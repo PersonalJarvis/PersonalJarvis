@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from jarvis.marketplace import catalog_data
@@ -103,4 +104,53 @@ def remove_community_plugin(plugin_id: str) -> bool:
     return True
 
 
-__all__ = ["install_plugin_spec", "remove_community_plugin", "seed_plugin_ids"]
+def install_community_skill(name: str, skill_md: str) -> Path:
+    """Write a STANDALONE community skill from the index, and return its path.
+
+    Standalone skills carry no ownership marker: the user owns them outright
+    and removes them from the Skills view like any other. What they do share
+    with a plugin's bundled skills is the rule set — the same
+    `validate_bundled_skills` call — because a rule that only applies to one
+    of the two publishing routes is a rule an author simply routes around.
+
+    Refuses to overwrite a directory a PLUGIN owns: a standalone submission
+    must not be able to take over a skill that arrives with, and disappears
+    with, an installed plugin.
+    """
+    from jarvis.core.paths import user_skills_dir
+    from jarvis.marketplace.agent_plugins_loader import validate_bundled_skills
+    from jarvis.marketplace.bundled_skills import owner_of
+
+    # Raises AgentPluginError on a bad name, missing frontmatter, an
+    # oversized file, or a self-declared risk_policy.
+    skills = validate_bundled_skills(
+        [{"name": name, "skill_md": skill_md}], plugin_name=name
+    )
+    skill = skills[0]
+
+    base = user_skills_dir().resolve()
+    target = (base / skill.name).resolve()
+    if target.parent != base:
+        raise ValueError(f"skill name {skill.name!r} resolves outside the skills directory")
+
+    owner = owner_of(target) if target.exists() else None
+    if owner is not None:
+        raise ValueError(
+            f"a skill named {skill.name!r} was installed by the {owner!r} plugin — "
+            "remove that plugin instead of overwriting its skill"
+        )
+
+    target.mkdir(parents=True, exist_ok=True)
+    skill_file = target / "SKILL.md"
+    tmp = skill_file.with_suffix(".md.tmp")
+    tmp.write_text(skill.skill_md, encoding="utf-8")
+    tmp.replace(skill_file)
+    return skill_file
+
+
+__all__ = [
+    "install_community_skill",
+    "install_plugin_spec",
+    "remove_community_plugin",
+    "seed_plugin_ids",
+]

@@ -149,7 +149,12 @@ def validate_bundled_skills(raw: Any, *, plugin_name: str) -> list[BundledSkill]
             raise AgentPluginError(f"package bundles the skill {name!r} twice")
         seen.add(name)
 
-        skill_md = _require_str(item.get("skill_md"), f"skill {name!r}: skill_md")
+        # Validate on the trimmed text, but KEEP the author's bytes: a
+        # SKILL.md is a document, and silently eating its trailing newline
+        # means the file we write is not the file that was published.
+        # `lstrip` only, because the parser needs `---` at offset zero.
+        _require_str(item.get("skill_md"), f"skill {name!r}: skill_md")
+        skill_md = str(item["skill_md"]).lstrip()
         if len(skill_md.encode("utf-8")) > MAX_SKILL_MD_BYTES:
             raise AgentPluginError(
                 f"skill {name!r}: SKILL.md exceeds {MAX_SKILL_MD_BYTES // 1024} KB"

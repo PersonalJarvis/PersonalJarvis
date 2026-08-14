@@ -85,8 +85,15 @@ class CommunitySkillEntry(_Tolerant):
     published_at: str | None = None
     categories: list[str] = Field(default_factory=list)
     source_url: str | None = None
-    # Direct download of the SKILL.md — consumed by the existing
-    # /api/skills/catalog/install route.
+    # The SKILL.md itself, embedded like a plugin's manifests. Preferred over
+    # `raw_url`: a linked file inherits the availability of whatever host
+    # serves it, and on 2026-08-14 that cost the store every skill install at
+    # once when the registry repo went private while this index stayed up.
+    # An embedded skill cannot go missing while the feed that advertises it
+    # is reachable.
+    skill_md: str | None = None
+    # Legacy download URL. Still read (older indexes carry only this) and
+    # still written by the registry, but only used when `skill_md` is absent.
     raw_url: str | None = None
 
     @field_validator("raw_url")

@@ -87,6 +87,10 @@ export interface CommunityPluginWire {
   has_usage_card?: boolean;
   post_install_hint_md?: string | null;
   install?: InstallStandardWire | null;
+  /** Skills the package carries (Agent Plugins `skills/`). Installing the
+   *  plugin writes each one into the user's skills folder, so the consent
+   *  dialog must name them BEFORE anything is written. */
+  bundled_skills?: string[];
 }
 
 export interface CommunitySkillWire {
@@ -99,6 +103,12 @@ export interface CommunitySkillWire {
   categories: string[];
   source_url?: string | null;
   raw_url?: string | null;
+  /** The install can actually run: the index carries the SKILL.md itself
+   *  (`embedded`) or at least a download link. Neither means the registry
+   *  published an incomplete entry — say so on the card, don't fail on the
+   *  button. */
+  installable?: boolean;
+  embedded?: boolean;
   installed: boolean;
   installed_version?: string | null;
   update_available?: boolean;
@@ -180,6 +190,10 @@ export function CommunityTab() {
   const [installedOnly, setInstalledOnly] = useState(false);
   const [consentPlugin, setConsentPlugin] = useState<CommunityPluginWire | null>(null);
   const [consentSkill, setConsentSkill] = useState<CommunitySkillWire | null>(null);
+  // One line about what the last action did to the disk. Cleared on the next
+  // one; there is no toast system in this app and inventing one for a single
+  // sentence would be worse than a line in the header.
+  const [notice, setNotice] = useState<string | null>(null);
   const [detail, setDetail] = useState<CommunityPluginWire | null>(null);
   const [skillDetail, setSkillDetail] = useState<CommunitySkillWire | null>(null);
 
@@ -216,10 +230,16 @@ export function CommunityTab() {
           .catch(() => undefined);
         throw new Error(detail ?? `Install failed (${res.status})`);
       }
-      return res.json();
+      return (await res.json()) as { plugin?: { installed_skills?: string[] } };
     },
-    onSuccess: () => {
+    onSuccess: (result, name) => {
       setConsentPlugin(null);
+      const added = result.plugin?.installed_skills ?? [];
+      setNotice(
+        added.length > 0
+          ? `Installed ${name} and added ${added.length === 1 ? "1 skill" : `${added.length} skills`}: ${added.join(", ")}. They start as drafts.`
+          : null,
+      );
       invalidateAll();
     },
   });
@@ -230,29 +250,41 @@ export function CommunityTab() {
         `/api/marketplace/community/plugins/${encodeURIComponent(name)}`,
         { method: "DELETE" },
       );
-      if (!res.ok) throw new Error(`Remove failed (${res.status})`);
-      return res.json();
+      if (!res.ok) {
+        const detail = await res
+          .json()
+          .then((body: { detail?: string }) => body.detail)
+          .catch(() => undefined);
+        throw new Error(detail ?? `Remove failed (${res.status})`);
+      }
+      return (await res.json()) as { removed_skills?: string[] };
     },
-    onSuccess: () => {
-      setDetail(null);
+    onSuccess: (result, name) => {
+      // Close the sheet only if it shows the removed plugin — removing B
+      // from a list row must not close an open sheet for A.
+      setDetail((d) => (d && d.name === name ? null : d));
+      // Files left the disk. Say which — a silent deletion is correct
+      // behaviour that looks like a bug.
+      const gone = result.removed_skills ?? [];
+      setNotice(
+        gone.length > 0
+          ? `Removed ${name} and ${gone.length === 1 ? "its skill" : `its ${gone.length} skills`}: ${gone.join(", ")}.`
+          : null,
+      );
       invalidateAll();
     },
   });
 
   const skillInstallMutation = useMutation({
     mutationFn: async (skill: CommunitySkillWire) => {
-      // The existing skill-catalog install route does the download,
-      // validation, and registry hot-swap.
-      const res = await fetch("/api/skills/catalog/install", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: skill.name,
-          title: skill.title,
-          raw_url: skill.raw_url,
-          source_url: skill.source_url ?? "",
-        }),
-      });
+      // The name is the whole request: the server reads the same index entry
+      // the card was rendered from, prefers the embedded SKILL.md, and falls
+      // back to the download only for older feeds. Sending a URL from here
+      // would make "install this skill" mean "write whatever that URL serves".
+      const res = await fetch(
+        `/api/marketplace/community/skills/${encodeURIComponent(skill.name)}/install`,
+        { method: "POST" },
+      );
       if (!res.ok) {
         const detail = await res
           .json()
@@ -384,6 +416,16 @@ export function CommunityTab() {
           {updateCount === 1
             ? "1 installed item has a newer version."
             : `${updateCount} installed items have newer versions.`}
+        </p>
+      )}
+
+      {notice && (
+        <p
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+        >
+          <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {notice}
         </p>
       )}
 
@@ -1144,7 +1186,7 @@ function CommunitySkillRow({
         )}
         {skill.installed ? (
           <>
-            {skill.update_available && skill.raw_url && (
+            {skill.update_available && skillIsInstallable(skill) && (
               <Button size="sm" variant="outline" onClick={onInstall} disabled={busy}>
                 <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" />
                 Update
@@ -1168,7 +1210,7 @@ function CommunitySkillRow({
               )}
             </Button>
           </>
-        ) : skill.raw_url ? (
+        ) : skillIsInstallable(skill) ? (
           <Button size="sm" variant="outline" onClick={onInstall} disabled={busy}>
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Install"}
           </Button>
@@ -1185,6 +1227,17 @@ function CommunitySkillRow({
   );
 }
 
+/** Whether the Install button can do anything.
+ *
+ *  A skill arrives either embedded in the feed (preferred) or as a download
+ *  link. `installable` is computed server-side; the `raw_url` fallback keeps
+ *  a client pointed at an older index working. Never test `raw_url` alone —
+ *  that reads an embedded skill as "manual install" and hides the button
+ *  that would have worked. */
+function skillIsInstallable(skill: CommunitySkillWire): boolean {
+  return skill.installable ?? Boolean(skill.raw_url);
+}
+
 /** What a plugin would be ALLOWED to do, in plain language.
  *
  *  Derived from the manifest rather than written per plugin, so it cannot go
@@ -1194,8 +1247,10 @@ function CommunitySkillRow({
 function capabilityLines(plugin: CommunityPluginWire): { icon: React.ReactNode; text: string }[] {
   const mcp = plugin.mcp_server ?? null;
   const name = plugin.display_name ?? plugin.name;
+  const lines: { icon: React.ReactNode; text: string }[] = [];
+
   if (mcp?.transport === "http") {
-    return [
+    lines.push(
       {
         icon: <Globe className="h-3.5 w-3.5" />,
         text: `Sends the data you ask it to work with — and your ${name} access token — to the address below.`,
@@ -1204,10 +1259,9 @@ function capabilityLines(plugin: CommunityPluginWire): { icon: React.ReactNode; 
         icon: <Plug className="h-3.5 w-3.5" />,
         text: "Runs no code on your computer; the tools live on that server.",
       },
-    ];
-  }
-  if (mcp?.transport === "stdio") {
-    return [
+    );
+  } else if (mcp?.transport === "stdio") {
+    lines.push(
       {
         icon: <Terminal className="h-3.5 w-3.5" />,
         text: "Runs the command below on your computer, with the same access this app has.",
@@ -1216,14 +1270,27 @@ function capabilityLines(plugin: CommunityPluginWire): { icon: React.ReactNode; 
         icon: <HardDrive className="h-3.5 w-3.5" />,
         text: "Can read and change files on your computer and connect to the internet.",
       },
-    ];
-  }
-  return [
-    {
+    );
+  } else if (!(plugin.bundled_skills?.length)) {
+    lines.push({
       icon: <FileText className="h-3.5 w-3.5" />,
       text: "Metadata only — it adds no server and runs no command.",
-    },
-  ];
+    });
+  }
+
+  // Installing a package with skills WRITES FILES. That has to be on the
+  // consent list, not discovered afterwards in the Skills view.
+  const skillCount = plugin.bundled_skills?.length ?? 0;
+  if (skillCount > 0) {
+    lines.push({
+      icon: <FileText className="h-3.5 w-3.5" />,
+      text:
+        skillCount === 1
+          ? "Writes one skill file into your skills folder — instructions the assistant reads, not code it runs."
+          : `Writes ${skillCount} skill files into your skills folder — instructions the assistant reads, not code it runs.`,
+    });
+  }
+  return lines;
 }
 
 /** The detail view: everything the index knows about one plugin, on one screen.
@@ -1334,6 +1401,14 @@ export function PluginDetailSheet({
             <Meta
               label="Keyword card"
               value={plugin.has_usage_card ? "Included" : "None"}
+            />
+            <Meta
+              label="Skills included"
+              value={
+                plugin.bundled_skills?.length
+                  ? plugin.bundled_skills.join(", ")
+                  : undefined
+              }
             />
           </dl>
 
@@ -1597,11 +1672,15 @@ export function SkillDetailSheet({
             </ul>
           </section>
 
-          {skill.raw_url && (
+          {skill.embedded ? (
+            <Field label="The instructions come from">
+              the marketplace catalogue itself — nothing else is downloaded
+            </Field>
+          ) : skill.raw_url ? (
             <Field label="The instructions are downloaded from">
               {skill.raw_url}
             </Field>
-          )}
+          ) : null}
 
           {skill.install && <InstallStandard install={skill.install} />}
 
@@ -1638,7 +1717,7 @@ export function SkillDetailSheet({
           )}
           {skill.installed ? (
             <>
-              {skill.update_available && skill.raw_url && (
+              {skill.update_available && skillIsInstallable(skill) && (
                 <Button size="sm" onClick={onInstall}>
                   <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" />
                   Update
@@ -1653,7 +1732,7 @@ export function SkillDetailSheet({
                 Remove
               </Button>
             </>
-          ) : skill.raw_url ? (
+          ) : skillIsInstallable(skill) ? (
             <Button size="sm" onClick={onInstall}>
               Install
             </Button>
@@ -1728,14 +1807,21 @@ export function SkillInstallConsentDialog({
             </span>
             {skill.version ? ` · version ${skill.version}` : ""}
           </p>
-          <div>
-            <p className="mb-1 text-xs font-medium text-foreground">
-              The instructions are downloaded from:
+          {skill.embedded ? (
+            <p className="text-xs text-muted-foreground">
+              The instructions come from the marketplace catalogue itself —
+              installing downloads nothing else.
             </p>
-            <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
-              {skill.raw_url}
-            </code>
-          </div>
+          ) : (
+            <div>
+              <p className="mb-1 text-xs font-medium text-foreground">
+                The instructions are downloaded from:
+              </p>
+              <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
+                {skill.raw_url}
+              </code>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             A skill is a set of instructions the assistant follows. Read the
             installed instructions before you switch it on.
@@ -1858,6 +1944,25 @@ export function InstallConsentDialog({
               <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
                 {(mcp.install ?? []).join(" ")}
               </code>
+            </div>
+          )}
+          {(plugin.bundled_skills?.length ?? 0) > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-foreground">
+                Installing also adds{" "}
+                {plugin.bundled_skills!.length === 1 ? "this skill" : "these skills"}{" "}
+                to your skills folder:
+              </p>
+              <ul className="space-y-0.5 rounded-md border border-border bg-muted/40 px-2.5 py-1.5">
+                {plugin.bundled_skills!.map((skill) => (
+                  <li key={skill} className="font-mono text-xs text-foreground">
+                    {skill}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                They start as drafts and leave again when you remove the plugin.
+              </p>
             </div>
           )}
           {authLabel && (

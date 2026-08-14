@@ -26,6 +26,22 @@ const COMMUNITY: CommunityResponse = {
       seed_conflict: false,
     },
     {
+      name: "note-owl",
+      valid: true,
+      id: "note-owl",
+      display_name: "NoteOwl",
+      description: "Notes and highlights from NoteOwl",
+      category: "Notes",
+      logo_slug: "noteowl",
+      publisher: "octocat",
+      version: "2.0.0",
+      auth: { mode: "pat_paste" },
+      mcp_server: { transport: "http", url: "https://mcp.noteowl.example/mcp" },
+      bundled_skills: ["note-triage", "note-weekly-review"],
+      installed: false,
+      seed_conflict: false,
+    },
+    {
       name: "broken-plugin",
       valid: false,
       error: "mcp.json server 'broken-plugin': url must be https://",
@@ -42,6 +58,7 @@ const COMMUNITY: CommunityResponse = {
       categories: ["productivity"],
       source_url: "https://github.com/PersonalJarvis/marketplace",
       raw_url: "https://raw.example/skills/three-point-check/SKILL.md",
+      installable: true,
       installed: false,
     },
   ],
@@ -65,7 +82,7 @@ function installFetchMock(overrides?: Partial<CommunityResponse>) {
         json: async () => ({ ok: true, plugin: { id: "todo-fox" } }),
       } as Response;
     }
-    if (url === "/api/skills/catalog/install") {
+    if (url === "/api/marketplace/community/skills/three-point-check/install") {
       return {
         ok: true,
         status: 200,
@@ -167,18 +184,40 @@ describe("CommunityTab", () => {
     );
     fireEvent.click(confirm!);
 
+    // The name is the whole request. Sending a URL from the client would
+    // make "install this skill" mean "write whatever that URL serves"; the
+    // server re-reads the same index entry the card came from.
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/skills/catalog/install",
+        "/api/marketplace/community/skills/three-point-check/install",
         expect.objectContaining({ method: "POST" }),
       );
     });
-    const body = JSON.parse(
-      (fetchMock.mock.calls.find(([u]) => u === "/api/skills/catalog/install")![1] as RequestInit)
-        .body as string,
+    const call = fetchMock.mock.calls.find(
+      ([u]) => u === "/api/marketplace/community/skills/three-point-check/install",
+    )!;
+    expect((call[1] as RequestInit).body).toBeUndefined();
+  });
+
+  it("names the skills a plugin will write before anything is installed", async () => {
+    // Installing a bundle puts FILES in the user's skills folder. A consent
+    // dialog that only names the server would be a promise the install
+    // breaks, so the skills have to appear by name on this screen.
+    installFetchMock();
+    renderTab();
+    await screen.findByText("NoteOwl");
+
+    const card = screen.getByText("NoteOwl").closest("article")!;
+    const installButton = Array.from(card.querySelectorAll("button")).find(
+      (b) => b.textContent === "Install",
     );
-    expect(body.name).toBe("three-point-check");
-    expect(body.raw_url).toBe("https://raw.example/skills/three-point-check/SKILL.md");
+    fireEvent.click(installButton!);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("Install NoteOwl?");
+    expect(dialog.textContent).toContain("skills folder");
+    expect(dialog.textContent).toContain("note-triage");
+    expect(dialog.textContent).toContain("note-weekly-review");
   });
 
   it("says honestly when it is showing a stale saved copy", async () => {

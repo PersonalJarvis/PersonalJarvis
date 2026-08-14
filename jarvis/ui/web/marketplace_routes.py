@@ -10,6 +10,7 @@ Endpoints:
     POST   /api/marketplace/community/refresh              — force index re-fetch
     POST   /api/marketplace/community/plugins/{id}/install — one-click install
     DELETE /api/marketplace/community/plugins/{id}         — uninstall + revoke
+    POST   /api/marketplace/community/skills/{name}/install — standalone skill
 """
 
 from __future__ import annotations
@@ -875,6 +876,12 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
                     "categories": list(skill.categories),
                     "source_url": skill.source_url,
                     "raw_url": skill.raw_url,
+                    # Whether the install can actually run. An index entry
+                    # may carry the SKILL.md itself (preferred) or only a
+                    # download link; with neither, the card must say so up
+                    # front rather than fail on the button.
+                    "installable": bool(skill.skill_md or skill.raw_url),
+                    "embedded": bool(skill.skill_md),
                     "installed": installed,
                     "installed_version": installed_version,
                     "update_available": installed and _is_newer(skill.version, installed_version),
@@ -1034,6 +1041,89 @@ async def community_install(plugin_id: str) -> dict[str, Any]:
     if skill_result is not None:
         item["installed_skills"] = skill_result.written
     return {"ok": True, "plugin": item}
+
+
+@router.post("/community/skills/{skill_name}/install")
+async def community_skill_install(skill_name: str, request: Request) -> dict[str, Any]:
+    """Install a standalone community skill, reading the index server-side.
+
+    Deliberately mirrors the plugin install route rather than reusing
+    `/api/skills/catalog/install`: that route takes the download URL from the
+    CALLER, which makes "install this skill" mean "write whatever this URL
+    serves". Here the name is the only input and the index is the only
+    source, so the same entry the user saw is the entry that lands.
+
+    Prefers the embedded `skill_md`. A skill that carries only `raw_url`
+    (older index) still downloads through the existing finder path.
+    """
+    from jarvis.marketplace import community_source
+    from jarvis.marketplace.agent_plugins_loader import AgentPluginError
+    from jarvis.marketplace.community_install import install_community_skill
+
+    reg = getattr(request.app.state, "skill_registry", None)
+    if reg is None:
+        raise HTTPException(status_code=503, detail="SkillRegistry not available")
+    index, _ = await community_source.get_index()
+    entry = None
+    if index is not None:
+        entry = next((s for s in index.skills if s.name == skill_name), None)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"skill {skill_name!r} is not in the community index",
+        )
+
+    if entry.skill_md:
+        try:
+            target_path = install_community_skill(entry.name, entry.skill_md)
+        except AgentPluginError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"skill could not be written: {exc}"
+            ) from exc
+    elif entry.raw_url:
+        from jarvis.skills.finder import SkillCandidate, SkillFinder
+
+        candidate = SkillCandidate(
+            name=entry.name,
+            title=entry.title or entry.name,
+            description=entry.description,
+            source="community",
+            source_url=entry.source_url or "",
+            raw_url=entry.raw_url,
+            trust="community",
+            stars=None,
+            categories=tuple(entry.categories),
+            languages=(),
+            risk="monitor",
+            tags=(),
+        )
+        try:
+            target_path = await SkillFinder().install(candidate)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        # Neither form of content. The index advertised something it cannot
+        # deliver; say so instead of failing at a download that never starts.
+        raise HTTPException(
+            status_code=422,
+            detail=f"skill {skill_name!r} carries no content in the index — "
+            "the registry published an incomplete entry",
+        )
+
+    try:
+        await reg.reload()
+    except Exception as exc:  # noqa: BLE001 - the watchdog picks it up anyway
+        return {
+            "ok": True,
+            "name": entry.name,
+            "path": str(target_path),
+            "reload_warning": str(exc),
+        }
+    return {"ok": True, "name": entry.name, "path": str(target_path)}
 
 
 @router.delete("/community/plugins/{plugin_id}")
