@@ -1030,7 +1030,7 @@ describe("pane header actions", () => {
     vi.useRealTimers();
   });
 
-  it("opens the gesture card over the title line, where the old tooltip lived", () => {
+  it("answers a hover on the title line with the recap card, not the gesture card", () => {
     vi.useFakeTimers();
     render(
       <AgenticTerminal
@@ -1044,15 +1044,16 @@ describe("pane header actions", () => {
       />,
     );
 
-    // The recap line is a button, but it spans nearly the whole bar — the
-    // card must show there, not only on the bar's empty slivers.
+    // Pointing at the title asks what the pane is DOING — the recap card
+    // answers that itself (see PaneRecap), so the gesture explainer stays
+    // off it: two cards must never stack over the same hover.
     fireEvent.pointerOver(screen.getByTestId("pane-recap-Dana"));
     act(() => {
       vi.advanceTimersByTime(600);
     });
 
-    const tip = screen.getByTestId("pane-header-tip-Dana");
-    expect(tip.textContent).toContain("Drag Dana by this bar");
+    expect(screen.queryByTestId("pane-header-tip-Dana")).toBeNull();
+    expect(screen.getByTestId("pane-recap-card-Dana")).toBeTruthy();
     vi.useRealTimers();
   });
 

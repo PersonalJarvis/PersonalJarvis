@@ -2503,15 +2503,21 @@ function PaneHeader({
         onArrangeStart(event);
       }}
       // A settled hover on the bar asks what the bar can do. The card yields
-      // only to controls that carry their OWN native label (`[title]` — the
-      // action cluster, the pencil, the seat chip), so two explanations never
-      // stack. Everything else on the bar belongs to the bar — including the
-      // recap line, which is a button but spans nearly the whole width: the
-      // first version suppressed the card there, and "hover the title" is
-      // exactly where people ask.
+      // to controls that carry their OWN native label (`[title]` — the action
+      // cluster, the pencil, the seat chip) and to the title line, whose
+      // settled hover opens the recap card itself (`aria-haspopup` — see
+      // PaneRecap): two explanations must never stack. An earlier version
+      // showed the gesture card over the title too, and hovering the title
+      // then answered "how do I move this pane" when the question asked was
+      // "what is this pane doing" — the maintainer chose the recap there.
       onPointerOver={(event) => {
         const target = event.target as HTMLElement | null;
-        if (target?.closest("[title], input, [role='menuitem']")) hideTip();
+        if (
+          target?.closest(
+            "[title], input, [role='menuitem'], [aria-haspopup='dialog']",
+          )
+        )
+          hideTip();
         else if (tipText) scheduleTip();
       }}
       onPointerLeave={hideTip}

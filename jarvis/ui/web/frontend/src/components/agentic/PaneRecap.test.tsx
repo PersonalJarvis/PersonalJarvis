@@ -7,15 +7,28 @@
  * three — it could not be moved into, it never explained itself, and there was
  * nothing to press.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { PaneRecap } from "./PaneRecap";
+import {
+  act,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { HOVER_CLOSE_MS, HOVER_OPEN_MS, PaneRecap } from "./PaneRecap";
 
 const BASE = {
   name: "Mika",
   displayName: "Claude Code",
   light: false,
 };
+
+// A hover test that fails mid-flight must not leak its fake clock into the
+// async tests after it — their `waitFor` polls would then never tick.
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("the header line", () => {
   it("shows the recap in place of the agent name", () => {
@@ -62,6 +75,87 @@ describe("the recap card", () => {
     const line = screen.getByTestId("pane-recap-Mika");
     fireEvent.mouseEnter(line.parentElement!);
     expect(screen.queryByTestId("pane-recap-card-Mika")).toBeNull();
+  });
+
+  it("opens on a settled hover of the line, and leaves when the pointer does", () => {
+    vi.useFakeTimers();
+    render(<PaneRecap {...BASE} recap="Rewrote the auth middleware" />);
+
+    const line = screen.getByTestId("pane-recap-Mika");
+    // A pass-over shows nothing; the card waits for the hover to settle.
+    fireEvent.pointerOver(line);
+    expect(screen.queryByTestId("pane-recap-card-Mika")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(HOVER_OPEN_MS + 50);
+    });
+    expect(screen.getByTestId("pane-recap-card-Mika")).toBeTruthy();
+
+    // What hover opened, leaving closes — after the grace the pointer would
+    // have needed to travel into the card instead.
+    fireEvent.pointerOut(line);
+    act(() => {
+      vi.advanceTimersByTime(HOVER_CLOSE_MS + 50);
+    });
+    expect(screen.queryByTestId("pane-recap-card-Mika")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("lets the pointer travel into a hover-opened card without losing it", () => {
+    vi.useFakeTimers();
+    render(
+      <PaneRecap
+        {...BASE}
+        recap="Rewrote the auth middleware"
+        detail="Where the work stands."
+      />,
+    );
+
+    const line = screen.getByTestId("pane-recap-Mika");
+    fireEvent.pointerOver(line);
+    act(() => {
+      vi.advanceTimersByTime(HOVER_OPEN_MS + 50);
+    });
+
+    // Reading the long form IS the point — the card must survive the trip.
+    fireEvent.pointerOut(line);
+    fireEvent.pointerOver(screen.getByTestId("pane-recap-card-Mika"));
+    act(() => {
+      vi.advanceTimersByTime(HOVER_CLOSE_MS + 50);
+    });
+    expect(screen.getByTestId("pane-recap-card-Mika")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("keeps a clicked-open card when the pointer drifts away", () => {
+    vi.useFakeTimers();
+    render(<PaneRecap {...BASE} recap="Rewrote the auth middleware" />);
+
+    const line = screen.getByTestId("pane-recap-Mika");
+    fireEvent.click(line);
+    fireEvent.pointerOut(line);
+    act(() => {
+      vi.advanceTimersByTime(HOVER_CLOSE_MS + 50);
+    });
+
+    expect(screen.getByTestId("pane-recap-card-Mika")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("stays closed for a touch pointer, which has no hover to settle", () => {
+    vi.useFakeTimers();
+    render(<PaneRecap {...BASE} recap="Rewrote the auth middleware" />);
+
+    const line = screen.getByTestId("pane-recap-Mika");
+    // jsdom has no PointerEvent constructor, so the pointerType has to be
+    // pinned onto a hand-built event — exactly what a real touch delivers.
+    const over = createEvent.pointerOver(line);
+    Object.defineProperty(over, "pointerType", { value: "touch" });
+    fireEvent(line, over);
+    act(() => {
+      vi.advanceTimersByTime(HOVER_OPEN_MS + 100);
+    });
+    expect(screen.queryByTestId("pane-recap-card-Mika")).toBeNull();
+    vi.useRealTimers();
   });
 
   it("closes on Escape", () => {

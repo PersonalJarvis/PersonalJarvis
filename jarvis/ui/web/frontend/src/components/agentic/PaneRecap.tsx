@@ -65,6 +65,14 @@ const ROOM_NEEDED = 300;
 /** The same two caps the backend enforces, so the counter cannot lie. */
 export const MAX_HEADLINE = 200;
 export const MAX_DETAIL = 2000;
+/**
+ * How long a hover has to settle on the title line before the card opens, and
+ * how far the pointer may travel between the line and the open card before a
+ * hover-opened card concludes the reader left. A click needs neither: it pins
+ * the card until it is clicked away, dismissed outside, or Escape'd.
+ */
+export const HOVER_OPEN_MS = 350;
+export const HOVER_CLOSE_MS = 300;
 
 /**
  * Why the recap on screen is the one on screen, in a sentence.
@@ -185,6 +193,12 @@ export function PaneRecap({
   const cardRef = useRef<HTMLDivElement | null>(null);
 
   const [open, setOpen] = useState(false);
+  /**
+   * Whether the card was CLAIMED — clicked open, or interacted with after a
+   * hover opened it. A hover-opened, unclaimed card is soft: it leaves with
+   * the pointer. A claimed one closes only on a deliberate dismissal.
+   */
+  const [pinned, setPinned] = useState(false);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<"save" | "clear" | "refresh" | null>(null);
   const [failure, setFailure] = useState("");
@@ -195,6 +209,7 @@ export function PaneRecap({
 
   const close = useCallback(() => {
     setOpen(false);
+    setPinned(false);
     setEditing(false);
     setFailure("");
   }, []);
@@ -203,6 +218,50 @@ export function PaneRecap({
     setAnchor(anchorTo(lineRef.current));
     setOpen(true);
   }, []);
+
+  /*
+   * The title line opens its card on a settled hover — the maintainer's
+   * explicit choice: pointing at the title asks "what is this pane doing",
+   * and a click tax on every glance kept the answer hidden. Hover is a SOFT
+   * open: the card follows the pointer into itself (the grace period below),
+   * and leaving both the line and the card closes it again. A click still
+   * works and pins the card instead. Touch has no hover, so touch pointers
+   * sit this out entirely and keep their tap-to-open.
+   */
+  const hoverTimer = useRef<number | undefined>(undefined);
+  const leaveTimer = useRef<number | undefined>(undefined);
+  const cancelTimer = (timer: { current: number | undefined }) => {
+    if (timer.current !== undefined) {
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+    }
+  };
+  const scheduleHoverOpen = () => {
+    cancelTimer(leaveTimer);
+    if (open || hoverTimer.current !== undefined) return;
+    hoverTimer.current = window.setTimeout(() => {
+      hoverTimer.current = undefined;
+      reveal();
+    }, HOVER_OPEN_MS);
+  };
+  const scheduleSoftClose = () => {
+    cancelTimer(hoverTimer);
+    // A claimed, editing, or working card is being USED — the pointer
+    // drifting away must not eat typed text or an answer being written.
+    if (!open || pinned || editing || busy) return;
+    cancelTimer(leaveTimer);
+    leaveTimer.current = window.setTimeout(() => {
+      leaveTimer.current = undefined;
+      close();
+    }, HOVER_CLOSE_MS);
+  };
+  useEffect(
+    () => () => {
+      cancelTimer(hoverTimer);
+      cancelTimer(leaveTimer);
+    },
+    [],
+  );
 
   // The card is positioned in viewport coordinates, so anything that moves the
   // pane underneath it — scrolling the workspace, resizing the window, dragging
@@ -302,10 +361,22 @@ export function PaneRecap({
         aria-label={`What ${name} is doing`}
         data-testid={`pane-recap-${name}`}
         onMouseDown={(e) => e.stopPropagation()}
+        onPointerEnter={(e) => {
+          if (e.pointerType !== "touch") scheduleHoverOpen();
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType !== "touch") scheduleSoftClose();
+        }}
         onClick={(e) => {
           e.stopPropagation();
-          if (open) close();
-          else reveal();
+          cancelTimer(hoverTimer);
+          // Clicking a soft, hover-opened card claims it rather than closing
+          // it — closing would reopen under the still-hovering pointer.
+          if (open && pinned) close();
+          else {
+            setPinned(true);
+            if (!open) reveal();
+          }
         }}
         // The title is the bar's main text and dresses like it: the display
         // face at a readable size, quiet ink that sharpens under the pointer.
@@ -336,7 +407,16 @@ export function PaneRecap({
             aria-label={`What ${name} is doing`}
             data-testid={`pane-recap-card-${name}`}
             data-placement={anchor.placement}
-            onMouseDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              // Pressing anything in the card is a claim on it — from here on
+              // only a deliberate dismissal closes it, never a drifting pointer.
+              setPinned(true);
+            }}
+            onPointerEnter={() => cancelTimer(leaveTimer)}
+            onPointerLeave={(e) => {
+              if (e.pointerType !== "touch") scheduleSoftClose();
+            }}
             style={{
               position: "fixed",
               left: anchor.left,
