@@ -357,6 +357,7 @@ class WebServer:
         from .feedback_routes import router as feedback_router
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
+        from .logins_routes import identity_router as agent_identity_router
         from .logins_routes import router as logins_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
@@ -383,6 +384,7 @@ class WebServer:
         from .setup_report_routes import router as setup_report_router
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
+        from .smarthome_routes import router as smarthome_router
         from .socials_routes import router as socials_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
@@ -439,6 +441,8 @@ class WebServer:
         app.include_router(self_mod_router)
         app.include_router(tasks_router)
         app.include_router(skills_router)
+        # Smart Home — the aggregated device view across every connected hub.
+        app.include_router(smarthome_router)
         app.include_router(docs_router)
         app.include_router(cli_router)
         # Command Registry — the one machine-readable catalog of app commands
@@ -490,6 +494,10 @@ class WebServer:
         # keychain. No Brain dependency: the model never reaches a password over
         # HTTP, it is substituted into a browser script by jarvis.logins.injection.
         app.include_router(logins_router)
+        # The assistant's own contact card — the details behind the accounts it
+        # holds in its own name, as opposed to the user's. Same store, same
+        # absence of a Brain dependency.
+        app.include_router(agent_identity_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is

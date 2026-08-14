@@ -18,6 +18,12 @@ the way to the harness subprocess's stdin. The tool call that gets logged still
 contains the placeholder; only the bytes on the pipe carry the secret, and they
 land in a separate process that the model does not observe.
 
+The second argument is any field the record holds — ``password``, ``username``
+and ``totp`` on every record, plus whatever else that particular connection was
+given (``api_key``, ``app_password``, an account number). Which of them count as
+secret is decided by where the value is stored, not by its name, so a new kind
+of connection needs no change here.
+
 This works *because* the script is executed out-of-process. An in-process
 action tool could not draw the line nearly as cleanly.
 
@@ -40,10 +46,16 @@ from jarvis.logins.store import CredentialStore, LoginStatus
 
 log = logging.getLogger(__name__)
 
-#: What may be pulled from a record. ``username`` is not secret — the brain can
-#: already read it from ``credential_lookup`` — but allowing it here keeps a
-#: login script uniform instead of half-templated.
-_FIELDS: Final[frozenset[str]] = frozenset({"password", "username", "totp"})
+#: The three fields every record has, whatever kind it is. Anything else a
+#: script names is looked up in that record's own ``secrets`` and ``fields`` —
+#: an API token, an app password, an account number — because the set of things
+#: a connection can hold is open-ended and a closed list here would have to be
+#: widened for every new kind (see ``store``'s "NOT ONLY WEBSITES").
+#:
+#: ``username`` is not secret — the brain can already read it from the
+#: ``credentials`` tool — but allowing it here keeps a login script uniform
+#: instead of half-templated.
+_CANONICAL_FIELDS: Final[frozenset[str]] = frozenset({"password", "username", "totp"})
 
 #: ``SECRET("service", "field")`` in the script text. Both quote styles, and
 #: tolerant of whitespace, because the model writes this by hand.
@@ -104,19 +116,55 @@ def placeholder_services(script: str) -> tuple[str, ...]:
     )
 
 
-def _field_value(store: CredentialStore, service: str, field: str) -> str:
+def _field_value(
+    store: CredentialStore, service: str, field: str
+) -> tuple[str, bool]:
+    """Resolve one reference, and say whether the value has to be redacted.
+
+    Returns ``(value, is_secret)``. The flag is not cosmetic: it decides whether
+    the value joins the redaction list applied to the script's output. Marking a
+    non-secret as secret would blank ordinary page text — a username is usually
+    an email address that appears all over the page — and marking a secret as
+    non-secret would hand it straight back to the model in the tool result.
+    """
     credential = store.load(service)
     if credential is None:
         raise SecretResolutionError(
             f"No stored login for {service!r}. Ask the user to add it in the "
             "Passwords section — you cannot create one yourself."
         )
+
     if field == "password":
-        value = credential.password
-    elif field == "username":
-        value = credential.username
-    else:
-        value = credential.totp_secret or ""
+        return _require(credential.password, service, field), True
+    if field == "username":
+        return _require(credential.username, service, field), False
+    if field == "totp":
+        return _require(credential.totp_secret or "", service, field), True
+
+    # Anything else: this record's own extra secrets first, then its non-secret
+    # detail. Secrets win a name collision — resolving to the readable copy of a
+    # value that also exists as a secret would quietly skip redaction.
+    #
+    # Matched case-insensitively because the reference is written by the model
+    # from a name a human typed into a form field. "API_Key" and "api_key" must
+    # not be two different things, and normalising the stored keys instead would
+    # silently rewrite what the user entered.
+    secrets = {name.lower(): value for name, value in credential.secret_map().items()}
+    if field in secrets:
+        return _require(secrets[field], service, field), True
+    extras = {name.lower(): value for name, value in credential.field_map().items()}
+    if field in extras:
+        return _require(extras[field], service, field), False
+
+    available = sorted({*_CANONICAL_FIELDS, *secrets, *extras})
+    raise SecretResolutionError(
+        f"The stored entry for {service!r} has no field {field!r}. "
+        f"It holds: {', '.join(available)}. Use one of those, or ask the user "
+        "to add the missing field in the Passwords section."
+    )
+
+
+def _require(value: str, service: str, field: str) -> str:
     if not value:
         raise SecretResolutionError(
             f"The stored login for {service!r} has no {field}. "
@@ -145,17 +193,10 @@ def resolve_secrets(script: str, store: CredentialStore | None = None) -> Resolu
     def _substitute(match: re.Match[str]) -> str:
         service = match.group("service").strip()
         field = match.group("field").strip().lower()
-        if field not in _FIELDS:
-            raise SecretResolutionError(
-                f"Unknown credential field {field!r}. "
-                f"Valid fields: {', '.join(sorted(_FIELDS))}."
-            )
-        value = _field_value(resolver, service, field)
+        value, is_secret = _field_value(resolver, service, field)
         if service not in services:
             services.append(service)
-        # The username is not a secret and redacting it would blank ordinary
-        # page text (it is usually an email that appears all over the page).
-        if field != "username" and value not in secrets:
+        if is_secret and value not in secrets:
             secrets.append(value)
         return repr(value)
 

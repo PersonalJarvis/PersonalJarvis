@@ -260,7 +260,14 @@ class TestTheSecretNeverLeaves:
         assert _TOTP not in blob
 
     async def test_the_schema_offers_no_way_to_ask_for_one(self) -> None:
-        """A future 'reveal' action would undo the split this design exists for."""
+        """A future 'reveal' action would undo the split this design exists for.
+
+        ``identity`` is on the list and is not such an action: it returns the
+        assistant's own contact details — an address, a number, a handle — and
+        reads from the identity profile, which holds no secret at all. The
+        guard is pinned to an exact set so that adding a genuinely
+        secret-returning action here has to be a deliberate edit to this test.
+        """
         actions = CredentialsTool.schema["properties"]["action"]["enum"]
 
-        assert set(actions) == {"find", "list", "report"}
+        assert set(actions) == {"find", "list", "report", "identity"}

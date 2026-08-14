@@ -240,3 +240,118 @@ class TestDegradation:
 
         assert response.status_code == 503
         assert "keyring" in response.json()["detail"].lower()
+
+
+class TestOwnershipOverHttp:
+    """The section has to be able to file an account under either identity."""
+
+    def test_a_login_defaults_to_the_users_own_account(
+        self, client: TestClient
+    ) -> None:
+        """An older client that never sends ``owner`` keeps its old meaning."""
+        created = client.post("/api/logins", json=_github()).json()
+
+        assert created["owner"] == "user"
+
+    def test_a_login_can_be_filed_as_the_assistants_own(
+        self, client: TestClient
+    ) -> None:
+        created = client.post(
+            "/api/logins",
+            json=_github(label="GitHub (assistant)", owner="agent", kind="git-forge"),
+        ).json()
+
+        assert created["owner"] == "agent"
+        assert created["kind"] == "git-forge"
+
+    def test_listing_can_be_narrowed_to_one_identity(
+        self, client: TestClient
+    ) -> None:
+        client.post("/api/logins", json=_github(label="Mine"))
+        client.post("/api/logins", json=_github(label="Theirs", owner="agent"))
+
+        mine = client.get("/api/logins", params={"owner": "user"}).json()["logins"]
+        theirs = client.get("/api/logins", params={"owner": "agent"}).json()["logins"]
+
+        assert [entry["label"] for entry in mine] == ["Mine"]
+        assert [entry["label"] for entry in theirs] == ["Theirs"]
+        assert len(client.get("/api/logins").json()["logins"]) == 2
+
+    def test_an_unrecognised_owner_is_refused_rather_than_defaulted(
+        self, client: TestClient
+    ) -> None:
+        """Silently filing it under the wrong identity is the whole failure."""
+        response = client.post("/api/logins", json=_github(owner="nobody"))
+
+        assert response.status_code == 400
+
+    def test_an_edit_keeps_the_owner_it_already_had(self, client: TestClient) -> None:
+        created = client.post("/api/logins", json=_github(owner="agent")).json()
+
+        patched = client.patch(
+            f"/api/logins/{created['service_id']}", json={"label": "Renamed"}
+        ).json()
+
+        assert patched["owner"] == "agent"
+
+    def test_extra_secrets_are_named_but_never_returned(
+        self, client: TestClient
+    ) -> None:
+        token = "tok-live-should-never-appear"  # noqa: S105
+
+        created = client.post(
+            "/api/logins",
+            json=_github(kind="api", secrets={"api_key": token}),
+        ).json()
+
+        assert created["secret_names"] == ["api_key"]
+        assert token not in str(created)
+        assert token not in str(client.get("/api/logins").json())
+
+
+class TestTheAgentIdentityEndpoints:
+    @pytest.fixture
+    def identity_client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        from jarvis.logins import identity as identity_module
+        from jarvis.logins.identity import IdentityStore
+        from jarvis.ui.web.logins_routes import identity_router
+
+        store = IdentityStore(backend=InMemoryBackend())
+        monkeypatch.setattr(identity_module, "default_identity_store", lambda: store)
+
+        app = FastAPI()
+        app.include_router(identity_router)
+        return TestClient(app)
+
+    def test_an_unset_identity_reads_as_empty_not_missing(
+        self, identity_client: TestClient
+    ) -> None:
+        """The starting state renders as an empty form, not as a 404."""
+        response = identity_client.get("/api/identity")
+
+        assert response.status_code == 200
+        assert response.json()["is_configured"] is False
+
+    def test_an_identity_round_trips(self, identity_client: TestClient) -> None:
+        identity_client.put(
+            "/api/identity",
+            json={
+                "email": "assistant@example.com",
+                "phone": "+49 000 0000000",
+                "handles": {"github": "assistant-machine-user"},
+            },
+        )
+
+        body = identity_client.get("/api/identity").json()
+
+        assert body["email"] == "assistant@example.com"
+        assert body["handles"] == {"github": "assistant-machine-user"}
+        assert body["is_configured"] is True
+
+    def test_clearing_reports_whether_anything_was_there(
+        self, identity_client: TestClient
+    ) -> None:
+        identity_client.put("/api/identity", json={"email": "assistant@example.com"})
+
+        assert identity_client.delete("/api/identity").json() == {"removed": True}
+        assert identity_client.delete("/api/identity").json() == {"removed": False}

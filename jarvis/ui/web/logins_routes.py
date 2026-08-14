@@ -1,4 +1,4 @@
-"""REST API for the Passwords section — the user's own website logins.
+"""REST API for the Passwords section — stored accounts, and whose they are.
 
 Endpoints (mounted by the WebServer in ``_build_app()``):
 
@@ -7,6 +7,15 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     PATCH  /api/logins/{service_id}         → partial edit; 404 if unknown
     DELETE /api/logins/{service_id}         → remove; {"removed": bool}
     POST   /api/logins/{service_id}/reveal  → the password, for an explicit click
+    GET    /api/identity                    → the assistant's own contact card
+    PUT    /api/identity                    → replace it wholesale
+    DELETE /api/identity                    → clear it
+
+A record names an owner: the user's own account, or one the assistant holds in
+its own name. Listing accepts ``?owner=`` so the section can show the two side
+by side without a second endpoint, and the identity routes hold the details the
+assistant's own accounts are registered under — the address it types into a
+signup form, the number an SMS code arrives at.
 
 Every response EXCEPT ``/reveal`` is built from ``CredentialSummary``, which has
 no password field at all. That is deliberate: stripping a secret by remembering
@@ -35,12 +44,15 @@ import threading
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from jarvis.logins import identity as identity_module
 from jarvis.logins import store as store_module
-from jarvis.logins.store import Credential, CredentialStore
+from jarvis.logins.identity import AgentIdentity, IdentityStore
+from jarvis.logins.store import Credential, CredentialOwner, CredentialStore
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/logins", tags=["logins"])
+identity_router = APIRouter(prefix="/api/identity", tags=["logins"])
 
 # Serialises read-modify-write across per-request store instances. The endpoints
 # are sync ``def`` (FastAPI threadpool), so a threading.Lock is the right shape.
@@ -59,6 +71,24 @@ def _store() -> CredentialStore:
     return store_module.default_store()
 
 
+def _owner(raw: str | None, *, default: CredentialOwner) -> CredentialOwner:
+    """Parse an owner from the wire, rejecting anything unrecognised.
+
+    Deliberately strict, unlike the store's forgiving read of an old record: a
+    typo here comes from a live caller that believes it is filing an account
+    under one identity, and silently defaulting it to the other is exactly the
+    mix-up this whole feature exists to prevent.
+    """
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return CredentialOwner(str(raw).strip().lower())
+    except ValueError as exc:
+        raise HTTPException(
+            400, "owner must be 'user' (your own account) or 'agent' (the assistant's)"
+        ) from exc
+
+
 class LoginCreate(BaseModel):
     label: str
     domains: list[str] = []
@@ -67,6 +97,15 @@ class LoginCreate(BaseModel):
     notes: str = ""
     totp_secret: str | None = None
     service_id: str | None = None
+    #: Defaults to the user's own account — the meaning every record had before
+    #: this field existed, so an older client keeps working unchanged.
+    owner: str = CredentialOwner.USER.value
+    kind: str = store_module.DEFAULT_KIND
+    #: Non-secret detail for this kind of connection (an address, a handle).
+    fields: dict[str, str] = {}
+    #: Additional secret values beyond the password (an API token, an app
+    #: password). Write-only: no response model can carry these back out.
+    secrets: dict[str, str] = {}
 
 
 class LoginUpdate(BaseModel):
@@ -82,6 +121,27 @@ class LoginUpdate(BaseModel):
     password: str | None = None
     notes: str | None = None
     totp_secret: str | None = None
+    owner: str | None = None
+    kind: str | None = None
+    fields: dict[str, str] | None = None
+    secrets: dict[str, str] | None = None
+
+
+class IdentityPayload(BaseModel):
+    """The assistant's own contact card. Every field optional and replaceable.
+
+    A whole-object PUT rather than a patch: this is one small card edited on one
+    screen, and merging half-sent fields would make "clear my phone number"
+    indistinguishable from "leave it alone".
+    """
+
+    display_name: str = ""
+    email: str = ""
+    phone: str = ""
+    timezone: str = ""
+    signature: str = ""
+    handles: dict[str, str] = {}
+    notes: str = ""
 
 
 def _validate(
@@ -105,10 +165,18 @@ def _validate(
 
 
 @router.get("", openapi_extra={"x-jarvis-readonly": True})
-def list_logins() -> dict[str, list[dict[str, object]]]:
-    """Every stored login, without secrets."""
+def list_logins(owner: str | None = None) -> dict[str, list[dict[str, object]]]:
+    """Every stored login, without secrets.
+
+    ``?owner=user`` or ``?owner=agent`` narrows to one side of the ledger;
+    omitting it returns both, each summary carrying its own ``owner``.
+    """
+    selected = (
+        None if owner is None or not owner.strip()
+        else _owner(owner, default=CredentialOwner.USER)
+    )
     try:
-        summaries = _store().list_summaries()
+        summaries = _store().list_summaries(selected)
     except Exception as exc:  # noqa: BLE001 -- a locked keychain is not a 500
         log.warning("could not read the login vault: %r", exc)
         raise HTTPException(
@@ -128,6 +196,10 @@ def create_login(payload: LoginCreate) -> dict[str, object]:
         username=payload.username,
         notes=payload.notes,
     )
+    # Parsed BEFORE the write, because the store's broad failure handler below
+    # turns anything raised inside it into a 503 — and "you sent an owner I do
+    # not recognise" is the caller's mistake, not the keychain's.
+    owner = _owner(payload.owner, default=CredentialOwner.USER)
     with _LOCK:
         store = _store()
         try:
@@ -140,6 +212,10 @@ def create_login(payload: LoginCreate) -> dict[str, object]:
                     password=payload.password,
                     notes=payload.notes,
                     totp_secret=payload.totp_secret or None,
+                    owner=owner,
+                    kind=payload.kind,
+                    fields=store_module.as_pairs(payload.fields),
+                    secrets=store_module.as_pairs(payload.secrets),
                 )
             )
         except ValueError as exc:
@@ -193,6 +269,18 @@ def update_login(service_id: str, payload: LoginUpdate) -> dict[str, object]:
             ),
             created_at=existing.created_at,
             last_used_at=existing.last_used_at,
+            owner=_owner(payload.owner, default=existing.owner),
+            kind=payload.kind if payload.kind is not None else existing.kind,
+            fields=(
+                store_module.as_pairs(payload.fields)
+                if payload.fields is not None
+                else existing.fields
+            ),
+            secrets=(
+                store_module.as_pairs(payload.secrets)
+                if payload.secrets is not None
+                else existing.secrets
+            ),
         )
         stored = store.save(merged)
     return stored.summary().to_public_dict()
@@ -234,4 +322,65 @@ def reveal_login(service_id: str) -> dict[str, str | None]:
     }
 
 
-__all__ = ["router"]
+def _identity_store() -> IdentityStore:
+    return identity_module.default_identity_store()
+
+
+@identity_router.get("", openapi_extra={"x-jarvis-readonly": True})
+def get_identity() -> dict[str, object]:
+    """The assistant's own contact card. Absent reads as an empty one.
+
+    Not a 404 when unset: "the assistant has no identity yet" is a normal
+    starting state that the section renders as an empty form, and making the
+    client special-case a missing resource would buy nothing.
+    """
+    return _identity_store().load().to_public_dict()
+
+
+@identity_router.put("")
+def put_identity(payload: IdentityPayload) -> dict[str, object]:
+    """Replace the card wholesale."""
+    for name, value in (
+        ("display_name", payload.display_name),
+        ("email", payload.email),
+        ("phone", payload.phone),
+        ("timezone", payload.timezone),
+        ("signature", payload.signature),
+    ):
+        if len(value) > _MAX_FIELD_LEN:
+            raise HTTPException(400, f"{name} is too long")
+    if len(payload.notes) > _MAX_NOTE_LEN:
+        raise HTTPException(400, f"notes must be at most {_MAX_NOTE_LEN} characters")
+
+    with _LOCK:
+        try:
+            stored = _identity_store().save(
+                AgentIdentity(
+                    display_name=payload.display_name,
+                    email=payload.email,
+                    phone=payload.phone,
+                    timezone=payload.timezone,
+                    signature=payload.signature,
+                    handles=store_module.as_pairs(payload.handles),
+                    notes=payload.notes,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 -- a locked keychain is not a 500
+            log.warning("could not save the agent identity: %r", exc)
+            raise HTTPException(
+                503, "The credential store rejected the write."
+            ) from exc
+    return stored.to_public_dict()
+
+
+@identity_router.delete("", openapi_extra={"x-jarvis-dangerous": True})
+def delete_identity() -> dict[str, bool]:
+    """Clear the card. The assistant then has no identity of its own again."""
+    with _LOCK:
+        removed = _identity_store().clear()
+    if removed:
+        log.info("the agent identity was cleared")
+    return {"removed": removed}
+
+
+__all__ = ["identity_router", "router"]

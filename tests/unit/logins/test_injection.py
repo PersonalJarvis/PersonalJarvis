@@ -144,7 +144,13 @@ class TestFailures:
             resolve_secrets('SECRET("nosuchsite", "password")', store)
 
     def test_an_unknown_field_fails_loudly(self, store: CredentialStore) -> None:
-        with pytest.raises(SecretResolutionError, match="Unknown credential field"):
+        """And names what the record actually holds, so the model can retry.
+
+        A bare "unknown field" would leave the model guessing at a vocabulary
+        that is now per-record — a connection may carry an api_key that the one
+        next to it does not.
+        """
+        with pytest.raises(SecretResolutionError, match="has no field 'pin'"):
             resolve_secrets('SECRET("github", "pin")', store)
 
     def test_an_empty_field_fails_loudly(self) -> None:
