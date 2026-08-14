@@ -1405,7 +1405,11 @@ async def search_catalog(
     }
 
 
-@router.post("/catalog/install")
+# Dangerous: writes UNREVIEWED community instructions into the user's skills
+# folder from a caller-supplied URL. The flag makes the auto-generated
+# `jarvis api` layer demand --yes — the same consent the store dialog and
+# `jarvis marketplace install` already collect.
+@router.post("/catalog/install", openapi_extra={"x-jarvis-dangerous": True})
 async def install_from_catalog(
     body: SkillInstallBody, request: Request
 ) -> dict[str, Any]:

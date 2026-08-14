@@ -101,16 +101,32 @@ def test_install_refresh_flag_refetches_the_index(capture_api):
     assert capture_api["calls"][0]["path"] == COMMUNITY + "/refresh"
 
 
-def test_uninstall_installed_plugin(capture_api):
-    capture_api["routes"][("GET", COMMUNITY)] = (
+LISTING = "/api/marketplace/plugins"
+
+
+def test_uninstall_installed_plugin_resolves_via_the_local_catalog(capture_api):
+    # No community route registered on purpose: an installed plugin must be
+    # removable even when the index is unavailable or the entry was delisted.
+    capture_api["routes"][("GET", LISTING)] = (
         200,
-        _payload(plugin_overrides={"installed": True}),
+        {"plugins": [{"id": "todo-fox", "source": "community", "status": "not_connected"}]},
     )
     res = runner.invoke(app, ["marketplace", "uninstall", "todo-fox", "--yes"])
     assert res.exit_code == 0, res.output
     call = capture_api["calls"][-1]
     assert call["method"] == "DELETE"
     assert call["path"] == "/api/marketplace/community/plugins/todo-fox"
+
+
+def test_uninstall_builtin_plugin_points_at_disconnect(capture_api):
+    capture_api["routes"][("GET", LISTING)] = (
+        200,
+        {"plugins": [{"id": "github", "source": "seed", "status": "connected"}]},
+    )
+    res = runner.invoke(app, ["marketplace", "uninstall", "github", "--yes"])
+    assert res.exit_code == 1
+    assert "disconnect" in res.output
+    assert [c["method"] for c in capture_api["calls"]] == ["GET"]
 
 
 def test_uninstall_installed_skill(capture_api):
@@ -128,4 +144,23 @@ def test_uninstall_nothing_installed_is_a_clean_error(capture_api):
     capture_api["routes"][("GET", COMMUNITY)] = (200, _payload())
     res = runner.invoke(app, ["marketplace", "uninstall", "todo-fox", "--yes"])
     assert res.exit_code == 1
+    assert [c["method"] for c in capture_api["calls"]] == ["GET", "GET"]
+
+
+def test_install_without_yes_is_refused(capture_api):
+    # The confirm gate itself: without --yes nothing may be sent. Guards the
+    # `dangerous=True` on the invoke.run call.
+    capture_api["routes"][("GET", COMMUNITY)] = (200, _payload())
+    res = runner.invoke(app, ["marketplace", "install", "todo-fox"])
+    assert res.exit_code == 1
     assert [c["method"] for c in capture_api["calls"]] == ["GET"]
+
+
+def test_uninstall_without_yes_is_refused(capture_api):
+    capture_api["routes"][("GET", LISTING)] = (
+        200,
+        {"plugins": [{"id": "todo-fox", "source": "community", "status": "not_connected"}]},
+    )
+    res = runner.invoke(app, ["marketplace", "uninstall", "todo-fox"])
+    assert res.exit_code == 1
+    assert all(c["method"] == "GET" for c in capture_api["calls"])

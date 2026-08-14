@@ -131,6 +131,25 @@ async def test_browse_lists_converted_plugins_and_skills(community_env: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_install_block_suppressed_where_install_would_fail(
+    community_env: Path,
+) -> None:
+    """A seed-name collision and a manual skill are shown, but carry NO
+    install block — the standard must never advertise a command that 409s."""
+    index = _index_payload(_plugin_entry(name="github"))
+    index["skills"][0]["raw_url"] = None
+    (community_env / "marketplace_index.json").write_text(
+        json.dumps({"fetched_at": time.time(), "index": index}), encoding="utf-8"
+    )
+    async with _client() as client:
+        data = (await client.get("/api/marketplace/community")).json()
+    plugin = data["plugins"][0]
+    assert plugin["seed_conflict"] is True
+    assert plugin["install"] is None
+    assert data["skills"][0]["install"] is None
+
+
+@pytest.mark.asyncio
 async def test_install_persists_catalog_entry_and_usage_card(
     community_env: Path,
 ) -> None:

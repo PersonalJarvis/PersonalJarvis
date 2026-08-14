@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
 
@@ -84,8 +84,33 @@ def disconnect(
 # starts advertising a command that does not exist.
 
 
-def _fetch_community(refresh: bool) -> dict[str, Any]:
-    """The community payload, fetched quietly — browsing is not the output."""
+def _exit_on_api_error(exc: ApiError) -> NoReturn:
+    if exc.status_code is None:
+        from jarvis.cli_ctl import doctor
+
+        render.error(doctor.unreachable_message(exc.base_url))
+    else:
+        render.error(exc.message)
+    raise typer.Exit(code=1) from exc
+
+
+def _quiet_get(path: str) -> dict[str, Any]:
+    """Fetch a payload without rendering it — resolution, not output."""
+    from jarvis.cli_ctl.__main__ import make_client
+
+    try:
+        with make_client() as client:
+            return dict(client.request("GET", path))
+    except ApiError as exc:
+        _exit_on_api_error(exc)
+
+
+def _fetch_community(refresh: bool, *, required: bool = True) -> dict[str, Any] | None:
+    """The community payload, fetched quietly — browsing is not the output.
+
+    ``required=False`` returns ``None`` on failure instead of exiting, for
+    callers that only decorate their output with index knowledge.
+    """
     from jarvis.cli_ctl.__main__ import make_client
 
     try:
@@ -94,13 +119,9 @@ def _fetch_community(refresh: bool) -> dict[str, Any]:
                 return dict(client.request("POST", "/api/marketplace/community/refresh"))
             return dict(client.request("GET", "/api/marketplace/community"))
     except ApiError as exc:
-        if exc.status_code is None:
-            from jarvis.cli_ctl import doctor
-
-            render.error(doctor.unreachable_message(exc.base_url))
-        else:
-            render.error(exc.message)
-        raise typer.Exit(code=1) from exc
+        if not required:
+            return None
+        _exit_on_api_error(exc)
 
 
 def _entry_named(payload: dict[str, Any], section: str, name: str) -> dict[str, Any] | None:
@@ -139,7 +160,7 @@ def install(
     and runs the matching install route. Community content is UNREVIEWED, so
     without --yes this prints what the entry would be allowed to do and asks.
     """
-    payload = _fetch_community(refresh)
+    payload = _fetch_community(refresh) or {}
     plugin = _entry_named(payload, "plugins", name)
     skill = _entry_named(payload, "skills", name)
 
@@ -154,12 +175,18 @@ def install(
             f"Community plugin {name!r} by {plugin.get('publisher') or 'an unknown publisher'}"
             f"{' · v' + str(plugin['version']) if plugin.get('version') else ''} — not reviewed."
         ]
+        # The SAME two-bullet disclosure the store's consent dialog shows —
+        # one surface must not read softer than the other.
         mcp = plugin.get("mcp_server") or {}
         if mcp.get("transport") == "http" and mcp.get("url"):
             lines.append(f"Once connected, requests and your token go to: {mcp['url']}")
+            lines.append("Runs no code on your computer; the tools live on that server.")
         elif mcp.get("transport") == "stdio":
             lines.append(
                 "Once connected, this command runs locally: " + " ".join(mcp.get("install") or [])
+            )
+            lines.append(
+                "It can read and change files on your computer and connect to the internet."
             )
         if skill is not None:
             lines.append(f"(A community skill is also named {name!r}; the plugin wins.)")
@@ -223,11 +250,30 @@ def uninstall(
     stored tokens, usage card and bundled skills; a skill uninstall deletes
     the skill folder.
     """
-    payload = _fetch_community(False)
-    plugin = _entry_named(payload, "plugins", name)
-    skill = _entry_named(payload, "skills", name)
-
-    if plugin is not None and plugin.get("installed"):
+    # Plugins resolve against the LOCAL catalog, not the community index — a
+    # delisted entry or an offline index must never make an installed plugin
+    # un-uninstallable (the DELETE route itself only reads local state).
+    listed = _quiet_get("/api/marketplace/plugins")
+    plugin = next(
+        (p for p in listed.get("plugins") or [] if isinstance(p, dict) and p.get("id") == name),
+        None,
+    )
+    if plugin is not None:
+        if plugin.get("source") != "community":
+            render.error(
+                f"{name!r} is a built-in connector — disconnect it instead: "
+                f"`jarvis marketplace disconnect {name}`."
+            )
+            raise typer.Exit(code=1)
+        payload = _fetch_community(False, required=False) or {}
+        skill = _entry_named(payload, "skills", name)
+        if skill is not None and skill.get("installed"):
+            _echo_trust_summary(
+                [
+                    f"(An installed community skill is also named {name!r} — "
+                    "run this command again after the plugin is removed.)"
+                ]
+            )
         invoke.run(
             "DELETE",
             f"/api/marketplace/community/plugins/{name}",
@@ -236,6 +282,12 @@ def uninstall(
             dangerous=True,
         )
         return
+
+    # Skills carry no local provenance marker, so the community index decides
+    # whether this name is a marketplace skill — the store's Remove button
+    # applies the same rule.
+    payload = _fetch_community(False) or {}
+    skill = _entry_named(payload, "skills", name)
     if skill is not None and skill.get("installed"):
         invoke.run(
             "DELETE",
@@ -247,7 +299,7 @@ def uninstall(
         return
     render.error(
         f"{name!r} is not an installed community plugin or skill. Installed "
-        "items are marked in `jarvis api marketplace community-browse` or the "
-        "Plugins view; built-in connectors are disconnected, not uninstalled."
+        "items are marked in the Plugins view; built-in connectors are "
+        "disconnected, not uninstalled."
     )
     raise typer.Exit(code=1)
