@@ -68,25 +68,24 @@ while the repo is private rather than publish a link that 404s.
 
 ## 3. Frontend ↔ backend: what is wired and what is not
 
-**Wired and working:** `PluginsCommunity.tsx` calls
-`GET /api/marketplace/community`, `POST …/refresh`,
-`POST …/plugins/{name}/install`, `DELETE …/plugins/{name}`,
-`POST /api/skills/catalog/install`, `DELETE /api/skills/{name}`. Cards,
-filters, category counts, update badges and the consent dialog all read
-fields the backend actually sends.
+`PluginsCommunity.tsx` calls `GET /api/marketplace/community`,
+`POST …/refresh`, `POST …/plugins/{name}/install`,
+`DELETE …/plugins/{name}`, `POST …/skills/{name}/install`, and
+`DELETE /api/skills/{name}`. Cards, filters, category counts, update badges,
+the consent dialogs and the bundled-skill list all read fields the backend
+actually sends.
 
-**Not wired — four gaps, in the order they hurt:**
+The four gaps this section listed on the morning of 2026-08-14 are closed.
+The one worth remembering was a **trust regression, not a missing feature**:
+the backend had started writing skill files to disk on install while the
+consent dialog still described only the server. A store that writes more
+than it announced is worse than one that does less — when the backend gains
+the power to touch the user's disk, the dialog is part of that change, not a
+follow-up.
 
-| # | Gap | Consequence |
-|---|---|---|
-| 1 | The consent dialog shows the MCP URL / stdio argv, but **not that a plugin will write skill files** into the user's skills folder | A plugin now installs files the user was never shown. This is the one gap that is a trust regression, not a missing feature. |
-| 2 | `bundled_skills` on a card and `installed_skills` in the install response are **ignored by the view** | A bundle installs correctly and looks exactly like a bare connector; the user cannot tell what they got. |
-| 3 | The install route can now answer **409 on a skill-name conflict**; the view renders it as a generic error | "Install failed" instead of "you already have a skill called X". |
-| 4 | Uninstall returns `removed_skills`; nothing reports it | Files disappear silently — correct behaviour, invisible. |
-
-All four are frontend-only changes against a backend that already sends the
-data. Gap 1 must land before any bundle is published, since it is the
-promise the store makes before writing to disk.
+Rule of thumb this leaves behind: **any new install side effect must appear
+in `capabilityLines` and in the dialog body before the code that performs it
+ships.**
 
 ---
 
