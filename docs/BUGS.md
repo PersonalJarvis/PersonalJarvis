@@ -9560,6 +9560,47 @@ the fixed-budget form, losing the final fragment exactly as the live call did;
 half) and `tests/unit/realtime/test_gemini_live.py` (default sensitivity, the
 opt-out, and the old-SDK degradation).
 
+## BUG-138: one spoken sentence becomes five Transcription turns — Grok re-emits a growing snapshot as a new final (HIGH, FIXED 2026-08-13)
+
+**Symptom (live 2026-08-13 18:52, grok-realtime, session 77083999).**
+Turn 1 ("Was geht ab?") was a real exchange. Turns 2-6 were ONE sentence
+growing in place:
+
+- "Kannst du bitte mal"
+- "Kannst du bitte mal den aktuellen Stand der Codebase analysieren?" <!-- i18n-allow -->
+- …plus the brainstorm request
+- …plus "Hallo?"
+- …plus the dog-calling tail
+
+Each row was a full VoiceTurnStarted / VoiceTurnCompleted pair. Later
+fragments dispatched their own tools (`agentic-ide-status`, `run_shell`).
+The Transcription view showed five user bubbles for one request. Not a
+UI rendering bug — the session wrote five turns.
+
+**Root cause.** xAI's `grok-transcribe` flags every committed audio item
+`is_final` and sends the WHOLE utterance so far, not the new words. The
+session treated each commit as a new turn:
+
+1. `speech_started` closed the unanswered previous turn
+   (`_begin_user_speech_turn` → `_publish_turn_completed`).
+2. The next final opened a new turn whose `user_text` was the longer
+   snapshot.
+3. Grok's automatic empty `response.done` then closed that turn too.
+4. `_recover_empty_provider_turn` / a fresh delegate could run on the
+   opening clause. BUG-137's microphone hold does not apply: the user
+   was thinking, so `_user_is_speaking()` was already false.
+
+**Fix.** A new final that is the previous sentence plus more words is
+the same utterance. Keep the turn open, replace the snapshot instead of
+concatenating, point a waiting delegate at the latest text, and do not
+close on an empty provider `turn_complete` or a `speech_started` while
+the user has not yet been answered. A genuinely new sentence after a
+pause still splits.
+
+**Tests.** `tests/unit/realtime/test_utterance_continuation.py`
+(`test_utterance_grows_detects_a_lengthening_snapshot`,
+`test_growing_snapshots_stay_one_turn_without_a_hot_mic`).
+
 ## BUG-139: recap engine re-walks three dead provider families on every poll — continuous CLI subprocess spawning until the desktop freezes (HIGH, FIXED 2026-08-14)
 
 **Symptom (live 2026-08-14, recurring).** The desktop app became laggy to
@@ -9679,3 +9720,25 @@ drops reuse the P-19 host-protocol forwarding.
 into the init payload, exception fallback, dead-host fallback, the
 opt-out staying fully in-process, `host_alive` semantics, and the
 priority helper's never-raises contract).
+
+## BUG-141: pane drag & drop is hard to grip over free workspace space (OPEN, reported 2026-08-14)
+
+**Symptom (maintainer report, 2026-08-14, not yet reproduced under
+instrumentation).** Moving a terminal around the Agentic-IDE workspace by its
+title bar feels imprecise: the pane is "hard to grab", most noticeably when
+the drag passes through or targets FREE workspace space rather than another
+terminal. Drops onto a neighbour or near an edge behave; the open floor is
+where the gesture feels like it slips.
+
+**What is known.** The grip is the whole header (`PaneHeader`'s
+`onPointerDown` → `onArrangeStart`), and `paneArrange.ts` only lifts a pane
+after the pointer has travelled `DRAG_THRESHOLD_PX` (5 px) — a threshold
+tuned so a double-click never moves a pane. Candidate causes to check when
+this is picked up: the threshold eating the start of slow or short drags,
+the drop-zone hit-testing over empty floor (edge zones vs. swap targets
+leaving a dead middle with no target at all), and the press being swallowed
+when it lands on the title line or another header control instead of bare
+bar. None of these is confirmed — nothing has been measured yet.
+
+**Fix.** None yet — this entry records the report so the next Agentic-IDE
+session starts from the observation instead of rediscovering it.
