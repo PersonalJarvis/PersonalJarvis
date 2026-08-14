@@ -4107,6 +4107,35 @@ _load_rate_count = 0
 _load_rate_last_alert = 0.0
 
 
+def _report_config_pathology(headline: str) -> None:
+    """Write a diagnosis where a wedged process can still deliver it.
+
+    The logging queue is drained by a worker thread, so a caller holding the GIL
+    at 100% starves it: the very report that explains the freeze never reaches
+    the log FILE while the freeze lasts, which is exactly when it is needed.
+    A direct append side-steps that, and the normal logger still gets a copy for
+    the ordinary case.
+    """
+    import traceback  # noqa: PLC0415 - only reached on a pathological load
+
+    caller = "".join(traceback.format_stack(limit=16)[:-2])
+    env_total = len(os.environ)
+    env_overrides = sum(1 for key in os.environ if key.startswith("JARVIS__"))
+    body = (
+        f"{headline}\n"
+        f"  env vars={env_total} (JARVIS__ overrides={env_overrides})\n"
+        f"{caller}"
+    )
+    try:
+        target = resolve_config_path().parent / "data" / "config_pathology.log"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(body + "\n")
+    except OSError:
+        pass  # noqa: S110 - a diagnostic must never raise into the caller
+    logging.getLogger(__name__).warning("%s", body)
+
+
 def _note_config_load() -> None:
     """Count config loads and, when the rate says "loop", name the caller once."""
     global _load_rate_window_started, _load_rate_count, _load_rate_last_alert
@@ -4133,18 +4162,19 @@ def _note_config_load() -> None:
 
     # Outside the lock on purpose: formatting a stack is the expensive half, and
     # it must not serialise the very callers being measured.
-    import traceback  # noqa: PLC0415 - only reached on a pathological burst
-
-    caller = "".join(traceback.format_stack(limit=14)[:-1])
-    logging.getLogger(__name__).warning(
-        "config load storm: %d loads in %.0fs (~%.0f/s, ~%.0f%% of one core) — "
-        "this is a loop, not usage. Caller:\n%s",
-        burst,
-        _LOAD_RATE_WINDOW_S,
-        burst / _LOAD_RATE_WINDOW_S,
-        burst * 0.51 / _LOAD_RATE_WINDOW_S / 10.0,
-        caller,
+    _report_config_pathology(
+        f"config load storm: {burst} loads in {_LOAD_RATE_WINDOW_S:.0f}s "
+        f"(~{burst / _LOAD_RATE_WINDOW_S:.0f}/s) — this is a loop, not usage."
     )
+
+
+#: A single load that takes longer than this is not "slow", it is stuck: the
+#: whole call is a copy, an env pass and a validation over a document measured
+#: in kilobytes. Reported separately from the rate alarm because the two say
+#: opposite things about the defect — many fast loads mean a looping CALLER,
+#: one endless load means the loop is INSIDE. Only a stack distribution can
+#: tell them apart from outside, and by then the process is already wedged.
+_LOAD_SLOW_S = 1.0
 
 
 def load_config(
@@ -4163,6 +4193,23 @@ def load_config(
     wins for callers that target a specific file.
     """
     _note_config_load()
+    _started_at = time.monotonic()
+    try:
+        return _load_config_uncached(config_file, profile)
+    finally:
+        _elapsed = time.monotonic() - _started_at
+        if _elapsed >= _LOAD_SLOW_S:
+            _report_config_pathology(
+                f"config load took {_elapsed:.1f}s — a single load, not a burst. "
+                f"The loop is inside this call, not in the caller."
+            )
+
+
+def _load_config_uncached(
+    config_file: Path | None,
+    profile: str | None,
+) -> JarvisConfig:
+    """The actual load — see :func:`load_config`, which times and counts it."""
     if config_file is None:
         config_file = resolve_config_path()
         # The codex-subscription-realtime adapter was removed 2026-08-10. A

@@ -257,8 +257,16 @@ def test_json_env_can_replace_an_arbitrary_mapping(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_state():
-    """Rate state is module-global; no test may inherit another's window."""
+def _reset_rate_state(tmp_path, monkeypatch):
+    """Rate state is module-global; no test may inherit another's window.
+
+    The report also APPENDS to ``data/config_pathology.log`` next to the real
+    config so a wedged process can still deliver it. A test must never write
+    there: it would bury the one live report this file exists to preserve.
+    """
+    monkeypatch.setattr(
+        config_module, "resolve_config_path", lambda: tmp_path / "jarvis.toml"
+    )
     config_module._load_rate_window_started = 0.0
     config_module._load_rate_count = 0
     config_module._load_rate_last_alert = 0.0
@@ -266,6 +274,15 @@ def _reset_rate_state():
     config_module._load_rate_window_started = 0.0
     config_module._load_rate_count = 0
     config_module._load_rate_last_alert = 0.0
+
+
+def test_the_pathology_report_never_writes_next_to_the_real_config(tmp_path):
+    """Pinned because a stray test write buries the one live report we need."""
+    written = tmp_path / "data" / "config_pathology.log"
+    config_module._report_config_pathology("probe")
+
+    assert written.exists(), "the report must land under the resolved config dir"
+    assert "probe" in written.read_text(encoding="utf-8")
 
 
 def test_ordinary_load_rate_stays_silent(caplog):
