@@ -56,6 +56,29 @@ TERMINAL_STATES: frozenset[ErrandState] = frozenset(
 )
 
 
+class ContextFact(BaseModel):
+    """One thing established — or assumed — while gathering context (C13).
+
+    ``confidence`` is 0.0–1.0 internally (the ``CriticVerdict`` precedent) and
+    rendered to the user as X/10. It defaults to 0.0 so a fact the scorer never
+    rated reads as UNMEASURED, which the gate treats as "ask" — garbage from
+    the scorer must never green-light an assumption, the same safe direction as
+    an unparseable verifier verdict never completing an errand.
+    """
+
+    statement: str
+    #: The tool call that produced it, or "user" for a clarification answer.
+    source: str = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    #: True when the errand's outcome depends on this fact being right.
+    decisive: bool = False
+    #: True when the fact outlives this errand — a preference, a relation, a
+    #: standing arrangement. Never a one-off price or departure time (C14).
+    durable: bool = False
+    #: The scorer's proposed question, used only if the fact stays uncertain.
+    question: str = ""
+
+
 class PlanStep(BaseModel):
     """One intended step. Revised freely — a plan that never changes is a plan
     that stopped looking at reality (C8)."""
@@ -101,8 +124,14 @@ class Errand(BaseModel):
     state: ErrandState = ErrandState.PLANNING
     #: What was resolved from tools before asking the user anything (C9).
     gathered_context: str = ""
+    #: The measured version of ``gathered_context`` (C13): each fact with the
+    #: tool that produced it and the scored confidence the gate decided on.
+    facts: tuple[ContextFact, ...] = ()
     #: Questions only the user can answer, asked in ONE round up front (C10).
     open_questions: tuple[str, ...] = ()
+    #: Every question that was ever put to the user on this errand, kept after
+    #: it is answered so what-was-asked can pair with what-was-answered (C14).
+    asked_questions: tuple[str, ...] = ()
     answers: str = ""
     plan: tuple[PlanStep, ...] = ()
     steps: tuple[StepRecord, ...] = ()
@@ -130,6 +159,7 @@ class Errand(BaseModel):
 
 __all__ = [
     "TERMINAL_STATES",
+    "ContextFact",
     "Errand",
     "ErrandState",
     "Evidence",

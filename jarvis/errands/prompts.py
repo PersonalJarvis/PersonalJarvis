@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Final
 
+from .context_gate import confidence_view
 from .schema import Errand, Evidence
 
 #: Shared preamble. Every phase gets this so the ladder and the honesty rule
@@ -72,39 +73,122 @@ THE GOAL: {errand.goal}
 WHAT YOU ALREADY KNOW (gathered from the user's own tools):
 {errand.gathered_context or "(nothing gathered yet)"}
 
-{f"THE USER ANSWERED: {errand.answers}" if errand.answers else ""}
+{_facts_view(errand)}{f"THE USER ANSWERED: {errand.answers}" if errand.answers else ""}
 
 Write the shortest sequence of steps that actually reaches the goal. Be
-concrete: name the route you will take and the tool you will use for it. Do not
-include steps that ask the user things — that round is already over.
+concrete: name the route you will take and the tool you will use for it. Build
+on the working assumptions above — they are measured and good enough to act on
+— but let a step that DISPROVES one revise the plan rather than push through.
+Do not include steps that ask the user things — that round is already over.
 
 Answer with JSON only, no prose around it:
 {{"steps": [{{"intent": "..."}}, {{"intent": "..."}}]}}"""
 
 
-def context_prompt(errand: Errand) -> str:
-    """C9 — earn the context from tools before asking the user for it."""
+def context_prompt(
+    errand: Errand,
+    *,
+    sources: str = "",
+    unresolved: Sequence[str] = (),
+) -> str:
+    """C9/C13 — earn the context from tools before asking the user for it.
+
+    ``sources`` is the code-assembled inventory of places context could live;
+    ``unresolved`` carries the facts a previous round left too uncertain, so a
+    re-gather probes new ground instead of repeating itself.
+    """
+    sources_block = (
+        f"""
+WHERE CONTEXT CAN LIVE — go through this list FIRST. For each entry decide
+whether it could hold something about this goal, then probe every one that
+could. You may only conclude "there was nowhere to look" if this list is empty:
+{sources}
+"""
+        if sources.strip()
+        else ""
+    )
+    unresolved_block = (
+        (
+            "\nTHESE POINTS ARE STILL TOO UNCERTAIN from your previous look. "
+            "Probe sources you have NOT used yet before giving up on them:\n"
+            + "\n".join(f"- {u}" for u in unresolved)
+            + "\n"
+        )
+        if unresolved
+        else ""
+    )
     return f"""{_COMMON}
 
 Right now you are GATHERING CONTEXT. You are not doing the task yet, and you
 must not ask the user anything in this phase.
 
 THE GOAL: {errand.goal}
-
+{sources_block}{unresolved_block}
 Use the read-only tools available to you to find out what you can work out for
 yourself: the calendar for dates and clashes, mail for bookings and
 confirmations, contacts for people, the user profile and the wiki for
 preferences and past decisions, past errands for how this went last time.
 
-Look things up. Then state, in plain sentences, only what you actually FOUND —
-never what you assume. If a lookup produced nothing, say so; an empty result is
-a useful fact.
+Look things up. Then state only what you actually FOUND — never what you
+assume. If a lookup produced nothing, say so; an empty result is a useful fact.
 
-Finish with a short paragraph headed FOUND: with everything you established."""
+Finish with a short paragraph headed FOUND: summarising everything, and then
+the SAME content as a complete fact ledger in JSON (restate every fact each
+round, not only new ones):
+{{"facts": [{{"statement": "one established fact or working assumption",
+  "source": "the tool that produced it",
+  "decisive": true|false,
+  "durable": true|false}}]}}
+"decisive" means the errand's outcome depends on this being right. "durable"
+means it outlives this errand — a preference, a relation, a standing
+arrangement — never a one-off price or departure time."""
 
 
-def clarify_prompt(errand: Errand) -> str:
-    """C10 — collect every open question and ask them ONCE, up front."""
+def score_prompt(errand: Errand) -> str:
+    """C13 — a separate leg rates the gathered facts; the gate then decides.
+
+    Deliberately NOT the gatherer judging its own work — the same separation
+    that keeps the verifier honest about completion.
+    """
+    ledger = "\n".join(
+        f"{i}. [{f.source or 'unknown'}] {f.statement}" for i, f in enumerate(errand.facts)
+    )
+    return f"""{_COMMON}
+
+You are now the ASSESSOR of gathered context, and you are deliberately hard to
+convince. You did not gather these facts and you owe them no loyalty.
+
+THE GOAL: {errand.goal}
+
+THE GATHERED FACTS:
+{ledger or "(none)"}
+
+For each fact, rate from 0.0 to 1.0 how certain you are that it is BOTH true
+AND actually what the user means for this goal. A fact read directly from a
+tool result scores high; an inference or a guess scores low. For every fact you
+rate below 0.7, also write the ONE question to the user that would settle it.
+
+Answer with JSON only:
+{{"scores": [{{"index": 0, "confidence": 0.0, "question": ""}}]}}"""
+
+
+def clarify_prompt(errand: Errand, *, must_ask: Sequence[str] = ()) -> str:
+    """C10 — collect every open question and ask them ONCE, up front.
+
+    ``must_ask`` carries the confidence gate's questions. They are asked no
+    matter what this leg answers — the code unions them in — so the model is
+    told about them only to avoid duplicates, never to veto them.
+    """
+    gate_block = (
+        (
+            "\nTHE CONFIDENCE GATE HAS ALREADY DECIDED these will be asked — do "
+            "not repeat them, only add what is still missing beyond them:\n"
+            + "\n".join(f"- {q}" for q in must_ask)
+            + "\n"
+        )
+        if must_ask
+        else ""
+    )
     return f"""{_COMMON}
 
 Right now you are deciding what you still need from the user, BEFORE any work
@@ -117,6 +201,7 @@ THE GOAL: {errand.goal}
 WHAT YOU ALREADY ESTABLISHED FROM THEIR TOOLS:
 {errand.gathered_context or "(nothing)"}
 
+{_facts_view(errand)}{gate_block}
 List ONLY what genuinely lives in the user's head and that you could not look
 up: a preference, a decision, a constraint they never wrote down. Do NOT ask
 for anything you could find in their calendar, mail, contacts or profile — you
@@ -144,7 +229,7 @@ THE PLAN:
 
 THIS STEP: {next_intent}
 
-WHAT HAS HAPPENED SO FAR:
+{_facts_view(errand)}WHAT HAS HAPPENED SO FAR:
 {history}
 
 {f"WHAT THE USER TOLD YOU: {errand.answers}" if errand.answers else ""}
@@ -224,6 +309,23 @@ Answer with JSON only:
 # --------------------------------------------------------------------------
 
 
+def _facts_view(errand: Errand) -> str:
+    """The scored ledger as prompt text, confidences in the user-facing X/10.
+
+    Only rendered once facts exist; callers embed it verbatim, so an empty
+    ledger contributes nothing rather than a "(none)" line in every prompt.
+    """
+    if not errand.facts:
+        return ""
+    lines = [
+        f"- ({confidence_view(f.confidence)}{', decisive' if f.decisive else ''}) "
+        f"{f.statement} [{f.source or 'unknown'}]"
+        for f in errand.facts
+    ]
+    header = "WORKING ASSUMPTIONS, as measured (revise if reality disagrees):"
+    return header + "\n" + "\n".join(lines) + "\n"
+
+
 def _plan_view(errand: Errand) -> str:
     if not errand.plan:
         return "(no plan yet)"
@@ -259,6 +361,7 @@ __all__ = [
     "context_prompt",
     "plan_prompt",
     "recheck_prompt",
+    "score_prompt",
     "step_prompt",
     "verify_prompt",
 ]

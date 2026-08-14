@@ -35,16 +35,18 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
-from . import progress
+from . import context_gate, progress
+from .context_gate import MAX_GATHER_ROUNDS, ContextVerdict
 from .prompts import (
     clarify_prompt,
     context_prompt,
     plan_prompt,
     recheck_prompt,
+    score_prompt,
     step_prompt,
     verify_prompt,
 )
-from .schema import Errand, ErrandState, Evidence, PlanStep, StepRecord
+from .schema import ContextFact, Errand, ErrandState, Evidence, PlanStep, StepRecord
 from .store import ErrandStore
 
 log = logging.getLogger(__name__)
@@ -126,8 +128,13 @@ class ErrandRunner:
     #: Called whenever the errand changes state, for the UI and for voice.
     #: Never allowed to break a run — exceptions are swallowed and logged.
     on_update: Callable[[Errand], Awaitable[None]] | None = None
+    #: Renders the code-assembled inventory of places context could live
+    #: (C13 move 1). Optional and never allowed to break a run: without it the
+    #: gather prompt simply carries no SOURCES block, the pre-C13 behaviour.
+    context_sources: Callable[[], Awaitable[str]] | None = None
     max_rechecks: int = MAX_RECHECKS
     max_legs_backstop: int = MAX_LEGS_BACKSTOP
+    max_gather_rounds: int = MAX_GATHER_ROUNDS
     _cancelled: set[str] = field(default_factory=set)
     #: Strong references to in-flight loops. The runner owns its background
     #: work: a caller that had to remember create_task-and-hold would be the
@@ -139,7 +146,7 @@ class ErrandRunner:
     # Public API
     # ------------------------------------------------------------------
 
-    async def start(self, goal: str, *, trace_id: str = "", language: str = "") -> Errand:
+    async def start(self, goal: str, *, trace_id: str = "") -> Errand:
         """Open a new errand: gather context, ask once, plan — then detach.
 
         Returns as soon as the errand is under way (or has questions). The
@@ -147,13 +154,11 @@ class ErrandRunner:
         "book me a flight" must never hold the conversation turn hostage
         until the flight is booked.
         """
-        errand = Errand(
-            id=str(uuid.uuid4()), goal=goal.strip(), trace_id=trace_id, language=language
-        )
+        errand = Errand(id=str(uuid.uuid4()), goal=goal.strip(), trace_id=trace_id)
         await self._persist(errand)
 
-        errand = await self._gather_context(errand)  # C9
-        errand = await self._clarify(errand)  # C10
+        errand, verdict = await self._gather_context(errand)  # C9 + C13
+        errand = await self._clarify(errand, must_ask=verdict.questions)  # C10
         if errand.state is ErrandState.NEEDS_INPUT:
             return errand
         errand = await self._plan(errand)
@@ -213,32 +218,107 @@ class ErrandRunner:
     # Phases
     # ------------------------------------------------------------------
 
-    async def _gather_context(self, errand: Errand) -> Errand:
-        """C9 — look it up before asking for it."""
-        outcome = await self._leg(
-            system_prompt=context_prompt(errand),
-            instruction=f"Find out what you can about: {errand.goal}",
-            with_tools=True,
-        )
-        found = _after_marker(outcome.text, "FOUND:") or outcome.text.strip()
-        errand = errand.model_copy(update={"gathered_context": found})
-        await self._persist(errand)
-        return errand
+    async def _gather_context(self, errand: Errand) -> tuple[Errand, ContextVerdict]:
+        """C9 + C13 — look it up, measure it, and look AGAIN before asking.
 
-    async def _clarify(self, errand: Errand) -> Errand:
-        """C10 — one round of questions, or none at all."""
+        Each round: gather with tools, score with a separate tool-less leg,
+        then let the gate judge. A round that leaves decisive facts uncertain
+        earns exactly one more look — pointed at the unresolved facts and at
+        sources not yet probed — and the loop stops early when another look
+        changed nothing, because at that point asking the user is the honest
+        move, not a failure.
+        """
+        sources = await self._render_sources()
+        verdict = context_gate.assess(())
+        unresolved: tuple[str, ...] = ()
+        for _ in range(self.max_gather_rounds):
+            outcome = await self._leg(
+                system_prompt=context_prompt(errand, sources=sources, unresolved=unresolved),
+                instruction=f"Find out what you can about: {errand.goal}",
+                with_tools=True,
+            )
+            found = _after_marker(outcome.text, "FOUND:") or outcome.text.strip()
+            errand = errand.model_copy(
+                update={
+                    "gathered_context": _strip_ledger(found),
+                    "facts": _parse_facts(outcome.text),
+                }
+            )
+            if errand.facts:
+                errand = await self._score_facts(errand)
+            await self._persist(errand)
+            verdict = context_gate.assess(errand.facts)
+            if verdict.proceed:
+                return errand, verdict
+            still_uncertain = tuple(f.statement for f in verdict.uncertain)
+            if still_uncertain == unresolved:
+                break  # another look moved nothing — stop burning rounds
+            unresolved = still_uncertain
+        return errand, verdict
+
+    async def _score_facts(self, errand: Errand) -> Errand:
+        """C13 — a separate leg rates the ledger; the gate decides on the numbers.
+
+        A fact the scorer failed to rate keeps confidence 0.0 and therefore
+        reads as "ask" when decisive — garbage from the scorer must never
+        green-light an assumption, the same safe direction as an unparseable
+        verifier verdict never completing an errand.
+        """
         outcome = await self._leg(
-            system_prompt=clarify_prompt(errand),
+            system_prompt=score_prompt(errand),
+            instruction="Rate each gathered fact.",
+            with_tools=False,
+        )
+        data = _parse_json(outcome.text)
+        facts = list(errand.facts)
+        for entry in data.get("scores") or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                idx = int(entry.get("index", -1))
+                confidence = float(entry.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= idx < len(facts):
+                continue
+            facts[idx] = facts[idx].model_copy(
+                update={
+                    "confidence": min(max(confidence, 0.0), 1.0),
+                    "question": str(entry.get("question", "") or "").strip(),
+                }
+            )
+        return errand.model_copy(update={"facts": tuple(facts)})
+
+    async def _render_sources(self) -> str:
+        if self.context_sources is None:
+            return ""
+        try:
+            return await self.context_sources()
+        except Exception:  # noqa: BLE001 — the inventory must never break a start
+            log.warning("errand: context source inventory failed", exc_info=True)
+            return ""
+
+    async def _clarify(self, errand: Errand, *, must_ask: tuple[str, ...] = ()) -> Errand:
+        """C10 — one round of questions, or none at all.
+
+        The gate's questions (``must_ask``) are asked unconditionally — the
+        model may ADD what only the user's head holds, but it can never veto a
+        measured uncertainty by returning an empty list.
+        """
+        outcome = await self._leg(
+            system_prompt=clarify_prompt(errand, must_ask=must_ask),
             instruction="What do you still need from the user?",
             with_tools=False,
         )
         data = _parse_json(outcome.text)
-        questions = tuple(str(q).strip() for q in (data.get("questions") or []) if str(q).strip())
+        extra = tuple(str(q).strip() for q in (data.get("questions") or []) if str(q).strip())
+        questions = tuple(dict.fromkeys((*must_ask, *extra)))
         if not questions:
             return errand
         errand = errand.with_state(
             ErrandState.NEEDS_INPUT,
             open_questions=questions,
+            asked_questions=tuple(dict.fromkeys((*errand.asked_questions, *questions))),
             outcome="Waiting for the user to answer the opening questions.",
         )
         await self._persist(errand)
@@ -303,6 +383,7 @@ class ErrandRunner:
                 errand = errand.with_state(
                     ErrandState.NEEDS_INPUT,
                     open_questions=(question,),
+                    asked_questions=tuple(dict.fromkeys((*errand.asked_questions, question))),
                     outcome=f"Needs the user: {question}",
                 )
                 await self._persist(errand)
@@ -454,6 +535,55 @@ def _append_plan_step(errand: Errand, intent: str) -> Errand:
     """A re-check that found a route adds it to the plan — revising a plan is
     normal (C8), and the new route must be visible to the user, not implicit."""
     return errand.model_copy(update={"plan": (*errand.plan, PlanStep(intent=intent))})
+
+
+#: Ledger cap. A rambling gather leg must not flood every later prompt; thirty
+#: facts is far beyond any real briefing, so the cut is a guard, not a budget.
+_MAX_FACTS: Final[int] = 30
+
+
+def _parse_facts(text: str) -> tuple[ContextFact, ...]:
+    """Read the gather leg's fact ledger out of mixed prose-and-JSON output.
+
+    Prefers the object that literally starts the ledger (the FOUND: prose may
+    contain braces of its own); anything unreadable degrades to NO ledger,
+    which the gate treats as the pre-C13 contract rather than as a block.
+    """
+    idx = text.find('{"facts"')
+    data = _parse_json(text[idx:]) if idx >= 0 else _parse_json(text)
+    raw = data.get("facts")
+    if not isinstance(raw, list):
+        return ()
+    facts: list[ContextFact] = []
+    for entry in raw[:_MAX_FACTS]:
+        if not isinstance(entry, dict):
+            continue
+        statement = str(entry.get("statement", "")).strip()
+        if not statement:
+            continue
+        facts.append(
+            ContextFact(
+                statement=statement,
+                source=str(entry.get("source", "") or "").strip(),
+                decisive=bool(entry.get("decisive")),
+                durable=bool(entry.get("durable")),
+            )
+        )
+    return tuple(facts)
+
+
+def _strip_ledger(text: str) -> str:
+    """Drop the JSON ledger from the FOUND: prose kept as ``gathered_context``.
+
+    Cosmetic only: the facts live structured on the record, and repeating them
+    as raw JSON inside every later prompt would just be noise. Best-effort —
+    a ledger this misses costs readability, never behaviour.
+    """
+    text = re.sub(r"```(?:json)?\s*\{.*?\}\s*```", "", text, flags=re.DOTALL)
+    idx = text.find('{"facts"')
+    if idx >= 0:
+        text = text[:idx]
+    return text.strip()
 
 
 def _after_marker(text: str, marker: str) -> str:
