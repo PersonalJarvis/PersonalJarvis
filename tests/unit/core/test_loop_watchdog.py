@@ -5,6 +5,14 @@ sat inside a synchronous TOML parse for over ten minutes, every probe from
 outside timed out, and nothing in the log said why. These tests pin the two
 properties that make the difference — it must fire while the loop is genuinely
 wedged, and it must not fire for a loop that is merely busy or idle.
+
+A loop can also fail the opposite way, and on 2026-08-14 it did: fifteen
+freezes in an evening where the loop answered every liveness beat on time and
+still served nobody, because one task spun on ``await asyncio.sleep(0)`` at a
+full core. A liveness-only watchdog calls that perfect health. The second half
+of these tests pins the reading that tells the two apart — what the loop thread
+COSTS — including that it stays quiet for an ordinary CPU burst and that it
+gives up quietly where per-thread CPU cannot be read at all.
 """
 from __future__ import annotations
 
@@ -180,3 +188,166 @@ def test_stack_is_reported_even_before_any_beat_landed(live_loop):
     watchdog = EventLoopWatchdog(live_loop, interval_s=5.0, stall_s=5.0)
     text = watchdog._loop_stack()
     assert isinstance(text, str) and text
+
+
+# ----------------------------------------------------------------------
+# Livelock: the loop answers every beat and still serves nobody
+# ----------------------------------------------------------------------
+
+
+class _SpinRecorder:
+    """Collects livelock reports without going anywhere near the logger."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[float, float, str]] = []
+        self.seen = threading.Event()
+
+    def __call__(self, spinning_s: float, cpu_ratio: float, stack: str) -> None:
+        self.calls.append((spinning_s, cpu_ratio, stack))
+        self.seen.set()
+
+
+class _FakeCpu:
+    """A CPU clock that burns a fixed share of wall time.
+
+    Standing in for the real per-thread reading keeps these tests exact and
+    quick: a genuine busy loop would have to run for the whole spin window at
+    whatever share of a core the CI box happens to give it.
+    """
+
+    def __init__(self, ratio: float) -> None:
+        self._ratio = ratio
+        self._base = time.monotonic()
+
+    def __call__(self) -> float:
+        return (time.monotonic() - self._base) * self._ratio
+
+
+def test_a_spinning_loop_is_reported(live_loop):
+    """A loop at a full core is not healthy, however promptly it beats."""
+    stalls, spins = _Recorder(), _SpinRecorder()
+    watchdog = EventLoopWatchdog(
+        live_loop,
+        interval_s=0.05,
+        stall_s=5.0,  # far away: this loop is responsive, not wedged
+        spin_s=0.3,
+        on_stall=stalls,
+        on_livelock=spins,
+        cpu_sampler=_FakeCpu(1.0),
+    )
+    watchdog.start()
+    try:
+        assert spins.seen.wait(4.0), "a loop burning a full core went unreported"
+    finally:
+        watchdog.stop()
+
+    spinning_s, ratio, stack = spins.calls[0]
+    assert spinning_s >= 0.3
+    assert ratio >= 0.85
+    assert isinstance(stack, str) and stack
+    assert stalls.calls == [], "a spinning loop is not a stalled loop"
+
+
+def test_a_waiting_loop_is_not_reported_as_spinning(live_loop):
+    """The ordinary case — a loop that mostly waits — must stay silent."""
+    spins = _SpinRecorder()
+    watchdog = EventLoopWatchdog(
+        live_loop,
+        interval_s=0.05,
+        stall_s=5.0,
+        spin_s=0.2,
+        on_livelock=spins,
+        cpu_sampler=_FakeCpu(0.05),
+    )
+    watchdog.start()
+    try:
+        time.sleep(1.0)  # many checks, all well below the threshold
+    finally:
+        watchdog.stop()
+    assert spins.calls == [], "a loop that waits must never be called a livelock"
+
+
+def test_a_brief_cpu_burst_is_not_reported(live_loop):
+    """Serialising a big response is allowed to cost a moment of core."""
+    spins = _SpinRecorder()
+    # Saturated the whole time, but the window is longer than the test lives:
+    # the streak never matures into a report.
+    watchdog = EventLoopWatchdog(
+        live_loop,
+        interval_s=0.05,
+        stall_s=5.0,
+        spin_s=30.0,
+        on_livelock=spins,
+        cpu_sampler=_FakeCpu(1.0),
+    )
+    watchdog.start()
+    try:
+        time.sleep(0.8)
+    finally:
+        watchdog.stop()
+    assert spins.calls == [], "a short burst of CPU is work, not a livelock"
+
+
+def test_an_ongoing_spin_is_not_repeated_every_check(live_loop):
+    """A spin wedged for minutes leaves a trail, not one block per interval."""
+    spins = _SpinRecorder()
+    watchdog = EventLoopWatchdog(
+        live_loop,
+        interval_s=0.05,
+        stall_s=5.0,
+        spin_s=0.2,
+        repeat_s=30.0,  # far beyond the test's lifetime
+        on_livelock=spins,
+        cpu_sampler=_FakeCpu(1.0),
+    )
+    watchdog.start()
+    try:
+        assert spins.seen.wait(3.0)
+        time.sleep(0.5)  # many further checks, all inside the same spin
+    finally:
+        watchdog.stop()
+    assert len(spins.calls) == 1, (
+        f"an ongoing spin must be reported once per repeat window, "
+        f"got {len(spins.calls)}"
+    )
+
+
+def test_unreadable_thread_cpu_degrades_to_stall_detection(live_loop):
+    """Where per-thread CPU is unknowable, the watchdog keeps its other half.
+
+    Guessing from process-wide CPU would blame the loop for whatever a speech
+    or terminal thread happens to be doing, so the honest move is silence on
+    spin and business as usual on stall.
+    """
+    stalls, spins = _Recorder(), _SpinRecorder()
+    watchdog = EventLoopWatchdog(
+        live_loop,
+        interval_s=0.05,
+        stall_s=0.4,
+        spin_s=0.2,
+        on_stall=stalls,
+        on_livelock=spins,
+        cpu_sampler=lambda: None,
+    )
+    watchdog.start()
+    release = threading.Event()
+    try:
+        time.sleep(0.5)
+        assert spins.calls == [], "no CPU reading must mean no spin verdict"
+        live_loop.call_soon_threadsafe(lambda: release.wait(3.0))
+        assert stalls.seen.wait(4.0), "stall detection must survive on its own"
+    finally:
+        release.set()
+        watchdog.stop()
+
+
+def test_the_real_cpu_sampler_answers_for_a_live_loop(live_loop):
+    """The default reading works on this platform, or says so by returning None."""
+    watchdog = EventLoopWatchdog(live_loop, interval_s=0.05, stall_s=5.0)
+    watchdog.start()
+    try:
+        time.sleep(0.3)  # let a beat land so the loop thread identifies itself
+        reading = watchdog._loop_thread_cpu_s()
+    finally:
+        watchdog.stop()
+    assert reading is None or (isinstance(reading, float) and reading >= 0.0)
