@@ -514,6 +514,52 @@ def test_a_depleted_provider_crosses_to_the_next_family(monkeypatch) -> None:
     assert answer.writer == "other-family"
 
 
+def test_a_failed_family_sits_out_its_quiet_window(monkeypatch) -> None:
+    """BUG-139: a dead family must not be re-walked on every poll.
+
+    Live, three broken families ahead of a working subscription CLI were
+    re-tried on every recap — two full PTY subprocess spawns per poll, for
+    hours — because the pane-level back-off only engages when the WHOLE chain
+    fails. A family that failed once is skipped until its window expires.
+    """
+    calls = {"dead": 0, "working": 0}
+
+    class Dead:
+        model = "pty-family"
+
+        async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+            calls["dead"] += 1
+            raise RuntimeError("the CLI turn produced no usable headline")
+            yield  # pragma: no cover - makes this an async generator
+
+    class Working:
+        model = "other-family"
+
+        async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+            calls["working"] += 1
+            yield SimpleNamespace(
+                content=(
+                    "HEADLINE: Pane recaps — family back-off\n"
+                    "DETAIL: The goal is a recap that stops paying for a dead "
+                    "family. The working provider wrote this one directly."
+                )
+            )
+
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [Dead(), Working()])
+
+    first = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+    second = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    assert first is not None and second is not None
+    assert calls["dead"] == 1  # tried once, then quiet — not once per poll
+    assert calls["working"] == 2
+
+    # Once the window expires the family is welcome to try again.
+    recap_engine._quiet_families["Dead:pty-family"] = 0.0
+    asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+    assert calls["dead"] == 2
+
+
 def test_when_every_family_fails_the_first_failure_is_reported(monkeypatch) -> None:
     """The configured provider's error is the one the user can act on."""
 

@@ -141,6 +141,20 @@ MAX_PROVIDER_TRIES = 3
 FAILURES_BEFORE_QUIET = 3
 QUIET_S = 600.0
 
+#: How long one failing provider FAMILY sits out before it may try again. The
+#: pane-level quiet window above only engages when the WHOLE chain fails; live,
+#: three broken families ahead of a working subscription CLI were re-walked on
+#: every poll — two full PTY subprocess turns (antigravity retries its budget
+#: bump) plus two fast auth failures per recap, hundreds of process spawns per
+#: hour, and the desktop froze under the churn (BUG-139). A family that fails
+#: is skipped for this window while the chain crosses straight to whoever
+#: last wrote; a recovered key resumes within ten minutes.
+PROVIDER_QUIET_S = QUIET_S
+
+#: Families currently sitting out their window, keyed by :func:`_brain_identity`
+#: → the ``time.monotonic()`` deadline when they may write again.
+_quiet_families: dict[str, float] = {}
+
 #: This is a DISPLAY budget, not merely a transport cap.  In a normal grid the
 #: call-sign and pane actions leave room for about 48 characters; a 90-character
 #: model instruction merely guaranteed that CSS would hide the distinguishing
@@ -915,19 +929,39 @@ async def summarize_with_model(
     brains = await asyncio.to_thread(_resolve_brains)
     if not brains:
         return None
+    now = time.monotonic()
+    ready = [brain for brain in brains if _quiet_families.get(_brain_identity(brain), 0.0) <= now]
+    # When every family is sitting out, the full chain still runs: a wrong skip
+    # would silence recaps entirely, and the pane-level back-off already bounds
+    # how often that full walk can recur.
     first_failure: Exception | None = None
-    for brain in brains:
+    for brain in ready or brains:
         try:
-            return await _summarize_on(brain, term, rows, folder=folder)
+            answer = await _summarize_on(brain, term, rows, folder=folder)
         except Exception as exc:  # noqa: BLE001 - the next family is the handling
+            _quiet_families[_brain_identity(brain)] = time.monotonic() + PROVIDER_QUIET_S
             first_failure = first_failure or exc
             logger.info(
                 "Agentic IDE recap: {} could not write it ({}) — crossing to the next provider",
                 getattr(brain, "model", "") or getattr(brain, "name", "") or type(brain).__name__,
                 type(exc).__name__,
             )
+        else:
+            _quiet_families.pop(_brain_identity(brain), None)
+            return answer
     assert first_failure is not None  # noqa: S101 - the loop above ran at least once
     raise first_failure
+
+
+def _brain_identity(brain: Any) -> str:
+    """One stable key per provider family for the quiet list.
+
+    Two resolver runs return fresh brain instances, so identity has to come
+    from what the family IS — its type plus the model/name it would write with
+    — never from the object itself.
+    """
+    label = getattr(brain, "model", "") or getattr(brain, "name", "") or ""
+    return f"{type(brain).__name__}:{label}"
 
 
 async def _summarize_on(
@@ -1099,6 +1133,7 @@ def reset_for_tests() -> None:
     global _inflight
     _panes.clear()
     _tasks.clear()
+    _quiet_families.clear()
     _inflight = 0
 
 
