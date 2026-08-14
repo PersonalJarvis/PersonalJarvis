@@ -3255,6 +3255,13 @@ class MarketplaceConfig(BaseModel):
     # the GitHub identity and opens the registry PR as the marketplace bot;
     # forks point this at their own deployment. Empty string hides Publish.
     publish_endpoint: str = "https://personaljarvis.ai/api/marketplace/submit"
+    # After a community listing installs, tell the registry so the storefront
+    # can show an install count. One POST carrying only the listing's name —
+    # no account, no machine id, no version, nothing about you. The receiving
+    # end increments a single integer. Set to false and nothing is sent; see
+    # jarvis/marketplace/install_report.py.
+    report_installs: bool = True
+    install_report_url: str = "https://personaljarvis.ai/api/marketplace/installed"
     # Client id of the marketplace GitHub App (public by design — device flow
     # needs no secret, which is why a downloadable binary can use it).
     publish_github_client_id: str = "Iv23li1YcX62KJO67whO"

@@ -941,7 +941,9 @@ async def community_refresh(response: Response) -> dict[str, Any]:
     "/community/plugins/{plugin_id}/install",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def community_install(plugin_id: str) -> dict[str, Any]:
+async def community_install(
+    plugin_id: str, background: BackgroundTasks
+) -> dict[str, Any]:
     """One-click install: convert the package, persist the catalog entry,
     usage card and bundled skills, refresh the live registry. The plugin then
     behaves exactly like a seed plugin (connect flows, relevance gate, worker
@@ -956,6 +958,7 @@ async def community_install(plugin_id: str) -> dict[str, Any]:
         install_plugin_spec,
         seed_plugin_ids,
     )
+    from jarvis.marketplace.install_report import report_install
     from jarvis.marketplace.usage_cards.loader import save_usage_card
 
     index, _ = await community_source.get_index()
@@ -1040,11 +1043,16 @@ async def community_install(plugin_id: str) -> dict[str, Any]:
     item["status"] = "not_connected"
     if skill_result is not None:
         item["installed_skills"] = skill_result.written
+    # The storefront's install count. Runs after the install has succeeded and
+    # cannot affect this reply — see install_report.py for what is sent.
+    background.add_task(report_install, "plugin", spec.id)
     return {"ok": True, "plugin": item}
 
 
 @router.post("/community/skills/{skill_name}/install")
-async def community_skill_install(skill_name: str, request: Request) -> dict[str, Any]:
+async def community_skill_install(
+    skill_name: str, request: Request, background: BackgroundTasks
+) -> dict[str, Any]:
     """Install a standalone community skill, reading the index server-side.
 
     Deliberately mirrors the plugin install route rather than reusing
@@ -1059,6 +1067,7 @@ async def community_skill_install(skill_name: str, request: Request) -> dict[str
     from jarvis.marketplace import community_source
     from jarvis.marketplace.agent_plugins_loader import AgentPluginError
     from jarvis.marketplace.community_install import install_community_skill
+    from jarvis.marketplace.install_report import report_install
 
     reg = getattr(request.app.state, "skill_registry", None)
     if reg is None:
@@ -1114,6 +1123,7 @@ async def community_skill_install(skill_name: str, request: Request) -> dict[str
             "the registry published an incomplete entry",
         )
 
+    background.add_task(report_install, "skill", entry.name)
     try:
         await reg.reload()
     except Exception as exc:  # noqa: BLE001 - the watchdog picks it up anyway
