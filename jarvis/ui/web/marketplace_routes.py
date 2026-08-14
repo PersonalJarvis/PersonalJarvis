@@ -926,7 +926,14 @@ async def community_refresh(response: Response) -> dict[str, Any]:
     return _community_payload(index, status)
 
 
-@router.post("/community/plugins/{plugin_id}/install")
+# Dangerous: installs UNREVIEWED third-party code (a stdio server is local
+# command execution; a hosted one receives the user's token). The flag makes
+# the auto-generated `jarvis api` layer demand --yes, the same consent the
+# store dialog and the curated command already collect.
+@router.post(
+    "/community/plugins/{plugin_id}/install",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
 async def community_install(plugin_id: str) -> dict[str, Any]:
     """One-click install: convert the package, persist the catalog entry,
     usage card and bundled skills, refresh the live registry. The plugin then
