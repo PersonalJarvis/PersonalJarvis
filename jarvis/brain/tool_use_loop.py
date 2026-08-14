@@ -25,6 +25,13 @@ from jarvis.brain.cu_gate import (
     CU_VEHICLE_TOOL_NAMES,
     llm_computer_use_allowed,
 )
+from jarvis.brain.errand_gate import (
+    AGENTIC_IDE_BLOCKED_FEEDBACK,
+    ERRAND_VEHICLE_TOOL_NAME,
+    agentic_ide_blocks_agents,
+    errand_blocked_feedback,
+    llm_errand_allowed,
+)
 from jarvis.brain.spawn_gate import (
     SPAWN_VEHICLE_TOOL_NAMES,
     llm_spawn_allowed,
@@ -928,6 +935,51 @@ class ToolUseLoop:
                         "success": False,
                         "output": None,
                         "error": spawn_blocked_feedback(user_utterance),
+                    }
+                elif (
+                    tool_name in SPAWN_VEHICLE_TOOL_NAMES
+                    or tool_name == ERRAND_VEHICLE_TOOL_NAME
+                ) and agentic_ide_blocks_agents():
+                    # Screen gate (maintainer mandate 2026-08-14): while the
+                    # Agentic-IDE section is visible, NO background agent
+                    # starts — the user is driving terminals there. See
+                    # jarvis/brain/errand_gate.py.
+                    log.info(
+                        "tool_use_loop: %s blocked — the Agentic IDE section "
+                        "is on screen", tool_name,
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: Agentic IDE on screen — background agents blocked",
+                        tid,
+                    )
+                    tool_result_payload = {
+                        "success": False,
+                        "output": None,
+                        "error": AGENTIC_IDE_BLOCKED_FEEDBACK,
+                    }
+                elif (
+                    tool_name == ERRAND_VEHICLE_TOOL_NAME
+                    and not llm_errand_allowed(user_utterance)
+                ):
+                    # Order-shape gate (maintainer mandate 2026-08-14): once
+                    # the errand engine went live, questions and UI requests
+                    # ("I need the last transcription") started opening
+                    # background errands. An errand runs ONLY for a turn that
+                    # reads as a real-world order. See jarvis/brain/errand_gate.py.
+                    log.info(
+                        "tool_use_loop: start_errand blocked — the turn is not "
+                        "a real-world order",
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: not a real-world order — errand not started",
+                        tid,
+                    )
+                    tool_result_payload = {
+                        "success": False,
+                        "output": None,
+                        "error": errand_blocked_feedback(user_utterance),
                     }
                 elif (
                     tool_name in CU_VEHICLE_TOOL_NAMES

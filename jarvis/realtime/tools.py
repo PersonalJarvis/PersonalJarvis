@@ -14,6 +14,13 @@ from jarvis.brain.cu_gate import (
     CU_VEHICLE_TOOL_NAMES,
     llm_computer_use_allowed,
 )
+from jarvis.brain.errand_gate import (
+    AGENTIC_IDE_BLOCKED_FEEDBACK,
+    ERRAND_VEHICLE_TOOL_NAME,
+    agentic_ide_blocks_agents,
+    errand_blocked_feedback,
+    llm_errand_allowed,
+)
 from jarvis.brain.spawn_gate import (
     SPAWN_VEHICLE_TOOL_NAMES,
     llm_spawn_allowed,
@@ -412,6 +419,13 @@ class RealtimeToolBridge:
             message = "The user was introducing themselves; the side-effect tool was not run."
         elif name == "spawn_worker" and _is_meta_debug_intent(user_text):
             message = "A meta/debug request must be answered directly, not delegated."
+        elif (
+            name in SPAWN_VEHICLE_TOOL_NAMES or name == ERRAND_VEHICLE_TOOL_NAME
+        ) and agentic_ide_blocks_agents():
+            # Screen gate (maintainer mandate 2026-08-14): while the Agentic
+            # IDE section is visible, NO background agent starts — the user
+            # is driving terminals there. See jarvis/brain/errand_gate.py.
+            message = AGENTIC_IDE_BLOCKED_FEEDBACK
         elif name in SPAWN_VEHICLE_TOOL_NAMES and not llm_spawn_allowed(user_text):
             # Explicit-delegation gate (maintainer mandate 2026-07-18): the
             # realtime model may start a background agent ONLY when the user's
@@ -419,6 +433,11 @@ class RealtimeToolBridge:
             # Deterministic — prompt-side discouragement failed repeatedly.
             # See jarvis/brain/spawn_gate.py.
             message = spawn_blocked_feedback(user_text)
+        elif name == ERRAND_VEHICLE_TOOL_NAME and not llm_errand_allowed(user_text):
+            # Order-shape gate (maintainer mandate 2026-08-14): a spoken
+            # question or UI request ("I need the last transcription") must
+            # never open a background errand. See jarvis/brain/errand_gate.py.
+            message = errand_blocked_feedback(user_text)
         elif name in CU_VEHICLE_TOOL_NAMES and not llm_computer_use_allowed(
             user_text
         ):

@@ -4806,6 +4806,27 @@ def coding_mode_active() -> bool:
     return session is not None and bool(session.focus_mode)
 
 
+def agentic_ide_on_screen() -> bool:
+    """Is the Agentic-IDE section VISIBLE in the desktop app right now?
+
+    ONE answer, same reasoning as ``coding_mode_active`` — but a different
+    question: ``focus_mode`` is a user-toggled switch that survives navigating
+    away, while this reads ``surface_on_screen``, which the mounted frontend
+    reports on every section switch (PUT /api/agentic-ide/surface-context).
+    Maintainer rule 2026-08-14: while the user is looking at the Agentic IDE,
+    background agents (missions and errands) are blocked — the user is
+    driving terminals there, and a self-chosen background agent on top of
+    that is exactly the noise they asked to stop.
+
+    Never raises — an optional surface must not be able to break a gate.
+    """
+    try:
+        session = get_registry().session
+    except Exception:  # noqa: BLE001 - optional surface, never fatal
+        return False
+    return session is not None and bool(getattr(session, "surface_on_screen", False))
+
+
 def running_call_signs() -> list[str]:
     """Call-signs of the open workspace, or ``[]`` when none is open.
 
@@ -4882,6 +4903,7 @@ __all__ = [
     "accepts_prompts",
     "agent_argv",
     "agent_display",
+    "agentic_ide_on_screen",
     "coding_mode_active",
     "coding_mode_event",
     "get_registry",
