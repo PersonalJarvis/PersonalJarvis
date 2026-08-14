@@ -126,6 +126,11 @@ export interface CommunityResponse {
   generated_at?: string | null;
   plugins: CommunityPluginWire[];
   skills: CommunitySkillWire[];
+  // The payload also carries a `wallpapers` array. DELIBERATELY not typed or
+  // rendered here: wallpapers are browsed on the storefront website (whose
+  // "Add to Personal Jarvis" button calls the local install route) and via
+  // `jarvis marketplace install <name>` — the picker's own Community tab is
+  // future work, not an oversight to "fix" by ad-hoc adding the field.
   categories?: CommunityCategoryWire[];
 }
 

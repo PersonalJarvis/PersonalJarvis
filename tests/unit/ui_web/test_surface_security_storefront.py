@@ -99,6 +99,9 @@ def test_preflight_from_the_storefront_is_answered_with_private_network_optin() 
     assert response.status_code == 204
     assert response.headers["access-control-allow-origin"] == _STOREFRONT
     assert "POST" in response.headers["access-control-allow-methods"]
+    # Without `authorization` here a browser strips the Bearer header, and a
+    # locked instance could never be reached through the door at all.
+    assert "authorization" in response.headers["access-control-allow-headers"]
     assert response.headers["access-control-allow-private-network"] == "true"
     # The preflight is answered at the boundary — the app never sees it.
     assert inner.scopes == []

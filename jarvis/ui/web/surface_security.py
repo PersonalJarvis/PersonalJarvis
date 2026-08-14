@@ -1119,7 +1119,11 @@ class SurfaceSecurity:
                 (b"access-control-allow-origin", origin_value),
                 (b"vary", b"Origin"),
                 (b"access-control-allow-methods", b"POST, OPTIONS"),
-                (b"access-control-allow-headers", b"content-type"),
+                # authorization is allowed so a LOCKED instance stays
+                # reachable for a storefront page holding a pasted control
+                # key — without it a browser strips the Bearer header and the
+                # 401 fallback below is theater.
+                (b"access-control-allow-headers", b"authorization, content-type"),
                 (b"access-control-max-age", b"600"),
                 (b"content-length", b"0"),
             ]

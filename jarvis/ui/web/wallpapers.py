@@ -571,7 +571,8 @@ def _detect_theme(image: Any) -> str:
 
         small = image.convert("L").resize((32, 32))
         mean = ImageStat.Stat(small).mean[0]
-    except Exception:  # noqa: BLE001 — a guess is never worth failing an upload
+    except Exception as exc:  # noqa: BLE001 — a guess is never worth failing an upload
+        logger.debug("Wallpaper theme guess failed, defaulting to dark: {}", exc)
         return "dark"
     return "light" if mean >= _LIGHT_THEME_LUMA else "dark"
 

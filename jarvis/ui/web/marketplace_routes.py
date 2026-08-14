@@ -1301,11 +1301,19 @@ async def community_wallpaper_install(
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=10.0),
-            follow_redirects=True,
+            # No redirects: the https-only rule was checked on the PUBLISHED
+            # URL, and a redirect hop could point anywhere (loopback, LAN,
+            # link-local metadata). A moderated static feed has no legitimate
+            # reason to redirect, so a 3xx is a download failure, not a hop.
+            follow_redirects=False,
             transport=_WALLPAPER_TRANSPORT,
         ) as client:
             async with client.stream("GET", entry.image_url) as response:
-                response.raise_for_status()
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"the wallpaper host answered {response.status_code}",
+                    )
                 received = 0
                 chunks: list[bytes] = []
                 async for chunk in response.aiter_bytes():
