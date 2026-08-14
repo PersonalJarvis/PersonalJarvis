@@ -803,6 +803,7 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
         AgentPluginError,
         convert_package,
     )
+    from jarvis.marketplace.install_standard import install_block
 
     catalog = load_catalog()
     installed_specs = {spec.id: spec for spec in catalog.plugins}
@@ -850,6 +851,12 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
             # installable — surfaced so the UI explains WHY the button is off.
             item["seed_conflict"] = existing is not None and existing.source != "community"
             item["has_usage_card"] = bool(entry.usage_card)
+            # The three install one-liners (CLI / uvx runner / assistant
+            # prompt) — computed by the ONE standard module so this payload,
+            # the curated CLI and the docs can never show different commands.
+            # A name collision with a shipped plugin is never installable, so
+            # it gets no block rather than a command that would 409.
+            item["install"] = None if item["seed_conflict"] else install_block(spec.id, "plugin")
             plugins.append(item)
 
         skills_root = user_skills_dir()
@@ -871,6 +878,9 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
                     "installed": installed,
                     "installed_version": installed_version,
                     "update_available": installed and _is_newer(skill.version, installed_version),
+                    # No raw_url means "Manual" — the CLI could not install it
+                    # either, so showing a one-liner would be a false promise.
+                    "install": install_block(skill.name, "skill") if skill.raw_url else None,
                 }
             )
 

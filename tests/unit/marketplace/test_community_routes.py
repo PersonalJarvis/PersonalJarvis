@@ -122,9 +122,12 @@ async def test_browse_lists_converted_plugins_and_skills(community_env: Path) ->
     assert plugin["installed"] is False
     assert plugin["seed_conflict"] is False
     assert plugin["mcp_server"]["url"] == "https://mcp.todofox.example/mcp"
+    assert plugin["install"]["cli"] == "jarvis marketplace install todo-fox"
+    assert plugin["install"]["runner"].startswith("uvx --from personal-jarvis ")
     skill = data["skills"][0]
     assert skill["name"] == "three-point-check"
     assert skill["installed"] is False
+    assert skill["install"]["cli"] == "jarvis marketplace install three-point-check"
 
 
 @pytest.mark.asyncio
