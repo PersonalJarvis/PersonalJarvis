@@ -28,6 +28,8 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     BrainTurnCompleted,
     BrainTurnStarted,
+    ErrandNeedsInput,
+    ErrandUpdated,
     HarnessCompleted,
     HarnessDispatched,
     JarvisAgentReviewTriggered,
@@ -53,6 +55,20 @@ log = logging.getLogger(__name__)
 
 NodeKind = Literal["router", "jarvis_agent", "harness", "tool_call"]
 NodeStatus = Literal["running", "completed", "failed", "cancelled"]
+
+#: ErrandState value -> board status. The keys mirror jarvis/errands/schema.py
+#: (five-layer enum discipline: the strings are the contract). NEEDS_INPUT is
+#: "running" on purpose — a waiting errand is alive, and its question rides on
+#: ``prompts`` via ErrandNeedsInput rather than on a status the board lacks.
+_ERRAND_NODE_STATUS: dict[str, NodeStatus] = {
+    "planning": "running",
+    "needs_input": "running",
+    "running": "running",
+    "completed": "completed",
+    "stalled": "failed",
+    "impossible": "failed",
+    "cancelled": "cancelled",
+}
 
 
 def _tid(uuid_or_str: UUID | str | None) -> str | None:
@@ -140,6 +156,12 @@ class JarvisAgentRegistry:
         self._bus.subscribe(ToolCallCompleted, self._on_tool_call_completed)
         self._bus.subscribe(HarnessDispatched, self._on_harness_dispatched)
         self._bus.subscribe(HarnessCompleted, self._on_harness_completed)
+        # Errands (jarvis/errands/) publish flat lifecycle events on the same
+        # global bus — without these two subscriptions a running real-world
+        # job is invisible on the {name}-Agents board while every coding
+        # mission shows up, which reads as "Jarvis is doing nothing".
+        self._bus.subscribe(ErrandUpdated, self._on_errand_updated)
+        self._bus.subscribe(ErrandNeedsInput, self._on_errand_needs_input)
         self._attached = True
         return self
 
@@ -314,6 +336,57 @@ class JarvisAgentRegistry:
         node.completed_ns = e.timestamp_ns
         node.duration_ms = duration_ms
         self._schedule_removal(tid)
+
+    # ------------------------------------------------------------- errands
+
+    async def _on_errand_updated(self, e: ErrandUpdated) -> None:
+        """Upsert the board node for a real-world errand.
+
+        kind="jarvis_agent" on purpose: the departure board renders that kind
+        today, so errands light up with zero frontend changes. The node key is
+        namespaced (``errand-<id>``) rather than the errand's trace_id — the
+        opening turn's trace already owns a router node, and sharing the key
+        would overwrite it.
+        """
+        tid = f"errand-{e.errand_id}"
+        node = self._nodes.get(tid)
+        if node is None:
+            node = AgentNode(
+                trace_id=tid,
+                kind="jarvis_agent",
+                name=_agent_display_name(),
+                utterance=e.goal,
+                started_ns=e.timestamp_ns,
+            )
+            self._nodes[tid] = node
+        status = _ERRAND_NODE_STATUS.get(e.state)
+        if status is None:
+            return  # a future ErrandState this build does not know — leave the node be
+        if status == "running":
+            # A resumed or answered errand is live again: clear the question
+            # and any stale failure text.
+            node.status = status
+            node.prompts = []
+            node.error = None
+            node.completed_ns = None
+            node.duration_ms = None
+            return
+        if node.status != "running":
+            return  # terminal already recorded; the first ending wins
+        node.status = status
+        node.completed_ns = e.timestamp_ns
+        if node.started_ns:
+            node.duration_ms = (node.completed_ns - node.started_ns) / 1e6
+        if status == "failed":
+            node.error = e.outcome or e.state
+        self._schedule_removal(tid)
+
+    async def _on_errand_needs_input(self, e: ErrandNeedsInput) -> None:
+        """Show the waiting question on the board row (expand view)."""
+        node = self._nodes.get(f"errand-{e.errand_id}")
+        if node is None:
+            return
+        node.prompts = [q.strip() for q in e.questions.splitlines() if q.strip()]
 
     def _schedule_removal(self, tid: str) -> None:
         try:
