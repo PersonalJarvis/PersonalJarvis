@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 # Mirrors the key the registry accepts. Enforced here too so a malformed name
 # never leaves the machine.
-_ENTRY = re.compile(r"^(skill|plugin):[a-z0-9][a-z0-9_-]{0,63}$")
+_ENTRY = re.compile(r"^(skill|plugin|wallpaper):[a-z0-9][a-z0-9_-]{0,63}$")
 
 _TIMEOUT_SECONDS = 4.0
 

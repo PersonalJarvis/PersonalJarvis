@@ -109,11 +109,53 @@ class CommunitySkillEntry(_Tolerant):
         return value
 
 
+class CommunityWallpaperEntry(_Tolerant):
+    """One published community wallpaper, as the compiled index carries it.
+
+    Unlike skills, the bytes are NEVER embedded: a wallpaper is hundreds of
+    kilobytes, and the index must stay a quick fetch. The image lives on the
+    same GitHub Pages deployment as the index itself — the embed-don't-link
+    lesson applied one level up: the feed links only to a host the registry
+    build controls, so the picture cannot go missing while the feed that
+    advertises it is reachable.
+    """
+
+    name: str
+    title: str | None = None
+    description: str = ""
+    publisher: str | None = None
+    version: str | None = None
+    published_at: str | None = None
+    # "light" or "dark" — computed by the registry build from mean luminance,
+    # the same heuristic the local upload store applies. Anything else is
+    # treated as unknown and the importer re-guesses.
+    theme: str | None = None
+    width: int | None = None
+    height: int | None = None
+    license: str | None = None
+    source_url: str | None = None
+    # Where the full image and its grid thumbnail are served from.
+    image_url: str | None = None
+    thumb_url: str | None = None
+
+    @field_validator("image_url", "thumb_url")
+    @classmethod
+    def _https_only(cls, value: str | None) -> str | None:
+        # The backend downloads image_url server-side at install time — the
+        # same SSRF reasoning as CommunitySkillEntry.raw_url applies, so a
+        # non-https URL degrades the entry to "not installable".
+        if value is not None and not value.lower().startswith("https://"):
+            logger.warning("community index: dropping non-https wallpaper url %r", value)
+            return None
+        return value
+
+
 class CommunityIndex(_Tolerant):
     revision: int = 0
     generated_at: str | None = None
     plugins: list[CommunityPluginEntry] = Field(default_factory=list)
     skills: list[CommunitySkillEntry] = Field(default_factory=list)
+    wallpapers: list[CommunityWallpaperEntry] = Field(default_factory=list)
 
     @field_validator("skills", mode="after")
     @classmethod
@@ -128,6 +170,23 @@ class CommunityIndex(_Tolerant):
                 # One malicious or malformed entry must cost exactly itself,
                 # never the whole index (that would be a delisting DoS).
                 logger.warning("community index: dropping skill with unsafe name %r", entry.name)
+        return kept
+
+    @field_validator("wallpapers", mode="after")
+    @classmethod
+    def _drop_unsafe_wallpaper_names(
+        cls, value: list[CommunityWallpaperEntry]
+    ) -> list[CommunityWallpaperEntry]:
+        # Same rule, same reason: the name later appears in file names, URLs
+        # and shell one-liners, so it is a security boundary, not cosmetics.
+        kept: list[CommunityWallpaperEntry] = []
+        for entry in value:
+            if _SKILL_NAME_RE.fullmatch(entry.name) and ".." not in entry.name:
+                kept.append(entry)
+            else:
+                logger.warning(
+                    "community index: dropping wallpaper with unsafe name %r", entry.name
+                )
         return kept
 
 
@@ -222,6 +281,7 @@ __all__ = [
     "CommunityIndex",
     "CommunityPluginEntry",
     "CommunitySkillEntry",
+    "CommunityWallpaperEntry",
     "cached_index",
     "get_index",
     "index_url",

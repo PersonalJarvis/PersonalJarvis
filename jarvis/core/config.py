@@ -3265,6 +3265,12 @@ class MarketplaceConfig(BaseModel):
     # Client id of the marketplace GitHub App (public by design — device flow
     # needs no secret, which is why a downloadable binary can use it).
     publish_github_client_id: str = "Iv23li1YcX62KJO67whO"
+    # The ONE https origin whose pages may call this machine's wallpaper
+    # import route cross-site ("Add Wallpaper to Personal Jarvis" on the
+    # storefront). Scoped to exactly that route by SurfaceSecurity — it never
+    # widens what the origin may do elsewhere. Empty string closes the door;
+    # forks point it at their own storefront.
+    storefront_origin: str = "https://personaljarvis.ai"
     model_config = ConfigDict(extra="allow")
 
 

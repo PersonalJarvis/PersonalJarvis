@@ -811,6 +811,7 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
 
     plugins: list[dict[str, Any]] = []
     skills: list[dict[str, Any]] = []
+    wallpapers: list[dict[str, Any]] = []
     if index is not None:
         for entry in index.plugins:
             base = {
@@ -891,6 +892,47 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
                 }
             )
 
+        wallpaper_entries = list(getattr(index, "wallpapers", []) or [])
+        if wallpaper_entries:
+            from jarvis.ui.web.wallpapers import WallpaperUploads
+
+            # One directory scan for the whole payload — imports are found by
+            # the provenance marker the install route writes.
+            imported = {
+                item.origin: item for item in WallpaperUploads().list() if item.origin
+            }
+            for wallpaper in wallpaper_entries:
+                existing_import = imported.get(f"community:{wallpaper.name}")
+                wallpapers.append(
+                    {
+                        "name": wallpaper.name,
+                        "title": wallpaper.title or wallpaper.name,
+                        "description": wallpaper.description,
+                        "publisher": wallpaper.publisher,
+                        "version": wallpaper.version,
+                        "published_at": wallpaper.published_at,
+                        "theme": wallpaper.theme
+                        if wallpaper.theme in ("light", "dark")
+                        else None,
+                        "width": wallpaper.width,
+                        "height": wallpaper.height,
+                        "license": wallpaper.license,
+                        "source_url": wallpaper.source_url,
+                        "image_url": wallpaper.image_url,
+                        "thumb_url": wallpaper.thumb_url,
+                        # No https image URL means nothing can be downloaded —
+                        # the card must say so instead of failing on the button.
+                        "installable": bool(wallpaper.image_url),
+                        "installed": existing_import is not None,
+                        # The local upload id an import landed under, so a
+                        # Remove button can target /api/wallpapers/uploads/{id}.
+                        "installed_id": existing_import.id if existing_import else None,
+                        "install": install_block(wallpaper.name, "wallpaper")
+                        if wallpaper.image_url
+                        else None,
+                    }
+                )
+
     # Category counts for the browse filter. Derived from the SAME converted
     # specs the cards render, so a filter chip can never promise a count the
     # list cannot show. Only valid plugins carry a category.
@@ -906,6 +948,7 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
         "generated_at": getattr(index, "generated_at", None),
         "plugins": plugins,
         "skills": skills,
+        "wallpapers": wallpapers,
         "categories": [
             {"name": name, "count": count}
             for name, count in sorted(category_counts.items(), key=lambda pair: (-pair[1], pair[0]))
@@ -1189,3 +1232,121 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
         "removed_skills": removed_skills,
         "revocation": revocation,
     }
+
+
+# Test seam: unit tests plug an httpx.MockTransport here so the wallpaper
+# download needs no network. Always None in production.
+_WALLPAPER_TRANSPORT: Any = None
+
+
+# Dangerous: writes third-party bytes to disk. Mitigated the same way the
+# local upload route is — the downloaded file is decoded and RE-ENCODED by
+# Pillow, so what lands on disk is a fresh WebP the app produced, never the
+# bytes the network delivered.
+@router.post(
+    "/community/wallpapers/{wallpaper_name}/install",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def community_wallpaper_install(
+    wallpaper_name: str, background: BackgroundTasks
+) -> dict[str, Any]:
+    """One-click wallpaper import from the community index.
+
+    The name is the only input and the index is the only source (same
+    doctrine as the skill route): the URL that gets downloaded is the one the
+    moderated feed published, never one the caller supplied. This is also the
+    route behind the storefront's "Add Wallpaper to Personal Jarvis" button —
+    SurfaceSecurity admits exactly this path from exactly the configured
+    storefront origin, so a caller from the web can trigger nothing but a
+    moderated wallpaper appearing in the picker.
+
+    Importing twice is a no-op that returns the existing copy: imports are
+    stamped with an ``origin`` marker the second click finds again.
+    """
+    import httpx
+
+    from jarvis.marketplace import community_source
+    from jarvis.marketplace.install_report import report_install
+    from jarvis.ui.web.wallpapers import (
+        MAX_UPLOAD_BYTES,
+        UploadRejected,
+        WallpaperUploads,
+    )
+
+    index, _ = await community_source.get_index()
+    entry = None
+    if index is not None:
+        entry = next(
+            (w for w in getattr(index, "wallpapers", []) or [] if w.name == wallpaper_name),
+            None,
+        )
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"wallpaper {wallpaper_name!r} is not in the community index",
+        )
+    if not entry.image_url:
+        raise HTTPException(
+            status_code=422,
+            detail=f"wallpaper {wallpaper_name!r} carries no downloadable image — "
+            "the registry published an incomplete entry",
+        )
+
+    origin_marker = f"community:{entry.name}"
+    uploads = WallpaperUploads()
+    existing = uploads.find_origin(origin_marker)
+    if existing is not None:
+        return {"ok": True, "already_installed": True, "wallpaper": existing.to_json()}
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=10.0),
+            follow_redirects=True,
+            transport=_WALLPAPER_TRANSPORT,
+        ) as client:
+            async with client.stream("GET", entry.image_url) as response:
+                response.raise_for_status()
+                received = 0
+                chunks: list[bytes] = []
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > MAX_UPLOAD_BYTES:
+                        # Same ceiling as the local upload route, so "too big
+                        # to upload" and "too big to import" are one number.
+                        raise HTTPException(
+                            status_code=502,
+                            detail="the published image exceeds the import ceiling",
+                        )
+                    chunks.append(chunk)
+        data = b"".join(chunks)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"the wallpaper could not be downloaded: {exc}",
+        ) from exc
+
+    try:
+        item = uploads.add(
+            data,
+            filename=f"{entry.name}.webp",
+            title=entry.title or entry.name,
+            origin=origin_marker,
+        )
+    except UploadRejected as exc:
+        # The store's own sentence, under the store's own status code — a
+        # non-image published by the registry surfaces as exactly that.
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    # The registry's theme call was computed from the full-size original;
+    # prefer it over the local guess when the two disagree.
+    if entry.theme in ("light", "dark") and entry.theme != item.theme:
+        try:
+            item = uploads.set_theme(item.id, entry.theme) or item
+        except UploadRejected:
+            # A failed retheme costs the light/dark sort, never the import.
+            pass
+
+    # The storefront's install count. Runs after the import succeeded and
+    # cannot affect this reply — see install_report.py for what is sent.
+    background.add_task(report_install, "wallpaper", entry.name)
+    return {"ok": True, "already_installed": False, "wallpaper": item.to_json()}

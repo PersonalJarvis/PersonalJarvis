@@ -154,15 +154,18 @@ def install(
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Install a community plugin or skill by name.
+    """Install a community plugin, skill or wallpaper by name.
 
-    Resolves the name against the community index (plugin first, then skill)
-    and runs the matching install route. Community content is UNREVIEWED, so
-    without --yes this prints what the entry would be allowed to do and asks.
+    Resolves the name against the community index (plugin first, then skill,
+    then wallpaper) and runs the matching install route. Plugins and skills
+    are UNREVIEWED, so without --yes this prints what the entry would be
+    allowed to do and asks. Wallpapers are the one human-reviewed lane, and
+    an import is an image re-encoded by the app — no code, no credentials.
     """
     payload = _fetch_community(refresh) or {}
     plugin = _entry_named(payload, "plugins", name)
     skill = _entry_named(payload, "skills", name)
+    wallpaper = _entry_named(payload, "wallpapers", name)
 
     if plugin is not None:
         if not plugin.get("valid"):
@@ -224,6 +227,32 @@ def install(
                 "raw_url": raw_url,
                 "source_url": skill.get("source_url") or "",
             },
+            assume_yes=yes,
+            dry_run=dry_run,
+            dangerous=True,
+        )
+        return
+
+    if wallpaper is not None:
+        if not wallpaper.get("installable"):
+            render.error(
+                f"wallpaper {name!r} is listed but carries no downloadable "
+                "image — the registry published an incomplete entry."
+            )
+            raise typer.Exit(code=1)
+        _echo_trust_summary(
+            [
+                f"Community wallpaper {name!r} by "
+                f"{wallpaper.get('publisher') or 'an unknown publisher'} — "
+                "reviewed before publication.",
+                f"The image is downloaded from: {wallpaper.get('image_url')}",
+                "It is re-encoded on import and lands in the wallpaper picker "
+                "under “Yours” — no code runs, no credentials are involved.",
+            ]
+        )
+        invoke.run(
+            "POST",
+            f"/api/marketplace/community/wallpapers/{name}/install",
             assume_yes=yes,
             dry_run=dry_run,
             dangerous=True,
@@ -297,9 +326,23 @@ def uninstall(
             dangerous=True,
         )
         return
+
+    # Wallpapers DO carry a provenance marker: the import stamped the local
+    # copy with its community name, and the payload surfaced that copy's id.
+    wallpaper = _entry_named(payload, "wallpapers", name)
+    if wallpaper is not None and wallpaper.get("installed") and wallpaper.get("installed_id"):
+        invoke.run(
+            "DELETE",
+            f"/api/wallpapers/uploads/{wallpaper['installed_id']}",
+            assume_yes=yes,
+            dry_run=dry_run,
+            dangerous=True,
+        )
+        return
+
     render.error(
-        f"{name!r} is not an installed community plugin or skill. Installed "
-        "items are marked in the Plugins view; built-in connectors are "
-        "disconnected, not uninstalled."
+        f"{name!r} is not an installed community plugin, skill or wallpaper. "
+        "Installed items are marked in the Plugins view; built-in connectors "
+        "are disconnected, not uninstalled."
     )
     raise typer.Exit(code=1)

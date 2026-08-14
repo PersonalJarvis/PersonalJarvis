@@ -32,7 +32,7 @@ from typing import Literal, TypedDict
 # which is what makes a copy-paste one-liner possible at all.
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$")
 
-EntryKind = Literal["plugin", "skill"]
+EntryKind = Literal["plugin", "skill", "wallpaper"]
 
 
 class InstallBlock(TypedDict):

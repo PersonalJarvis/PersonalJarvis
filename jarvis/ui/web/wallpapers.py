@@ -288,13 +288,18 @@ class UploadRejected(Exception):
 
 @dataclass(frozen=True)
 class UploadedWallpaper:
-    """One wallpaper the owner brought themselves."""
+    """One wallpaper the owner brought themselves (or imported from the store)."""
 
     id: str
     title: str
     theme: str
     created_at: float
     path: Path
+    # Provenance, e.g. ``community:aurora-drift`` for a marketplace import.
+    # ``None`` for the owner's own pictures. This is what lets a second
+    # "Add to Personal Jarvis" click find the existing copy instead of
+    # storing a duplicate.
+    origin: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -302,6 +307,7 @@ class UploadedWallpaper:
             "title": self.title,
             "theme": self.theme,
             "createdAt": self.created_at,
+            "origin": self.origin,
         }
 
 
@@ -353,6 +359,7 @@ class WallpaperUploads:
         theme = "dark"
         title = "Your wallpaper"
         created = 0.0
+        origin: str | None = None
         try:
             meta = json.loads(self._meta_path(upload_id).read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -364,6 +371,11 @@ class WallpaperUploads:
                 theme = str(meta["theme"])
             if str(meta.get("title", "")).strip():
                 title = str(meta["title"]).strip()[:60]
+            if isinstance(meta.get("origin"), str) and meta["origin"].strip():
+                # Capped like the title: the sidecar is data, not a payload.
+                # isinstance, not str(): own uploads write ``"origin": null``,
+                # which must stay None rather than become the text "None".
+                origin = meta["origin"].strip()[:120]
             try:
                 created = float(meta.get("createdAt", 0.0))
             except (TypeError, ValueError):
@@ -376,7 +388,12 @@ class WallpaperUploads:
                 # An unreadable mtime only costs sort order, never the picture.
                 created = 0.0
         return UploadedWallpaper(
-            id=upload_id, title=title, theme=theme, created_at=created, path=image
+            id=upload_id,
+            title=title,
+            theme=theme,
+            created_at=created,
+            path=image,
+            origin=origin,
         )
 
     def _write_meta(self, item: UploadedWallpaper) -> None:
@@ -405,7 +422,24 @@ class WallpaperUploads:
             return None
         return self._read(upload_id)
 
-    def add(self, data: bytes, filename: str = "") -> UploadedWallpaper:
+    def find_origin(self, origin: str) -> UploadedWallpaper | None:
+        """The upload imported from ``origin``, or ``None``.
+
+        A directory scan, like everything else here: a handful of wallpapers
+        never justifies an index that could go stale.
+        """
+        if not origin:
+            return None
+        return next((item for item in self.list() if item.origin == origin), None)
+
+    def add(
+        self,
+        data: bytes,
+        filename: str = "",
+        *,
+        title: str | None = None,
+        origin: str | None = None,
+    ) -> UploadedWallpaper:
         """Validate, re-encode, and store one uploaded picture.
 
         The incoming bytes are decoded by Pillow rather than trusted by their
@@ -458,10 +492,11 @@ class WallpaperUploads:
             upload_id = f"u{secrets.token_hex(8)}"
             item = UploadedWallpaper(
                 id=upload_id,
-                title=_clean_title(filename),
+                title=(title or "").strip()[:60] or _clean_title(filename),
                 theme=theme,
                 created_at=time.time(),
                 path=self._image_path(upload_id),
+                origin=(origin or "").strip()[:120] or None,
             )
             try:
                 _atomic_write(item.path, buffer.getvalue(), prefix=".upload.", suffix=".webp")
@@ -487,6 +522,7 @@ class WallpaperUploads:
                 theme=theme,
                 created_at=item.created_at,
                 path=item.path,
+                origin=item.origin,
             )
             try:
                 self._write_meta(updated)

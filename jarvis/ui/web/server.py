@@ -282,6 +282,12 @@ class WebServer:
             SurfaceSecurity,
             vite_dev_url=vite_dev_url,
             public_urls=public_urls,
+            # The storefront's one cross-site door ("Add Wallpaper to
+            # Personal Jarvis") — scoped inside SurfaceSecurity to exactly
+            # the wallpaper-import path, never a general origin trust.
+            storefront_origin=getattr(
+                getattr(self.cfg, "marketplace", None), "storefront_origin", ""
+            ),
         )
 
         self._register_rest_routes(app)

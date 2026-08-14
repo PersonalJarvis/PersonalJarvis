@@ -750,6 +750,31 @@ def _external_http_auth(path: str, method: str) -> bool:
     )
 
 
+# The ONE route the public storefront origin may call cross-site: the
+# "Add Wallpaper to Personal Jarvis" button. Deliberately a path predicate
+# rather than a trusted-origin entry — putting the storefront into
+# ``trusted_origins`` would let its pages drive EVERY local route through an
+# open-access loopback browser, and a compromised storefront must never be
+# worth more than "a moderated wallpaper appeared in the picker".
+_STOREFRONT_WALLPAPER_PREFIX = "/api/marketplace/community/wallpapers/"
+_STOREFRONT_WALLPAPER_SUFFIX = "/install"
+
+
+def _is_storefront_wallpaper_path(path: str) -> bool:
+    if not path.startswith(_STOREFRONT_WALLPAPER_PREFIX):
+        return False
+    if not path.endswith(_STOREFRONT_WALLPAPER_SUFFIX):
+        return False
+    name = path[len(_STOREFRONT_WALLPAPER_PREFIX) : -len(_STOREFRONT_WALLPAPER_SUFFIX)]
+    return bool(name) and "/" not in name
+
+
+def _origin_header_value(origin: Origin) -> bytes:
+    scheme, host, port = origin
+    rendered = f"{scheme}://{host}" if port is None else f"{scheme}://{host}:{port}"
+    return rendered.encode("latin-1")
+
+
 def _http_auth_exception(path: str, method: str) -> bool:
     return (
         _is_static_request(path, method)
@@ -783,6 +808,7 @@ class SurfaceSecurity:
         public_urls: str | Iterable[str] | None = None,
         trusted_hosts: str | Iterable[str] | None = None,
         trusted_origins: str | Iterable[str] | None = None,
+        storefront_origin: str | None = None,
         bootstrap_tokens: tuple[str, ...] = (),
         control_key_validator: CredentialValidator | None = None,
         session_validator: CredentialValidator | None = None,
@@ -798,6 +824,20 @@ class SurfaceSecurity:
             public_urls=public_urls,
             vite_dev_url=vite_dev_url,
         )
+        # NOT folded into _trusted_origins on purpose — see the comment at
+        # _is_storefront_wallpaper_path. The storefront origin is honored
+        # only on that one path, and only over https (plain http is accepted
+        # for a loopback host alone, so the storefront's own dev server can
+        # exercise the door without a certificate).
+        parsed_storefront = _parse_origin(storefront_origin) if storefront_origin else None
+        if parsed_storefront is not None and parsed_storefront[0] != "https":
+            host = parsed_storefront[1]
+            loopback = host == "localhost" or (
+                _is_ip_literal(host) and ipaddress.ip_address(host).is_loopback
+            )
+            if not loopback:
+                parsed_storefront = None
+        self._storefront_origin = parsed_storefront
         # Bootstrap credentials are deliberately separate from authenticated
         # sessions: they are accepted only by POST /api/ui/session, never as a
         # Bearer token or cookie on a protected API/WebSocket.
@@ -1050,6 +1090,70 @@ class SurfaceSecurity:
         )
         await send({"type": "http.response.body", "body": body})
 
+    def _storefront_scope(self, scope: Scope, path: str) -> bool:
+        """True when this is the storefront origin knocking on its one door."""
+        if self._storefront_origin is None or not _is_storefront_wallpaper_path(path):
+            return False
+        values = _headers(scope, "origin")
+        if len(values) != 1:
+            return False
+        return _parse_origin(values[0]) == self._storefront_origin
+
+    async def _handle_storefront_request(
+        self, scope: Scope, receive: Receive, send: Send, method: str
+    ) -> None:
+        """Answer the storefront's cross-site wallpaper-import call.
+
+        Production mounts no CORS middleware (nothing else is ever called
+        cross-site), so the preflight is answered HERE and the CORS response
+        headers are stamped onto whatever the inner route replies. The
+        credential rules are the normal ones — control key, session, or open
+        access on a loopback machine; a locked instance answers 401, which
+        the storefront may read (the headers are present) and explain.
+        """
+        assert self._storefront_origin is not None  # guarded by _storefront_scope
+        origin_value = _origin_header_value(self._storefront_origin)
+
+        if method == "OPTIONS":
+            headers = [
+                (b"access-control-allow-origin", origin_value),
+                (b"vary", b"Origin"),
+                (b"access-control-allow-methods", b"POST, OPTIONS"),
+                (b"access-control-allow-headers", b"content-type"),
+                (b"access-control-max-age", b"600"),
+                (b"content-length", b"0"),
+            ]
+            # Chromium gates public-site -> loopback fetches behind an extra
+            # preflight opt-in (Private Network Access, renamed Local Network
+            # Access mid-rollout). Answer whichever generation asked; the
+            # unknown header is ignored by browsers that predate it.
+            if _headers(scope, "access-control-request-private-network"):
+                headers.append((b"access-control-allow-private-network", b"true"))
+            if _headers(scope, "access-control-request-local-network"):
+                headers.append((b"access-control-allow-local-network", b"true"))
+            await send({"type": "http.response.start", "status": 204, "headers": headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def send_with_cors(message: Any) -> None:
+            if message.get("type") == "http.response.start":
+                extended = list(message.get("headers") or [])
+                extended.append((b"access-control-allow-origin", origin_value))
+                extended.append((b"vary", b"Origin"))
+                message = {**message, "headers": extended}
+            await send(message)
+
+        if method != "POST":
+            await reject_origin(scope, send_with_cors, receive)
+            return
+        auth_kind = self._authenticate(scope)
+        if auth_kind is None and open_access_granted(scope):
+            auth_kind = "open"
+        if auth_kind is None:
+            await reject_unauthorized(scope, send_with_cors, receive)
+            return
+        await self.app(scope, receive, send_with_cors)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         kind = scope.get("type")
         if kind not in {"http", "websocket"}:
@@ -1063,6 +1167,12 @@ class SurfaceSecurity:
         path = str(scope.get("path", "") or "")
         method = str(scope.get("method", "GET") or "GET").upper()
         self._register_local_tokens_if_available()
+
+        # The storefront's single cross-site door, decided before the general
+        # origin gate below would (correctly) refuse the foreign Origin.
+        if kind == "http" and self._storefront_scope(scope, path):
+            await self._handle_storefront_request(scope, receive, send, method)
+            return
 
         # A supplied Origin is never advisory: malformed, null, or foreign
         # values fail even on otherwise-public static and health requests.
