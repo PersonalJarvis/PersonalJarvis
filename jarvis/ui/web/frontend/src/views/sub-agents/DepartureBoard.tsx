@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  BookOpenText,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 import { failureLabel } from "./failureLabel";
+import { TranscriptDialog } from "./TranscriptDialog";
 
 // Emerald and amber carry meaning the token set has no name for ("finished
 // cleanly" / "stopped on purpose"), so they stay literal — but each needs its
@@ -100,6 +102,7 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
   const assistantName = useEventStore((s) => s.assistantName);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [transcriptAgent, setTranscriptAgent] = useState<SubAgentNode | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -208,6 +211,7 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
                     nowMs={nowMs}
                     expanded={expanded.has(agent.trace_id)}
                     onToggle={() => toggle(agent.trace_id)}
+                    onOpenTranscript={() => setTranscriptAgent(agent)}
                     t={t}
                   />
                 ))}
@@ -216,6 +220,14 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
           </div>
         </div>
       </div>
+
+      <TranscriptDialog
+        agent={transcriptAgent}
+        open={transcriptAgent !== null}
+        onOpenChange={(open) => {
+          if (!open) setTranscriptAgent(null);
+        }}
+      />
     </div>
   );
 }
@@ -288,16 +300,20 @@ function AgentRow({
   nowMs,
   expanded,
   onToggle,
+  onOpenTranscript,
   t,
 }: {
   agent: SubAgentNode;
   nowMs: number;
   expanded: boolean;
   onToggle: () => void;
+  onOpenTranscript: () => void;
   t: (key: string) => string;
 }) {
   const assistantName = useEventStore((s) => s.assistantName);
-  const hasDrilldown = agent.tool_calls.length > 0 || agent.error || agent.prompts.length > 0;
+  // Every row is inspectable: even before the first tool call lands, the
+  // drilldown carries the task details and the transcript entry point.
+  const hasDrilldown = true;
 
   return (
     <div>
@@ -378,6 +394,14 @@ function AgentRow({
                 {failureLabel(agent, t) && (
                   <div className="text-destructive">{failureLabel(agent, t)}</div>
                 )}
+                <button
+                  type="button"
+                  onClick={onOpenTranscript}
+                  className="flex items-center gap-1.5 rounded border border-primary/25 bg-primary/5 px-2.5 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/10"
+                >
+                  <BookOpenText className="h-3.5 w-3.5" />
+                  Open transcript
+                </button>
                 <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/70">
                   trace {agent.trace_id.slice(0, 10)}
                 </div>
