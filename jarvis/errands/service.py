@@ -59,7 +59,10 @@ def _data_dir(config: Any) -> Path:
 def _resolve_brain(manager: Any, config: Any) -> Any | None:
     """The brain an errand thinks with."""
     brain_cfg = getattr(config, "brain", None)
-    provider = getattr(brain_cfg, "provider", None)
+    # BrainConfig names its selected provider ``primary`` — there is no
+    # ``provider`` field, and the lenient getattr default meant reading the
+    # wrong name kept the runner unavailable forever instead of failing loudly.
+    provider = getattr(brain_cfg, "primary", None)
     getter = getattr(manager, "_get_brain", None)
     if not provider or not callable(getter):
         return None
