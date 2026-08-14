@@ -2722,6 +2722,19 @@ class DesktopApp:
 
             return NullOverlay()
         if style == "jarvis_bar":
+            # Windows/Linux prefer the SAME companion-process host macOS uses
+            # (BUG-057 machinery): an in-process bar shares the GIL with wake
+            # models, STT and terminal restores, and any CPU-bound stretch
+            # elsewhere in the process collapses its frame loop to a few
+            # frames per second (measured 2026-07-10; froze the bar for ~30 s
+            # in the 2026-08-14 post-reboot storm). Its own process has its
+            # own GIL, so the bar stays fluid no matter what the app is doing.
+            if getattr(self.cfg.ui, "bar_out_of_process", True):
+                surface = self._try_subprocess_bar(gate_until_voice_ready)
+                if surface is not None:
+                    return surface
+                # Honest degradation: the in-process bar below still renders —
+                # it merely shares the process again (the pre-2026-08 behavior).
             from jarvis.ui.jarvisbar import JarvisBarOverlay
 
             # The startup gate is stronger than merely starting withdrawn: early
@@ -2745,6 +2758,50 @@ class DesktopApp:
                 mascot_path=self.cfg.ui.orb_mascot_path or None,
             )
         surface.start_in_thread()
+        return surface
+
+    def _try_subprocess_bar(self, gate_until_voice_ready: bool):
+        """Spawn the out-of-process bar host; ``None`` when it failed to come up.
+
+        Non-darwin companion to the macOS branch above. Unlike there, a failed
+        spawn has a real fallback (the proven in-process Tk bar), so this
+        reports failure instead of degrading to a no-op surface — the caller
+        decides. ``host_alive`` distinguishes "spawned" from "spawn call
+        swallowed its own failure" (the proxy degrades internally by design).
+        """
+        from loguru import logger
+
+        try:
+            from jarvis.ui.jarvisbar.subprocess_overlay import (
+                SubprocessBarOverlay,
+            )
+
+            surface = SubprocessBarOverlay(
+                persistent=self.cfg.ui.bar_persistent,
+                accent=self.cfg.ui.bar_accent,
+                startup_gated=gate_until_voice_ready,
+                size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
+                follow_cursor_monitor=getattr(
+                    self.cfg.ui, "bar_follow_cursor_monitor", True
+                ),
+            )
+            surface.start_in_thread()
+        except Exception:  # noqa: BLE001 — cosmetic; the in-process bar remains
+            logger.opt(exception=True).warning(
+                "JarvisBar host process failed to start — falling back to the "
+                "in-process bar."
+            )
+            return None
+        if not surface.host_alive:
+            logger.warning(
+                "JarvisBar host process died during startup — falling back to "
+                "the in-process bar."
+            )
+            return None
+        logger.info(
+            "JarvisBar hosted out-of-process (jarvis.ui.jarvisbar.host) — "
+            "its frame loop no longer shares this process's GIL."
+        )
         return surface
 
     def set_bar_persistent(self, enabled: bool) -> dict[str, object]:

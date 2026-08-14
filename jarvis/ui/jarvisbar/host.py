@@ -424,6 +424,20 @@ def main() -> int:
         with contextlib.suppress(Exception):
             stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
+    # This process exists to keep the bar fluid while the parent is busy; the
+    # process boundary already removes the parent's GIL from the equation, and
+    # one scheduling step above normal additionally protects the frame loop
+    # against system-wide CPU storms (post-reboot autostart burst, 2026-08-14
+    # forensic: ~0.3 fps). Quiet no-op wherever the OS refuses.
+    try:
+        from jarvis.core.process_utils import (  # noqa: PLC0415 — after stream setup
+            raise_own_priority_above_normal,
+        )
+
+        raise_own_priority_above_normal()
+    except Exception:  # noqa: BLE001 — a scheduling nicety must never block the bar
+        log.debug("bar-host priority raise skipped", exc_info=True)
+
     init_raw = sys.stdin.readline()
     try:
         cfg = json.loads(init_raw)

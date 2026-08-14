@@ -1586,6 +1586,17 @@ class UIConfig(BaseModel):
     # a headless / Wayland host with no reliable per-monitor geometry keeps the
     # single-monitor behaviour. See jarvis/ui/jarvisbar/interaction.py.
     bar_follow_cursor_monitor: bool = True
+    # Host the bar in its own small companion process (jarvis.ui.jarvisbar.host)
+    # instead of a Tk thread inside the desktop process. An in-process bar
+    # shares the GIL with wake models, STT and terminal restores; measured
+    # forensics (2026-07-10 stutter benchmark, 2026-08-14 post-reboot freeze)
+    # show any CPU-bound stretch elsewhere in the process collapses its frame
+    # loop to a few frames per second — no in-loop pacing can prevent that.
+    # The companion process (the macOS BUG-057 host, now used everywhere) has
+    # its own interpreter and GIL, so the bar stays fluid while the app works.
+    # Off = the previous in-process hosting (escape hatch; ignored on macOS,
+    # where in-process Tk on a worker thread would abort the app natively).
+    bar_out_of_process: bool = True
     # Remembered "open with" choice for Outputs artifacts: an opener id
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.

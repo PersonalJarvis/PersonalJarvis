@@ -235,6 +235,18 @@ class SubprocessBarOverlay:
                 log.debug("JarvisBar host kill failed", exc_info=True)
         self._proc = None
 
+    @property
+    def host_alive(self) -> bool:
+        """Whether the companion host process is currently running.
+
+        The spawn path degrades internally by design (a cosmetic surface must
+        never raise into the app), so callers with a REAL fallback — the
+        non-darwin builder, whose in-process Tk bar still works — use this to
+        distinguish a live host from a silently failed spawn.
+        """
+        proc = self._proc
+        return proc is not None and proc.poll() is None
+
     def _init_payload(self) -> dict[str, Any]:
         """First protocol line sent to the freshly spawned host."""
         init: dict[str, Any] = {

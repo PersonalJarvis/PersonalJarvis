@@ -161,9 +161,45 @@ def disable_windows_app_ghosting() -> bool:
     return True
 
 
+def raise_own_priority_above_normal() -> bool:
+    """Nudge THIS process one scheduling step above normal; quiet no-op elsewhere.
+
+    Meant for tiny latency-sensitive companion processes (the Jarvis Bar host):
+    after a reboot the desktop is a storm of normal-priority autostarts, and a
+    30 fps overlay loses the scheduling lottery against them (measured
+    2026-08-14: the bar rendered at ~0.3 fps through the post-boot storm).
+    One step above normal keeps such a process fluid without starving anyone —
+    this is NOT for the main app, whose heavy work should stay at normal.
+
+    Windows: ``ABOVE_NORMAL_PRIORITY_CLASS`` (no privileges required).
+    POSIX: ``os.nice(-1)``, which usually needs elevated rights — a refusal
+    degrades to a quiet ``False``. Never raises.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes  # noqa: PLC0415 — Windows-only, keep it off the import floor
+
+            above_normal_priority_class = 0x00008000
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            return bool(
+                ctypes.windll.kernel32.SetPriorityClass(
+                    handle, above_normal_priority_class
+                )
+            )
+        except Exception:  # noqa: BLE001 — cosmetic scheduling edge; never block
+            return False
+    try:
+        os.nice(-1)
+    except (OSError, AttributeError):
+        # Unprivileged POSIX processes may not raise their priority — fine.
+        return False
+    return True
+
+
 __all__ = [
     "NO_WINDOW_CREATIONFLAGS",
     "disable_windows_app_ghosting",
     "ensure_standard_streams",
+    "raise_own_priority_above_normal",
     "resolve_executable",
 ]

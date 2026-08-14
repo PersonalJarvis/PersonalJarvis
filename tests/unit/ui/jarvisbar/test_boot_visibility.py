@@ -27,6 +27,10 @@ def _app(*, bar_persistent: bool) -> DesktopApp:
             bar_persistent=bar_persistent,
             bar_accent="#e7c46e",
             orb_mascot_path="",
+            # Pin the in-process path: since 2026-08-14 every platform
+            # defaults to the companion-process host (GIL starvation fix);
+            # these tests deliberately cover the in-process escape hatch.
+            bar_out_of_process=False,
         )
     )
     return app
@@ -34,8 +38,9 @@ def _app(*, bar_persistent: bool) -> DesktopApp:
 
 def _disable_real_tk(monkeypatch) -> None:
     # These tests exercise the in-process Tk lifecycle specifically. The real
-    # macOS desktop selects SubprocessBarOverlay; its mirror/gate contract is
-    # covered in test_subprocess_overlay.py and the Qt host-selection tests.
+    # desktop (every platform) selects SubprocessBarOverlay; its mirror/gate
+    # contract is covered in test_subprocess_overlay.py and the host-selection
+    # tests (test_bar_host_selection.py).
     monkeypatch.setattr(desktop_app_module.sys, "platform", "linux")
     monkeypatch.setattr(JarvisBarOverlay, "start_in_thread", lambda self, timeout=3.0: None)
 
