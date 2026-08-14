@@ -147,3 +147,43 @@ def test_detail_503_when_registry_missing() -> None:
     client = TestClient(app)
     resp = client.get("/api/sub-agents/anything")
     assert resp.status_code == 503
+
+
+def test_transcript_404_without_any_stream(server_bus) -> None:
+    client, _, _ = server_bus
+    resp = client.get("/api/sub-agents/deadbeefdeadbeefdeadbeefdeadbeef/transcript")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_transcript_resolves_the_archived_worker(
+    server_bus, tmp_path, monkeypatch
+) -> None:
+    """A mission row click serves its worker child's archived stream."""
+    import json
+
+    from jarvis.missions import worker_transcript as wt
+
+    client, bus, _registry = server_bus
+    monkeypatch.setattr(wt, "TRANSCRIPT_DIR", tmp_path)
+
+    mission = uuid4()
+    worker = uuid4()
+    await bus.publish(JarvisAgentTaskStarted(trace_id=mission))
+    await bus.publish(
+        JarvisAgentTaskStarted(trace_id=worker, parent_trace_id=mission)
+    )
+
+    stream = json.dumps({
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": "Working on it."}]},
+    })
+    wt.transcript_path(worker.hex).parent.mkdir(parents=True, exist_ok=True)
+    wt.transcript_path(worker.hex).write_text(stream, encoding="utf-8")
+
+    resp = client.get(f"/api/sub-agents/{mission.hex}/transcript")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["source"] == "archive"
+    assert payload["worker_trace_id"] == worker.hex
+    assert payload["items"] == [{"kind": "text", "text": "Working on it."}]

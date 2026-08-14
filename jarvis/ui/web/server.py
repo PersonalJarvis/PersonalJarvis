@@ -386,6 +386,7 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .screen_context_routes import router as screen_context_router
+        from .screenshots_routes import router as screenshots_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
@@ -475,6 +476,9 @@ class WebServer:
 
         app.include_router(browser_voice_router)
         app.include_router(sub_agents_router)
+        # Captured screenshot frames by content hash (flight-recorder blobs) —
+        # the transcript / mission views render them inline.
+        app.include_router(screenshots_router)
         app.include_router(outputs_router)
         app.include_router(downloads_router)
         app.include_router(clipboard_router)
@@ -2880,6 +2884,19 @@ class WebServer:
         registry = getattr(self.app.state, "sub_agent_registry", None)
         if registry is not None:
             registry.attach_mission_bus(result["manager"].bus)
+
+        # Durable worker transcripts: copy each worker's stream.jsonl into
+        # data/agent_transcripts/ when it finishes, so the board's transcript
+        # view survives the mission-dir prune. Also the live-path directory
+        # for GET /api/sub-agents/{trace_id}/transcript while a worker runs.
+        try:
+            from jarvis.missions.worker_transcript import WorkerTranscriptArchiver
+
+            self.app.state.worker_transcript_archiver = (
+                WorkerTranscriptArchiver().attach(result["manager"].bus)
+            )
+        except Exception as exc:  # noqa: BLE001 — observability must not block boot
+            logger.warning("worker transcript archiver wiring failed: {}", exc)
 
         recovered = result["recovered_mission_ids"]
         sweep = result["sweep_stats"]

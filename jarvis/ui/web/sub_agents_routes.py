@@ -3,12 +3,17 @@
 Endpoints:
 - ``GET /api/sub-agents/tree``          → snapshot of all active agents.
 - ``GET /api/sub-agents/{trace_id}``    → a single node (for the detail panel).
+- ``GET /api/sub-agents/{trace_id}/transcript`` → chat-like worker transcript
+  (thinking / tool calls / results), live while running, archived afterwards.
 
 The router expects a ``SubAgentRegistry`` on
-``app.state.sub_agent_registry`` (set by ``WebServer._build_app``).
+``app.state.sub_agent_registry`` (set by ``WebServer._build_app``) and, for
+transcripts, a ``WorkerTranscriptArchiver`` on
+``app.state.worker_transcript_archiver`` (set when the Phase-6 stack boots).
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 
@@ -39,3 +44,42 @@ async def get_agent(trace_id: str, request: Request) -> dict:
     if node is None:
         raise HTTPException(status_code=404, detail=f"agent {trace_id} not found")
     return dataclasses.asdict(node)
+
+
+@router.get("/{trace_id}/transcript")
+async def get_transcript(trace_id: str, request: Request) -> dict:
+    """Chat-like transcript of one worker row.
+
+    ``trace_id`` is the board key of a Worker row (= the mission worker_id).
+    While the worker runs this reads its tee'd ``stream.jsonl`` live; after
+    the mission ends it reads the durable copy in ``data/agent_transcripts/``.
+    404 when neither exists — e.g. router or errand rows, which have no
+    worker stream. Every preview in the response is redacted + capped at
+    parse time (``jarvis.core.redact.safe_preview``).
+    """
+    # Local import: the missions package is heavyweight and must not load on
+    # web-server module import (nothing heavy on the boot critical path).
+    from jarvis.missions.worker_transcript import load_transcript
+
+    archiver = getattr(request.app.state, "worker_transcript_archiver", None)
+    registry = getattr(request.app.state, "sub_agent_registry", None)
+
+    # The clicked row is usually the MISSION node (workers collapse into it
+    # on the board) — the stream belongs to its worker children. Try the row
+    # itself first, then its children newest-first.
+    candidates = [trace_id.replace("-", "")]
+    if registry is not None:
+        node = registry.snapshot().get(candidates[0])
+        if node is not None:
+            candidates.extend(reversed(node.children_trace_ids))
+
+    for candidate in candidates:
+        worktree = (
+            archiver.worktree_for(candidate) if archiver is not None else None
+        )
+        result = await asyncio.to_thread(
+            load_transcript, candidate, worktree=worktree
+        )
+        if result is not None:
+            return {**result, "worker_trace_id": candidate}
+    raise HTTPException(status_code=404, detail=f"no transcript for {trace_id}")
