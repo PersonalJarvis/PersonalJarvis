@@ -4074,6 +4074,12 @@
       "already": "Every terminal already has the same size.",
       "grid_only": "Sizes even out in the terminal grid — there are no boundaries to even here."
     },
+    "tidy": {
+      "label": "Line the terminals up in rows",
+      "hint": "Rebuild the wall as even rows. Every row spans the full width and divides it evenly, so no terminal inherits another row's boundary.",
+      "already": "The terminals are already lined up.",
+      "grid_only": "Terminals line up in the terminal grid — there is no wall to straighten here."
+    },
     "explorer": {
       "title": "Explorer",
       "toggle": "Show or hide the workspace explorer",

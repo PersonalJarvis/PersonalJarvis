@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMFORTABLE_PANE_HEIGHT_PX,
   COMFORTABLE_PANE_WIDTH_PX,
+  COMFORT_REFERENCE_FONT_PX,
   GRID_HORIZONTAL_PADDING_PX,
+  WIZARD_COLUMN_HEIGHT,
   columnDepthFor,
   paneGrid,
   paneWidthAt,
   panesAreComfortable,
+  tidyRowsFor,
   wizardPanes,
 } from "./layout";
 
@@ -137,6 +141,100 @@ describe("columnDepthFor", () => {
     const depth = columnDepthFor({ ...REPORTED, canvasWidthPx: 300 });
     expect(depth).toBe(2);
     expect(Number.isFinite(depth)).toBe(true);
+  });
+});
+
+describe("tidyRowsFor", () => {
+  /*
+   * The workspace from the 2026-08-14 screenshot, at the numbers it was taken
+   * at: five panes on the maintainer's display (~1850 css px of canvas, ~965
+   * high) with the terminal text turned up to 20 px — the size the toolbar
+   * reads in that very screenshot.
+   */
+  const REPORTED = { panes: 5, width: 1850, height: 965, font: 20 };
+  const rowsFor = (over: Partial<typeof REPORTED> = {}) => {
+    const at = { ...REPORTED, ...over };
+    return tidyRowsFor(at.panes, at.width, at.height, at.font);
+  };
+
+  it("straightens the reported workspace into two rows", () => {
+    // Two above three — which is what puts the top seam in the middle, where
+    // the maintainer drew his line. The backend deals the panes onto them.
+    expect(rowsFor()).toBe(2);
+  });
+
+  it("scales its idea of 'wide enough' to the reader's text size", () => {
+    // The same five panes on a window that carries four at the reference size
+    // but only two once the text is nearly doubled. A rule that ignored the
+    // font would call a pane roomy for the very reader who had just made the
+    // text bigger BECAUSE it was too small.
+    const window = 4 * COMFORTABLE_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
+    // Tall enough that only the width rule is being read here; the height floor
+    // has a test of its own below.
+    const tall = 8 * COMFORTABLE_PANE_HEIGHT_PX;
+    expect(rowsFor({ width: window, height: tall, font: COMFORT_REFERENCE_FONT_PX })).toBe(2);
+    expect(
+      rowsFor({ width: window, height: tall, font: 2 * COMFORT_REFERENCE_FONT_PX }),
+    ).toBe(3);
+  });
+
+  it("spends no height it does not have to", () => {
+    // Two panes on a display that carries four side by side stay side by side.
+    // A row is paid for in height, and width is the axis a terminal needs.
+    expect(rowsFor({ panes: 2, font: COMFORT_REFERENCE_FONT_PX })).toBe(1);
+  });
+
+  it("stops adding rows once they would be too short to hold an agent", () => {
+    // Twelve panes on a laptop want four rows on width alone. A 700 px canvas
+    // carries two rows at the height floor, so the straightening stops at two:
+    // a workspace of unusable stripes is not an improvement on an uneven seam.
+    const rows = rowsFor({
+      panes: 12,
+      width: 1440,
+      height: 2 * COMFORTABLE_PANE_HEIGHT_PX + 40,
+      font: COMFORT_REFERENCE_FONT_PX,
+    });
+    expect(rows).toBe(2);
+  });
+
+  it("lets height cap nothing while height is unknown", () => {
+    // Width measured, height not — capping at 1 there would silently refuse the
+    // rows the width evidence already justifies.
+    expect(
+      rowsFor({ panes: 12, width: 1440, height: 0, font: COMFORT_REFERENCE_FONT_PX }),
+    ).toBe(Math.ceil(12 / Math.floor((1440 - GRID_HORIZONTAL_PADDING_PX) / COMFORTABLE_PANE_WIDTH_PX)));
+  });
+
+  it("falls back to the shape a workspace opens in while unmeasured", () => {
+    // The first frames report 0. "We have not measured" must not decide a
+    // rearrangement, so it answers with the app's own opening shape instead.
+    expect(rowsFor({ width: 0 })).toBe(WIZARD_COLUMN_HEIGHT);
+    expect(rowsFor({ width: Number.NaN })).toBe(WIZARD_COLUMN_HEIGHT);
+  });
+
+  it("never asks for more rows than there are panes", () => {
+    // The backend clamps too, but a browser that asked for eight rows for three
+    // panes would be describing a workspace it had not looked at.
+    expect(
+      rowsFor({ panes: 3, width: 200, height: 8 * COMFORTABLE_PANE_HEIGHT_PX, font: 20 }),
+    ).toBe(3);
+    expect(rowsFor({ panes: 1, width: 200 })).toBe(1);
+    expect(rowsFor({ panes: 0 })).toBe(1);
+  });
+
+  it("survives a window narrower than one usable terminal", () => {
+    // It cannot be repaired by adding rows, but it must still answer with a
+    // real number rather than dividing by zero.
+    const rows = rowsFor({ panes: 4, width: 120 });
+    expect(Number.isFinite(rows)).toBe(true);
+    expect(rows).toBeGreaterThanOrEqual(1);
+  });
+
+  it("treats a nonsensical font size as the reference one", () => {
+    expect(rowsFor({ font: Number.NaN })).toBe(
+      rowsFor({ font: COMFORT_REFERENCE_FONT_PX }),
+    );
+    expect(rowsFor({ font: 0 })).toBe(rowsFor({ font: COMFORT_REFERENCE_FONT_PX }));
   });
 });
 

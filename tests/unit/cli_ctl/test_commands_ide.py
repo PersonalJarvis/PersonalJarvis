@@ -20,6 +20,23 @@ def test_rename_terminal_sends_the_new_call_sign(capture_api) -> None:
     assert call["body"] == {"name": "Frontend"}
 
 
+def test_tidy_sends_the_row_count(capture_api) -> None:
+    """Straightening is a layout change, so it needs no confirmation."""
+    result = runner.invoke(app, ["ide", "tidy", "--rows", "3"])
+
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/agentic-ide/terminals/tidy"
+    assert call["body"] == {"rows": 3}
+
+
+def test_tidy_defaults_to_two_rows(capture_api) -> None:
+    """The shape a workspace opens in, and the one the report asked for."""
+    assert runner.invoke(app, ["ide", "tidy"]).exit_code == 0
+    assert capture_api["calls"][-1]["body"] == {"rows": 2}
+
+
 def test_close_terminals_requires_confirmation(capture_api) -> None:
     result = runner.invoke(app, ["ide", "close-terminals", "Mika", "Nova"])
 

@@ -24,6 +24,7 @@ import {
   GripVertical,
   Image as ImageIcon,
   LayoutGrid,
+  LayoutPanelTop,
   ListChecks,
   Loader2,
   MessagesSquare,
@@ -64,6 +65,7 @@ import {
   type PaneSeam,
 } from "./treeLayout";
 import { useTreeSizes } from "./useTreeSizes";
+import { tidyRowsFor } from "./layout";
 import {
   describeLayoutViolations,
   findLayoutViolations,
@@ -108,6 +110,7 @@ import {
   renameTerminal,
   saveTerminalFontSize,
   syncAgenticIdeSurface,
+  tidyWorkspace,
   setTerminalRecap,
   promptTerminal,
   type DropAttachment,
@@ -1708,6 +1711,71 @@ export function AgenticGrid({
     [onSessionChanged, pushToast, session.layout, t],
   );
 
+  /*
+   * "Line them up" — the workspace rebuilt as even, full-width rows.
+   *
+   * The complaint it answers arrived as a screenshot on 2026-08-14: two panes
+   * across the top of the workspace, and the seam between them two thirds of
+   * the way across rather than in the middle — lined up with the seam of the
+   * row BELOW. Nothing had been dragged there. Splits are local by design (a
+   * split carves only the clicked pane's rectangle), so a pane whose branch
+   * was split again beneath it ends up spanning both halves and inherits a
+   * boundary from panes it has nothing to do with.
+   *
+   * "Even them out" cannot fix that and deliberately does not try: it levels
+   * SIZES and never rearranges, and by its rule the reported workspace is
+   * already even — a pane above two panes is honestly worth two shares. So
+   * this is the second, admitted act: the arrangement is rebuilt so that every
+   * row spans the full width and divides it evenly among its own panes.
+   *
+   * The row count is decided HERE because only the browser knows how wide the
+   * window is and how large the reader set the terminal text; the deal itself
+   * is the backend's, like every other structural change (a second placement
+   * arithmetic in the browser would drift from the one on disk, and the
+   * workspace on disk is what a restart brings back).
+   */
+  const tidyPanes = useCallback(async () => {
+    const rows = tidyRowsFor(
+      session.terminals.length,
+      canvasRef.current?.clientWidth ?? 0,
+      canvasRef.current?.clientHeight ?? 0,
+      fontSize,
+    );
+    setWorking(true);
+    try {
+      const next = await tidyWorkspace(rows);
+      // Locally dragged widths belong to the arrangement that was just
+      // replaced — keeping them would paint the old workspace over the new one.
+      sizes.reset();
+      /*
+       * A straightening that changes nothing must SAY so. A workspace already
+       * in rows is the common case for a second click, and a grid that simply
+       * sits there is exactly what reads as a dead button (the lesson from the
+       * silent no-op drop, 2026-08-07).
+       */
+      if (
+        JSON.stringify(next.layout ?? null) ===
+        JSON.stringify(session.layout ?? null)
+      ) {
+        pushToast("info", t("agentic_grid.tidy.already"));
+        return;
+      }
+      onSessionChanged?.(next);
+    } catch (error) {
+      pushToast("error", (error as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  }, [
+    fontSize,
+    onSessionChanged,
+    pushToast,
+    session.layout,
+    session.terminals.length,
+    sizes.reset,
+    t,
+  ]);
+
   const arrange = usePaneArrange(
     useCallback(
       (moved: string, target: string, zone: DropZone) => {
@@ -2387,6 +2455,32 @@ export function AgenticGrid({
           className={TOOLBAR_BTN}
         >
           <AlignHorizontalDistributeCenter className="h-4 w-4 shrink-0" />
+        </button>
+
+        {/* Line them up. Right beside "even them out" because the two are the
+            same question at different depths — that one levels the sizes
+            within the arrangement, this one rebuilds the arrangement so the
+            sizes can be level at all (2026-08-14).
+
+            Deliberately NOT disabled on "already lined up": answering that
+            would mean a second copy of the backend's dealing arithmetic in the
+            browser, and the two would drift. The workspace itself says so
+            instead, in a toast, once the answer is in. Off in chat view and
+            while a pane is maximized, where there is no wall to straighten. */}
+        <button
+          type="button"
+          data-testid="agentic-tidy-panes"
+          onClick={() => void tidyPanes()}
+          disabled={chatView || maximized !== null || session.terminals.length < 2}
+          title={
+            chatView || maximized !== null
+              ? t("agentic_grid.tidy.grid_only")
+              : t("agentic_grid.tidy.hint")
+          }
+          aria-label={t("agentic_grid.tidy.label")}
+          className={TOOLBAR_BTN}
+        >
+          <LayoutPanelTop className="h-4 w-4 shrink-0" />
         </button>
 
         {/* Appearance stays behind one quiet menu; text size is deliberately

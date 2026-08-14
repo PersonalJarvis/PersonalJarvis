@@ -4019,6 +4019,61 @@ class Registry:
             )
             return session
 
+    async def tidy(self, rows: int) -> Session:
+        """Straighten the workspace into ``rows`` full-width rows of equal panes.
+
+        The split tree keeps every split LOCAL, which is the whole reason it
+        replaced the flat grid — and it is also how a workspace drifts out of
+        alignment. Split the top-left pane downwards, split the pane below it
+        sideways, and the top pane now spans both: its branch is two panes
+        wide, so the seam between the two TOP panes lands wherever the seam
+        below them is. The top of the workspace looks tied to the bottom right
+        of it, and no amount of evening out the sizes moves it — by the
+        even-out rule that arrangement already IS even, because a pane above
+        two panes is honestly worth two shares (reported with a drawing on
+        2026-08-14).
+
+        So this is a second, ADMITTED rearrangement, and the counterpart of
+        the toolbar's "even them out": that one keeps the arrangement and
+        levels the sizes, this one keeps the sizes level by rebuilding the
+        arrangement. Every row spans the full width and splits it evenly among
+        its own panes, and the rows are the same height.
+
+        Panes are dealt in the order they are READ on screen, not in the tree's
+        own depth-first order, so nothing crosses the workspace: what was on
+        top stays on top, left to right. No agent is started or stopped and no
+        pane is remounted — only where each one is drawn, exactly as for a
+        move.
+
+        ``rows`` comes from the client because only the client knows how wide
+        the window is and how big the user set the terminal text; it is
+        clamped here to something this workspace can actually hold.
+        """
+        async with self._lock:
+            session = self.session
+            if session is None:
+                raise SessionError("No Agentic-IDE session is running.")
+            if rows < 1:
+                raise SessionError("A workspace needs at least one row.")
+            # More rows than panes is the same shape as one pane per row.
+            # Accepting it rather than refusing keeps the caller from having to
+            # clamp a number it derived from a measurement.
+            rows = min(rows, max(1, len(session.terminals)))
+
+            # Weights reset by construction: a straightening is a whole-
+            # workspace re-deal, and carrying dragged widths from an
+            # arrangement that no longer exists would land the workspace in a
+            # shape nobody has seen before.
+            session.layout = layout_tree.tidy_tree(session.layout, rows)
+            self._renumber(session)
+            await self._persist()
+            logger.info(
+                "Agentic IDE: lined {} panes up into {} rows",
+                len(session.terminals),
+                rows,
+            )
+            return session
+
     async def set_layout_weights(self, layout: dict[str, Any]) -> Session:
         """Adopt a client's dragged pane sizes; the STRUCTURE stays the server's.
 

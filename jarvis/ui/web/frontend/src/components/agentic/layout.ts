@@ -85,6 +85,33 @@
 export const COMFORTABLE_PANE_WIDTH_PX = 380;
 
 /**
+ * Below this a pane is too SHORT to be worth the width a row costs it.
+ *
+ * A coding CLI anchors its input box to its bottom row, so a pane folded until
+ * it can no longer hold the agent's interface has traded one unreadable pane
+ * for another. Deliberately far below "comfortable": this is the floor that
+ * stops `tidyRowsFor` from dealing a fourth row onto a laptop, not a target.
+ * At the reference text size it is roughly a dozen visible lines plus the
+ * pane's own header and status row — thin, but still a terminal.
+ */
+export const COMFORTABLE_PANE_HEIGHT_PX = 260;
+
+/**
+ * The text size the two comfort figures above were measured at.
+ *
+ * They are pixel counts, so they only mean anything together with a font size:
+ * 380 px is ~45 characters at 13 px monospace and ~29 at 20 px, and a rule that
+ * ignored that would call a pane roomy for a reader who had just made the text
+ * bigger BECAUSE it was too small. Everything that compares a measured window
+ * against them scales them by `fontSizePx / this`.
+ *
+ * The same number as `FONT_DEFAULT` in `./AgenticGrid` and the default in
+ * `jarvis/agentic_ide/ui_prefs.py`, and for the same reason: the size a
+ * workspace opens at is the size its comfort was judged at.
+ */
+export const COMFORT_REFERENCE_FONT_PX = 13;
+
+/**
  * The count from which opening a workspace has to be confirmed out loud.
  *
  * NOT a limit, and deliberately not derived from the window either. The
@@ -306,6 +333,61 @@ export function columnDepthFor(measurements: RefoldMeasurements): number {
   }
   const bearable = Math.max(1, Math.floor(height / floorPx));
   return Math.min(wanted, bearable);
+}
+
+/**
+ * How many full-width rows the workspace should be straightened into.
+ *
+ * The companion of the backend's `tidy_tree`, and the half of it that has to
+ * live in the browser: only the browser knows how wide this window is and how
+ * large the reader set the terminal text. The backend deals the panes; this
+ * decides how many lines to deal them onto.
+ *
+ * The rule is "as few rows as the width can carry", because a row is paid for
+ * in height and the axis a terminal actually needs is width — the same
+ * ordering `columnDepthFor` follows, and the reason the workspace opens two
+ * deep rather than as square as possible (see {@link WIZARD_COLUMN_HEIGHT}).
+ * Both comfort figures are scaled to the reader's text size, so making the
+ * text bigger folds the workspace instead of leaving it in a shape that was
+ * only comfortable at 13 px.
+ *
+ * The height floor is the second half: past it a row would be too short to
+ * hold an agent's interface, and a workspace of unusable stripes is not an
+ * improvement on one uneven seam. An unmeasured window (the first frames
+ * report 0) falls back to the shape a workspace opens in rather than guessing.
+ */
+export function tidyRowsFor(
+  paneCount: number,
+  canvasWidthPx: number,
+  canvasHeightPx: number,
+  fontSizePx: number,
+): number {
+  const panes = Math.max(0, Math.trunc(paneCount));
+  if (panes <= 1) return 1;
+
+  const size =
+    Number.isFinite(fontSizePx) && fontSizePx > 0
+      ? fontSizePx
+      : COMFORT_REFERENCE_FONT_PX;
+  const scale = size / COMFORT_REFERENCE_FONT_PX;
+
+  const content = Math.max(0, canvasWidthPx - GRID_HORIZONTAL_PADDING_PX);
+  // Nothing measured yet — and "we have not measured" must not decide a
+  // rearrangement. The workspace's own opening shape is the honest default.
+  if (!Number.isFinite(content) || content <= 0) {
+    return Math.min(panes, WIZARD_COLUMN_HEIGHT);
+  }
+
+  const perRow = Math.max(1, Math.floor(content / (COMFORTABLE_PANE_WIDTH_PX * scale)));
+  const wanted = Math.min(panes, Math.ceil(panes / perRow));
+
+  const height = canvasHeightPx;
+  if (!Number.isFinite(height) || height <= 0) return wanted;
+  const bearable = Math.max(
+    1,
+    Math.floor(height / (COMFORTABLE_PANE_HEIGHT_PX * scale)),
+  );
+  return Math.max(1, Math.min(wanted, bearable));
 }
 
 /** Where one pane sits in the CSS grid. All values are 1-based, as CSS wants. */

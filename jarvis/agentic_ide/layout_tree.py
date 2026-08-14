@@ -205,6 +205,153 @@ def from_grid(entries: Iterable[tuple[str, int, int]]) -> LayoutNode | None:
     return Split(direction="row", children=columns, weights=[1.0] * len(columns))
 
 
+@dataclass(frozen=True, slots=True)
+class Box:
+    """Where one pane is DRAWN, as fractions of the workspace on both axes."""
+
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+def pane_boxes(root: LayoutNode | None) -> dict[str, Box]:
+    """Every pane's rectangle, keyed by pane.
+
+    The same walk the frontend paints with (``treeLayout.ts``): a ``row``
+    hands each child a slice of its width in proportion to the weights, a
+    ``column`` a slice of its height, and a leaf keeps whatever rectangle it
+    was handed. Fractions rather than pixels, because the workspace is always
+    exactly the window it is given and the window is not this module's
+    business.
+
+    It exists so the server can answer "which pane is drawn where" without a
+    client telling it — what :func:`tidy_tree` needs to re-deal panes in the
+    order they are actually READ rather than the order the split history left
+    them in.
+    """
+    if root is None:
+        return {}
+
+    found: dict[str, Box] = {}
+
+    def walk(node: LayoutNode, box: Box) -> None:
+        if isinstance(node, Leaf):
+            found[node.pane] = box
+            return
+        weights = [
+            _clean_weight(node.weights[index] if index < len(node.weights) else 1.0)
+            for index in range(len(node.children))
+        ]
+        total = sum(weights) or 1.0
+        along = box.w if node.direction == "row" else box.h
+        cursor = box.x if node.direction == "row" else box.y
+        for child, weight in zip(node.children, weights, strict=True):
+            share = (weight / total) * along
+            if node.direction == "row":
+                walk(child, Box(x=cursor, y=box.y, w=share, h=box.h))
+            else:
+                walk(child, Box(x=box.x, y=cursor, w=box.w, h=share))
+            cursor += share
+
+    walk(root, Box(x=0.0, y=0.0, w=1.0, h=1.0))
+    return found
+
+
+#: How close two edges may be and still count as the same one when panes are
+#: sorted into reading order. Fractions of the workspace, so on a 4K display
+#: this is roughly two pixels — far below anything a user could point at, and
+#: loose enough that the float noise a chain of drags leaves behind cannot
+#: reorder two panes that visibly start on the same line.
+_EDGE_EPSILON = 1e-3
+
+
+def visual_order(root: LayoutNode | None) -> list[str]:
+    """Every pane key in the order the SCREEN reads: top to bottom, left to right.
+
+    Deliberately NOT :func:`leaves`. That one walks the tree, so it reports
+    the order the split HISTORY produced — for a workspace of one wide pane
+    above two narrow ones beside a stack of two, it reads down the left branch
+    before ever reaching the top-right pane. Nobody looking at the screen
+    reads it that way, and re-arranging by it would teleport panes across the
+    workspace for no reason the user can see.
+
+    Sorted by each pane's top-left corner instead, which is what a reader
+    actually follows. Ties within a hairline count as the same line (see
+    ``_EDGE_EPSILON``) so two panes that visibly start together are ordered by
+    their left edge rather than by float noise.
+    """
+    boxes = pane_boxes(root)
+    if not boxes:
+        return []
+    step = _EDGE_EPSILON
+    return sorted(
+        boxes,
+        key=lambda pane: (
+            round(boxes[pane].y / step),
+            round(boxes[pane].x / step),
+            pane,
+        ),
+    )
+
+
+def row_sizes(count: int, rows: int) -> list[int]:
+    """How many panes each of ``rows`` rows holds, as evenly as they divide.
+
+    The remainder goes to the LAST rows: five panes over two rows is two above
+    three, never three above two. That is the shape the maintainer drew on
+    2026-08-14 — a short row reads as the top of a wall, a short row at the
+    bottom reads as an unfinished one — and it also keeps the widest row
+    nearest the prompt bar, where the pane being typed into usually is.
+    """
+    total = max(0, int(count))
+    lines = max(1, min(int(rows), total or 1))
+    base, extra = divmod(total, lines)
+    return [base + (1 if index >= lines - extra else 0) for index in range(lines)]
+
+
+def tidy_tree(root: LayoutNode | None, rows: int) -> LayoutNode | None:
+    """Re-deal every pane into ``rows`` FULL-WIDTH rows of equal panes.
+
+    The split tree makes every split local, which is what makes it the right
+    model (see the module header) — and it is also why a workspace drifts out
+    of alignment. Split the top-left pane downwards, then split the pane below
+    it sideways, and the top pane is left spanning both: not because anyone
+    chose it, but because its branch is now two panes wide. The seam between
+    the two top panes therefore lands wherever the seam BELOW them is, and the
+    top of the workspace looks tied to the bottom right of it (reported with a
+    drawing on 2026-08-14).
+
+    This is the deliberate straightening. Every row spans the whole width and
+    divides it evenly among its own panes, so a row of two is halved down the
+    middle whatever the row beneath it does, and the rows themselves are the
+    same height. Panes are dealt in :func:`visual_order`, so nothing crosses
+    the workspace: the panes on top stay on top, in the order they are read.
+
+    Distinct from :func:`wizard_tree`, which deals COLUMNS of a given depth
+    and is the shape a workspace opens in. Both are whole-workspace re-deals;
+    this one is the answer to "line it up", that one to "it is too narrow".
+    """
+    order = visual_order(root)
+    if not order:
+        return None
+
+    lines: list[LayoutNode] = []
+    cursor = 0
+    for size in row_sizes(len(order), rows):
+        chunk = [Leaf(pane=key) for key in order[cursor : cursor + size]]
+        cursor += size
+        if not chunk:
+            continue
+        if len(chunk) == 1:
+            lines.append(chunk[0])
+        else:
+            lines.append(Split(direction="row", children=list(chunk), weights=[1.0] * len(chunk)))
+    if len(lines) == 1:
+        return normalize(lines[0])
+    return normalize(Split(direction="column", children=lines, weights=[1.0] * len(lines)))
+
+
 def _insert_beside(
     node: LayoutNode,
     anchor: str,

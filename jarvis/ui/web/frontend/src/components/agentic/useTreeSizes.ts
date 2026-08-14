@@ -62,6 +62,15 @@ export interface TreeSizeControls {
   /** Every pane back to an equal share — the toolbar's "even out". */
   evenAll: () => void;
   /**
+   * Drop any locally held sizes and follow the server again.
+   *
+   * What a whole-workspace RE-DEAL needs (the toolbar's "line them up"): the
+   * override normally survives until the server's tree changes shape, and a
+   * straightening that only moved the seams would otherwise leave the dragged
+   * widths painted over the answer that was just asked for.
+   */
+  reset: () => void;
+  /**
    * The tree a drag is currently at, or null when nothing is being dragged.
    * How a caller that repaints mid-gesture recovers the in-flight sizes.
    */
@@ -256,7 +265,22 @@ export function useTreeSizes(
     commit(evenedTree(current));
   }, [commit]);
 
-  return { tree, dragging, startDrag, nudge, even, evenAll, liveTree: live };
+  /*
+   * A pending save is dropped with the override rather than flushed: it
+   * describes an arrangement the caller is in the middle of replacing, and the
+   * backend would decline it anyway (it adopts weights only into the shape it
+   * already has). Flushing it would be one pointless request per straightening.
+   */
+  const reset = useCallback(() => {
+    if (saveTimer.current !== undefined) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = undefined;
+    }
+    pendingSave.current = null;
+    setOverride(null);
+  }, []);
+
+  return { tree, dragging, startDrag, nudge, even, evenAll, reset, liveTree: live };
 }
 
 export { KEY_STEP_PX };

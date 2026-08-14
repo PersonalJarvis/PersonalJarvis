@@ -310,6 +310,22 @@ class RefoldRequest(BaseModel):
     )
 
 
+class TidyRequest(BaseModel):
+    """How many full-width rows the workspace should be lined up into."""
+
+    rows: int = Field(
+        ge=1,
+        le=MAX_TERMINALS,
+        description=(
+            "Rows to deal the panes into, top to bottom. Each row spans the "
+            "whole width and divides it evenly among its own panes, so the "
+            "seams of one row never inherit the seams of another. The caller "
+            "picks the number because only it knows how wide the window is "
+            "and how large the terminal text was set."
+        ),
+    )
+
+
 class LayoutWeightsRequest(BaseModel):
     """The workspace tree as the dragging client saw it, weights included."""
 
@@ -2365,6 +2381,40 @@ async def refold_workspace(req: RefoldRequest) -> dict:
     return {
         "ok": True,
         "depth": req.depth,
+        "terminals": [t.to_dict() for t in session.terminals],
+        "state": get_registry().state(),
+    }
+
+
+@router.post("/terminals/tidy", summary="Line the workspace up into even full-width rows")
+async def tidy_workspace(req: TidyRequest) -> dict:
+    """Re-deal every pane into ``rows`` full-width rows, evenly divided.
+
+    The counterpart of the toolbar's "even them out". That one levels the
+    SIZES and never touches the arrangement; this one rebuilds the
+    arrangement so the sizes can be level at all. Splitting panes one at a
+    time leaves a workspace where a pane's width is inherited from the branch
+    it happens to sit in — two panes on top whose seam lands two thirds
+    across, because the pane below them was split again (reported with a
+    drawing on 2026-08-14). Here every row spans the full width and divides it
+    evenly among its own panes, and the rows are the same height.
+
+    Panes keep their reading order, so nothing crosses the workspace: what was
+    on top stays on top, left to right. Nothing is started, stopped, resized
+    or remounted — only where each pane is drawn. Lining up a workspace that
+    is already lined up succeeds and changes nothing.
+    """
+    try:
+        session = await get_registry().tidy(req.rows)
+    except SessionError as exc:
+        message = str(exc)
+        # A row count this workspace cannot hold is the caller's arithmetic; a
+        # workspace that is not open is a conflict nothing here can fix.
+        status = 409 if "No Agentic-IDE session" in message else 422
+        raise HTTPException(status_code=status, detail=message) from exc
+    return {
+        "ok": True,
+        "rows": req.rows,
         "terminals": [t.to_dict() for t in session.terminals],
         "state": get_registry().state(),
     }

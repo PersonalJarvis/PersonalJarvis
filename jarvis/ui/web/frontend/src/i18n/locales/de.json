@@ -4074,6 +4074,12 @@
       "already": "Alle Terminals haben bereits dieselbe Größe.",
       "grid_only": "Größen gleichen sich im Terminal-Raster an — hier gibt es keine Grenzen zum Angleichen."
     },
+    "tidy": {
+      "label": "Terminals in Reihen ausrichten",
+      "hint": "Baut die Wand als gleichmäßige Reihen neu auf. Jede Reihe geht über die volle Breite und teilt sie gleichmäßig, damit kein Terminal die Kante einer anderen Reihe erbt.",
+      "already": "Die Terminals sind bereits ausgerichtet.",
+      "grid_only": "Terminals richten sich im Terminal-Raster aus — hier gibt es keine Wand zum Ausrichten."
+    },
     "explorer": {
       "title": "Explorer",
       "toggle": "Workspace-Explorer ein- oder ausblenden",

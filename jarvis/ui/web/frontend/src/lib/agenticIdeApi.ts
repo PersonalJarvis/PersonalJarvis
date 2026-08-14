@@ -1067,6 +1067,33 @@ export async function saveLayoutWeights(layout: LayoutNode): Promise<SessionStat
   return body.state.session;
 }
 
+/**
+ * Straighten the workspace into ``rows`` full-width rows of equal panes.
+ *
+ * The counterpart of "even them out": that one levels the sizes and leaves the
+ * arrangement alone, this one rebuilds the arrangement so the sizes CAN be
+ * level. Splitting panes one at a time leaves a workspace where a pane's width
+ * is inherited from the branch it happens to sit in — two panes on top whose
+ * seam lands two thirds across because the pane below them was split again.
+ *
+ * The row count is decided here rather than on the server because only the
+ * browser knows how wide the window is and how large the terminal text was
+ * set. Nothing is started, stopped or remounted; the answer carries the whole
+ * workspace, so the grid redraws from this call alone.
+ */
+export async function tidyWorkspace(rows: number): Promise<SessionState> {
+  const res = await fetch("/api/agentic-ide/terminals/tidy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rows }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  if (!body.state.session)
+    throw new Error("The workspace closed while lining the terminals up.");
+  return body.state.session;
+}
+
 /** Where a dragged pane may land relative to the pane it was dropped on. */
 export type PaneMovePosition = "swap" | "left" | "right" | "above" | "below";
 

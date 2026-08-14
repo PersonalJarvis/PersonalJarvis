@@ -4074,6 +4074,12 @@
       "already": "Todos los terminales ya tienen el mismo tamaño.",
       "grid_only": "Los tamaños se igualan en la cuadrícula de terminales: aquí no hay bordes que igualar."
     },
+    "tidy": {
+      "label": "Alinear los terminales en filas",
+      "hint": "Reconstruye el muro en filas uniformes. Cada fila ocupa todo el ancho y lo divide por igual, así ningún terminal hereda el borde de otra fila.",
+      "already": "Los terminales ya están alineados.",
+      "grid_only": "Los terminales se alinean en la cuadrícula de terminales: aquí no hay muro que enderezar."
+    },
     "explorer": {
       "title": "Explorador",
       "toggle": "Mostrar u ocultar el explorador del espacio de trabajo",

@@ -43,6 +43,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   moveTerminal: vi.fn(),
   renameTerminal: vi.fn(),
   saveLayoutWeights: vi.fn(),
+  tidyWorkspace: vi.fn(),
   // Polled by the grid so the pane headers keep saying what their agents are
   // doing. Resolves empty by default; the recap tests give it real rows.
   fetchTerminalRecaps: vi.fn(async () => ({
@@ -1828,6 +1829,189 @@ describe("resizing the workspace", () => {
 
       fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
       expect(disabled("agentic-even-panes")).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  /*
+   * The toolbar's "line them up" button.
+   *
+   * Its report arrived as a screenshot on 2026-08-14: two panes across the top
+   * of the workspace, and the seam between them two thirds of the way across
+   * rather than in the middle — inherited from the row BELOW, where a pane had
+   * been split again. "Even them out" is no help there and must not try: by its
+   * rule that workspace already IS even, because a pane above two panes is
+   * honestly worth two shares.
+   *
+   * So the two buttons divide the work, and these tests pin the division: this
+   * one asks the BACKEND to re-deal the panes (the dealing arithmetic lives in
+   * one place, `layout_tree.tidy_tree`), and all the browser contributes is how
+   * many rows this window and this text size can carry.
+   */
+  /** The screenshot's workspace: T1 alone above T2|T5, beside a stack of two. */
+  const REPORTED_LAYOUT: LayoutNode = {
+    direction: "row",
+    children: [
+      {
+        direction: "column",
+        children: [
+          { pane: "mika" },
+          {
+            direction: "row",
+            children: [{ pane: "nova" }, { pane: "vega" }],
+            weights: [1, 1],
+          },
+        ],
+        weights: [1, 1],
+      },
+      {
+        direction: "column",
+        children: [{ pane: "aria" }, { pane: "kai" }],
+        weights: [1, 1],
+      },
+    ],
+    weights: [2, 1],
+  };
+  const reportedSession = () =>
+    sessionWith(
+      [
+        ["Mika", 0],
+        ["Nova", 0, 1],
+        ["Vega", 1],
+        ["Aria", 2],
+        ["Kai", 2, 1],
+      ],
+      REPORTED_LAYOUT,
+    );
+
+  it("asks for the rows this window can carry", async () => {
+    // The maintainer's own numbers: five panes on ~1850 px of canvas. Two rows
+    // — which is what puts the top seam in the middle, where the line in the
+    // screenshot was drawn. (How the reader's text size moves that count is
+    // `tidyRowsFor`'s own business, pinned in `layout.test.ts`.)
+    const restore = measured(1850, 965);
+    try {
+      vi.mocked(api.tidyWorkspace).mockResolvedValue(reportedSession());
+      renderGrid(reportedSession());
+
+      fireEvent.click(screen.getByTestId("agentic-tidy-panes"));
+
+      await waitFor(() => expect(api.tidyWorkspace).toHaveBeenCalledWith(2));
+    } finally {
+      restore();
+    }
+  });
+
+  it("draws the straightened workspace the backend answers with", async () => {
+    const restore = measured(1850, 965);
+    try {
+      // Two full-width rows: Mika|Aria on top, the other three below.
+      const straight = sessionWith(
+        [
+          ["Mika", 0],
+          ["Aria", 1],
+          ["Nova", 0, 1],
+          ["Vega", 1, 1],
+          ["Kai", 2, 1],
+        ],
+        {
+          direction: "column",
+          children: [
+            {
+              direction: "row",
+              children: [{ pane: "mika" }, { pane: "aria" }],
+              weights: [1, 1],
+            },
+            {
+              direction: "row",
+              children: [{ pane: "nova" }, { pane: "vega" }, { pane: "kai" }],
+              weights: [1, 1, 1],
+            },
+          ],
+          weights: [1, 1],
+        },
+      );
+      vi.mocked(api.tidyWorkspace).mockResolvedValue(straight);
+      const { onSessionChanged, rerender } = renderGrid(reportedSession());
+      // The complaint, measured: the top seam sits at two thirds.
+      expect(widthOf("Mika")).toBeCloseTo(66.7, 0);
+
+      fireEvent.click(screen.getByTestId("agentic-tidy-panes"));
+      await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(straight));
+      rerender({ session: straight });
+
+      // ...and afterwards exactly in the middle, whatever the row below does.
+      expect(widthOf("Mika")).toBe(50);
+      expect(box("Aria").left).toBe(50);
+      expect(box("Nova").left).toBe(0);
+      expect(widthOf("Nova")).toBeCloseTo(33.3, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("says so instead of sitting there when nothing needed straightening", async () => {
+    // A grid that simply does not move is what reads as a dead button — the
+    // lesson from the silent no-op drop (2026-08-07).
+    const restore = measured(1850, 965);
+    try {
+      const already = reportedSession();
+      vi.mocked(api.tidyWorkspace).mockResolvedValue(already);
+      const { onSessionChanged } = renderGrid(already);
+
+      fireEvent.click(screen.getByTestId("agentic-tidy-panes"));
+
+      await waitFor(() => expect(pushToast).toHaveBeenCalledWith("info", expect.any(String)));
+      expect(onSessionChanged).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("drops locally dragged sizes when the workspace is re-dealt", async () => {
+    // The dragged widths belong to the arrangement that was just replaced.
+    // Keeping them would paint the old workspace over the answer that was
+    // asked for — the seam override survives until the SHAPE changes, and a
+    // straightening that only moved seams would slip past that guard.
+    const restore = measured(1850, 965);
+    try {
+      const already = reportedSession();
+      vi.mocked(api.tidyWorkspace).mockResolvedValue(already);
+      renderGrid(already);
+      dragSeamBy("pane-seam-root:1", -400, 1850);
+      expect(widthOf("Mika")).not.toBeCloseTo(66.7, 0);
+
+      fireEvent.click(screen.getByTestId("agentic-tidy-panes"));
+
+      await waitFor(() => expect(widthOf("Mika")).toBeCloseTo(66.7, 0));
+    } finally {
+      restore();
+    }
+  });
+
+  it("stands down where there is no wall to straighten", () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0]]));
+      // One pane is not an arrangement.
+      expect(disabled("agentic-tidy-panes")).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stands down while one pane covers the others, like evening out does", () => {
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      expect(disabled("agentic-tidy-panes")).toBe(false);
+
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      expect(disabled("agentic-tidy-panes")).toBe(true);
+
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      expect(disabled("agentic-tidy-panes")).toBe(false);
     } finally {
       restore();
     }

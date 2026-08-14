@@ -27,6 +27,33 @@ def rename_terminal(
     )
 
 
+@app.command("tidy")
+def tidy(
+    rows: Annotated[
+        int,
+        typer.Option(
+            "--rows",
+            min=1,
+            help="Full-width rows to deal the panes into, top to bottom.",
+        ),
+    ] = 2,
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Line the workspace up into even, full-width rows of terminals.
+
+    Every row spans the whole width and divides it evenly among its own panes,
+    so no terminal inherits a boundary from the row above or below it. Nothing
+    is started or stopped — only where each pane is drawn.
+    """
+    invoke.run(
+        "POST",
+        "/api/agentic-ide/terminals/tidy",
+        body={"rows": rows},
+        dry_run=dry_run,
+        dangerous=False,
+    )
+
+
 @app.command("close-terminals")
 def close_terminals(
     names: Annotated[list[str], typer.Argument(help="Terminal call-signs to close.")],
