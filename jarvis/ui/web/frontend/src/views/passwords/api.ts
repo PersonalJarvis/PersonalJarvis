@@ -10,6 +10,14 @@
 
 export type LoginStatus = "unknown" | "ok" | "rejected";
 
+/**
+ * Whose account a record is. "user" = the person at the screen, the assistant
+ * acts on their behalf; "agent" = an account the assistant holds in its own
+ * name. Mirrors `jarvis.logins.store.CredentialOwner` — the wire strings are
+ * the enum values, and the server rejects anything else with a 400.
+ */
+export type LoginOwner = "user" | "agent";
+
 export interface LoginSummary {
   service_id: string;
   label: string;
@@ -22,6 +30,12 @@ export interface LoginSummary {
   created_at: string | null;
   updated_at: string | null;
   last_used_at: string | null;
+  owner: LoginOwner;
+  kind: string;
+  /** Non-secret extra detail (an address, a base URL) — safe to display. */
+  fields: Record<string, string>;
+  /** NAMES of additional stored secrets. The values never reach this client. */
+  secret_names: string[];
 }
 
 export interface LoginSecrets {
@@ -38,6 +52,7 @@ export interface LoginDraft {
   password: string;
   notes: string;
   totp_secret?: string | null;
+  owner?: LoginOwner;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -58,27 +73,64 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function listLogins(): Promise<LoginSummary[]> {
-  const body = await request<{ logins: LoginSummary[] }>("/api/logins");
-  return body.logins;
+/**
+ * Fill in the fields an OLDER running server does not send yet. The desktop's
+ * Python process does not hot-reload, so a freshly built frontend routinely
+ * talks to a server from before `owner`/`kind`/`fields` existed — and every
+ * record from that era is the user's own, which is exactly what the backend
+ * itself assumes when reading old records.
+ */
+function normalizeSummary(raw: Partial<LoginSummary> & { service_id: string }): LoginSummary {
+  return {
+    label: raw.service_id,
+    domains: [],
+    username: "",
+    notes: "",
+    has_password: false,
+    has_totp: false,
+    status: "unknown",
+    created_at: null,
+    updated_at: null,
+    last_used_at: null,
+    ...raw,
+    owner: raw.owner === "agent" ? "agent" : "user",
+    kind: raw.kind || "website",
+    fields: raw.fields ?? {},
+    secret_names: raw.secret_names ?? [],
+  };
 }
 
-export function createLogin(draft: LoginDraft): Promise<LoginSummary> {
-  return request<LoginSummary>("/api/logins", {
-    method: "POST",
-    body: JSON.stringify(draft),
-  });
+export async function listLogins(): Promise<LoginSummary[]> {
+  const body = await request<{ logins: (Partial<LoginSummary> & { service_id: string })[] }>(
+    "/api/logins",
+  );
+  return body.logins.map(normalizeSummary);
+}
+
+export async function createLogin(draft: LoginDraft): Promise<LoginSummary> {
+  const created = await request<Partial<LoginSummary> & { service_id: string }>(
+    "/api/logins",
+    {
+      method: "POST",
+      body: JSON.stringify(draft),
+    },
+  );
+  return normalizeSummary(created);
 }
 
 /** Partial edit. Omitted fields stay as they are — that is the server contract. */
-export function updateLogin(
+export async function updateLogin(
   serviceId: string,
   patch: Partial<LoginDraft>,
 ): Promise<LoginSummary> {
-  return request<LoginSummary>(`/api/logins/${encodeURIComponent(serviceId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  });
+  const updated = await request<Partial<LoginSummary> & { service_id: string }>(
+    `/api/logins/${encodeURIComponent(serviceId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    },
+  );
+  return normalizeSummary(updated);
 }
 
 export function deleteLogin(serviceId: string): Promise<{ removed: boolean }> {
