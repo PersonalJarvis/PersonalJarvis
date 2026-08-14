@@ -17,6 +17,7 @@ import os
 import secrets
 import sys
 import threading
+import time
 import tomllib
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -4082,6 +4083,70 @@ def _heal_dictation_hotkeys_once(path: Path) -> None:
         pass
 
 
+#: A config load is NOT free: the TOML cache spares the parse, but every call
+#: still pays the structural copy, the env-override pass and a full Pydantic
+#: validation of the whole document — measured 2026-08-14 at 0.51 ms on this
+#: install. With 130 call sites treating it as a cheap getter (often to read a
+#: single flag), one caller polling it in a loop saturates a core, and because
+#: that work holds the GIL it stops every other Python thread in the process:
+#: the log falls silent and the desktop window stops answering Windows, which
+#: the user sees as "Not Responding". Measured that day: a single io-pool
+#: thread at 99.5% doing nothing but this, for minutes.
+#:
+#: So the burst is made to name itself. Counting is two integers on the common
+#: path; the stack is formatted only when the rate is already pathological, and
+#: then at most once per cooldown, so the diagnostic can never become the load.
+_LOAD_RATE_WINDOW_S = 5.0
+#: 60 loads/second sustained. Ordinary use is a few per second at most (a view
+#: opening, a turn starting); nothing legitimate polls the config this hard.
+_LOAD_RATE_ALERT = int(_LOAD_RATE_WINDOW_S * 60)
+_LOAD_RATE_COOLDOWN_S = 120.0
+_load_rate_lock = threading.Lock()
+_load_rate_window_started = 0.0
+_load_rate_count = 0
+_load_rate_last_alert = 0.0
+
+
+def _note_config_load() -> None:
+    """Count config loads and, when the rate says "loop", name the caller once."""
+    global _load_rate_window_started, _load_rate_count, _load_rate_last_alert
+
+    now = time.monotonic()
+    with _load_rate_lock:
+        if now - _load_rate_window_started > _LOAD_RATE_WINDOW_S:
+            _load_rate_window_started = now
+            _load_rate_count = 1
+            return
+        _load_rate_count += 1
+        if _load_rate_count < _LOAD_RATE_ALERT:
+            return
+        if now - _load_rate_last_alert < _LOAD_RATE_COOLDOWN_S:
+            # Still storming, already reported. Restart the window so the next
+            # report after the cooldown measures a fresh burst, not this one.
+            _load_rate_window_started = now
+            _load_rate_count = 0
+            return
+        _load_rate_last_alert = now
+        burst = _load_rate_count
+        _load_rate_count = 0
+        _load_rate_window_started = now
+
+    # Outside the lock on purpose: formatting a stack is the expensive half, and
+    # it must not serialise the very callers being measured.
+    import traceback  # noqa: PLC0415 - only reached on a pathological burst
+
+    caller = "".join(traceback.format_stack(limit=14)[:-1])
+    logging.getLogger(__name__).warning(
+        "config load storm: %d loads in %.0fs (~%.0f/s, ~%.0f%% of one core) — "
+        "this is a loop, not usage. Caller:\n%s",
+        burst,
+        _LOAD_RATE_WINDOW_S,
+        burst / _LOAD_RATE_WINDOW_S,
+        burst * 0.51 / _LOAD_RATE_WINDOW_S / 10.0,
+        caller,
+    )
+
+
 def load_config(
     config_file: Path | None = None,
     profile: str | None = None,
@@ -4097,6 +4162,7 @@ def load_config(
     ``JARVIS_CONFIG`` override is honoured (cloud-first). An explicit path still
     wins for callers that target a specific file.
     """
+    _note_config_load()
     if config_file is None:
         config_file = resolve_config_path()
         # The codex-subscription-realtime adapter was removed 2026-08-10. A

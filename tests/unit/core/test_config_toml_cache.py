@@ -239,3 +239,72 @@ def test_json_env_can_replace_an_arbitrary_mapping(monkeypatch):
     result = config_module._apply_env_overrides(data)
 
     assert result["example"]["mapping"] == {"nested": "updated"}
+
+
+# --------------------------------------------------------------------------
+# Load-rate alarm
+#
+# The cache above removed the PARSE from a repeat load; it did not make a load
+# free. Every call still pays the structural copy, the env pass and a full
+# Pydantic validation — 0.51 ms measured 2026-08-14. That is small enough to
+# look free at a call site and large enough that ~2000 calls/s saturate a core,
+# and since the work holds the GIL it stops every other thread in the process:
+# the same "Not responding" window this module's docstring describes, returned
+# on 2026-08-14 with the burner inside `_copy_toml_data` instead of `tomllib`
+# (28 of 30 stack samples). A caller looping on the config is therefore made to
+# announce itself instead of being absorbed silently by a faster cache.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_state():
+    """Rate state is module-global; no test may inherit another's window."""
+    config_module._load_rate_window_started = 0.0
+    config_module._load_rate_count = 0
+    config_module._load_rate_last_alert = 0.0
+    yield
+    config_module._load_rate_window_started = 0.0
+    config_module._load_rate_count = 0
+    config_module._load_rate_last_alert = 0.0
+
+
+def test_ordinary_load_rate_stays_silent(caplog):
+    """Normal use must never produce the alarm, or it teaches people to ignore it."""
+    with caplog.at_level("WARNING", logger="jarvis.core.config"):
+        for _ in range(config_module._LOAD_RATE_ALERT - 1):
+            config_module._note_config_load()
+
+    assert "config load storm" not in caplog.text
+
+
+def test_a_storming_caller_is_named_once(caplog):
+    """The alarm fires on a pathological rate and points at the calling frame."""
+    with caplog.at_level("WARNING", logger="jarvis.core.config"):
+        for _ in range(config_module._LOAD_RATE_ALERT + 50):
+            config_module._note_config_load()
+
+    storms = [r for r in caplog.records if "config load storm" in r.getMessage()]
+    assert len(storms) == 1, "one burst must produce exactly one report"
+    # The stack has to reach the actual caller, which is this test.
+    assert "test_config_toml_cache.py" in storms[0].getMessage()
+
+
+def test_a_continuing_storm_does_not_flood_the_log(caplog):
+    """A wedged caller must not turn one defect into thousands of log lines."""
+    with caplog.at_level("WARNING", logger="jarvis.core.config"):
+        for _ in range(config_module._LOAD_RATE_ALERT * 5):
+            config_module._note_config_load()
+
+    storms = [r for r in caplog.records if "config load storm" in r.getMessage()]
+    assert len(storms) == 1, "the cooldown must hold while the storm continues"
+
+
+def test_load_config_counts_through_the_public_entry_point(tmp_path, monkeypatch):
+    """The counter sits in load_config itself, not only in the helper."""
+    target = tmp_path / "jarvis.toml"
+    _write(target, '[brain]\nprimary = "gemini"\n')
+
+    before = config_module._load_rate_count
+    config_module.load_config(config_file=target)
+
+    assert config_module._load_rate_count != before
