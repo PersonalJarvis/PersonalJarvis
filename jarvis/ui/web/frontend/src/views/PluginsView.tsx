@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { CommunityTab } from "@/views/PluginsCommunity";
+import { PublishTab } from "@/views/PluginsPublish";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
@@ -368,7 +369,7 @@ const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
   asana: "https://app.asana.com/0/my-apps",
 };
 
-type TabId = "browse" | "installed" | "community";
+type TabId = "browse" | "installed" | "community" | "publish";
 type FilterId = "all" | Category;
 
 /** Section order for the store, straight from the catalog. Any category the
@@ -723,12 +724,19 @@ export function PluginsView() {
           active={tab === "community"}
           onClick={() => setTab("community")}
         />
+        <Tab
+          label="Publish"
+          active={tab === "publish"}
+          onClick={() => setTab("publish")}
+        />
       </div>
 
       <ScrollArea className="flex-1">
         <div className="relative mx-auto max-w-3xl px-6 pb-20 pt-14">
           <AttentionBanner plugins={attentionPlugins} onJump={jumpToFirstProblem} />
-          {tab === "community" ? (
+          {tab === "publish" ? (
+            <PublishTab />
+          ) : tab === "community" ? (
             <CommunityTab />
           ) : tab === "browse" ? (
             <BrowseLayout
