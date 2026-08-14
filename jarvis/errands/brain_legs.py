@@ -55,6 +55,7 @@ class BrainLegExecutor:
         system_prompt: str,
         instruction: str,
         with_tools: bool,
+        user_utterance: str = "",
     ) -> LegOutcome:
         # A judgement leg gets NO tools at all. This is structural rather than
         # advisory: a verifier holding a browser tool goes and looks something
@@ -73,8 +74,36 @@ class BrainLegExecutor:
         )
         aggregate = await loop.run(
             [BrainMessage(role="user", content=instruction)],
-            user_utterance=instruction,
+            # The consent gates (intent_confirms_args, the spawn gate, the
+            # computer-use gate) judge this string as if the user spoke it.
+            # It must therefore be the USER's words — the goal and their
+            # answers — and NEVER the step intent: the intent is model text,
+            # and a model that writes "delete the old folder" as its own plan
+            # step must not thereby waive the destructive-command confirm.
+            # Same reasoning as spawn_gate.py's "never the model's paraphrase".
+            user_utterance=user_utterance,
+            # Defer consequential (ask-tier) tools instead of blocking on a
+            # UI approval nobody is watching: without this, an ask-tier call
+            # inside a detached errand parked 60 s on an unattributed approval
+            # card, then failed as "approval-denied (timeout)" and the run was
+            # misreported as a stall. The deferral surfaces as a question the
+            # runner can route to the user (C10/C11).
+            voice_confirm=with_tools,
         )
+        if getattr(aggregate, "finish_reason", "") == "voice_confirm_pending":
+            # The executor stashed the consequential action and the loop
+            # composed a localized confirmation question. Translate it into
+            # the runner's ONE escape hatch: the errand pauses in NEEDS_INPUT,
+            # the announcer speaks the question, and the user's answer returns
+            # via answer_errand — in their own words, which is exactly what
+            # the consent gates need to let the retried call through.
+            question = (aggregate.text or "").strip() or (
+                "May I go ahead with the pending consequential action?"
+            )
+            return LegOutcome(
+                text=f"NEEDS-USER: {question}",
+                tools_used=tuple(sorted(aggregate.executed_tool_names)),
+            )
         return LegOutcome(
             text=aggregate.text or "",
             # ``executed_tool_names`` is what ACTUALLY ran, not what the model

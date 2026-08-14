@@ -55,13 +55,16 @@ class ScriptedLegs:
         self.rechecks = rechecks or []
         self.tools_used = tools_used
         self.calls: list[str] = []
+        #: (phase, user_utterance) per call — what the consent gates would see.
+        self.utterances: list[tuple[str, str]] = []
         self._work_i = 0
         self._verdict_i = 0
         self._recheck_i = 0
 
     async def __call__(
-        self, *, system_prompt: str, instruction: str, with_tools: bool
+        self, *, system_prompt: str, instruction: str, with_tools: bool, user_utterance: str = ""
     ) -> LegOutcome:
+        self.utterances.append((self._phase_of(system_prompt), user_utterance))
         if _CONTEXT.lower() in system_prompt.lower():
             self.calls.append("context")
             return LegOutcome(text=self.context, tools_used=("calendar",))
@@ -89,6 +92,19 @@ class ScriptedLegs:
         text = self._take(self.work, self._work_i, "I tried something.")
         self._work_i += 1
         return LegOutcome(text=text, tools_used=self.tools_used)
+
+    def _phase_of(self, system_prompt: str) -> str:
+        lowered = system_prompt.lower()
+        for phase, marker in (
+            ("context", _CONTEXT),
+            ("clarify", _CLARIFY),
+            ("plan", _PLAN),
+            ("verify", _VERIFY),
+            ("recheck", _RECHECK),
+        ):
+            if marker.lower() in lowered:
+                return phase
+        return "work"
 
     @staticmethod
     def _take(seq, index, default):
@@ -384,11 +400,21 @@ async def test_an_errand_waiting_on_the_user_stays_waiting_after_a_restart(
 @pytest.mark.asyncio
 async def test_a_failing_leg_is_recorded_not_raised(store: ErrandStore) -> None:
     class Exploding(ScriptedLegs):
-        async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+        async def __call__(
+            self,
+            *,
+            system_prompt: str,
+            instruction: str,
+            with_tools: bool,
+            user_utterance: str = "",
+        ):
             if _WORK.lower() in system_prompt.lower():
                 raise RuntimeError("provider went away")
             return await super().__call__(
-                system_prompt=system_prompt, instruction=instruction, with_tools=with_tools
+                system_prompt=system_prompt,
+                instruction=instruction,
+                with_tools=with_tools,
+                user_utterance=user_utterance,
             )
 
     legs = Exploding(verdicts=[{"done": False}])
@@ -402,12 +428,22 @@ async def test_unparseable_verdict_is_read_as_not_done(store: ErrandStore) -> No
     """The safe reading: garbage from the judge must never complete an errand."""
 
     class Garbled(ScriptedLegs):
-        async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+        async def __call__(
+            self,
+            *,
+            system_prompt: str,
+            instruction: str,
+            with_tools: bool,
+            user_utterance: str = "",
+        ):
             if _VERIFY.lower() in system_prompt.lower():
                 self.calls.append("verify")
                 return LegOutcome(text="Sure, looks done to me!")
             return await super().__call__(
-                system_prompt=system_prompt, instruction=instruction, with_tools=with_tools
+                system_prompt=system_prompt,
+                instruction=instruction,
+                with_tools=with_tools,
+                user_utterance=user_utterance,
             )
 
     legs = Garbled(work=["tried"], rechecks=[{"route_exists": False, "why_impossible": "x"}])
@@ -418,14 +454,24 @@ async def test_unparseable_verdict_is_read_as_not_done(store: ErrandStore) -> No
 @pytest.mark.asyncio
 async def test_fenced_json_is_accepted(store: ErrandStore) -> None:
     class Fenced(ScriptedLegs):
-        async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+        async def __call__(
+            self,
+            *,
+            system_prompt: str,
+            instruction: str,
+            with_tools: bool,
+            user_utterance: str = "",
+        ):
             if _VERIFY.lower() in system_prompt.lower():
                 self.calls.append("verify")
                 return LegOutcome(
                     text='Here you go:\n```json\n{"done": true, "proof": "ref P1"}\n```'
                 )
             return await super().__call__(
-                system_prompt=system_prompt, instruction=instruction, with_tools=with_tools
+                system_prompt=system_prompt,
+                instruction=instruction,
+                with_tools=with_tools,
+                user_utterance=user_utterance,
             )
 
     legs = Fenced(work=["did it. EVIDENCE: ref P1"])
@@ -443,7 +489,14 @@ async def test_runaway_backstop_reports_itself_as_a_fault(store: ErrandStore) ->
         judges by facts, correctly sees progress and never fires. This is the
         exact hole the backstop exists to cover."""
 
-        async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+        async def __call__(
+            self,
+            *,
+            system_prompt: str,
+            instruction: str,
+            with_tools: bool,
+            user_utterance: str = "",
+        ):
             if _WORK.lower() in system_prompt.lower():
                 self.calls.append("work")
                 self._work_i += 1
@@ -452,7 +505,10 @@ async def test_runaway_backstop_reports_itself_as_a_fault(store: ErrandStore) ->
                     tools_used=self.tools_used,
                 )
             return await super().__call__(
-                system_prompt=system_prompt, instruction=instruction, with_tools=with_tools
+                system_prompt=system_prompt,
+                instruction=instruction,
+                with_tools=with_tools,
+                user_utterance=user_utterance,
             )
 
     legs = NeverRepeats(verdicts=[{"done": False}])
@@ -484,11 +540,21 @@ async def test_start_returns_while_the_loop_is_still_working(store: ErrandStore)
     gate = asyncio.Event()
 
     class Gated(ScriptedLegs):
-        async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+        async def __call__(
+            self,
+            *,
+            system_prompt: str,
+            instruction: str,
+            with_tools: bool,
+            user_utterance: str = "",
+        ):
             if _WORK.lower() in system_prompt.lower():
                 await asyncio.wait_for(gate.wait(), timeout=10)
             return await super().__call__(
-                system_prompt=system_prompt, instruction=instruction, with_tools=with_tools
+                system_prompt=system_prompt,
+                instruction=instruction,
+                with_tools=with_tools,
+                user_utterance=user_utterance,
             )
 
     legs = Gated(

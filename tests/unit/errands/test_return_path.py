@@ -179,11 +179,21 @@ async def test_a_cancellation_is_not_spoken_but_still_signalled(
     gate = asyncio.Event()
 
     class Gated(ScriptedLegs):
-        async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+        async def __call__(
+            self,
+            *,
+            system_prompt: str,
+            instruction: str,
+            with_tools: bool,
+            user_utterance: str = "",
+        ):
             if "WORKING on the errand".lower() in system_prompt.lower():
                 await asyncio.wait_for(gate.wait(), timeout=10)
             return await super().__call__(
-                system_prompt=system_prompt, instruction=instruction, with_tools=with_tools
+                system_prompt=system_prompt,
+                instruction=instruction,
+                with_tools=with_tools,
+                user_utterance=user_utterance,
             )
 
     ErrandAnnouncer(bus=bus).start()

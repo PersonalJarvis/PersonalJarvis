@@ -88,7 +88,14 @@ def test_a_still_running_errand_keeps_nothing_yet() -> None:
 class MinimalLegs:
     """One evidence-bearing step, then the verifier accepts."""
 
-    async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+    async def __call__(
+        self,
+        *,
+        system_prompt: str,
+        instruction: str,
+        with_tools: bool,
+        user_utterance: str = "",
+    ):
         lowered = system_prompt.lower()
         if "gathering context" in lowered:
             return LegOutcome(text="FOUND: nothing useful")

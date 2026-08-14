@@ -116,7 +116,12 @@ class LegExecutor(Protocol):
         system_prompt: str,
         instruction: str,
         with_tools: bool,
+        user_utterance: str = "",
     ) -> LegOutcome: ...
+    # ``user_utterance`` carries the USER's verbatim words (goal + answers)
+    # for the consent gates in the tool layer. Never the step intent: the
+    # intent is model-authored, and gates that read it as the user's voice
+    # let a plan step waive a destructive-command confirmation.
 
 
 @dataclass
@@ -242,6 +247,7 @@ class ErrandRunner:
                 system_prompt=context_prompt(errand, sources=sources, unresolved=unresolved),
                 instruction=f"Find out what you can about: {errand.goal}",
                 with_tools=True,
+                utterance=_user_words(errand),
             )
             found = _after_marker(outcome.text, "FOUND:") or outcome.text.strip()
             errand = errand.model_copy(
@@ -439,6 +445,7 @@ class ErrandRunner:
             system_prompt=step_prompt(errand, intent),
             instruction=intent,
             with_tools=True,
+            utterance=_user_words(errand),
         )
         evidence = tuple(
             Evidence(
@@ -482,12 +489,20 @@ class ErrandRunner:
         )
         return _parse_json(outcome.text)
 
-    async def _leg(self, *, system_prompt: str, instruction: str, with_tools: bool) -> LegOutcome:
+    async def _leg(
+        self,
+        *,
+        system_prompt: str,
+        instruction: str,
+        with_tools: bool,
+        utterance: str = "",
+    ) -> LegOutcome:
         try:
             return await self.execute_leg(
                 system_prompt=system_prompt,
                 instruction=instruction,
                 with_tools=with_tools,
+                user_utterance=utterance,
             )
         except Exception as exc:  # noqa: BLE001 — a failed leg is data, not a crash
             log.warning("errand leg failed: %s", exc, exc_info=True)
@@ -527,6 +542,16 @@ class ErrandRunner:
 # ----------------------------------------------------------------------
 # Pure helpers
 # ----------------------------------------------------------------------
+
+
+def _user_words(errand: Errand) -> str:
+    """Everything the USER actually said about this errand — goal + answers.
+
+    This is what the tool layer's consent gates are allowed to judge. A
+    user who answers "yes, buy the ticket" has consented in their own words;
+    a plan step that says the same has not.
+    """
+    return f"{errand.goal}\n{errand.answers}".strip() if errand.answers else errand.goal
 
 
 def _next_intent(errand: Errand) -> str:

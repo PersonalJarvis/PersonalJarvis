@@ -74,7 +74,12 @@ class C13Legs:
         self._score_i = 0
 
     async def __call__(
-        self, *, system_prompt: str, instruction: str, with_tools: bool
+        self,
+        *,
+        system_prompt: str,
+        instruction: str,
+        with_tools: bool,
+        user_utterance: str = "",
     ) -> LegOutcome:
         lowered = system_prompt.lower()
         if _CONTEXT.lower() in lowered:
