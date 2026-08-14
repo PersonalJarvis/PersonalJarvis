@@ -56,7 +56,10 @@ log = logging.getLogger(__name__)
 #: Which side of the ledger an action applies to. ``any`` is the default for
 #: reads because "is anything stored for this site" is a legitimate question,
 #: and forcing a choice there would make the model guess before it has the
-#: information the choice depends on.
+#: information the choice depends on. When both identities hold a login for
+#: the same site, ``any`` resolves to the user's — the store prefers the
+#: user's record in the unfiltered lookup, because a caller that named no
+#: owner is acting on the user's behalf by default.
 _OWNERS: dict[str, CredentialOwner | None] = {
     "user": CredentialOwner.USER,
     "agent": CredentialOwner.AGENT,
@@ -133,7 +136,8 @@ class CredentialsTool:
                     "Whose account you mean. 'user' = the user's own account, "
                     "acting on their behalf. 'agent' = an account you hold in "
                     "your own name, acting as yourself. Defaults to 'any', "
-                    "which only tells you what exists."
+                    "which reports what exists and returns the user's account "
+                    "when both have a login for the site."
                 ),
             },
             "url": {

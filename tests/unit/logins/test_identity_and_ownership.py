@@ -132,6 +132,71 @@ class TestOwnership:
         """"Is anything stored for this site" stays a legitimate question."""
         assert both.find_for_url("github.com") is not None
 
+    def test_a_lookup_without_an_owner_prefers_the_users_account(
+        self, both: CredentialStore
+    ) -> None:
+        """The unnamed case resolves to the user, deterministically.
+
+        Both records match ``github.com``. Which one comes back must not
+        depend on index order: a caller that named no owner is acting on the
+        user's behalf by default, so it gets the user's login — the
+        assistant's own is only picked when asked for via ``owner=AGENT``.
+        """
+        found = both.find_for_url("https://github.com/login")
+
+        assert found is not None
+        assert found.service_id == "github-user"
+        assert found.owner is CredentialOwner.USER
+
+    def test_the_owner_default_outranks_domain_specificity(
+        self, store: CredentialStore
+    ) -> None:
+        """A more specific agent domain does not beat the user's record."""
+        store.save(
+            Credential(
+                service_id="google-user",
+                label="Google (mine)",
+                domains=("google.com",),
+                username="me",
+                password=_USER_PASSWORD,
+            )
+        )
+        store.save(
+            Credential(
+                service_id="google-agent",
+                label="Google (assistant)",
+                domains=("accounts.google.com",),
+                username="assistant",
+                password=_AGENT_PASSWORD,
+                owner=CredentialOwner.AGENT,
+            )
+        )
+
+        found = store.find_for_url("https://accounts.google.com/signin")
+
+        assert found is not None
+        assert found.service_id == "google-user"
+
+    def test_an_agent_only_login_is_still_found_without_an_owner(
+        self, store: CredentialStore
+    ) -> None:
+        """Preferring the user must not hide the only record that exists."""
+        store.save(
+            Credential(
+                service_id="forge",
+                label="Forge (assistant)",
+                domains=("forge.example",),
+                username="assistant",
+                password=_AGENT_PASSWORD,
+                owner=CredentialOwner.AGENT,
+            )
+        )
+
+        found = store.find_for_url("forge.example")
+
+        assert found is not None
+        assert found.service_id == "forge"
+
     def test_an_owner_filter_that_matches_nothing_returns_nothing(
         self, store: CredentialStore
     ) -> None:

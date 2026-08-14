@@ -36,6 +36,12 @@ that only ever borrows the user's logins puts the user's name on everything it
 does and cannot be revoked without revoking the user. A record written before
 this field existed reads back as ``USER``, which is what it always was.
 
+A lookup that names no owner defaults towards the user: when both identities
+hold a login for the same site, :meth:`CredentialStore.find_for_url` returns
+the user's record. Acting on the user's behalf is the assistant's default
+posture, so the unnamed case must resolve to the account the user recognises;
+the assistant's own account is only picked when the caller asks for it.
+
 The owner lives on the record rather than in a second, parallel vault on
 purpose. Two stores would mean two code paths that can leak a password, two
 index entries to keep consistent, and a merge problem the first time something
@@ -484,14 +490,23 @@ class CredentialStore:
                 assistant's own account and got the user's would sign the user
                 in to a site the assistant was meant to enter under its own
                 name — silently, and with the user's session left behind in the
-                browser profile. Absent means "any", for the "is anything
-                stored for this domain" question.
+                browser profile. Absent means "any" — and there the user's own
+                record outranks an agent-owned one covering the same site,
+                before domain specificity. A caller that names no owner is
+                presumed to act on the user's behalf (that is the assistant's
+                default posture), so the pick must be deterministic and err
+                towards the account the user recognises, never towards
+                whichever record happens to sit earlier in the index. The
+                assistant's own account is still found when it is the only
+                match, and is chosen deliberately via ``owner=AGENT``.
         """
         host = normalize_domain(url_or_host)
         if not host:
             return None
         best: Credential | None = None
-        best_len = -1
+        # (owner rank, domain-match length). With an owner filter set the rank
+        # is constant and the key degrades to plain specificity.
+        best_key = (-1, -1)
         for service_id in self._read_index():
             try:
                 cred = self.load(service_id)
@@ -505,8 +520,9 @@ class CredentialStore:
                 (len(d) for d in cred.domains if host == d or host.endswith(f".{d}")),
                 default=0,
             )
-            if longest > best_len:
-                best, best_len = cred, longest
+            key = (1 if cred.owner is CredentialOwner.USER else 0, longest)
+            if key > best_key:
+                best, best_key = cred, key
         return best
 
     # -- writes ----------------------------------------------------------
