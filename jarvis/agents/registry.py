@@ -26,6 +26,9 @@ from uuid import UUID
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
+    ActionDenied,
+    ActionExecuted,
+    ActionProposed,
     BrainTurnCompleted,
     BrainTurnStarted,
     ErrandNeedsInput,
@@ -38,6 +41,7 @@ from jarvis.core.events import (
     ToolCallCompleted,
     ToolCallStarted,
 )
+from jarvis.core.redact import safe_preview
 from jarvis.missions.events import (
     CriticVerdictReady,
     EventEnvelope,
@@ -154,6 +158,16 @@ class JarvisAgentRegistry:
         self._bus.subscribe(BrainTurnCompleted, self._on_brain_turn_completed)
         self._bus.subscribe(ToolCallStarted, self._on_tool_call_started)
         self._bus.subscribe(ToolCallCompleted, self._on_tool_call_completed)
+        # The live tool vocabulary: every supervisor-executed call publishes
+        # Action* (ToolExecutor). Only events stamped with a mission_id are
+        # agent work — the ADR-0025 gateway stamps brokered worker calls, the
+        # mainline chat/voice path leaves both attribution fields None. This
+        # is what fills the board's Tools column; ToolCallStarted/Completed
+        # above is the never-published sibling vocabulary kept for
+        # compatibility (cf. lib/thinkingSteps.ts which handles both).
+        self._bus.subscribe(ActionProposed, self._on_action_proposed)
+        self._bus.subscribe(ActionExecuted, self._on_action_executed)
+        self._bus.subscribe(ActionDenied, self._on_action_denied)
         self._bus.subscribe(HarnessDispatched, self._on_harness_dispatched)
         self._bus.subscribe(HarnessCompleted, self._on_harness_completed)
         # Errands (jarvis/errands/) publish flat lifecycle events on the same
@@ -304,6 +318,77 @@ class JarvisAgentRegistry:
                     entry["output_preview"] = e.output_preview
                     entry["error"] = e.error
                     return
+
+    def _action_target(
+        self, e: ActionProposed | ActionExecuted | ActionDenied
+    ) -> AgentNode | None:
+        """Board node a supervisor-executed action belongs to, or None.
+
+        Only events stamped with a mission_id are agent work — mainline
+        chat/voice turns fire the same Action* events with both attribution
+        fields None and must not litter the board. The MISSION node is
+        preferred: the board collapses each worker into its mission row
+        (``rows.ts::selectTaskRows``), so calls attached to the worker child
+        would never surface. The worker node is the fallback for an orphaned
+        worker whose mission row already faded out.
+        """
+        if not e.mission_id:
+            return None
+        node = self._nodes.get(_tid(e.mission_id) or "")
+        if node is not None:
+            return node
+        if e.worker_id:
+            return self._nodes.get(_tid(e.worker_id) or "")
+        return None
+
+    async def _on_action_proposed(self, e: ActionProposed) -> None:
+        node = self._action_target(e)
+        if node is None:
+            return
+        node.tool_calls.append({
+            "trace_id": _tid(e.trace_id),
+            "tool_name": e.tool_name,
+            # e.args is the raw dict and may hold PII/secrets — same rule as
+            # the session recorder: only a redacted, capped preview may reach
+            # the REST snapshot / WS mirror.
+            "args_preview": safe_preview(e.args, max_chars=240),
+            "started_ns": e.timestamp_ns,
+            "status": "running",
+        })
+
+    async def _on_action_executed(self, e: ActionExecuted) -> None:
+        if not e.mission_id:
+            return
+        tc_tid = _tid(e.trace_id)
+        for parent in self._nodes.values():
+            for entry in parent.tool_calls:
+                if entry.get("trace_id") == tc_tid and entry.get("status") == "running":
+                    entry["status"] = "completed" if e.success else "failed"
+                    entry["duration_ms"] = float(e.duration_ms)
+                    entry["output_preview"] = e.output_preview
+                    entry["error"] = e.error
+                    return
+
+    async def _on_action_denied(self, e: ActionDenied) -> None:
+        node = self._action_target(e)
+        if node is None:
+            return
+        tc_tid = _tid(e.trace_id)
+        for entry in node.tool_calls:
+            if entry.get("trace_id") == tc_tid and entry.get("status") == "running":
+                entry["status"] = "failed"
+                entry["error"] = e.reason
+                return
+        # Guard/blacklist denials refuse a call BEFORE ActionProposed fires —
+        # append a terminal row so the refusal is visible on the board too.
+        node.tool_calls.append({
+            "trace_id": tc_tid,
+            "tool_name": e.tool_name,
+            "args_preview": "",
+            "started_ns": e.timestamp_ns,
+            "status": "failed",
+            "error": e.reason,
+        })
 
     async def _on_harness_dispatched(self, e: HarnessDispatched) -> None:
         tid = _tid(e.trace_id)

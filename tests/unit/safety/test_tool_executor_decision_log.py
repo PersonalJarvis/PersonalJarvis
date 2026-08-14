@@ -73,7 +73,7 @@ async def test_output_preview_is_redacted() -> None:
         seen.append(e)
 
     bus.subscribe(ActionExecuted, _cap)  # type: ignore[arg-type]
-    secret = "sk-proj-AbCdEf0123456789ghijKLmnopQRstuv"
+    secret = "sk-proj-AbCdEf0123456789ghijKLmnopQRstuv"  # noqa: S105 — fake fixture key
     await _executor(bus).execute(
         _SafeTool(output=f"token echoed back: {secret}"), args={}, trace_id=uuid4(),
     )
@@ -131,3 +131,50 @@ async def test_rationale_defaults_empty_when_not_supplied() -> None:
     await _executor(bus).execute(_SafeTool(), args={}, trace_id=uuid4())
     await _drain(bus)
     assert seen and seen[0].rationale == ""
+
+
+@pytest.mark.asyncio
+async def test_mission_attribution_rides_action_events() -> None:
+    """The ADR-0025 gateway stamps mission_id/worker_id into config_snapshot;
+    the executor must carry both onto every Action* event so the Sub-Agents
+    board can attach the call to the right worker row."""
+    bus = EventBus()
+    proposed: list[ActionProposed] = []
+    executed: list[ActionExecuted] = []
+
+    async def _cap_p(e: ActionProposed) -> None:
+        proposed.append(e)
+
+    async def _cap_x(e: ActionExecuted) -> None:
+        executed.append(e)
+
+    bus.subscribe(ActionProposed, _cap_p)  # type: ignore[arg-type]
+    bus.subscribe(ActionExecuted, _cap_x)  # type: ignore[arg-type]
+    await _executor(bus).execute(
+        _SafeTool(),
+        args={},
+        trace_id=uuid4(),
+        config_snapshot={"mission_id": "m-123", "worker_id": "w-456"},
+    )
+    await _drain(bus)
+    assert proposed and proposed[0].mission_id == "m-123"
+    assert proposed[0].worker_id == "w-456"
+    assert executed and executed[0].mission_id == "m-123"
+    assert executed[0].worker_id == "w-456"
+
+
+@pytest.mark.asyncio
+async def test_mainline_calls_carry_no_attribution() -> None:
+    """A normal chat/voice turn has no mission context — both attribution
+    fields must stay None so the board's mission gate filters it out."""
+    bus = EventBus()
+    seen: list[ActionExecuted] = []
+
+    async def _cap(e: ActionExecuted) -> None:
+        seen.append(e)
+
+    bus.subscribe(ActionExecuted, _cap)  # type: ignore[arg-type]
+    await _executor(bus).execute(_SafeTool(), args={}, trace_id=uuid4())
+    await _drain(bus)
+    assert seen and seen[0].mission_id is None
+    assert seen[0].worker_id is None

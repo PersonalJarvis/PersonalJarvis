@@ -1,9 +1,16 @@
 /**
  * Jarvis-Agent Store — live tree of all active Jarvis-Agents.
  *
- * Fed by the WebSocket hook (9 event types: JarvisAgentTaskStarted/Review/
+ * Fed by the WebSocket hook (12 event types: JarvisAgentTaskStarted/Review/
  * Completed, BrainTurnStarted/Completed, ToolCallStarted/Completed, Harness-
- * Dispatched/Completed) and rendered in <JarvisAgentsView /> as a live table.
+ * Dispatched/Completed, ActionProposed/Executed/Denied) and rendered in
+ * <JarvisAgentsView /> as a live table.
+ *
+ * Action* events are the LIVE tool vocabulary (published by the ToolExecutor
+ * for every supervisor-executed call). Only events stamped with a mission_id
+ * belong on the board — the mainline chat/voice path fires the same events
+ * with no attribution and is ignored here. ToolCallStarted/Completed is the
+ * never-published sibling vocabulary kept for compatibility.
  */
 import { create } from "zustand";
 
@@ -78,6 +85,17 @@ function safeNumber(v: unknown, fallback = 0): number {
 function safeStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.filter((x): x is string => typeof x === "string");
+}
+
+/** Compact one-line preview of an ActionProposed args object (capped). */
+function previewArgs(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  try {
+    const text = typeof v === "string" ? v : JSON.stringify(v);
+    return text.length > 240 ? `${text.slice(0, 240)}…` : text;
+  } catch {
+    return "";
+  }
 }
 
 interface SubAgentStore {
@@ -257,6 +275,60 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
           };
           break;
         }
+        case "ActionProposed": {
+          // Live tool vocabulary — only mission-stamped events are board work.
+          // Mission node first: the board collapses workers into the mission
+          // row (rows.ts), so calls on the worker child would never surface.
+          const missionTid = normalizeTraceId(payloadObj.mission_id);
+          if (!missionTid) break;
+          const workerTid = normalizeTraceId(payloadObj.worker_id);
+          const targetTid = nodes[missionTid] ? missionTid : workerTid;
+          const target = targetTid ? nodes[targetTid] : undefined;
+          if (!targetTid || !target) break;
+          const entry: ToolCallEntry = {
+            trace_id: traceId ?? null,
+            tool_name: safeString(payloadObj.tool_name),
+            args_preview: previewArgs(payloadObj.args),
+            started_ns: timestampNs,
+            status: "running",
+          };
+          nodes[targetTid] = {
+            ...target,
+            tool_calls: [...target.tool_calls, entry],
+          };
+          break;
+        }
+        case "ActionDenied": {
+          const missionTid = normalizeTraceId(payloadObj.mission_id);
+          if (!missionTid) break;
+          const workerTid = normalizeTraceId(payloadObj.worker_id);
+          const targetTid = nodes[missionTid] ? missionTid : workerTid;
+          const target = targetTid ? nodes[targetTid] : undefined;
+          if (!targetTid || !target) break;
+          const reason = safeString(payloadObj.reason);
+          const idx = target.tool_calls.findIndex(
+            (tc) => tc.trace_id === traceId && tc.status === "running",
+          );
+          const nextCalls = [...target.tool_calls];
+          if (idx !== -1) {
+            nextCalls[idx] = { ...nextCalls[idx], status: "failed", error: reason };
+          } else {
+            // Guard/blacklist denials refuse before ActionProposed fires.
+            nextCalls.push({
+              trace_id: traceId ?? null,
+              tool_name: safeString(payloadObj.tool_name),
+              args_preview: "",
+              started_ns: timestampNs,
+              status: "failed",
+              error: reason,
+            });
+          }
+          nodes[targetTid] = { ...target, tool_calls: nextCalls };
+          break;
+        }
+        // ActionExecuted carries the same completion fields as the (never
+        // published) ToolCallCompleted — one shared matching walk.
+        case "ActionExecuted":
         case "ToolCallCompleted": {
           if (!traceId) break;
           for (const [parentTid, parent] of Object.entries(nodes)) {
@@ -376,6 +448,9 @@ export const SUB_AGENT_EVENT_NAMES = new Set<string>([
   "BrainTurnCompleted",
   "ToolCallStarted",
   "ToolCallCompleted",
+  "ActionProposed",
+  "ActionExecuted",
+  "ActionDenied",
   "HarnessDispatched",
   "HarnessCompleted",
 ]);

@@ -178,6 +178,13 @@ class ToolExecutor:
     ) -> ToolResult:
         tid = trace_id or uuid4()
         t_start = time.perf_counter()
+        # Attribution passthrough: the supervisor tool gateway stamps the
+        # brokered mission/worker identity into config_snapshot (ADR-0025).
+        # Riding it on every Action* event lets the Sub-Agents board attach
+        # the call to the right worker row; mainline turns carry neither key.
+        snap = config_snapshot or {}
+        mission_id = str(snap["mission_id"]) if snap.get("mission_id") else None
+        worker_id = str(snap["worker_id"]) if snap.get("worker_id") else None
 
         if cancel_token is not None and cancel_token.is_cancelled():
             return ToolResult(
@@ -194,6 +201,8 @@ class ToolExecutor:
                 trace_id=tid,
                 tool_name=tool.name,
                 reason=f"blacklist: {exc.pattern}",
+                mission_id=mission_id,
+                worker_id=worker_id,
             ))
             return ToolResult(success=False, output=None, error=str(exc))
 
@@ -249,6 +258,8 @@ class ToolExecutor:
                 args=args,
                 risk_tier=decision.tier,
                 rationale=safe_preview(rationale),
+                mission_id=mission_id,
+                worker_id=worker_id,
             ))
         except BaseException:
             if approval_ticket is not None:
@@ -330,6 +341,8 @@ class ToolExecutor:
                     trace_id=tid,
                     tool_name=tool.name,
                     reason=who_or_reason,
+                    mission_id=mission_id,
+                    worker_id=worker_id,
                 ))
                 return ToolResult(
                     success=False,
@@ -343,6 +356,8 @@ class ToolExecutor:
                 trace_id=tid,
                 tool_name=tool.name,
                 reason=f"cancelled: {cancel_token.reason or 'requested'}",
+                mission_id=mission_id,
+                worker_id=worker_id,
             ))
             return ToolResult(
                 success=False,
@@ -368,6 +383,8 @@ class ToolExecutor:
                 success=False,
                 duration_ms=duration_ms,
                 error=str(exc),
+                mission_id=mission_id,
+                worker_id=worker_id,
             ))
             return ToolResult(success=False, output=None, error=str(exc))
 
@@ -379,6 +396,8 @@ class ToolExecutor:
             duration_ms=duration_ms,
             error=result.error,
             output_preview=safe_preview(result.output),
+            mission_id=mission_id,
+            worker_id=worker_id,
         ))
         return result
 
@@ -413,6 +432,9 @@ class ToolExecutor:
                 error="voice-confirm expired (no pending action for this turn)",
             )
         tool, args = pending
+        snap = config_snapshot or {}
+        mission_id = str(snap["mission_id"]) if snap.get("mission_id") else None
+        worker_id = str(snap["worker_id"]) if snap.get("worker_id") else None
         ctx = ExecutionContext(
             trace_id=trace_id,
             user_utterance=user_utterance,
@@ -431,6 +453,8 @@ class ToolExecutor:
                 success=False,
                 duration_ms=duration_ms,
                 error=str(exc),
+                mission_id=mission_id,
+                worker_id=worker_id,
             ))
             return ToolResult(success=False, output=None, error=str(exc))
         duration_ms = int((time.perf_counter() - t_start) * 1000)
@@ -441,6 +465,8 @@ class ToolExecutor:
             duration_ms=duration_ms,
             error=result.error,
             output_preview=safe_preview(result.output),
+            mission_id=mission_id,
+            worker_id=worker_id,
         ))
         return result
 

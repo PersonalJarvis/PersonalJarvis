@@ -1208,7 +1208,8 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "new_model",
         "system_prompt_preview",  # BrainTurnStarted — which persona/prompt ran
         "harness",            # HarnessDispatched / HarnessCompleted
-        "mission_id",         # MissionCompleted / CUControl*
+        "mission_id",         # MissionCompleted / CUControl* / Action* attribution
+        "worker_id",          # Action* — which mission worker asked (ADR-0025)
         "status",             # MissionCompleted
         "summary",            # JarvisAgentTaskCompleted
         "summary_en",         # MissionCompleted

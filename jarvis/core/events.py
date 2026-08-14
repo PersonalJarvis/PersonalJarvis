@@ -469,6 +469,12 @@ class ActionProposed(Event):
     # Run Inspector + local diary can show *why* Jarvis chose this action.
     # Already redacted + length-capped by the ToolExecutor before publish.
     rationale: str = ""
+    # Attribution: set ONLY for supervisor-brokered calls made on behalf of a
+    # mission worker (ADR-0025 path). Mainline chat/voice actions leave both
+    # None — the Sub-Agents board uses that distinction to show worker tool
+    # calls without flooding itself with ordinary turn activity.
+    mission_id: str | None = None
+    worker_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,6 +505,10 @@ class ActionApproved(Event):
 class ActionDenied(Event):
     tool_name: str = ""
     reason: str = ""
+    # Attribution for supervisor-brokered mission-worker calls (see
+    # ``ActionProposed``); None on mainline chat/voice actions.
+    mission_id: str | None = None
+    worker_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -512,6 +522,10 @@ class ActionExecuted(Event):
     # ToolExecutor before publish (``jarvis.core.redact.safe_preview``) so no
     # raw secret reaches the bus / session DB / local diary.
     output_preview: str = ""
+    # Attribution for supervisor-brokered mission-worker calls (see
+    # ``ActionProposed``); None on mainline chat/voice actions.
+    mission_id: str | None = None
+    worker_id: str | None = None
 
 
 # ----------------------------------------------------------------------

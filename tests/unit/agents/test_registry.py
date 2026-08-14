@@ -20,6 +20,9 @@ import pytest
 from jarvis.agents import AgentNode, JarvisAgentRegistry
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
+    ActionDenied,
+    ActionExecuted,
+    ActionProposed,
     BrainTurnCompleted,
     BrainTurnStarted,
     HarnessCompleted,
@@ -217,6 +220,139 @@ async def test_tool_call_completed_updates_matching_entry(
     assert entry["status"] == "completed"
     assert entry["duration_ms"] == 42.0
     assert entry["output_preview"] == "file1\nfile2"
+
+
+# ────────────────────────────────────────────────────────────────
+# Action* attribution (the live tool vocabulary, mission-stamped)
+# ────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_action_proposed_lands_on_the_mission_node(
+    bus: EventBus, registry: JarvisAgentRegistry
+) -> None:
+    """Mission node preferred: the board collapses each worker into its
+    mission row (rows.ts), so calls on the worker child would never show."""
+    mission = uuid4()
+    worker = uuid4()
+    call = uuid4()
+    await bus.publish(JarvisAgentTaskStarted(trace_id=mission))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=worker))
+    await bus.publish(
+        ActionProposed(
+            trace_id=call,
+            tool_name="search_web",
+            args={"query": "flight prices"},
+            mission_id=str(mission),
+            worker_id=str(worker),
+        )
+    )
+    assert registry.snapshot()[worker.hex].tool_calls == []
+    calls = registry.snapshot()[mission.hex].tool_calls
+    assert len(calls) == 1
+    assert calls[0]["tool_name"] == "search_web"
+    assert calls[0]["status"] == "running"
+    assert "flight prices" in calls[0]["args_preview"]
+
+
+@pytest.mark.asyncio
+async def test_action_proposed_falls_back_to_the_worker_node(
+    bus: EventBus, registry: JarvisAgentRegistry
+) -> None:
+    """An orphaned worker whose mission row already faded still gets the call."""
+    worker = uuid4()
+    await bus.publish(JarvisAgentTaskStarted(trace_id=worker))
+    await bus.publish(
+        ActionProposed(
+            trace_id=uuid4(),
+            tool_name="wiki-recall",
+            mission_id=str(uuid4()),  # mission row already faded out
+            worker_id=str(worker),
+        )
+    )
+    assert len(registry.snapshot()[worker.hex].tool_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_unstamped_action_events_never_reach_the_board(
+    bus: EventBus, registry: JarvisAgentRegistry
+) -> None:
+    """Mainline chat/voice turns fire the same Action* events with no
+    mission_id — they must not litter any agent row."""
+    node = uuid4()
+    await bus.publish(JarvisAgentTaskStarted(trace_id=node))
+    await bus.publish(ActionProposed(trace_id=uuid4(), tool_name="search_web"))
+    await bus.publish(ActionDenied(trace_id=uuid4(), tool_name="run_shell", reason="x"))
+    assert registry.snapshot()[node.hex].tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_action_executed_completes_the_matching_entry(
+    bus: EventBus, registry: JarvisAgentRegistry
+) -> None:
+    mission = uuid4()
+    call = uuid4()
+    await bus.publish(JarvisAgentTaskStarted(trace_id=mission))
+    await bus.publish(
+        ActionProposed(trace_id=call, tool_name="search_web", mission_id=str(mission))
+    )
+    await bus.publish(
+        ActionExecuted(
+            trace_id=call,
+            tool_name="search_web",
+            success=True,
+            duration_ms=88,
+            output_preview="3 results",
+            mission_id=str(mission),
+        )
+    )
+    entry = registry.snapshot()[mission.hex].tool_calls[0]
+    assert entry["status"] == "completed"
+    assert entry["duration_ms"] == 88.0
+    assert entry["output_preview"] == "3 results"
+
+
+@pytest.mark.asyncio
+async def test_action_denied_without_proposed_appends_a_failed_row(
+    bus: EventBus, registry: JarvisAgentRegistry
+) -> None:
+    """Guard/blacklist denials refuse BEFORE ActionProposed fires — the
+    refusal must still be visible on the board."""
+    mission = uuid4()
+    await bus.publish(JarvisAgentTaskStarted(trace_id=mission))
+    await bus.publish(
+        ActionDenied(
+            trace_id=uuid4(),
+            tool_name="run_shell",
+            reason="blacklist: rm -rf *",
+            mission_id=str(mission),
+        )
+    )
+    calls = registry.snapshot()[mission.hex].tool_calls
+    assert len(calls) == 1
+    assert calls[0]["status"] == "failed"
+    assert calls[0]["error"] == "blacklist: rm -rf *"
+
+
+@pytest.mark.asyncio
+async def test_action_proposed_args_preview_is_redacted(
+    bus: EventBus, registry: JarvisAgentRegistry
+) -> None:
+    """ActionProposed carries the RAW args dict — the board snapshot may only
+    ever hold a redacted, capped preview (same rule as the session recorder)."""
+    mission = uuid4()
+    secret = "sk-proj-AbCdEf0123456789ghijKLmnopQRstuv"  # noqa: S105 — fake fixture key
+    await bus.publish(JarvisAgentTaskStarted(trace_id=mission))
+    await bus.publish(
+        ActionProposed(
+            trace_id=uuid4(),
+            tool_name="cli_gcloud",
+            args={"api_key": secret},
+            mission_id=str(mission),
+        )
+    )
+    preview = registry.snapshot()[mission.hex].tool_calls[0]["args_preview"]
+    assert secret not in preview
+    assert "<redacted" in preview
 
 
 # ────────────────────────────────────────────────────────────────
