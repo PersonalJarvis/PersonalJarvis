@@ -52,11 +52,54 @@ def test_an_errand_cannot_dispatch_an_errand() -> None:
     """Same reasoning as AP-5/AP-14 for spawn tools: the runner already owns an
     unbounded loop, and a nested one inside a leg would run a second."""
     assert "start_errand" not in _FORBIDDEN_EXACT  # workers are not the issue…
-    # …the guard is in the service, which strips it from the leg tool set.
-    import inspect
+    # …the guard is the leg-tool curation in the service.
+    assert "start_errand" in service.LEG_TOOL_DENYLIST
+    assert "start_errand" not in service.curated_leg_tools({"start_errand": object()})
 
-    source = inspect.getsource(service.get_runner)
-    assert 'tools.pop("start_errand"' in source
+
+def test_the_leg_arsenal_is_curated_not_the_raw_router_map() -> None:
+    """An errand stays MORE capable than a mission worker (browser, shell,
+    mail — finishing real jobs is the point) but three classes never enter a
+    detached loop: loop-in-loop vehicles, config/self-mod, foreground UI
+    remote control. The denylist is the documented difference."""
+    sample = {name: object() for name in service.LEG_TOOL_DENYLIST} | {
+        name: object()
+        for name in (
+            "browser",
+            "run_shell",
+            "gmail",
+            "google_calendar",
+            "credentials",
+            "run_skill",
+            "computer_use",
+            "answer_errand",  # harmless: answering needs a WAITING errand
+        )
+    }
+    curated = service.curated_leg_tools(sample)
+    for banned in service.LEG_TOOL_DENYLIST:
+        assert banned not in curated, f"{banned} must never reach an errand leg"
+    for kept in (
+        "browser",
+        "run_shell",
+        "gmail",
+        "google_calendar",
+        "credentials",
+        "run_skill",
+        "computer_use",
+    ):
+        assert kept in curated, f"{kept} is the errand's working arsenal"
+
+
+def test_the_denylist_covers_the_three_classes() -> None:
+    """Membership pins, so a rename in the tool layer fails loudly here."""
+    assert {"start_errand", "spawn_worker"} <= service.LEG_TOOL_DENYLIST
+    assert {
+        "set_config_value",
+        "switch-provider",
+        "manage-mcp-server",
+        "reveal-key-preview",
+    } <= service.LEG_TOOL_DENYLIST
+    assert {"navigate", "app-command", "visualize"} <= service.LEG_TOOL_DENYLIST
 
 
 def test_the_description_does_not_demand_delegation_words() -> None:

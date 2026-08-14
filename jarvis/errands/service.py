@@ -70,6 +70,45 @@ def _resolve_brain(manager: Any, config: Any) -> Any | None:
         return None
 
 
+#: Tools an errand leg must NOT hold, however capable the router is.
+#:
+#: An errand is deliberately MORE powerful than a Phase-6 mission worker — it
+#: drives the browser, the shell and the mailbox, because finishing real-world
+#: jobs is its whole point. But three classes never belong in a detached
+#: background loop:
+#:
+#: - Loop-in-loop vehicles. ``start_errand`` would nest a second unbounded
+#:   loop inside a leg (AP-5/AP-14 reasoning), and ``spawn_worker`` was an
+#:   ungoverned parallelism side door — C7/C12 fan-out must arrive as a
+#:   mechanism the runner governs, not as a tool the model reaches for.
+#: - Configuration / self-modification. A job that can rewrite provider
+#:   wiring, mutate config or preview keys can rewrite the ground it runs
+#:   on; mission workers are denied the same class by the worker broker.
+#: - Foreground UI remote control. ``navigate`` flips the user's visible
+#:   sidebar, ``app-command`` reaches the agentic-IDE fan-out commands, and
+#:   ``visualize`` opens views — a background errand stays invisible (C12).
+#:
+#: Names are runtime registry keys (``tool.name``), hence the mixed dashes.
+LEG_TOOL_DENYLIST: frozenset[str] = frozenset(
+    {
+        "start_errand",
+        "spawn_worker",
+        "set_config_value",
+        "switch-provider",
+        "manage-mcp-server",
+        "reveal-key-preview",
+        "navigate",
+        "app-command",
+        "visualize",
+    }
+)
+
+
+def curated_leg_tools(tools: dict[str, Any]) -> dict[str, Any]:
+    """The errand leg arsenal: the full router map minus ``LEG_TOOL_DENYLIST``."""
+    return {name: tool for name, tool in tools.items() if name not in LEG_TOOL_DENYLIST}
+
+
 def get_runner() -> ErrandRunner | None:
     """The shared runner, or None when the app is not wired for errands yet."""
     if _RUNNER:
@@ -80,17 +119,12 @@ def get_runner() -> ErrandRunner | None:
         return None
 
     config = getattr(manager, "_config", None)
-    tools = dict(getattr(manager, "_tools", {}) or {})
+    tools = curated_leg_tools(dict(getattr(manager, "_tools", {}) or {}))
     executor = getattr(manager, "_tool_executor", None)
     brain = _resolve_brain(manager, config)
     if config is None or executor is None or brain is None or not tools:
         log.info("errands: brain stack not fully wired — runner unavailable")
         return None
-
-    # An errand must never dispatch another errand: the runner already owns the
-    # long-running loop, and a nested one would run a second unbounded loop
-    # inside a leg. Same reasoning as AP-5/AP-14 for spawn tools in worker sets.
-    tools.pop("start_errand", None)
 
     if not _EVENT_BUS:
         log.info("errands: no event bus registered — outcomes will not be announced")
@@ -118,4 +152,10 @@ def reset_runner() -> None:
     _EVENT_BUS.clear()
 
 
-__all__ = ["get_runner", "reset_runner", "set_event_bus"]
+__all__ = [
+    "LEG_TOOL_DENYLIST",
+    "curated_leg_tools",
+    "get_runner",
+    "reset_runner",
+    "set_event_bus",
+]
