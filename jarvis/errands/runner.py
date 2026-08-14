@@ -139,7 +139,7 @@ class ErrandRunner:
     # Public API
     # ------------------------------------------------------------------
 
-    async def start(self, goal: str, *, trace_id: str = "") -> Errand:
+    async def start(self, goal: str, *, trace_id: str = "", language: str = "") -> Errand:
         """Open a new errand: gather context, ask once, plan — then detach.
 
         Returns as soon as the errand is under way (or has questions). The
@@ -147,7 +147,9 @@ class ErrandRunner:
         "book me a flight" must never hold the conversation turn hostage
         until the flight is booked.
         """
-        errand = Errand(id=str(uuid.uuid4()), goal=goal.strip(), trace_id=trace_id)
+        errand = Errand(
+            id=str(uuid.uuid4()), goal=goal.strip(), trace_id=trace_id, language=language
+        )
         await self._persist(errand)
 
         errand = await self._gather_context(errand)  # C9
