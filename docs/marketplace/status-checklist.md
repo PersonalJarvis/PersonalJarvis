@@ -24,13 +24,13 @@ installed plugin · **Reads:** [community-registry.md](community-registry.md)
 | **Consume** — browse, filter, consent dialog, one-click install | ✅ shipped (beta UI) |
 | **Consume** — installed plugin joins connect flow, relevance gate, worker bridge | ✅ shipped |
 | **Format** — Agent Plugins v1.0.0 manifests → `PluginSpec` | ✅ shipped |
-| **Format** — a plugin may bundle skills; ownership markers; `$schema`; component rule | ✅ shipped 2026-08-14 (client side only) |
+| **Format** — a plugin may bundle skills; ownership markers; `$schema`; component rule | ✅ shipped 2026-08-14 |
 | **Registry** — CI validation, auto-merge, ownership ledger, Pages index | ✅ live, but see §2 |
-| **Registry** — knows about bundled skills | ❌ not started |
+| **Registry** — knows about bundled skills, feed is self-contained | ✅ written 2026-08-14, **on branch `feat/bundled-skills`, not pushed** |
 | **Publish** — any interface a human can use | ❌ not started |
 | **Publish** — GitHub sign-in gate + storefront submit | 🔨 in build (parallel effort, spec written) |
 | **Storefront** — the site itself | ❌ no repo exists yet |
-| **Frontend ↔ backend** — bundled skills visible in the UI | ❌ backend sends, UI ignores |
+| **Frontend ↔ backend** — bundled skills visible, consent names them | ✅ shipped 2026-08-14 |
 
 ---
 
@@ -51,20 +51,18 @@ installing the **plugin** works (its manifests are embedded in the index),
 installing the **skill** fails, and every provenance link is dead. The store
 looks open and is half closed.
 
-Three ways out, cheapest first:
+**Fix written, not yet live.** The feed now embeds every skill's `SKILL.md`
+(app side: shipped; registry side: branch `feat/bundled-skills`, awaiting a
+push). A linked file inherits the availability of whatever host serves it;
+an embedded one cannot go missing while the feed advertising it is
+reachable. `raw_url` stays for older clients.
 
-1. **Embed skills the way plugins are embedded.** A skill is one Markdown
-   file; putting `skill_md` in the index removes the second host entirely
-   and makes the feed self-contained. Same move already made for bundled
-   skills. Fixes the download permanently, private repo or not.
-2. Reopen the repo (spec §8 step 5) — but that reopens submissions before
-   the gate exists, which is what the private switch was for.
-3. Ship the index with a `source_url` that degrades honestly ("source not
-   public") instead of a 404 link.
+**Until that branch is pushed and Pages redeploys, the outage stands** — the
+live feed still carries links only, so the app has nothing embedded to fall
+back to.
 
-Recommended: **(1) plus (3)** — self-contained feed, honest links. It is the
-same code path the bundled-skill work just introduced, and it removes a
-whole class of "the store points somewhere it cannot reach".
+Still open: the dead `source_url` on every card. The index should omit it
+while the repo is private rather than publish a link that 404s.
 
 ---
 
@@ -94,28 +92,39 @@ promise the store makes before writing to disk.
 
 ## 4. What is left to build
 
-### Now — close what the last change opened
+### Done 2026-08-14
 
-- [ ] **Consent dialog lists the bundled skills** (name + first line of the
-      description) under a "this will also add" heading. Trust gate.
-- [ ] Card badge "includes N skills"; installed state shows which.
-- [ ] Surface the 409 conflict message verbatim; surface `removed_skills`
-      in the uninstall toast.
-- [ ] Make the feed self-contained: embed `skill_md` for standalone skills
-      (§2), keep `raw_url` for older clients.
+- [x] Consent dialog names every skill a plugin will write, before it writes.
+- [x] Detail sheet lists the bundled skills; the store reports what was
+      added or removed after the fact.
+- [x] Install/remove surface the server's message verbatim (409 conflicts
+      included).
+- [x] Feed made self-contained: `skill_md` embedded for standalone skills
+      and for bundled ones, `raw_url` kept for older clients.
+- [x] Standalone skill install moved to
+      `POST /api/marketplace/community/skills/{name}/install` — the name is
+      the whole request, so the server reads the same index entry the card
+      came from instead of trusting a caller-supplied URL.
+- [x] Registry: `skills[]` in the schema, the shared SKILL.md rules in
+      `validate.py`, `expand.py` writing the standard directory layout,
+      `build_index.py` embedding everything, and
+      `scripts/test_bundled_skills.py` pinning the four rejection cases in
+      CI. Verified end to end against the app's own loader.
 
-### Next — the registry side of the same format
+### Blocked on a push
 
-- [ ] `submission.schema.json`: `skills: [{name, skill_md}]` for
-      `kind: "plugin"`.
-- [ ] `validate.py`: the four package rules (no `scripts/`, no
-      `risk_policy`, caps, at least one component) — mirroring
-      `agent_plugins_loader.py` until §5 merges them.
-- [ ] `expand.py`: write `plugins/<name>/skills/<skill>/SKILL.md`.
-- [ ] `build_index.py`: embed them in the plugin entry.
-- [ ] Ownership fix from the login spec: `registry.json` keys publishers by
-      **login string**; add the immutable numeric `publisher_id` before
-      reopening. A renamed login is a hijack hole today.
+- [ ] Push `feat/bundled-skills` in `PersonalJarvis/marketplace` and let
+      Pages redeploy. **The skill-install outage (§2) stays until this
+      happens** — the live feed carries links only.
+
+### Next — the registry's remaining hole
+
+- [ ] Ownership: `registry.json` keys publishers by **login string**; the
+      numeric `publisher_id` must be the key before the repo reopens. A
+      renamed login is a hijack hole today. (Partly in flight — the
+      submission schema already accepts `publisher_id`.)
+- [ ] Omit `source_url` while the repo is private instead of publishing a
+      link that 404s.
 
 ### Then — one validator, then a door
 
