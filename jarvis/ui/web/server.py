@@ -359,6 +359,7 @@ class WebServer:
         from .frontier_routes import router as frontier_router
         from .logins_routes import identity_router as agent_identity_router
         from .logins_routes import router as logins_router
+        from .marketplace_publish_routes import router as marketplace_publish_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
         from .missions_auth import router as missions_auth_router
@@ -450,6 +451,7 @@ class WebServer:
         app.include_router(commands_router)
         app.include_router(friends_router)
         app.include_router(marketplace_router)
+        app.include_router(marketplace_publish_router)
         app.state.friend_registry = None
         app.state.channel_manager = None
         app.state.channel_chat_bridge = None
