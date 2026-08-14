@@ -279,6 +279,9 @@ async def test_the_source_inventory_reaches_the_gather_prompt(store: ErrandStore
     )
     assert "WhatsApp" in legs.prompts["context"][0]
     assert "WHERE CONTEXT CAN LIVE" in legs.prompts["context"][0]
+    # The triage duty and the explicit-mention free pass ride with the list.
+    assert "triage" in legs.prompts["context"][0]
+    assert "free pass" in legs.prompts["context"][0]
 
 
 @pytest.mark.asyncio

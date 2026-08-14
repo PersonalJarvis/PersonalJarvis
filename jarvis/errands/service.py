@@ -24,6 +24,7 @@ from jarvis.core import runtime_refs
 from .brain_legs import BrainLegExecutor
 from .bridge import ErrandEventBridge
 from .runner import ErrandRunner
+from .sources import render_context_sources
 from .store import ErrandStore
 
 log = logging.getLogger(__name__)
@@ -92,10 +93,18 @@ def get_runner() -> ErrandRunner | None:
 
     if not _EVENT_BUS:
         log.info("errands: no event bus registered — outcomes will not be announced")
+    store = ErrandStore(_data_dir(config) / "jarvis.db")
+
+    async def _context_sources() -> str:
+        """The C13 inventory, assembled from what THIS runner can actually
+        reach: its own tool map, its own errand history, this machine's apps."""
+        return await render_context_sources(tool_names=set(tools), store=store)
+
     runner = ErrandRunner(
-        store=ErrandStore(_data_dir(config) / "jarvis.db"),
+        store=store,
         execute_leg=BrainLegExecutor(brain=brain, tools=tools, executor=executor),
         on_update=ErrandEventBridge(_EVENT_BUS[0]) if _EVENT_BUS else None,
+        context_sources=_context_sources,
     )
     _RUNNER.append(runner)
     return runner

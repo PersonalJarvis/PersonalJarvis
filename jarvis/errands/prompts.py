@@ -99,9 +99,13 @@ def context_prompt(
     """
     sources_block = (
         f"""
-WHERE CONTEXT CAN LIVE — go through this list FIRST. For each entry decide
-whether it could hold something about this goal, then probe every one that
-could. You may only conclude "there was nowhere to look" if this list is empty:
+WHERE CONTEXT CAN LIVE — triage this list FIRST, before any lookup. For each
+entry make one quick judgement: is what it might hold worth the cost of
+looking? Probe the sources where the answer is yes, skip the rest and say so —
+maximum context, no wasted lookups. Two hard rules:
+- A source the user's order names EXPLICITLY ("check WhatsApp", "look in my
+  mail") is a free pass: it is ALWAYS probed, whatever your triage says.
+- You may only conclude "there was nowhere to look" if this list is empty.
 {sources}
 """
         if sources.strip()
