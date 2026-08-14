@@ -9627,3 +9627,55 @@ Task-Manager handle column) to confirm or kill the desktop-heap theory.
 
 **Tests.** `tests/unit/agentic_ide/test_recap_engine.py`
 (`test_a_failed_family_sits_out_its_quiet_window`).
+
+## BUG-140: the Jarvis Bar takes ~30 s to appear and crawls at ~0.3 fps while dictation keeps working — its frame loop lives inside the busy desktop process (HIGH, FIXED 2026-08-14)
+
+**Symptom (live 2026-08-14 15:52-15:57, right after the BUG-139 reboot).**
+Holding the dictation hotkey produced no visible bar for ~30 s; when it
+finally appeared it animated at roughly one frame every three seconds, and
+a couple of minutes later it recovered on its own. The transcription
+pipeline was healthy the entire time — the spoken text arrived complete
+(audio capture is I/O-bound and the primary STT is a network call), so the
+failure read as "the hotkey is dead" while every press actually worked.
+The same signature recurs at lower intensity: `JarvisBar frame loop
+stalled 4.2s — reviving it` (2026-08-13 22:09) and the 2026-07-10 stutter
+forensic preserved in `jarvis/ui/jarvisbar/overlay.py`.
+
+**Root cause.** On Windows/Linux the bar was a Tk mainloop on a THREAD of
+the desktop process, so every frame competes for the GIL with everything
+else living there. The incident window stacked three loads: the
+post-reboot autostart storm (GoogleDriveFS alone burned 329 CPU-seconds;
+OBS, OneDrive, Docker, Epic Games all initializing), the Agentic-IDE
+restore spawning 4 `claude` + 2 `agy` CLI processes at 15:54:01-07, and
+the dictation preview engine loading CUDA/cuDNN plus faster-whisper
+in-process at 15:54:10-13. The starvation is visible beyond the bar:
+`oww_q=19` in the wake heartbeat and `vosk-kws: rejected-candidate
+backpressure active — protecting desktop responsiveness`. The 2026-07-10
+benchmark had already proven this class unfixable in-process: one
+GIL-holding background thread collapses the frame loop to 4-5 fps, and a
+Tk thread-priority raise measurably does NOT help (OS priorities do not
+schedule the GIL). `disable_windows_app_ghosting` fought a symptom of the
+same class (the black ghost rectangle) without touching the cause.
+
+**Fix.** Every platform now hosts the bar in the BUG-057 companion
+process (`jarvis.ui.jarvisbar.host`) — its own interpreter, its own GIL,
+so the desktop process can be arbitrarily busy without costing the bar a
+frame. `_build_overlay_surface` prefers `SubprocessBarOverlay` off darwin
+too, behind `ui.bar_out_of_process` (default on; off = the previous
+in-process hosting as an escape hatch, ignored on macOS where in-process
+Tk would abort the app). A failed or dead-on-arrival spawn falls back
+HONESTLY to the proven in-process bar — detected via the new
+`SubprocessBarOverlay.host_alive`, never degraded to a silent no-op
+surface. The host additionally nudges itself one scheduling step above
+normal (`jarvis/core/process_utils.py::raise_own_priority_above_normal`,
+no privileges needed on Windows, quiet no-op on unprivileged POSIX) so a
+storm of normal-priority autostarts cannot starve it at the OS level
+either. No DPI port was needed: `JarvisBarOverlay.start()` already sets
+process+thread DPI awareness itself inside whatever process runs it, and
+drops reuse the P-19 host-protocol forwarding.
+
+**Tests.** `tests/unit/ui/jarvisbar/test_bar_host_selection.py`
+(companion-process default on win32/linux with the startup gate carried
+into the init payload, exception fallback, dead-host fallback, the
+opt-out staying fully in-process, `host_alive` semantics, and the
+priority helper's never-raises contract).
