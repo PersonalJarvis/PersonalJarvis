@@ -19,6 +19,7 @@ a bad submission merge.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -55,13 +56,25 @@ MAX_FILE_BYTES = 128 * 1024
 MAX_SKILL_BYTES = 64 * 1024
 MAX_DESCRIPTION_CHARS = 500
 _STDIO_LAUNCHERS = frozenset({"npx", "uvx", "docker"})
+# Verbatim copy of validate.ts's SECRET_PATTERNS — a mirror that misses a
+# family gives a green "Check" the endpoint then refuses, which reads like a
+# store bug. Keep the two lists identical when either changes.
 _SECRET_PATTERNS = (
-    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
-    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
-    re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),  # GitHub token family
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),  # GitHub fine-grained PAT
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),  # OpenAI-style, incl. - and _
+    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),  # Slack
+    re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access key
+    re.compile(r"AIza[0-9A-Za-z_-]{30,}"),  # Google API key
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}"),  # JWT
 )
+
+
+def _utf16_len(text: str) -> int:
+    """Length in UTF-16 code units — the unit the endpoint's ``.length``
+    counts, so an emoji-heavy description cannot pass here and 422 there."""
+    return len(text.encode("utf-16-le")) // 2
 
 
 class FieldError(dict):
@@ -107,7 +120,7 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
             errors.append(FieldError("title is required for a skill", "title"))
         if not description:
             errors.append(FieldError("description is required for a skill", "description"))
-        elif len(description) > MAX_DESCRIPTION_CHARS:
+        elif _utf16_len(description) > MAX_DESCRIPTION_CHARS:
             errors.append(
                 FieldError(f"description longer than {MAX_DESCRIPTION_CHARS} chars", "description")
             )
@@ -128,7 +141,7 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
             errors.append(FieldError("plugin_json object is required for a plugin", "plugin_json"))
             plugin_json = {}
         desc = plugin_json.get("description")
-        if isinstance(desc, str) and len(desc) > MAX_DESCRIPTION_CHARS:
+        if isinstance(desc, str) and _utf16_len(desc) > MAX_DESCRIPTION_CHARS:
             errors.append(
                 FieldError(
                     f"plugin_json.description longer than {MAX_DESCRIPTION_CHARS} chars",
@@ -280,7 +293,9 @@ async def current_identity(
     """
     store = store or TokenStore()
     try:
-        tokens = store.load(PUBLISHER_TOKEN_ID)
+        # to_thread: the keyring backend talks to the OS credential store
+        # synchronously and must not block the event loop.
+        tokens = await asyncio.to_thread(store.load, PUBLISHER_TOKEN_ID)
     except Exception:  # noqa: BLE001 - a locked keyring reads as signed out
         log.warning("publish: token load failed", exc_info=True)
         return {"signed_in": False}
@@ -291,13 +306,16 @@ async def current_identity(
         return {"signed_in": True, **identity}
     try:
         refreshed = await make_device_handler().refresh(tokens)
-    except RuntimeError:
-        store.delete(PUBLISHER_TOKEN_ID)
+    except RuntimeError as exc:
+        # Expected lifecycle (revoked at GitHub, refresh token aged out) —
+        # log it so "I keep getting signed out" is diagnosable.
+        log.info("publish: token refresh failed, signing out: %s", exc)
+        await asyncio.to_thread(store.delete, PUBLISHER_TOKEN_ID)
         return {"signed_in": False}
-    store.save(PUBLISHER_TOKEN_ID, refreshed)
+    await asyncio.to_thread(store.save, PUBLISHER_TOKEN_ID, refreshed)
     identity = await fetch_identity(refreshed, transport)
     if identity is None:
-        store.delete(PUBLISHER_TOKEN_ID)
+        await asyncio.to_thread(store.delete, PUBLISHER_TOKEN_ID)
         return {"signed_in": False}
     return {"signed_in": True, **identity}
 
@@ -332,7 +350,7 @@ async def submit(
     if not endpoint:
         raise SubmitError(503, "publishing is disabled in this deployment")
     store = store or TokenStore()
-    tokens = store.load(PUBLISHER_TOKEN_ID)
+    tokens = await asyncio.to_thread(store.load, PUBLISHER_TOKEN_ID)
     if tokens is None:
         raise SubmitError(401, "sign in with GitHub first")
     try:

@@ -184,6 +184,28 @@ async def test_submit_disabled_deployment(monkeypatch: pytest.MonkeyPatch) -> No
     assert exc.value.status == 503
 
 
+# --- live status ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_live_status_reports_the_feed_truthfully(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.marketplace import community_source
+
+    index = community_source.CommunityIndex.model_validate(
+        {"skills": [{"name": "three-point-check", "version": "1.0.0"}]}
+    )
+
+    async def fake_get_index(force: bool = False) -> tuple[Any, str]:
+        return index, "fresh"
+
+    monkeypatch.setattr(community_source, "get_index", fake_get_index)
+    assert (await publish.live_status("three-point-check", "1.0.0"))["live"] is True
+    assert (await publish.live_status("three-point-check", "2.0.0"))["live"] is False
+    assert (await publish.live_status("absent-name", "1.0.0"))["live"] is False
+
+
 # --- identity -------------------------------------------------------------
 
 

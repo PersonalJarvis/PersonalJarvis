@@ -676,6 +676,20 @@ function SignInCard({
               )}
             </button>
             <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                // Tell the backend to drop the flow, then forget it locally
+                // either way — an already-finished flow 404s harmlessly.
+                void fetch(`/api/marketplace/publish/signin/${flow.flow_id}`, {
+                  method: "DELETE",
+                }).catch(() => undefined);
+                setFlow(null);
+              }}
+            >
+              Cancel
+            </Button>
           </div>
         </div>
       )}

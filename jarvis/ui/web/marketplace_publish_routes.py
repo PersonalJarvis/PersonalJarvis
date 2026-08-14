@@ -28,10 +28,17 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/marketplace/publish", tags=["marketplace"])
 
-# In-flight device flows: flow_id -> completion task. Entries are popped on
-# the poll that observes completion; abandoned flows die with their 15-minute
-# GitHub expiry, so this stays a handful of entries at worst.
+# In-flight device flows: flow_id -> completion task. Entries are popped by
+# the poll that observes completion, by an explicit cancel, or by the sweep
+# in signin_start — an ABANDONED flow's task finishes with GitHub's
+# 15-minute expiry but its dict entry would otherwise stay forever.
 _flows: dict[str, asyncio.Task[dict[str, Any]]] = {}
+
+
+def _sweep_finished_flows() -> None:
+    for fid, task in list(_flows.items()):
+        if task.done():
+            _flows.pop(fid, None)
 
 
 async def _complete_signin(handler: Any, session: Any) -> dict[str, Any]:
@@ -41,7 +48,7 @@ async def _complete_signin(handler: Any, session: Any) -> dict[str, Any]:
     if result.tokens is None:
         return {"status": "error", "error": result.error or "sign-in failed"}
     store = TokenStore()
-    store.save(PUBLISHER_TOKEN_ID, result.tokens)
+    await asyncio.to_thread(store.save, PUBLISHER_TOKEN_ID, result.tokens)
     try:
         identity = await fetch_identity(result.tokens)
     except RuntimeError as exc:
@@ -67,6 +74,7 @@ async def publish_identity(response: Response) -> dict[str, Any]:
         # GitHub unreachable: report the stored token as "unknown", not as
         # signed out — signing the user out over a network blip would drop a
         # perfectly good token.
+        log.warning("publish identity: GitHub unreachable: %s", exc)
         return {"enabled": True, "signed_in": False, "unreachable": str(exc)}
     return {"enabled": True, **state}
 
@@ -78,6 +86,7 @@ async def signin_start() -> dict[str, Any]:
 
     if not publish_endpoint():
         raise HTTPException(status_code=503, detail="publishing is disabled in this deployment")
+    _sweep_finished_flows()
     handler = make_device_handler()
     try:
         session = await handler.start(None)
@@ -112,12 +121,30 @@ async def signin_poll(flow_id: str, response: Response) -> dict[str, Any]:
         return {"status": "error", "error": str(exc)}
 
 
+@router.delete("/signin/{flow_id}")
+async def signin_cancel(flow_id: str) -> dict[str, Any]:
+    """Abandon an in-progress sign-in (mirrors the connect-flow cancel)."""
+    task = _flows.pop(flow_id, None)
+    if task is None:
+        raise HTTPException(status_code=404, detail="unknown or already-finished flow")
+    task.cancel()
+    return {"ok": True}
+
+
 @router.delete("/identity")
 async def sign_out() -> dict[str, Any]:
     """Sign out: drop the stored publisher token."""
     from jarvis.marketplace.publish import PUBLISHER_TOKEN_ID
 
-    TokenStore().delete(PUBLISHER_TOKEN_ID)
+    try:
+        # Fail-closed by design: TokenStore raises when it cannot VERIFY the
+        # credential is gone — surface that as a structured error, never as
+        # a bare 500 the view cannot explain.
+        await asyncio.to_thread(TokenStore().delete, PUBLISHER_TOKEN_ID)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"sign-out could not be verified: {exc}"
+        ) from exc
     return {"ok": True}
 
 

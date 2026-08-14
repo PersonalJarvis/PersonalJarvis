@@ -734,9 +734,13 @@ export function PluginsView() {
       <ScrollArea className="flex-1">
         <div className="relative mx-auto max-w-3xl px-6 pb-20 pt-14">
           <AttentionBanner plugins={attentionPlugins} onJump={jumpToFirstProblem} />
-          {tab === "publish" ? (
+          {/* Publish stays MOUNTED behind the other tabs: its form state is
+              a draft the user is writing — a tab switch must hide it, never
+              destroy it. */}
+          <div className={cn(tab !== "publish" && "hidden")}>
             <PublishTab />
-          ) : tab === "community" ? (
+          </div>
+          {tab === "publish" ? null : tab === "community" ? (
             <CommunityTab />
           ) : tab === "browse" ? (
             <BrowseLayout
