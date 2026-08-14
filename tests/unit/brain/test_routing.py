@@ -1935,6 +1935,14 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # delegation gate that guards spawn-worker: an order is itself the
             # instruction. See docs/plans/autonomous-missions.md.
             "start-errand",
+            # Errand control (2026-08-14): the return half of the dialog
+            # start-errand opens — the user's answers reach the waiting errand,
+            # "how is my errand going" has a data source, and "stop it" works.
+            # Direct actions on the durable errand record (status safe-tier,
+            # answer/cancel monitor), never spawns (AP-5/AP-14).
+            "answer-errand",
+            "errand-status",
+            "cancel-errand",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,

@@ -85,9 +85,7 @@ class ErrandAnnouncer:
             if not event.mid_run:
                 return  # the opening round is asked inside the open turn
             questions = " ".join(event.questions.splitlines()).strip()
-            await self._say(
-                _compose(_NEEDS_INPUT_FRAME, event.language, questions), event.language
-            )
+            await self._say(_compose(_NEEDS_INPUT_FRAME, event.language, questions), event.language)
         except Exception:  # noqa: BLE001
             log.warning("ErrandAnnouncer failed on needs-input", exc_info=True)
 
