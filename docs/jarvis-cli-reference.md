@@ -112,7 +112,9 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis marketplace connect-poll <plugin_id> <flow_id>` — Poll an in-progress OAuth connect flow.
 - `jarvis marketplace connect-start <plugin_id> --yes --dry-run` — Begin an OAuth connect flow (prints the redirect URI + flow id).
 - `jarvis marketplace disconnect <plugin_id> --yes --dry-run` — Disconnect a plugin.
+- `jarvis marketplace install <name> --refresh --yes --dry-run` — Install a community plugin or skill by name.
 - `jarvis marketplace list` — List marketplace plugins + their connection status.
+- `jarvis marketplace uninstall <name> --yes --dry-run` — Remove an installed community plugin or skill by name.
 
 ## mcps
 
@@ -173,6 +175,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis skills disable <name> --yes --dry-run` — Deactivate a skill.
 - `jarvis skills draft <intent> --name-hint --category --yes --dry-run` — Generate a skill draft from an intent (AI author; lands as state=draft).
 - `jarvis skills enable <name> --yes --dry-run` — Activate a skill.
+- `jarvis skills import <source> --yes --dry-run` — Install a skill from a local folder or a SKILL.md link.
 - `jarvis skills list` — List all discovered skills.
 - `jarvis skills reload --yes --dry-run` — Re-scan the skills directory.
 - `jarvis skills show <name>` — Show one skill's detail.
