@@ -9559,3 +9559,71 @@ the fixed-budget form, losing the final fragment exactly as the live call did;
 `test_a_loud_but_wordless_floor_still_releases_the_order` for the bounded
 half) and `tests/unit/realtime/test_gemini_live.py` (default sensitivity, the
 opt-out, and the old-SDK degradation).
+
+## BUG-139: recap engine re-walks three dead provider families on every poll — continuous CLI subprocess spawning until the desktop freezes (HIGH, FIXED 2026-08-14)
+
+**Symptom (live 2026-08-14, recurring).** The desktop app became laggy to
+the point of unusability and the keyboard stopped responding; the
+maintainer had to reboot the machine (Event Log: user-initiated restart
+15:49:46). CPU sat at a NORMAL 50-70 % and the GPU near 19 % throughout —
+this is not a load spike, which is exactly why Task Manager looked
+innocent. The same failure signature recurs across days:
+`jarvis_desktop.log` shows the identical fallback storm on 2026-08-13
+20:00-21:00 (164 walks/h) and 2026-08-14 08:00-10:00 (126/72/75 walks/h).
+An app restart at 15:46 did not help — the fresh process resumed the same
+loop within seconds, and it was still running after the PC reboot when
+this was diagnosed (one full walk every ~13 s).
+
+**Root cause.** The Agentic-IDE recap engine walks the provider chain
+antigravity → gemini → claude-api → claude-cli on EVERY summary. On this
+install the first three always fail, but each in a different way:
+
+1. **antigravity** — a full `agy.EXE` PTY subprocess turn (8-26 s,
+   ConPTY + conhost + node) whose answer never parses as a recap
+   headline, so `_summarize_on` retries it ONCE MORE with a bigger token
+   budget: TWO complete CLI process spawns per walk, output discarded
+   (`ValueError: The recap model returned no usable headline`).
+2. **gemini** — dead API key, fast `ClientError`.
+3. **claude-api** — invalid key, fast 401.
+4. **claude-cli** — a fourth process spawn; this one succeeds (~13 s).
+
+Because candidate 4 rescues the recap, the pane-level back-off
+(`FAILURES_BEFORE_QUIET`/`QUIET_S`, which only engages when the WHOLE
+chain fails) reset `entry.failures` to 0 on every poll — the three dead
+families stayed permanently "fresh". Measured in the incident window
+15:07-15:49: 63 `agy.EXE` PTY spawns + 25 `claude` CLI spawns in 42
+minutes, across 4+ panes. Post-incident census: 36 `conhost` + 14
+`OpenConsole` helper processes alive.
+
+**Why the machine, not just the app, degraded (assessment).** The
+codebase installs NO low-level keyboard hook and never calls
+`BlockInput` (the Windows hotkey backend polls `GetAsyncKeyState`), so
+Jarvis cannot block the keyboard directly. The system-wide symptoms fit
+continuous console-session churn: every `agy`/`claude` turn creates and
+tears down a ConPTY console host, and dozens of spawns per hour for
+hours exhaust interactive-session resources (process/handle churn,
+desktop-heap pressure) — the classic Windows failure where input and
+window creation die while CPU stays moderate and only a reboot recovers.
+The `Mic closed (drops=1208)` line at 15:08 shows the process itself was
+already starved. Direct proof of the final freeze mechanism is not in
+the logs; the spawn storm is measured, the heap attribution is inferred.
+
+**Fix.** Provider-family-level quiet window in
+`jarvis/agentic_ide/recap_engine.py` (`PROVIDER_QUIET_S`,
+`_quiet_families`, `_brain_identity`): a family that fails at call time
+sits out ten minutes while the chain crosses straight to whoever last
+wrote; a success clears its marker; when EVERY family is quiet the full
+chain still runs so recaps can never be silenced by a wrong skip. Per
+walk this removes two PTY spawns and two dead API calls — the recap goes
+directly to the one working provider.
+
+**Leftovers.** (a) The configured gemini and anthropic API keys fail on
+every call (`ClientError` / 401 "API key is invalid") — fixing or
+removing them would also shorten the walk. (b) The antigravity brain
+burning a full PTY turn to produce an unparseable recap answer deserves
+its own look. (c) If a freeze recurs WITH this fix in, capture
+process/handle counts before rebooting (`Get-Process | measure`,
+Task-Manager handle column) to confirm or kill the desktop-heap theory.
+
+**Tests.** `tests/unit/agentic_ide/test_recap_engine.py`
+(`test_a_failed_family_sits_out_its_quiet_window`).
