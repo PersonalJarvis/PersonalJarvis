@@ -23,6 +23,7 @@ from jarvis.core import runtime_refs
 
 from .brain_legs import BrainLegExecutor
 from .bridge import ErrandEventBridge
+from .keeper import keep_learnings
 from .runner import ErrandRunner
 from .sources import render_context_sources
 from .store import ErrandStore
@@ -105,6 +106,7 @@ def get_runner() -> ErrandRunner | None:
         execute_leg=BrainLegExecutor(brain=brain, tools=tools, executor=executor),
         on_update=ErrandEventBridge(_EVENT_BUS[0]) if _EVENT_BUS else None,
         context_sources=_context_sources,
+        keep_learnings=keep_learnings,
     )
     _RUNNER.append(runner)
     return runner

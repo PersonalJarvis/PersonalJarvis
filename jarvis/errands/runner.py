@@ -132,6 +132,10 @@ class ErrandRunner:
     #: (C13 move 1). Optional and never allowed to break a run: without it the
     #: gather prompt simply carries no SOURCES block, the pre-C13 behaviour.
     context_sources: Callable[[], Awaitable[str]] | None = None
+    #: Persists what a finished errand learned (C14) — durable facts and the
+    #: user's own answers. Called once per terminal state, after the terminal
+    #: persist; the callable owns all filtering (e.g. skipping CANCELLED).
+    keep_learnings: Callable[[Errand], Awaitable[None]] | None = None
     max_rechecks: int = MAX_RECHECKS
     max_legs_backstop: int = MAX_LEGS_BACKSTOP
     max_gather_rounds: int = MAX_GATHER_ROUNDS
@@ -500,6 +504,14 @@ class ErrandRunner:
         )
         await self._persist(errand)
         log.info("errand %s finished: %s — %s", errand.id, state, outcome_text[:120])
+        if self.keep_learnings is not None:
+            # C14 — what was learned outlives the errand. Strictly after the
+            # terminal persist, and never allowed to break an outcome: a note
+            # that fails to save costs a memory, not a booking.
+            try:
+                await self.keep_learnings(errand)
+            except Exception:  # noqa: BLE001 — keeping notes is best-effort
+                log.warning("errand %s: keep_learnings failed", errand.id, exc_info=True)
         return errand
 
     async def _persist(self, errand: Errand) -> None:
