@@ -291,6 +291,8 @@ def _read_dir(directory: Path, *, built_in: bool) -> dict[str, Mode]:
     try:
         entries = sorted(directory.glob(f"*{_MODE_FILE_SUFFIX}"))
     except OSError:
+        # No mode directory yet is the normal state on a fresh install, and an
+        # unreadable one must not take the whole shelf down: list what we have.
         return found
     for path in entries:
         mode = _parse_mode_file(path, built_in=built_in)
@@ -329,6 +331,8 @@ def get_mode(slug: str) -> Mode | None:
     try:
         wanted = normalize_slug(slug)
     except ModeError:
+        # A slug that cannot even be normalised names no mode, which is exactly
+        # the None this function is documented to return.
         return None
     for mode in list_modes():
         if mode.slug == wanted:
@@ -341,6 +345,7 @@ def has_user_copy(slug: str) -> bool:
     try:
         return _mode_path(normalize_slug(slug)).is_file()
     except (ModeError, OSError):
+        # Unaskable question, honest answer: no readable user file for this slug.
         return False
 
 
@@ -460,6 +465,8 @@ def _atomic_write(path: Path, text: str) -> None:
         try:
             os.unlink(tmp_name)
         except OSError:
+            # Best-effort cleanup of the temp file; the write error itself is
+            # re-raised below and is the one the caller needs to see.
             pass
         raise
 
@@ -527,6 +534,8 @@ def delete_mode(slug: str) -> bool:
         _mode_path(safe_slug).unlink()
         removed = True
     except FileNotFoundError:
+        # Already gone: nothing was removed, which the return value states. A
+        # real I/O failure is a different branch and raises ModeError.
         removed = False
     except OSError as exc:
         raise ModeError(f"Could not delete {safe_slug!r}: {exc}") from exc
@@ -554,6 +563,7 @@ def restore_builtin(slug: str) -> bool:
         _mode_path(safe_slug).unlink()
         return True
     except FileNotFoundError:
+        # No user copy to drop, so the packaged built-in already applies.
         return False
     except OSError as exc:
         raise ModeError(f"Could not restore {safe_slug!r}: {exc}") from exc

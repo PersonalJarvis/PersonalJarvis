@@ -96,6 +96,8 @@ def _live_plugin_registry() -> Any:
 
         return get_active_plugin_registry()
     except Exception:  # noqa: BLE001
+        # The plugin registry is optional wiring; without it the caller gets
+        # None and degrades, which is the documented keyless path.
         return None
 
 
@@ -133,6 +135,7 @@ def _plugin_status_meta(plugin_id: str, store: TokenStore) -> _PluginStatusMeta:
     try:
         tokens = store.load(plugin_id)
     except RuntimeError:
+        # Not swallowed: the failure becomes the "error" status the UI renders.
         return _PluginStatusMeta("error")
     if tokens is None:
         return _PluginStatusMeta("not_connected")
@@ -195,6 +198,8 @@ def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
             try:
                 return bool(resp.json().get("ok")), 200
             except ValueError:
+                # A non-JSON body from Telegram is a soft failure, reported as
+                # the False below rather than raised at the caller.
                 return False, 200
         return True, 200
 
@@ -295,6 +300,7 @@ async def list_plugins(response: Response) -> dict[str, Any]:
 
                 native_live = spec.native_tool in ROUTER_TOOLS
             except Exception:  # noqa: BLE001
+                # Router tools are an optional import; absent means not live.
                 native_live = False
         item["live_callable"] = mcp_live or native_live
         if status == "connected":
@@ -779,6 +785,8 @@ def _community_payload(
                         f"name {spec.id!r}"
                     )
             except AgentPluginError as exc:
+                # Surfaced, not dropped: the entry is listed as invalid with its
+                # reason attached, so one bad manifest cannot hide the rest.
                 plugins.append({**base, "valid": False, "error": str(exc)})
                 continue
             item = spec.model_dump(mode="json")

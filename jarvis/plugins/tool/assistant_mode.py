@@ -70,6 +70,8 @@ class SwitchModeTool:
         try:
             mode = modes.set_active(slug)
         except modes.ModeError as exc:
+            # Not swallowed: the refusal and the real mode list go back to the
+            # model in the ToolResult below, which is where it can act on them.
             available = ", ".join(m.slug for m in modes.list_modes())
             return ToolResult(
                 success=False,
@@ -174,8 +176,10 @@ class SaveModeTool:
                 proactivity=str(args.get("proactivity") or modes.PROACTIVITY_NORMAL),
             )
         except modes.ModeError as exc:
+            # Returned to the model as a failed ToolResult, not dropped.
             return ToolResult(success=False, output=None, error=str(exc))
         except OSError as exc:
+            # Returned to the model as a failed ToolResult, not dropped.
             return ToolResult(success=False, output=None, error=f"Could not save the mode: {exc}")
 
         if not bool(args.get("activate")):
