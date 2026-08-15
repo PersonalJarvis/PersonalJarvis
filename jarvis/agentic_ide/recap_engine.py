@@ -155,6 +155,19 @@ PROVIDER_QUIET_S = QUIET_S
 #: → the ``time.monotonic()`` deadline when they may write again.
 _quiet_families: dict[str, float] = {}
 
+#: How long the two config-derived values — the smart-recaps switch and the
+#: interface language — may be answered from cache before ``jarvis.toml`` is
+#: parsed again. Both live in the config file, ``load_config`` re-parses that
+#: file on every call, and the recap poll asks per pane per poll; five seconds
+#: keeps a toggle landing within one poll cadence while taking the parse off
+#: the per-pane path.
+SWITCH_TTL_S = 5.0
+
+#: The cached switch: ``time.monotonic()`` of the read, the smart-recaps
+#: switch, and the interface language. One tuple because both values come out
+#: of the same ``load_config`` call, so a refresh of one is a refresh of both.
+_switch: tuple[float, bool, str] = (0.0, True, "en")
+
 #: This is a DISPLAY budget, not merely a transport cap.  In a normal grid the
 #: call-sign and pane actions leave room for about 48 characters; a 90-character
 #: model instruction merely guaranteed that CSS would hide the distinguishing
@@ -414,30 +427,79 @@ def _state(key: str) -> _PaneState:
     return entry
 
 
+def _load_switch() -> tuple[bool, str]:
+    """Parse ``jarvis.toml`` once and refresh the cached switch from it.
+
+    The one place this module pays for ``load_config``. A config that cannot be
+    loaded answers "on" and English: the deterministic floor is what runs anyway
+    when nothing else works, and failing closed here would make a broken config
+    look like a broken feature.
+    """
+    global _switch
+    enabled = True
+    language = "en"
+    try:
+        from jarvis.core.config import load_config
+
+        config = load_config()
+        enabled = bool(getattr(config.agentic_ide, "smart_recaps", True))
+        language = str(getattr(config.ui, "language", "en") or "en").strip().lower()
+    except Exception as exc:  # noqa: BLE001 - a recap must never break a state read
+        logger.debug("Agentic IDE recap: config unreadable, running on defaults ({})", exc)
+    _switch = (time.monotonic(), enabled, language)
+    return enabled, language
+
+
 def _enabled() -> bool:
     """Is the model-written recap switched on for this install?
 
-    Read live rather than cached, so turning it off in ``jarvis.toml`` takes
-    effect on the next poll instead of on the next restart. A config that cannot
-    be loaded answers "on": the deterministic floor is what runs anyway when
-    nothing else works.
+    Cached briefly (:data:`SWITCH_TTL_S`) rather than read per call: the value
+    lives in ``jarvis.toml``, ``load_config`` parses that file on every call,
+    and this runs per pane on every recap poll. A toggle still lands within one
+    poll cadence — the cache outlives a single poll, not a decision. A config
+    that cannot be loaded answers "on": the deterministic floor is what runs
+    anyway when nothing else works.
     """
-    try:
-        from jarvis.core.config import load_config
-
-        return bool(getattr(load_config().agentic_ide, "smart_recaps", True))
-    except Exception:  # noqa: BLE001 - a recap must never break a state read
-        return True
+    cached_at, enabled, _language = _switch
+    if time.monotonic() - cached_at < SWITCH_TTL_S:
+        return enabled
+    return _load_switch()[0]
 
 
 def _ui_language() -> str:
-    """The interface language the recap should be written in."""
-    try:
-        from jarvis.core.config import load_config
+    """The interface language the recap should be written in.
 
-        return str(getattr(load_config().ui, "language", "en") or "en").strip().lower()
-    except Exception:  # noqa: BLE001
-        return "en"
+    Answered from the same short-TTL cache as :func:`_enabled`; the miss parses
+    ``jarvis.toml`` and refreshes both values at once.
+    """
+    cached_at, _enabled_now, language = _switch
+    if time.monotonic() - cached_at < SWITCH_TTL_S:
+        return language
+    return _load_switch()[1]
+
+
+async def warm_switch_cache() -> None:
+    """Refresh the switch cache with the TOML parse kept off the event loop.
+
+    :func:`_enabled` and :func:`_ui_language` answer from their cache almost
+    always; the miss parses ``jarvis.toml``, which is file IO plus a TOML parse
+    on the loop that also carries the wake microphone — the freeze class this
+    repo keeps re-finding (AP-9/AP-26), and a single ``load_config`` has been
+    measured at whole seconds under GC pressure. So the recap poll and the
+    manual refresh await this ONCE up front: cache hits return synchronously,
+    only the rare miss pays for a thread hop, and every per-pane gate behind it
+    then reads warm.
+    """
+    cached_at, _enabled_now, _language = _switch
+    if time.monotonic() - cached_at < SWITCH_TTL_S:
+        return
+    await asyncio.to_thread(_load_switch)
+
+
+def reset_switch_cache() -> None:
+    """Forget the cached switch — for tests, and for a live config change."""
+    global _switch
+    _switch = (0.0, True, "en")
 
 
 def _material_change(term: Any, entry: _PaneState, line_count: int) -> bool:
@@ -710,6 +772,18 @@ def _resolve_brains() -> list[Any]:
     return candidates
 
 
+def _resolve_brains_and_language() -> tuple[list[Any], str]:
+    """Everything one summary needs from config, resolved in ONE thread hop.
+
+    The brains and the interface language both come out of ``load_config``, and
+    :func:`summarize_with_model` already pays a worker thread to resolve the
+    brains — so the language rides along here (through the cache-refreshing
+    :func:`_ui_language`) instead of being parsed again on the event loop when
+    the prompt is built.
+    """
+    return _resolve_brains(), _ui_language()
+
+
 def _resolve_subscription(config: Any) -> Any | None:
     """A connected subscription brain as the recap's last resort, or None."""
     try:
@@ -787,12 +861,18 @@ def _screen_sections(rows: Sequence[str]) -> list[str]:
     return sections
 
 
-def build_prompt(term: Any, rows: Sequence[str], *, folder: str = "") -> str:
+def build_prompt(term: Any, rows: Sequence[str], *, folder: str = "", language: str = "") -> str:
     """What the summarizer is shown: the brief, the pane, and its screen.
 
     Public because it is the part worth asserting on — the tests pin that the
     instruction and both transcript bookends survive the budget, and that the
     less useful middle is what gets dropped when they do not.
+
+    ``language`` is the interface language the recap should be written in. The
+    async summarize path resolves it inside the same worker-thread hop as the
+    brains (:func:`_resolve_brains_and_language`) and passes it in, so building
+    the prompt never parses config on the event loop; a caller that leaves it
+    empty falls back to :func:`_ui_language`.
     """
     instruction = str(getattr(term, "last_prompt", "") or "").strip()
     if len(instruction) > 1_500:
@@ -816,8 +896,8 @@ def build_prompt(term: Any, rows: Sequence[str], *, folder: str = "") -> str:
         )
     parts.extend(_screen_sections(rows))
 
-    language = _LANGUAGE_NAMES.get(_ui_language(), _LANGUAGE_NAMES["en"])
-    parts.append(f"Write both lines in {language}.")
+    language_name = _LANGUAGE_NAMES.get(language or _ui_language(), _LANGUAGE_NAMES["en"])
+    parts.append(f"Write both lines in {language_name}.")
     return "\n\n".join(parts)
 
 
@@ -926,7 +1006,7 @@ async def summarize_with_model(
     this raise, and it raises the FIRST failure — the configured provider's,
     which is the one the user can act on.
     """
-    brains = await asyncio.to_thread(_resolve_brains)
+    brains, language = await asyncio.to_thread(_resolve_brains_and_language)
     if not brains:
         return None
     now = time.monotonic()
@@ -937,7 +1017,7 @@ async def summarize_with_model(
     first_failure: Exception | None = None
     for brain in ready or brains:
         try:
-            answer = await _summarize_on(brain, term, rows, folder=folder)
+            answer = await _summarize_on(brain, term, rows, folder=folder, language=language)
         except Exception as exc:  # noqa: BLE001 - the next family is the handling
             _quiet_families[_brain_identity(brain)] = time.monotonic() + PROVIDER_QUIET_S
             first_failure = first_failure or exc
@@ -965,13 +1045,17 @@ def _brain_identity(brain: Any) -> str:
 
 
 async def _summarize_on(
-    brain: Any, term: Any, rows: Sequence[str], *, folder: str = ""
+    brain: Any, term: Any, rows: Sequence[str], *, folder: str = "", language: str = ""
 ) -> SmartRecap:
     """One summary on one brain. Raises whatever the provider raises."""
     from jarvis.core.protocols import BrainMessage, BrainRequest
 
     request = BrainRequest(
-        messages=(BrainMessage(role="user", content=build_prompt(term, rows, folder=folder)),),
+        messages=(
+            BrainMessage(
+                role="user", content=build_prompt(term, rows, folder=folder, language=language)
+            ),
+        ),
         system=_SYSTEM,
         # A recap is a reading of the screen, not an opinion about it: the same
         # pane should not be described differently on two consecutive polls.
@@ -1083,6 +1167,9 @@ async def summarize_now(term: Any, *, lines: Sequence[str], folder: str = "") ->
     entry = _state(key) if key else _PaneState()
     unpin(key)
     rows = list(lines)
+    # Warm the config-derived switch off the loop before any gate reads it, so
+    # a cold cache costs a thread hop here rather than a TOML parse on the loop.
+    await warm_switch_cache()
     if not _enabled():
         return _floor(term, rows, WHY_DISABLED)
     if not _worth_summarizing(term, len(rows)):
@@ -1135,6 +1222,7 @@ def reset_for_tests() -> None:
     _tasks.clear()
     _quiet_families.clear()
     _inflight = 0
+    reset_switch_cache()
 
 
 __all__ = [
@@ -1169,7 +1257,9 @@ __all__ = [
     "recap_for",
     "refresh_soon",
     "reset_for_tests",
+    "reset_switch_cache",
     "summarize_now",
     "summarize_with_model",
     "unpin",
+    "warm_switch_cache",
 ]

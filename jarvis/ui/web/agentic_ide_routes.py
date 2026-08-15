@@ -2592,6 +2592,12 @@ async def get_recaps(workspace_id: str | None = None) -> RecapsResponse:
     session = get_registry().get(workspace_id)
     if session is None:
         return RecapsResponse(workspace_id=None, terminals=[])
+    # One off-loop config read before the pane loop: every per-pane gate below
+    # (`refresh_soon`, `recap_for`) consults the recap switch, and paying the
+    # TOML parse here — in a worker thread, once — is what keeps a cold cache
+    # from parsing config on the event loop per pane (measured at whole seconds
+    # under GC pressure, i.e. a frozen app).
+    await recap_engine.warm_switch_cache()
     rows: list[TerminalRecap] = []
     for term in session.terminals:
         # The replayed screen, read ONCE per pane: the summarizer wants it and
