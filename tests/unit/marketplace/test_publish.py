@@ -19,7 +19,9 @@ def _skill_draft(**overrides: Any) -> dict[str, Any]:
         "title": "Three Point Check",
         "description": "Summarize any topic in three bullets",
         "categories": ["writing"],
-        "skill_md": "---\nname: three-point-check\n---\n\nDo the thing.",
+        "skill_md": (
+            "---\nname: three-point-check\ndescription: Three bullets, done.\n---\n\nDo the thing."
+        ),
     }
     draft.update(overrides)
     return draft
@@ -66,11 +68,7 @@ def test_valid_skill_normalizes() -> None:
 
 def test_valid_plugin_with_pinned_stdio() -> None:
     draft = _plugin_draft(
-        mcp_json={
-            "mcpServers": {
-                "todo-fox": {"command": "uvx", "args": ["todo-fox-mcp@1.2.0"]}
-            }
-        }
+        mcp_json={"mcpServers": {"todo-fox": {"command": "uvx", "args": ["todo-fox-mcp@1.2.0"]}}}
     )
     value, errors = publish.validate_draft(draft)
     assert errors == [] and value is not None
@@ -117,6 +115,139 @@ def test_secret_pattern_rejected() -> None:
     value, errors = publish.validate_draft(draft)
     assert value is None
     assert any("credential" in e["error"] for e in errors)
+
+
+# --- skill_md is judged by the same rule the install path uses -------------
+#
+# community_install.install_community_skill calls
+# agent_plugins_loader.validate_bundled_skills for every standalone skill
+# install; validate_draft must reject exactly what that call would reject,
+# not a hand-rolled subset of it.
+
+
+def test_skill_frontmatter_missing_description_is_rejected() -> None:
+    draft = _skill_draft(skill_md="---\nname: three-point-check\n---\n\nDo the thing.")
+    value, errors = publish.validate_draft(draft)
+    assert value is None
+    assert any(e["field"] == "skill_md" for e in errors)
+
+
+def test_skill_frontmatter_risk_policy_is_rejected() -> None:
+    draft = _skill_draft(
+        skill_md=(
+            "---\nname: three-point-check\ndescription: d\nrisk_policy: safe\n---\n\nDo the thing."
+        )
+    )
+    value, errors = publish.validate_draft(draft)
+    assert value is None
+    assert any(e["field"] == "skill_md" and "risk_policy" in e["error"] for e in errors)
+
+
+def test_invalid_skill_name_does_not_also_report_skill_md() -> None:
+    # A bad top-level name must not be reused as `plugin_name` for the
+    # skill_md check — that would attribute a confusing second error to the
+    # wrong field for a skill_md that was otherwise fine.
+    draft = _skill_draft(name="UPPER")
+    value, errors = publish.validate_draft(draft)
+    assert value is None
+    assert any(e["field"] == "name" for e in errors)
+    assert not any(e["field"] == "skill_md" for e in errors)
+
+
+# --- bundled skills on a plugin submission ----------------------------------
+
+
+def _bundled_skill(name: str = "todo-fox-tips", **overrides: Any) -> dict[str, Any]:
+    skill: dict[str, Any] = {
+        "name": name,
+        "skill_md": f"---\nname: {name}\ndescription: Tips for todo-fox.\n---\n\nDo the thing.",
+    }
+    skill.update(overrides)
+    return skill
+
+
+def test_valid_bundled_skill_normalizes() -> None:
+    value, errors = publish.validate_draft(_plugin_draft(skills=[_bundled_skill()]))
+    assert errors == []
+    assert value is not None
+    assert value["skills"] == [_bundled_skill()]
+
+
+def test_bundled_skill_missing_description_is_rejected() -> None:
+    bad = _bundled_skill(skill_md="---\nname: todo-fox-tips\n---\n\nDo the thing.")
+    value, errors = publish.validate_draft(_plugin_draft(skills=[bad]))
+    assert value is None
+    assert any(e["field"] == "skills" for e in errors)
+
+
+def test_bundled_skill_risk_policy_is_rejected() -> None:
+    bad = _bundled_skill(
+        skill_md=(
+            "---\nname: todo-fox-tips\ndescription: d\nrisk_policy: safe\n---\n\nDo the thing."
+        )
+    )
+    value, errors = publish.validate_draft(_plugin_draft(skills=[bad]))
+    assert value is None
+    assert any(e["field"] == "skills" and "risk_policy" in e["error"] for e in errors)
+
+
+def test_bundled_skill_duplicate_name_is_rejected() -> None:
+    skill = _bundled_skill()
+    value, errors = publish.validate_draft(_plugin_draft(skills=[skill, skill]))
+    assert value is None
+    assert any(e["field"] == "skills" for e in errors)
+
+
+def test_bundled_skill_sharing_plugin_name_alone_is_allowed() -> None:
+    skill = _bundled_skill(
+        name="todo-fox",
+        skill_md="---\nname: todo-fox\ndescription: d\n---\n\nDo the thing.",
+    )
+    value, errors = publish.validate_draft(_plugin_draft(skills=[skill]))
+    assert errors == []
+    assert value is not None
+
+
+def test_bundled_skill_sharing_plugin_name_with_others_is_rejected() -> None:
+    same_name = _bundled_skill(
+        name="todo-fox",
+        skill_md="---\nname: todo-fox\ndescription: d\n---\n\nDo the thing.",
+    )
+    value, errors = publish.validate_draft(
+        _plugin_draft(skills=[same_name, _bundled_skill(name="todo-fox-extra")])
+    )
+    assert value is None
+    assert any(e["field"] == "skills" for e in errors)
+
+
+def test_too_many_bundled_skills_is_rejected() -> None:
+    skills = [_bundled_skill(name=f"todo-fox-{i}") for i in range(11)]
+    value, errors = publish.validate_draft(_plugin_draft(skills=skills))
+    assert value is None
+    assert any(e["field"] == "skills" for e in errors)
+
+
+# --- mcp.json: the two divergences closed in publish.py --------------------
+
+
+def test_mcp_rejects_latest_even_when_another_arg_looks_pinned() -> None:
+    draft = _plugin_draft(
+        mcp_json={
+            "mcpServers": {"todo-fox": {"command": "npx", "args": ["foo@1.2.0", "bar@latest"]}}
+        }
+    )
+    value, errors = publish.validate_draft(draft)
+    assert value is None
+    assert any(e["field"] == "mcp_json" for e in errors)
+
+
+def test_mcp_rejects_the_servers_alias() -> None:
+    draft = _plugin_draft(
+        mcp_json={"servers": {"todo-fox": {"url": "https://mcp.todofox.example/mcp"}}}
+    )
+    value, errors = publish.validate_draft(draft)
+    assert value is None
+    assert any(e["field"] == "mcp_json" for e in errors)
 
 
 # --- submit ---------------------------------------------------------------

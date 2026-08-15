@@ -132,7 +132,7 @@ async def test_submit_maps_endpoint_refusals(
                 "version": "1.0.0",
                 "title": "T",
                 "description": "D",
-                "skill_md": "---\nname: taken-name\n---\nBody",
+                "skill_md": "---\nname: taken-name\ndescription: D\n---\nBody",
             },
         )
     assert resp.status_code == 409
@@ -156,7 +156,7 @@ async def test_submit_happy_path(
                 "version": "1.0.0",
                 "title": "T",
                 "description": "D",
-                "skill_md": "---\nname: fresh-name\n---\nBody",
+                "skill_md": "---\nname: fresh-name\ndescription: D\n---\nBody",
             },
         )
     assert resp.status_code == 200

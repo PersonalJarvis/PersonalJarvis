@@ -27,6 +27,13 @@ from typing import Any
 
 import httpx
 
+from jarvis.marketplace.agent_plugins_loader import (
+    MAX_SKILL_MD_BYTES,
+    AgentPluginError,
+)
+from jarvis.marketplace.agent_plugins_loader import (
+    validate_bundled_skills as _install_time_validate_bundled_skills,
+)
 from jarvis.marketplace.auth.oauth_device import DeviceFlowConfig, DeviceFlowHandler
 from jarvis.marketplace.token_store import Tokens, TokenStore
 
@@ -53,7 +60,10 @@ _UA = {"User-Agent": "Personal-Jarvis/1.0"}
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$")
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 MAX_FILE_BYTES = 128 * 1024
-MAX_SKILL_BYTES = 64 * 1024
+# Re-exported under this module's existing name, but the VALUE comes from
+# agent_plugins_loader — the install-time authority — so the two numbers
+# cannot silently drift apart.
+MAX_SKILL_BYTES = MAX_SKILL_MD_BYTES
 MAX_DESCRIPTION_CHARS = 500
 _STDIO_LAUNCHERS = frozenset({"npx", "uvx", "docker"})
 # Verbatim copy of validate.ts's SECRET_PATTERNS — a mirror that misses a
@@ -84,6 +94,12 @@ class FieldError(dict):
         super().__init__(error=error, field=field)
 
 
+def _is_valid_name(text: str) -> bool:
+    """The Agent Plugins spec name rule, shared by the submission name and
+    every bundled/standalone skill name (each becomes a directory)."""
+    return bool(_NAME_RE.fullmatch(text)) and ".." not in text and "--" not in text
+
+
 def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[FieldError]]:
     """Normalize and check a submission draft.
 
@@ -97,7 +113,8 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
         return None, [FieldError('kind must be "plugin" or "skill"', "kind")]
 
     name = str(draft.get("name") or "").strip()
-    if not _NAME_RE.fullmatch(name) or ".." in name or "--" in name:
+    name_is_valid = _is_valid_name(name)
+    if not name_is_valid:
         errors.append(
             FieldError(
                 "name must be 1-64 chars of a-z 0-9 - . "
@@ -124,10 +141,22 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
             errors.append(
                 FieldError(f"description longer than {MAX_DESCRIPTION_CHARS} chars", "description")
             )
-        if not skill_md.lstrip().startswith("---"):
-            errors.append(FieldError("skill_md must start with YAML frontmatter (---)", "skill_md"))
-        elif len(skill_md.encode("utf-8")) > MAX_SKILL_BYTES:
-            errors.append(FieldError(f"skill_md larger than {MAX_SKILL_BYTES} bytes", "skill_md"))
+        if not skill_md:
+            errors.append(FieldError("skill_md is required for a skill", "skill_md"))
+        elif name_is_valid:
+            # A standalone skill install runs through the exact same call
+            # (community_install.install_community_skill), so this is not a
+            # second opinion on the frontmatter shape/size/forbidden-key
+            # rules — it is a preview of the one judgment that will actually
+            # be made. Skipped when the submission name itself is invalid:
+            # that error is already reported above, and using a bad name as
+            # `plugin_name` here would only produce a confusing second one.
+            try:
+                _install_time_validate_bundled_skills(
+                    [{"name": name, "skill_md": skill_md}], plugin_name=name
+                )
+            except AgentPluginError as exc:
+                errors.append(FieldError(str(exc), "skill_md"))
         raw_categories = draft.get("categories")
         categories = (
             [c for c in raw_categories if isinstance(c, str)][:10]
@@ -163,6 +192,20 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
             mcp_json=mcp_json,
             usage_card=usage_card if isinstance(usage_card, str) else None,
         )
+        # Skipped when the submission name itself is invalid, for the same
+        # reason as the standalone-skill branch above: that error is already
+        # reported, and an invalid `plugin_name` here would only add a
+        # confusing second one.
+        skills, skill_errors = (
+            _validate_bundled_skills(draft.get("skills"), plugin_name=name)
+            if name_is_valid
+            else ([], [])
+        )
+        errors.extend(skill_errors)
+        if skills:
+            # Only present when non-empty, so a plain connector submission
+            # keeps the exact body shape older endpoints already accept.
+            value["skills"] = skills
 
     serialized = json.dumps(value, ensure_ascii=False)
     if len(serialized.encode("utf-8")) > MAX_FILE_BYTES:
@@ -182,10 +225,40 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
     return value, []
 
 
+def _validate_bundled_skills(
+    raw: Any, *, plugin_name: str
+) -> tuple[list[dict[str, str]], list[FieldError]]:
+    """Validate a plugin submission's ``skills: [{name, skill_md}]`` block.
+
+    Delegates the per-skill rules — frontmatter shape, the required ``name``/
+    ``description`` keys, the forbidden ``risk_policy`` key, the size cap, and
+    the "may only share the plugin's own name when it is the sole skill"
+    rule — straight to ``agent_plugins_loader.validate_bundled_skills``. That
+    is the exact function the install path calls (both for a plugin's bundled
+    skills and, via ``community_install.install_community_skill``, for a
+    standalone skill submission), so there is no second copy of the rule set
+    left to drift out of sync.
+
+    The trade-off against the rest of this module's "collect every error"
+    form UX: the authority is fail-fast (one exception), so a bad bundle is
+    reported by its first violation rather than all of them at once.
+    """
+    if raw is None:
+        return [], []
+    try:
+        validated = _install_time_validate_bundled_skills(raw, plugin_name=plugin_name)
+    except AgentPluginError as exc:
+        return [], [FieldError(str(exc), "skills")]
+    return [{"name": skill.name, "skill_md": skill.skill_md} for skill in validated], []
+
+
 def _validate_mcp(mcp: dict[str, Any]) -> str | None:
     """Exactly one server; hosted must be https, local a pinned allowlisted
     launcher — the two fields where data flows or code executes."""
-    servers = mcp.get("mcpServers", mcp.get("servers"))
+    # Only "mcpServers" is a real key — a "servers" alias would validate here
+    # and then vanish once CI (which reads only "mcpServers") looks at it,
+    # producing a submission that describes a server nobody can find.
+    servers = mcp.get("mcpServers")
     if not isinstance(servers, dict):
         return "mcp_json must contain an mcpServers object"
     if len(servers) != 1:
@@ -203,6 +276,13 @@ def _validate_mcp(mcp: dict[str, Any]) -> str | None:
         if command not in _STDIO_LAUNCHERS:
             return "stdio launcher must be one of: npx, uvx, docker"
         args = [a for a in server.get("args") or [] if isinstance(a, str)]
+        # An arg ending in "@latest" is rejected on its own, even when a
+        # DIFFERENT arg in the same command looks pinned — the earlier
+        # "any argument looks pinned" check alone would accept
+        # `npx foo@1.2.0 bar@latest`, which CI's own "no @latest, ever" rule
+        # then refuses.
+        if any(a.endswith("@latest") for a in args):
+            return "stdio args may not pin @latest — pin an exact version instead"
         pinned = any(
             re.search(r"@\d+\.\d+\.\d+", a) or re.search(r":[\w.-]*\d[\w.-]*$", a) for a in args
         )

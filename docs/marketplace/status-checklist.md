@@ -190,11 +190,28 @@ ships.**
 ### In flight (this session) — outcome not knowable from here
 
 - [ ] The GitHub device-flow sign-in path for the in-app publisher.
-- [ ] Bundled-skill validation in the app's upload pre-check
-      (`jarvis/marketplace/publish.py`).
 - [ ] The in-app **Publish** tab frontend.
 
 Re-measure these before trusting any line about them.
+
+### Done 2026-08-15
+
+- [x] **Bundled-skill and standalone-skill validation in the app's upload
+      pre-check now delegates to the install-time authority.**
+      `jarvis/marketplace/publish.py`'s `_validate_bundled_skills` and its
+      `kind: "skill"` branch call `agent_plugins_loader.validate_bundled_skills`
+      directly — the exact function `community_install.py` calls at install
+      time — instead of a hand-copied, drifted-out-of-sync subset. This
+      closed three real bugs (missing required `name`/`description`
+      frontmatter keys, the missing "shares the plugin's name only when
+      sole" rule, `risk_policy` unchecked on standalone skills) plus a
+      dormant error-accumulation trap. Also fixed, independently: the
+      `@latest`-pin bug and the `servers`/`mcpServers` alias in `_validate_mcp`
+      (validator-parity.md rows 14 and 16). 15 new tests in
+      `tests/unit/marketplace/test_publish.py` pin every rule including the
+      rejection cases; `tests/unit/marketplace` is green (441 passed). See
+      `docs/marketplace/validator-parity.md` §"A third comparison axis" for
+      the evidence.
 
 ### Next — the door, in order
 
@@ -216,16 +233,43 @@ Re-measure these before trusting any line about them.
 
 ### Then — one validator, and the CLI
 
-- [ ] **W3 is half done.** `rules.json` is generated from the registry
-      validator, published next to the feed (**200** today), and CI fails if
-      it drifts. But **nothing reads it**: the app still carries a
-      hand-copied mirror (`jarvis/marketplace/publish.py:56-75`, comment:
-      *"keep the two lists identical"*) and the storefront validator only
-      names the file in a comment (`functions/_lib/validate.ts:45`). The
-      17 divergences in [validator-parity.md](validator-parity.md) stand
-      except the secret-pattern gap, which was closed by hand on 2026-08-14
-      — which is exactly the recurrence W3 was meant to prevent. `submission_
-      rules.py` does not exist in any repo.
+- [ ] **W3 is now three-quarters done for the skill half, still open for the
+      plugin-manifest half.** Two separate things both called "W3" in this
+      repo's history:
+      1. *Storefront ↔ registry* (the plan's original W3 target,
+         `functions/_lib/validate.ts` vs `scripts/validate.py`, both in
+         other repos): unchanged from before — `rules.json` is published
+         (**200** today) but nothing reads it, and `submission_rules.py`
+         does not exist in either repo.
+      2. *This app's own Publish tab ↔ this app's own installer*
+         (`jarvis/marketplace/publish.py` vs `agent_plugins_loader.py`,
+         both here): **closed for skills 2026-08-15** — `publish.py` now
+         calls `agent_plugins_loader.validate_bundled_skills` directly, so
+         there is one function, not two hand-kept-in-sync copies (see
+         "Done 2026-08-15" above). **Still open for the plugin-manifest
+         rules** (schema id, `extensions` namespace, `native_tool` ban, auth
+         mode, mcp.json server rules — `agent_plugins_loader.convert_package`
+         already implements all of these correctly). The reason it was not
+         done in the same pass: `convert_package` requires a
+         `type: "streamable-http" | "stdio" | "sse"` key on every `mcp.json`
+         server entry per the Agent Plugins spec
+         (`docs/marketplace/agent-plugins-standard.md` line 21), and neither
+         `publish.py`'s own `_validate_mcp` nor its test fixtures have ever
+         carried that key — confirmed against
+         `{"mcpServers": {"todo-fox": {"url": "..."}}}` with no `type` in
+         `tests/unit/marketplace/test_publish.py`. Delegating today would
+         reject every currently-valid submission. **Maintainer decision
+         needed:** add `type` to the in-app form/schema (small, contained,
+         but a format change worth a second pair of eyes since it also
+         touches `package-layout.md` author guidance), then delegate
+         `_validate_mcp` to `convert_package` in one pass — that closes
+         validator-parity.md rows 4–13 and 15 together instead of one at a
+         time. Recommended over inventing a parallel `type`-inference
+         heuristic in `publish.py`, which would just be a fourth copy of the
+         same rule guessing at a field the real one requires outright.
+      The 17-divergence table in [validator-parity.md](validator-parity.md)
+      is for axis 1 and stands except rows 14 and 16 (closed 2026-08-15, see
+      that file) and the secret-pattern gap (closed 2026-08-14).
 - [ ] **W4 — `jarvis plugin init | validate | publish | status`: untouched.**
       No `plugin` group exists in `jarvis/cli_ctl/commands/`, and `plugin` is
       not in `jarvis/cli_ctl/reserved.py`. The CLI-first contract is

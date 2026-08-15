@@ -87,3 +87,52 @@ rather than data and still need writing once against the table above.
 Number 17 needs no shared data at all: measure the bytes of the exact JSON
 the App is about to commit — pretty-printed, publisher fields included —
 rather than the payload as received.
+
+## Closed in `jarvis/marketplace/publish.py` (2026-08-15)
+
+| # | Fix |
+|---|---|
+| 14 | `_validate_mcp` now rejects an `@latest`-suffixed stdio arg on its own, even when a different arg in the same command looks pinned. Previously `npx foo@1.2.0 bar@latest` passed because the check only asked "does *any* arg look pinned". |
+| 16 | `_validate_mcp` reads only `mcpServers`; the undocumented `servers` alias (which CI has never recognized) is no longer accepted. |
+
+Numbers 1–13 and 15 were left open: closing them well requires either data
+this desktop app cannot fetch locally (`RESERVED_PLUGIN_IDS` /
+`RESERVED_SKILL_NAMES` — see `rules.json` above, not yet consumed here) or a
+change to the `mcp.json` shape this app's Publish form accepts. See
+"the mcp.json `type` field gap" below — several of the remaining rows (9,
+11 partial, 12, 13, 15, and would-be row 16's structural cousin) are
+enforced correctly by `agent_plugins_loader.convert_package`, but that
+function REQUIRES a `type: "streamable-http" | "stdio" | "sse"` key per
+server (`docs/marketplace/agent-plugins-standard.md` line 21) that neither
+`publish.py`'s `_validate_mcp` nor its own tests ever populate — the two
+would need to agree on the mcp.json shape before delegation is safe. That is
+a form/format decision, not a mechanical fix; flagged for the maintainer in
+`status-checklist.md` §4 rather than guessed at here.
+
+## A third comparison axis: this app's own local check vs. its own installer
+
+The rows above are all "the storefront endpoint vs. registry CI". The
+desktop app's in-app Publish tab (`publish.py::validate_draft`) is a THIRD
+copy of similar rules, one hop earlier — and it had drifted from
+`agent_plugins_loader.py`, the authority this same app uses at install time
+(`community_install.install_community_skill`,
+`bundled_skills.write_bundled_skills`). The failure mode is the same shape
+as the table above, just one step earlier in the pipeline: a submission
+passes the in-app "Check" and gets a 201, and only fails once someone
+(possibly the very same publisher) tries to install it.
+
+Found and closed 2026-08-15, by making `_validate_bundled_skills` and the
+`kind: "skill"` branch of `validate_draft` call
+`agent_plugins_loader.validate_bundled_skills` directly instead of
+re-implementing a subset of it:
+
+| Divergence | Where | Risk before the fix |
+|---|---|---|
+| Frontmatter `name`/`description` keys not required | `_frontmatter_keys` + local checks never enforced this | A skill missing either key passed the form, then failed `AgentPluginError` at install — for a STANDALONE skill submission, this could also mean it merges into the live index and is broken for every installer, not just the submitter. |
+| "may only share the plugin's own name when it is the sole skill" rule | never implemented client-side (the local function had no `plugin_name` parameter at all) | A bundle could smuggle a skill under the plugin's own name alongside other skills, which the loader would refuse at install, again after merge. |
+| `risk_policy` forbidden only checked for a plugin's *bundled* skills, never for a standalone `kind: "skill"` submission | `validate_draft`'s skill branch had no risk_policy check at all | A standalone skill declaring `risk_policy` passed the form outright — the loader still refuses it at install (defense in depth held), but the usability failure is identical to the rows above. |
+| Error-accumulation bug: an invalid bundled skill was appended to the returned `skills` list in the same branch that recorded its error | old `_validate_bundled_skills` | Dormant under `validate_draft` (a non-empty `errors` list already forces `return None, errors`), but a latent trap for any future direct caller of the helper. |
+
+All four close by construction now: `_validate_bundled_skills` is a thin
+try/except around `agent_plugins_loader.validate_bundled_skills`, so there
+is no second rule set left to drift.
