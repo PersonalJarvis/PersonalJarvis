@@ -589,3 +589,40 @@ async def test_cancelled_disconnect_finishes_stop_before_untracking_client() -> 
 
     assert clients and clients[0].open is False
     assert plugin.id not in reg._clients
+
+
+class _CancelLeakClient:
+    """Reproduces the mcp streamable-http quirk (live 2026-08-15): the
+    transport's internal task group aborts on an HTTP 401 and start() dies
+    with a bare CancelledError instead of the real error."""
+    def __init__(self, spec, env_overrides=None):
+        self.spec = spec
+    async def start(self) -> None:
+        import asyncio
+        raise asyncio.CancelledError("Cancelled via cancel scope")
+    async def stop(self) -> None: ...
+    async def list_tools(self): return []
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_survives_transport_cancellation_leak():
+    """A CancelledError leaking out of one plugin's connect must degrade to a
+    per-plugin error, never kill the bootstrap task. Regression: GitHub is
+    catalog entry #1, and its expired credential silently cancelled the WHOLE
+    bootstrap on every boot — zero marketplace tools, no error anywhere."""
+    import asyncio
+
+    catalog = PluginCatalog(version=1, schema_version="1",
+                            plugins=[_plugin("leaks"), _plugin("healthy")])
+    bus = _RecordingBus()
+    reg = PluginToolRegistry(
+        catalog=catalog, token_store=_store_for("leaks", "healthy"),
+        client_factory=_factory_by_id({"leaks": _CancelLeakClient, "healthy": _FakeClient}),
+        bus=bus,
+    )
+    await asyncio.wait_for(reg.bootstrap(), timeout=5.0)
+    names = [t.name for t in reg.active_tools()]
+    assert "healthy/list_events" in names
+    assert reg.live_tool_count("leaks") == 0
+    assert "aborted by the transport" in (reg.last_connect_error("leaks") or "")
+    assert reg.is_bootstrapped()

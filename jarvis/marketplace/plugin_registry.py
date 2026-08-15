@@ -209,8 +209,21 @@ class PluginToolRegistry:
             tool_defs = await asyncio.wait_for(
                 self._start_and_list(client), timeout=self._connect_timeout_s
             )
-        except BaseException:
+        except BaseException as exc:
             await self._stop_client_bounded(client, "untracked-connect")
+            if isinstance(exc, asyncio.CancelledError):
+                current = asyncio.current_task()
+                if current is None or not current.cancelling():
+                    # A transport-internal abort leaking out as CancelledError
+                    # (mcp SDK streamable-http quirk). Re-raised bare, it would
+                    # skip every `except Exception` in _connect_plugin and kill
+                    # the whole bootstrap task silently. MCPClient already
+                    # unwraps this; this is the belt-and-braces layer for any
+                    # client implementation that does not.
+                    raise RuntimeError(
+                        "connect aborted by the transport before the handshake "
+                        "completed"
+                    ) from exc
             raise
         return client, tool_defs
 

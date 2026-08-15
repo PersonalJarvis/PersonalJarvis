@@ -2538,6 +2538,18 @@ class WebServer:
             async def _bootstrap_plugins() -> None:
                 try:
                     await self._plugin_registry.bootstrap()
+                except asyncio.CancelledError:
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise  # genuine shutdown cancel
+                    # A transport abort leaking as CancelledError (mcp SDK
+                    # quirk) must not end this task "cancelled and silent" —
+                    # one bad plugin credential would take every other
+                    # marketplace plugin down with it on each boot.
+                    logger.warning(
+                        "PluginToolRegistry bootstrap aborted by a transport "
+                        "leak — plugins worker-only"
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.opt(exception=exc).warning(
                         "PluginToolRegistry bootstrap failed — plugins worker-only"

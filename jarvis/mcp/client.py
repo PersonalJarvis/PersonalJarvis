@@ -113,6 +113,11 @@ class MCPClient:
         self._owner_task: asyncio.Task[None] | None = None
         self._owner_ready: asyncio.Future[None] | None = None
         self._stop_requested: asyncio.Event | None = None
+        # True only while start() is deliberately cancelling the owner task
+        # (its own caller was cancelled). Lets the owner tell a REAL cancel
+        # apart from the mcp SDK's cancel-scope leak: anyio cancels via
+        # task.cancel() too, so Task.cancelling() cannot distinguish the two.
+        self._owner_abort_requested = False
         self._tools_cache: list[dict[str, Any]] = []
         self._circuit_breaker_failures = 0
         self._disabled_until_ns: int = 0
@@ -131,6 +136,7 @@ class MCPClient:
         loop = asyncio.get_running_loop()
         ready = loop.create_future()
         stop_requested = asyncio.Event()
+        self._owner_abort_requested = False
         owner = asyncio.create_task(
             self._run_lifecycle(ready, stop_requested),
             name=f"mcp-owner-{self.spec.name}",
@@ -143,6 +149,7 @@ class MCPClient:
         except BaseException:
             if not ready.done():
                 ready.cancel()
+            self._owner_abort_requested = True
             owner.cancel()
             await asyncio.gather(owner, return_exceptions=True)
             if self._owner_task is owner:
@@ -158,57 +165,80 @@ class MCPClient:
 
         stack = AsyncExitStack()
         try:
-            # Lazy imports — MCP lib is optional-but-expected (requirements.txt).
-            from mcp import ClientSession
-            from mcp.client.stdio import StdioServerParameters, stdio_client
+            try:
+                # Lazy imports — MCP lib is optional-but-expected (requirements.txt).
+                from mcp import ClientSession
+                from mcp.client.stdio import StdioServerParameters, stdio_client
 
-            if self.spec.transport == "stdio":
-                command, args, env = self._resolve_install_command()
-                if shutil.which(command) is None:
-                    # Fail actionable, not raw: without this check
-                    # ``stdio_client`` spawns the launcher itself and a
-                    # missing binary surfaces as a bare FileNotFoundError.
-                    raise FileNotFoundError(
-                        _stdio_launcher_missing_message(self.spec.name, command)
+                if self.spec.transport == "stdio":
+                    command, args, env = self._resolve_install_command()
+                    if shutil.which(command) is None:
+                        # Fail actionable, not raw: without this check
+                        # ``stdio_client`` spawns the launcher itself and a
+                        # missing binary surfaces as a bare FileNotFoundError.
+                        raise FileNotFoundError(
+                            _stdio_launcher_missing_message(self.spec.name, command)
+                        )
+                    params = StdioServerParameters(
+                        command=command,
+                        args=args,
+                        env=env,
                     )
-                params = StdioServerParameters(
-                    command=command,
-                    args=args,
-                    env=env,
-                )
-                read, write = await stack.enter_async_context(stdio_client(params))
-            elif self.spec.transport == "sse":
-                from mcp.client.sse import sse_client
+                    read, write = await stack.enter_async_context(stdio_client(params))
+                elif self.spec.transport == "sse":
+                    from mcp.client.sse import sse_client
 
-                command, args, _env = self._resolve_install_command()
-                # install_command for SSE transport = [url] (by convention)
-                url = args[0] if args else command
-                read, write = await stack.enter_async_context(sse_client(url))
-            elif self.spec.transport == "http":
-                from mcp.client.streamable_http import streamablehttp_client
+                    command, args, _env = self._resolve_install_command()
+                    # install_command for SSE transport = [url] (by convention)
+                    url = args[0] if args else command
+                    read, write = await stack.enter_async_context(sse_client(url))
+                elif self.spec.transport == "http":
+                    from mcp.client.streamable_http import streamablehttp_client
 
-                if not self.spec.url:
-                    raise ValueError(
-                        f"{self.spec.name}: http transport requires a 'url'"
+                    if not self.spec.url:
+                        raise ValueError(
+                            f"{self.spec.name}: http transport requires a 'url'"
+                        )
+                    headers = self._resolve_headers()
+                    # streamablehttp_client yields a 3-tuple
+                    # (read, write, get_session_id) — unlike the 2-tuple stdio/sse
+                    # transports. The session-id callback is unused here.
+                    read, write, _ = await stack.enter_async_context(
+                        streamablehttp_client(self.spec.url, headers=headers or None)
                     )
-                headers = self._resolve_headers()
-                # streamablehttp_client yields a 3-tuple
-                # (read, write, get_session_id) — unlike the 2-tuple stdio/sse
-                # transports. The session-id callback is unused here.
-                read, write, _ = await stack.enter_async_context(
-                    streamablehttp_client(self.spec.url, headers=headers or None)
-                )
-            else:
-                raise NotImplementedError(
-                    f"Transport {self.spec.transport!r} not (yet) supported"
-                )
+                else:
+                    raise NotImplementedError(
+                        f"Transport {self.spec.transport!r} not (yet) supported"
+                    )
 
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
+                session = await stack.enter_async_context(ClientSession(read, write))
+                await session.initialize()
 
-            # Cache tools — saves round trips on every list_tools() call.
-            tools_result = await session.list_tools()
-            self._tools_cache = [_tool_to_dict(t) for t in tools_result.tools]
+                # Cache tools — saves round trips on every list_tools() call.
+                tools_result = await session.list_tools()
+                self._tools_cache = [_tool_to_dict(t) for t in tools_result.tools]
+            except asyncio.CancelledError:
+                if self._owner_abort_requested:
+                    raise  # genuine cancel — start()'s own caller was cancelled
+                # MCP-SDK quirk (observed live with streamable http + an HTTP
+                # 401): the transport's internal anyio task group aborts via its
+                # cancel scope, so the failure reaches this task as a bare
+                # CancelledError while the real httpx error only surfaces when
+                # the transport context unwinds. Left unhandled, that
+                # CancelledError escapes every `except Exception` upstream and
+                # silently kills the whole plugin bootstrap. Unwind the stack
+                # here to capture the underlying error, then raise it as a real
+                # exception the callers' error handling can see.
+                detail = ""
+                try:
+                    async with asyncio.timeout(_STOP_TIMEOUT_S):
+                        await stack.aclose()
+                except BaseException as close_exc:  # noqa: BLE001
+                    detail = _describe_transport_failure(close_exc)
+                raise RuntimeError(
+                    f"{self.spec.name}: transport failed during connect"
+                    + (f": {detail}" if detail else "")
+                ) from None
 
             self._exit_stack = stack
             self._session = session
@@ -398,6 +428,30 @@ class MCPClient:
 # ----------------------------------------------------------------------
 # Utilities
 # ----------------------------------------------------------------------
+
+def _describe_transport_failure(exc: BaseException) -> str:
+    """Flatten a transport teardown error into its informative leaf messages.
+
+    The streamable-http transport wraps the real failure (e.g. an httpx 401)
+    in nested ``BaseExceptionGroup``s and pads them with the CancelledErrors of
+    its sibling tasks. Keep the real messages, drop the cancellation noise.
+    """
+    seen: list[str] = []
+
+    def _walk(e: BaseException) -> None:
+        if isinstance(e, BaseExceptionGroup):
+            for sub in e.exceptions:
+                _walk(sub)
+            return
+        if isinstance(e, asyncio.CancelledError):
+            return
+        text = str(e) or type(e).__name__
+        if text not in seen:
+            seen.append(text)
+
+    _walk(exc)
+    return " | ".join(seen)
+
 
 def _extract_error_text(result: Any) -> str:
     """Extract the error text from a CallToolResult(isError=True)."""
