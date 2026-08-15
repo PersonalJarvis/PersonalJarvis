@@ -441,6 +441,16 @@ interface AgenticTerminalProps {
   maximized?: boolean;
   onToggleMaximize?: () => void;
   /**
+   * Show the header's layout trio — maximize, split right, split below.
+   *
+   * Off on the chat stage: the pane already fills the surface there and the
+   * grid those buttons rearrange is not on screen, so the trio was three dead
+   * controls beside the ones that still mean something (prompt history, the
+   * conversation book, close). The pane stays mounted across a view switch,
+   * so flipping this is what grows the trio back the moment the grid returns.
+   */
+  layoutActions?: boolean;
+  /**
    * Open another terminal beside or below this one.
    *
    * `agent` is the coding CLI the user picked from the split menu; omitted, the
@@ -526,6 +536,7 @@ export function AgenticTerminal({
   onStatus,
   maximized = false,
   onToggleMaximize,
+  layoutActions = true,
   onSplit,
   agents,
   onRename,
@@ -2149,6 +2160,7 @@ export function AgenticTerminal({
         focused={focused}
         maximized={maximized}
         onToggleMaximize={onToggleMaximize}
+        layoutActions={layoutActions}
         onSplit={onSplit}
         agents={agents}
         onRename={onRename}
@@ -2309,6 +2321,7 @@ function PaneHeader({
   focused,
   maximized,
   onToggleMaximize,
+  layoutActions = true,
   onSplit,
   agents,
   onRename,
@@ -2333,6 +2346,8 @@ function PaneHeader({
   focused: boolean;
   maximized: boolean;
   onToggleMaximize?: () => void;
+  /** Render the maximize/split trio — off where there is no grid to arrange. */
+  layoutActions?: boolean;
   onSplit?: (direction: SplitDirection, agent?: string) => void;
   agents?: SplitAgentChoice[];
   onRename?: (name: string) => Promise<boolean>;
@@ -2390,6 +2405,14 @@ function PaneHeader({
       setPicking((current) => (current === direction ? null : direction));
     else onSplit?.(direction);
   };
+
+  // The split menu hangs off a button that can leave the header mid-session
+  // (the view switches to the chat stage, which hides the trio). A menu whose
+  // opener is gone would float over the stage with no way to close it from
+  // where it was opened — so it leaves with its button.
+  useEffect(() => {
+    if (!layoutActions) setPicking(null);
+  }, [layoutActions]);
 
   /*
    * The bar's gesture explainer — our own card, not the browser's `title`.
@@ -2843,38 +2866,45 @@ function PaneHeader({
         >
           <BookOpenText className="h-3.5 w-3.5" aria-hidden="true" />
         </PaneAction>
-        <PaneAction
-          label={maximized ? `Restore ${name}` : `Maximize ${name}`}
-          testId={`pane-maximize-${name}`}
-          light={light}
-          onClick={onToggleMaximize}
-        >
-          {maximized ? (
-            <Minimize2 className="h-3.5 w-3.5" />
-          ) : (
-            <Maximize2 className="h-3.5 w-3.5" />
-          )}
-        </PaneAction>
-        <PaneAction
-          label={`Open another terminal beside ${name}`}
-          testId={`pane-split-right-${name}`}
-          light={light}
-          disabled={splitDisabled}
-          expanded={offersChoice ? picking === "right" : undefined}
-          onClick={onSplit ? () => startSplit("right") : undefined}
-        >
-          <SplitRightIcon className="h-3.5 w-3.5" />
-        </PaneAction>
-        <PaneAction
-          label={`Split ${name} and open a terminal below it`}
-          testId={`pane-split-down-${name}`}
-          light={light}
-          disabled={splitDisabled}
-          expanded={offersChoice ? picking === "down" : undefined}
-          onClick={onSplit ? () => startSplit("down") : undefined}
-        >
-          <SplitBelowIcon className="h-3.5 w-3.5" />
-        </PaneAction>
+        {/* The layout trio only where there IS a layout: on the chat stage the
+            pane already fills the surface and there is no grid beside it to
+            split into, so these three would be furniture. See `layoutActions`. */}
+        {layoutActions && (
+          <>
+            <PaneAction
+              label={maximized ? `Restore ${name}` : `Maximize ${name}`}
+              testId={`pane-maximize-${name}`}
+              light={light}
+              onClick={onToggleMaximize}
+            >
+              {maximized ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </PaneAction>
+            <PaneAction
+              label={`Open another terminal beside ${name}`}
+              testId={`pane-split-right-${name}`}
+              light={light}
+              disabled={splitDisabled}
+              expanded={offersChoice ? picking === "right" : undefined}
+              onClick={onSplit ? () => startSplit("right") : undefined}
+            >
+              <SplitRightIcon className="h-3.5 w-3.5" />
+            </PaneAction>
+            <PaneAction
+              label={`Split ${name} and open a terminal below it`}
+              testId={`pane-split-down-${name}`}
+              light={light}
+              disabled={splitDisabled}
+              expanded={offersChoice ? picking === "down" : undefined}
+              onClick={onSplit ? () => startSplit("down") : undefined}
+            >
+              <SplitBelowIcon className="h-3.5 w-3.5" />
+            </PaneAction>
+          </>
+        )}
         <PaneAction
           label={`Close ${name}`}
           testId={`pane-close-${name}`}

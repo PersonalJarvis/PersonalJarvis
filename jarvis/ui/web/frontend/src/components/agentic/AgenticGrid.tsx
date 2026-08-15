@@ -3083,6 +3083,10 @@ export function AgenticGrid({
                   if (takesPrompts(term)) setTarget(term.name);
                 }}
                 onStatus={(status, detail) => setStatus(term.name, status, detail)}
+                // The stage shows one pane full-surface with no grid around
+                // it, so the maximize/split trio has nothing to act on there —
+                // the header drops it and keeps history, book and close.
+                layoutActions={!chatView}
                 onToggleMaximize={() => {
                   // On the chat stage the pane already fills the surface, so
                   // "maximize" honestly means "give me the full-width grid

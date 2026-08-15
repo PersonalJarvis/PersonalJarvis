@@ -137,6 +137,7 @@ vi.mock("./AgenticTerminal", () => ({
     onRestart,
     agents,
     onToggleMaximize,
+    layoutActions,
     onSplit,
     onRename,
     onClose,
@@ -155,6 +156,7 @@ vi.mock("./AgenticTerminal", () => ({
     onRestart?: () => void;
     agents?: Array<{ name: string }>;
     onToggleMaximize?: () => void;
+    layoutActions?: boolean;
     onSplit?: (direction: "right" | "down", agent?: string) => void;
     onRename?: (name: string) => Promise<boolean>;
     onClose?: () => void;
@@ -185,6 +187,10 @@ vi.mock("./AgenticTerminal", () => ({
       // because it is the grid's job to say WHEN the geometry is in motion.
       data-layout-busy={layoutBusy ? "yes" : "no"}
       data-active={active ? "yes" : "no"}
+      // Whether the real header would draw its maximize/split trio at all —
+      // the grid switches it off on the chat stage, where there is no grid
+      // arrangement for those buttons to act on.
+      data-layout-actions={layoutActions === false ? "no" : "yes"}
       // The size the terminal text is drawn at. Read here because the point of
       // remembering it is that the PANES come back at that size.
       data-font-size={String(fontSize ?? "")}
@@ -3249,9 +3255,25 @@ describe("chat view", () => {
   it("maximize on the stage hands over to the grid, maximized", () => {
     renderGrid(FOUR);
     toChat();
+    // The stage header hides its maximize BUTTON (see the layout-trio test
+    // below); what remains wired is the title bar's double-click, and the
+    // mock's button stands for whatever gesture calls onToggleMaximize.
     fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
     expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
     expect(screen.getByTestId("pane-Mika").getAttribute("data-maximized")).toBe("yes");
+  });
+
+  it("switches the header's layout trio off on the stage and back on in the grid", () => {
+    renderGrid(FOUR);
+    // In the grid every pane offers maximize and the two splits.
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-layout-actions")).toBe("yes");
+    // On the stage there is no arrangement for them to act on — the same
+    // mounted pane drops the trio the moment the view flips…
+    toChat();
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-layout-actions")).toBe("no");
+    // …and grows it back on the way out, without a remount in between.
+    toGrid();
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-layout-actions")).toBe("yes");
   });
 
   it("the rail's plus opens a terminal at the end of the row", async () => {

@@ -953,6 +953,40 @@ describe("pane header actions", () => {
     expect(screen.getByTestId("pane-close-Dana")).toBeTruthy();
   });
 
+  it("drops the layout trio where there is no layout, and grows it back", () => {
+    const paneProps = {
+      name: "Dana",
+      displayName: "Claude Code",
+      appearance: "dark" as const,
+      fontSize: 13,
+      onToggleMaximize: () => undefined,
+      onSplit: () => undefined,
+      onClose: () => undefined,
+    };
+    const { rerender } = render(
+      <AgenticTerminal {...paneProps} layoutActions={false} />,
+    );
+
+    // The chat stage shows one pane full-surface — maximize and the two
+    // splits would rearrange a grid that is not on screen, so they are gone
+    // entirely rather than merely disabled.
+    expect(screen.queryByTestId("pane-maximize-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-split-right-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-split-down-Dana")).toBeNull();
+    // The pane-scoped controls stay: they act on the pane itself, not on the
+    // arrangement around it.
+    expect(screen.getByTestId("pane-prompt-history-Dana")).toBeTruthy();
+    expect(screen.getByTestId("pane-conversation-Dana")).toBeTruthy();
+    expect(screen.getByTestId("pane-close-Dana")).toBeTruthy();
+
+    // Panes stay mounted across a view switch (a remount kills the agent), so
+    // the trio must come back on the SAME instance when the grid returns.
+    rerender(<AgenticTerminal {...paneProps} layoutActions />);
+    expect(screen.getByTestId("pane-maximize-Dana")).toBeTruthy();
+    expect(screen.getByTestId("pane-split-right-Dana")).toBeTruthy();
+    expect(screen.getByTestId("pane-split-down-Dana")).toBeTruthy();
+  });
+
   it("fills the workspace on a double-click of the title bar", () => {
     const onToggleMaximize = vi.fn();
     render(
