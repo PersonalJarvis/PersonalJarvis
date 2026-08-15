@@ -4,6 +4,7 @@ Keyring/ENV: `anthropic_api_key` / `ANTHROPIC_API_KEY`.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -36,7 +37,7 @@ class ClaudeAPIBrain:
                     "ANTHROPIC_API_KEY in the environment."
                 )
             from anthropic import AsyncAnthropic
-            # max_retries=0 → BrainManager-Fallback greift schneller bei 429
+            # max_retries=0 → the BrainManager fallback kicks in faster on 429
             kwargs: dict[str, Any] = {"api_key": ep.credential, "max_retries": 0, "timeout": 15.0}
             if ep.base_url:
                 kwargs["base_url"] = ep.base_url
@@ -44,7 +45,13 @@ class ClaudeAPIBrain:
         return self._client
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        client = self._ensure_client()
+        client = self._client
+        if client is None:
+            # Cold path: the first call imports the anthropic SDK and reads
+            # the key from the keyring — both synchronous and measured at
+            # 15.1 s on the event loop. Do it once on a worker thread; the
+            # cached-client path above stays a plain attribute read.
+            client = await asyncio.to_thread(self._ensure_client)
         async for delta in stream_complete(client, self._model, req):
             yield delta
 
