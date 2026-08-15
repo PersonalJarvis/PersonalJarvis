@@ -1306,11 +1306,17 @@ async def community_wallpaper_install(
 
     The name is the only input and the index is the only source (same
     doctrine as the skill route): the URL that gets downloaded is the one the
-    moderated feed published, never one the caller supplied. This is also the
+    published feed carries, never one the caller supplied. This is also the
     route behind the storefront's "Add Wallpaper to Personal Jarvis" button —
     SurfaceSecurity admits exactly this path from exactly the configured
     storefront origin, so a caller from the web can trigger nothing but a
-    moderated wallpaper appearing in the picker.
+    listed wallpaper appearing in the picker.
+
+    Note what that does and does not promise. Community wallpapers are not
+    reviewed by anyone before they publish, so the feed vouches for the bytes
+    (re-encoded by the registry build, re-encoded again below), not for what
+    the picture depicts. The import stays harmless anyway because it produces
+    an image and nothing else — no code, no credentials, nothing that acts.
 
     Importing twice is a no-op that returns the existing copy: imports are
     stamped with an ``origin`` marker the second click finds again.
@@ -1355,7 +1361,7 @@ async def community_wallpaper_install(
             timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=10.0),
             # No redirects: the https-only rule was checked on the PUBLISHED
             # URL, and a redirect hop could point anywhere (loopback, LAN,
-            # link-local metadata). A moderated static feed has no legitimate
+            # link-local metadata). A static Pages feed has no legitimate
             # reason to redirect, so a 3xx is a download failure, not a hop.
             follow_redirects=False,
             transport=_WALLPAPER_TRANSPORT,

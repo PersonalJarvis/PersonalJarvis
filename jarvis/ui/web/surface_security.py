@@ -755,7 +755,9 @@ def _external_http_auth(path: str, method: str) -> bool:
 # rather than a trusted-origin entry — putting the storefront into
 # ``trusted_origins`` would let its pages drive EVERY local route through an
 # open-access loopback browser, and a compromised storefront must never be
-# worth more than "a moderated wallpaper appeared in the picker".
+# worth more than "a listed wallpaper appeared in the picker". The blast
+# radius is that small because the route produces an image and nothing else —
+# not because anyone reviewed the image first (nobody does).
 _STOREFRONT_WALLPAPER_PREFIX = "/api/marketplace/community/wallpapers/"
 _STOREFRONT_WALLPAPER_SUFFIX = "/install"
 
