@@ -150,7 +150,15 @@ async def sign_out() -> dict[str, Any]:
 
 class SubmissionDraft(BaseModel):
     """The submission as the form holds it — validation happens server-side
-    in ``validate_draft`` so the wire shape stays loose on purpose."""
+    in ``validate_draft`` so the wire shape stays loose on purpose.
+
+    Every field the form can send MUST be declared here even though the real
+    rules live in ``validate_draft``: pydantic drops undeclared keys silently,
+    so an omission does not surface as an error — it publishes a package with
+    a piece quietly missing, under a success message. ``skills`` was exactly
+    that: the Publish tab sent bundled skills, this model discarded them, and
+    ``validate_draft`` never saw the block it validates.
+    """
 
     kind: str
     name: str = ""
@@ -162,6 +170,10 @@ class SubmissionDraft(BaseModel):
     plugin_json: dict[str, Any] | None = None
     mcp_json: dict[str, Any] | None = None
     usage_card: str | None = None
+    # Bundled skills ride inside a plugin submission as [{name, skill_md}]
+    # (publishing-plan.md §3). Kept loose on purpose — `validate_draft`
+    # delegates to the installer's own rules, which are the authority.
+    skills: list[dict[str, Any]] | None = None
 
 
 @router.post("/validate", openapi_extra={"x-jarvis-readonly": True})
@@ -196,7 +208,20 @@ async def submit(body: SubmissionDraft) -> dict[str, Any]:
         raise HTTPException(
             status_code=exc.status, detail={"error": exc.error, "field": exc.field}
         ) from exc
-    return {"ok": True, "name": normalized["name"], "version": normalized["version"], **result}
+    # What the author will hand to everyone else. Computed by the same standard
+    # module the store and the CLI use, so the line an author copies here is
+    # exactly the line their installers will run. It describes the entry once it
+    # is live — the view only shows it after the registry confirms that.
+    from jarvis.marketplace.install_standard import install_block
+
+    kind = "skill" if normalized["kind"] == "skill" else "plugin"
+    return {
+        "ok": True,
+        "name": normalized["name"],
+        "version": normalized["version"],
+        "install": install_block(normalized["name"], kind),
+        **result,
+    }
 
 
 @router.get("/status", openapi_extra={"x-jarvis-readonly": True})
