@@ -1,6 +1,6 @@
 # Marketplace — where we stand
 
-**Measured:** 2026-08-15 · **Scope:** the whole chain, publisher to
+**Measured:** 2026-08-15 (re-measured after the wallpaper lane landed in-app) · **Scope:** the whole chain, publisher to
 installed plugin · **Reads:** [community-registry.md](community-registry.md)
 · [publishing-plan.md](publishing-plan.md) ·
 [package-layout.md](package-layout.md) ·
@@ -36,11 +36,13 @@ installed plugin · **Reads:** [community-registry.md](community-registry.md)
 | **Registry** — ownership keyed on the numeric account id | ✅ live 2026-08-14 | registry `scripts/validate.py:16-20, 404-431`; `scripts/test_ownership.py` |
 | **Registry** — knows about bundled skills, feed is self-contained | ✅ live (index revision 12) | live `index.json`: `skills[0].skill_md` = 1126 bytes |
 | **Feed** — served, and every URL in it resolves | ✅ measured 2026-08-15 | see §2 |
-| **Publish** — GitHub sign-in + validate + submit + watch, in-app | 🔨 **in flight (this session)** | routes exist: `jarvis/ui/web/marketplace_publish_routes.py:62-210` |
+| **Publish** — GitHub sign-in + validate + submit + watch, in-app | ✅ shipped | Plugins → Publish; live process reports `{"enabled":true}` |
 | **Publish** — upload endpoint at the storefront | ✅ deployed, live | `POST personaljarvis.ai/api/marketplace/submit` → **401** without a session |
 | **Storefront** — repo, sign-in, submit form, gallery | ✅ built and deployed, ❌ **curtained off** | see §2 |
-| **Wallpapers lane** — app half | ✅ committed 2026-08-14 | `jarvis/ui/web/marketplace_routes.py:1310-1420` |
-| **Wallpapers lane** — registry + storefront halves | ❌ **written but never pushed** | see §2 |
+| **Wallpapers lane** — app half (import) | ✅ committed 2026-08-14 | `jarvis/ui/web/marketplace_routes.py:1310-1420` |
+| **Wallpapers lane** — registry half | ✅ **live** (re-measured 2026-08-15) | feed revision 13 carries `wallpapers[]`, 3 entries |
+| **Wallpapers lane** — in-app browse + publish | ✅ shipped 2026-08-15 | `WallpaperView.tsx` "Community" chip + Share; `publish.py::submit_wallpaper` |
+| **Wallpapers lane** — storefront half | 🟡 deployed one revision behind | `submit-wallpaper` → **401**, but the deployed copy is pre-conversion and has no Bearer path; see §2 |
 | **W3** — one validator, three callers | 🟡 half — data published, nobody reads it | see §4 |
 | **W4** — `jarvis plugin …` CLI | ❌ untouched (generic CLI reachability exists) | see §4 |
 | **Frontend ↔ backend** — bundled skills visible, consent names them | ✅ shipped 2026-08-14 | `PluginsCommunity.tsx`, `marketplace_routes.py` |
@@ -99,28 +101,25 @@ So a stranger with a browser has **no door**: no listing page, no detail
 page, no sign-in page, no upload form. The only remaining publisher path is
 the in-app Publish tab, which is in flight in this session.
 
-### The wallpapers lane exists only in this repo
+### The wallpapers lane is live — except the storefront's app-facing half
 
-`wallpapers-lane.md` ends with an activation checklist. Steps 1 and 2 are
-**not done**, and the work is sitting unpushed in two local clones:
+**This corrects the 2026-08-15 morning revision of this file, which reported
+the lane as producing nothing.** Re-measured the same day against the live
+services:
 
 | Repo | Measured state |
 |---|---|
-| App (this repo) | ✅ committed on `main` (`3bef83e22`, `a97b509e3`) |
-| Registry | ❌ remote has **no** `wallpapers/`, no `scripts/test_wallpapers.py`; the local clone is ahead of `origin/main` |
-| Storefront | ❌ deployed branch has **no** `submit-wallpaper.ts` (`POST …/api/marketplace/submit-wallpaper` → **405**, the static-asset answer, against **401** for the deployed `submit.ts`); the local clone is ahead of `origin/remake` |
+| App (this repo) | ✅ import, in-app browsing and in-app publishing all committed on `main` |
+| Registry | ✅ **live** — `index.json` revision 13 carries `wallpapers[]` with `flooded-observatory`, `mallorcan-stone-courtyard`, `rain-antenna-city` |
+| Storefront | 🟡 `POST …/api/marketplace/submit-wallpaper` answers **401**, not the 405 recorded earlier — the function IS deployed. But the deployed revision predates the notice-and-action conversion: it writes to the private inbox repo and takes a browser session only. Two commits sit unpushed on the local `remake` clone |
 
-The private inbox repo that step 3 used to require is **obsolete**: the lane
-was converted from pre-moderation to notice-and-action on 2026-08-15, so
-uploads now commit straight to the public registry and no queue exists.
+What that costs today, precisely: **the browse half works and the publish
+half does not.** The picker lists community wallpapers and imports them; the
+Share button POSTs to an endpoint whose deployed copy has no Bearer path and
+answers 401 no matter who is signed in. One push fixes it.
 
-Consequence: the app ships an import route and a storefront door for a lane
-that produces nothing. Nothing crashes — the feed simply carries no
-`wallpapers[]` — but the feature is not live, and
-[qa/upload-and-cloudflare-audit.md](../../qa/upload-and-cloudflare-audit.md)
-(2026-08-15) describes those endpoints as live in production because it read
-the local clones rather than the deployed branch. **Treat that audit's
-wallpaper findings as a description of the code, not of production.**
+The private inbox repo becomes obsolete with that same push, since the
+rewritten function commits straight to the public registry.
 
 ---
 
@@ -190,12 +189,16 @@ ships.**
       endpoint's bot were validated and merged without human action
       (registry PRs #1–#4, 2026-08-14), including the Turnstile bot check.
 
-### In flight (this session) — outcome not knowable from here
+### Done 2026-08-15 (was "in flight")
 
-- [ ] The GitHub device-flow sign-in path for the in-app publisher.
-- [ ] The in-app **Publish** tab frontend.
-
-Re-measure these before trusting any line about them.
+- [x] The GitHub device-flow sign-in path for the in-app publisher. Shared by
+      both lanes since the wallpaper surface landed —
+      `components/marketplace/PublishIdentity.tsx` is the one implementation.
+- [x] The in-app **Publish** tab frontend (plugins and skills).
+- [x] The in-app **wallpaper** publish surface, in the picker rather than the
+      Publish tab: the pictures are already there, and "share this one"
+      belongs where the picture is. Blocked in production only by the
+      storefront push above.
 
 ### Done 2026-08-15
 
@@ -222,13 +225,13 @@ Re-measure these before trusting any line about them.
       the storefront's `public/_redirects`) — but only after the two items
       below, because today the curtain is the only thing standing between a
       stranger and an unfinished lane.
-- [ ] **Push the two clones** (registry: 2 commits; storefront: 4 commits)
-      or explicitly decide the wallpapers lane stays parked. Unpushed work
-      that other repos already reference is the most expensive state to
-      leave a system in — the app advertises a door that answers 405.
-- [ ] **Grant the GitHub App access to the private inbox repo**, or wallpaper
-      uploads answer 502 the moment the lane goes live
-      (`wallpapers-lane.md` step 3).
+- [ ] **Push the storefront clone** (branch `remake`, 2 commits: the
+      notice-and-action rewrite and the Bearer path). Until then the app's
+      Share button answers 401 for everyone. The registry clone's one
+      remaining commit is the matching validator change.
+- [x] ~~Grant the GitHub App access to the private inbox repo~~ — moot: the
+      rewritten function commits to the PUBLIC registry, so no inbox grant is
+      needed at all.
 - [ ] **Prove the publisher path from a non-maintainer account.** Every
       green measurement so far was made by the account that owns all three
       repos. The fork path in the auto-merge gate has never been exercised
@@ -296,8 +299,9 @@ behind.*
 
 | Step | State | Why |
 |---|---|---|
-| Sign in | 🟡 **partly** | On the web: **blocked** — the sign-in page is behind the curtain. In the app: the routes exist; the flow is in flight this session. |
-| Upload a plugin directory with one skill | 🟡 **partly** | The endpoint is live (401 without a session) and accepts bundled skills. The web form is behind the curtain; the in-app form is in flight. |
+| Sign in | ✅ **in the app** | Device flow, shared by both lanes. On the web it is still behind the curtain. |
+| Upload a plugin directory with one skill | ✅ **in the app** | The endpoint is live and accepts bundled skills; the in-app Publish tab drives it. The web form is behind the curtain. |
+| Upload a wallpaper | 🟡 **app surface done, endpoint one push behind** | The picker's Share dialog is built and tested; the deployed storefront function has no Bearer path yet. |
 | Watch it auto-merge | ✅ **reachable** | Proven four times on 2026-08-14 via the trusted-bot path. Never proven from a stranger's fork. |
 | See it in the app's store within minutes | ✅ **reachable** | The publish workflow rebuilds the index on merge; the live feed is at revision 12 and the app reads it. |
 | Install it | ✅ **reachable** | Plugin and standalone skill both install from the embedded feed; routes confirmed in the running process. |
