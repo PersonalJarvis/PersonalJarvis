@@ -66,9 +66,10 @@ Every URL the feed publishes resolves:
 | `github.com/…/marketplace/tree/main/skills/three-bullet-brief` | **200** |
 | `raw.githubusercontent.com/…/skills/three-bullet-brief/SKILL.md` | **200** |
 
-Feed contents: **revision 12**, generated `2026-08-14T08:20:57Z`, **1 plugin
-+ 1 skill**, `skill_md` embedded (1126 bytes) so an install writes straight
-from the feed. **No `wallpapers` lane** — see below.
+Feed contents: **revision 13**, **1 plugin + 1 skill + 3 wallpapers**,
+`skill_md` embedded so an install writes straight from the feed. The
+`wallpapers` lane IS in the feed — the earlier note that it was absent
+described revision 12 and is superseded below.
 
 **This retires the "omit `source_url`" item.** The app renders that link as
 an external-link button on four surfaces
@@ -98,8 +99,9 @@ BACK: delete the three /marketplace lines."* Measured: `GET
 personaljarvis.ai/marketplace` → **302** to `/`.
 
 So a stranger with a browser has **no door**: no listing page, no detail
-page, no sign-in page, no upload form. The only remaining publisher path is
-the in-app Publish tab, which is in flight in this session.
+page, no sign-in page, no upload form. The only publisher path that works
+today is the in-app one: the Publish tab for plugins and skills, and the
+wallpaper picker's Share dialog once the storefront push below lands.
 
 ### The wallpapers lane is live — except the storefront's app-facing half
 
