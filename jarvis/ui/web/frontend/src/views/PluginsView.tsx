@@ -16,7 +16,6 @@ import {
   Plus,
   Check,
   Copy,
-  Sparkles,
   X,
   Loader2,
   AlertTriangle,
@@ -31,14 +30,6 @@ import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { robustCopy } from "@/lib/clipboard";
 import { PRODUCT_NAME } from "@/lib/branding";
-
-// Wave hero image restored. The previous "kill image entirely" attempt
-// felt too flat; the CSS-only gradient lacked atmospheric depth. Edge
-// artefacts are killed by a brutal pair of inset shadows on the section
-// (see CarouselBanner): an almost-black 180px shadow eats the visible
-// rim, then a faint gold 140px shadow restores premium glow. The wave
-// stays vivid in the centre.
-const CAROUSEL_BG_URL = "/plugin-assets/carousel-hero.png";
 
 // ---------------------------------------------------------------------------
 // Wire types — mirror the JSON shape served by /api/marketplace/plugins.
@@ -882,8 +873,10 @@ function AttentionBanner({
     ? `${names[0]} needs reconnecting`
     : `${plugins.length} connections need reconnecting`;
 
+  // An editorial aside: a solid amber rule on the left margin instead of a
+  // tinted rounded box — the same warning weight without another rectangle.
   return (
-    <div className="mb-8 flex items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+    <div className="mb-10 flex items-center gap-4 border-l-2 border-amber-500 py-1 pl-4">
       <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-foreground">{headline}</p>
@@ -904,7 +897,7 @@ function AttentionBanner({
       <button
         type="button"
         onClick={onJump}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-500 transition-colors hover:bg-amber-500/20"
+        className="inline-flex shrink-0 items-center gap-1.5 border-b border-amber-500/60 pb-0.5 text-xs font-semibold text-amber-500 transition-colors hover:border-amber-500"
       >
         {one ? "Jump to it" : "Jump to first"}
         <ArrowRight className="h-3.5 w-3.5" />
@@ -1012,15 +1005,25 @@ function Hero({
   filter,
   setFilter,
 }: { title?: string; subtitle?: string } & SearchControlsProps) {
+  // A left-set masthead rather than a centered hero: the store reads as the
+  // front page of a printed catalogue — overline, display headline with a gold
+  // full stop, and the search sitting ON a baseline rule instead of in a pill.
   return (
-    <header className="mb-10 text-center">
-      <h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
+    <header className="mb-12">
+      <p className="flex items-baseline gap-3 text-[10px] font-semibold uppercase tracking-[0.32em] text-primary">
+        Catalogue
+        <span aria-hidden className="h-px flex-1 translate-y-[-2px] bg-border" />
+      </p>
+      <h1 className="mt-4 max-w-xl font-display text-3xl font-semibold leading-[1.08] tracking-tight sm:text-4xl">
+        {title}
+        <span aria-hidden className="text-primary">.</span>
+      </h1>
       {subtitle && (
-        <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-3 max-w-md text-xs leading-relaxed text-muted-foreground">
           {subtitle}
         </p>
       )}
-      <div className="mx-auto mt-6 flex max-w-md items-center gap-2">
+      <div className="mt-9 flex items-end gap-6">
         <SearchInput value={query} onChange={setQuery} />
         <FilterMenu filter={filter} setFilter={setFilter} />
       </div>
@@ -1029,17 +1032,19 @@ function Hero({
 }
 
 function SearchInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  // An underlined field, not a bordered pill: the rule under the text is the
+  // whole affordance, and it turns gold while the field holds focus.
   return (
-    <div className="relative flex-1">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+    <label className="group flex flex-1 items-center gap-2.5 border-b border-border pb-2 transition-colors focus-within:border-primary">
+      <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-focus-within:text-primary" />
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Search plugins"
-        className="h-9 w-full rounded-full border border-border bg-card/60 pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/30"
+        placeholder="Search the catalogue"
+        className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
       />
-    </div>
+    </label>
   );
 }
 
@@ -1055,7 +1060,7 @@ function FilterMenu({ filter, setFilter }: { filter: FilterId; setFilter: (f: Fi
         value={filter}
         onValueChange={(value) => setFilter(value as FilterId)}
         ariaLabel="Plugin category"
-        className="h-9 w-auto rounded-full bg-card/60 px-4 text-xs font-medium"
+        className="h-8 w-auto rounded-none border-0 border-b border-border bg-transparent px-1 text-xs font-medium"
         options={[
           { value: "all", label: "All" },
           ...categories.map((category) => ({
@@ -1088,8 +1093,8 @@ function Tab({
         {count !== undefined && (
           <span
             className={cn(
-              "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
-              active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
+              "font-mono text-[10px] font-medium tabular-nums",
+              active ? "text-primary" : "text-muted-foreground/70",
             )}
           >
             {count}
@@ -1107,16 +1112,16 @@ function Tab({
 }
 
 // ---------------------------------------------------------------------------
-// Auto-rotating hero carousel
+// Auto-rotating "try saying" specimen — a typographic showcase, not an image
+// banner. The previous image carousel was the biggest rectangle on the page
+// and shipped a hardcoded #0a0a0a ground that fought the light theme; this
+// one is built from type and rules alone, so both themes own it natively.
 // ---------------------------------------------------------------------------
 
 interface CarouselSlide {
   pluginId: string;
   pluginName: string;
   example: string;
-  iconUrl: string;
-  iconBoost?: boolean;
-  accent: string;
 }
 
 const SLIDES: CarouselSlide[] = [
@@ -1124,44 +1129,31 @@ const SLIDES: CarouselSlide[] = [
     pluginId: "google_calendar",
     pluginName: "Google Calendar",
     example: "Schedule a meeting for tomorrow at 3pm",
-    iconUrl: "https://cdn.simpleicons.org/googlecalendar/F4F4F5",
-    accent: "border-blue-400/40",
   },
   {
     pluginId: "github",
     pluginName: "GitHub",
     example: "Triage open issues on my main repo",
-    iconUrl: "https://cdn.simpleicons.org/github/F4F4F5",
-    accent: "border-zinc-400/40",
   },
   {
     pluginId: "vercel",
     pluginName: "Vercel",
     example: "Deploy my project to production",
-    iconUrl: "https://cdn.simpleicons.org/vercel/F4F4F5",
-    accent: "border-primary/50",
   },
   {
     pluginId: "supabase",
     pluginName: "Supabase",
     example: "Snapshot all my Supabase projects",
-    iconUrl: "https://cdn.simpleicons.org/supabase",
-    accent: "border-emerald-400/40",
   },
   {
     pluginId: "notion",
     pluginName: "Notion",
     example: "Find pages mentioning the Q3 plan",
-    iconUrl: "https://cdn.simpleicons.org/notion/F4F4F5",
-    accent: "border-zinc-300/40",
   },
   {
     pluginId: "slack",
     pluginName: "Slack",
     example: "Search messages mentioning the launch plan",
-    iconUrl: "/plugin-assets/slack-logo.svg",
-    iconBoost: true,
-    accent: "border-purple-400/40",
   },
 ];
 
@@ -1187,30 +1179,26 @@ function CarouselBanner() {
 
   return (
     <section
-      // Wave hero restored. Two stacked inset shadows do the edge-kill:
-      //   - 180px black-92% inset → eats the rounded-3xl rim, the wave's
-      //     hard edges are gone before they reach the visible boundary.
-      //   - 140px gold-10% inset → faint warm glow so the rim doesn't
-      //     read as a dead frame.
-      // bg-size 180% over-zooms the image deeply so only the brightest
-      // mid-band is visible; whatever rim survives the zoom is then
-      // swallowed by the black inset. This combo proved the only one
-      // that actually kills the artefact — radial gradients alone left
-      // a visible diagonal cut, the flat-only version felt sloppy.
-      className="relative mb-12 aspect-[16/7] w-full overflow-hidden rounded-3xl shadow-[inset_0_0_180px_rgba(0,0,0,0.92),inset_0_0_140px_rgba(255,214,10,0.10)]"
       aria-roledescription="carousel"
-      style={{
-        backgroundImage: `url(${CAROUSEL_BG_URL})`,
-        backgroundSize: "180%",
-        backgroundPosition: "center 60%",
-        backgroundRepeat: "no-repeat",
-        backgroundColor: "#0a0a0a",
-      }}
+      // A ruled interlude between masthead and index: double rule on top (the
+      // classic editorial signature), single rule below, the specimen quote
+      // set large in the display face. Fixed min-height on the stage keeps the
+      // page from breathing as slides of different length cross-fade.
+      className="relative mb-14 border-b border-t-2 border-border py-7"
     >
-      {SLIDES.map((slide, i) => (
-        <CarouselSlideView key={slide.pluginId} slide={slide} active={active === i} />
-      ))}
-      <div className="absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-2">
+      <span
+        aria-hidden
+        className="absolute inset-x-0 top-[3px] block h-px bg-border"
+      />
+      <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-muted-foreground">
+        Try saying
+      </p>
+      <div className="relative mt-4 min-h-[5.5rem] sm:min-h-[5rem]">
+        {SLIDES.map((slide, i) => (
+          <CarouselSlideView key={slide.pluginId} slide={slide} active={active === i} />
+        ))}
+      </div>
+      <div className="mt-5 flex items-center gap-1.5">
         {SLIDES.map((s, i) => (
           <button
             key={s.pluginId}
@@ -1221,10 +1209,8 @@ function CarouselBanner() {
             }}
             aria-label={`Show ${s.pluginName} example`}
             className={cn(
-              "h-1.5 w-1.5 rounded-full transition-all duration-300",
-              active === i
-                ? "scale-125 bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]"
-                : "bg-sheen/30 hover:bg-sheen/60",
+              "h-[3px] w-7 transition-colors duration-300",
+              active === i ? "bg-primary" : "bg-border hover:bg-muted-foreground/60",
             )}
           />
         ))}
@@ -1235,33 +1221,21 @@ function CarouselBanner() {
 
 function CarouselSlideView({ slide, active }: { slide: CarouselSlide; active: boolean }) {
   return (
-    <div
+    <blockquote
       className={cn(
-        "absolute inset-0 flex items-center justify-center",
-        "transition-[opacity,transform] duration-500 ease-out",
-        active
-          ? "translate-y-0 scale-100 opacity-100 z-10"
-          : "translate-y-2 scale-[0.96] opacity-0 z-0",
+        "absolute inset-0 transition-[opacity,transform] duration-500 ease-out",
+        active ? "z-10 translate-y-0 opacity-100" : "z-0 translate-y-1.5 opacity-0",
       )}
       aria-hidden={!active}
     >
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded-full border bg-scrim/55 px-4 py-2 text-xs shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md",
-          slide.accent,
-        )}
-      >
-        <img
-          src={slide.iconUrl}
-          alt=""
-          className={cn(slide.iconBoost ? "h-5 w-5" : "h-3.5 w-3.5")}
-          loading="lazy"
-        />
-        <span className="font-medium text-foreground">{slide.pluginName}</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground">{slide.example}</span>
-      </div>
-    </div>
+      <p className="max-w-2xl font-display text-xl font-medium leading-snug tracking-tight text-foreground sm:text-2xl">
+        &ldquo;{slide.example}&rdquo;
+      </p>
+      <footer className="mt-3 flex items-center gap-2.5 text-[10px] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
+        <span aria-hidden className="inline-block h-1.5 w-1.5 rotate-45 bg-primary" />
+        {slide.pluginName}
+      </footer>
+    </blockquote>
   );
 }
 
@@ -1303,9 +1277,9 @@ function CategorizedList({
   ];
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-12">
       {featured.length > 0 && (
-        <Section title="Featured">
+        <Section title="Featured" index="00" count={featured.length}>
           {featured.map((p) => (
             <PluginRow
               key={p.id}
@@ -1316,8 +1290,13 @@ function CategorizedList({
           ))}
         </Section>
       )}
-      {sections.map((c) => (
-        <Section key={c} title={c}>
+      {sections.map((c, i) => (
+        <Section
+          key={c}
+          title={c}
+          index={String(i + 1).padStart(2, "0")}
+          count={byCat.get(c)?.length ?? 0}
+        >
           {(byCat.get(c) ?? []).map((p) => (
             <PluginRow
               key={p.id}
@@ -1332,13 +1311,48 @@ function CategorizedList({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** One register of the catalogue: numbered header on a rule, then the entries
+ *  as hairline-separated ledger rows in two newspaper columns with a centre
+ *  column rule — no boxes anywhere.
+ *
+ *  The index numeral and count sit OUTSIDE the `<h2>`: the heading's
+ *  accessible name must stay exactly the category name (screen readers and
+ *  the view's own tests navigate by it). */
+function Section({
+  title,
+  index,
+  count,
+  children,
+}: {
+  title: string;
+  index?: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
   return (
     <section>
-      <h2 className="mb-3 font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-        {title}
-      </h2>
-      <div className="grid gap-2 sm:grid-cols-2">{children}</div>
+      <div className="mb-1.5 flex items-baseline gap-3">
+        {index && (
+          <span
+            aria-hidden
+            className="font-mono text-[10px] font-medium tabular-nums text-primary"
+          >
+            {index}
+          </span>
+        )}
+        <h2 className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-foreground">
+          {title}
+        </h2>
+        <span aria-hidden className="h-px flex-1 self-center bg-border" />
+        {count !== undefined && (
+          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+            {count}
+          </span>
+        )}
+      </div>
+      <div className="relative sm:grid sm:grid-cols-2 sm:gap-x-12 sm:before:absolute sm:before:inset-y-3 sm:before:left-1/2 sm:before:w-px sm:before:bg-border/60 sm:before:content-['']">
+        {children}
+      </div>
     </section>
   );
 }
@@ -1363,7 +1377,7 @@ export function BrandTile({ plugin }: { plugin: Plugin }) {
   return (
     <div
       className={cn(
-        "grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border",
+        "grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-md border",
         // A bundled mark sits on a dark plate, not a white one: a row of white
         // squares reads as pasted-in on this UI. The plate is a touch lighter
         // than the card so the mark still has something to sit on. Brands whose
@@ -1475,15 +1489,18 @@ function PluginRow({
       // scrollIntoView + flash this exact row. `scroll-mt-24` leaves headroom
       // under the sticky tab bar so the scrolled-to row isn't hidden beneath it.
       id={`plugin-row-${plugin.id}`}
+      // A ledger row, not a card: no fill, no rounding — just the entry on a
+      // hairline. Status lives in the hairline's colour plus the text badges;
+      // hover answers with the gold rule instead of a glowing box.
       className={cn(
-        "group flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-[colors,box-shadow] scroll-mt-24",
-        isConnected && "border-primary/30",
-        needsReauth && "border-amber-500/40",
-        isError && "border-destructive/40",
+        "group flex items-center gap-3 border-b py-3 pl-0.5 pr-0.5 transition-[colors,box-shadow] scroll-mt-24",
+        isConnected && "border-primary/40",
+        needsReauth && "border-amber-500/50",
+        isError && "border-destructive/50",
         !isConnected &&
           !needsReauth &&
           !isError &&
-          "border-border hover:border-primary/40 hover:bg-card/70",
+          "border-border/70 hover:border-primary/60",
       )}
     >
       <BrandTile plugin={plugin} />
@@ -1639,8 +1656,11 @@ export function ConnectIconButton({
 }
 
 function EmptyHits({ query }: { query: string }) {
+  // Empty states are set as ruled interludes, not dashed boxes — the same
+  // typographic language as the rest of the catalogue.
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-12 text-center">
+    <div className="border-y border-border/70 py-10 text-center">
+      <span aria-hidden className="mx-auto mb-4 block h-1.5 w-1.5 rotate-45 bg-primary" />
       <p className="text-sm text-muted-foreground">
         No plugin matches <span className="font-mono text-foreground">"{query}"</span>.
       </p>
@@ -1651,10 +1671,8 @@ function EmptyHits({ query }: { query: string }) {
 function EmptyInstalled({ totalAvailable }: { totalAvailable: number }) {
   const assistantName = useEventStore((s) => s.assistantName);
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40 px-8 py-14 text-center">
-      <div className="mb-4 grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
-        <Sparkles className="h-5 w-5" />
-      </div>
+    <div className="flex flex-col items-center border-y border-border/70 px-8 py-14 text-center">
+      <span aria-hidden className="mb-5 block h-2 w-2 rotate-45 bg-primary" />
       <h3 className="font-display text-base font-semibold tracking-tight">
         Nothing connected yet
       </h3>
@@ -1671,20 +1689,23 @@ function ComingSoonStrip({ taken = [] }: { taken?: string[] }) {
   // connector (e.g. Linear) never shows as both connectable and "coming soon".
   const upcoming = COMING_SOON.filter((name) => !taken.includes(name));
   if (upcoming.length === 0) return null;
+  // A colophon, not a chip cloud: the names run in as a single interpunct-
+  // separated line under the closing rule, the way a printed catalogue lists
+  // what the next edition will carry.
   return (
-    <section className="mt-16 border-t border-border pt-8 text-center">
-      <h3 className="font-display text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-        Coming soon
-      </h3>
-      <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {upcoming.map((name) => (
-          <span
-            key={name}
-            className="rounded-full border border-border/60 bg-card/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
-          >
-            {name}
-          </span>
-        ))}
+    <section className="mt-16 border-t-2 border-border pt-5">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1.5">
+        <h3 className="shrink-0 font-display text-[10px] font-semibold uppercase tracking-[0.22em] text-primary">
+          Coming soon
+        </h3>
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+          {upcoming.map((name, i) => (
+            <span key={name}>
+              {i > 0 && <span aria-hidden className="mx-1.5 text-border">·</span>}
+              {name}
+            </span>
+          ))}
+        </p>
       </div>
     </section>
   );

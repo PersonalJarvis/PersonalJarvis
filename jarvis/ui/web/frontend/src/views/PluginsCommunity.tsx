@@ -416,7 +416,7 @@ export function CommunityTab() {
       <StatusNotice status={data?.status} error={error} isLoading={isLoading} />
 
       {updateCount > 0 && (
-        <p className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+        <p className="flex items-center gap-2 border-l-2 border-primary py-1 pl-3 text-xs text-foreground">
           <ArrowUpCircle className="h-3.5 w-3.5 shrink-0 text-primary" />
           {updateCount === 1
             ? "1 installed item has a newer version."
@@ -427,7 +427,7 @@ export function CommunityTab() {
       {notice && (
         <p
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+          className="flex items-start gap-2 border-l-2 border-border py-1 pl-3 text-xs text-muted-foreground"
         >
           <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {notice}
@@ -456,7 +456,9 @@ export function CommunityTab() {
         <Section title="Plugins" count={plugins.length}>
           <div
             className={cn(
-              layout === "grid" ? "grid gap-2 sm:grid-cols-2" : "flex flex-col gap-2",
+              layout === "grid"
+                ? "relative sm:grid sm:grid-cols-2 sm:gap-x-12 sm:before:absolute sm:before:inset-y-3 sm:before:left-1/2 sm:before:w-px sm:before:bg-border/60 sm:before:content-['']"
+                : "flex flex-col",
             )}
           >
             {plugins.map((p) => (
@@ -482,7 +484,9 @@ export function CommunityTab() {
         <Section title="Skills" count={skills.length}>
           <div
             className={cn(
-              layout === "grid" ? "grid gap-2 sm:grid-cols-2" : "flex flex-col gap-2",
+              layout === "grid"
+                ? "relative sm:grid sm:grid-cols-2 sm:gap-x-12 sm:before:absolute sm:before:inset-y-3 sm:before:left-1/2 sm:before:w-px sm:before:bg-border/60 sm:before:content-['']"
+                : "flex flex-col",
             )}
           >
             {skills.map((s) => (
@@ -626,14 +630,19 @@ function Section({
   count: number;
   children: React.ReactNode;
 }) {
+  // The same register header the main catalogue uses: title on a rule with a
+  // tabular count at the far end — no pill, no box.
   return (
     <section>
-      <h3 className="mb-3 flex items-center gap-2 font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-        {title}
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+      <div className="mb-1.5 flex items-baseline gap-3">
+        <h3 className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-foreground">
+          {title}
+        </h3>
+        <span aria-hidden className="h-px flex-1 self-center bg-border" />
+        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
           {count}
         </span>
-      </h3>
+      </div>
       {children}
     </section>
   );
@@ -673,14 +682,14 @@ function BrowseControls({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border border-border bg-card/40 px-3 py-2">
-          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <label className="group flex min-w-[12rem] flex-1 items-center gap-2.5 border-b border-border pb-2 transition-colors focus-within:border-primary">
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-focus-within:text-primary" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by name, description or publisher…"
             aria-label="Search community plugins and skills"
-            className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
           />
           {query && (
             <button
@@ -702,7 +711,7 @@ function BrowseControls({
           className="w-44 shrink-0"
         />
 
-        <div className="flex shrink-0 items-center rounded-lg border border-border bg-card/40 p-0.5">
+        <div className="flex shrink-0 items-center gap-0.5">
           <LayoutButton
             active={layout === "grid"}
             label="Grid view"
@@ -768,10 +777,10 @@ function LayoutButton({
       aria-pressed={active}
       title={label}
       className={cn(
-        "grid h-6 w-6 place-items-center rounded-md transition-colors",
+        "grid h-6 w-6 place-items-center border-b-2 transition-colors",
         active
-          ? "bg-muted text-foreground"
-          : "text-muted-foreground hover:text-foreground",
+          ? "border-primary text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
       )}
     >
       {children}
@@ -793,11 +802,13 @@ function Chip({
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      // Ink, not pills: an active filter is underlined in gold the way an
+      // index entry gets a pencil mark — the label itself is the control.
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+        "inline-flex items-baseline gap-1.5 border-b pb-0.5 text-[11px] font-medium uppercase tracking-wider transition-colors",
         active
-          ? "border-primary/40 bg-primary/10 text-foreground"
-          : "border-border bg-card/40 text-muted-foreground hover:border-primary/30 hover:text-foreground",
+          ? "border-primary text-foreground"
+          : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
       )}
     >
       {children}
@@ -807,7 +818,7 @@ function Chip({
 
 function ChipCount({ children }: { children: React.ReactNode }) {
   return (
-    <span className="tabular-nums text-muted-foreground/70">{children}</span>
+    <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">{children}</span>
   );
 }
 
@@ -823,7 +834,8 @@ function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card/20 px-6 py-10 text-center">
+    <div className="border-y border-border/70 px-6 py-10 text-center">
+      <span aria-hidden className="mx-auto mb-4 block h-1.5 w-1.5 rotate-45 bg-primary" />
       <p className="font-display text-sm font-semibold text-foreground">{title}</p>
       <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">{body}</p>
       {action && <div className="mt-4">{action}</div>}
@@ -893,11 +905,10 @@ function Notice({
   return (
     <p
       className={cn(
-        "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-        tone === "muted" && "border-border bg-card/40 text-muted-foreground",
-        tone === "warn" && "border-amber-500/40 bg-amber-500/5 text-amber-500",
-        tone === "error" &&
-          "border-destructive/40 bg-destructive/5 text-destructive",
+        "flex items-start gap-2 border-l-2 py-1 pl-3 text-xs",
+        tone === "muted" && "border-border text-muted-foreground",
+        tone === "warn" && "border-amber-500 text-amber-500",
+        tone === "error" && "border-destructive text-destructive",
       )}
     >
       {tone !== "muted" && <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
@@ -927,7 +938,7 @@ function CommunityTile({
   return (
     <div
       className={cn(
-        "grid shrink-0 place-items-center overflow-hidden rounded-lg border border-border/60",
+        "grid shrink-0 place-items-center overflow-hidden rounded-md border border-border/60",
         size === "lg" ? "h-14 w-14" : "h-10 w-10",
       )}
       style={{ backgroundColor: tile }}
@@ -984,8 +995,8 @@ function CommunityPluginRow({
   const name = plugin.display_name ?? plugin.name;
   if (!plugin.valid) {
     return (
-      <article className="flex items-center gap-3 rounded-lg border border-border bg-card/20 px-3 py-2.5 opacity-70">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted">
+      <article className="flex items-center gap-3 border-b border-border/70 py-3 pl-0.5 pr-0.5 opacity-70">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-muted">
           <AlertTriangle className="h-4 w-4 text-muted-foreground" />
         </div>
         <div className="min-w-0 flex-1">
@@ -1006,11 +1017,11 @@ function CommunityPluginRow({
   return (
     <article
       className={cn(
-        "group relative flex gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-[colors,box-shadow]",
+        "group relative flex gap-3 border-b py-3 pl-0.5 pr-0.5 transition-[colors,box-shadow]",
         layout === "grid" ? "flex-col" : "items-center",
         plugin.installed
-          ? "border-primary/30"
-          : "border-border hover:border-primary/40 hover:bg-card/70",
+          ? "border-primary/40"
+          : "border-border/70 hover:border-primary/60",
       )}
     >
       <div className={cn("flex min-w-0 gap-3", layout === "grid" && "w-full")}>
@@ -1127,15 +1138,15 @@ function CommunitySkillRow({
   return (
     <article
       className={cn(
-        "flex gap-3 rounded-lg border bg-card/40 px-3 py-2.5",
+        "flex gap-3 border-b py-3 pl-0.5 pr-0.5 transition-colors",
         layout === "grid" ? "flex-col" : "items-center",
         skill.installed
-          ? "border-primary/30"
-          : "border-border hover:border-primary/40 hover:bg-card/70",
+          ? "border-primary/40"
+          : "border-border/70 hover:border-primary/60",
       )}
     >
       <div className="flex min-w-0 flex-1 gap-3">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted/60">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-muted/60">
           <FileText className="h-4 w-4 text-muted-foreground" />
         </div>
         <div className="min-w-0 flex-1">
