@@ -55,6 +55,23 @@ for :data:`SETTLE_S` before anything is filed, and the flag is armed once per
 episode: an agent that goes back to work re-arms it, and one that sits at its
 prompt for an hour is reported once.
 
+The badge needs a second, longer debounce. ``STILL_S`` answers "did anything
+just happen?" — four seconds, so a single printout cannot spin the spinner.
+That is the wrong bar for "is this job over?". Grok thinks for six to sixty
+seconds without painting, Claude sits on a long shell or a hook the same way,
+and the chat-mode list then shows a solid "done" dot over a terminal that is
+mid-command. :data:`WORK_HOLD_S` keeps a *confirmed* job on ``working`` through
+those gaps; a question, a dead process, or a failed start still cut through.
+
+The two windows RUN TOGETHER rather than stacking. Both are asked about the
+same moment — when the pane itself went quiet, not when the badge admitted it —
+so a job held on ``working`` for the full ninety seconds is news the moment the
+hold ends, and is not made to sit out another five for a stillness it has
+already served. The hold is likewise anchored to the last movement OBSERVED,
+never to the sweep that read it: raw ``working`` outlives the last change by
+the whole ``STILL_S`` tail, and anchoring on the reading pushed the window one
+sweep further out every time anybody looked.
+
 ## What is and is not persisted
 
 An entry's whole value is the "jump to pane" behind it. Panes do not survive a
@@ -104,6 +121,7 @@ from .activity import (
     is_settled,
     read_activity,
     screen_digest,
+    shows_question,
     stamp,
 )
 
@@ -124,14 +142,33 @@ SETTLE_S = 5.0
 #: so this is about how quickly the bell should react, not about cost.
 SWEEP_INTERVAL_S = 2.0
 
-#: Movement resuming within this long of the badge last wearing "working"
-#: needs no fresh ``WORK_CONFIRM_S`` confirmation. A coding TUI pauses between
-#: tool steps — a slow shell command, a long model wait — and demanding a new
-#: five-second confirmation after every such gap turned one continuous job into
-#: repeated false "waiting" dips. Sized to cover an inter-step gap generously
-#: while staying far below the minutes a finished pane typically sits before
-#: the user prints something into it (the case the confirm gate exists for).
-WORK_RESUME_GRACE_S = 15.0
+#: Movement resuming within this long of a confirmed job's last observed
+#: movement needs no fresh ``WORK_CONFIRM_S`` confirmation. Matched to
+#: :data:`WORK_HOLD_S` so a job that just outlasts the hold can start
+#: painting again without a five-second "done" dip first.
+#:
+#: It buys the WORD only, never the hold clock. A resumption that re-anchored
+#: the hold would let one repaint every ninety seconds keep a pane that has
+#: long since finished spinning for ever, each burst buying the next one
+#: another ninety seconds — so a job that has genuinely resumed re-anchors the
+#: honest way, by sustaining movement past ``WORK_CONFIRM_S`` again.
+WORK_RESUME_GRACE_S = 90.0
+
+#: How long a confirmed job may go quiet before the badge believes it stopped.
+#:
+#: ``STILL_S`` is four seconds — right for "did the screen just change?",
+#: wrong for "is the agent finished?". Measured on a live workspace
+#: (2026-08-12): Grok filed eight false "finished" bells on one pane during a
+#: single job, with quiet gaps of 28–64 s between paints (model think, a long
+#: tool, a blocking hook). Ninety seconds covers those gaps and still flips a
+#: pane that has actually sat down at its prompt within a glance and a half.
+WORK_HOLD_S = 90.0
+
+# The grace must not outlive the hold: a grace window still open after the
+# hold has expired and the completed entry has been filed would re-latch
+# `worked` off one stray repaint and file the same stop twice. Tune either
+# constant, keep this true.
+assert WORK_RESUME_GRACE_S <= WORK_HOLD_S
 
 #: How many entries are kept. A heavy day across six workspaces produces a few
 #: dozen; past this the oldest fall off the back, which is the right end to lose
@@ -363,10 +400,18 @@ class _PaneWatch:
     #: calls a pane working for the whole ``STILL_S`` tail of any lone
     #: printout, slash-command output included.
     moving_since: float | None = None
-    #: When the badge last actually wore "working". Movement that resumes
-    #: within ``WORK_RESUME_GRACE_S`` of this is a job continuing after a
-    #: tool-step pause and skips re-confirmation.
-    stamped_working_at: float = 0.0
+    #: When movement was last SEEN in an episode that counted as work. The
+    #: anchor of the think/tool hold, and named for the observation rather than
+    #: for the sweep that made it on purpose: raw ``working`` outlives the last
+    #: change by the whole ``STILL_S`` tail, so anchoring on the READING pushed
+    #: the ninety-second window one sweep further out every time it was read.
+    work_seen_at: float = 0.0
+    #: The RAW reading at the last sweep, and when that word last changed.
+    #: The word above can lag this by the whole hold, and the settle window has
+    #: to count from when the PANE went quiet rather than from when the badge
+    #: admitted it — see :meth:`ActivityWatcher._step`.
+    raw_activity: Activity = "starting"
+    raw_since: float = 0.0
 
 
 def _detail(term: Any) -> str:
@@ -500,19 +545,36 @@ class ActivityWatcher:
                 digest=digest,
                 changed_at=settled_at,
                 process_generation=process_generation,
+                raw_activity=activity,
+                raw_since=now,
             )
             self._panes[ident] = watch
             # Through the same movement-confirmation gate as every later sweep:
             # a restored pane replaying its transcript is fresh output too, and
-            # first sight is not a reason to trust a burst more.
+            # first sight is not a reason to trust a burst more. With no history
+            # behind it, whatever it is doing is the START of an episode.
+            confirmed = self._confirmed(term, watch, activity, now, fresh_episode=True)
+            if confirmed == "working":
+                watch.worked = True
             stamp(
                 term,
-                self._confirmed(term, watch, activity, now),
+                confirmed,
                 now=now,
                 since=watch.moving_since,
             )
             self._checkpoint_resume_state(term, activity, watch, now)
             return None
+
+        # Does this sweep's movement CONTINUE the previous episode, or start a
+        # new one? Asked BEFORE the fingerprint is refreshed, because that is
+        # the only moment the answer still exists: once `changed_at` has been
+        # moved to `now`, a repaint that landed after a minute of stillness
+        # looks exactly like one that landed two seconds after the last. The raw
+        # reading cannot tell them apart either — it sees the change, never the
+        # rest before it. Without this a lone repaint inherits a long-dead
+        # episode's start and walks through the confirmation gate on it, which
+        # is a finished pane spinning "working" for ever.
+        fresh_episode = now - self._moved_at(term, watch, now) > STILL_S
 
         if digest != watch.digest:
             watch.digest = digest
@@ -529,25 +591,45 @@ class ActivityWatcher:
             watch.tasked = True
         # ``now`` travels into the read as well, so a test can place a pane on
         # its own timeline instead of racing the wall clock.
-        activity = read_activity(term, now=now, still_since=watch.changed_at)
-        if is_settled(activity) and not is_moving(term, now, watch.changed_at):
+        raw = read_activity(term, now=now, still_since=watch.changed_at)
+        if is_settled(raw) and not is_moving(term, now, watch.changed_at):
             # An OBSERVED still screen — two looks at the same picture, never
             # the assumption the first-sight branch above has to make. This
             # proves only that restore/startup repainting has settled; a matching
             # current-process submission remains the proof of actual work.
             term.idle_seen = True
 
+        # When the pane itself last changed what it was doing. The held word
+        # below can lag this by the whole hold, and something has to remember
+        # the honest moment.
+        if raw != watch.raw_activity:
+            watch.raw_activity = raw
+            watch.raw_since = now
+
+        # Confirm against the RAW reading so a held "working" cannot refresh
+        # the hold clock and live forever. Latch `worked` here, not on the
+        # way down: the hold keeps the displayed word on "working" while
+        # `_confirmed` clears `moving_since`, and a completed bell that waited
+        # for that transition would then never fire.
+        confirmed = self._confirmed(term, watch, raw, now, fresh_episode=fresh_episode)
+        if confirmed == "working":
+            watch.worked = True
+        activity = self._held(watch, raw, confirmed, now)
+
         if activity != watch.activity:
-            # `worked` — the half of "completed" that says the screen moved and
-            # then stopped — demands a CONFIRMED episode, judged the same way
-            # the badge judges it. Raw "working" covers the STILL_S tail of any
-            # lone printout, and counting that as work is how one /recap into a
-            # long-finished pane still rang a "finished" bell after the badge
-            # had already learned better.
             if watch.activity == "working" and self._episode_confirmed(term, watch):
                 watch.worked = True
             watch.activity = activity
-            watch.since = now
+            # Dated to when the PANE entered this state, not to when the badge
+            # caught up with it. A word held on "working" through a think gap
+            # reaches this line up to WORK_HOLD_S late, and a settle window
+            # started here would then demand a further SETTLE_S of a pane that
+            # has visibly been sitting at its prompt for ninety seconds — the
+            # two windows run together, they do not stack.
+            # `raw_since <= now` holds structurally (it is only ever stamped
+            # with a sweep's own clock); the min() is a defensive clamp, not a
+            # live code path.
+            watch.since = min(now, watch.raw_since)
             watch.announced = False
 
         # Publish the reading before deciding whether it is worth a bell entry.
@@ -555,15 +637,17 @@ class ActivityWatcher:
         # is filed once per episode and only for the few states that are news —
         # so an early return below must never cost the UI its status.
         #
-        # Publish the CONFIRMED word, not the raw one. Raw "working" covers the
+        # Publish the HELD word, not the raw one. Raw "working" covers the
         # whole STILL_S tail of any single printout — a slash command's output,
         # a menu, a redraw the user caused — and the badge spinning over an
         # agent that is sitting at its prompt is exactly the slot machine the
         # maintainer reported (2026-08-07, right after /recap printed). Real
         # work repaints continuously and sustains the episode past
-        # WORK_CONFIRM_S; a burst's tail cannot. The bell shares the same
-        # judgement through `worked` above, and the user's own Send is carried
-        # through the confirm window by the submit grace in `observed`.
+        # WORK_CONFIRM_S; a burst's tail cannot. A confirmed job then stays
+        # on "working" through the quiet gaps a coding TUI leaves between
+        # tool steps (WORK_HOLD_S). The bell shares the same judgement, and
+        # the user's own Send is carried through the confirm window by the
+        # submit grace in `observed`.
         #
         # ``since`` is the moment the movement episode actually began, so the
         # handover at the confirm boundary does not restart the badge's clock —
@@ -571,7 +655,7 @@ class ActivityWatcher:
         # were spent confirming.
         stamp(
             term,
-            self._confirmed(term, watch, activity, now),
+            activity,
             now=now,
             since=watch.moving_since,
         )
@@ -610,53 +694,140 @@ class ActivityWatcher:
             )
         )
 
-    def _confirmed(self, term: Any, watch: _PaneWatch, activity: Activity, now: float) -> Activity:
+    def _confirmed(
+        self,
+        term: Any,
+        watch: _PaneWatch,
+        activity: Activity,
+        now: float,
+        *,
+        fresh_episode: bool,
+    ) -> Activity:
         """The word the badge wears: movement must outlast a single burst.
 
-        Tracks when the current movement episode began and reports ``waiting``
-        until it has lasted ``WORK_CONFIRM_S`` — strictly longer than the
-        freshness tail one lone printout leaves behind, so a slash command's
-        output can never spin the badge, while a genuinely working agent
-        (repainting at least twice a second, measured) confirms within a few
-        sweeps.
+        Tracks when the current movement episode began and reports what a STILL
+        pane showing this screen would be called until that episode has lasted
+        ``WORK_CONFIRM_S`` — strictly longer than the freshness tail one lone
+        printout leaves behind, so a slash command's output can never spin the
+        badge, while a genuinely working agent (repainting at least twice a
+        second, measured) confirms within a few sweeps. ``fresh_episode`` says
+        the screen came to REST before this movement, which ends the previous
+        episode however recently it ran: a repaint after a minute of stillness
+        is a new burst and has to earn the word on its own.
 
-        Two kinds of movement need no waiting. An episode that BEGAN in the
-        wake of a confirmed submission: output that soon after a Send is the
-        agent starting, not the user printing something into the pane — the
-        seamless handover from the submit grace. And an episode that RESUMES
+        Judged by how long movement was actually SEEN (:meth:`_moved_at`, so
+        an agent streaming into rows the fingerprint does not cover still
+        counts) rather than by the clock at gate time — the same standard,
+        and for the same reason, as :meth:`_episode_confirmed`: raw
+        ``working`` survives the whole ``STILL_S`` tail after the last
+        change, and a lone burst must not confirm itself through its own
+        tail.
+
+        Two kinds of movement may skip the wait, and a question on screen
+        outranks both. An episode that BEGAN in the wake of a confirmed
+        submission: output that soon after a Send is the agent starting, not
+        the user printing something into the pane. And an episode RESUMING
         shortly after a confirmed one (:data:`WORK_RESUME_GRACE_S`): a coding
         TUI pauses between tool steps, and demanding a fresh five-second
         confirmation after every such gap turned one long job into repeated
-        false "waiting" dips. The gate exists for the pane that has been SITTING
-        at its prompt when a burst arrives, and such a pane has not worn
-        "working" for a long time.
+        false "waiting" dips.
+
+        A question does NOT outrank movement that has actually been sustained,
+        and the asymmetry is deliberate. Where the gate is satisfied this
+        module keeps :func:`~.activity.read_activity`'s rule that movement is
+        the stronger signal, because an agent writes "do you want me to…" into
+        its own prose all day and a working pane must not read as a prompt for
+        it. Where the gate is NOT satisfied there is no movement worth the
+        name to outrank, and a CLI that answers a Send with a permission prompt
+        needs the user now rather than a spinner for ninety seconds — the same
+        precedence a question already takes over the submit grace in
+        :func:`~.activity.observed`.
         """
         if activity != "working":
             watch.moving_since = None
             return activity
-        if watch.moving_since is None:
+        if watch.moving_since is None or fresh_episode:
             watch.moving_since = now
-        if in_submit_wake(term, watch.moving_since):
-            watch.stamped_working_at = now
+        moved_at = self._moved_at(term, watch, now)
+        if moved_at - watch.moving_since >= WORK_CONFIRM_S:
+            watch.work_seen_at = moved_at
             return activity
-        if (
-            now - watch.moving_since < WORK_CONFIRM_S
-            and now - watch.stamped_working_at > WORK_RESUME_GRACE_S
-        ):
-            return "waiting"
-        watch.stamped_working_at = now
-        return activity
+        if shows_question(term):
+            return "asking"
+        if in_submit_wake(term, watch.moving_since):
+            watch.work_seen_at = moved_at
+            return activity
+        if watch.work_seen_at > 0 and now - watch.work_seen_at <= WORK_RESUME_GRACE_S:
+            # Carries the WORD across a tool-step pause without carrying the
+            # hold CLOCK with it. Re-anchoring here would let one repaint every
+            # ninety seconds keep a finished pane spinning for ever, each burst
+            # buying the next one another ninety. Work that really did resume
+            # sustains itself past ``WORK_CONFIRM_S`` and re-anchors above.
+            return activity
+        return "waiting"
+
+    @staticmethod
+    def _moved_at(term: Any, watch: _PaneWatch, now: float) -> float:
+        """When movement was last SEEN in this pane, by either signal.
+
+        Both of :func:`~.activity.is_moving`'s signals count: the screen
+        fingerprint this sweep tracks, and output that has just arrived — the
+        second one because an agent streaming into the rows the fingerprint
+        does not cover is moving without changing it.
+
+        This, never ``now``, is what the hold is anchored to. Raw ``working``
+        outlives the last change by the whole ``STILL_S`` tail, so anchoring on
+        the sweep that merely READS that tail pushed the ninety-second window
+        one sweep further out every time it was read — and the badge's own
+        settle window then started a sweep too late for the bell behind it.
+
+        A stamp in the FUTURE is a clock that does not agree with this
+        caller's, not freshness, and is ignored.
+        """
+        at = watch.changed_at
+        out_at = float(getattr(term, "last_output_at", 0.0) or 0.0)
+        if out_at > at and 0 <= now - out_at <= STILL_S:
+            at = out_at
+        return at
+
+    @staticmethod
+    def _in_work_hold(watch: _PaneWatch, now: float) -> bool:
+        """Was work seen recently enough for the badge to keep saying so?"""
+        last = watch.work_seen_at
+        return last > 0 and 0 <= now - last <= WORK_HOLD_S
+
+    @staticmethod
+    def _held(watch: _PaneWatch, raw: Activity, confirmed: Activity, now: float) -> Activity:
+        """Keep a confirmed job on ``working`` through a quiet think/tool gap.
+
+        Only upgrades ``waiting``. A question, a dead process or a failed start
+        is news the user has to see now; stretching those under a spinner would
+        hide the one state that wants an action.
+        """
+        if confirmed == "working":
+            return "working"
+        if raw != "waiting":
+            return confirmed
+        if ActivityWatcher._in_work_hold(watch, now):
+            return "working"
+        return confirmed
 
     @staticmethod
     def _episode_confirmed(term: Any, watch: _PaneWatch) -> bool:
         """Did the movement episode that just ended count as real work?
 
-        The same standard the badge applies, asked retrospectively at the
-        moment raw ``working`` flips away. Judged by how long the screen kept
-        CHANGING (``changed_at - moving_since``), never by the clock at flip
-        time: raw ``working`` survives the whole ``STILL_S`` tail after the
-        last change, and ``STILL_S`` plus a sweep can reach ``WORK_CONFIRM_S``
-        — a lone burst must not confirm itself through its own tail.
+        Literally the same standard :meth:`_confirmed` applies live, asked
+        retrospectively at the moment the DISPLAYED word leaves "working".
+        Judged by how long the screen kept CHANGING (``changed_at -
+        moving_since``), never by the clock at flip time: raw ``working``
+        survives the whole ``STILL_S`` tail after the last change, and
+        ``STILL_S`` plus a sweep can reach ``WORK_CONFIRM_S`` — a lone burst
+        must not confirm itself through its own tail.
+
+        A backstop rather than the main road: ``worked`` is latched at the
+        confirm site itself, so this only has anything left to catch where the
+        episode is still running and the word changed under it — a question
+        surfacing in the wake of a Send, say.
         """
         began = watch.moving_since
         if began is None:
@@ -934,6 +1105,7 @@ __all__ = [
     "MAX_ENTRIES",
     "SETTLE_S",
     "SWEEP_INTERVAL_S",
+    "WORK_HOLD_S",
     "WORK_RESUME_GRACE_S",
     "ActivityWatcher",
     "Kind",

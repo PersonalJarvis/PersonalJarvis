@@ -124,12 +124,15 @@ ten seconds after nothing happened.
 
 ## Honest limits
 
-An agent whose process WEDGES stops repainting, so it reads as finished a few
-seconds later; the wording ("finished and waiting at its prompt") is then
-optimistic, which is the one case where this is wrong in the user's favour
-rather than silent. A CLI that genuinely draws nothing at all while it works —
-none of the four measured — would be reported early. A plain shell pane is not
-an agent and is left out entirely by the caller.
+An agent whose process WEDGES stops repainting, so it reads as finished once
+the sweep's hold expires (``notifications.WORK_HOLD_S``); the wording
+("finished and waiting at its prompt") is then optimistic, which is the one
+case where this is wrong in the user's favour rather than silent. A CLI that
+genuinely draws nothing at all while it works — Grok thinking, a long shell,
+a blocking hook — is held on ``working`` by that same window, because the
+four-second stillness bar that stops a ``/recap`` burst from spinning the
+badge is far shorter than a real think. A plain shell pane is not an agent
+and is left out entirely by the caller.
 
 ## Who reads this, and why it is stamped on the pane
 

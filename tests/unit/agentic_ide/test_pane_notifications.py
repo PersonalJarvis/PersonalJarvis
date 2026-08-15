@@ -25,7 +25,7 @@ import pytest
 
 from jarvis.agentic_ide import notifications
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.activity import STILL_S, read_activity
+from jarvis.agentic_ide.activity import STILL_S, observed, read_activity
 from jarvis.agentic_ide.session import Registry
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -183,14 +183,49 @@ def _busy(
     return at
 
 
+def _hold_expires(last_working_stamp: float) -> float:
+    """First moment a confirmed job may leave ``working`` after it goes quiet."""
+    return last_working_stamp + notifications.WORK_HOLD_S + 1.0
+
+
+def _work_settled(last_working_stamp: float) -> float:
+    """First moment a confirmed stop is news (hold expired, then settle)."""
+    return _hold_expires(last_working_stamp) + notifications.SETTLE_S + 1.0
+
+
+def _go_quiet(
+    watcher: Any,
+    registry: Registry,
+    term: Any,
+    stopped: float,
+    screen: str = IDLE_SCREEN,
+    *,
+    emit: bool = False,
+) -> float:
+    """Park the pane on ``screen`` just after work. Returns the last working stamp.
+
+    Drawing the finished (or idle) frame is itself a screen change, so the
+    sweep that first sees it still reads raw ``working`` and refreshes the
+    hold clock. Callers expire the hold from the value this returns, not
+    from ``stopped``.
+    """
+    term.transcript.clear()
+    _draw(term, screen)
+    _quiet_since(term, stopped)
+    at = stopped + 1.0
+    watcher.poll(registry, now=at, emit=emit)
+    return at
+
+
 def _rest(
     watcher: Any, registry: Registry, term: Any, screen: str, *, at: float, emit: bool = True
 ) -> list:
     """Show ``screen`` and let it stand still long enough to count as settled."""
-    term.transcript.clear()
-    _draw(term, screen)
-    watcher.poll(registry, now=at, emit=emit)
-    return watcher.poll(registry, now=at + STILL_S + 1, emit=emit)
+    last = _go_quiet(watcher, registry, term, at, screen, emit=emit)
+    delay = STILL_S + 1
+    if getattr(term, "activity", "") == "working":
+        delay = notifications.WORK_HOLD_S + 1
+    return watcher.poll(registry, now=last + delay, emit=emit)
 
 
 # ------------------------------------------------- reading the REAL terminals
@@ -349,10 +384,12 @@ async def test_a_real_pane_finishing_files_one_entry(registry: Registry, tmp_pat
     # Still "working" here: it printed half a second ago, and a reply arrives in
     # bursts. The clock is gone but the pane is not done talking.
     assert watcher.poll(registry, now=1002.5) == []
-    # Past the output window, so this is where the settle timer actually starts.
-    assert watcher.poll(registry, now=1010.0) == []
+    # Past the output window — and past the hold that keeps a confirmed job
+    # from flipping "done" the first time the model thinks without painting.
+    last_working = 1002.5
+    assert watcher.poll(registry, now=_hold_expires(last_working)) == []
 
-    filed = watcher.poll(registry, now=1010.0 + notifications.SETTLE_S + 1)
+    filed = watcher.poll(registry, now=_work_settled(last_working))
 
     assert [entry.kind for entry in filed] == ["completed"]
 
@@ -400,12 +437,12 @@ async def test_a_pane_that_stops_working_is_reported_once(
     stopped = _busy(watcher, registry, term, start=100.0)
 
     # The picture now stops changing. Standing still is not instantly "finished"
-    # — a pane between two steps looks exactly the same for a moment.
+    # — a pane between two steps looks exactly the same for a moment, and a
+    # confirmed job stays on "working" through the whole think/tool hold.
     assert watcher.poll(registry, now=stopped + 1) == []
-    # Still enough to count as settled, but the settle window has not run.
-    assert watcher.poll(registry, now=stopped + STILL_S + 1) == []
+    assert watcher.poll(registry, now=_hold_expires(stopped)) == []
 
-    filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
+    filed = watcher.poll(registry, now=_work_settled(stopped))
     assert [entry.kind for entry in filed] == ["completed"]
     assert filed[0].pane == term.name
     assert filed[0].workspace_id == session.id
@@ -435,9 +472,9 @@ async def test_only_observed_work_is_checkpointed_for_restart(
     assert watcher.take_resume_dirty() is False
 
     # Two waits stack, and both are load-bearing: the screen has to stand still
-    # long enough to count as settled at all (STILL_S), and only then does the
+    # long enough that the think/tool hold expires, and only then does the
     # settle window for "this really is over" start running (SETTLE_S).
-    settled_at = stopped + STILL_S + 2
+    settled_at = _hold_expires(stopped)
     watcher.poll(registry, now=settled_at, emit=False)
     watcher.poll(registry, now=settled_at + notifications.SETTLE_S + 1, emit=False)
     assert term.resume_continuation_needed is False
@@ -593,8 +630,8 @@ async def test_a_prompt_typed_by_hand_arms_the_report(registry: Registry, tmp_pa
     registry.write(term.key, "run the tests\r", workspace_id=session.id)
 
     stopped = _busy(watcher, registry, term, start=200.0)
-    watcher.poll(registry, now=stopped + STILL_S + 1)
-    filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
+    watcher.poll(registry, now=_hold_expires(stopped))
+    filed = watcher.poll(registry, now=_work_settled(stopped))
 
     assert [entry.kind for entry in filed] == ["completed"]
 
@@ -615,9 +652,9 @@ async def test_arrow_keys_and_half_typed_lines_are_not_an_instruction(
     # NOT having been given anything, with a screen that moved regardless.
     term.last_submit_at = None
     watcher._panes[(session.id, term.key)].tasked = False
-    watcher.poll(registry, now=stopped + STILL_S + 1)
+    watcher.poll(registry, now=_hold_expires(stopped))
 
-    assert watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2) == []
+    assert watcher.poll(registry, now=_work_settled(stopped)) == []
 
 
 async def test_a_repaint_gap_does_not_file_a_notification(
@@ -724,16 +761,92 @@ async def test_a_tool_step_gap_does_not_demand_reconfirmation(
     assert term.activity == "working", "sustained movement confirms"
 
     # A quiet tool step: the screen stands still past its freshness tail.
+    # The badge must KEEP saying working — this is the chat-list "done" bug.
     watcher.poll(registry, now=1008.0 + STILL_S + 1)
-    assert term.activity == "waiting"
+    assert term.activity == "working"
 
-    # Work resumes. The badge must follow on the SAME sweep, not five later.
+    # Work resumes. The badge was never taken off, and must stay on.
     term.transcript.clear()
     _draw(term, "\r\n· working again after the tool call\r\n")
     term.last_output_at = 1015.0
     watcher.poll(registry, now=1015.0)
 
     assert term.activity == "working", "a resuming job needs no re-confirmation"
+
+
+async def test_a_think_gap_keeps_the_badge_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The chat-list bug: Grok thinks for 20s and the dot says "done".
+
+    The raw reading goes waiting after STILL_S of silence. The badge must not.
+    A confirmed job stays on working through the whole hold, which is what
+    the user is looking at when they scan the rail.
+    """
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    term.last_submit_at = 500.0
+    term.submit_generation = term.process_generation
+    _quiet_since(term, 999.0)
+    _draw(term, IDLE_SCREEN)
+    watcher.poll(registry, now=996.0)
+
+    for step, at in enumerate((1000.0, 1002.0, 1004.0, 1006.0, 1008.0)):
+        term.transcript.clear()
+        _draw(term, f"\r\n· working, frame {step}\r\n")
+        term.last_output_at = at
+        watcher.poll(registry, now=at)
+    assert term.activity == "working"
+
+    # Twenty seconds of silence — a typical Grok think, a long grep, a hook.
+    watcher.poll(registry, now=1008.0 + 20.0)
+    assert observed(term, now=1008.0 + 20.0).activity == "working"
+    assert watcher.poll(registry, now=1008.0 + 20.0) == []
+
+
+async def test_the_hold_expires_into_waiting(registry: Registry, tmp_path: Path) -> None:
+    """A pane that has actually sat down at its prompt must not spin forever."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    stopped = _busy(watcher, registry, term, start=100.0)
+    _quiet_since(term, stopped)
+    term.transcript.clear()
+    _draw(term, IDLE_SCREEN)
+
+    watcher.poll(registry, now=_hold_expires(stopped))
+
+    assert observed(term, now=_hold_expires(stopped)).activity == "waiting"
+
+
+async def test_a_question_cuts_through_the_hold(registry: Registry, tmp_path: Path) -> None:
+    """A permission prompt needs the user now, not a spinner for ninety seconds."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    stopped = _busy(watcher, registry, term, start=100.0)
+    _quiet_since(term, stopped)
+    term.transcript.clear()
+    _draw(term, QUESTION_SCREEN)
+
+    watcher.poll(registry, now=stopped + 2)
+
+    assert term.activity == "asking"
+
+
+async def test_a_think_gap_does_not_file_finished(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The other half: eight false "finished" bells on one Grok pane."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    stopped = _busy(watcher, registry, term, start=100.0)
+    _quiet_since(term, stopped)
+    term.transcript.clear()
+    _draw(term, IDLE_SCREEN)
+
+    assert watcher.poll(registry, now=stopped + 30.0) == []
+    assert watcher.poll(registry, now=stopped + 60.0) == []
+    filed = watcher.poll(registry, now=_work_settled(stopped))
+    assert [entry.kind for entry in filed] == ["completed"]
 
 
 async def test_a_question_is_reported_even_though_it_never_worked(
@@ -761,8 +874,8 @@ async def test_going_back_to_work_re_arms_the_report(registry: Registry, tmp_pat
 
     for round_start in (100.0, 500.0):
         stopped = _busy(watcher, registry, term, start=round_start)
-        watcher.poll(registry, now=stopped + STILL_S + 1)
-        filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
+        watcher.poll(registry, now=_hold_expires(stopped))
+        filed = watcher.poll(registry, now=_work_settled(stopped))
         assert [entry.kind for entry in filed] == ["completed"], round_start
 
 
@@ -825,8 +938,8 @@ def test_the_store_is_bounded() -> None:
 async def _file_one(watcher: Any, registry: Registry, term: Any, *, start: float) -> None:
     """Put exactly one ``completed`` entry in the bell for ``term``."""
     stopped = _busy(watcher, registry, term, start=start)
-    watcher.poll(registry, now=stopped + STILL_S + 1)
-    filed = watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
+    watcher.poll(registry, now=_hold_expires(stopped))
+    filed = watcher.poll(registry, now=_work_settled(stopped))
     assert [entry.pane for entry in filed] == [term.name]
 
 
@@ -906,8 +1019,8 @@ async def test_closing_a_workspace_takes_its_notifications_with_it(
     watcher = notifications.watcher()
     session, term = await _pane(registry, tmp_path)
     stopped = _busy(watcher, registry, term, start=100.0)
-    watcher.poll(registry, now=stopped + STILL_S + 1)
-    watcher.poll(registry, now=stopped + STILL_S + notifications.SETTLE_S + 2)
+    watcher.poll(registry, now=_hold_expires(stopped))
+    watcher.poll(registry, now=_work_settled(stopped))
     assert notifications.center().list() != []
 
     await registry.end(session.id)

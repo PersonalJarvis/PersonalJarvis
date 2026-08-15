@@ -534,6 +534,33 @@ async def test_movement_in_a_submits_wake_confirms_instantly(
     assert observed(term, now=504.0).activity == "working"
 
 
+async def test_a_confirmed_job_stays_working_through_a_think_gap(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Chat-mode dots: a working terminal must not read as finished mid-think.
+
+    The rail's badge is the sweep's stamped word. A 20 s silent think — Grok
+    "Thought for 6.0s" scaled up, a 56 s grep whose timer sits above the
+    fingerprint — used to flip that word to waiting and paint a solid amber
+    "done" dot over a pane that was still on the job.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    _instruct(term, 100.0)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _sweep(registry, 500.0)
+    _sweep(registry, 502.0)
+
+    for at in (504.0, 506.0, 508.0, 510.0):
+        term.transcript.feed(f"\r\n· step at {at}\r\n")
+        term.last_output_at = at
+        _sweep(registry, at)
+    assert observed(term, now=510.0).activity == "working"
+
+    _sweep(registry, 530.0)
+
+    assert observed(term, now=530.0).activity == "working"
+
+
 async def test_the_two_readings_of_one_pane_agree(registry: Registry, tmp_path: Path) -> None:
     """The workspace state and the pane-list poll describe the same pane alike.
 
