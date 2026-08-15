@@ -246,6 +246,12 @@ check in order, name the layer (runbook:
    (`jarvis/brain/assistant_name.py`). Tests pin an arbitrary brand (e.g.
    "Nova-Agent"), never the host's live wake-word config.
 
+3. **Mascot character name:** **Jarvussus**. This is the official black
+   ghost with glowing yellow eyes (the brand mark). Historical asset
+   filenames and paths may still say `gigi` / `jarvis-gigi-*`; do not
+   rename those files unless asked. In prose, call the character
+   Jarvussus.
+
 **Glossary:** the retired internal codenames ("Subagents" / "sub_jarvis" /
 the old bridge codename) stay dead repo-wide. The old bridge codename
 survives ONLY where functional: (a) the external `openclaw` npm worker

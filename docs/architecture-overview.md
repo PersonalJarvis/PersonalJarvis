@@ -227,7 +227,7 @@ The six desktop power-user features that were historically Windows-only are now 
 
 ## Brand mark / logo (BINDING)
 
-**The official Jarvis logo is the Gigi GHOST mascot** — the black ghost character with glowing yellow eyes (`jarvis-gigi-256.png` == the maintainer's master `Jarvis-Logo (1).png` at the repo root, md5 `7de0a930`; also served to the frontend as `/jarvis-logo.png`). **The gold four-point star (`jarvis-mark-256.png` / `jarvis.ico` md5 `73bd5837`) is "AI-slop" the maintainer rejects — do NOT use it** as the brand mark anywhere (UI avatar, titlebar/taskbar icon, marketing, videos, intro/onboarding films). Titlebar/taskbar icon must be the ghost (`assets/icons/jarvis.ico`); sidebar avatar is `Sidebar.tsx <img src="/jarvis-logo.png">`. When a feature needs "the Jarvis logo", it is always the ghost mascot.
+**The official Jarvis logo is Jarvussus** — the black ghost character with glowing yellow eyes (historical asset name "Gigi"; `jarvis-gigi-256.png` == the maintainer's master `Jarvis-Logo (1).png` at the repo root, md5 `7de0a930`; also served to the frontend as `/jarvis-logo.png`). **The gold four-point star (`jarvis-mark-256.png` / `jarvis.ico` md5 `73bd5837`) is "AI-slop" the maintainer rejects — do NOT use it** as the brand mark anywhere (UI avatar, titlebar/taskbar icon, marketing, videos, intro/onboarding films). Titlebar/taskbar icon must be the ghost (`assets/icons/jarvis.ico`); sidebar avatar is `Sidebar.tsx <img src="/jarvis-logo.png">`. When a feature needs "the Jarvis logo", it is always the ghost mascot.
 
 ---
 

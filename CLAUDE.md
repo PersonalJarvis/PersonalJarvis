@@ -45,6 +45,8 @@ pin may remain only as a documented non-general exception with a removal test.
 Internal: **Jarvis-Agents**. User-visible brand is DYNAMIC from the wake word
 (`{name}-Agent`, fallback "Assistant-Agent") — never hardcode. Retired
 codenames stay dead; `openclaw` binary strings + back-compat aliases stay AS-IS.
+Mascot character name: **Jarvussus** (the official black ghost with glowing
+yellow eyes; asset filenames may still say `gigi`).
 
 ## 5. Architecture essentials (+ §6 safety)
 8-layer rule (protocols down, frozen `EventBus` events laterally); plugins via
