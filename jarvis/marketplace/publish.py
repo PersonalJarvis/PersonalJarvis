@@ -10,6 +10,12 @@ token belongs to OUR App (confused-deputy check), derives the publisher from
 it, and opens the registry PR as the bot — one publishing implementation for
 web and app.
 
+Two lanes share that one identity. A **package** (plugin or skill) travels
+as JSON to ``/submit``; a **wallpaper** travels as multipart image bytes to
+``/submit-wallpaper``, where the endpoint slugifies the title into a name and
+commits straight to the public registry. Both end up in the same feed the
+store reads back.
+
 Validation here MIRRORS the endpoint's rules (``_lib/validate.ts``, itself a
 mirror of the registry CI) for instant field-level feedback in the form. It
 is deliberately never the authority: the endpoint and the registry CI re-run
@@ -20,19 +26,25 @@ a bad submission merge.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
 
 from jarvis.marketplace.agent_plugins_loader import (
+    EXTENSION_NAMESPACE,
     MAX_SKILL_MD_BYTES,
     AgentPluginError,
 )
 from jarvis.marketplace.agent_plugins_loader import (
     validate_bundled_skills as _install_time_validate_bundled_skills,
+)
+from jarvis.marketplace.agent_plugins_loader import (
+    validate_mcp_server as _install_time_validate_mcp_server,
 )
 from jarvis.marketplace.auth.oauth_device import DeviceFlowConfig, DeviceFlowHandler
 from jarvis.marketplace.token_store import Tokens, TokenStore
@@ -60,12 +72,20 @@ _UA = {"User-Agent": "Personal-Jarvis/1.0"}
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$")
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 MAX_FILE_BYTES = 128 * 1024
+# The wallpaper lane's own limits, mirrored from the endpoint's
+# functions/_lib/wallpapers.ts. Same reasoning as the rules above: a mirror
+# that drifts costs a duplicate error message, never a bad publish — the
+# endpoint re-checks all of it and the registry CI re-checks it again.
+MAX_WALLPAPER_BYTES = 8 * 1024 * 1024
+MAX_TITLE_CHARS = 80
+# Redistribution licenses only. A wallpaper published here is copied onto
+# stranger's machines, so "all rights reserved" has no meaning in this lane.
+WALLPAPER_LICENSES = ("CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0")
 # Re-exported under this module's existing name, but the VALUE comes from
 # agent_plugins_loader — the install-time authority — so the two numbers
 # cannot silently drift apart.
 MAX_SKILL_BYTES = MAX_SKILL_MD_BYTES
 MAX_DESCRIPTION_CHARS = 500
-_STDIO_LAUNCHERS = frozenset({"npx", "uvx", "docker"})
 # Verbatim copy of validate.ts's SECRET_PATTERNS — a mirror that misses a
 # family gives a green "Check" the endpoint then refuses, which reads like a
 # store bug. Keep the two lists identical when either changes.
@@ -183,7 +203,7 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
                 errors.append(FieldError("mcp_json must be an object", "mcp_json"))
                 mcp_json = None
             else:
-                mcp_error = _validate_mcp(mcp_json)
+                mcp_error = _validate_mcp(mcp_json, plugin_json=plugin_json)
                 if mcp_error:
                     errors.append(FieldError(mcp_error, "mcp_json"))
         usage_card = draft.get("usage_card")
@@ -225,6 +245,119 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
     return value, []
 
 
+def validate_wallpaper_draft(
+    draft: Mapping[str, Any],
+) -> tuple[dict[str, str] | None, list[FieldError]]:
+    """Normalize and check a wallpaper submission's text fields.
+
+    The image itself is checked separately (``prepare_wallpaper_image``) —
+    bytes and metadata fail for different reasons and the form wants to say
+    which. There is no ``name`` or ``version`` field here on purpose: the
+    endpoint slugifies the title into a free name and stamps 1.0.0, so a
+    client that invented either would only be describing something the server
+    ignores.
+    """
+    errors: list[FieldError] = []
+    title = str(draft.get("title") or "").strip()
+    if not title:
+        errors.append(FieldError("a title is required", "title"))
+    elif _utf16_len(title) > MAX_TITLE_CHARS:
+        errors.append(FieldError(f"title longer than {MAX_TITLE_CHARS} characters", "title"))
+    elif not re.search(r"[a-z0-9]", title.lower()):
+        # The endpoint slugifies the title and refuses an empty slug. Saying
+        # so here, in the words the endpoint uses, beats a 422 after upload.
+        errors.append(FieldError("the title needs at least a few letters or digits", "title"))
+
+    description = str(draft.get("description") or "").strip()
+    if _utf16_len(description) > MAX_DESCRIPTION_CHARS:
+        errors.append(
+            FieldError(f"description longer than {MAX_DESCRIPTION_CHARS} characters", "description")
+        )
+
+    license_id = str(draft.get("license") or "").strip()
+    if license_id not in WALLPAPER_LICENSES:
+        errors.append(FieldError("pick one of the redistribution licenses", "license"))
+
+    theme = str(draft.get("theme") or "").strip()
+    if theme not in ("light", "dark", ""):
+        errors.append(FieldError("theme must be 'light' or 'dark'", "theme"))
+
+    if draft.get("rights") is not True:
+        # Not decoration: this is the uploader's own statement, recorded in a
+        # submission published under their name. Nobody inspects the picture
+        # before it goes live, which is exactly why the statement is required.
+        errors.append(
+            FieldError(
+                "confirm that you hold the rights and the image is legal to publish", "rights"
+            )
+        )
+
+    if errors:
+        return None, errors
+    value = {"title": title, "license": license_id, "rights": "yes"}
+    if description:
+        value["description"] = description
+    if theme:
+        value["theme"] = theme
+    return value, []
+
+
+def prepare_wallpaper_image(data: bytes) -> tuple[bytes, str]:
+    """Re-encode a picture into the bytes that will be published.
+
+    Returns ``(webp_bytes, "wallpaper.webp")``. Nothing the caller supplied
+    survives the round trip: Pillow decodes and re-encodes, so EXIF (GPS
+    included), a forged header and anything appended past the image data are
+    all gone. That is the same guarantee the website's uploader gives with a
+    canvas, and the registry build re-encodes a third time — no byte an
+    uploader crafted is ever served as-is.
+
+    Raises ``SubmitError`` with a sentence meant for the person uploading.
+    """
+    if not data:
+        raise SubmitError(422, "that file is empty", "file")
+    try:
+        from PIL import Image
+    except ImportError as exc:  # pragma: no cover - Pillow is a hard dependency
+        raise SubmitError(503, "image support is unavailable on this install", "file") from exc
+
+    try:
+        with Image.open(io.BytesIO(data)) as probe:
+            probe.verify()
+        with Image.open(io.BytesIO(data)) as source:
+            source.load()
+            prepared = source.convert("RGB")
+    except Exception as exc:  # noqa: BLE001 - any decode failure means "not an image"
+        raise SubmitError(422, "that file is not an image the app can read", "file") from exc
+
+    # 4K cap, matching the picker's own store and the website's uploader.
+    max_width = 3840
+    if prepared.width > max_width:
+        height = max(1, round(prepared.height * max_width / prepared.width))
+        prepared = prepared.resize((max_width, height), Image.Resampling.LANCZOS)
+
+    # Step down the quality until it fits rather than refusing a picture the
+    # user cannot fix by hand — a 4K photograph can exceed 8 MB at q82, and
+    # "export a smaller one" is not an instruction a wallpaper picker can act
+    # on. The floor is deliberate: below q50 the result is not worth shipping.
+    encoded = b""
+    for quality in (82, 70, 60, 50):
+        buffer = io.BytesIO()
+        prepared.save(buffer, "WEBP", quality=quality, method=4)
+        encoded = buffer.getvalue()
+        if len(encoded) <= MAX_WALLPAPER_BYTES:
+            break
+    prepared.close()
+    if len(encoded) > MAX_WALLPAPER_BYTES:
+        raise SubmitError(
+            413,
+            f"even re-encoded, that image stays over "
+            f"{MAX_WALLPAPER_BYTES // (1024 * 1024)} MB — publish a smaller one",
+            "file",
+        )
+    return encoded, "wallpaper.webp"
+
+
 def _validate_bundled_skills(
     raw: Any, *, plugin_name: str
 ) -> tuple[list[dict[str, str]], list[FieldError]]:
@@ -252,9 +385,29 @@ def _validate_bundled_skills(
     return [{"name": skill.name, "skill_md": skill.skill_md} for skill in validated], []
 
 
-def _validate_mcp(mcp: dict[str, Any]) -> str | None:
-    """Exactly one server; hosted must be https, local a pinned allowlisted
-    launcher — the two fields where data flows or code executes."""
+def _validate_mcp(mcp: dict[str, Any], *, plugin_json: Mapping[str, Any]) -> str | None:
+    """Exactly one server, then delegate the transport/credential rules to
+    ``agent_plugins_loader.validate_mcp_server`` — the exact function the
+    install-time authority applies to a plugin's own ``mcp.json`` — so
+    https-only, the ``npx``/``uvx``/``docker`` launcher allowlist, no
+    ``headers`` on a hosted server, ``$plugin_…``-only ``env`` values and the
+    ``sse``-transport ban are one rule set, not two hand-kept-in-sync copies.
+
+    "Exactly one server" stays a LOCAL check, on top of the delegated one:
+    the author-facing contract (docs/marketplace/package-layout.md) promises
+    it, but the authority itself tolerates several servers when one is named
+    after the plugin (a selection rule this pre-check has no use for). A
+    stricter local check can only produce a duplicate error message, never
+    let a submission through the authority would refuse
+    (validator-parity.md, "the direction of a divergence decides whether it
+    matters").
+
+    A second local check stays for the same reason: the authority's own pin
+    rule only forbids a literal ``@latest`` suffix, not the absence of any
+    version marker at all, so a bare unversioned package name
+    (``npx some-package``) would install today without ever being pinned.
+    Catching that here is strictly stricter, never looser.
+    """
     # Only "mcpServers" is a real key — a "servers" alias would validate here
     # and then vanish once CI (which reads only "mcpServers") looks at it,
     # producing a submission that describes a server nobody can find.
@@ -263,33 +416,25 @@ def _validate_mcp(mcp: dict[str, Any]) -> str | None:
         return "mcp_json must contain an mcpServers object"
     if len(servers) != 1:
         return "mcp_json must define exactly one server"
-    server = next(iter(servers.values()))
-    if not isinstance(server, dict):
-        return "server entry must be an object"
-    url = server.get("url")
-    if isinstance(url, str):
-        if not url.lower().startswith("https://"):
-            return "hosted server URL must be https://"
-        return None
-    command = server.get("command")
-    if isinstance(command, str):
-        if command not in _STDIO_LAUNCHERS:
-            return "stdio launcher must be one of: npx, uvx, docker"
-        args = [a for a in server.get("args") or [] if isinstance(a, str)]
-        # An arg ending in "@latest" is rejected on its own, even when a
-        # DIFFERENT arg in the same command looks pinned — the earlier
-        # "any argument looks pinned" check alone would accept
-        # `npx foo@1.2.0 bar@latest`, which CI's own "no @latest, ever" rule
-        # then refuses.
-        if any(a.endswith("@latest") for a in args):
-            return "stdio args may not pin @latest — pin an exact version instead"
+    server_name, server = next(iter(servers.items()))
+
+    extensions = plugin_json.get("extensions") if isinstance(plugin_json, Mapping) else None
+    extension = extensions.get(EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
+    try:
+        converted = _install_time_validate_mcp_server(
+            str(server_name), server, extension if isinstance(extension, Mapping) else None
+        )
+    except AgentPluginError as exc:
+        return str(exc)
+
+    if converted.get("transport") == "stdio":
+        args = list(converted.get("install") or [])[1:]
         pinned = any(
             re.search(r"@\d+\.\d+\.\d+", a) or re.search(r":[\w.-]*\d[\w.-]*$", a) for a in args
         )
         if not pinned:
             return "stdio server must pin an exact version (e.g. @1.2.0 or image:1.2)"
-        return None
-    return "server must have either an https url or a pinned stdio command"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +465,19 @@ def publish_endpoint() -> str:
         from jarvis.core.config import MarketplaceConfig
 
         return MarketplaceConfig().publish_endpoint
+
+
+def publish_wallpaper_endpoint() -> str:
+    """The configured wallpaper endpoint (empty string = lane disabled)."""
+    from jarvis.core.config import load_config
+
+    try:
+        return str(load_config().marketplace.publish_wallpaper_endpoint).strip()
+    except Exception:  # noqa: BLE001 - config trouble must not kill the picker
+        log.warning("publish: could not read config for the wallpaper endpoint")
+        from jarvis.core.config import MarketplaceConfig
+
+        return MarketplaceConfig().publish_wallpaper_endpoint
 
 
 def make_device_handler() -> DeviceFlowHandler:
@@ -456,6 +614,51 @@ async def submit(
     raise SubmitError(r.status_code, error, field if isinstance(field, str) else None)
 
 
+async def submit_wallpaper(
+    fields: Mapping[str, str],
+    image: bytes,
+    filename: str = "wallpaper.webp",
+    store: TokenStore | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    """POST an already-validated wallpaper; returns ``{"name": ...}``.
+
+    Multipart rather than JSON because the payload is image bytes, but the
+    identity chain is the one ``submit`` uses: the token travels as
+    ``Authorization: Bearer``, the endpoint proves it belongs to the
+    marketplace App and derives the publisher from it. Nothing
+    identity-shaped is in the form.
+    """
+    endpoint = publish_wallpaper_endpoint()
+    if not endpoint:
+        raise SubmitError(503, "wallpaper publishing is disabled in this deployment")
+    store = store or TokenStore()
+    tokens = await asyncio.to_thread(store.load, PUBLISHER_TOKEN_ID)
+    if tokens is None:
+        raise SubmitError(401, "sign in with GitHub first")
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, transport=transport) as client:
+            r = await client.post(
+                endpoint,
+                data=dict(fields),
+                files={"file": (filename, image, "image/webp")},
+                headers={**_UA, "Authorization": f"Bearer {tokens.access}"},
+            )
+    except httpx.HTTPError as exc:
+        raise SubmitError(502, f"the publish endpoint is unreachable: {exc}") from exc
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    if r.status_code == 201:
+        # The endpoint slugified the title into the name — the caller could
+        # not have known it in advance, and it is what the live check needs.
+        return {"name": str(body.get("name") or "")}
+    error = str(body.get("error") or f"publish failed (HTTP {r.status_code})")
+    field = body.get("field")
+    raise SubmitError(r.status_code, error, field if isinstance(field, str) else None)
+
+
 async def live_status(name: str, version: str, *, force: bool = False) -> dict[str, Any]:
     """Whether ``name`` at ``version`` is in the community index yet.
 
@@ -467,7 +670,8 @@ async def live_status(name: str, version: str, *, force: bool = False) -> dict[s
     index, status = await community_source.get_index(force=force)
     live = False
     if index is not None:
-        for entry in list(index.plugins) + list(index.skills):
+        entries: list[Any] = [*index.plugins, *index.skills, *index.wallpapers]
+        for entry in entries:
             if entry.name == name and (entry.version or "") == version:
                 live = True
                 break

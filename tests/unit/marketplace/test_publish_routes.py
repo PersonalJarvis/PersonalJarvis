@@ -88,9 +88,26 @@ async def test_identity_reports_disabled_deployment(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(publish, "publish_endpoint", lambda: "")
+    monkeypatch.setattr(publish, "publish_wallpaper_endpoint", lambda: "")
     async with client:
         state = (await client.get("/api/marketplace/publish/identity")).json()
-    assert state == {"enabled": False, "signed_in": False}
+    assert state == {"enabled": False, "wallpapers_enabled": False, "signed_in": False}
+
+
+@pytest.mark.asyncio
+async def test_the_two_lanes_are_reported_separately(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork may run one lane without the other, and each surface hides its
+    own button accordingly — so one flag cannot speak for both."""
+    monkeypatch.setattr(publish, "publish_endpoint", lambda: "")
+    monkeypatch.setattr(publish, "publish_wallpaper_endpoint", lambda: "https://pj.example/w")
+    async with client:
+        state = (await client.get("/api/marketplace/publish/identity")).json()
+    assert state["enabled"] is False
+    assert state["wallpapers_enabled"] is True
+    # Still reports sign-in state: the wallpaper lane needs the same identity.
+    assert "signed_in" in state
 
 
 @pytest.mark.asyncio
@@ -163,6 +180,13 @@ async def test_submit_happy_path(
     body = resp.json()
     assert body["ok"] is True and body["pr_url"] == "https://github.com/pr/9"
     assert body["name"] == "fresh-name" and body["version"] == "1.0.0"
+    # The line the author hands to everyone else. Computed by the one standard
+    # module, so it cannot drift from what `jarvis marketplace install` accepts.
+    assert body["install"] == {
+        "cli": "jarvis marketplace install fresh-name",
+        "runner": "uvx --from personal-jarvis jarvis marketplace install fresh-name",
+        "prompt": 'Install the "fresh-name" skill from the community marketplace.',
+    }
 
 
 @pytest.mark.asyncio

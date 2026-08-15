@@ -3267,6 +3267,13 @@ class MarketplaceConfig(BaseModel):
     # the GitHub identity and opens the registry PR as the marketplace bot;
     # forks point this at their own deployment. Empty string hides Publish.
     publish_endpoint: str = "https://personaljarvis.ai/api/marketplace/submit"
+    # Where the in-app Wallpapers view publishes a picture. A lane of its own
+    # because the payload is multipart image bytes, not a JSON manifest — but
+    # the same identity, the same registry, the same feed. Empty string hides
+    # "Share to community" in the wallpaper picker.
+    publish_wallpaper_endpoint: str = (
+        "https://personaljarvis.ai/api/marketplace/submit-wallpaper"
+    )
     # After a community listing installs, tell the registry so the storefront
     # can show an install count. One POST carrying only the listing's name —
     # no account, no machine id, no version, nothing about you. The receiving

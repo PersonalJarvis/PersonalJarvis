@@ -7,6 +7,7 @@ Endpoints:
     DELETE /api/marketplace/publish/identity          — sign out (drop token)
     POST   /api/marketplace/publish/validate          — field-level pre-check
     POST   /api/marketplace/publish/submit            — publish (opens the bot PR)
+    POST   /api/marketplace/publish/submit-wallpaper  — publish a picker wallpaper
     GET    /api/marketplace/publish/status            — is name@version live in the feed
 
 The heavy lifting lives in ``jarvis/marketplace/publish.py``; this layer only
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
@@ -62,12 +63,20 @@ async def _complete_signin(handler: Any, session: Any) -> dict[str, Any]:
 @router.get("/identity", openapi_extra={"x-jarvis-readonly": True})
 async def publish_identity(response: Response) -> dict[str, Any]:
     """Signed-in state, plus whether publishing is enabled at all."""
-    from jarvis.marketplace.publish import current_identity, publish_endpoint
+    from jarvis.marketplace.publish import (
+        current_identity,
+        publish_endpoint,
+        publish_wallpaper_endpoint,
+    )
 
     response.headers["Cache-Control"] = "no-store"
     enabled = bool(publish_endpoint())
-    if not enabled:
-        return {"enabled": False, "signed_in": False}
+    # Reported separately: the two lanes are separate endpoints and a fork may
+    # run one without the other. The wallpaper picker hides its Share button on
+    # a false here rather than offering a door that answers 503.
+    wallpapers_enabled = bool(publish_wallpaper_endpoint())
+    if not enabled and not wallpapers_enabled:
+        return {"enabled": False, "wallpapers_enabled": False, "signed_in": False}
     try:
         state = await current_identity()
     except RuntimeError as exc:
@@ -75,8 +84,13 @@ async def publish_identity(response: Response) -> dict[str, Any]:
         # signed out — signing the user out over a network blip would drop a
         # perfectly good token.
         log.warning("publish identity: GitHub unreachable: %s", exc)
-        return {"enabled": True, "signed_in": False, "unreachable": str(exc)}
-    return {"enabled": True, **state}
+        return {
+            "enabled": enabled,
+            "wallpapers_enabled": wallpapers_enabled,
+            "signed_in": False,
+            "unreachable": str(exc),
+        }
+    return {"enabled": enabled, "wallpapers_enabled": wallpapers_enabled, **state}
 
 
 @router.post("/signin/start")
@@ -214,13 +228,102 @@ async def submit(body: SubmissionDraft) -> dict[str, Any]:
     # is live — the view only shows it after the registry confirms that.
     from jarvis.marketplace.install_standard import install_block
 
-    kind = "skill" if normalized["kind"] == "skill" else "plugin"
+    kind: Literal["plugin", "skill"] = "skill" if normalized["kind"] == "skill" else "plugin"
     return {
         "ok": True,
         "name": normalized["name"],
         "version": normalized["version"],
         "install": install_block(normalized["name"], kind),
         **result,
+    }
+
+
+class WallpaperDraft(BaseModel):
+    """A "share this picture" request from the wallpaper picker.
+
+    The image is named, not uploaded: ``upload_id`` points at a picture the
+    picker already holds, whose bytes this app re-encoded when they arrived.
+    That keeps the sanitizing in one place and means the browser cannot hand
+    the publisher different bytes than the ones the user is looking at.
+
+    There is no ``name`` or ``version``: the endpoint slugifies the title into
+    a free name and stamps 1.0.0. A client that sent either would be
+    describing something the server ignores.
+    """
+
+    upload_id: str
+    title: str = ""
+    description: str | None = None
+    license: str = ""
+    theme: str | None = None
+    rights: bool = False
+
+
+# Dangerous for the same reason as /submit, and more so: this publishes an
+# IMAGE publicly under the user's GitHub name, into a lane nobody reviews
+# before it goes live.
+@router.post("/submit-wallpaper", openapi_extra={"x-jarvis-dangerous": True})
+async def submit_wallpaper(body: WallpaperDraft) -> dict[str, Any]:
+    """Publish one of the picker's own wallpapers to the community feed."""
+    from jarvis.marketplace.publish import (
+        SubmitError,
+        prepare_wallpaper_image,
+        validate_wallpaper_draft,
+    )
+    from jarvis.marketplace.publish import submit_wallpaper as do_submit
+    from jarvis.ui.web.wallpapers import WallpaperUploads
+
+    fields, errors = validate_wallpaper_draft(body.model_dump())
+    if fields is None:
+        first = errors[0]
+        raise HTTPException(
+            status_code=422,
+            detail={"error": first["error"], "field": first["field"], "errors": errors},
+        )
+
+    item = await asyncio.to_thread(WallpaperUploads().get, body.upload_id)
+    if item is None:
+        raise HTTPException(
+            status_code=404, detail={"error": "that wallpaper is gone", "field": "file"}
+        )
+    if item.origin:
+        # An imported community wallpaper is somebody else's picture. Letting
+        # it be re-published would launder authorship through the picker and
+        # put a stranger's name on a stranger's work.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "that wallpaper came from the community — only your own pictures "
+                "can be published",
+                "field": "file",
+            },
+        )
+    try:
+        raw = await asyncio.to_thread(item.path.read_bytes)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": f"the image could not be read: {exc}", "field": "file"},
+        ) from exc
+
+    try:
+        # Pillow work is CPU-bound: off the event loop, like every other
+        # image path in the app.
+        image, filename = await asyncio.to_thread(prepare_wallpaper_image, raw)
+        result = await do_submit(fields, image, filename)
+    except SubmitError as exc:
+        raise HTTPException(
+            status_code=exc.status, detail={"error": exc.error, "field": exc.field}
+        ) from exc
+
+    from jarvis.marketplace.install_standard import install_block
+
+    name = result["name"]
+    return {
+        "ok": True,
+        "name": name,
+        "version": "1.0.0",
+        "install": install_block(name, "wallpaper") if name else None,
     }
 
 
