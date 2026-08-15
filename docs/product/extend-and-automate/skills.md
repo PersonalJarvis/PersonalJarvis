@@ -30,26 +30,25 @@ to use them.
 | Building block | What it gives Jarvis | Use it when |
 |---|---|---|
 | **Skill** | Repeatable instructions, optional triggers, and supporting files | You want Jarvis to follow your preferred method each time |
-| **Command** | One defined action with known inputs, such as creating or listing something | You need a predictable operation that can be called from the app, command line, or conversation |
+| **Command** | One defined action with known inputs, such as creating or listing something | You need a predictable operation callable from the app, command line, or conversation |
 | **Plugin** | A packaged capability or integration | Jarvis does not yet have the action or service you need |
-| **MCP connection** | Tools supplied by an external service through Model Context Protocol (MCP) | A skill needs to read from or act in a connected service |
-| **Jarvis-Agent** | An isolated background worker for longer, reviewed work | The task needs several substantial steps or should continue outside the conversation |
+| **MCP connection** | Tools from an external service via Model Context Protocol (MCP) | A skill needs to read from or act in a connected service |
+| **Jarvis-Agent** | An isolated background worker for longer, reviewed work | The task needs several substantial steps, or should outlive the conversation |
 
-A skill can tell Jarvis to use a command, plugin, or connected tool. A skill
-marked for mission execution can hand its instructions to a Jarvis-Agent. The
-skill remains the method; the other building block supplies the action or does
-the work.
+A skill can tell Jarvis to use a command, plugin, or connected tool, and one
+marked for mission execution hands its instructions to a Jarvis-Agent. The
+skill stays the method; the other building block supplies the action.
 
 ## Before You Start
 
 - You can create and manage a skill without an artificial intelligence (AI)
   provider. AI-assisted drafting and catalog ranking use the active provider
-  when one is reachable, then fall back to a basic editable draft or local
+  when one is reachable, and fall back to a basic editable draft or local
   search when it is not.
-- Catalog installation needs an internet connection. A manually created skill
+- Catalog installation needs an internet connection; a manually created skill
   does not.
 - Connect any required service before testing the skill. Installing a skill
-  does not install its plugin or create its connection.
+  installs no plugin and creates no connection.
 - Keep credentials, private contact details, and other sensitive values out of
   a skill's name, description, trigger, and instructions. Enter credentials
   only in **API Keys** or the relevant connection screen.
@@ -64,34 +63,33 @@ the work.
    skills. A switch shows whether a healthy skill is on; a draft shows an error
    instead of a switch.
 
-2. **Open Skill Finder.** Describe the outcome you want. You can narrow the
-   catalog by trust label, popularity, category, language, and stated risk.
-   Search still works without an AI provider, although its ranking is then
-   based on the catalog text rather than an AI comparison.
+2. **Open Skill Finder.** Describe the outcome you want, and narrow the catalog
+   by trust label, popularity, category, language, and stated risk. Search
+   works without an AI provider, ranking by catalog text instead.
 
 3. **Review a promising result.** Read its description, stated risk, and
    categories, then open **Source**. Check what the instructions ask Jarvis to
-   do, which services they mention, and whether the source is one you trust.
+   do, which services they mention, and whether you trust the source.
 
-4. **Choose Install.** A directly downloadable skill appears in the Skills
-   list after installation. If the result says **Manual**, the app has not
-   installed it; use **Source** to inspect the project and proceed only if you
-   understand its separate installation steps.
+4. **Choose Install.** A directly downloadable skill appears in the Skills list
+   afterwards. If the result says **Manual**, the app installed nothing; use
+   **Source** to inspect the project and proceed only if you understand its
+   separate installation steps.
 
 5. **Check the installed state before using it.** Installation preserves the
    downloaded file. A structurally valid file with no state appears as
-   **Validated** with its switch on. A file that declares another state keeps
-   that state. Invalid YAML or unsupported settings appear as **Draft** with an
-   error. Switch an unfamiliar skill off while you review it.
+   **Validated** with its switch on; one that declares a state keeps it;
+   invalid YAML or unsupported settings appear as **Draft** with an error.
+   Switch an unfamiliar skill off while you review it.
 
 6. **Select the skill and inspect its detail panel.** The main editor shows the
    complete `SKILL.md`: its settings followed by the instructions Jarvis will
    receive. The **Bundle** panel lists references, scripts, assets, and agent
-   notes that already exist in the skill folder. The panel can preview UTF-8
-   text files, but not binary files.
+   notes already in the skill folder, and previews UTF-8 text files but not
+   binary ones.
 
 The catalog refuses a second skill with the same name. Review the installed
-copy before deleting it to make room for a replacement; deletion is permanent.
+copy before deleting it to make room; deletion is permanent.
 
 > [!note] A direct catalog install downloads only `SKILL.md`. It does not clone
 > the source repository or download sibling bundle folders. A catalog result
@@ -99,12 +97,11 @@ copy before deleting it to make room for a replacement; deletion is permanent.
 
 ## Import a Skill from a Folder
 
-Jarvis only reads skills from its own skills directory. A skill written
-anywhere else — for example in a coding agent's project folder such as
-`.claude/skills/<name>/` (Claude Code) or a Codex equivalent — is invisible to
-Jarvis until it is imported. Those agent folders belong to a **separate skill
-system** with a similar file format; placing a file there does not install
-anything in Jarvis, and vice versa.
+Jarvis reads skills only from its own skills directory. One written anywhere
+else — say a coding agent's project folder such as `.claude/skills/<name>/`
+(Claude Code) or a Codex equivalent — stays invisible until imported. Those
+folders are a **separate skill system** with a similar file format: a file
+placed there installs nothing in Jarvis, and vice versa.
 
 To bridge a skill across, run:
 
@@ -114,21 +111,20 @@ jarvis skills import <path-to-skill-folder>
 
 The command copies the folder's `SKILL.md` and its bundle folders
 (`references/`, `scripts/`, `assets/`, `agents/`) into the Jarvis skills
-directory and reloads the registry. The same command accepts an `http(s)`
-link to a raw `SKILL.md` and then behaves like a catalog install.
+directory and reloads the registry. It also accepts an `http(s)` link to a raw
+`SKILL.md`, and then behaves like a catalog install.
 
 Import rules:
 
-- A folder import is treated like the manual install: a structurally valid
-  file with no declared state arrives as **Validated** (on). A file that
-  declares a state keeps it.
-- If the instructions contain code with disallowed calls, the copy arrives as
-  **Draft** instead, and the findings are reported. Review it before
-  promotion, exactly as with an AI-written draft.
+- A folder import behaves like the manual install: a structurally valid file
+  with no declared state arrives as **Validated** (on); one that declares a
+  state keeps it.
+- Instructions containing code with disallowed calls arrive as **Draft**, with
+  the findings reported. Review before promotion, as with an AI-written draft.
 - A name that collides with an installed or built-in skill is refused.
-- Not every field of another agent's skill format is supported. An
-  unsupported setting makes the import fail with the exact validation error;
-  remove the offending field from the source file and import again.
+- Not every field of another agent's format is supported. An unsupported
+  setting fails the import with the exact validation error; remove that field
+  from the source and import again.
 
 ## Create Your Own Skill
 
@@ -157,24 +153,22 @@ Import rules:
    supplied by AI or by the automatic starter must instead be saved as
    **Draft**. A draft cannot run and has no on/off switch.
 
-6. **Review and activate an AI-created draft separately.** Open the saved
-   definition and check its name, description, triggers, instructions, and any
-   requested capabilities. The current desktop can display and edit a deliberate
-   draft but cannot promote it. After review, a trusted operator can activate it
-   with `python -m jarvis.skills.cli --promote <skill-slug>`. That command checks
-   the content before changing it to **Active**. Refresh Skills and confirm the
-   new state before testing it.
+6. **Review and activate an AI-created draft separately.** Check the saved
+   definition's name, description, triggers, instructions, and requested
+   capabilities. The desktop can edit a deliberate draft but not promote it: a
+   trusted operator runs `python -m jarvis.skills.cli --promote <skill-slug>`,
+   which re-checks the content before setting **Active**. Refresh Skills to
+   confirm the new state.
 
-The form refuses a skill with no real instructions. It also prevents a name
-collision with an installed or built-in skill. Do not copy AI-written text into
-the manual path merely to skip the draft boundary. If an AI-created skill
-appears enabled immediately, switch it off and report the behavior as a bug
-before running it.
+The form refuses a skill with no real instructions, or a name that collides
+with an installed or built-in one. Do not paste AI-written text into the manual
+path to skip the draft boundary. If an AI-created skill appears enabled
+immediately, switch it off and report it as a bug before running it.
 
 ## Review States and Changes
 
-The switch uses two internal "on" states. They behave the same for everyday
-use, even though their labels differ.
+The switch has two internal "on" states. Their labels differ; for everyday use
+they behave identically.
 
 | State | Can it run? | What it means in the app |
 |---|---|---|
@@ -188,15 +182,12 @@ whole file and reads it again. Invalid YAML, unsupported fields, or a trigger
 without its required value move the skill to **Draft** and show an error. Fix
 the named problem and save again. The save path does not check whether a voice
 regular expression will compile, whether a cron expression will run, or whether
-a named tool is installed, so test those parts before relying on them. A
-deliberate AI-created draft stays unable to run until the separate promotion
-command completes. The desktop switch cannot perform that promotion yet.
+a named tool is installed, so test those parts before relying on them.
 
-Built-in skills are protected from deletion, and editing one requires existing
-admin access. You can still switch a built-in skill off without changing its
-file. Personal skills can be deleted individually or in a confirmed batch.
-Dragging rows changes only their display order; it does not change which skill
-Jarvis prefers for a request.
+Built-in skills are protected from deletion, and editing one requires admin
+access, though you can switch one off without changing its file. Personal
+skills can be deleted individually or in a confirmed batch. Dragging rows
+changes only their display order, not which skill Jarvis prefers.
 
 ### Use the command line
 
@@ -227,24 +218,22 @@ An enabled skill can start in two common ways:
   current turn. This is useful for a dependable shortcut, but an overly broad
   pattern can also match conversation you did not intend as a command.
 
-Jarvis initially exposes the name and description of enabled skills, within a
-bounded list and text budget. It loads the selected skill's instruction body
-for the turn. Bundle files are separate and are not included automatically. An
-**inline** skill guides the current turn. A **mission** skill hands the
-instructions to a Jarvis-Agent; if worker dispatch is unavailable or fails,
-Jarvis follows the instructions in the current turn instead.
+Jarvis first sees only the name and description of enabled skills, within a
+bounded list and text budget, then loads the selected skill's instruction body
+for the turn; bundle files are never included automatically. An **inline**
+skill guides the current turn. A **mission** skill hands the instructions to a
+Jarvis-Agent, falling back to the current turn if worker dispatch is
+unavailable or fails.
 
-The creator writes a voice trigger without a language list, which currently
-defaults to German and English. Add `es` to the trigger's `language` list if it
-must match spoken Spanish. Chat matching uses the current text without that
-spoken-language filter.
+A voice trigger written by the creator carries no language list, which
+currently means German and English. Add `es` to the trigger's `language` list
+to match spoken Spanish. Chat matching applies no spoken-language filter.
 
 Scheduled triggers can exist in an installed skill, but the scheduler starts
-with the voice pipeline. They therefore do not run in a headless API-only
-session or while Jarvis is stopped. The current creator does not expose
-schedule setup. Hotkey definitions can be stored and displayed, but no live
-skill-hotkey handler is connected to them. Do not rely on a skill hotkey to
-start work.
+with the voice pipeline, so they never run in a headless API-only session or
+while Jarvis is stopped, and the creator does not expose schedule setup.
+Hotkey definitions can be stored and displayed, but nothing is listening for
+them yet — do not rely on a skill hotkey to start work.
 
 ### Skills paired with plugins
 
@@ -260,58 +249,54 @@ capability after a registry load. After changing a paired skill's switch, use
 
 ## Safety During a Run
 
-A skill supplies instructions; it does not bypass the normal action policy.
-Connected actions still pass through the same safe, monitored, confirmation,
-and blocked decisions used elsewhere in Jarvis. A blocked skill or action does
-not run. An unattended scheduled action that needs a decision may stop because
-no person is present to approve it.
+A skill supplies instructions; it does not bypass the action policy. Connected
+actions still pass the same safe, monitored, confirmation, and blocked
+decisions used everywhere else, and a blocked action does not run. An
+unattended scheduled action needing a decision may simply stop, because nobody
+is there to approve it.
 
 If a skill names a tool that is not installed or a service that is not
-connected, the normal editor may not warn you before the run. During use,
-Jarvis may skip the unavailable step or report that it could not complete it;
-the skill does not gain the missing access. Read [Plugins](plugins) or [MCP
-Connections](mcp-connections) before enabling instructions that depend on an
-external capability.
+connected, the editor may not warn you beforehand. At run time Jarvis skips the
+step or reports that it could not finish; the skill gains no missing access.
+Read [Plugins](plugins) or [MCP Connections](mcp-connections) before enabling
+instructions that depend on an external capability.
 
 ## How It Fits Together
 
-1. **A request or trigger starts the match.** Chat, voice, or an advanced
-   schedule can point Jarvis to an enabled skill.
-2. **The skill state is checked.** Validated and Active skills can continue;
-   Draft and Disabled skills are rejected before their instructions load.
-3. **Jarvis loads the playbook.** It renders the instruction body with the
-   current request. Bundle files remain separate unless they are requested.
-4. **Commands and connections supply actions.** The skill can guide Jarvis to
-   use an app command, a plugin tool, or an MCP-connected tool, but it cannot
-   create those capabilities by itself.
-5. **Safety checks every action.** Permissions and approval rules apply after
-   the skill is selected, just as they do for a normal conversation. Read
+1. **A request or trigger starts the match.** Chat, voice, or a schedule points
+   Jarvis to an enabled skill.
+2. **The skill state is checked.** Validated and Active continue; Draft and
+   Disabled are rejected before their instructions load.
+3. **Jarvis loads the playbook.** The instruction body is rendered with the
+   current request; bundle files stay separate unless requested.
+4. **Commands and connections supply actions.** A skill can guide Jarvis to an
+   app command, a plugin tool, or an MCP tool, but creates no capability itself.
+5. **Safety checks every action**, exactly as in a normal conversation — see
    [Safety and Approvals](safety-and-approvals) before automating changes.
-6. **Inline work returns to the conversation.** Longer mission skills can
-   delegate the same instructions to [Jarvis-Agents](jarvis-agents), where the
-   worker, review, and durable outputs have their own lifecycle.
+6. **Inline work returns to the conversation.** Mission skills delegate to
+   [Jarvis-Agents](jarvis-agents), which own their worker, review, and outputs.
 
 ## Check That It Works
 
 1. Create **Three Point Check** manually. Describe it as turning a topic into
    three bullets, and instruct it to finish with `Check complete.`
-2. Confirm that it appears as **Validated** with its switch on, then ask Chats
-   to use it for a harmless topic. Success is three bullets followed by the
+2. Confirm it appears as **Validated** with its switch on, then ask Chats to
+   use it for a harmless topic. Success is three bullets followed by the
    requested words.
-3. Switch it off, refresh Skills, and confirm that Chats no longer use it. The
-   row should remain **Off** after restarting Jarvis.
-4. Ask AI to draft a second harmless skill and save it. It should appear as
-   **Draft**, without a switch, until you promote it separately.
+3. Switch it off, refresh Skills, and confirm Chats no longer use it. The row
+   should still read **Off** after restarting Jarvis.
+4. Ask AI to draft a second harmless skill. It should appear as **Draft**,
+   without a switch, until you promote it separately.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| A row says **Draft** and has no switch | Its settings, trigger, or file structure could not be accepted, or it was intentionally saved for review | Select it, read any validation error, and fix only the named issue. After reviewing an intentional draft, use the supported promotion command; the desktop switch cannot promote it yet. |
-| The switch is on but Jarvis ignores the skill | The description is vague, the skill fell outside the bounded discovery list, the request does not match it, or the direct trigger is too strict | Name the skill in a clear request, make its description specific, and test a distinctive trigger |
-| A catalog installation fails | The download is unavailable, the network failed, or that name is already installed | Open **Source**, check the connection, and review the existing skill before deciding whether to delete it |
-| The skill starts but cannot finish an action | A required plugin, MCP connection, permission, tool, or approval is missing | Connect the capability in the app, review its permissions, and retry; never put a credential in the skill |
-| An automatic trigger does not run | Spanish is missing from the voice trigger's language list, the schedule is outside the live voice runtime, or the trigger is a skill hotkey | Add the required language, run a schedule with the desktop voice runtime, or use chat or voice instead of a skill hotkey |
+| A row says **Draft** and has no switch | Its settings, trigger, or structure was not accepted, or it was saved for review | Read the validation error and fix only the named issue. For an intentional draft, use the promotion command; the switch cannot promote. |
+| The switch is on but Jarvis ignores the skill | Vague description, outside the bounded discovery list, or too strict a trigger | Name the skill in a clear request, make its description specific, test a distinctive trigger |
+| A catalog installation fails | Download unavailable, network failed, or that name is already installed | Open **Source**, check the connection, and review the existing skill before deleting it |
+| The skill starts but cannot finish an action | A required plugin, MCP connection, permission, tool, or approval is missing | Connect the capability, review its permissions, retry; never put a credential in the skill |
+| An automatic trigger does not run | Spanish missing from the trigger's language list, the schedule is outside the live voice runtime, or it is a skill hotkey | Add the language, run the schedule with the desktop voice runtime, or use chat or voice instead |
 
 For repeated app, provider, or connection failures, follow the main
 [Troubleshooting](troubleshooting) guide.
