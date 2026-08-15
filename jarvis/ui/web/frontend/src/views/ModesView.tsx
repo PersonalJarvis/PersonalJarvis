@@ -21,6 +21,7 @@ import { Loader2, Mic, MicOff, Plus, RotateCcw, Sparkles, Trash2, Check } from "
 import { ViewHeader } from "@/views/ChatsView";
 import { useEventStore } from "@/store/events";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
+import { BrandedSelect } from "@/components/ui/select";
 import { sendChatMessage } from "@/lib/chat";
 import { cn } from "@/lib/utils";
 import {
@@ -357,32 +358,28 @@ export function ModesView() {
                   className="resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                 />
                 <div className="flex flex-wrap gap-2">
-                  <select
-                    aria-label="Answer length"
+                  <BrandedSelect
+                    ariaLabel="Answer length"
                     value={draft.verbosity}
-                    onChange={(e) => setDraft({ ...draft, verbosity: e.target.value as Verbosity })}
-                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  >
-                    {(state?.verbosities ?? []).map((v) => (
-                      <option key={v} value={v}>
-                        {VERBOSITY_LABELS[v]}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    aria-label="How much it volunteers"
-                    value={draft.proactivity}
-                    onChange={(e) =>
-                      setDraft({ ...draft, proactivity: e.target.value as Proactivity })
+                    onValueChange={(value) =>
+                      setDraft({ ...draft, verbosity: value as Verbosity })
                     }
-                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  >
-                    {(state?.proactivities ?? []).map((p) => (
-                      <option key={p} value={p}>
-                        {PROACTIVITY_LABELS[p]}
-                      </option>
-                    ))}
-                  </select>
+                    options={(state?.verbosities ?? []).map((v) => ({
+                      value: v,
+                      label: VERBOSITY_LABELS[v],
+                    }))}
+                  />
+                  <BrandedSelect
+                    ariaLabel="How much it volunteers"
+                    value={draft.proactivity}
+                    onValueChange={(value) =>
+                      setDraft({ ...draft, proactivity: value as Proactivity })
+                    }
+                    options={(state?.proactivities ?? []).map((p) => ({
+                      value: p,
+                      label: PROACTIVITY_LABELS[p],
+                    }))}
+                  />
                 </div>
                 <button
                   type="button"

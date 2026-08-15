@@ -929,8 +929,11 @@ describe("Agentic IDE running workspace", () => {
 
     await waitFor(() =>
       // The third argument carries files dropped on the prompt bar — empty
-      // here, because this instruction was typed with nothing attached.
+      // here, because this instruction was typed with nothing attached — and
+      // `compose`, which the typed bar always sends ON so a typed instruction
+      // gets the same briefing treatment a spoken one does.
       expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
+        compose: true,
         attachments: [],
       }),
     );
