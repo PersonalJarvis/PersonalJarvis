@@ -32,6 +32,41 @@ def test_generic_rules_allow_neutral_home_placeholders() -> None:
         assert docs_privacy_scan.scan_text(value, rules, emails) == []
 
 
+def test_generic_rules_allow_placeholder_accounts_documentation_really_uses() -> None:
+    """Prose that is already anonymous must not trip the fork-safe fallback.
+
+    Every value here appears verbatim in ``docs/``. They are elisions, sample
+    names, shell variables and role accounts belonging to no individual — the
+    scanner flagged all of them once the maintainer manifest stopped being
+    published, which is what took CI red on ffa18202.
+    """
+    rules, emails = docs_privacy_scan._generic_manifest()
+
+    for value in (
+        r"`C:\Users\...` or assume cp1252",
+        r"C:\Users\Foo\.personal-jarvis",
+        r'"workspaceDir": "C:\\Users\\...\\.openclaw\\workspace"',
+        "/home/claude/ path nonexistent",
+        "/Users/admin/Desktop/Personal Jarvis/data/sessions.db",
+        r"C:\Users\%USERNAME%\Desktop",
+        "/home/$USER/bin",
+    ):
+        assert docs_privacy_scan.scan_text(value, rules, emails) == [], value
+
+
+def test_placeholder_exemption_matches_whole_segment_only() -> None:
+    """A placeholder prefix must not smuggle a real account name through."""
+    rules, emails = docs_privacy_scan._generic_manifest()
+
+    for value in (
+        r"C:\Users\admin.smith\Documents",
+        r"C:\Users\foobar\Documents",
+        "/home/user2/data",
+        "/home/claudia/notes.md",
+    ):
+        assert docs_privacy_scan.scan_text(value, rules, emails), value
+
+
 def test_generic_rules_do_not_mistake_url_paths_for_home_directories() -> None:
     rules, emails = docs_privacy_scan._generic_manifest()
 

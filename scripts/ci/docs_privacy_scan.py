@@ -61,6 +61,26 @@ TEXT_SUFFIXES = {
 }
 
 
+# A home path is only personal when the account segment names an actual
+# person. Documentation is full of paths that do not: an elision, an angle
+# placeholder, a shell variable, a classic sample name, or a role/agent account
+# that belongs to no individual. The maintainer manifest never had to care —
+# it matches the maintainer's real login — but the fork-safe fallback below
+# matches *any* segment, so without this exemption it flags prose like
+# ``C:\Users\...`` that is already correctly anonymous.
+#
+# Deliberately strict: the whole segment must be the placeholder, so `admin` is
+# exempt while `admin.smith` still gets caught.
+_PLACEHOLDER_ACCOUNT = (
+    r"(?:\.\.\.|<[^>\s]+>|%[A-Za-z_][A-Za-z_0-9]*%|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?"
+    r"|foo|bar|baz|qux|you|me|example|sample|demo|test"
+    r"|admin|administrator|root|runner|claude|user|username)"
+)
+# What may follow it: a path separator (plain or JSON-escaped), whitespace,
+# a quote or backtick from the surrounding prose, or the end of the line.
+_PLACEHOLDER_END = r"""(?:[\\/\s"'`)\]},]|$)"""
+
+
 def _generic_manifest() -> tuple[
     list[tuple[re.Pattern[str], str, str]], list[re.Pattern[str]]
 ]:
@@ -69,7 +89,7 @@ def _generic_manifest() -> tuple[
         (
             re.compile(
                 r"(?i)\b[A-Z]:[\\/]+Users[\\/]+"
-                r"(?!<(?:name|person|user|username)>)[^\\/\s]+"
+                rf"(?!{_PLACEHOLDER_ACCOUNT}{_PLACEHOLDER_END})[^\\/\s]+"
             ),
             "<USER_HOME>",
             "personal Windows home path",
@@ -77,7 +97,7 @@ def _generic_manifest() -> tuple[
         (
             re.compile(
                 r"(?i)(?<![A-Za-z0-9._~-])/(?:home|Users)/"
-                r"(?!(?:<(?:name|person|service-user|user|username)>|user(?:/|$)))"
+                rf"(?!{_PLACEHOLDER_ACCOUNT}{_PLACEHOLDER_END})"
                 r"[^/\s]+"
             ),
             "<USER_HOME>",
