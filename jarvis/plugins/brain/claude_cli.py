@@ -45,7 +45,10 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.core.process_utils import (
+    NO_WINDOW_CREATIONFLAGS,
+    close_subprocess_transports,
+)
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
 from .cli_prompt_context import (
@@ -395,30 +398,39 @@ class ClaudeCliBrain:
         stderr_bytes = b""
 
         async def _kill() -> None:
-            if not comm_task.done():
-                comm_task.cancel()
-            pid = getattr(proc, "pid", None)
-            if sys.platform == "win32" and isinstance(pid, int) and pid > 0:
-                # The Node shim spawns children; killing only the shim leaves
-                # them running and holding the pipes open.
+            try:
+                if not comm_task.done():
+                    comm_task.cancel()
+                pid = getattr(proc, "pid", None)
+                if sys.platform == "win32" and isinstance(pid, int) and pid > 0:
+                    # The Node shim spawns children; killing only the shim leaves
+                    # them running and holding the pipes open.
+                    with suppress(Exception):  # noqa: BLE001
+                        killer = await asyncio.create_subprocess_exec(
+                            "taskkill",
+                            "/PID",
+                            str(pid),
+                            "/T",
+                            "/F",
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.DEVNULL,
+                            creationflags=creationflags,
+                        )
+                        try:
+                            await asyncio.wait_for(killer.wait(), timeout=3.0)
+                        finally:
+                            close_subprocess_transports(killer)
+                with suppress(OSError):
+                    proc.kill()
                 with suppress(Exception):  # noqa: BLE001
-                    killer = await asyncio.create_subprocess_exec(
-                        "taskkill",
-                        "/PID",
-                        str(pid),
-                        "/T",
-                        "/F",
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                        creationflags=creationflags,
-                    )
-                    await asyncio.wait_for(killer.wait(), timeout=3.0)
-            with suppress(OSError):
-                proc.kill()
-            with suppress(Exception):  # noqa: BLE001
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
-            with suppress(asyncio.CancelledError, Exception):
-                await comm_task
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
+                with suppress(asyncio.CancelledError, Exception):
+                    await comm_task
+            finally:
+                # The cancelled communicate() never reads EOF, so the pipe
+                # transports would otherwise stay open until the GC finalizer
+                # closes them ON the loop thread — a multi-second app freeze.
+                close_subprocess_transports(proc)
 
         try:
             while True:

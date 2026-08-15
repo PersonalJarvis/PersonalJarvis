@@ -32,6 +32,7 @@ parameter is silently ignored by the subprocess machinery.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -39,7 +40,44 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+log = logging.getLogger(__name__)
+
 _NULL_STANDARD_STREAMS: list[TextIO] = []
+
+
+def close_subprocess_transports(proc: object) -> None:
+    """Close an asyncio subprocess's pipe transports immediately.
+
+    Why this exists: when a killed or cancelled subprocess is dropped, a
+    cancelled ``communicate()`` has never read EOF from stdout/stderr, so
+    their pipe transports stay open. They are then closed seconds later by
+    the garbage collector's finalizer (``_ProactorBasePipeTransport.__del__``
+    on Windows), which runs ON the event-loop thread inside unrelated code —
+    a measured 16.2 s loop stall that freezes the whole app. Closing the
+    transports explicitly at the kill site keeps that teardown off the GC.
+
+    Idempotent and exception-safe: callable more than once, on live, dead,
+    and half-constructed process objects. Must be called from the loop
+    thread (transport close schedules loop callbacks).
+    """
+    # stdin is a StreamWriter with a public, idempotent close(); stdout and
+    # stderr are StreamReaders whose read-pipe transports are reachable only
+    # through the private subprocess transport handled below.
+    stdin = getattr(proc, "stdin", None)
+    if stdin is not None:
+        try:
+            stdin.close()
+        except Exception:  # noqa: BLE001 — teardown must not mask the caller's path
+            log.debug("subprocess stdin close failed", exc_info=True)
+    # ``_transport`` is a private attribute (hence the getattr guard); its
+    # close() closes every remaining pipe transport, stdout/stderr included,
+    # and reaps the child if it is somehow still running.
+    transport = getattr(proc, "_transport", None)
+    if transport is not None:
+        try:
+            transport.close()
+        except Exception:  # noqa: BLE001 — teardown must not mask the caller's path
+            log.debug("subprocess transport close failed", exc_info=True)
 
 
 def ensure_standard_streams() -> None:
@@ -198,6 +236,7 @@ def raise_own_priority_above_normal() -> bool:
 
 __all__ = [
     "NO_WINDOW_CREATIONFLAGS",
+    "close_subprocess_transports",
     "disable_windows_app_ghosting",
     "ensure_standard_streams",
     "raise_own_priority_above_normal",

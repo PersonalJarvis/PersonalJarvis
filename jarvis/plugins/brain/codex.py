@@ -32,7 +32,10 @@ from contextlib import suppress
 from typing import Any
 
 from jarvis.core import config as cfg
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.core.process_utils import (
+    NO_WINDOW_CREATIONFLAGS,
+    close_subprocess_transports,
+)
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
 from ._openai_base import stream_complete
@@ -607,33 +610,42 @@ class CodexBrain:
         stderr_bytes = b""
 
         async def _kill_cli_process() -> None:
-            if not comm_task.done():
-                comm_task.cancel()
-            pid = getattr(proc, "pid", None)
-            if sys.platform == "win32" and isinstance(pid, int) and pid > 0:
+            try:
+                if not comm_task.done():
+                    comm_task.cancel()
+                pid = getattr(proc, "pid", None)
+                if sys.platform == "win32" and isinstance(pid, int) and pid > 0:
+                    with suppress(Exception):  # noqa: BLE001
+                        killer = await asyncio.create_subprocess_exec(
+                            "taskkill",
+                            "/PID",
+                            str(pid),
+                            "/T",
+                            "/F",
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.DEVNULL,
+                            creationflags=creationflags,
+                        )
+                        try:
+                            await asyncio.wait_for(killer.wait(), timeout=3.0)
+                        finally:
+                            close_subprocess_transports(killer)
+                elif sys.platform != "win32" and isinstance(pid, int) and pid > 0:
+                    # The POSIX sibling of `taskkill /T`: the CLI leads its own
+                    # group (start_new_session above), so one signal reaps the
+                    # launcher AND the real codex child it exec'd.
+                    await _terminate_posix_process_group(pid, proc)
+                with suppress(OSError):
+                    proc.kill()
                 with suppress(Exception):  # noqa: BLE001
-                    killer = await asyncio.create_subprocess_exec(
-                        "taskkill",
-                        "/PID",
-                        str(pid),
-                        "/T",
-                        "/F",
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                        creationflags=creationflags,
-                    )
-                    await asyncio.wait_for(killer.wait(), timeout=3.0)
-            elif sys.platform != "win32" and isinstance(pid, int) and pid > 0:
-                # The POSIX sibling of `taskkill /T`: the CLI leads its own
-                # group (start_new_session above), so one signal reaps the
-                # launcher AND the real codex child it exec'd.
-                await _terminate_posix_process_group(pid, proc)
-            with suppress(OSError):
-                proc.kill()
-            with suppress(Exception):  # noqa: BLE001
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
-            with suppress(asyncio.CancelledError, Exception):
-                await comm_task
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
+                with suppress(asyncio.CancelledError, Exception):
+                    await comm_task
+            finally:
+                # The cancelled communicate() never reads EOF, so the pipe
+                # transports would otherwise stay open until the GC finalizer
+                # closes them ON the loop thread — a multi-second app freeze.
+                close_subprocess_transports(proc)
 
         try:
             while True:
