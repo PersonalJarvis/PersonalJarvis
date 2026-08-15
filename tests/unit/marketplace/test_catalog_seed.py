@@ -315,3 +315,92 @@ def test_gmail_pkce_loopback_full_mail_scope() -> None:
     assert spec.auth.callback_path == ""
     assert spec.auth.offline_access is True
     assert spec.native_tool == "gmail"
+
+
+# ---------------------------------------------------------------------------
+# GitHub sign-in: device flow (2026-08-15). The PAT paste flow shipped a
+# long-lived repo-wide token with invisible expiry and no refresh path; the
+# device flow (same login `gh auth login` uses) renews itself and the shipped
+# public client id needs no secret in the binary.
+# ---------------------------------------------------------------------------
+
+
+def test_github_uses_device_flow_sign_in() -> None:
+    spec = _seed().by_id("github")
+    assert spec is not None
+    assert spec.auth.mode == "oauth_device_flow"
+    assert spec.auth.device_url == "https://github.com/login/device/code"
+    assert spec.auth.token_url == "https://github.com/login/oauth/access_token"  # noqa: S105 - URL, not a secret
+    from jarvis.marketplace.connect_helpers import is_placeholder_client_id
+
+    assert not is_placeholder_client_id(spec.auth.client_id), (
+        "the shipped GitHub client id must be a real public client — device "
+        "flow needs no client_secret, so shipping it is safe and required "
+        "for the zero-config connect"
+    )
+
+
+def test_legacy_github_pat_auth_block_migrates_to_device_flow(
+    tmp_path, monkeypatch,
+) -> None:
+    """A data/ override keeps its auth block (user-owned), so the shipped
+    pat_paste block would pin GitHub to the retired token flow forever.
+    The migration upgrades exactly the shipped block — including one that
+    materialized pydantic defaults like auth_scheme."""
+    clear_cache()
+    legacy_auth = {
+        "mode": "pat_paste",
+        "token_creation_url": (
+            "https://github.com/settings/tokens/new"
+            "?scopes=repo,workflow,read:user&description=Personal+Jarvis"
+        ),
+        "token_prefix": "ghp",
+        "validation_endpoint": "https://api.github.com/user",
+        "instruction_md": "1. The link below opens GitHub…",
+        "auth_scheme": "bearer",  # materialized default must not break the match
+        "instance_url": None,
+    }
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    github = next(item for item in seed["plugins"] if item["id"] == "github")
+    github["auth"] = legacy_auth
+    override = tmp_path / "plugin_catalog.json"
+    override.write_text(
+        json.dumps({"version": 1, "schema_version": "old", "plugins": [github]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
+
+    spec = load_catalog().by_id("github")
+
+    assert spec is not None and spec.auth.mode == "oauth_device_flow"
+    clear_cache()
+
+
+def test_customized_github_pat_auth_block_is_left_alone(
+    tmp_path, monkeypatch,
+) -> None:
+    """A user who pointed the PAT flow at their own enterprise host must keep
+    it — the migration matches only the shipped block."""
+    clear_cache()
+    custom_auth = {
+        "mode": "pat_paste",
+        "token_creation_url": "https://github.enterprise.example/settings/tokens/new",
+        "token_prefix": "ghp",
+        "validation_endpoint": "https://github.enterprise.example/api/v3/user",
+        "instruction_md": "custom",
+    }
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    github = next(item for item in seed["plugins"] if item["id"] == "github")
+    github["auth"] = custom_auth
+    override = tmp_path / "plugin_catalog.json"
+    override.write_text(
+        json.dumps({"version": 1, "schema_version": "old", "plugins": [github]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
+
+    spec = load_catalog().by_id("github")
+
+    assert spec is not None and spec.auth.mode == "pat_paste"
+    assert spec.auth.token_creation_url.startswith("https://github.enterprise.example")
+    clear_cache()

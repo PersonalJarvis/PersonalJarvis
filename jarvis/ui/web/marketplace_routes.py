@@ -2,7 +2,7 @@
 
 Endpoints:
     GET    /api/marketplace/plugins                       — catalog + status
-    POST   /api/marketplace/plugins/{id}/connect/pat       — paste-token (Vercel, Supabase fallback)
+    POST   /api/marketplace/plugins/{id}/connect/pat       — paste-token (GitHub, Vercel, …)
     POST   /api/marketplace/plugins/{id}/connect/start     — kick off OAuth redirect flow
     GET    /api/marketplace/plugins/{id}/connect/poll/{flow_id} — poll until completion
     DELETE /api/marketplace/plugins/{id}                   — disconnect
@@ -19,6 +19,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -166,17 +167,42 @@ def _build_dcr_handler(plugin_id: str, auth: HostedMcpOAuthDcrAuth) -> HostedMcp
     )
 
 
+def _pat_expiry_from_headers(headers: httpx.Headers) -> datetime | None:
+    """The pasted token's expiry, when the provider volunteers it.
+
+    GitHub answers the validation call for a dated (classic or fine-grained)
+    PAT with a ``github-authentication-token-expiration`` header, e.g.
+    ``2026-11-13 07:19:11 UTC``. Capturing it here is the only chance the
+    paste flow gets: unlike OAuth there is no token response carrying
+    ``expires_in``, so without this the stored token has no expiry and the UI
+    can never warn before the credential silently dies. Absent header
+    (non-expiring token, other providers) or an unparsable value → ``None``,
+    never a guess.
+    """
+    raw = (headers.get("github-authentication-token-expiration") or "").strip()
+    if not raw:
+        return None
+    candidate = raw.replace(" UTC", "+00:00").replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
     """Build a token validator that branches on the catalog's ``auth_scheme``.
 
-    Returns an async callable ``(auth, token) -> (ok: bool, status: int)``.
+    Returns an async callable ``(auth, token) -> (ok, status, expires_at)``:
+    whether the provider accepted the token, the HTTP status, and the token's
+    expiry when the provider reported one (see ``_pat_expiry_from_headers``).
     ``transport`` is injectable so unit tests can stub the HTTP layer.
     Raises ``httpx.HTTPError`` to the caller when the endpoint is unreachable.
     """
 
     async def _validate(
         auth: PatPasteAuth, token: str, instance_url: str | None = None
-    ) -> tuple[bool, int]:
+    ) -> tuple[bool, int, datetime | None]:
         scheme = getattr(auth, "auth_scheme", "bearer")
         headers = {"User-Agent": "Personal-Jarvis/1.0"}
         if scheme == "telegram_path":
@@ -195,14 +221,14 @@ def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
         async with httpx.AsyncClient(timeout=10.0, transport=transport) as client:
             resp = await client.get(url, headers=headers)
         if resp.status_code != 200:
-            return False, resp.status_code
+            return False, resp.status_code, None
         if scheme == "telegram_path":
             # Telegram returns 200 with {"ok": false} for soft errors.
             try:
-                return bool(resp.json().get("ok")), 200
+                return bool(resp.json().get("ok")), 200, None
             except ValueError:
-                return False, 200
-        return True, 200
+                return False, 200, None
+        return True, 200, _pat_expiry_from_headers(resp.headers)
 
     return _validate
 
@@ -369,11 +395,14 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
         )
 
     token = body.token.strip()
-    if spec.auth.token_prefix and not token.startswith(spec.auth.token_prefix):
+    prefixes = spec.auth.accepted_token_prefixes()
+    if prefixes and not any(token.startswith(p) for p in prefixes):
+        # Legacy single-string prefixes ("ghp") historically hinted with an
+        # appended underscore; list entries are already complete literals.
+        expected = " or ".join(f"'{p}'" if p.endswith("_") else f"'{p}_'" for p in prefixes)
         raise HTTPException(
             status_code=400,
-            detail=f"token must start with '{spec.auth.token_prefix}_' "
-            f"(got first 4 chars: {token[:4]!r})",
+            detail=f"token must start with {expected} (got first 4 chars: {token[:4]!r})",
         )
 
     # Self-hosted services (Home Assistant, Jellyfin, ...) live at the user's
@@ -396,10 +425,12 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
         else spec.auth.validation_endpoint
     )
     try:
-        # Only widen the call for self-hosted plugins. Every other caller (and
-        # every injected test double) keeps the two-argument shape it has had
-        # since the flow was written.
-        ok, status = (
+        # `instance_url` is only passed for self-hosted plugins; every other
+        # caller keeps the two-argument CALL shape it has had since the flow
+        # was written. That is independent of the RETURN shape below — every
+        # `_validate_token` implementation and every injected test double
+        # must return the 3-tuple `(ok, status, expires_at)`.
+        ok, status, token_expires_at = (
             await _validate_token(spec.auth, token, instance_url)
             if instance_url
             else await _validate_token(spec.auth, token)
@@ -421,7 +452,10 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
     # it must survive a restart exactly like the credential, and a tool that has
     # the token but not the address can do nothing with it.
     extra = {"instance_url": instance_url} if instance_url else {}
-    store.save(plugin_id, Tokens(access=token, extra=extra))
+    # `expires_at` is only ever what the provider itself reported during
+    # validation (GitHub's expiration header) — the plugins view then shows an
+    # honest expiry instead of a "permanent" connection that dies unannounced.
+    store.save(plugin_id, Tokens(access=token, expires_at=token_expires_at, extra=extra))
     if plugin_id in _CHANNEL_PLUGIN_IDS:
         # A channel "connect" enables the in-repo bidirectional channel. Do not
         # report a successful Marketplace connect if the canonical channel

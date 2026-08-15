@@ -49,7 +49,12 @@ class InstanceUrlSpec(_BaseAuth):
 class PatPasteAuth(_BaseAuth):
     mode: Literal["pat_paste"]
     token_creation_url: str
-    token_prefix: str
+    # One prefix ("ghp", legacy shape: an underscore is appended for the user
+    # hint) or a list of full literal alternatives (["ghp_", "github_pat_"]) —
+    # a provider can issue more than one token format (GitHub: classic AND
+    # fine-grained PATs). A bare string keeps every existing catalog entry and
+    # every user's data/ override valid.
+    token_prefix: str | list[str]
     validation_endpoint: str
     instruction_md: str
     # Set for self-hosted services: the user supplies the address, so
@@ -61,6 +66,18 @@ class PatPasteAuth(_BaseAuth):
     #   bot           -> Authorization: Bot <token>      (Discord)
     #   telegram_path -> token spliced into the URL {token}, no header; body ok==true
     auth_scheme: Literal["bearer", "bot", "telegram_path"] = "bearer"
+
+    def accepted_token_prefixes(self) -> tuple[str, ...]:
+        """The literal prefixes a pasted token may start with; empty = any.
+
+        Normalises the two catalog shapes: a legacy bare string is matched
+        as-is (historic behaviour, no underscore appended), list entries are
+        complete literals including their underscore.
+        """
+        raw = self.token_prefix
+        if isinstance(raw, str):
+            return (raw,) if raw else ()
+        return tuple(p for p in raw if p)
 
 
 class OAuthDeviceFlowAuth(_BaseAuth):

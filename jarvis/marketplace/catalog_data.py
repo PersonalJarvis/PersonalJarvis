@@ -93,6 +93,56 @@ _OAUTH_DISCOVERY_MIGRATIONS: dict[str, tuple[str, str]] = {
 }
 
 
+# Auth-block upgrades for entries whose shipped auth mode was replaced. The
+# auth block is user-owned in a data/ override (_OVERRIDE_OWNED_FIELDS), so a
+# seed-side auth change reaches only fresh installs without this. Unlike the
+# transport migrations above, the match is a small signature instead of full
+# byte-equality: an auth block that passed through the catalog models may have
+# materialized defaults (e.g. ``auth_scheme: "bearer"``), so exact equality
+# would silently skip real legacy blocks. The signature keys are values only
+# the shipped entry ever had; any customized block fails the match and stays.
+_LEGACY_AUTH_MIGRATIONS: dict[str, tuple[dict[str, object], dict[str, object]]] = {
+    "github": (
+        {
+            "mode": "pat_paste",
+            "token_creation_url": (
+                "https://github.com/settings/tokens/new"
+                "?scopes=repo,workflow,read:user&description=Personal+Jarvis"
+            ),
+            "validation_endpoint": "https://api.github.com/user",
+        },
+        {
+            "mode": "oauth_device_flow",
+            "device_url": "https://github.com/login/device/code",
+            "verify_url": "https://github.com/login/device",
+            "token_url": "https://github.com/login/oauth/access_token",
+            "client_id": "Iv23li1YcX62KJO67whO",
+            "scopes": [],
+        },
+    ),
+}
+
+
+def _migrate_obsolete_auth_blocks(raw: object) -> object:
+    """Upgrade the exact shipped auth block of a migrated plugin in a local
+    override. A stored access token survives untouched — it keeps working via
+    the unchanged ``auth_header_template`` until it dies, and the reconnect
+    then runs the new flow."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("plugins"), list):
+        return raw
+    for plugin in raw["plugins"]:
+        if not isinstance(plugin, dict):
+            continue
+        migration = _LEGACY_AUTH_MIGRATIONS.get(str(plugin.get("id", "")))
+        auth = plugin.get("auth")
+        if migration is None or not isinstance(auth, dict):
+            continue
+        signature, replacement = migration
+        if all(auth.get(key) == value for key, value in signature.items()):
+            plugin["auth"] = dict(replacement)
+    return raw
+
+
 def _migrate_obsolete_mcp_transports(raw: object) -> object:
     """Upgrade exact built-in launcher specs without changing user variants.
 
@@ -207,6 +257,7 @@ def _read(path: Path) -> PluginCatalog:
     if path.resolve() == _DEFAULT_CATALOG_PATH.resolve():
         raw = _migrate_obsolete_mcp_transports(raw)
         raw = _migrate_obsolete_oauth_discovery(raw)
+        raw = _migrate_obsolete_auth_blocks(raw)
     return PluginCatalog.model_validate(raw)
 
 
@@ -220,6 +271,7 @@ def load_catalog(path: Path | None = None) -> PluginCatalog:
         return _read(_PACKAGE_SEED_PATH)
     raw = _migrate_obsolete_mcp_transports(_read_raw(_DEFAULT_CATALOG_PATH))
     raw = _migrate_obsolete_oauth_discovery(raw)
+    raw = _migrate_obsolete_auth_blocks(raw)
     try:
         seed_raw = _read_raw(_PACKAGE_SEED_PATH)
     except (OSError, ValueError):

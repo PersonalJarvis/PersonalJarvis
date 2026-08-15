@@ -124,7 +124,7 @@ async def test_connect_pat_discord_enables_channel_and_applies_live(monkeypatch)
     )
 
     async def _ok(_auth, _token):
-        return True, 200
+        return True, 200, None
 
     monkeypatch.setattr(mr, "_validate_token", _ok)
     monkeypatch.setattr(mr, "TokenStore", lambda: type("S", (), {"save": lambda *_: None})())
@@ -171,7 +171,7 @@ async def test_connect_pat_discord_fails_when_channel_enable_fails(monkeypatch):
     )
 
     async def _ok(_auth, _token):
-        return True, 200
+        return True, 200, None
 
     monkeypatch.setattr(mr, "_validate_token", _ok)
     monkeypatch.setattr(mr, "TokenStore", lambda: store)

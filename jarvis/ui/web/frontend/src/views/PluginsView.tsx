@@ -164,7 +164,9 @@ function cachePluginStatus(
 interface PatPasteAuthDetail {
   mode: "pat_paste";
   token_creation_url: string;
-  token_prefix: string;
+  /** One legacy prefix ("ghp", underscore appended in hints) or a list of
+   *  complete literal alternatives (["ghp_", "github_pat_"]). */
+  token_prefix: string | string[];
   instruction_md: string;
   /** Present for self-hosted services (Home Assistant, Jellyfin, Nextcloud…):
    *  the server address is the user's own, so the catalog can only describe
@@ -2500,8 +2502,17 @@ export function PatConnectDialog({
   const ownerLock = OWNER_LOCK_PLUGIN_IDS.has(plugin.id);
   const auth = plugin.authConfig as unknown as PatPasteAuthDetail;
   const instanceField = auth.instance_url ?? null;
-  const expectedPrefix = auth.token_prefix ?? "";
-  const prefixOk = !expectedPrefix || token.trim().startsWith(`${expectedPrefix}_`);
+  // Legacy single-string prefixes ("ghp") get their underscore appended for
+  // the hint; list entries are complete literals — mirrors the backend's
+  // PatPasteAuth.accepted_token_prefixes so both layers accept the same set.
+  const acceptedPrefixes = Array.isArray(auth.token_prefix)
+    ? auth.token_prefix.filter(Boolean)
+    : auth.token_prefix
+      ? [`${auth.token_prefix}_`]
+      : [];
+  const prefixOk =
+    acceptedPrefixes.length === 0 ||
+    acceptedPrefixes.some((p) => token.trim().startsWith(p));
   const userIdTrimmed = userId.trim();
   const userIdOk = !ownerLock || userIdTrimmed === "" || /^\d+$/.test(userIdTrimmed);
   const parsedUserId =
@@ -2623,15 +2634,15 @@ export function PatConnectDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && canSubmit) submit();
               }}
-              placeholder={expectedPrefix ? `${expectedPrefix}_…` : "Token"}
+              placeholder={acceptedPrefixes.length ? `${acceptedPrefixes[0]}…` : "Token"}
               className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
               autoFocus
               disabled={isPending}
             />
-            {token && expectedPrefix && !prefixOk && (
+            {token && acceptedPrefixes.length > 0 && !prefixOk && (
               <p className="mt-1.5 text-[11px] text-amber-400">
                 Should start with{" "}
-                <span className="font-mono">{expectedPrefix}_</span>
+                <span className="font-mono">{acceptedPrefixes.join(" or ")}</span>
               </p>
             )}
           </Step>

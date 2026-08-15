@@ -92,7 +92,7 @@ async def test_connect_pat_telegram_fires_the_enable_hook(monkeypatch):
     monkeypatch.setattr(mr, "load_catalog", lambda: _Cat())
 
     async def _ok(_auth, _token):
-        return True, 200
+        return True, 200, None
 
     monkeypatch.setattr(mr, "_validate_token", _ok)
     monkeypatch.setattr(mr, "TokenStore", lambda: type("S", (), {"save": lambda *_: None})())
@@ -137,7 +137,7 @@ async def test_connect_pat_telegram_fails_when_channel_enable_fails(monkeypatch)
     monkeypatch.setattr(mr, "load_catalog", lambda: _Cat())
 
     async def _ok(_auth, _token):
-        return True, 200
+        return True, 200, None
 
     monkeypatch.setattr(mr, "_validate_token", _ok)
     monkeypatch.setattr(mr, "TokenStore", lambda: store)
