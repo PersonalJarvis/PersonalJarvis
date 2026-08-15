@@ -34,7 +34,9 @@ an added account therefore opened in the CLI's built-in fallback — manual mode
 however the user had equipped it globally, and had to be switched over by hand
 every time. :func:`inherit_default_mode` copies exactly those mode settings
 across (nothing else, and never over a value set for that account by hand), so a
-pane starts the way the same CLI starts in an ordinary terminal.
+pane starts the way the same CLI starts in an ordinary terminal. The model and
+reasoning-effort keys go one step further and follow the global file on every
+spawn — see :class:`_ModeFile`.
 
 **The built-in account is synthetic.** Every platform always offers the CLI's
 own default directory as an account that was never created here, cannot be
@@ -601,6 +603,16 @@ class _ModeFile:
     fmt: Literal["json", "toml"]
     #: The setting paths to carry over, each a sequence of nested keys.
     keys: tuple[tuple[str, ...], ...]
+    #: Setting paths that ALWAYS track the native file — overwritten on every
+    #: spawn, and removed when the global file no longer carries them. For
+    #: choices that are global by nature: which model, how much reasoning. A
+    #: pane is supposed to BE the user's terminal, and their terminal reads the
+    #: global file — so an account file that diverged once must not pin every
+    #: future pane to a fossil. Live report 2026-08-15: the global settings said
+    #: fable/high while two account files still spawned every pane at
+    #: opus/xhigh, mirrored a long time ago and never updated since, because
+    #: these keys were only ever filled in when MISSING.
+    follow: tuple[tuple[str, ...], ...] = ()
 
 
 #: What "the mode this CLI starts in" is, per platform.
@@ -615,11 +627,14 @@ _MODE_FILES: dict[Platform, _ModeFile] = {
         name="settings.json",
         fmt="json",
         keys=(("permissions", "defaultMode"), ("skipDangerousModePermissionPrompt",)),
+        # Claude Code persists the /model pick as these two keys.
+        follow=(("model",), ("effortLevel",)),
     ),
     "codex": _ModeFile(
         name="config.toml",
         fmt="toml",
         keys=(("approval_policy",), ("sandbox_mode",)),
+        follow=(("model",), ("model_reasoning_effort",)),
     ),
 }
 
@@ -708,6 +723,19 @@ def _put_setting(doc: Any, key: tuple[str, ...], value: Any, fmt: str) -> None:
     node[key[-1]] = value
 
 
+def _pop_setting(doc: Any, key: tuple[str, ...]) -> bool:
+    """Remove the value at a nested key path. Returns whether one was there."""
+    node = doc
+    for part in key[:-1]:
+        node = node.get(part) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            return False
+    if isinstance(node, dict) and key[-1] in node:
+        del node[key[-1]]
+        return True
+    return False
+
+
 def _dump_settings(doc: Any, fmt: str) -> str:
     if fmt == "json":
         return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
@@ -764,7 +792,14 @@ def inherit_default_mode(platform: Platform, account_id: str | None) -> bool:
     the rest of the file. Project-level settings are untouched by the redirect
     (the CLI reads those from the folder it runs in) and need nothing here.
 
-    **A value the user typed into the account is never overwritten.** The mirror
+    Two kinds of keys travel, with different rules. The MODE keys below honour a
+    per-account choice (see the mirror record). The FOLLOW keys — model and
+    reasoning effort — track the global file unconditionally: they are the mode
+    the user "really chose in their global folder", and an account file that
+    diverged once used to pin every future pane to a fossil of it (see
+    :class:`_ModeFile`).
+
+    **A MODE value the user typed into the account is never overwritten.** The mirror
     file records what was last copied across, so a setting that no longer matches
     it is a deliberate per-account choice and is left exactly as it is; one that
     still matches follows a later change of the global default. An account with
@@ -813,6 +848,21 @@ def inherit_default_mode(platform: Platform, account_id: str | None) -> bool:
             _put_setting(doc, key, wanted, spec.fmt)
             applied.append(dotted)
         updated[dotted] = wanted
+
+    for key in spec.follow:
+        # Global-by-nature settings (model, reasoning effort): the native value
+        # wins every spawn, so a diverged account file cannot pin its panes to a
+        # stale choice. No mirror bookkeeping — there is no per-account variant
+        # of these to protect.
+        wanted = _setting_at(native, key)
+        current = _setting_at(doc, key)
+        if wanted is _MISSING:
+            if current is not _MISSING and _pop_setting(doc, key):
+                applied.append(".".join(key))
+            continue
+        if current != wanted:
+            _put_setting(doc, key, wanted, spec.fmt)
+            applied.append(".".join(key))
 
     if not applied and updated == mirrored:
         return False

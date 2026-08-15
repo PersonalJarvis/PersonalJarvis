@@ -222,9 +222,7 @@ def test_an_added_account_pins_its_own_directory() -> None:
 def test_spawn_env_inherits_rather_than_replaces() -> None:
     """A bare {VAR: dir} would strip PATH and the agent binary would vanish."""
     account = agent_accounts.create_account("claude", "Second seat")
-    env = agent_accounts.spawn_env(
-        "claude", account.id, base={"PATH": "/usr/bin", "TERM": "xterm"}
-    )
+    env = agent_accounts.spawn_env("claude", account.id, base={"PATH": "/usr/bin", "TERM": "xterm"})
     assert env["PATH"] == "/usr/bin"
     assert env["TERM"] == "xterm"
     assert env["CLAUDE_CONFIG_DIR"] == str(account.config_dir)
@@ -313,9 +311,10 @@ def test_a_pane_on_an_added_account_starts_in_the_globally_equipped_mode() -> No
     settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
     assert settings["permissions"]["defaultMode"] == "bypassPermissions"
     assert settings["skipDangerousModePermissionPrompt"] is True
-    # Only the mode travels. The rest of the global file is none of our business.
+    # The model choice is global by nature and travels too (as a follow key).
+    assert settings["model"] == "opus"
+    # The rest of the global file is none of our business.
     assert "allow" not in settings["permissions"]
-    assert "model" not in settings
 
 
 def test_codex_inherits_its_own_pair_of_mode_settings() -> None:
@@ -332,7 +331,8 @@ def test_codex_inherits_its_own_pair_of_mode_settings() -> None:
     written = (account.config_dir / "config.toml").read_text(encoding="utf-8")
     assert 'approval_policy = "never"' in written
     assert 'sandbox_mode = "danger-full-access"' in written
-    assert "gpt-5" not in written
+    # Codex's model choice follows the global file as well.
+    assert 'model = "gpt-5"' in written
 
 
 def test_an_existing_account_file_keeps_everything_it_already_had() -> None:
@@ -378,7 +378,8 @@ def test_no_global_preference_means_the_cli_keeps_its_own_default() -> None:
     assert agent_accounts.inherit_default_mode("claude", account.id) is False
     assert not (account.config_dir / "settings.json").exists()
 
-    _write_native("claude", "settings.json", json.dumps({"model": "opus"}))
+    # A global file with neither a mode nor a followed key carries nothing.
+    _write_native("claude", "settings.json", json.dumps({"theme": "dark"}))
     assert agent_accounts.inherit_default_mode("claude", account.id) is False
 
 
@@ -415,6 +416,71 @@ def test_changing_the_global_mode_follows_through_to_an_untouched_account() -> N
     )
     assert agent_accounts.inherit_default_mode("claude", account.id) is True
     assert _claude_mode(account.config_dir) == "acceptEdits"
+
+
+def test_model_and_effort_follow_the_global_choice_into_a_diverged_account() -> None:
+    """The 2026-08-15 report: global said fable/high, panes spawned opus/xhigh.
+
+    An account settings file that diverged once was only ever filled in where
+    keys were MISSING, so its model and effortLevel stayed a fossil of whatever
+    was mirrored first. Model and reasoning effort are global by nature — the
+    account file must follow the native one on every spawn, while everything
+    else the account holds stays its own.
+    """
+    _write_native(
+        "claude",
+        "settings.json",
+        json.dumps({"model": "claude-fable-5[1m]", "effortLevel": "high"}),
+    )
+    account = agent_accounts.create_account("claude", "Second seat")
+    (account.config_dir / "settings.json").write_text(
+        json.dumps({"model": "opus[1m]", "effortLevel": "xhigh", "theme": "dark"}),
+        encoding="utf-8",
+    )
+
+    assert agent_accounts.inherit_default_mode("claude", account.id) is True
+
+    settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
+    assert settings["model"] == "claude-fable-5[1m]"
+    assert settings["effortLevel"] == "high"
+    assert settings["theme"] == "dark"
+
+
+def test_an_effort_dropped_from_the_global_file_is_dropped_from_the_account() -> None:
+    """Back to the CLI's own default means back to it everywhere."""
+    _write_native("claude", "settings.json", json.dumps({"model": "claude-fable-5[1m]"}))
+    account = agent_accounts.create_account("claude", "Second seat")
+    (account.config_dir / "settings.json").write_text(
+        json.dumps({"model": "claude-fable-5[1m]", "effortLevel": "xhigh"}),
+        encoding="utf-8",
+    )
+
+    assert agent_accounts.inherit_default_mode("claude", account.id) is True
+
+    settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
+    assert "effortLevel" not in settings
+    assert settings["model"] == "claude-fable-5[1m]"
+
+
+def test_codex_reasoning_effort_follows_the_global_file_too() -> None:
+    """Same rule, TOML flavour: a diverged config.toml cannot pin the effort."""
+    _write_native(
+        "codex",
+        "config.toml",
+        'model = "gpt-5"\nmodel_reasoning_effort = "medium"\n',
+    )
+    account = agent_accounts.create_account("codex", "Second seat")
+    (account.config_dir / "config.toml").write_text(
+        'model = "o3"\nmodel_reasoning_effort = "xhigh"\nprofile = "mine"\n',
+        encoding="utf-8",
+    )
+
+    assert agent_accounts.inherit_default_mode("codex", account.id) is True
+
+    written = (account.config_dir / "config.toml").read_text(encoding="utf-8")
+    assert 'model = "gpt-5"' in written
+    assert 'model_reasoning_effort = "medium"' in written
+    assert 'profile = "mine"' in written
 
 
 def test_inheriting_twice_writes_nothing_the_second_time() -> None:
@@ -634,7 +700,7 @@ def test_two_genuinely_different_subscriptions_are_never_flagged() -> None:
 
 
 def test_accounts_without_a_readable_email_are_never_grouped() -> None:
-    """"Both unknown" is not evidence of sameness — it is absence of evidence."""
+    """ "Both unknown" is not evidence of sameness — it is absence of evidence."""
     first = agent_accounts.create_account("claude", "Seat A")
     second = agent_accounts.create_account("claude", "Seat B")
     for account in (first, second):
