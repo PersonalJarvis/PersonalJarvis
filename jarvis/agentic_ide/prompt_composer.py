@@ -82,6 +82,55 @@ out IN FULL before anyone else was allowed to start; attempts now overlap
 after ``HEDGE_AFTER_S`` and the first valid brief wins, which bounds the tail
 without demoting the model.
 
+**Where the time goes now (measured 2026-08-13, this repo as the workspace,
+the real payload).** Every earlier round of this work attacked the preparation
+or the cold start, and there is nothing left in either: cleaning the speech,
+picking candidates and reading five file outlines plus the house rules costs
+15-172 ms, a cached writer resolution costs 0-47 ms, and the CLI — a native
+binary now, no longer the Node shim the notes above were written against —
+starts in 0.11 s and produces its first output at 0.88 s. The first ANSWER
+token arrives at 1.6-2.9 s. Everything after that, 13-17 of a 21 s delivery,
+is the model typing the brief out one character at a time.
+
+That last number is the whole feature's latency, and it has exactly one input:
+how many characters the brief has. The rate does not vary with anything under
+this module's control — measured at 180-210 characters per second across two
+different quality-tier models, with and without an ``--effort`` level, so a
+faster model and a cheaper reasoning setting each buy nothing. Two guesses
+worth recording as DEAD so they are not tried again: trimming the file
+outlines to shrink the input made a composition *slower* (18.5 s against
+15.7 s) because a writer given thinner material pads to compensate, and it cut
+the brief's named symbols from 21 to 6; and prewarming or pooling the CLI
+process cannot pay for itself against a 0.11 s start.
+
+So the lever is the length of the brief, and it lives in ``prompt_blueprint``
+— which had a stated 1400-2400 character target that live compositions were
+missing by 30-48 %. Holding the writer to its own budget is what took a
+composition from 21-22 s to 15-16 s, and nothing in this module can beat it.
+
+**The lane that skips all of it (2026-08-13).** Everything above is about
+making the WRITING faster, and it had run out of room because the writing is
+the product. What none of it questioned is whether every order needs writing at
+all — and measured against the real traffic, plainly not. "T4, run pytest on
+tests/unit/agentic_ide" and "commit and push" arrive as finished instructions;
+a writer given one of those can only restate it at greater length, and the
+restating is the entire 19-25 s wait.
+
+So the decision is now made per order rather than once for all of them
+(``direct_delivery``): an instruction that carries both halves of an executable
+command — an executional verb AND a concrete target — is rendered by the
+deterministic layer and sent, with the same verified ``@file`` references the
+brief would have carried, in 15-172 ms instead of 19-25 s. Everything else is
+briefed exactly as before.
+
+This does NOT revisit the maintainer's 2026-07-25 decision that an accurate
+prompt beats a quick handoff. It applies that decision where it bites: the
+orders it was made for are the vague ones, and those still wait. The admission
+rules are one-sided on purpose — a wrongly admitted order costs a rougher
+prompt, a wrongly held one costs only the seconds it was always going to cost —
+so ``direct_delivery`` requires positive evidence and every doubt keeps the
+brief. ``[agentic_ide].direct_delivery = false`` turns the lane off entirely.
+
 **On the silence.** The rest is perceived latency: for 10-27 s nothing at all
 was said, so a working composer and a wedged one looked identical. The three
 beats below (``start`` → ``thinking``/``drafting`` → ``ready``, and ``sent``
@@ -104,6 +153,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from . import direct_delivery
 from .file_index import cached_index
 from .session import MAX_PROMPT_CHARS, sanitize_prompt
 from .task_kind import (
@@ -130,16 +180,31 @@ from .task_kind import (
 # 10-12 s for a trivial prompt and 26.6 s for a real structured brief on the
 # fastest model. At 45 s a slower model or a loaded machine would have expired
 # routinely, and every expiry buys the regex prompt — never a faster good one.
-COMPOSE_TIMEOUT_S = 90.0
+#
+# Lowered 90 → 60 s (2026-08-13) because the cold start those 90 s were sized
+# around is gone: the CLI ships as a native binary now and measures 0.11 s to
+# start and 0.88 s to its first output, against the 10-12 s the paragraph above
+# was written for. A healthy brief measures 13-18 s end to end, so this still
+# clears the worst case by more than three times while capping what a wedged
+# provider can cost the user. It also has to fit the whole sequence and does:
+# the primary starts at 0, the hedge at HEDGE_AFTER_S, and a full attempt after
+# it lands well inside the budget.
+COMPOSE_TIMEOUT_S = 60.0
 
 # How many files may be attached. Enough to point the agent at a feature's
 # surface; few enough that the agent's context is not flooded with guesses.
 MAX_FILE_REFERENCES = 5
 
-# The least time a second writer needs to be worth starting. A subscription CLI
-# pays a 10-12 s cold process start before it thinks at all, so handing one a
-# shorter window buys the deterministic prompt AND the wait.
-_MIN_ATTEMPT_S = 20.0
+# The least time a second writer needs to be worth starting. Handing one a
+# window it cannot finish in buys the deterministic prompt AND the wait.
+#
+# Was 20 s, sized around a 10-12 s cold process start (2026-07-26). That start
+# is now 0.11 s, and what a writer actually needs is the time to first token
+# plus the time to type a brief: measured 1.6-2.9 s and 13-18 s respectively
+# (2026-08-13). Fifteen seconds covers a healthy attempt, and lowering it is
+# not a licence to waste calls — it OPENS rescues that the stale figure refused
+# in windows where a second writer would comfortably have finished.
+_MIN_ATTEMPT_S = 15.0
 
 # How long the chosen writer may stay silent before the next rung starts
 # WRITING ALONGSIDE it — not instead of it: the first valid brief wins and the
@@ -149,19 +214,29 @@ _MIN_ATTEMPT_S = 20.0
 # before the rescue was even ALLOWED to start). Hedging bounds that tail at
 # roughly this constant plus the second writer's own time.
 #
-# Above the healthy p90 on purpose: a brief on the lean CLI invocation measures
-# 16-25 s end to end, so a hedge at 30 s fires only on genuinely slow calls and
-# the double spend stays rare. The hedge crosses to the SAME rungs the rescue
-# already uses on failure — quality-tier by construction, never a demotion.
-HEDGE_AFTER_S = 30.0
+# Above the healthy p90 on purpose: a hedge that fires on ordinary calls is not
+# insurance, it is paying twice for every brief. The hedge crosses to the SAME
+# rungs the rescue already uses on failure — quality-tier by construction,
+# never a demotion.
+#
+# 30 → 20 s (2026-08-13), tracking its own band down. The 30 was set above a
+# 16-25 s healthy range; with the brief inside its length budget the same
+# payload measures 13-18 s on the same writer, so 30 s had become a full twelve
+# seconds of silence past the point where a call is plainly unwell.
+HEDGE_AFTER_S = 20.0
 
 # When the writer is a direct API call (the ``api`` and ``tool_model`` rungs),
 # insurance starts earlier. Those paths have no process to cold-start: measured
-# live 2026-08-12, a healthy API brief lands in 13-21 s, so the CLI-sized 30 s
-# above would let an already-fast path sit through half a minute of silence
-# before a second writer was allowed to begin. Still above the API path's
-# healthy band, so the double spend stays as rare as it is for the CLI.
-HEDGE_AFTER_API_S = 20.0
+# live 2026-08-12, a healthy API brief lands in 13-21 s, so the CLI-sized value
+# above would let an already-fast path sit through a long silence before a
+# second writer was allowed to begin. Still above the API path's healthy band,
+# so the double spend stays as rare as it is for the CLI.
+#
+# 20 → 15 s (2026-08-13). The length budget cuts what every provider has to
+# type, not just the CLI — the measured brief came down by roughly a fifth —
+# so this band moves with it rather than being left as the one threshold still
+# sized for the longer brief.
+HEDGE_AFTER_API_S = 15.0
 
 # Speech artefacts the deterministic layer removes. Matching *input vocabulary*
 # in the supported locales — these are the words people actually say while
@@ -222,8 +297,15 @@ class ComposedPrompt:
     """Repo-relative paths referenced with ``@`` in ``text``."""
 
     composed_by: str = "fallback"
-    """``llm`` when a provider wrote it, ``fallback`` when the regex layer did,
-    ``raw`` when composition was switched off by the caller."""
+    """``llm`` when a provider wrote it, ``fallback`` when the regex layer did
+    because a writer was unreachable or failed, ``direct`` when the order
+    already was a prompt and no writer was asked, ``raw`` when composition was
+    switched off by the caller.
+
+    ``direct`` and ``fallback`` render through the same deterministic layer and
+    are deliberately still distinguished: one is a choice and the other is a
+    degradation, and a readback that called them both "fallback" would report a
+    healthy fast delivery as a provider failure."""
 
     note: str = ""
     """Why the fallback was used, when it was. Empty on the happy path."""
@@ -241,6 +323,10 @@ STAGE_HEDGE = "hedge"
 STAGE_READY = "ready"
 STAGE_FALLBACK = "fallback"
 STAGE_SENT = "sent"
+#: The order was already a prompt and went out as it stands — the ONE stage that
+#: is not followed by a wait. It is still announced, because a delivery nobody
+#: saw being written looks like a delivery that skipped a step.
+STAGE_DIRECT = "direct"
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,6 +495,32 @@ def _ready_message(
     )
 
 
+_DIRECT_PHRASES = (
+    "{name} gets that straight away - {reason}.",
+    "Sending {name} the order as it stands - {reason}.",
+    "No brief needed for {name} - {reason}. Sending it now.",
+)
+
+
+def _direct_message(terminal_name: str, *, reason: str, files: int) -> str:
+    """The one-line stand-in for a whole composition that did not happen.
+
+    Says WHY on purpose. A user who has watched the same feature take twenty
+    seconds all week needs to be able to tell "it decided this one was already a
+    prompt" from "it gave up and sent the raw sentence" — those look identical
+    on screen and mean opposite things about the prompt the agent received.
+    """
+    if files == 1:
+        files_clause = ", one file attached"
+    elif files:
+        files_clause = f", {files} files attached"
+    else:
+        files_clause = ""
+    return _variant(_DIRECT_PHRASES, reason).format(
+        name=terminal_name, reason=f"{reason}{files_clause}"
+    )
+
+
 def _writer_label(brain: object) -> str:
     """The writing model's own name, when it has one worth printing."""
     name = str(getattr(brain, "name", "") or "").strip()
@@ -540,6 +652,28 @@ def _file_candidates(session, instruction: str, limit: int) -> list[str]:  # noq
     return _existing(session.folder, index.suggest(instruction, limit=limit))
 
 
+def _direct_files(session, instruction: str, limit: int) -> list[str]:  # noqa: ANN001
+    """Only the files a DIRECT order named itself — never an index suggestion.
+
+    The index's suggestions are keyword matches, and on the briefed path a model
+    reads them, keeps the ones that matter and says why. Nothing does that here,
+    and unfiltered they are actively worse than an empty list: measured on this
+    repository, "commit and push" drew ``@mcps/ollama/tools/push.json`` and
+    ``@scripts/auto-push-eod.ps1``, and "rename ``_fuse_ranked`` to
+    ``_merge_ranked``" drew five unrelated files that merely contain the word
+    "merge" — each under a heading reading "Start with these files".
+
+    An order only reaches this lane by naming its target, so what the user
+    pointed at is exactly the right set, and naming none is a complete
+    instruction rather than a gap to fill. A named DIRECTORY attaches nothing:
+    ``_existing`` keeps files only, and the path is already in the task line
+    where the agent reads it verbatim.
+
+    Cheaper as well as better — the fast lane touches no index at all.
+    """
+    return _existing(session.folder, direct_delivery.named_paths(instruction))[:limit]
+
+
 def _extract_referenced(text: str) -> list[str]:
     """``@path`` tokens in a composed prompt, in order of appearance."""
     seen: list[str] = []
@@ -548,6 +682,24 @@ def _extract_referenced(text: str) -> list[str]:
         if rel not in seen:
             seen.append(rel)
     return seen
+
+
+def _direct_delivery_enabled() -> bool:
+    """Is the fast lane switched on for this install?
+
+    Read live rather than cached, like its siblings ``smart_recaps`` and
+    ``pane_notifications``: ``load_config`` measures 0.7 ms here, so turning the
+    lane off in ``jarvis.toml`` takes effect on the next order instead of on the
+    next restart. A config that cannot be loaded answers "on" — the fast lane is
+    the cheaper and more available of the two paths, and an install whose config
+    is unreadable is the last one that should be made to wait on a provider.
+    """
+    try:
+        from jarvis.core.config import load_config
+
+        return bool(getattr(load_config().agentic_ide, "direct_delivery", True))
+    except Exception:  # noqa: BLE001 - a switch must never break a composition
+        return True
 
 
 def _resolve_writer():  # noqa: ANN202 - (Brain | None, str), avoid an import cycle
@@ -832,6 +984,43 @@ async def compose(
         found = await asyncio.to_thread(_file_candidates, session, subject, max_files * 2)
         return _deterministic("raw", candidates=found)
 
+    # An order that already NAMES the work goes out as it stands. There is
+    # nothing a writer can add to "run pytest on tests/unit/agentic_ide" except
+    # the measured 19-25 s it takes to say it again at greater length, and the
+    # deterministic renderer below still attaches the same verified `@file`
+    # references from the same index. ``direct_delivery`` sets the bar and
+    # documents why every doubt keeps the brief.
+    #
+    # A pinned ``brain`` is never overridden: the caller named a writer, which
+    # is a decision about this prompt and not ours to skip.
+    # ``utterance=said`` is load-bearing: the addressing parsers strip the
+    # briefing verb while extracting the instruction, so "prompt it to do a
+    # deep dive ..." arrives here as "do a deep dive ..." — only the original
+    # sentence still shows that the user ordered a WRITTEN prompt.
+    verdict = (
+        direct_delivery.decide(
+            base_instruction or said,
+            has_attachments=bool(attached),
+            utterance=said,
+        )
+        if brain is None and _direct_delivery_enabled()
+        else direct_delivery.Verdict(False, "")
+    )
+    if verdict.direct:
+        found = await asyncio.to_thread(_direct_files, session, subject, max_files)
+        chosen = found[:max_files]
+        logger.info(
+            "Agentic IDE: {} is sent as spoken — {} ({} file reference(s))",
+            terminal_name,
+            verdict.reason,
+            len(chosen),
+        )
+        notify(
+            STAGE_DIRECT,
+            _direct_message(terminal_name, reason=verdict.reason, files=len(chosen)),
+        )
+        return _deterministic("direct", verdict.reason, candidates=found)
+
     started = time.monotonic()
     notify(STAGE_START, _start_message(kind, subject, terminal_name))
 
@@ -1069,6 +1258,7 @@ __all__ = [
     "HEDGE_AFTER_API_S",
     "HEDGE_AFTER_S",
     "MAX_FILE_REFERENCES",
+    "STAGE_DIRECT",
     "STAGE_DRAFTING",
     "STAGE_FALLBACK",
     "STAGE_HEDGE",

@@ -426,6 +426,7 @@ jarvis/agentic_ide/clarify.py
 jarvis/agentic_ide/intent.py
 jarvis/agentic_ide/file_index.py
 jarvis/agentic_ide/prompt_composer.py
+jarvis/agentic_ide/direct_delivery.py
 
 # --- Their tests: every German string is a simulated user utterance fed to the
 #     classifiers above — the speech input the matcher is scored on, i.e. the
