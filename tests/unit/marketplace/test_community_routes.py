@@ -134,9 +134,10 @@ async def test_browse_lists_converted_plugins_and_skills(community_env: Path) ->
 async def test_install_block_suppressed_where_install_would_fail(
     community_env: Path,
 ) -> None:
-    """A seed-name collision and a manual skill are shown, but carry NO
+    """A seed-name collision and a contentless skill are shown, but carry NO
     install block — the standard must never advertise a command that 409s."""
     index = _index_payload(_plugin_entry(name="github"))
+    # Neither an embedded body nor a download link: nothing to install.
     index["skills"][0]["raw_url"] = None
     (community_env / "marketplace_index.json").write_text(
         json.dumps({"fetched_at": time.time(), "index": index}), encoding="utf-8"
@@ -146,7 +147,34 @@ async def test_install_block_suppressed_where_install_would_fail(
     plugin = data["plugins"][0]
     assert plugin["seed_conflict"] is True
     assert plugin["install"] is None
-    assert data["skills"][0]["install"] is None
+    skill = data["skills"][0]
+    assert skill["installable"] is False
+    assert skill["install"] is None
+
+
+@pytest.mark.asyncio
+async def test_embedded_only_skill_still_gets_an_install_command(
+    community_env: Path,
+) -> None:
+    """A skill the index carries in full installs from the one-liner too.
+
+    The install route PREFERS the embedded body and only falls back to a
+    download, so gating the command on raw_url hid a working command from
+    exactly the entries the registry serves best.
+    """
+    index = _index_payload(_plugin_entry())
+    index["skills"][0]["raw_url"] = None
+    index["skills"][0]["skill_md"] = (
+        "---\nname: three-point-check\ndescription: Three bullets\n---\nBody"
+    )
+    (community_env / "marketplace_index.json").write_text(
+        json.dumps({"fetched_at": time.time(), "index": index}), encoding="utf-8"
+    )
+    async with _client() as client:
+        data = (await client.get("/api/marketplace/community")).json()
+    skill = data["skills"][0]
+    assert skill["installable"] is True and skill["embedded"] is True
+    assert skill["install"]["cli"] == "jarvis marketplace install three-point-check"
 
 
 @pytest.mark.asyncio

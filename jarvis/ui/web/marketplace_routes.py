@@ -938,9 +938,15 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
                     "installed": installed,
                     "installed_version": installed_version,
                     "update_available": installed and _is_newer(skill.version, installed_version),
-                    # No raw_url means "Manual" — the CLI could not install it
-                    # either, so showing a one-liner would be a false promise.
-                    "install": install_block(skill.name, "skill") if skill.raw_url else None,
+                    # Gated on `installable`, not on raw_url: the install route
+                    # prefers the index's own embedded body and only falls back
+                    # to a download, so an embedded-only skill installs from
+                    # this one-liner just as well. An entry carrying neither
+                    # gets no block — a command that cannot work is worse than
+                    # none at all.
+                    "install": install_block(skill.name, "skill")
+                    if (skill.skill_md or skill.raw_url)
+                    else None,
                 }
             )
 
@@ -1144,7 +1150,14 @@ async def community_install(
     return {"ok": True, "plugin": item}
 
 
-@router.post("/community/skills/{skill_name}/install")
+# Dangerous like its plugin sibling: a skill is an instruction document the
+# assistant then follows, published by a stranger and read by no reviewer. The
+# flag makes the generated `jarvis api` layer demand --yes, matching the
+# curated `jarvis marketplace install` command and the store's own confirm.
+@router.post(
+    "/community/skills/{skill_name}/install",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
 async def community_skill_install(
     skill_name: str, request: Request, background: BackgroundTasks
 ) -> dict[str, Any]:

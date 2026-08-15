@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   Check,
-  Copy,
   ExternalLink,
   FileText,
   Globe,
@@ -22,8 +21,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
+import {
+  InstallStandard,
+  type InstallStandardWire,
+} from "@/components/InstallStandard";
 import { cn } from "@/lib/utils";
-import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { PRODUCT_NAME } from "@/lib/branding";
 
@@ -49,14 +51,9 @@ export const MARKETPLACE_SUBMIT_URL = "https://personaljarvis.ai/marketplace/sub
 
 // Wire types — mirror /api/marketplace/community (see marketplace_routes.py).
 
-/** The three install surfaces, computed server-side by
- *  jarvis/marketplace/install_standard.py and rendered VERBATIM — the store
- *  must never derive its own command strings, or it drifts from the CLI. */
-export interface InstallStandardWire {
-  cli: string;
-  runner: string;
-  prompt: string;
-}
+/** Re-exported for the tests and views that import the wire shape from here;
+ *  it is defined next to the component that renders it. */
+export type { InstallStandardWire };
 
 export interface CommunityPluginWire {
   name: string;
@@ -1482,101 +1479,6 @@ export function PluginDetailSheet({
         </footer>
       </div>
     </div>
-  );
-}
-
-// The three install surfaces, in the order a visitor tries them: the curated
-// CLI command, the zero-install uvx runner, the assistant prompt.
-const INSTALL_TABS = [
-  { id: "cli", label: "CLI", hint: "Runs in any terminal while the app is running." },
-  {
-    id: "runner",
-    label: "uvx",
-    hint: "No install needed — uv fetches the CLI and runs the same command.",
-  },
-  {
-    id: "prompt",
-    label: "Prompt",
-    hint: "Paste this to your assistant — it runs the install for you.",
-  },
-] as const;
-type InstallTabId = (typeof INSTALL_TABS)[number]["id"];
-
-/** The store's install standard (the CLI | runner | Prompt pattern every
- *  comparable store shows on a detail page). Strings arrive verbatim from the
- *  backend — see InstallStandardWire — so the copy button can never hand out
- *  a command the CLI does not have. */
-function InstallStandard({ install }: { install: InstallStandardWire }) {
-  const [tab, setTab] = useState<InstallTabId>("cli");
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 2000);
-    return () => clearTimeout(t);
-  }, [copied]);
-
-  const active = INSTALL_TABS.find((t) => t.id === tab) ?? INSTALL_TABS[0];
-  const value = install[tab];
-  return (
-    <section>
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground">
-          Install
-        </h3>
-        <div className="flex items-center">
-          {INSTALL_TABS.map((t, i) => (
-            <span key={t.id} className="flex items-center">
-              {i > 0 && (
-                <span aria-hidden className="mx-1.5 select-none text-muted-foreground/40">
-                  |
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  setTab(t.id);
-                  setCopied(false);
-                }}
-                className={cn(
-                  "text-[11px] font-medium transition-colors",
-                  tab === t.id
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {t.label}
-              </button>
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 py-1 pl-2.5 pr-1">
-        <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-1 text-xs text-foreground">
-          {tab !== "prompt" && (
-            <span aria-hidden className="select-none text-muted-foreground">
-              ${" "}
-            </span>
-          )}
-          {value}
-        </code>
-        <button
-          type="button"
-          onClick={async () => {
-            if (await robustCopy(value)) setCopied(true);
-          }}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title={copied ? "Copied" : "Copy"}
-          aria-label={`Copy the ${active.label} install command`}
-        >
-          {copied ? (
-            <Check className="h-3.5 w-3.5 text-primary" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </button>
-      </div>
-      <p className="mt-1.5 text-[11px] text-muted-foreground">{active.hint}</p>
-    </section>
   );
 }
 

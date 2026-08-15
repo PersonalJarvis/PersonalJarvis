@@ -1,6 +1,7 @@
 """Tests for `jarvis marketplace install/uninstall` — the CLI surface of the
 store's three-way install standard (resolve by name, then run the same routes
 the store's buttons use)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -32,6 +33,8 @@ def _payload(
         "name": "three-point-check",
         "title": "Three Point Check",
         "installed": False,
+        "installable": True,
+        "embedded": False,
         "publisher": "octocat",
         "raw_url": "https://raw.example/skills/three-point-check/SKILL.md",
         "source_url": "https://github.com/PersonalJarvis/marketplace",
@@ -53,18 +56,30 @@ def test_install_resolves_a_plugin_to_the_community_route(capture_api):
     assert "https://mcp.todofox.example/mcp" in res.output
 
 
-def test_install_resolves_a_skill_to_the_catalog_route(capture_api):
+def test_install_resolves_a_skill_to_the_community_route(capture_api):
+    # The name is the ONLY input. `/api/skills/catalog/install` would take the
+    # download URL from this caller — and it reports no install to the store.
     capture_api["routes"][("GET", COMMUNITY)] = (200, _payload())
     res = runner.invoke(app, ["marketplace", "install", "three-point-check", "--yes"])
     assert res.exit_code == 0, res.output
     call = capture_api["calls"][-1]
-    assert call["method"] == "POST" and call["path"] == "/api/skills/catalog/install"
-    assert call["body"] == {
-        "name": "three-point-check",
-        "title": "Three Point Check",
-        "raw_url": "https://raw.example/skills/three-point-check/SKILL.md",
-        "source_url": "https://github.com/PersonalJarvis/marketplace",
-    }
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/marketplace/community/skills/three-point-check/install"
+    assert call["body"] is None
+    assert "https://raw.example/skills/three-point-check/SKILL.md" in res.output
+
+
+def test_install_embedded_skill_says_nothing_is_downloaded(capture_api):
+    # An index carrying the SKILL.md itself installs without any download —
+    # the consent line must not claim a fetch that never happens.
+    capture_api["routes"][("GET", COMMUNITY)] = (
+        200,
+        _payload(skill_overrides={"embedded": True, "raw_url": None}),
+    )
+    res = runner.invoke(app, ["marketplace", "install", "three-point-check", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert capture_api["calls"][-1]["method"] == "POST"
+    assert "nothing is downloaded" in res.output
 
 
 def test_install_unknown_name_is_a_clean_error(capture_api):
@@ -84,14 +99,17 @@ def test_install_seed_conflict_refuses_before_any_request(capture_api):
     assert [c["method"] for c in capture_api["calls"]] == ["GET"]
 
 
-def test_install_manual_skill_points_at_the_source(capture_api):
+def test_install_contentless_skill_points_at_the_source(capture_api):
+    # Neither an embedded body nor a download link: the registry published an
+    # entry it cannot deliver, and no request may leave for it.
     capture_api["routes"][("GET", COMMUNITY)] = (
         200,
-        _payload(skill_overrides={"raw_url": None}),
+        _payload(skill_overrides={"installable": False, "raw_url": None}),
     )
     res = runner.invoke(app, ["marketplace", "install", "three-point-check", "--yes"])
     assert res.exit_code == 1
-    assert "no direct download" in res.output
+    assert "carries no content" in res.output
+    assert [c["method"] for c in capture_api["calls"]] == ["GET"]
 
 
 def test_install_refresh_flag_refetches_the_index(capture_api):

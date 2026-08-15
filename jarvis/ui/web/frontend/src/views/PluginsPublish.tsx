@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
   Check,
-  Copy,
   ExternalLink,
   FileText,
   FolderUp,
   Github,
   Loader2,
-  LogOut,
   PencilLine,
   Plug,
   Search,
@@ -18,8 +16,15 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  InstallStandard,
+  type InstallStandardWire,
+} from "@/components/InstallStandard";
+import {
+  PublishIdentityCard,
+  usePublishIdentity,
+} from "@/components/marketplace/PublishIdentity";
 import { cn } from "@/lib/utils";
-import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import {
   collectDroppedFiles,
@@ -54,22 +59,6 @@ import {
 // the web form uses, so web and app cannot drift apart.
 // ---------------------------------------------------------------------------
 
-interface IdentityWire {
-  enabled: boolean;
-  signed_in: boolean;
-  login?: string;
-  avatar_url?: string | null;
-  unreachable?: string;
-}
-
-interface SigninStartWire {
-  flow_id: string;
-  user_code: string;
-  verification_uri?: string | null;
-  verification_uri_complete?: string | null;
-  interval?: number;
-}
-
 interface FieldErrorWire {
   field: string | null;
   error: string;
@@ -81,6 +70,9 @@ interface SubmitResultWire {
   version: string;
   pr_url?: string | null;
   submission_path?: string | null;
+  /** The three commands other people will run to install this — computed
+   *  server-side by install_standard.py, never derived here. */
+  install?: InstallStandardWire | null;
 }
 
 type Kind = "skill" | "plugin";
@@ -124,12 +116,6 @@ version: 1.0.0
 
 Write the instructions the assistant follows, step by step.
 `;
-
-async function fetchIdentity(): Promise<IdentityWire> {
-  const res = await fetch("/api/marketplace/publish/identity", { cache: "no-store" });
-  if (!res.ok) throw new Error(`Identity request failed (${res.status})`);
-  return res.json();
-}
 
 /** The JSON body the backend's validate/submit routes expect, or a field
  *  error when a pasted JSON block does not parse. */
@@ -180,7 +166,7 @@ function draftToBody(
 
 export function PublishTab() {
   const queryClient = useQueryClient();
-  const identity = useQuery({ queryKey: ["marketplace-publish-identity"], queryFn: fetchIdentity });
+  const identity = usePublishIdentity();
 
   const [source, setSource] = useState<Source>("picker");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -316,7 +302,7 @@ export function PublishTab() {
         </p>
       </header>
 
-      <SignInCard identity={identity.data} loading={identity.isLoading} />
+      <PublishIdentityCard identity={identity.data} loading={identity.isLoading} />
 
       {source === "picker" && (
         <SourcePicker
@@ -1040,7 +1026,7 @@ function DraftForm({
           </Field>
           <Field
             label="mcp.json"
-            hint="optional — exactly one server: an https URL, or a pinned npx/uvx/docker command"
+            hint='optional — exactly one server, with its "type" ("streamable-http" or "stdio"): an https URL, or a pinned npx/uvx/docker command'
             errors={errorFor("mcp_json")}
           >
             <textarea
@@ -1048,7 +1034,7 @@ function DraftForm({
               onChange={(e) => set({ mcp_json_text: e.target.value })}
               rows={6}
               spellCheck={false}
-              placeholder='{ "mcpServers": { "my-plugin": { "url": "https://…" } } }'
+              placeholder='{ "mcpServers": { "my-plugin": { "type": "streamable-http", "url": "https://…" } } }'
               className={cn(inputCls(errorFor("mcp_json").length > 0), "font-mono text-xs")}
             />
           </Field>
@@ -1300,196 +1286,6 @@ function KindButton({
   );
 }
 
-/** GitHub device-flow sign-in: show the short code, the user types it at
- *  github.com/login/device, we poll until approved. No password, no secret. */
-function SignInCard({
-  identity,
-  loading,
-}: {
-  identity: IdentityWire | undefined;
-  loading: boolean;
-}) {
-  const queryClient = useQueryClient();
-  const [flow, setFlow] = useState<SigninStartWire | null>(null);
-  const [flowError, setFlowError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const startMutation = useMutation({
-    mutationFn: async (): Promise<SigninStartWire> => {
-      const res = await fetch("/api/marketplace/publish/signin/start", { method: "POST" });
-      if (!res.ok) {
-        const detail = await res
-          .json()
-          .then((b: { detail?: string }) => b.detail)
-          .catch(() => undefined);
-        throw new Error(detail ?? `Sign-in start failed (${res.status})`);
-      }
-      return res.json();
-    },
-    onSuccess: (f) => {
-      setFlow(f);
-      setFlowError(null);
-    },
-  });
-
-  const signOutMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/marketplace/publish/identity", { method: "DELETE" });
-      if (!res.ok) throw new Error(`Sign-out failed (${res.status})`);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["marketplace-publish-identity"] });
-    },
-  });
-
-  // Poll the running flow until GitHub reports approval or an error.
-  useEffect(() => {
-    if (!flow) return;
-    const intervalMs = Math.max(2, flow.interval ?? 5) * 1000;
-    const timer = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/marketplace/publish/signin/poll/${flow.flow_id}`, {
-          cache: "no-store",
-        });
-        if (res.status === 404) {
-          setFlow(null);
-          return;
-        }
-        const data = (await res.json()) as { status: string; error?: string };
-        if (data.status === "connected") {
-          setFlow(null);
-          queryClient.invalidateQueries({ queryKey: ["marketplace-publish-identity"] });
-        } else if (data.status === "error") {
-          setFlow(null);
-          setFlowError(data.error ?? "sign-in failed");
-        }
-      } catch {
-        // Network blip — keep polling until the flow expires.
-      }
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [flow, queryClient]);
-
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 2000);
-    return () => clearTimeout(t);
-  }, [copied]);
-
-  const signedIn = identity?.signed_in === true;
-  return (
-    <section className="rounded-lg border border-border bg-card/40 p-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-foreground">
-            Identity
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {signedIn ? (
-              <>
-                Signed in as{" "}
-                <span className="font-medium text-foreground">@{identity?.login}</span> — your
-                packages publish under this name.
-              </>
-            ) : (
-              "Sign in with GitHub to publish. The sign-in only proves who you are — it grants nothing on your account."
-            )}
-          </p>
-          {identity?.unreachable && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              GitHub is unreachable right now — your sign-in state could not be
-              checked.
-            </p>
-          )}
-        </div>
-        {loading ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        ) : signedIn ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => signOutMutation.mutate()}
-            disabled={signOutMutation.isPending}
-          >
-            <LogOut className="mr-1.5 h-3.5 w-3.5" />
-            Sign out
-          </Button>
-        ) : flow ? null : (
-          <Button
-            size="sm"
-            onClick={() => startMutation.mutate()}
-            disabled={startMutation.isPending}
-          >
-            {startMutation.isPending ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : null}
-            Sign in with GitHub
-          </Button>
-        )}
-      </div>
-
-      {flow && (
-        <div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">
-            Enter this code at{" "}
-            <button
-              type="button"
-              onClick={() => openExternalUrl(flow.verification_uri ?? "https://github.com/login/device")}
-              className="font-medium text-primary hover:underline"
-            >
-              github.com/login/device
-              <ExternalLink className="ml-0.5 inline h-3 w-3" />
-            </button>
-            {" "}— waiting for your approval…
-          </p>
-          <div className="mt-2 flex items-center gap-2">
-            <code className="rounded-md border border-border bg-background px-3 py-1.5 font-mono text-lg font-semibold tracking-[0.25em] text-foreground">
-              {flow.user_code}
-            </code>
-            <button
-              type="button"
-              onClick={async () => {
-                if (await robustCopy(flow.user_code)) setCopied(true);
-              }}
-              className="grid h-7 w-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              title={copied ? "Copied" : "Copy code"}
-              aria-label="Copy the sign-in code"
-            >
-              {copied ? (
-                <Check className="h-3.5 w-3.5 text-primary" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" />
-              )}
-            </button>
-            <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-muted-foreground" />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                // Tell the backend to drop the flow, then forget it locally
-                // either way — an already-finished flow 404s harmlessly.
-                void fetch(`/api/marketplace/publish/signin/${flow.flow_id}`, {
-                  method: "DELETE",
-                }).catch(() => undefined);
-                setFlow(null);
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-      {flowError && (
-        <p className="mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {flowError}
-        </p>
-      )}
-    </section>
-  );
-}
-
 /** After the PR is open: link it, then watch the live feed until the package
  *  actually appears — "published" only means anything once the store shows it. */
 function PublishedCard({
@@ -1561,7 +1357,7 @@ function PublishedCard({
         </div>
       </section>
 
-      <section className="rounded-lg border border-border bg-card/40 p-4">
+      <section className="space-y-4 rounded-lg border border-border bg-card/40 p-4">
         {live ? (
           <p className="flex items-center gap-2 text-sm text-foreground">
             <Check className="h-4 w-4 text-primary" />
@@ -1579,6 +1375,17 @@ function PublishedCard({
             Watching the live feed until your package appears — usually a few
             minutes.
           </p>
+        )}
+
+        {/* Gated on `live` on purpose: handed out a minute too early, the
+            command resolves against an index that does not list the entry yet
+            and fails for whoever the author sent it to. */}
+        {live && result.install && (
+          <InstallStandard
+            install={result.install}
+            heading="Share it"
+            note="Anyone can run this now — it resolves your listing from the public registry."
+          />
         )}
       </section>
     </div>
