@@ -157,10 +157,11 @@ def install(
     """Install a community plugin, skill or wallpaper by name.
 
     Resolves the name against the community index (plugin first, then skill,
-    then wallpaper) and runs the matching install route. Plugins and skills
-    are UNREVIEWED, so without --yes this prints what the entry would be
-    allowed to do and asks. Wallpapers are the one human-reviewed lane, and
-    an import is an image re-encoded by the app — no code, no credentials.
+    then wallpaper) and runs the matching install route. Everything here is
+    UNREVIEWED, so for plugins and skills without --yes this prints what the
+    entry would be allowed to do and asks. Wallpapers skip that prompt for a
+    different reason than trust: an import is an image re-encoded by the app —
+    no code, no credentials, nothing that can act.
     """
     payload = _fetch_community(refresh) or {}
     plugin = _entry_named(payload, "plugins", name)
@@ -204,29 +205,33 @@ def install(
         return
 
     if skill is not None:
-        raw_url = skill.get("raw_url")
-        if not raw_url:
+        if not skill.get("installable"):
             render.error(
-                f"skill {name!r} has no direct download — open its source and "
-                f"follow its steps: {skill.get('source_url') or 'no source URL published'}"
+                f"skill {name!r} is listed but carries no content — the registry "
+                "published an incomplete entry. Open its source and follow its "
+                f"steps: {skill.get('source_url') or 'no source URL published'}"
             )
             raise typer.Exit(code=1)
+        # The name is the ONLY input; the route reads the index server-side.
+        # `/api/skills/catalog/install` takes the download URL from the caller,
+        # which would make "install this skill" mean "write whatever this URL
+        # serves" — see community_skill_install for why that route is not the
+        # marketplace's. It also skips the store's install counter.
+        origin = (
+            "The instructions come from the registry index itself — nothing is downloaded."
+            if skill.get("embedded")
+            else f"The instructions are downloaded from: {skill.get('raw_url')}"
+        )
         _echo_trust_summary(
             [
                 f"Community skill {name!r} by {skill.get('publisher') or 'an unknown publisher'}"
                 f"{' · v' + str(skill['version']) if skill.get('version') else ''} — not reviewed.",
-                f"The instructions are downloaded from: {raw_url}",
+                origin,
             ]
         )
         invoke.run(
             "POST",
-            "/api/skills/catalog/install",
-            body={
-                "name": name,
-                "title": skill.get("title") or name,
-                "raw_url": raw_url,
-                "source_url": skill.get("source_url") or "",
-            },
+            f"/api/marketplace/community/skills/{name}/install",
             assume_yes=yes,
             dry_run=dry_run,
             dangerous=True,

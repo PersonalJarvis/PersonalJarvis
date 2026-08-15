@@ -101,15 +101,18 @@ the in-app Publish tab, which is in flight in this session.
 
 ### The wallpapers lane exists only in this repo
 
-`wallpapers-lane.md` ends with a four-step activation checklist. Steps 1 and
-2 are **not done**, and the work is sitting unpushed in two local clones:
+`wallpapers-lane.md` ends with an activation checklist. Steps 1 and 2 are
+**not done**, and the work is sitting unpushed in two local clones:
 
 | Repo | Measured state |
 |---|---|
 | App (this repo) | ✅ committed on `main` (`3bef83e22`, `a97b509e3`) |
-| Registry | ❌ remote has **no** `wallpapers/`, no `scripts/test_wallpapers.py`; the local clone is **2 commits ahead** of `origin/main` |
-| Storefront | ❌ deployed branch has **no** `submit-wallpaper.ts` (`POST …/api/marketplace/submit-wallpaper` → **405**, the static-asset answer, against **401** for the deployed `submit.ts`); the local clone is **4 commits ahead** of `origin/remake` |
-| Inbox (private review queue) | ❌ contains `README.md` only; step 3 (grant the GitHub App access to it) unverified |
+| Registry | ❌ remote has **no** `wallpapers/`, no `scripts/test_wallpapers.py`; the local clone is ahead of `origin/main` |
+| Storefront | ❌ deployed branch has **no** `submit-wallpaper.ts` (`POST …/api/marketplace/submit-wallpaper` → **405**, the static-asset answer, against **401** for the deployed `submit.ts`); the local clone is ahead of `origin/remake` |
+
+The private inbox repo that step 3 used to require is **obsolete**: the lane
+was converted from pre-moderation to notice-and-action on 2026-08-15, so
+uploads now commit straight to the public registry and no queue exists.
 
 Consequence: the app ships an import route and a storefront door for a lane
 that produces nothing. Nothing crashes — the feed simply carries no
