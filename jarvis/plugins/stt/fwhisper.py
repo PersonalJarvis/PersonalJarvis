@@ -330,6 +330,19 @@ def ensure_cuda_libraries_findable() -> None:
         return
 
 
+# One WhisperModel construction at a time, process-wide. Boot builds several
+# engines from the same weights family within seconds of each other (the
+# utterance lane, the dictation lane, a provider "Test" click), and two
+# multi-gigabyte CUDA loads running concurrently contend for disk, PCIe and
+# VRAM until BOTH crawl — the 2026-08-15 boot measured a 281 s dictation
+# warm-up for a load that takes ~11 s alone on the same box. Serializing the
+# construction keeps each load at its solo speed; the queueing wait is exactly
+# the time the concurrent version would ALSO have spent, minus the thrash.
+# Only the build is held — inference locks stay per-instance and this lock is
+# always the innermost, so no cycle is possible.
+_MODEL_BUILD_LOCK = threading.Lock()
+
+
 def _new_whisper_model(
     model_name: str, device: str, compute_type: str, cpu_threads: int = 0
 ) -> Any:
@@ -362,7 +375,8 @@ def _new_whisper_model(
     if cpu_threads and cpu_threads > 0:
         kwargs["cpu_threads"] = int(cpu_threads)
         kwargs["num_workers"] = 1
-    return WhisperModel(model_name, **kwargs)
+    with _MODEL_BUILD_LOCK:
+        return WhisperModel(model_name, **kwargs)
 
 
 # --- Boot-time wake-model prefetch (TTU iteration 10) -----------------------
@@ -701,9 +715,13 @@ class FasterWhisperProvider:
 
         This is enough for Phase 1 — the VAD layer in front already delivers
         clean utterances, so "in one go" is the natural granularity.
-        """
-        self._ensure_model()
 
+        No ``_ensure_model()`` here: this coroutine runs ON the event loop, and
+        a cold CUDA/large-v3 build takes seconds to minutes — calling it here
+        froze every WebSocket, HTTP route and brain turn behind one model load
+        (live stall 2026-08-15, provider test → ``WhisperModel`` on the loop
+        thread). ``_transcribe_sync`` builds the model in its worker thread.
+        """
         # Concatenate all chunks into one float32 array
         pieces: list[np.ndarray] = []
         sample_rate = 16_000
@@ -732,8 +750,10 @@ class FasterWhisperProvider:
         transcript is exactly the primed phrase, an unbiased second pass on
         the same window separates a genuine wake (the unprimed ear still
         hears speech) from a prompt echo on noise/breath (it hears nothing).
+
+        Like ``transcribe``, this must NOT call ``_ensure_model()`` — it runs on
+        the event loop; the worker thread in ``_transcribe_sync`` loads lazily.
         """
-        self._ensure_model()
         audio_np = pcm_bytes_to_np(pcm_bytes)
         return await self._transcribe_np(
             audio_np, sample_rate, language=language,

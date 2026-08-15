@@ -628,9 +628,12 @@ async def run_provider_test(
     # stt
     builder = make_stt or _default_make_stt
     try:
-        # Built off the event loop: the local faster-whisper build LOADS the model
-        # synchronously (seconds), which would otherwise freeze every other request
-        # (and the whole API-Keys screen) while a test/section-health check runs.
+        # Built off the event loop as defence in depth. NOTE the construction is
+        # LAZY for the local engines — the multi-gigabyte model load happens on
+        # the first ``transcribe`` below, and the provider contract requires
+        # that call to load in a worker thread, never on the loop (the
+        # 2026-08-15 stall: this test's transcribe built a CUDA WhisperModel ON
+        # the loop thread and froze every route behind it).
         inst = await asyncio.to_thread(builder, cfg, provider)
     except (ImportError, ModuleNotFoundError):
         # The on-device engines are optional packages a base install omits. That

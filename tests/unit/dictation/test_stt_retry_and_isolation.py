@@ -364,6 +364,127 @@ async def test_a_provider_that_never_answers_ends_the_dictation(
 
 
 # --------------------------------------------------------------------------
+# The wedged-engine self-heal (live log 2026-08-15)
+#
+# ``asyncio.wait_for`` abandons an await, never the native call behind it: a
+# ctranslate2 decode that wedges keeps the provider's inference lock forever,
+# and every later dictation then failed with ``TranscribeBusy`` in under two
+# seconds — recording fine (the meters read the microphone, not the model) and
+# delivering nothing, until an app restart. The lane must therefore drop the
+# engine via ``recover()`` when the failure signature IS a held engine: our own
+# timeout ceiling, or an exhausted busy ladder.
+# --------------------------------------------------------------------------
+
+
+class _NeverAnswersRecoverableSTT(_NeverAnswersSTT):
+    """The never-answers shape, with the local engine's self-heal hook."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.recoveries = 0
+
+    def recover(self) -> None:
+        self.recoveries += 1
+
+
+class _AlwaysBusySTT:
+    """The poisoned local engine: every call finds the lock already held."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.recoveries = 0
+
+    async def transcribe_pcm(self, pcm: bytes, language: str | None = None) -> Any:
+        self.calls += 1
+        from jarvis.plugins.stt.fwhisper import TranscribeBusy
+
+        raise TranscribeBusy("a transcription is already in flight on this model")
+
+    def recover(self) -> None:
+        self.recoveries += 1
+
+
+@pytest.mark.asyncio
+async def test_our_own_ceiling_recovers_the_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout means the orphaned native call may still hold the lock —
+    leaving it held is what turned one slow decode into permanent deafness."""
+    import jarvis.speech.pipeline as pipeline_module
+
+    monkeypatch.setattr(
+        pipeline_module, "_DICTATION_TRANSCRIBE_TIMEOUT_PER_AUDIO_S", 0.1
+    )
+    stt = _NeverAnswersRecoverableSTT()
+    pipe, events = _session_pipeline(stt, seconds=0.5)
+    pipe._stt_final_timeout_s = 0.05
+
+    await _run_session(pipe)
+
+    assert stt.recoveries == 1, "a timed-out final read must rebuild the engine"
+    assert _completed(events).outcome in ("failed", "empty")
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_busy_ladder_recovers_the_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Busy across the WHOLE retry window is the orphaned-call wedge, not a
+    transient overlap — the next dictation must not inherit the held lock."""
+    slept: list[float] = []
+
+    async def _no_wait(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", _no_wait)
+    stt = _AlwaysBusySTT()
+    pipe, events = _session_pipeline(stt)
+
+    await _run_session(pipe)
+
+    assert stt.calls == 3, "busy IS retried — it usually clears in a second"
+    assert stt.recoveries == 1, "exhausting the ladder on busy must self-heal"
+    assert _completed(events).outcome in ("failed", "empty")
+
+
+@pytest.mark.asyncio
+async def test_the_probe_stop_recovers_the_provider_it_was_given() -> None:
+    """The dictation lane runs on its OWN provider; recovering the voice
+    lane's ``_utterance_stt`` there healed a healthy engine while the wedged
+    one kept its lock."""
+
+    class _Recoverable:
+        def __init__(self) -> None:
+            self.recoveries = 0
+
+        def recover(self) -> None:
+            self.recoveries += 1
+
+    provider = _Recoverable()
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    # Deliberately NO ``_utterance_stt``: the dictation lane must neither need
+    # nor touch it.
+    pipe._stt_final_timeout_s = 0.05
+    inference_active = asyncio.Event()
+    inference_active.set()
+
+    async def _wedged() -> None:
+        await asyncio.sleep(3600)
+
+    task = asyncio.create_task(_wedged())
+    await pipe._stop_ptt_live_transcription(
+        task,
+        stop_event=asyncio.Event(),
+        inference_active=inference_active,
+        wait_for_inference=True,
+        provider=provider,
+    )
+
+    assert provider.recoveries == 1
+    assert task.cancelled() or task.done()
+
+
+# --------------------------------------------------------------------------
 # F14 / F3 — whose provider, and what it was built with
 # --------------------------------------------------------------------------
 

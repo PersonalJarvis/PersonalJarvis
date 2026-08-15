@@ -9099,6 +9099,7 @@ class SpeechPipeline:
         stop_event: asyncio.Event,
         inference_active: asyncio.Event,
         wait_for_inference: bool,
+        provider: Any | None = None,
     ) -> None:
         """Quiesce the cosmetic PTT probe before final STT or wake re-arm.
 
@@ -9110,7 +9111,19 @@ class SpeechPipeline:
         is cancelled, which is the AP-24 recovery contract.  A hard hangup does
         not wait for cosmetic output, but still recovers a busy native engine so
         the wake listener never inherits it.
+
+        ``provider`` is the STT instance whose native engine the probe was
+        using, and it MUST be the one recovered. The dictation lane runs on its
+        OWN provider (``_dictation_stt``), and defaulting to the voice lane's
+        ``_utterance_stt`` there recovered a healthy engine while the wedged
+        one kept its lock — every later dictation then failed with
+        ``TranscribeBusy`` until an app restart (live log 2026-08-15).
         """
+        # ``getattr`` keeps pipelines built via ``__new__`` working — the unit
+        # tests bypass ``__init__`` entirely (see the dictation session's own
+        # config reads for the same pattern).
+        if provider is None:
+            provider = getattr(self, "_utterance_stt", None)
         stop_event.set()
 
         def _retrieve_late_result(done: asyncio.Task) -> None:
@@ -9183,7 +9196,7 @@ class SpeechPipeline:
                     return
 
         if inference_active.is_set():
-            recover = getattr(self._utterance_stt, "recover", None)
+            recover = getattr(provider, "recover", None)
             if callable(recover):
                 try:
                     recover()
@@ -10581,6 +10594,50 @@ class SpeechPipeline:
             except asyncio.CancelledError:
                 pass
 
+        def _recover_wedged_engine(exc: BaseException | None) -> None:
+            """Self-heal after a failure whose signature is a HELD native engine.
+
+            Two shapes mean the engine may never answer again on its own:
+
+            * our own ``TimeoutError`` ceiling — ``wait_for`` cancelled the
+              await, but the native ``model.transcribe`` thread runs on and
+              keeps the inference lock until it returns, which a wedged
+              ctranslate2 call never does;
+            * ``engine_busy`` after the ladder is exhausted — the lock was
+              already held for the whole retry window, i.e. by exactly such an
+              orphaned call.
+
+            Without this, one wedged call poisoned the dictation engine until
+            an app restart: every later dictation recorded fine (the meters
+            read the microphone, not the model) and then failed with
+            ``TranscribeBusy`` three times in under two seconds (live log
+            2026-08-15). ``recover()`` swaps in a fresh model + lock; the
+            warm-up flag is cleared and re-scheduled so the rebuild happens off
+            the next dictation's critical path instead of inside its final
+            ceiling. Cloud providers have no ``recover`` and are unaffected.
+            """
+            if exc is None:
+                return
+            if not (
+                isinstance(exc, TimeoutError)
+                or classify_stt_failure(exc) == "engine_busy"
+            ):
+                return
+            recover = getattr(stt, "recover", None)
+            if not callable(recover):
+                return
+            try:
+                recover()
+            except Exception:  # noqa: BLE001 — a failed self-heal must not raise here
+                log.warning(
+                    "dictation STT recovery failed; the next dictation will "
+                    "load lazily.",
+                    exc_info=True,
+                )
+                return
+            self._dictation_warmup_succeeded_provider = None
+            self._schedule_dictation_warmup(stt)
+
         async def _read_piece(
             piece: bytes, *, ask_for: str | None = None
         ) -> tuple[str, bool]:
@@ -10626,6 +10683,11 @@ class SpeechPipeline:
                         "survives.",
                         stt_error_detail or stt_error or "unknown error",
                     )
+                    # A ceiling here abandons an await, not the native call:
+                    # that call may still hold the engine, and leaving it held
+                    # is what turned one slow decode into every later dictation
+                    # failing busy until restart.
+                    _recover_wedged_engine(exc)
                     return "", False
                 if attempt + 1 >= _DICTATION_FINAL_ATTEMPTS:
                     break
@@ -10652,6 +10714,11 @@ class SpeechPipeline:
                     delay,
                 )
                 await asyncio.sleep(delay)
+            # Every attempt failed. When the last answer was "busy", the lock
+            # was held across the whole retry window — the orphaned-call wedge,
+            # not a transient overlap — so rebuild before the next dictation
+            # inherits it.
+            _recover_wedged_engine(exc)
             return "", False
 
         async def _repair_truncated_read(
@@ -11019,6 +11086,10 @@ class SpeechPipeline:
                     stop_event=stop_event,
                     inference_active=inference_active,
                     wait_for_inference=not hung_up,
+                    # The dictation lane transcribes on its OWN provider; a
+                    # wedge here must recover THAT engine, never the voice
+                    # lane's ``_utterance_stt``.
+                    provider=stt,
                 )
 
             if not hung_up:
