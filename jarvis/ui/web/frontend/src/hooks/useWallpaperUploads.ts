@@ -9,6 +9,8 @@ export interface WallpaperUpload {
   title: string;
   theme: Theme;
   createdAt: number;
+  /** `community:<name>` for a picture imported from the store, else null. */
+  origin?: string | null;
 }
 
 /** The filter slug and chip label the owner's own pictures live under. */
@@ -37,6 +39,7 @@ export function uploadAsEntry(upload: WallpaperUpload): WallpaperEntry {
     styleLabel: "Yours",
     theme: upload.theme,
     isUpload: true,
+    origin: upload.origin ?? null,
   };
 }
 
@@ -59,12 +62,20 @@ export function useWallpaperUploads() {
         .catch(() => null);
       const items = (data as { items?: unknown } | null)?.items;
       if (!Array.isArray(items)) return [];
-      return items.filter(
-        (item): item is WallpaperUpload =>
-          typeof item?.id === "string" &&
-          typeof item?.title === "string" &&
-          (item?.theme === "light" || item?.theme === "dark"),
-      );
+      return items
+        .filter(
+          (item): item is WallpaperUpload =>
+            typeof item?.id === "string" &&
+            typeof item?.title === "string" &&
+            (item?.theme === "light" || item?.theme === "dark"),
+        )
+        .map((item) => ({
+          ...item,
+          // Normalized here so every consumer can test one thing. A server
+          // that omits the field is an older one, and "no marker" has always
+          // meant "the owner's own picture".
+          origin: typeof item.origin === "string" && item.origin ? item.origin : null,
+        }));
     },
   });
 }

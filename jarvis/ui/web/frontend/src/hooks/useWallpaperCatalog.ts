@@ -23,6 +23,26 @@ export interface WallpaperEntry {
    * can be removed or re-themed, so the preview needs to know which it has.
    */
   isUpload?: boolean;
+  /**
+   * Where an upload came from, e.g. `community:rain-antenna-city` for one
+   * imported from the store. `null` for the owner's own pictures — which is
+   * the difference that decides whether "Share to community" is offered:
+   * re-publishing an import would put one person's name on another's work.
+   */
+  origin?: string | null;
+  /**
+   * True for a picture in the community feed that is NOT on this machine yet.
+   * Its pixels live on the registry, so it is browsable but not usable until
+   * someone adds it — at which point it becomes an ordinary upload.
+   */
+  isCommunity?: boolean;
+  /** The feed's name for a community picture, e.g. `rain-antenna-city`. */
+  communityName?: string;
+  /** Who published a community picture, for the preview's byline. */
+  publisher?: string | null;
+  /** Remote pixels, for entries whose bytes are not on this machine. */
+  remoteThumbUrl?: string | null;
+  remoteFullUrl?: string | null;
 }
 
 export interface WallpaperStyle {
@@ -68,12 +88,18 @@ export const DEFAULT_WALLPAPER_ENTRY: WallpaperEntry = {
 
 /** Where a grid tile's thumbnail comes from. */
 export function thumbUrlFor(item: WallpaperEntry): string {
-  return item.isDefault ? DEFAULT_WALLPAPER_URL : wallpaperThumbUrl(item.id);
+  if (item.isDefault) return DEFAULT_WALLPAPER_URL;
+  // A community picture that is not on this machine has no local file to ask
+  // for — its pixels come straight from the registry's own feed.
+  if (item.remoteThumbUrl) return item.remoteThumbUrl;
+  return wallpaperThumbUrl(item.id);
 }
 
 /** Where a preview's full-size image comes from. */
 export function fullUrlFor(item: WallpaperEntry): string {
-  return item.isDefault ? DEFAULT_WALLPAPER_URL : wallpaperFullUrl(item.id);
+  if (item.isDefault) return DEFAULT_WALLPAPER_URL;
+  if (item.remoteFullUrl) return item.remoteFullUrl;
+  return wallpaperFullUrl(item.id);
 }
 
 /** The catalog as it looks before (or without) the generated library. */

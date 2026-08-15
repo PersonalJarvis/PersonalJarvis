@@ -9,6 +9,7 @@ import {
   Loader2,
   Moon,
   RotateCcw,
+  Share2,
   Sun,
   Trash2,
   Upload,
@@ -23,7 +24,14 @@ import {
   thumbUrlFor,
   useWallpaperCatalog,
   type WallpaperEntry,
+  type WallpaperStyle,
 } from "@/hooks/useWallpaperCatalog";
+import {
+  communityAsEntry,
+  COMMUNITY_WALLPAPER_STYLE,
+  useCommunityWallpapers,
+  useImportCommunityWallpaper,
+} from "@/hooks/useCommunityWallpapers";
 import {
   uploadAsEntry,
   useUploadMutations,
@@ -31,6 +39,8 @@ import {
   UPLOAD_WALLPAPER_STYLE,
 } from "@/hooks/useWallpaperUploads";
 import { useApplyWallpaper } from "@/hooks/useApplyWallpaper";
+import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
+import { PublishWallpaperDialog } from "@/components/wallpaper/PublishWallpaperDialog";
 import {
   installRunning,
   useWallpaperLibraryInstall,
@@ -61,11 +71,15 @@ function shuffleRank(id: string): number {
   return hash;
 }
 
-/** Where a wallpaper came from, as the grid orders it: bundled, own, library. */
+/** Where a wallpaper came from, as the grid orders it. */
 function originRank(item: WallpaperEntry): number {
   if (item.isDefault) return 0;
   if (item.isUpload) return 1;
-  return 2;
+  // Community pictures rank ahead of the generated library but behind your
+  // own: they are the part of the grid that changes, and a section nobody
+  // scrolls to is a section nobody publishes into.
+  if (item.isCommunity) return 2;
+  return 3;
 }
 
 /** The segmented filter/ordering controls share one look. */
@@ -328,6 +342,9 @@ function WallpaperPreview({
   onToggleFavorite,
   onSetTheme,
   onRemove,
+  onShare,
+  onImport,
+  importing = false,
   onClose,
   onStep,
 }: {
@@ -339,6 +356,11 @@ function WallpaperPreview({
   onToggleFavorite: () => void;
   onSetTheme: (theme: Theme) => void;
   onRemove: () => void;
+  /** Absent when this picture cannot be published — see the caller. */
+  onShare?: () => void;
+  /** Present only for a community picture that is not on this machine yet. */
+  onImport?: () => void;
+  importing?: boolean;
   onClose: () => void;
   onStep: (delta: number) => void;
 }) {
@@ -371,6 +393,7 @@ function WallpaperPreview({
           <h3 className="truncate text-sm font-semibold">{item.title}</h3>
           <p className="truncate text-xs text-muted-foreground">
             {item.styleLabel} · {item.theme === "dark" ? "Dark" : "Light"}
+            {item.publisher ? ` · by @${item.publisher}` : ""}
           </p>
         </div>
         {/* Only an upload can be re-themed: the library's own light/dark comes
@@ -392,6 +415,12 @@ function WallpaperPreview({
             </SegmentButton>
           </div>
         )}
+        {onShare && (
+          <Button size="sm" variant="outline" onClick={onShare}>
+            <Share2 className="mr-1.5 h-3.5 w-3.5" />
+            Share
+          </Button>
+        )}
         {item.isUpload && (
           <Button
             size="sm"
@@ -410,20 +439,34 @@ function WallpaperPreview({
           onToggle={onToggleFavorite}
           tone="surface"
         />
-        <Button
-          size="sm"
-          variant={applied ? "secondary" : "default"}
-          onClick={onApply}
-          disabled={applied}
-        >
-          {applied ? (
-            <>
-              <Check className="mr-1.5 h-3.5 w-3.5" /> In use
-            </>
-          ) : (
-            "Use this wallpaper"
-          )}
-        </Button>
+        {/* A community picture lives on the registry, not on this machine, so
+            there is nothing to "use" yet — it is fetched first, and then it is
+            an ordinary wallpaper like any other. */}
+        {onImport ? (
+          <Button size="sm" onClick={onImport} disabled={importing}>
+            {importing ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Add to my wallpapers
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant={applied ? "secondary" : "default"}
+            onClick={onApply}
+            disabled={applied}
+          >
+            {applied ? (
+              <>
+                <Check className="mr-1.5 h-3.5 w-3.5" /> In use
+              </>
+            ) : (
+              "Use this wallpaper"
+            )}
+          </Button>
+        )}
         <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close preview">
           <X className="h-4 w-4" />
         </Button>
@@ -476,6 +519,8 @@ function WallpaperPreview({
 export function WallpaperView() {
   const { data, isLoading } = useWallpaperCatalog();
   const { data: uploads } = useWallpaperUploads();
+  const { data: community } = useCommunityWallpapers();
+  const importCommunity = useImportCommunityWallpaper();
   const { add, setTheme: retheme, remove } = useUploadMutations();
   // Each theme keeps its own pick; the grid marks the one worn by the mode
   // the app is in right now (adopting a tile switches mode WITH the picture,
@@ -493,6 +538,7 @@ export function WallpaperView() {
   const [style, setStyle] = useState<string | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [shareId, setShareId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
 
   const ownEntries = useMemo(
@@ -500,14 +546,25 @@ export function WallpaperView() {
     [uploads],
   );
 
+  // Community pictures that are already on this machine are dropped: they are
+  // in `ownEntries` under "Yours", where they can actually be used. Showing
+  // both would put the same picture in the grid twice, one copy of it inert.
+  const communityEntries = useMemo(
+    () => (community ?? []).filter((w) => !w.installed && w.installable).map(communityAsEntry),
+    [community],
+  );
+
   // The owner's own pictures sit between the bundled original and the generated
   // library — brought here on purpose, so they are found without scrolling.
+  // Community pictures follow them: closer than the five hundred, further than
+  // your own.
   const items = useMemo(() => {
     const catalog = data?.items ?? [];
-    if (!ownEntries.length) return catalog;
+    const brought = [...ownEntries, ...communityEntries];
+    if (!brought.length) return catalog;
     const [bundled, ...rest] = catalog;
-    return bundled ? [bundled, ...ownEntries, ...rest] : [...ownEntries, ...catalog];
-  }, [data?.items, ownEntries]);
+    return bundled ? [bundled, ...brought, ...rest] : [...brought, ...catalog];
+  }, [data?.items, ownEntries, communityEntries]);
 
   // This view is the one place that knows which mode every picture was
   // authored for, so it is where a misfiled pick — the boot migration's wrong
@@ -521,15 +578,21 @@ export function WallpaperView() {
 
   const styles = useMemo(() => {
     const known = data?.styles ?? [];
-    if (!ownEntries.length) return known;
-    const chip = {
-      slug: UPLOAD_WALLPAPER_STYLE,
-      label: "Yours",
-      count: ownEntries.length,
-    };
+    const brought: WallpaperStyle[] = [];
+    if (ownEntries.length) {
+      brought.push({ slug: UPLOAD_WALLPAPER_STYLE, label: "Yours", count: ownEntries.length });
+    }
+    if (communityEntries.length) {
+      brought.push({
+        slug: COMMUNITY_WALLPAPER_STYLE,
+        label: "Community",
+        count: communityEntries.length,
+      });
+    }
+    if (!brought.length) return known;
     const [bundled, ...rest] = known;
-    return bundled ? [bundled, chip, ...rest] : [chip, ...known];
-  }, [data?.styles, ownEntries.length]);
+    return bundled ? [bundled, ...brought, ...rest] : [...brought, ...known];
+  }, [data?.styles, ownEntries.length, communityEntries.length]);
 
   const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
   // Counted against the catalog, not against the stored list: an id left over
@@ -579,6 +642,11 @@ export function WallpaperView() {
     previewIndex >= 0
       ? visible[previewIndex]
       : (items.find((item) => item.id === previewId) ?? null);
+
+  // Resolved against `items` rather than the filter for the same reason as the
+  // preview above: the share dialog is a form somebody is filling in, and a
+  // filter change behind it must not close it mid-sentence.
+  const shareItem = shareId ? (items.find((item) => item.id === shareId) ?? null) : null;
 
   // Stepping wraps around, so the arrow keys never dead-end at either edge of
   // whatever the current filter happens to be showing.
@@ -638,7 +706,29 @@ export function WallpaperView() {
     );
   };
 
-  const uploadError = add.error?.message ?? remove.error?.message ?? retheme.error?.message;
+  // The imported copy takes the community entry's place in the preview, so the
+  // picture the reader was looking at stays under the cursor — now usable.
+  const onImportCommunity = (name: string) => {
+    importCommunity.mutate(name, {
+      onSuccess: (result) => setPreviewId(result.wallpaper.id),
+    });
+  };
+
+  const uploadError =
+    add.error?.message ??
+    remove.error?.message ??
+    retheme.error?.message ??
+    importCommunity.error?.message;
+
+  // Sharing is offered only when this deployment actually has the lane AND the
+  // picture is the owner's own. An imported community wallpaper is somebody
+  // else's work; the server refuses to republish it, and offering a button
+  // that always fails would be worse than not offering one.
+  const publishIdentity = usePublishIdentity();
+  const canShare = (item: WallpaperEntry): boolean =>
+    publishIdentity.data?.wallpapers_enabled === true &&
+    item.isUpload === true &&
+    !item.origin;
 
   const header = (
     <ViewHeader
@@ -809,9 +899,20 @@ export function WallpaperView() {
           onToggleFavorite={() => toggleFavorite(previewItem.id)}
           onSetTheme={(next) => onRethemeUpload(previewItem, next)}
           onRemove={() => onRemoveUpload(previewItem)}
+          onShare={canShare(previewItem) ? () => setShareId(previewItem.id) : undefined}
+          onImport={
+            previewItem.communityName
+              ? () => onImportCommunity(previewItem.communityName as string)
+              : undefined
+          }
+          importing={importCommunity.isPending}
           onClose={() => setPreviewId(null)}
           onStep={step}
         />
+      )}
+
+      {shareItem && (
+        <PublishWallpaperDialog item={shareItem} onClose={() => setShareId(null)} />
       )}
     </div>
   );
