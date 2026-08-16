@@ -37,13 +37,20 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .schema import SkillFrontmatter
+from .schema import SkillFrontmatter, SkillLifecycleState
 
 log = logging.getLogger(__name__)
 
 #: The frontmatter fields a foreign skill may contribute. Descriptive only —
 #: identity, prose, provenance. See the module docstring for why the
 #: behaviour-granting fields are absent.
+#:
+#: ``state`` is the one apparent exception, and it is here for the opposite of
+#: the usual reason: dropping it would be the PERMISSIVE choice. The loader
+#: reads a missing ``state`` as VALIDATED — the active pool — so ignoring an
+#: author's (or the import route's) ``state: draft`` would silently promote the
+#: file. It is adopted so it can only ever hold the skill back, never let it
+#: through: an unreadable value falls to DRAFT rather than being dropped.
 ADOPTED_FIELDS: frozenset[str] = frozenset(
     {
         "name",
@@ -58,6 +65,7 @@ ADOPTED_FIELDS: frozenset[str] = frozenset(
         "source_url",
         "docs_url",
         "token_budget_estimate",
+        "state",
     }
 )
 
@@ -85,6 +93,28 @@ def _normalise_key(key: Any) -> str:
     is folded away before the whitelist decides.
     """
     return str(key).strip().replace("-", "_").lower()
+
+
+def _fail_closed_state(
+    frontmatter: SkillFrontmatter, meta: Mapping[str, Any]
+) -> SkillFrontmatter:
+    """A ``state:`` the adapter could not read means DRAFT, never "active".
+
+    The loader reads an absent ``state`` as VALIDATED, so a foreign file
+    spelling it in a vocabulary Jarvis does not share (``state: published``)
+    would otherwise be *promoted* by having its own restriction dropped. The
+    file said something about its readiness; not understanding it is a reason
+    to hold it back, not to wave it through.
+    """
+    if frontmatter.state is not None:
+        return frontmatter
+    if not any(_normalise_key(key) == "state" for key in meta):
+        return frontmatter
+    log.warning(
+        "portable skill %r declared an unreadable state — holding it as draft",
+        frontmatter.name,
+    )
+    return frontmatter.model_copy(update={"state": SkillLifecycleState.DRAFT})
 
 
 def adapt_portable_frontmatter(meta: Mapping[str, Any]) -> PortableAdaptation | None:
@@ -143,7 +173,7 @@ def adapt_portable_frontmatter(meta: Mapping[str, Any]) -> PortableAdaptation | 
                 return None
             continue
         return PortableAdaptation(
-            frontmatter=frontmatter,
+            frontmatter=_fail_closed_state(frontmatter, meta),
             ignored=tuple(sorted(ignored)),
         )
 

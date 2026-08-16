@@ -129,6 +129,36 @@ async def test_import_preserves_the_body(
     assert "description: a skill downloaded from the internet" in stored
 
 
+_FOREIGN_FORMAT = (
+    "---\n"
+    "name: remote-skill\n"
+    "description: written for another agent\n"
+    "allowed-tools: Read, Grep\n"
+    "model: inherit\n"
+    "---\n\n"
+    "## Body\n\nJust a marker body.\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_import_accepts_a_skill_written_for_another_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A SKILL.md in the open Agent Skills format imports — and stays a draft.
+
+    The portable adapter (jarvis/skills/portable.py) is what makes the first
+    half work; the second half is the guard above it: the adapter must not
+    drop the stamped ``state: draft`` and thereby promote the file into the
+    active pool.
+    """
+    detail, frontmatter = await _import(_FOREIGN_FORMAT, tmp_path, monkeypatch)
+
+    assert frontmatter["state"] == "draft"
+    assert detail["state"] == "draft"
+    assert detail["portable"] is True
+    assert set(detail["ignored_fields"]) == {"allowed-tools", "model"}
+
+
 @pytest.mark.asyncio
 async def test_import_refuses_a_traversal_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

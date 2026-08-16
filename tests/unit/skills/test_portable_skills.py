@@ -185,6 +185,52 @@ Body.
     assert skill.portable is False
 
 
+def test_a_declared_draft_is_honoured(tmp_path: Path) -> None:
+    """AP-15: the import route stamps ``state: draft`` into the file it stores.
+
+    Dropping that key in portable mode would PROMOTE the skill — the loader
+    reads an absent state as VALIDATED, which is the active pool. So a
+    downloaded file that says draft stays a draft.
+    """
+    text = """---
+name: imported
+description: downloaded from the internet
+allowed-tools: Read
+state: draft
+---
+
+Body.
+"""
+    skill = parse_skill(_write(tmp_path, "imported", text))
+
+    assert skill.portable is True
+    assert skill.state == SkillLifecycleState.DRAFT
+
+
+def test_an_unreadable_state_holds_the_skill_back(tmp_path: Path) -> None:
+    # A word from another agent's vocabulary. Not understanding it is a reason
+    # to hold the skill, not to wave it through.
+    text = """---
+name: mystery
+description: says something about its own readiness
+allowed-tools: Read
+state: published
+---
+
+Body.
+"""
+    skill = parse_skill(_write(tmp_path, "mystery", text))
+
+    assert skill.portable is True
+    assert skill.state == SkillLifecycleState.DRAFT
+
+
+def test_a_state_free_portable_skill_still_loads_normally(tmp_path: Path) -> None:
+    skill = parse_skill(_write(tmp_path, "three-point-check", CLAUDE_CODE_SKILL))
+
+    assert skill.state == SkillLifecycleState.VALIDATED
+
+
 def test_non_mapping_frontmatter_is_refused() -> None:
     assert adapt_portable_frontmatter({"name": 42}) is None
     assert adapt_portable_frontmatter({"name": "   "}) is None

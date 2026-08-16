@@ -63,6 +63,12 @@ schema, so a typo in a hand-written skill is caught where it is made.
   `description`, `when_to_use`, `version`, `author`, `license`, `category`,
   `tags`, the three URLs, `token_budget_estimate`. Dashed spellings
   (`when-to-use`) fold onto the underscored ones.
+* **`state` is adopted, for the opposite of the usual reason.** The loader
+  reads a missing `state` as VALIDATED — the active pool — so dropping an
+  author's (or the import route's, AP-15) `state: draft` would *promote* the
+  file by discarding its own restriction. It is read so it can only hold a
+  skill back: a value in a vocabulary Jarvis does not share (`state:
+  published`) falls to DRAFT rather than being ignored.
 * **Nothing that grants behaviour crosses over** — not even when a foreign
   file spells it exactly the way Jarvis does: `triggers` (fires by itself),
   `risk_policy` (lowers the confirmation tier), `auto_fire` (promotes into the
