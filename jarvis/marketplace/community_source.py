@@ -24,6 +24,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from jarvis.core.http_guard import https_only_async
+
 logger = logging.getLogger(__name__)
 
 # Repo-root data/ — same resolution as jarvis/marketplace/catalog_data.py.
@@ -316,8 +318,13 @@ async def get_index(
             return hit[1], "fresh"
 
         try:
+            # The index URL is configuration, but its redirects are not: the
+            # host on the other end picks them, so the chain stays on https.
             async with httpx.AsyncClient(
-                timeout=_FETCH_TIMEOUT, follow_redirects=True, transport=transport
+                timeout=_FETCH_TIMEOUT,
+                follow_redirects=True,
+                transport=transport,
+                **https_only_async(),
             ) as client:
                 response = await client.get(url)
                 response.raise_for_status()

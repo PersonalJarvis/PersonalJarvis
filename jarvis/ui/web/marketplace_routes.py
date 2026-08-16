@@ -42,6 +42,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from jarvis.core.events import MarketplaceItemInstalled
+from jarvis.core.http_guard import InsecureRedirect, https_only_async
 from jarvis.core.process_utils import resolve_executable
 from jarvis.core.uploads import UploadRejected, stage_upload
 from jarvis.marketplace.auth import (
@@ -946,6 +947,7 @@ async def _download_text(raw_url: str, *, transport: Any = None) -> tuple[str, b
         follow_redirects=True,
         timeout=httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=20.0),
         transport=transport,
+        **https_only_async(),
     ) as client:
         try:
             async with client.stream("GET", raw_url) as resp:
@@ -1221,7 +1223,9 @@ async def _download_image(
     Streamed rather than read whole so an oversized (or endless) body is cut
     off mid-flight instead of being absorbed first. The redirect chain is
     re-checked: the index validator only sees the URL it was given, and a
-    302 to plain http would put the server back on an SSRF path.
+    302 to plain http would put the server back on an SSRF path. The guard
+    refuses that hop BEFORE it is made; the scheme check below stays as the
+    second pair of eyes on where the chain actually ended up.
 
     ``transport`` is the injection point tests use (same shape as
     ``community_source.get_index``); production passes nothing.
@@ -1230,6 +1234,7 @@ async def _download_image(
         follow_redirects=True,
         timeout=httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=20.0),
         transport=transport,
+        **https_only_async(),
     ) as client:
         try:
             async with client.stream("GET", raw_url) as resp:
@@ -1252,6 +1257,11 @@ async def _download_image(
                             ),
                         )
                     chunks.append(chunk)
+        except InsecureRedirect as exc:
+            # Not a 502: the registry entry itself is what is wrong, and
+            # saying "the other end failed" would send the reader looking for
+            # a network problem that does not exist.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(
                 status_code=502, detail=f"download from {raw_url} failed: {exc}"

@@ -439,9 +439,16 @@ class SkillFinder:
         # httpx is in the runtime deps (mcp_routes etc.)
         import httpx
 
+        from jarvis.core.http_guard import https_only_async
+
+        # The https check above covers the URL the index gave us. The guard
+        # covers every url after it: a publisher who controls the host also
+        # controls its Location header, and one 302 would otherwise put this
+        # download back on the loopback API or a metadata endpoint.
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=httpx.Timeout(15.0),
+            **https_only_async(),
         ) as client:
             try:
                 resp = await client.get(candidate.raw_url)
