@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import signal
 import sys
 import time
 
 from jarvis.core.branding import CONFIG_FILE_NAME
+from jarvis.core.branding import PRODUCT_NAME as APP_DISPLAY_NAME
 from jarvis.core.process_utils import ensure_standard_streams
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
 
@@ -771,8 +773,82 @@ async def _run_headless(args) -> int:
     return 0
 
 
+def _show_error_dialog(title: str, message: str) -> None:
+    """Last-resort visible surface: a native modal box. Windows-only, no-op else.
+
+    Separated from ``_report_startup_failure`` so tests can assert the decision
+    to show a box without a real one ever opening — an unattended dialog blocks
+    the process until someone clicks it, which in CI means a hung run.
+    """
+    if sys.platform != "win32":
+        return
+    with contextlib.suppress(Exception):
+        import ctypes
+
+        MB_ICONERROR = 0x10
+        ctypes.windll.user32.MessageBoxW(None, message, title, MB_ICONERROR)
+
+
+def _report_startup_failure(message: str) -> None:
+    """Put a desktop-start failure somewhere the user will actually see it.
+
+    A windowless interpreter is the whole problem here. ``pythonw`` — what the
+    Start-Menu shortcut and ``run.bat`` use, so no console flashes up — has no
+    standard streams, so the reason the app refused to start is written into the
+    null device ``ensure_standard_streams`` substituted. From the user's side
+    the app "just doesn't start any more": no window, no error, nothing to
+    search for. When stderr demonstrably went nowhere, say it in a dialog.
+
+    Whenever stderr IS readable — a terminal, a pipe, a redirected build log —
+    the print below is the whole job and a modal box would only be in the way.
+    The log line is written either way, so the reason survives for a support
+    question even if the box is clicked away.
+    """
+    print(message, file=sys.stderr, flush=True)
+    with contextlib.suppress(Exception):
+        from loguru import logger as _slog
+
+        _slog.error(message)
+    with contextlib.suppress(Exception):
+        from jarvis.core.process_utils import standard_error_is_visible
+
+        if not standard_error_is_visible():
+            _show_error_dialog(f"{APP_DISPLAY_NAME} could not start", message)
+
+
+def _missing_window_toolkit() -> str | None:
+    """Explain a missing pywebview, or ``None`` when the window can be built.
+
+    The base install ships without a window toolkit on purpose (it lives in the
+    ``[full]`` extra), and the shortcut can also end up aimed at a foreign
+    interpreter. Both end in the same ``ModuleNotFoundError`` deep inside the
+    boot — checked here so the user gets a sentence instead of a traceback, and
+    is told about the window-less mode that does work on their install.
+    """
+    import importlib.util
+
+    try:
+        if importlib.util.find_spec("webview") is not None:
+            return None
+    except (ImportError, ValueError):  # broken/partial install
+        pass
+    return (
+        f"{APP_DISPLAY_NAME} cannot open its window: the pywebview package is "
+        f"missing from this Python install.\n\n"
+        f"Python: {sys.executable}\n\n"
+        f"Install the desktop extra:\n"
+        f"    pip install 'personal-jarvis[full]'\n\n"
+        f"Or start it without a window:\n"
+        f"    jarvis serve"
+    )
+
+
 def _run_desktop(cfg, use_lock: bool) -> int:
-    """Full desktop app with a pywebview window."""
+    """Full desktop app with a pywebview window.
+
+    ``main()`` has already established that pywebview is importable
+    (``_missing_window_toolkit``), so the window layer can be built here.
+    """
     # AUMID must be set before pywebview creates the window (taskbar icon).
     _ensure_windows_app_identity()
     from jarvis.ui.desktop_app import (
@@ -1079,6 +1155,17 @@ def main(argv: list[str] | None = None) -> int:
 
     _raw_argv = argv if argv is not None else sys.argv[1:]
     args = _parse_args(_raw_argv)
+
+    # Refuse a window we cannot build, BEFORE paying for the boot. Everything
+    # below this line — config, control key, autostart, backend, voice — takes
+    # up to a minute and would all be thrown away at the pywebview import. Worse,
+    # under `pythonw` that import error has nowhere to print, so the app just
+    # never appears. Check the one import that decides it, and say so out loud.
+    if not args.headless:
+        _no_window = _missing_window_toolkit()
+        if _no_window is not None:
+            _report_startup_failure(_no_window)
+            return 4
 
     # Drop administrator rights BEFORE booting, not after.
     #

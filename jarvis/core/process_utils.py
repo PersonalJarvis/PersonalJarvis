@@ -58,6 +58,9 @@ def ensure_standard_streams() -> None:
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name, None)
         if stream is None:
+            # Recorded in _NULL_STANDARD_STREAMS so callers can ask whether what
+            # they just printed actually reached a human — see
+            # ``standard_error_is_visible``.
             replacement = open(  # noqa: SIM115 - intentionally process-lifetime
                 os.devnull,
                 "w",
@@ -74,6 +77,24 @@ def ensure_standard_streams() -> None:
                 # No reconfigure support or a closed/redirected stream — the
                 # original stream keeps working, just without forced UTF-8.
                 pass
+
+
+def standard_error_is_visible() -> bool:
+    """Can a human read what we write to ``sys.stderr``?
+
+    False in a windowed process — ``pythonw.exe``, a GUI PyInstaller build — where
+    ``ensure_standard_streams`` had to substitute the null device, so everything
+    printed there is discarded. Code that reports a fatal startup problem uses
+    this to decide whether stderr was enough or whether the message needs a
+    second, visible surface (a dialog). Getting that decision from the stream we
+    actually wrote to beats guessing from a console handle: a redirected build
+    log, a pipe and an IDE console are all legitimately readable, and none of
+    them own a console window.
+    """
+    stream = getattr(sys, "stderr", None)
+    if stream is None or getattr(stream, "closed", False):
+        return False
+    return not any(stream is null for null in _NULL_STANDARD_STREAMS)
 
 
 if sys.platform == "win32":
