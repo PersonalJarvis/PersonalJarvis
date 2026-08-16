@@ -390,6 +390,16 @@ class MCPClient:
         command, *args = expanded
 
         # env: system env as the base, overrides on top. String values only.
+        #
+        # Unless the server is untrusted — then the base is the smallest
+        # environment a process can start in, because "the system env" on the
+        # owner's machine is where their API keys live and a community plugin
+        # is a stranger's code running as our child (jarvis.mcp.env_isolation).
+        if self.spec.isolate_env:
+            from jarvis.mcp.env_isolation import isolated_environment
+
+            return command, args, isolated_environment(self._env_overrides)
+
         env = dict(os.environ)
         env.update({k: str(v) for k, v in self._env_overrides.items()})
         return command, args, env

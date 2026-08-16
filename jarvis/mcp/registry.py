@@ -46,6 +46,13 @@ class MCPServerSpec:
     # HTTP headers for the http transport. Values may contain ``$SECRET``
     # placeholders resolved against the Credential Manager at connect time.
     headers: dict[str, str] = field(default_factory=dict)
+    # Start this stdio server WITHOUT the process environment (see
+    # ``jarvis.mcp.env_isolation``). Set for servers whose command line came
+    # from someone other than the user — a community plugin would otherwise
+    # inherit every API key the owner ever exported. Off by default: a server
+    # from the user's own mcp.json is theirs, and cutting its environment
+    # would break the many that read a token straight out of it.
+    isolate_env: bool = False
 
 
 # ----------------------------------------------------------------------

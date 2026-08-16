@@ -66,6 +66,13 @@ def plugin_to_mcp_server_spec(
             description=plugin.description,
             install_command=resolved_install,
             transport="stdio",
+            # A community entry is a command line somebody else wrote, and the
+            # user approved it from a dialog, not from reading the code. It
+            # starts with the environment it needs and its own token — never
+            # with the owner's other credentials (jarvis.mcp.env_isolation).
+            # A seed plugin is this project's own; a locally uploaded one the
+            # user put there themselves.
+            isolate_env=plugin.source == "community",
         )
         return server_spec, env_overrides
 

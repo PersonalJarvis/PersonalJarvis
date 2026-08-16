@@ -50,8 +50,17 @@ the TTL-gated refresh.
 
 1. **Registry CI** (`scripts/validate.py` there): naming rules + reserved
    built-in names, https-only URLs, stdio launcher allowlist
-   (`npx`/`uvx`/`docker`) with pinned versions, `$plugin_…` placeholders
-   only (no literal credentials anywhere), size limits, secret-pattern scan.
+   (`npx`/`uvx`/`docker`), `$plugin_…` placeholders only (no literal
+   credentials anywhere), size limits, secret-pattern scan.
+   The launcher allowlist covers its ARGUMENTS too, and has to: each of the
+   three launchers has options that run anything at all (`npx -c`, `uvx
+   --with`, `docker -v/--privileged`), so allowing only the name would allow
+   everything. The package a launcher fetches must be a pinned name from its
+   own registry — never a git ref, URL or path, all of which name code that
+   changes after review — and env keys may not name the machinery that starts
+   the server (`PATH`, `LD_PRELOAD`, …). The data half of these rules is
+   published in `rules.json` so the other two layers read the values rather
+   than retyping them.
 2. **Ownership**: first merged submission claims the name in
    `registry.json`; updates auto-merge only from the same GitHub account
    and must increase the version. The auto-merge gate runs trusted
@@ -62,7 +71,14 @@ the TTL-gated refresh.
 4. **Consent dialog** (app + storefront detail view): shows verbatim the
    MCP URL (where requests and the token go) or the stdio argv (what runs
    locally) BEFORE install. Community entries are badged "not reviewed".
-5. Existing blast-radius limits apply unchanged: per-plugin connect
+5. **Environment isolation**: a connected community plugin's stdio process
+   starts WITHOUT the app's environment (`jarvis/mcp/env_isolation.py`) — it
+   gets what a process needs to run and reach the network, plus its own
+   token. A child process otherwise inherits every exported credential on the
+   machine, which is one `os.environ` read away from code the user only ever
+   saw in a dialog. Does not reach the delegated worker path, where the
+   claude CLI starts the server itself.
+6. Existing blast-radius limits apply unchanged: per-plugin connect
    isolation, per-turn relevance gate, `ToolExecutor` as the single
    execution path, skill Draft/Validated lifecycle.
 
