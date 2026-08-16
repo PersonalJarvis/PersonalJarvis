@@ -774,19 +774,71 @@ async def _run_headless(args) -> int:
 
 
 def _show_error_dialog(title: str, message: str) -> None:
-    """Last-resort visible surface: a native modal box. Windows-only, no-op else.
+    """Last-resort visible surface: a native modal box, on every desktop OS.
 
-    Separated from ``_report_startup_failure`` so tests can assert the decision
-    to show a box without a real one ever opening — an unattended dialog blocks
-    the process until someone clicks it, which in CI means a hung run.
+    Reached only when the message provably went nowhere else (see
+    ``_report_startup_failure``), because a GUI launch is mute on all three
+    platforms: Windows ``pythonw`` has no streams at all, a macOS ``.app`` and a
+    Linux ``.desktop`` with ``Terminal=false`` bury stderr in Console.app and
+    the journal. Same failure, same class of user, so all three get a dialog.
+
+    Windows uses Win32 directly; macOS uses ``osascript``, which every install
+    has; Linux tries the two desktop dialog helpers in turn and honestly gives
+    up if the distro ships neither — stderr and the log still carry the reason.
+
+    Separated from its caller so tests can assert the DECISION to show a box
+    without a real one opening: an unattended modal blocks until someone clicks
+    it, which in CI is a hung run.
     """
-    if sys.platform != "win32":
-        return
-    with contextlib.suppress(Exception):
-        import ctypes
+    if sys.platform == "win32":
+        with contextlib.suppress(Exception):
+            import ctypes
 
-        MB_ICONERROR = 0x10
-        ctypes.windll.user32.MessageBoxW(None, message, title, MB_ICONERROR)
+            MB_ICONERROR = 0x10
+            ctypes.windll.user32.MessageBoxW(None, message, title, MB_ICONERROR)
+        return
+
+    import subprocess
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    def _run(cmd: list[str]) -> bool:
+        try:
+            subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input in argv[0]
+                cmd,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            return True
+        except (OSError, ValueError):
+            return False  # helper not installed → try the next one
+
+    if sys.platform == "darwin":
+        # AppleScript string literals: backslash first, then the quote.
+        def _as(text: str) -> str:
+            return text.replace("\\", "\\\\").replace('"', '\\"')
+
+        _run(
+            [
+                "osascript",
+                "-e",
+                f'display dialog "{_as(message)}" with title "{_as(title)}" '
+                'buttons {"OK"} default button "OK" with icon stop',
+            ]
+        )
+        return
+
+    # Linux: no shell, so the text is an argument and needs no escaping.
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return  # no graphical session — a dialog has nowhere to appear
+    for cmd in (
+        ["zenity", "--error", f"--title={title}", f"--text={message}"],
+        ["kdialog", "--title", title, "--error", message],
+    ):
+        if _run(cmd):
+            return
 
 
 def _report_startup_failure(message: str) -> None:

@@ -110,9 +110,129 @@ class TestFailureIsVisible:
         monkeypatch.setattr("loguru.logger.error", _explode)
         launcher._report_startup_failure("still has to survive this")
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="tests the non-Windows no-op")
-    def test_dialog_is_a_noop_off_windows(self) -> None:
-        launcher._show_error_dialog("title", "body")
+class TestDialogOnEveryDesktopOS:
+    """A GUI launch is mute on all three platforms, so all three get a dialog.
+
+    ``sys.platform`` is patched rather than skipped on, so the macOS and Linux
+    branches are exercised wherever the suite runs — including the maintainer's
+    Windows box, which is the only machine most of this code is written on. A
+    fake ``subprocess.run`` keeps real dialogs closed and needs no helper binary
+    installed.
+    """
+
+    @pytest.fixture
+    def spawned(self, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        import subprocess
+
+        calls: list[list[str]] = []
+
+        def _fake_run(cmd: list[str], **kwargs: object) -> object:
+            calls.append(cmd)
+            assert kwargs.get("encoding") == "utf-8", "subprocesses must be UTF-8"
+            return object()
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        return calls
+
+    @staticmethod
+    def _as_platform(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+        monkeypatch.setattr(launcher.sys, "platform", name)
+
+    def test_macos_uses_osascript(
+        self, spawned: list[list[str]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._as_platform(monkeypatch, "darwin")
+        launcher._show_error_dialog("Title", "Body")
+        assert spawned and spawned[0][0] == "osascript"
+        assert "display dialog" in spawned[0][-1]
+
+    def test_macos_escapes_applescript_string_literals(
+        self, spawned: list[list[str]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unescaped quote turns the message into a syntax error, i.e. silence."""
+        self._as_platform(monkeypatch, "darwin")
+        launcher._show_error_dialog('Ti"tle', 'say \\ and "quote"')
+        script = spawned[0][-1]
+        assert '\\"quote\\"' in script and "\\\\" in script
+
+    def test_linux_prefers_zenity_and_passes_text_as_an_argument(
+        self, spawned: list[list[str]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._as_platform(monkeypatch, "linux")
+        monkeypatch.setenv("DISPLAY", ":0")
+        launcher._show_error_dialog("Title", "Body; rm -rf /")
+        assert spawned and spawned[0][0] == "zenity"
+        # No shell anywhere, so shell metacharacters are inert data.
+        assert "--text=Body; rm -rf /" in spawned[0]
+
+    def test_linux_falls_back_to_kdialog(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        calls: list[list[str]] = []
+
+        def _fake_run(cmd: list[str], **kwargs: object) -> object:
+            calls.append(cmd)
+            if cmd[0] == "zenity":
+                raise FileNotFoundError("zenity is not installed")
+            return object()
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        self._as_platform(monkeypatch, "linux")
+        monkeypatch.setenv("DISPLAY", ":0")
+        launcher._show_error_dialog("Title", "Body")
+        assert [c[0] for c in calls] == ["zenity", "kdialog"]
+
+    def test_linux_without_a_graphical_session_stays_quiet(
+        self, spawned: list[list[str]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A headless host has nowhere to show a box; stderr and the log carry it."""
+        self._as_platform(monkeypatch, "linux")
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        launcher._show_error_dialog("Title", "Body")
+        assert not spawned
+
+    def test_wayland_counts_as_a_graphical_session(
+        self, spawned: list[list[str]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._as_platform(monkeypatch, "linux")
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        launcher._show_error_dialog("Title", "Body")
+        assert spawned, "a Wayland desktop can show a dialog"
+
+    def test_linux_survives_a_distro_with_neither_helper(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import subprocess
+
+        def _missing(cmd: list[str], **kwargs: object) -> object:
+            raise FileNotFoundError(cmd[0])
+
+        monkeypatch.setattr(subprocess, "run", _missing)
+        self._as_platform(monkeypatch, "linux")
+        monkeypatch.setenv("DISPLAY", ":0")
+        launcher._show_error_dialog("Title", "Body")  # must not raise
+
+    def test_no_dialog_helper_ever_runs_through_a_shell(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The message is attacker-influenced only in theory, but shell=True here
+        would turn a diagnostic into command execution. Pin it closed."""
+        import subprocess
+
+        seen: list[dict[str, object]] = []
+
+        def _fake_run(cmd: list[str], **kwargs: object) -> object:
+            seen.append(kwargs)
+            return object()
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        monkeypatch.setenv("DISPLAY", ":0")
+        for platform_name in ("darwin", "linux"):
+            self._as_platform(monkeypatch, platform_name)
+            launcher._show_error_dialog("T", "B")
+        assert seen and all(not kw.get("shell") for kw in seen)
 
 
 class TestStandardErrorVisibility:
