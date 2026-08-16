@@ -114,22 +114,35 @@ class CommunityWallpaperEntry(_Tolerant):
     published_at: str | None = None
     categories: list[str] = Field(default_factory=list)
     source_url: str | None = None
-    # Direct download of the image itself.
+    license: str | None = None
+    #: Full-size picture. This is what the published registry actually emits;
+    #: ``raw_url`` is accepted alongside it so the field name the other two
+    #: kinds use keeps working for a hand-written entry.
+    image_url: str | None = None
     raw_url: str | None = None
+    #: Small preview, for showing the picture before anything is installed.
+    thumb_url: str | None = None
+    width: int | None = None
+    height: int | None = None
     # Light/dark hint from the publisher. Only a hint: the server re-derives
     # the theme from the actual pixels, exactly as it does for an upload, so a
     # wrong or absent value costs nothing.
     theme: str | None = None
 
-    @field_validator("raw_url")
+    @field_validator("image_url", "raw_url", "thumb_url")
     @classmethod
     def _https_only(cls, value: str | None) -> str | None:
         # Same reasoning as the skill raw_url above: the backend fetches this
         # server-side, so anything but https is an SSRF vector.
         if value is not None and not value.lower().startswith("https://"):
-            logger.warning("community index: dropping non-https wallpaper raw_url %r", value)
+            logger.warning("community index: dropping non-https wallpaper url %r", value)
             return None
         return value
+
+    @property
+    def download_url(self) -> str | None:
+        """The picture to fetch, whichever field the publisher used."""
+        return self.image_url or self.raw_url
 
 
 class CommunityIndex(_Tolerant):

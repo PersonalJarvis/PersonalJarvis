@@ -67,7 +67,15 @@ def _index_payload() -> dict[str, Any]:
                 "description": "A dark wave under a full moon",
                 "publisher": "octocat",
                 "version": "1.0.0",
-                "raw_url": "https://raw.example/wallpapers/moonlit-wave.png",
+                # The published registry emits `image_url` + `thumb_url` and
+                # leaves `raw_url` null — pinned here because reading the
+                # wrong field made every published wallpaper uninstallable.
+                "image_url": "https://pages.example/wallpapers/moonlit-wave/wallpaper.webp",
+                "thumb_url": "https://pages.example/wallpapers/moonlit-wave/thumb.webp",
+                "raw_url": None,
+                "license": "CC0-1.0",
+                "width": 1920,
+                "height": 1080,
                 "source_url": "https://github.com/PersonalJarvis/marketplace",
                 "theme": "dark",
             }
@@ -150,6 +158,35 @@ async def test_browse_lists_published_wallpapers(env: Path) -> None:
     assert paper["name"] == "moonlit-wave"
     assert paper["title"] == "Moonlit Wave"
     assert paper["installed"] is False
+    # The picture the install would fetch, whichever field the publisher used.
+    assert paper["image_url"].endswith("wallpaper.webp")
+    assert paper["raw_url"] == paper["image_url"]
+    assert paper["thumb_url"].endswith("thumb.webp")
+
+
+@pytest.mark.asyncio
+async def test_the_download_url_comes_from_the_published_field(env: Path) -> None:
+    """Regression: the registry emits `image_url`, not `raw_url`.
+
+    Reading only `raw_url` left every published wallpaper with no download at
+    all — browsable, and refused the moment anyone pressed install.
+    """
+    index, _ = await community_source.get_index()
+    paper = index.wallpapers[0]
+    assert paper.raw_url is None
+    assert paper.download_url == paper.image_url
+
+
+@pytest.mark.asyncio
+async def test_a_non_https_image_url_is_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The server fetches this URL — plain http would be an SSRF primitive."""
+    from jarvis.marketplace.community_source import CommunityWallpaperEntry
+
+    entry = CommunityWallpaperEntry(
+        name="x", image_url="http://plain.example/a.webp", thumb_url="http://plain.example/t.webp"
+    )
+    assert entry.image_url is None
+    assert entry.download_url is None
 
 
 @pytest.mark.asyncio
