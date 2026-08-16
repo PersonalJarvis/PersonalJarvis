@@ -23,16 +23,22 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from jarvis.core.paths import user_skills_dir
+from jarvis.core.uploads import UploadRejected, stage_upload
 from jarvis.skills.builtin import BUILTIN_SKILL_NAMES
 from jarvis.skills.finder import SearchFilters, SkillFinder
 from jarvis.skills.loader import parse_skill
 from jarvis.skills.origin import read_origin
 from jarvis.skills.schema import RESOURCE_KINDS, Skill, SkillLifecycleState
+from jarvis.ui.web.upload_intake import (
+    read_upload_entries,
+    upload_http_error,
+    upload_limits,
+)
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -103,6 +109,12 @@ def _skill_to_summary(s: Skill) -> dict[str, Any]:
         "tags": list(fm.tags) if fm else [],
         "resources": resources,
         "resource_count": resource_count,
+        # Read through the portable adapter: a SKILL.md written for the open
+        # Agent Skills format, not for Jarvis. The ignored keys travel with it
+        # — the owner of the file has to be able to see what was dropped from
+        # it, which is the whole difference between tolerant and sloppy.
+        "portable": s.portable,
+        "ignored_fields": list(s.ignored_fields),
     }
 
 
@@ -719,6 +731,220 @@ async def import_skill_from_path(
 
     detail = _skill_to_detail(reg.get(name))
     detail["lint_findings"] = lint_findings
+    return detail
+
+
+# ----------------------------------------------------------------------
+# Upload — a skill folder or archive dropped onto the UI
+# ----------------------------------------------------------------------
+
+def _locate_skill_root(staged_root: Path) -> Path:
+    """The folder inside a staged upload that actually holds the skill.
+
+    People drop three different things and mean the same one: the skill
+    folder, its contents, or a repository ZIP where the skill sits a few
+    levels down (``repo-main/skills/my-skill/``). Staging already strips one
+    shared wrapper; this walks the rest of the way.
+
+    A single ``SKILL.md`` anywhere in the tree names the skill. Several mean
+    the upload holds a catalog rather than one skill — that is refused with
+    the paths listed, because guessing which one was meant is exactly the kind
+    of silent choice that installs the wrong thing.
+    """
+    candidates = sorted(
+        path
+        for path in staged_root.rglob("*")
+        if path.is_file() and path.name.lower() == "skill.md"
+    )
+    if not candidates:
+        raise HTTPException(
+            status_code=400,
+            detail="No SKILL.md found in the upload.",
+        )
+    if len(candidates) > 1:
+        listed = ", ".join(
+            str(path.relative_to(staged_root)).replace("\\", "/")
+            for path in candidates[:5]
+        )
+        suffix = ", ..." if len(candidates) > 5 else ""
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The upload holds {len(candidates)} skills ({listed}{suffix}). "
+                "Upload one skill folder at a time."
+            ),
+        )
+
+    found = candidates[0]
+    # The loader looks for the exact name ``SKILL.md``. A drop from a
+    # case-insensitive filesystem may spell it ``Skill.md``; renaming here
+    # keeps that upload working instead of failing on a detail nobody typed.
+    if found.name != "SKILL.md":
+        renamed = found.with_name("SKILL.md")
+        try:
+            found.replace(renamed)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not normalize {found.name}: {exc}",
+            ) from exc
+        found = renamed
+    return found.parent
+
+
+def _describe_staged_skill(folder: Path, reg: Any) -> dict[str, Any]:
+    """What this upload would install — read, parsed, but nothing written.
+
+    Deliberately returns problems instead of raising: the inspect route feeds
+    a form the owner is still filling in, and a form that reports three issues
+    at once beats one that dies on the first.
+    """
+    from jarvis.skills.authoring.draft_writer import safe_lint_skill_body
+
+    problems: list[str] = []
+    parsed = parse_skill(folder / "SKILL.md")
+    if parsed.frontmatter is None:
+        return {
+            "skill": None,
+            "lint_findings": [],
+            "problems": [f"SKILL.md could not be read: {parsed.error}"],
+            "ready": False,
+        }
+
+    name = parsed.name
+    if name in BUILTIN_SKILL_NAMES:
+        problems.append(f"'{name}' is a built-in skill name and cannot be imported.")
+    else:
+        try:
+            reg.get(name)
+        except KeyError:  # free — the normal case for a fresh upload
+            pass
+        else:
+            problems.append(f"Skill '{name}' already exists.")
+    if not _IMPORT_NAME_RE.match(name or ""):
+        problems.append(
+            f"Skill name {name!r} is not a valid slug "
+            "(letters, digits, '-', '_'; max 64 chars)."
+        )
+
+    lint_findings: list[str] = []
+    try:
+        lint_findings = list(safe_lint_skill_body(parsed.body))
+    except Exception:  # noqa: BLE001 — a missing lint module must not block preview
+        lint_findings = []
+
+    fm = parsed.frontmatter
+    resources = {
+        kind: [entry for entry in (folder / kind).iterdir() if entry.is_file()]
+        for kind in RESOURCE_KINDS
+        if (folder / kind).is_dir()
+    }
+    return {
+        "skill": {
+            "name": name,
+            "description": fm.description,
+            "category": fm.category,
+            "version": fm.version,
+            "tags": list(fm.tags),
+            # A lint finding does not block the install — it lands as a draft.
+            # Saying so up front is the difference between an informed yes and
+            # a surprise.
+            "state": (
+                SkillLifecycleState.DRAFT.value if lint_findings else parsed.state.value
+            ),
+            "resource_count": sum(len(entries) for entries in resources.values()),
+        },
+        "lint_findings": lint_findings,
+        "problems": problems,
+        "ready": not problems,
+    }
+
+
+@router.post("/upload/inspect", openapi_extra={"x-jarvis-readonly": True})
+async def inspect_skill_upload(
+    request: Request,
+    files: list[UploadFile] = File(...),  # noqa: B008 — FastAPI dependency default
+    paths: str | None = Form(default=None),  # noqa: B008 — same
+) -> dict[str, Any]:
+    """Reports what a dropped folder or archive holds, without installing it.
+
+    This is what lets the publish form fill itself in: the upload is staged in
+    a temporary directory, parsed, then thrown away. Nothing reaches the
+    skills directory on this route.
+    """
+    import tempfile
+
+    reg = _require_registry(request)
+    entries = await read_upload_entries(files, paths)
+
+    def _work() -> dict[str, Any]:
+        with tempfile.TemporaryDirectory(prefix="jarvis-skill-inspect-") as tmp:
+            try:
+                staged = stage_upload(entries, Path(tmp) / "skill")
+            except UploadRejected as exc:
+                raise upload_http_error(exc) from exc
+            folder = _locate_skill_root(staged.root)
+            described = _describe_staged_skill(folder, reg)
+            # Paths are reported relative to the located skill root, so the UI
+            # shows what will be installed rather than what was dropped.
+            described["files"] = sorted(
+                str(path.relative_to(folder)).replace("\\", "/")
+                for path in folder.rglob("*")
+                if path.is_file()
+            )
+            described["ignored"] = list(staged.ignored)
+            described["stripped_root"] = staged.stripped_root
+            described["total_bytes"] = staged.total_bytes
+            described["limits"] = upload_limits()
+            return described
+
+    return await asyncio.to_thread(_work)
+
+
+@router.post("/upload")
+async def upload_skill(
+    request: Request,
+    files: list[UploadFile] = File(...),  # noqa: B008 — FastAPI dependency default
+    paths: str | None = Form(default=None),  # noqa: B008 — same
+) -> dict[str, Any]:
+    """Installs a skill folder or archive dropped onto the UI.
+
+    Trust model matches ``POST /import-local``: the owner picked these files
+    from their own machine, so a lint-clean skill is honored as parsed, while
+    a body that fails the promotion safety lint is stamped DRAFT with the
+    findings returned. Staging (``jarvis.core.uploads``) is what keeps a
+    crafted archive from writing outside the temporary folder; the install
+    itself reuses the very same code path the local-folder import uses.
+    """
+    import tempfile
+
+    reg = _require_registry(request)
+    entries = await read_upload_entries(files, paths)
+
+    def _work() -> tuple[str, list[str], dict[str, Any]]:
+        with tempfile.TemporaryDirectory(prefix="jarvis-skill-upload-") as tmp:
+            try:
+                staged = stage_upload(entries, Path(tmp) / "skill")
+            except UploadRejected as exc:
+                raise upload_http_error(exc) from exc
+            folder = _locate_skill_root(staged.root)
+            name, lint_findings = _import_skill_folder(str(folder), reg)
+            return name, lint_findings, staged.to_json()
+
+    name, lint_findings, staged_json = await asyncio.to_thread(_work)
+
+    # A real reload rather than a dict insert, for the reason spelled out on
+    # ``/import-local``: the match index has to rebuild or the skill is listed
+    # but invisible to the paraphrase channel.
+    try:
+        await reg.reload()
+    except Exception:  # noqa: BLE001 — fall back to the minimal insert
+        installed = parse_skill(user_skills_dir() / name / "SKILL.md")
+        reg._skills[name] = installed  # type: ignore[attr-defined]
+
+    detail = _skill_to_detail(reg.get(name))
+    detail["lint_findings"] = lint_findings
+    detail["upload"] = staged_json
     return detail
 
 
