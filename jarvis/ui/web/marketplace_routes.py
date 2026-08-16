@@ -8,7 +8,7 @@ Endpoints:
     DELETE /api/marketplace/plugins/{id}                   — disconnect
     GET    /api/marketplace/community                      — community index browse
     POST   /api/marketplace/community/refresh              — force index re-fetch
-    POST   /api/marketplace/community/install/{id}         — install by name (skill OR plugin)
+    POST   /api/marketplace/community/install/{id}         — install by name (any kind)
     POST   /api/marketplace/community/plugins/{id}/install — one-click install
     DELETE /api/marketplace/community/plugins/{id}         — uninstall + revoke
 """
@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -744,7 +745,8 @@ def _community_payload(
     uses, so "shown as installable" and "actually installs" cannot drift: an
     entry the loader rejects renders as an explicit incompatible card instead
     of failing later at install time. Skills carry their install state from
-    the user skills directory.
+    the user skills directory, wallpapers from the recorded origin of the
+    pictures in the picker's own store.
     """
     from jarvis.core.paths import user_skills_dir
     from jarvis.marketplace.agent_plugins_loader import (
@@ -757,6 +759,7 @@ def _community_payload(
 
     plugins: list[dict[str, Any]] = []
     skills: list[dict[str, Any]] = []
+    wallpapers: list[dict[str, Any]] = []
     if index is not None:
         for entry in index.plugins:
             base = {
@@ -815,12 +818,40 @@ def _community_payload(
                 }
             )
 
+        from jarvis.ui.web.wallpapers import WallpaperUploads
+
+        # One listing for the whole loop: the picker's store is a directory
+        # scan, and asking it once per published wallpaper would turn browsing
+        # into an O(entries x installed) walk of the data directory.
+        installed_sources = {
+            item.origin.source_id
+            for item in WallpaperUploads().list()
+            if item.origin is not None
+        }
+        for paper in index.wallpapers:
+            wallpapers.append(
+                {
+                    "name": paper.name,
+                    "title": paper.title or paper.name,
+                    "description": paper.description,
+                    "publisher": paper.publisher,
+                    "version": paper.version,
+                    "published_at": paper.published_at,
+                    "categories": list(paper.categories),
+                    "source_url": paper.source_url,
+                    "raw_url": paper.raw_url,
+                    "theme": paper.theme,
+                    "installed": paper.name in installed_sources,
+                }
+            )
+
     return {
         "status": status,
         "revision": getattr(index, "revision", None),
         "generated_at": getattr(index, "generated_at", None),
         "plugins": plugins,
         "skills": skills,
+        "wallpapers": wallpapers,
     }
 
 
@@ -938,6 +969,8 @@ async def _install_community_skill(entry: Any, request: Request) -> dict[str, An
     exactly ONE skill install path (download guards, name-slug check, registry
     hot-swap) rather than a second copy that can drift.
     """
+    from jarvis.core.paths import user_skills_dir
+    from jarvis.skills.origin import SkillOrigin, write_origin
     from jarvis.ui.web.skills_routes import SkillInstallBody, install_from_catalog
 
     body = SkillInstallBody(
@@ -947,6 +980,18 @@ async def _install_community_skill(entry: Any, request: Request) -> dict[str, An
         title=entry.title or entry.name,
     )
     result = await install_from_catalog(body, request)
+    # Receipt AFTER the install: a downloaded SKILL.md carries nothing that
+    # says where it came from, and the Skills view has to be able to show it.
+    write_origin(
+        user_skills_dir() / entry.name,
+        SkillOrigin(
+            source_id=entry.name,
+            publisher=entry.publisher,
+            version=entry.version,
+            source_url=entry.source_url,
+            installed_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        ),
+    )
     summary = result.get("skill") or {}
     state = str(summary.get("state") or "draft")
     return {
@@ -967,19 +1012,134 @@ async def _install_community_skill(entry: Any, request: Request) -> dict[str, An
     }
 
 
+async def _download_image(
+    raw_url: str, limit_bytes: int, *, transport: Any = None
+) -> bytes:
+    """Fetch one image over https, refusing anything bigger than ``limit_bytes``.
+
+    Streamed rather than read whole so an oversized (or endless) body is cut
+    off mid-flight instead of being absorbed first. The redirect chain is
+    re-checked: the index validator only sees the URL it was given, and a
+    302 to plain http would put the server back on an SSRF path.
+
+    ``transport`` is the injection point tests use (same shape as
+    ``community_source.get_index``); production passes nothing.
+    """
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=20.0),
+        transport=transport,
+    ) as client:
+        try:
+            async with client.stream("GET", raw_url) as resp:
+                if resp.url.scheme != "https":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"refusing a non-https redirect to {resp.url}",
+                    )
+                resp.raise_for_status()
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > limit_bytes:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "that image is larger than "
+                                f"{limit_bytes // (1024 * 1024)} MB"
+                            ),
+                        )
+                    chunks.append(chunk)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"download from {raw_url} failed: {exc}"
+            ) from exc
+    return b"".join(chunks)
+
+
+async def _install_community_wallpaper(entry: Any) -> dict[str, Any]:
+    """Download one wallpaper and store it beside the owner's own uploads.
+
+    It goes through the SAME mill an upload does — Pillow decode, re-encode,
+    size ceiling — so an installed picture is never more trusted than a
+    dragged-in one. What it gains is a recorded origin, which is the only
+    reason the picker can later show where the tile came from.
+    """
+    from jarvis.ui.web.wallpapers import (
+        MAX_UPLOAD_BYTES,
+        UploadRejected,
+        WallpaperOrigin,
+        WallpaperUploads,
+    )
+
+    if not entry.raw_url:
+        # Either absent or dropped by the index validator for not being https.
+        raise HTTPException(
+            status_code=400,
+            detail=f"wallpaper {entry.name!r} has no downloadable image",
+        )
+    store = WallpaperUploads()
+    existing = store.find_by_source(entry.name)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{entry.name!r} is already in your wallpapers as "
+                f"{existing.title!r}. Remove it there before installing again."
+            ),
+        )
+    data = await _download_image(entry.raw_url, MAX_UPLOAD_BYTES)
+    try:
+        item = store.add(
+            data,
+            filename=entry.name,
+            source="marketplace",
+            title=entry.title or "",
+            origin=WallpaperOrigin(
+                source_id=entry.name,
+                publisher=entry.publisher,
+                version=entry.version,
+                source_url=entry.source_url,
+            ),
+        )
+    except UploadRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return {
+        "ok": True,
+        "kind": "wallpaper",
+        "id": entry.name,
+        "title": item.title,
+        "publisher": entry.publisher,
+        "version": entry.version,
+        "source_url": entry.source_url,
+        "location": str(item.path),
+        "state": "installed",
+        # A picture needs nothing else to be usable: it is in the picker now.
+        "ready": True,
+        "problem": None,
+        "next_action": "none",
+        "wallpaper": item.to_json(),
+    }
+
+
 def _install_by_name_404(item_id: str, index: Any) -> HTTPException:
     """404 that names the closest existing entry instead of a dead end."""
     import difflib
 
     names: list[str] = []
     if index is not None:
-        names = [e.name for e in index.plugins] + [s.name for s in index.skills]
+        names = (
+            [e.name for e in index.plugins]
+            + [s.name for s in index.skills]
+            + [w.name for w in index.wallpapers]
+        )
     close = difflib.get_close_matches(item_id, names, n=1, cutoff=0.6)
     hint = f" Closest match: {close[0]!r}." if close else ""
     return HTTPException(
         status_code=404,
         detail=(
-            f"No skill or plugin named {item_id!r} in the community "
+            f"Nothing named {item_id!r} is published in the community "
             f"marketplace.{hint}"
         ),
     )
@@ -999,15 +1159,19 @@ async def community_install_by_name(item_id: str, request: Request) -> dict[str,
     from jarvis.marketplace import community_source
 
     index, _ = await community_source.get_index()
-    plugin_entry = skill_entry = None
+    plugin_entry = skill_entry = wallpaper_entry = None
     if index is not None:
         plugin_entry = next((e for e in index.plugins if e.name == item_id), None)
         skill_entry = next((s for s in index.skills if s.name == item_id), None)
-    if plugin_entry is None and skill_entry is None:
+        wallpaper_entry = next((w for w in index.wallpapers if w.name == item_id), None)
+    if plugin_entry is None and skill_entry is None and wallpaper_entry is None:
         raise _install_by_name_404(item_id, index)
 
     if skill_entry is not None:
         return await _install_community_skill(skill_entry, request)
+
+    if wallpaper_entry is not None:
+        return await _install_community_wallpaper(wallpaper_entry)
 
     item = await _install_community_plugin(item_id)
     return {

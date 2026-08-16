@@ -31,6 +31,7 @@ from jarvis.core.paths import user_skills_dir
 from jarvis.skills.builtin import BUILTIN_SKILL_NAMES
 from jarvis.skills.finder import SearchFilters, SkillFinder
 from jarvis.skills.loader import parse_skill
+from jarvis.skills.origin import read_origin
 from jarvis.skills.schema import RESOURCE_KINDS, Skill, SkillLifecycleState
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
@@ -86,11 +87,15 @@ def _skill_to_summary(s: Skill) -> dict[str, Any]:
     # resources as a plain dict with lists (instead of tuples) for JSON serialization
     resources = {k: list(v) for k, v in s.resources.items()}
     resource_count = sum(len(v) for v in resources.values())
+    # One stat per skill for the ones nobody installed (the common case); the
+    # read only happens for a skill that actually carries a receipt.
+    origin = read_origin(s.root)
     return {
         "name": s.name,
         "state": s.state.value,
         "is_builtin": _is_builtin(s.name),
         "error": s.error,
+        "origin": origin.to_json() if origin is not None else None,
         "description": fm.description if fm else "",
         "category": fm.category if fm else "unknown",
         "version": fm.version if fm else "",

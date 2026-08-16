@@ -96,11 +96,48 @@ class CommunitySkillEntry(_Tolerant):
         return value
 
 
+class CommunityWallpaperEntry(_Tolerant):
+    """One installable wallpaper.
+
+    A wallpaper is the simplest thing the registry publishes: a picture and a
+    name. It carries no code, no credentials, and no manifest — installing one
+    downloads an image, re-encodes it, and drops it next to the owner's own
+    uploads, so it can never be more dangerous than a file the owner dragged
+    in themselves.
+    """
+
+    name: str
+    title: str | None = None
+    description: str = ""
+    publisher: str | None = None
+    version: str | None = None
+    published_at: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    source_url: str | None = None
+    # Direct download of the image itself.
+    raw_url: str | None = None
+    # Light/dark hint from the publisher. Only a hint: the server re-derives
+    # the theme from the actual pixels, exactly as it does for an upload, so a
+    # wrong or absent value costs nothing.
+    theme: str | None = None
+
+    @field_validator("raw_url")
+    @classmethod
+    def _https_only(cls, value: str | None) -> str | None:
+        # Same reasoning as the skill raw_url above: the backend fetches this
+        # server-side, so anything but https is an SSRF vector.
+        if value is not None and not value.lower().startswith("https://"):
+            logger.warning("community index: dropping non-https wallpaper raw_url %r", value)
+            return None
+        return value
+
+
 class CommunityIndex(_Tolerant):
     revision: int = 0
     generated_at: str | None = None
     plugins: list[CommunityPluginEntry] = Field(default_factory=list)
     skills: list[CommunitySkillEntry] = Field(default_factory=list)
+    wallpapers: list[CommunityWallpaperEntry] = Field(default_factory=list)
 
     @field_validator("skills", mode="after")
     @classmethod
@@ -115,6 +152,25 @@ class CommunityIndex(_Tolerant):
                 # One malicious or malformed entry must cost exactly itself,
                 # never the whole index (that would be a delisting DoS).
                 logger.warning("community index: dropping skill with unsafe name %r", entry.name)
+        return kept
+
+    @field_validator("wallpapers", mode="after")
+    @classmethod
+    def _drop_unsafe_wallpaper_names(
+        cls, value: list[CommunityWallpaperEntry]
+    ) -> list[CommunityWallpaperEntry]:
+        # A wallpaper name never becomes a path (the store keys by a random
+        # id), but it IS the identity the install-by-name route resolves and
+        # the "already installed" check compares, so it obeys the same shape
+        # as every other entry rather than being a free-form string.
+        kept: list[CommunityWallpaperEntry] = []
+        for entry in value:
+            if _SKILL_NAME_RE.fullmatch(entry.name) and ".." not in entry.name:
+                kept.append(entry)
+            else:
+                logger.warning(
+                    "community index: dropping wallpaper with unsafe name %r", entry.name
+                )
         return kept
 
 

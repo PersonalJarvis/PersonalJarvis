@@ -40,7 +40,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -287,22 +287,54 @@ class UploadRejected(Exception):
 
 
 @dataclass(frozen=True)
+class WallpaperOrigin:
+    """Where a stored wallpaper came from, when it was not the owner's own file.
+
+    Recorded at install time and carried in the sidecar, because "this came
+    from the marketplace" is something the picker must be able to SHOW — and
+    nothing about the finished ``.webp`` on disk could tell it apart from a
+    dragged-in photograph afterwards.
+    """
+
+    source_id: str
+    publisher: str | None = None
+    version: str | None = None
+    source_url: str | None = None
+
+
+@dataclass(frozen=True)
 class UploadedWallpaper:
-    """One wallpaper the owner brought themselves."""
+    """One wallpaper outside the generated library: an upload or an install."""
 
     id: str
     title: str
     theme: str
     created_at: float
     path: Path
+    #: "own" for a file the owner brought, "marketplace" for an installed one.
+    source: str = "own"
+    origin: WallpaperOrigin | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "id": self.id,
             "title": self.title,
             "theme": self.theme,
             "createdAt": self.created_at,
+            "source": self.source,
         }
+        if self.origin is not None:
+            payload["sourceId"] = self.origin.source_id
+            payload["publisher"] = self.origin.publisher
+            payload["version"] = self.origin.version
+            payload["sourceUrl"] = self.origin.source_url
+        return payload
+
+
+def _opt_str(value: Any) -> str | None:
+    """A trimmed, length-capped string from sidecar JSON — or None."""
+    text = str(value or "").strip()
+    return text[:200] or None
 
 
 def _clean_title(filename: str) -> str:
@@ -375,8 +407,24 @@ class WallpaperUploads:
             except OSError:
                 # An unreadable mtime only costs sort order, never the picture.
                 created = 0.0
+        source = "own"
+        origin: WallpaperOrigin | None = None
+        if isinstance(meta, dict) and str(meta.get("sourceId", "")).strip():
+            source = "marketplace" if str(meta.get("source")) == "marketplace" else "own"
+            origin = WallpaperOrigin(
+                source_id=str(meta["sourceId"]).strip()[:120],
+                publisher=_opt_str(meta.get("publisher")),
+                version=_opt_str(meta.get("version")),
+                source_url=_opt_str(meta.get("sourceUrl")),
+            )
         return UploadedWallpaper(
-            id=upload_id, title=title, theme=theme, created_at=created, path=image
+            id=upload_id,
+            title=title,
+            theme=theme,
+            created_at=created,
+            path=image,
+            source=source,
+            origin=origin,
         )
 
     def _write_meta(self, item: UploadedWallpaper) -> None:
@@ -405,13 +453,38 @@ class WallpaperUploads:
             return None
         return self._read(upload_id)
 
-    def add(self, data: bytes, filename: str = "") -> UploadedWallpaper:
-        """Validate, re-encode, and store one uploaded picture.
+    def find_by_source(self, source_id: str) -> UploadedWallpaper | None:
+        """The installed wallpaper carrying this marketplace name, if any.
+
+        The store keys by a random id, so identity across an install is the
+        recorded ``source_id`` — this is what stops a second install of the
+        same entry from stacking duplicate tiles in the picker.
+        """
+        wanted = str(source_id or "").strip()
+        if not wanted:
+            return None
+        for item in self.list():
+            if item.origin is not None and item.origin.source_id == wanted:
+                return item
+        return None
+
+    def add(
+        self,
+        data: bytes,
+        filename: str = "",
+        *,
+        source: str = "own",
+        origin: WallpaperOrigin | None = None,
+        title: str = "",
+    ) -> UploadedWallpaper:
+        """Validate, re-encode, and store one picture — an upload or an install.
 
         The incoming bytes are decoded by Pillow rather than trusted by their
         declared type, and what is written is the *re-encoded* image — so
         whatever else the upload carried (a forged header, an appended
-        payload, EXIF) does not survive the round trip onto disk.
+        payload, EXIF) does not survive the round trip onto disk. A marketplace
+        download is put through the exact same mill: an installed wallpaper is
+        never more trusted than a dragged-in file.
         """
         if not data:
             raise UploadRejected("That file is empty.")
@@ -431,9 +504,12 @@ class WallpaperUploads:
         try:
             with Image.open(io.BytesIO(data)) as probe:
                 probe.verify()
-            with Image.open(io.BytesIO(data)) as source:
-                source.load()
-                prepared = source.convert("RGB")
+            # Named `decoded`, not `source`: `source` is this method's caller-
+            # facing parameter, and shadowing it here silently turned every
+            # marketplace install back into an "own" upload.
+            with Image.open(io.BytesIO(data)) as decoded:
+                decoded.load()
+                prepared = decoded.convert("RGB")
         except Exception as exc:  # noqa: BLE001 — any decode failure = not an image
             raise UploadRejected(
                 "That file is not an image the app can read (PNG, JPEG, WebP, GIF or BMP)."
@@ -458,10 +534,12 @@ class WallpaperUploads:
             upload_id = f"u{secrets.token_hex(8)}"
             item = UploadedWallpaper(
                 id=upload_id,
-                title=_clean_title(filename),
+                title=(title.strip()[:60] or _clean_title(filename)),
                 theme=theme,
                 created_at=time.time(),
                 path=self._image_path(upload_id),
+                source="marketplace" if origin is not None and source == "marketplace" else "own",
+                origin=origin,
             )
             try:
                 _atomic_write(item.path, buffer.getvalue(), prefix=".upload.", suffix=".webp")
@@ -481,13 +559,10 @@ class WallpaperUploads:
             item = self.get(upload_id)
             if item is None:
                 return None
-            updated = UploadedWallpaper(
-                id=item.id,
-                title=item.title,
-                theme=theme,
-                created_at=item.created_at,
-                path=item.path,
-            )
+            # replace() rather than a fresh construction: a field added later
+            # (the marketplace origin was exactly that) must not silently fall
+            # out of the sidecar the first time somebody flips light/dark.
+            updated = replace(item, theme=theme)
             try:
                 self._write_meta(updated)
             except OSError as exc:
