@@ -542,6 +542,25 @@ export function useWebSocket(): void {
           void queryClient.invalidateQueries({ queryKey: ["docs"] });
         }
 
+        if (env.event_name === "MarketplaceItemInstalled") {
+          // The install may have come from anywhere: a terminal running
+          // `jarvis marketplace install`, a spoken sentence, the storefront's
+          // button, or another window of this app. Only the window that
+          // pressed a button knows to refresh itself — every other one used to
+          // keep showing a library the file was already in until it was
+          // restarted. Reload the lane that changed, wherever it came from.
+          const p = env.payload as { kind?: string };
+          void queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
+          if (p.kind === "wallpaper") {
+            // Prefix match: catalog, uploads and library all hang off this key.
+            void queryClient.invalidateQueries({ queryKey: ["wallpapers"] });
+          } else if (p.kind === "skill") {
+            void queryClient.invalidateQueries({ queryKey: ["skills"] });
+          } else if (p.kind === "plugin") {
+            void queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+          }
+        }
+
         if (env.event_name === "ActionApprovalRequired") {
           const p = env.payload as {
             mission_id?: unknown;

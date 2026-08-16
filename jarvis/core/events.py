@@ -2023,3 +2023,30 @@ class OrbResetRequested(Event):
     trigger from the Tk-thread mutation — bus stays sync-friendly.
     """
     source: str = ""  # "voice" | "tray" | "test"
+
+
+@dataclass(frozen=True, slots=True)
+class MarketplaceItemInstalled(Event):
+    """One marketplace entry just landed on this machine.
+
+    An install can now start anywhere: the desktop's own store card, a
+    terminal running ``jarvis marketplace install``, a spoken sentence going
+    through the router's ``marketplace-install`` tool, or the storefront's
+    button talking to the local app. Only the first of those has a view that
+    knows to refresh itself — the other three used to leave an open window
+    showing a library the file was already missing from, until the user
+    restarted the app or happened to navigate away and back.
+
+    So the install says what it did, once, on the bus. The chat socket's
+    wildcard forward carries every bus event to the frontend, so the open
+    window hears it no matter which surface did the installing and reloads
+    exactly the lane that changed.
+
+    ``ready`` mirrors the install reply's own field: True when the thing is
+    usable right now (a wallpaper, a skill that validated), False when it
+    still needs the user (a plugin waiting to be connected).
+    """
+    kind: str = ""  # "skill" | "plugin" | "wallpaper"
+    item_id: str = ""
+    title: str = ""
+    ready: bool = False

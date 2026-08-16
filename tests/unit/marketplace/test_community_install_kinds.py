@@ -131,7 +131,7 @@ def offline_downloads(monkeypatch: pytest.MonkeyPatch, env: Path) -> None:
     monkeypatch.setattr(marketplace_routes, "_download_image", fake_image)
 
 
-def _client(env: Path) -> httpx.AsyncClient:
+def _client(env: Path, bus: Any = None) -> httpx.AsyncClient:
     from jarvis.skills.registry import SkillRegistry
 
     app = FastAPI()
@@ -142,7 +142,21 @@ def _client(env: Path) -> httpx.AsyncClient:
     registry = SkillRegistry(root=skills_root)
     registry.reload_sync()
     app.state.skill_registry = registry
+    # Absent by default, exactly like a headless boot: the install must work
+    # with nothing listening.
+    if bus is not None:
+        app.state.bus = bus
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+class _RecordingBus:
+    """Captures what the install announced, in order."""
+
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    async def publish(self, event: Any) -> None:
+        self.events.append(event)
 
 
 # ----------------------------------------------------------------------
@@ -361,3 +375,63 @@ async def test_download_returns_the_bytes_it_was_served() -> None:
         "https://raw.example/ok.png", 10_000_000, transport=httpx.MockTransport(handler)
     )
     assert got == payload
+
+
+# ----------------------------------------------------------------------
+# Telling the open window about it
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_wallpaper_install_announces_itself(
+    env: Path, offline_downloads: None
+) -> None:
+    """An install from a terminal has to reach the window that is already open.
+
+    Nothing about `jarvis marketplace install` touches the desktop UI, so
+    without this announcement the picker kept showing the library the picture
+    was already in until the app was restarted.
+    """
+    from jarvis.core.events import MarketplaceItemInstalled
+
+    bus = _RecordingBus()
+    async with _client(env, bus) as client:
+        resp = await client.post("/api/marketplace/community/install/moonlit-wave")
+    assert resp.status_code == 200
+
+    announced = [e for e in bus.events if isinstance(e, MarketplaceItemInstalled)]
+    assert len(announced) == 1
+    assert announced[0].kind == "wallpaper"
+    assert announced[0].item_id == "moonlit-wave"
+    # The picture is usable the moment it lands — the frontend uses this to
+    # decide whether it can say "done" or has to point at a next step.
+    assert announced[0].ready is True
+
+
+@pytest.mark.asyncio
+async def test_a_skill_install_announces_its_own_kind(
+    env: Path, offline_downloads: None
+) -> None:
+    """One event, three kinds: the receiver reloads only the lane that moved."""
+    from jarvis.core.events import MarketplaceItemInstalled
+
+    bus = _RecordingBus()
+    async with _client(env, bus) as client:
+        resp = await client.post("/api/marketplace/community/install/three-point-check")
+    assert resp.status_code == 200
+
+    announced = [e for e in bus.events if isinstance(e, MarketplaceItemInstalled)]
+    assert len(announced) == 1
+    assert announced[0].kind == "skill"
+    assert announced[0].item_id == "three-point-check"
+
+
+@pytest.mark.asyncio
+async def test_an_install_still_works_with_nobody_listening(
+    env: Path, offline_downloads: None
+) -> None:
+    """Headless, or early boot: no bus, and the install must not care."""
+    async with _client(env) as client:
+        resp = await client.post("/api/marketplace/community/install/moonlit-wave")
+    assert resp.status_code == 200
+    assert resp.json()["ready"] is True

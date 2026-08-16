@@ -41,6 +41,7 @@ from fastapi import (
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from jarvis.core.events import MarketplaceItemInstalled
 from jarvis.core.process_utils import resolve_executable
 from jarvis.core.uploads import UploadRejected, stage_upload
 from jarvis.marketplace.auth import (
@@ -1136,11 +1137,22 @@ async def _install_community_plugin(plugin_id: str) -> dict[str, Any]:
 
 
 @router.post("/community/plugins/{plugin_id}/install")
-async def community_install(plugin_id: str) -> dict[str, Any]:
+async def community_install(plugin_id: str, request: Request) -> dict[str, Any]:
     """One-click install: convert the manifest, persist the catalog entry and
     usage card, refresh the live registry. The plugin then behaves exactly
     like a seed plugin (connect flows, relevance gate, worker bridge)."""
     item = await _install_community_plugin(plugin_id)
+    # The window that pressed the button refreshes itself, but it is not
+    # necessarily the only one open.
+    await _announce_install(
+        request,
+        {
+            "kind": "plugin",
+            "id": item.get("id", plugin_id),
+            "title": item.get("display_name") or plugin_id,
+            "ready": False,
+        },
+    )
     return {"ok": True, "plugin": item}
 
 
@@ -1313,6 +1325,39 @@ async def _install_community_wallpaper(entry: Any) -> dict[str, Any]:
     }
 
 
+async def _announce_install(request: Request, result: dict[str, Any]) -> None:
+    """Say on the bus that an entry landed, so open windows can catch up.
+
+    An install can start from four places and only one of them — the store
+    card in the desktop app — has a view that refreshes itself afterwards.
+    A terminal, a spoken sentence and the storefront button all left the open
+    window showing a library the file was already in. The bus reaches every
+    surface at once, so the announcement happens here rather than in each
+    caller.
+
+    Never blocks the install: the entry is already on disk by the time this
+    runs, and a window that missed the news is one navigation away from the
+    truth. Same async/sync publish convention as ``mcp_routes``.
+    """
+    bus = getattr(request.app.state, "bus", None)
+    if bus is None:
+        return  # headless / early boot: nothing is listening anyway
+    event = MarketplaceItemInstalled(
+        source_layer="ui.web.marketplace",
+        kind=str(result.get("kind") or ""),
+        item_id=str(result.get("id") or ""),
+        title=str(result.get("title") or ""),
+        ready=bool(result.get("ready")),
+    )
+    try:
+        if asyncio.iscoroutinefunction(bus.publish):
+            await bus.publish(event)
+        else:
+            bus.publish(event)
+    except Exception as exc:  # noqa: BLE001 - a missed refresh is not a failed install
+        log.debug("MarketplaceItemInstalled publish failed: %s", exc)
+
+
 def _install_by_name_404(item_id: str, index: Any) -> HTTPException:
     """404 that names the closest existing entry instead of a dead end."""
     import difflib
@@ -1358,29 +1403,34 @@ async def community_install_by_name(item_id: str, request: Request) -> dict[str,
         raise _install_by_name_404(item_id, index)
 
     if skill_entry is not None:
-        return await _install_community_skill(skill_entry, request)
+        result = await _install_community_skill(skill_entry, request)
+    elif wallpaper_entry is not None:
+        result = await _install_community_wallpaper(wallpaper_entry)
+    else:
+        item = await _install_community_plugin(item_id)
+        result = {
+            "ok": True,
+            "kind": "plugin",
+            "id": item.get("id", item_id),
+            "title": item.get("display_name") or item_id,
+            "publisher": item.get("publisher"),
+            "version": item.get("version"),
+            "source_url": item.get("source_url"),
+            "location": "",
+            "state": "not_connected",
+            # A plugin talks to somebody else's service: installed is not the
+            # same as usable, and saying otherwise is the exact confusion this
+            # route exists to kill.
+            "ready": False,
+            "problem": None,
+            "next_action": "connect",
+            "plugin": item,
+        }
 
-    if wallpaper_entry is not None:
-        return await _install_community_wallpaper(wallpaper_entry)
-
-    item = await _install_community_plugin(item_id)
-    return {
-        "ok": True,
-        "kind": "plugin",
-        "id": item.get("id", item_id),
-        "title": item.get("display_name") or item_id,
-        "publisher": item.get("publisher"),
-        "version": item.get("version"),
-        "source_url": item.get("source_url"),
-        "location": "",
-        "state": "not_connected",
-        # A plugin talks to somebody else's service: installed is not the same
-        # as usable, and saying otherwise is the exact confusion this route exists to kill.
-        "ready": False,
-        "problem": None,
-        "next_action": "connect",
-        "plugin": item,
-    }
+    # One announcement for all three kinds, from the one place that knows the
+    # install finished — a per-branch publish would be three chances to forget.
+    await _announce_install(request, result)
+    return result
 
 
 @router.delete("/community/plugins/{plugin_id}")
@@ -1429,6 +1479,8 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
             log.info("plugin %s revocation skipped: %s", plugin_id, exc)
             revocation = "failed"
     return {"ok": True, "removed": removed, "revocation": revocation}
+
+
 # ----------------------------------------------------------------------
 # Upload — a plugin manifest dropped onto the UI
 # ----------------------------------------------------------------------
