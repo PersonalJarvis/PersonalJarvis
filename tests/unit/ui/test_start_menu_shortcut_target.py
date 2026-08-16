@@ -199,6 +199,85 @@ class TestShortcutTargetsOurOwnExe:
         assert Path(sc.TargetPath).is_file(), "shortcut points at a missing exe"
 
 
+@windows_only
+class TestDesktopShortcutIsTheSearchableEntry:
+    """The Desktop entry is the one Windows Search can actually see.
+
+    Forensic 2026-08-16: Windows excludes ``%APPDATA%`` from the content index
+    by default, and the per-user Start Menu lives inside it — that machine's
+    Start-Menu folder had ZERO indexed entries, so typing the app's name found
+    nothing. Discord and Obsidian stayed findable because each also has a
+    Desktop .lnk, which IS indexed. Ours had none, and the user noticed the
+    missing icon before the missing search hit.
+    """
+
+    def test_creates_the_entry(self, tmp_path: Path) -> None:
+        assert icon_utils.ensure_desktop_shortcut(
+            aumid=_TEST_AUMID, desktop_dir=tmp_path
+        )
+        lnk = tmp_path / icon_utils.START_MENU_SHORTCUT_NAME
+        assert lnk.is_file()
+
+        from win32com.client import Dispatch
+
+        sc = Dispatch("WScript.Shell").CreateShortcut(str(lnk))
+        assert Path(sc.TargetPath).is_file(), "desktop entry points at a missing exe"
+        assert sc.Arguments.strip() == f"-m {icon_utils._LAUNCHER_MODULE}"
+
+    def test_is_idempotent(self, tmp_path: Path) -> None:
+        assert icon_utils.ensure_desktop_shortcut(
+            aumid=_TEST_AUMID, desktop_dir=tmp_path
+        )
+        lnk = tmp_path / icon_utils.START_MENU_SHORTCUT_NAME
+        first = lnk.stat().st_mtime_ns
+        assert icon_utils.ensure_desktop_shortcut(
+            aumid=_TEST_AUMID, desktop_dir=tmp_path
+        )
+        assert lnk.stat().st_mtime_ns == first, "a matching entry was rewritten"
+
+    def test_does_not_resurrect_an_icon_the_user_deleted(self, tmp_path: Path) -> None:
+        """Self-healing must not mean un-deletable — an empty desktop stays empty."""
+        assert not icon_utils.ensure_desktop_shortcut(
+            aumid=_TEST_AUMID, desktop_dir=tmp_path, create_if_missing=False
+        )
+        assert not (tmp_path / icon_utils.START_MENU_SHORTCUT_NAME).exists()
+
+    def test_repairs_an_existing_entry_even_without_create(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale target IS repaired — that is a broken icon, not a deleted one."""
+        lnk = tmp_path / icon_utils.START_MENU_SHORTCUT_NAME
+        lnk.write_bytes(b"not really a shortcut")
+        assert icon_utils.ensure_desktop_shortcut(
+            aumid=_TEST_AUMID, desktop_dir=tmp_path, create_if_missing=False
+        )
+        from win32com.client import Dispatch
+
+        sc = Dispatch("WScript.Shell").CreateShortcut(str(lnk))
+        assert Path(sc.TargetPath).is_file()
+
+    def test_missing_desktop_dir_is_not_an_error(self, tmp_path: Path) -> None:
+        assert not icon_utils.ensure_desktop_shortcut(
+            aumid=_TEST_AUMID, desktop_dir=tmp_path / "nope"
+        )
+
+    def test_window_less_interpreter_never_claims_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(icon_utils, "_interpreter_can_open_a_window", lambda: False)
+        assert not icon_utils.ensure_desktop_shortcut(
+            aumid=_TEST_AUMID, desktop_dir=tmp_path
+        )
+        assert not (tmp_path / icon_utils.START_MENU_SHORTCUT_NAME).exists()
+
+
+class TestDesktopShortcutOffWindows:
+    def test_is_a_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(icon_utils.sys, "platform", "linux")
+        assert icon_utils.ensure_desktop_shortcut(desktop_dir=tmp_path) is False
+        assert not (tmp_path / icon_utils.START_MENU_SHORTCUT_NAME).exists()
+
+
 class TestReexecLoopGuard:
     """Launching THROUGH the branded exe must not re-exec through it again."""
 
@@ -234,10 +313,20 @@ class TestShellIsToldAboutTheEntry:
     def test_writer_announces_the_entry(self) -> None:
         import inspect
 
-        src = inspect.getsource(icon_utils.ensure_start_menu_shortcut)
+        src = inspect.getsource(icon_utils._write_branded_shortcut)
         assert "_notify_shell_of_shortcut(lnk)" in src
         # …after the property-store commit, which is the last write to the file.
         assert src.index("rw_store.Commit()") < src.index("_notify_shell_of_shortcut")
+
+    def test_both_entries_go_through_the_same_writer(self) -> None:
+        """Start-Menu and Desktop must never drift into different targets."""
+        import inspect
+
+        for fn in (
+            icon_utils.ensure_start_menu_shortcut,
+            icon_utils.ensure_desktop_shortcut,
+        ):
+            assert "_write_branded_shortcut(" in inspect.getsource(fn), fn.__name__
 
     def test_is_a_noop_off_windows(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

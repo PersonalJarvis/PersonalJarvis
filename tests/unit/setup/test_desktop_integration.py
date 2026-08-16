@@ -183,6 +183,9 @@ def test_windows_managed_install_is_visible_to_start_and_installed_apps(
 
     root = _managed_root(tmp_path)
     programs = tmp_path / "Programs"
+    # A throwaway Desktop too — never write into the real one from a test.
+    desktop = tmp_path / "Desktop"
+    desktop.mkdir()
     subkey = rf"Software\PersonalJarvisTests\DesktopIntegration\{tmp_path.name}"
     aumid = f"PersonalJarvis.Test.DesktopIntegration.{tmp_path.name}"
     aumid_subkey = rf"Software\Classes\AppUserModelId\{aumid}"
@@ -191,6 +194,7 @@ def test_windows_managed_install_is_visible_to_start_and_installed_apps(
             install_dir=root,
             platform="win32",
             windows_programs_dir=programs,
+            windows_desktop_dir=desktop,
             windows_registry_subkey=subkey,
             windows_aumid=aumid,
         )
@@ -198,10 +202,16 @@ def test_windows_managed_install_is_visible_to_start_and_installed_apps(
         assert report.ok is True
         assert set(report.artifacts) == {
             "start_menu_launcher",
+            "desktop_launcher",
             "installed_apps_registration",
             "windows_app_identity",
         }
         assert (programs / "Personal Jarvis.lnk").is_file()
+        # The Desktop entry is what Windows Search can actually see: the
+        # per-user Start Menu lives under %APPDATA%, which the content index
+        # excludes by default (forensic 2026-08-16 — the app was unfindable by
+        # name on such a box while its Start-Menu .lnk sat right there).
+        assert (desktop / "Personal Jarvis.lnk").is_file()
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
             assert winreg.QueryValueEx(key, "DisplayName")[0] == "Personal Jarvis"
             assert winreg.QueryValueEx(key, "InstallLocation")[0] == str(root)
@@ -211,11 +221,14 @@ def test_windows_managed_install_is_visible_to_start_and_installed_apps(
         removed = di.remove_desktop_integration(
             platform="win32",
             windows_programs_dir=programs,
+            windows_desktop_dir=desktop,
             windows_registry_subkey=subkey,
             windows_aumid=aumid,
         )
         assert removed.ok is True
         assert not (programs / "Personal Jarvis.lnk").exists()
+        # An uninstall that leaves an icon on the desktop has not uninstalled.
+        assert not (desktop / "Personal Jarvis.lnk").exists()
         with pytest.raises(FileNotFoundError):
             winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey)
         with pytest.raises(FileNotFoundError):

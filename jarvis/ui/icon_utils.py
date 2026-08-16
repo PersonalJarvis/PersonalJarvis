@@ -704,7 +704,6 @@ def ensure_start_menu_shortcut(
         return False
     try:
         import pywintypes
-        from win32com.client import Dispatch
         from win32com.propsys import propsys, pscon
     except Exception as exc:  # noqa: BLE001
         logger.debug("pywin32 unavailable; Start-Menu shortcut not ensured: {}", exc)
@@ -758,15 +757,31 @@ def ensure_start_menu_shortcut(
         except Exception as exc:  # noqa: BLE001
             logger.debug("could not read existing shortcut AUMID, rewriting: {}", exc)
 
+    if _write_branded_shortcut(lnk, target=pythonw, ico=ico, aumid=aumid,
+                               display_name=display_name):
+        logger.debug("Start-Menu shortcut ensured: {}", lnk)
+        return True
+    return False
+
+
+def _write_branded_shortcut(
+    lnk: Path, *, target: Path, ico: Path, aumid: str, display_name: str
+) -> bool:
+    """Write one AUMID-tagged .lnk pointing at ``target``. Never raises.
+
+    Shared by the Start-Menu and Desktop entries so the two can never drift into
+    different targets, icons or identities — which is exactly how a user ends up
+    with one working launcher and one dead one.
+    """
     try:
-        programs.mkdir(parents=True, exist_ok=True)
+        import pywintypes
+        from win32com.client import Dispatch
+        from win32com.propsys import propsys, pscon
+
+        lnk.parent.mkdir(parents=True, exist_ok=True)
         shell = Dispatch("WScript.Shell")
         sc = shell.CreateShortcut(str(lnk))
-        # Target the venv pythonw (which re-execs through the branded base copy in
-        # main()); the branded exe itself needs __PYVENV_LAUNCHER__ to find the
-        # venv, so it is not a valid direct shortcut target. IconLocation below
-        # still brands the pinned/Start-Menu icon itself.
-        sc.TargetPath = str(pythonw)
+        sc.TargetPath = str(target)
         sc.Arguments = f"-m {_LAUNCHER_MODULE}"
         sc.WorkingDirectory = str(Path.home())
         if ico.is_file():
@@ -776,16 +791,79 @@ def ensure_start_menu_shortcut(
         sc.Save()
         # Embed the AUMID so Windows matches the running window to this shortcut.
         rw_store = propsys.SHGetPropertyStoreFromParsingName(
-            str(lnk), None, 2, iid  # GPS_READWRITE
+            str(lnk), None, 2, pywintypes.IID(_IID_IPROPERTYSTORE)  # GPS_READWRITE
         )
         rw_store.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType(aumid))
         rw_store.Commit()
         _notify_shell_of_shortcut(lnk)
-        logger.debug("Start-Menu shortcut ensured: {}", lnk)
         return True
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Start-Menu shortcut could not be written: {}", exc)
+        logger.debug("shortcut could not be written at {}: {}", lnk, exc)
         return False
+
+
+def _default_desktop_dir() -> Path | None:
+    profile = os.environ.get("USERPROFILE")
+    return Path(profile) / "Desktop" if profile else None
+
+
+def ensure_desktop_shortcut(
+    *,
+    aumid: str = APP_USER_MODEL_ID,
+    display_name: str = APP_DISPLAY_NAME,
+    icon_path: Path | None = None,
+    desktop_dir: Path | None = None,
+    create_if_missing: bool = True,
+) -> bool:
+    """Install/repair the Desktop launcher — the entry Windows Search can see.
+
+    The Start-Menu entry alone is not enough on a real machine. Windows excludes
+    ``%LOCALAPPDATA%``/``%APPDATA%`` from the content index by default, and the
+    per-user Start Menu lives inside ``%APPDATA%`` — so on a box whose index
+    lacks the Start-Menu exception rule, NOTHING there is searchable and typing
+    the app's name finds nothing at all. The Desktop is indexed, which is why
+    Discord and Obsidian were still findable on the machine that reported this
+    (forensic 2026-08-16: their Desktop .lnk files were in the index; the
+    Start-Menu folder had zero entries).
+
+    So this is not decoration — for that user it is the only working search
+    entry, and the icon they expected to see. Everything else (target, icon,
+    AUMID) is identical to the Start-Menu entry via ``_write_branded_shortcut``.
+
+    ``create_if_missing=False`` repairs an existing shortcut but never
+    resurrects a deleted one — a user who threw the icon away keeps their empty
+    desktop. The installer passes ``True``; incidental callers should not.
+    """
+    if sys.platform != "win32":
+        return False
+    desktop = desktop_dir or _default_desktop_dir()
+    if desktop is None or not desktop.is_dir():
+        return False
+    target = _shortcut_launch_target()
+    if target is None:
+        return False
+    ico = icon_path or project_icon_path()
+    lnk = desktop / START_MENU_SHORTCUT_NAME
+
+    if not lnk.is_file() and not create_if_missing:
+        return False
+    if not _interpreter_can_open_a_window():
+        # Same rule as the Start-Menu entry: never aim it at an interpreter that
+        # cannot open the window.
+        return lnk.is_file()
+    if lnk.is_file() and _shortcut_matches_install(
+        lnk,
+        expected_target=target,
+        expected_icon=ico,
+        expected_arguments=f"-m {_LAUNCHER_MODULE}",
+    ):
+        return True
+    if _write_branded_shortcut(
+        lnk, target=target, ico=ico, aumid=aumid, display_name=display_name
+    ):
+        logger.debug("Desktop shortcut ensured: {}", lnk)
+        return True
+    return False
 
 
 def _notify_shell_of_shortcut(lnk: Path) -> None:

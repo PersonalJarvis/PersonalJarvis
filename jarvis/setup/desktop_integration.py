@@ -209,9 +209,15 @@ def _windows_programs_dir() -> Path | None:
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
 
 
+def _windows_desktop_dir() -> Path | None:
+    profile = os.environ.get("USERPROFILE")
+    return Path(profile) / "Desktop" if profile else None
+
+
 def _remove_windows_desktop_integration(
     *,
     programs_dir: Path | None = None,
+    desktop_dir: Path | None = None,
     registry_subkey: str = WINDOWS_UNINSTALL_SUBKEY,
     aumid: str = WINDOWS_APP_USER_MODEL_ID,
 ) -> tuple[bool, tuple[str, ...]]:
@@ -223,6 +229,13 @@ def _remove_windows_desktop_integration(
             shortcut.unlink(missing_ok=True)
         except OSError as exc:
             warnings.append(f"could not remove the Start-menu launcher: {exc}")
+    # An uninstall that leaves an icon on the desktop has not uninstalled.
+    desktop = desktop_dir or _windows_desktop_dir()
+    if desktop is not None:
+        try:
+            (desktop / WINDOWS_SHORTCUT_FILE_NAME).unlink(missing_ok=True)
+        except OSError as exc:
+            warnings.append(f"could not remove the Desktop launcher: {exc}")
     if not _delete_windows_registry_key(registry_subkey):
         warnings.append("could not remove the Installed Apps registry entry")
     if not _delete_windows_registry_key(_windows_aumid_subkey(aumid)):
@@ -260,6 +273,7 @@ def ensure_desktop_integration(
     platform: str | None = None,
     require_managed: bool = True,
     windows_programs_dir: Path | None = None,
+    windows_desktop_dir: Path | None = None,
     windows_registry_subkey: str = WINDOWS_UNINSTALL_SUBKEY,
     windows_aumid: str = WINDOWS_APP_USER_MODEL_ID,
     macos_applications_dir: Path | None = None,
@@ -284,6 +298,7 @@ def ensure_desktop_integration(
     if plat == "windows":
         try:
             from jarvis.ui.icon_utils import (
+                ensure_desktop_shortcut,
                 ensure_start_menu_shortcut,
                 project_icon_path,
                 register_windows_app_user_model_id,
@@ -298,6 +313,18 @@ def ensure_desktop_integration(
                 artifacts.append("start_menu_launcher")
             else:
                 warnings.append("could not create the Start-menu launcher")
+            # The Desktop entry is the one Windows Search can actually see: the
+            # per-user Start Menu sits inside %APPDATA%, which the content index
+            # excludes by default, so on a machine missing the Start-Menu
+            # exception rule the app is unfindable by name without this.
+            if ensure_desktop_shortcut(
+                aumid=windows_aumid,
+                icon_path=icon if icon.is_file() else None,
+                desktop_dir=windows_desktop_dir,
+            ):
+                artifacts.append("desktop_launcher")
+            else:
+                warnings.append("could not create the Desktop launcher")
             if register_windows_app_user_model_id(
                 windows_aumid,
                 icon_path=icon if icon.is_file() else None,
@@ -375,6 +402,7 @@ def remove_desktop_integration(
     *,
     platform: str | None = None,
     windows_programs_dir: Path | None = None,
+    windows_desktop_dir: Path | None = None,
     windows_registry_subkey: str = WINDOWS_UNINSTALL_SUBKEY,
     windows_aumid: str = WINDOWS_APP_USER_MODEL_ID,
     macos_applications_dir: Path | None = None,
@@ -388,12 +416,14 @@ def remove_desktop_integration(
     if plat == "windows":
         ok, found = _remove_windows_desktop_integration(
             programs_dir=windows_programs_dir,
+            desktop_dir=windows_desktop_dir,
             registry_subkey=windows_registry_subkey,
             aumid=windows_aumid,
         )
         artifacts.extend(
             (
                 "start_menu_launcher",
+                "desktop_launcher",
                 "installed_apps_registration",
                 "windows_app_identity",
             )
