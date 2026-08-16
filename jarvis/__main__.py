@@ -1,8 +1,11 @@
 """Jarvis entry point.
 
 Usage:
-    python -m jarvis                # Starts the tray app (first-run setup
-                                    #   happens in the app's onboarding)
+    python -m jarvis                # Starts the desktop app: window + voice +
+                                    #   Orb overlay (first-run setup happens in
+                                    #   the app's onboarding)
+    python -m jarvis serve          # Headless: API + WebSocket + browser UI
+    python -m jarvis --tray         # Tray icon only, no backend, no window
     python -m jarvis --wizard       # Terminal setup wizard (explicit opt-in,
                                     #   e.g. SSH-only hosts)
     python -m jarvis --check        # Show hardware analysis only
@@ -14,9 +17,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 # A frozen GUI executable cannot be relaunched with ``python -m`` and has no
 # reliable stdout.  Dispatch this private, file-backed sidecar mode before the
@@ -40,7 +44,9 @@ from jarvis import __version__
 from jarvis.core import config as cfg
 from jarvis.core import registry
 from jarvis.hardware import detection
-from jarvis.ui.tray import JarvisState, JarvisTray, TrayCommand
+
+if TYPE_CHECKING:
+    from jarvis.ui.tray import TrayCommand
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -126,6 +132,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run", action="store_true", dest="dry_run",
         help="With --uninstall: show what would be removed, change nothing.",
+    )
+    parser.add_argument(
+        "--tray",
+        action="store_true",
+        help="Only the tray icon, no backend and no window. A diagnostic "
+             "leftover — the product entry point is bare `jarvis`.",
     )
     parser.add_argument(
         "command",
@@ -397,7 +409,15 @@ def _cmd_install_admin_helper() -> int:
 
 
 async def _run_tray_app(debug: bool = False) -> int:
-    """Tray app event loop."""
+    """Tray app event loop — the ``--tray`` opt-in, not the product entry point.
+
+    Backend-less by design: it shows a menu and nothing else (its own "kill"
+    handler says so). Kept for diagnostics. The tray toolkit is imported here
+    rather than at module level so the normal desktop start does not pay for
+    pystray on the boot critical path (AP-26).
+    """
+    from jarvis.ui.tray import JarvisState, JarvisTray
+
     config = cfg.load_config()
     print(f"Jarvis {__version__} started (profile: {config.profile.name}).")
     if debug:
@@ -561,7 +581,57 @@ def main(argv: list[str] | None = None) -> int:
         return launcher.main(["--headless"])
     if _should_run_wizard(args.wizard):
         return _cmd_wizard()
-    return asyncio.run(_run_tray_app(debug=args.debug))
+    if args.tray:
+        return asyncio.run(_run_tray_app(debug=args.debug))
+    return _run_desktop(debug=args.debug)
+
+
+def _run_desktop(*, debug: bool) -> int:
+    """Start the full desktop app — window + voice + Orb overlay.
+
+    This is what bare ``jarvis`` promises (README: "jarvis → full desktop"), and
+    for a long time it did not deliver: the entry point ran ``_run_tray_app``,
+    a backend-less tray icon that shows a menu and nothing else. Typing
+    ``jarvis`` therefore looked like a hang — no window, no voice, no error —
+    while the desktop app was only ever reachable through ``run.bat`` / the
+    Start-Menu shortcut. Same launcher on every OS; the window layer itself is
+    what differs, and pywebview handles that.
+
+    ``--debug`` travels as ``JARVIS_DEBUG`` rather than an argv flag: the
+    launcher's parser has no such option and would abort on it (the reason
+    run.bat/run.sh set the same variable instead of forwarding the flag).
+    """
+    if debug:
+        os.environ["JARVIS_DEBUG"] = "1"
+    missing = _missing_desktop_dependency()
+    if missing is not None:
+        print(missing, file=sys.stderr)
+        return 4
+    from jarvis.ui.web import launcher
+
+    return launcher.main([])
+
+
+def _missing_desktop_dependency() -> str | None:
+    """Explain a missing window toolkit, or ``None`` when the desktop can run.
+
+    The base install is deliberately window-less (``pip install personal-jarvis``
+    ships the server; the window lives in the ``[full]`` extra), so an arbitrary
+    downloader typing ``jarvis`` can legitimately have no pywebview. Without
+    this check they get a bare ``ModuleNotFoundError`` traceback — and under
+    ``pythonw`` (the Start-Menu shortcut) not even that, because a windowless
+    interpreter has nowhere to print it. Name the missing piece and the two ways
+    forward instead.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("webview") is not None:
+        return None
+    return (
+        "The desktop window needs pywebview, which this install does not have.\n"
+        "  Install it:  pip install 'personal-jarvis[full]'\n"
+        "  Or run without a window:  jarvis serve"
+    )
 
 
 def _should_run_wizard(wizard_flag: bool) -> bool:
