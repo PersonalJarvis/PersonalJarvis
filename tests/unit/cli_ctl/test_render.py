@@ -49,3 +49,24 @@ def test_error_sets_message_on_stderr(capsys):
     render.error("boom")
     err = capsys.readouterr().err
     assert "boom" in err
+
+
+def test_field_wraps_the_value_under_its_own_column(capsys):
+    render.field("Status", " ".join(["word"] * 60))
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert len(lines) > 1, "a long value must wrap, not run off"
+    # Continuation lines start under the value, not at column 0 — otherwise a
+    # narrow terminal turns the status block into prose soup.
+    indent = lines[0].index("word")
+    assert all(ln.startswith(" " * indent) for ln in lines[1:])
+
+
+def test_field_keeps_a_long_path_in_one_piece(capsys):
+    path = r"C:\Users\someone\AppData\Local\Jarvis\skills\three-bullet-brief\SKILL.md"
+    render.field("File", path)
+    assert path in capsys.readouterr().out.replace("\n", "")
+
+
+def test_field_does_not_eat_brackets_as_markup(capsys):
+    render.field("Problem", "invalid [type=missing] in frontmatter")
+    assert "[type=missing]" in capsys.readouterr().out

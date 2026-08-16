@@ -107,10 +107,12 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## marketplace
 
+- `jarvis marketplace browse` — Show everything the community marketplace offers, and what you already have.
 - `jarvis marketplace connect-pat <plugin_id> --token --yes --dry-run` — Connect a plugin with a personal access token.
 - `jarvis marketplace connect-poll <plugin_id> <flow_id>` — Poll an in-progress OAuth connect flow.
 - `jarvis marketplace connect-start <plugin_id> --yes --dry-run` — Begin an OAuth connect flow (prints the redirect URI + flow id).
 - `jarvis marketplace disconnect <plugin_id> --yes --dry-run` — Disconnect a plugin.
+- `jarvis marketplace install <item_id> --yes --dry-run` — Install a marketplace entry by name — skill or plugin — and report the result.
 - `jarvis marketplace list` — List marketplace plugins + their connection status.
 
 ## mcps
@@ -134,6 +136,15 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis missions result <mission_id>` — Read a mission's signed outcome and actual deliverable contents.
 - `jarvis missions show <mission_id>` — Show one mission with its events + verdicts.
 - `jarvis missions tool-approvals <mission_id>` — List supervisor tool calls waiting for approval in a mission.
+
+## modes
+
+- `jarvis modes create <name> --character --slug --emoji --description --voice --verbosity --proactivity` — Create or replace a mode. Does NOT switch to it — use `modes use` for that.
+- `jarvis modes delete <slug>` — Delete a mode you created. Built-ins are refused; a copy of one is not.
+- `jarvis modes list` — List every mode and show which one is active.
+- `jarvis modes restore <slug>` — Throw away your edits to a built-in mode and bring the shipped one back.
+- `jarvis modes show <slug>` — Show one mode in full, including its character text.
+- `jarvis modes use <slug>` — Switch the active mode. Applies on the next turn — no restart.
 
 ## outputs
 
@@ -172,6 +183,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis skills disable <name> --yes --dry-run` — Deactivate a skill.
 - `jarvis skills draft <intent> --name-hint --category --yes --dry-run` — Generate a skill draft from an intent (AI author; lands as state=draft).
 - `jarvis skills enable <name> --yes --dry-run` — Activate a skill.
+- `jarvis skills import <source> --yes --dry-run` — Install a skill from a local folder or a SKILL.md link.
 - `jarvis skills list` — List all discovered skills.
 - `jarvis skills reload --yes --dry-run` — Re-scan the skills directory.
 - `jarvis skills show <name>` — Show one skill's detail.

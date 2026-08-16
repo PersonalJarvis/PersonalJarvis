@@ -56,5 +56,48 @@ def emit(payload: Any, *, as_json: bool) -> None:
         _out.print(str(payload))
 
 
+def is_human() -> bool:
+    """True when the caller is a person at a terminal, not a pipe or an agent.
+
+    A command that wants to narrate ("Downloading… done", "installed but not
+    connected yet") asks this first: prose belongs to the interactive terminal
+    only, while every non-TTY consumer keeps receiving the machine JSON
+    ``emit`` produces. Callers must still honor the global ``--json`` flag.
+    """
+    return _stdout_isatty()
+
+
+def line(text: str = "") -> None:
+    """Print one prose line to stdout (Rich markup allowed, no highlighting)."""
+    _out.print(text)
+
+
+def field(label: str, value: str, *, label_width: int = 9) -> None:
+    """Print one ``label   value`` row of a status block, wrapped in-column.
+
+    The value is wrapped here rather than by Rich because Rich restarts a
+    continuation line at column 0, which destroys the two-column read exactly
+    when it matters most — a narrow terminal. Long unbroken tokens (a Windows
+    path, a URL) are left intact and allowed to overhang; a path chopped
+    mid-word is worse than one that runs on. The value is escaped, so a
+    file path or an error message containing ``[`` cannot be eaten as markup.
+    """
+    import textwrap
+
+    from rich.markup import escape
+
+    indent = " " * (2 + label_width + 1)
+    width = max(40, min(_out.width, 100))
+    parts = textwrap.wrap(
+        value,
+        width=max(20, width - len(indent)),
+        break_long_words=False,
+        break_on_hyphens=False,
+    ) or [""]
+    _out.print(f"  [bold]{label:<{label_width}}[/bold] {escape(parts[0])}", soft_wrap=True)
+    for extra in parts[1:]:
+        _out.print(f"{indent}{escape(extra)}", soft_wrap=True)
+
+
 def error(message: str) -> None:
     _err.print(f"[red]error:[/red] {message}")

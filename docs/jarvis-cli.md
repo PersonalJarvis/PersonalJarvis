@@ -86,6 +86,24 @@ jarvis --json missions list          # JSON, for scripts/agents
 jarvis missions list                 # rich table, for humans
 ```
 
+## Installing from the marketplace
+
+A marketplace page prints one line to copy. It works for both kinds of entry —
+skills and plugins — and you never have to know which one you are looking at:
+
+```bash
+jarvis marketplace install three-bullet-brief
+jarvis marketplace browse                       # everything on offer + what you have
+```
+
+At a terminal the command first shows what the entry is and where it comes from,
+asks once, and then says plainly what happened — a skill that validated is usable
+immediately, while a plugin lands on your list but stays powerless until you
+connect your account. **Exit code 1 means "not usable"**: an unknown name, a
+declined prompt, or a skill whose file failed validation. Piped or with `--json`
+it skips the prose and the prompt and prints the API payload
+(`POST /api/marketplace/community/install/<name>`).
+
 ## Safety model
 
 The CLI is agent-first, so it stays out of your way for safe work and only gates
