@@ -51,6 +51,15 @@ def _fake_app(calls: dict) -> FastAPI:
         calls["terminal_prompt"] = {"name": name, **body}
         return {"ok": True, "terminal": name, "submitted": True}
 
+    @app.post("/api/marketplace/community/install/{item_id}")
+    async def marketplace_install(item_id: str) -> dict:
+        calls["marketplace_install"] = item_id
+        return {
+            "ok": True, "kind": "wallpaper", "id": item_id,
+            "title": "Rain Antenna City", "state": "installed",
+            "ready": True, "next_action": "none",
+        }
+
     return app
 
 
@@ -364,3 +373,54 @@ def test_a_response_that_is_only_a_snapshot_is_still_returned() -> None:
 
     assert _without_snapshots(payload) == payload
     assert _without_snapshots("plain text") == "plain text"
+
+
+def test_a_one_word_state_is_not_mistaken_for_a_snapshot() -> None:
+    """`state` is also what several routes call their verdict.
+
+    A marketplace install answers ``state: "installed"`` (or "not_connected"),
+    and trimming that took the outcome out of the very payload the model is
+    told to report from.
+    """
+    from jarvis.plugins.tool.app_command import _without_snapshots
+
+    trimmed = _without_snapshots({"ok": True, "kind": "wallpaper", "state": "installed"})
+
+    assert trimmed["state"] == "installed"
+
+
+# --------------------------------------------------------------------------- #
+# Marketplace: installing by just asking for it                               #
+# --------------------------------------------------------------------------- #
+
+
+def test_installing_from_the_marketplace_needs_a_spoken_confirmation() -> None:
+    """Pulling somebody else's published content onto the machine is `ask`.
+
+    A plugin brings an outside MCP server with it, so this must never run off
+    a half-heard sentence — even though the CLI path heuristic sees nothing
+    destructive in the URL.
+    """
+    tools = _tools()
+
+    assert tools["marketplace-install"].risk_tier == "ask"
+    assert tools["marketplace-browse"].risk_tier == "monitor"
+
+
+async def test_installing_a_wallpaper_by_name_reports_what_landed() -> None:
+    """The prompt path is the CLI path: same route, same honest answer."""
+    calls: dict = {}
+    tools = _tools(calls)
+
+    result = await tools["marketplace-install"].execute(
+        {"item_id": "rain-antenna-city"}, SimpleNamespace()
+    )
+
+    assert result.success is True
+    assert calls["marketplace_install"] == "rain-antenna-city"
+    response = result.output["response"]
+    assert response["kind"] == "wallpaper"
+    # What the user asks next is "did it work" — the answer must carry the
+    # verdict, not just an `ok: true` the model would have to interpret.
+    assert response["state"] == "installed"
+    assert response["ready"] is True

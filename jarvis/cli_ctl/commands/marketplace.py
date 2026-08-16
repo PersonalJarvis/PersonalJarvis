@@ -222,7 +222,7 @@ def install(
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Install a marketplace entry by name — skill or plugin — and report the result.
+    """Install a marketplace entry by name — skill, plugin or wallpaper — and report it.
 
     At a terminal this shows what the entry is and asks once before installing,
     then states plainly whether the thing is usable now or still needs a step.

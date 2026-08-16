@@ -685,6 +685,85 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "es": ("lista las herramientas mcps y clis conectadas",),  # i18n-allow: input vocab
             },
         ),
+        # ------------------------------------------------------ marketplace
+        AppCommand(
+            id="marketplace-browse",
+            title="Browse the marketplace",
+            description=(
+                "List everything the community marketplace publishes — skills, "
+                "plugins and wallpapers — with the exact name of each entry and "
+                "whether it is already installed. Use this to find the name "
+                "before installing, and to answer 'what is there to install'."
+            ),
+            method="GET",
+            path="/api/marketplace/community",
+            params={"type": "object", "properties": {}},
+            ui_section="plugins",
+            voice_aliases={
+                "de": (  # i18n-allow: input vocab
+                    "was gibt es im marktplatz",
+                    "welche wallpaper kann ich installieren",
+                ),
+                "en": (
+                    "what is in the marketplace",
+                    "which wallpapers can i install",
+                ),
+                "es": (  # i18n-allow: input vocab
+                    "qué hay en el mercado",
+                    "qué fondos de pantalla puedo instalar",
+                ),
+            },
+        ),
+        AppCommand(
+            id="marketplace-install",
+            title="Install from the marketplace",
+            description=(
+                "Install ONE published marketplace entry by its exact name. The "
+                "kind is resolved by the app, so the same command installs a "
+                "skill, a plugin or a wallpaper. What the user gets differs and "
+                "the answer must say so: a skill is usable right away, a "
+                "wallpaper lands in the wallpaper picker, a plugin only lands on "
+                "the plugin list and stays powerless until the user connects "
+                "their account. Look the name up with marketplace-browse first "
+                "rather than guessing it; report the result the tool returns."
+            ),
+            method="POST",
+            path="/api/marketplace/community/install/{item_id}",
+            # Installing pulls somebody else's published content onto this
+            # machine — a plugin brings an outside MCP server with it. That is
+            # never something a spoken sentence should do unconfirmed, so the
+            # tier is `ask` even though the CLI path heuristic sees nothing
+            # destructive here.
+            dangerous=True,
+            params={
+                "type": "object",
+                "properties": {
+                    "item_id": _str_param(
+                        "Exact published name of the entry to install, as shown "
+                        "by marketplace-browse (e.g. three-bullet-brief).",
+                        min_length=1,
+                        max_length=128,
+                    ),
+                },
+                "required": ["item_id"],
+            },
+            path_params=("item_id",),
+            ui_section="plugins",
+            voice_aliases={
+                "de": (  # i18n-allow: input vocab
+                    "installier das wallpaper",
+                    "installier das plugin aus dem marktplatz",
+                ),
+                "en": (
+                    "install that wallpaper",
+                    "install that plugin from the marketplace",
+                ),
+                "es": (  # i18n-allow: input vocab
+                    "instala ese fondo de pantalla",
+                    "instala ese complemento del mercado",
+                ),
+            },
+        ),
         # -------------------------------------------------------- dictation
         AppCommand(
             id="dictation-start",

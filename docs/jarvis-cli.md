@@ -88,8 +88,9 @@ jarvis missions list                 # rich table, for humans
 
 ## Installing from the marketplace
 
-A marketplace page prints one line to copy. It works for both kinds of entry —
-skills and plugins — and you never have to know which one you are looking at:
+A marketplace page prints one line to copy. It works for every kind of entry —
+skills, plugins and wallpapers — and you never have to know which one you are
+looking at:
 
 ```bash
 jarvis marketplace install three-bullet-brief
@@ -97,12 +98,19 @@ jarvis marketplace browse                       # everything on offer + what you
 ```
 
 At a terminal the command first shows what the entry is and where it comes from,
-asks once, and then says plainly what happened — a skill that validated is usable
-immediately, while a plugin lands on your list but stays powerless until you
-connect your account. **Exit code 1 means "not usable"**: an unknown name, a
-declined prompt, or a skill whose file failed validation. Piped or with `--json`
-it skips the prose and the prompt and prints the API payload
-(`POST /api/marketplace/community/install/<name>`).
+asks once, and then says plainly what happened. What "installed" is worth differs
+per kind, and the answer says which one you got: a skill that validated is usable
+immediately, a wallpaper is in your picker straight away, and a plugin lands on
+your list but stays powerless until you connect your account. **Exit code 1 means
+"not usable"**: an unknown name, a declined prompt, or a skill whose file failed
+validation. Piped or with `--json` it skips the prose and the prompt and prints
+the API payload (`POST /api/marketplace/community/install/<name>`).
+
+The same install is reachable by just asking for it — "install the wallpaper
+rain-antenna-city" — because both the browse and the install are Command-Registry
+entries (`marketplace-browse`, `marketplace-install`), so the assistant can look
+the name up and then install it. Installing pulls somebody else's published
+content onto your machine, so that path asks you to confirm out loud first.
 
 ## Safety model
 

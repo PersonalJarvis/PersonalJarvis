@@ -112,7 +112,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis marketplace connect-poll <plugin_id> <flow_id>` — Poll an in-progress OAuth connect flow.
 - `jarvis marketplace connect-start <plugin_id> --yes --dry-run` — Begin an OAuth connect flow (prints the redirect URI + flow id).
 - `jarvis marketplace disconnect <plugin_id> --yes --dry-run` — Disconnect a plugin.
-- `jarvis marketplace install <item_id> --yes --dry-run` — Install a marketplace entry by name — skill or plugin — and report the result.
+- `jarvis marketplace install <item_id> --yes --dry-run` — Install a marketplace entry by name — skill, plugin or wallpaper — and report it.
 - `jarvis marketplace list` — List marketplace plugins + their connection status.
 
 ## mcps

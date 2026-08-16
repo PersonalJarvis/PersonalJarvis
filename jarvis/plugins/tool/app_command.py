@@ -125,10 +125,22 @@ _SNAPSHOT_KEYS = frozenset({"state"})
 
 
 def _without_snapshots(data: Any) -> Any:
-    """The server's response minus any full-state snapshot it echoed back."""
+    """The server's response minus any full-state snapshot it echoed back.
+
+    Only a nested body is ever a snapshot. ``state`` is also what several
+    routes call their one-word verdict — a marketplace install answers
+    ``state: "installed"`` / ``"not_connected"`` — and dropping THAT took the
+    result out of the very payload the model is told to report from. Trimming
+    on the value's shape keeps the 25 000-character workspace dumps out while
+    letting a plain word through.
+    """
     if not isinstance(data, dict):
         return data
-    trimmed = {key: value for key, value in data.items() if key not in _SNAPSHOT_KEYS}
+    trimmed = {
+        key: value
+        for key, value in data.items()
+        if key not in _SNAPSHOT_KEYS or not isinstance(value, (dict, list))
+    }
     if trimmed.keys() <= {"ok"}:
         # The snapshot WAS the answer; trimming it would return nothing at all.
         return data
