@@ -1470,7 +1470,24 @@ async def install_from_catalog(
             "reload_warning": str(exc),
         }
 
-    installed = reg.get(body.name)
+    try:
+        installed = reg.get(body.name)
+    except KeyError as exc:
+        # The download succeeded and the file is on disk, but the loader keys a
+        # skill by its FRONTMATTER name (falling back to the file stem), so a
+        # missing/unreadable frontmatter means nothing was registered under the
+        # requested name. Saying so — with the path — beats the bare 500 an
+        # uncaught KeyError produced, which told the user nothing about the
+        # file now sitting in their skills folder.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Downloaded to {target_path}, but it is not a usable skill: "
+                f"Jarvis found no skill named '{body.name}' in it (the "
+                "frontmatter is missing or unreadable). Delete that folder or "
+                "fix the file."
+            ),
+        ) from exc
     return {
         "ok": True,
         "name": body.name,

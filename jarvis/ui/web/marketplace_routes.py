@@ -8,6 +8,7 @@ Endpoints:
     DELETE /api/marketplace/plugins/{id}                   — disconnect
     GET    /api/marketplace/community                      — community index browse
     POST   /api/marketplace/community/refresh              — force index re-fetch
+    POST   /api/marketplace/community/install/{id}         — install by name (skill OR plugin)
     POST   /api/marketplace/community/plugins/{id}/install — one-click install
     DELETE /api/marketplace/community/plugins/{id}         — uninstall + revoke
 """
@@ -843,11 +844,13 @@ async def community_refresh(response: Response) -> dict[str, Any]:
     return _community_payload(index, status)
 
 
-@router.post("/community/plugins/{plugin_id}/install")
-async def community_install(plugin_id: str) -> dict[str, Any]:
-    """One-click install: convert the manifest, persist the catalog entry and
-    usage card, refresh the live registry. The plugin then behaves exactly
-    like a seed plugin (connect flows, relevance gate, worker bridge)."""
+async def _install_community_plugin(plugin_id: str) -> dict[str, Any]:
+    """Install one community plugin; return its catalog item.
+
+    Shared by the id-specific route and the by-name installer below, so both
+    enforce the SAME preconditions (index membership, seed-id collision,
+    manifest validity) instead of drifting into two install semantics.
+    """
     from jarvis.marketplace import community_source
     from jarvis.marketplace.agent_plugins_loader import (
         AgentPluginError,
@@ -909,7 +912,121 @@ async def community_install(plugin_id: str) -> dict[str, Any]:
     _refresh_plugin_in_live_registry(spec.id)
     item = spec.model_dump(mode="json")
     item["status"] = "not_connected"
+    return item
+
+
+@router.post("/community/plugins/{plugin_id}/install")
+async def community_install(plugin_id: str) -> dict[str, Any]:
+    """One-click install: convert the manifest, persist the catalog entry and
+    usage card, refresh the live registry. The plugin then behaves exactly
+    like a seed plugin (connect flows, relevance gate, worker bridge)."""
+    item = await _install_community_plugin(plugin_id)
     return {"ok": True, "plugin": item}
+
+
+# States a freshly parsed skill can carry that mean "Jarvis will actually use
+# this" — the registry treats VALIDATED and ACTIVE alike (see
+# jarvis/skills/registry.py::active_skills). DRAFT means the file parsed but
+# failed validation, i.e. installed yet dead.
+_SKILL_READY_STATES = frozenset({"active", "validated"})
+
+
+async def _install_community_skill(entry: Any, request: Request) -> dict[str, Any]:
+    """Download + register one community skill; return the by-name result shape.
+
+    Delegates to the existing catalog-install route function so there is
+    exactly ONE skill install path (download guards, name-slug check, registry
+    hot-swap) rather than a second copy that can drift.
+    """
+    from jarvis.ui.web.skills_routes import SkillInstallBody, install_from_catalog
+
+    body = SkillInstallBody(
+        name=entry.name,
+        raw_url=entry.raw_url,
+        source_url=entry.source_url or "",
+        title=entry.title or entry.name,
+    )
+    result = await install_from_catalog(body, request)
+    summary = result.get("skill") or {}
+    state = str(summary.get("state") or "draft")
+    return {
+        "ok": True,
+        "kind": "skill",
+        "id": entry.name,
+        "title": entry.title or entry.name,
+        "publisher": entry.publisher,
+        "version": entry.version,
+        "source_url": entry.source_url,
+        "location": result.get("path") or "",
+        "state": state,
+        # A skill needs no credentials and no connect step: once the file
+        # parses and validates, asking for it is enough.
+        "ready": state in _SKILL_READY_STATES,
+        "problem": summary.get("error") or result.get("reload_warning"),
+        "next_action": "none" if state in _SKILL_READY_STATES else "repair",
+    }
+
+
+def _install_by_name_404(item_id: str, index: Any) -> HTTPException:
+    """404 that names the closest existing entry instead of a dead end."""
+    import difflib
+
+    names: list[str] = []
+    if index is not None:
+        names = [e.name for e in index.plugins] + [s.name for s in index.skills]
+    close = difflib.get_close_matches(item_id, names, n=1, cutoff=0.6)
+    hint = f" Closest match: {close[0]!r}." if close else ""
+    return HTTPException(
+        status_code=404,
+        detail=(
+            f"No skill or plugin named {item_id!r} in the community "
+            f"marketplace.{hint}"
+        ),
+    )
+
+
+@router.post("/community/install/{item_id}")
+async def community_install_by_name(item_id: str, request: Request) -> dict[str, Any]:
+    """Install a marketplace entry by name — skill or plugin, one call.
+
+    The one-liner a downloader copies off a marketplace page
+    (``jarvis marketplace install <name>``) never says which of the two an
+    entry is, so the KIND is resolved here and both kinds answer in one shape:
+    what landed, where it landed, whether it is usable right now, and what is
+    still missing. Every surface (CLI, desktop, an agent driving the API) can
+    therefore report an honest status instead of a bare 200.
+    """
+    from jarvis.marketplace import community_source
+
+    index, _ = await community_source.get_index()
+    plugin_entry = skill_entry = None
+    if index is not None:
+        plugin_entry = next((e for e in index.plugins if e.name == item_id), None)
+        skill_entry = next((s for s in index.skills if s.name == item_id), None)
+    if plugin_entry is None and skill_entry is None:
+        raise _install_by_name_404(item_id, index)
+
+    if skill_entry is not None:
+        return await _install_community_skill(skill_entry, request)
+
+    item = await _install_community_plugin(item_id)
+    return {
+        "ok": True,
+        "kind": "plugin",
+        "id": item.get("id", item_id),
+        "title": item.get("display_name") or item_id,
+        "publisher": item.get("publisher"),
+        "version": item.get("version"),
+        "source_url": item.get("source_url"),
+        "location": "",
+        "state": "not_connected",
+        # A plugin talks to somebody else's service: installed is not the same
+        # as usable, and saying otherwise is the exact confusion this route exists to kill.
+        "ready": False,
+        "problem": None,
+        "next_action": "connect",
+        "plugin": item,
+    }
 
 
 @router.delete("/community/plugins/{plugin_id}")

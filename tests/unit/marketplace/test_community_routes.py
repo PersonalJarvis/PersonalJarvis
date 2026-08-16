@@ -229,3 +229,176 @@ async def test_refresh_bypasses_ttl(community_env: Path, monkeypatch: pytest.Mon
         resp = await client.post("/api/marketplace/community/refresh")
     assert resp.status_code == 200
     assert calls == [True]
+
+
+# ----------------------------------------------------------------------
+# Install by name (skill OR plugin) — the published one-liner
+# ----------------------------------------------------------------------
+
+_SKILL_MD = """---
+schema_version: "1"
+name: three-point-check
+version: "1.0.0"
+description: Summarize any topic in exactly three bullets plus a takeaway.
+when_to_use: When someone asks for a brief, a TLDR, or the short version.
+category: productivity
+---
+
+# Three Point Check
+
+Produce three bullets and one takeaway line.
+"""
+
+
+def _client_with_skills(skills_root: Path) -> tuple[httpx.AsyncClient, Any]:
+    """Test client whose app carries a real SkillRegistry (skill installs need it)."""
+    from jarvis.skills.registry import SkillRegistry
+
+    app = FastAPI()
+    app.include_router(router)
+    registry = SkillRegistry(root=skills_root)
+    registry.reload_sync()
+    app.state.skill_registry = registry
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
+    return client, registry
+
+
+@pytest.fixture()
+def offline_skill_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Write the SKILL.md locally instead of fetching it (no network in tests).
+
+    The download itself — https-only, slug-only, path containment — is covered
+    in tests/unit/marketplace/test_community_hardening.py; here we only need a
+    file on disk so the registry parse + lifecycle state are the REAL ones.
+    """
+    from jarvis.skills.finder import SkillFinder
+
+    async def fake_install(self: Any, candidate: Any) -> Path:
+        target_dir = tmp_path / "skills" / candidate.name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / "SKILL.md"
+        target.write_text(_SKILL_MD, encoding="utf-8")
+        return target
+
+    monkeypatch.setattr(SkillFinder, "install", fake_install)
+
+
+@pytest.mark.asyncio
+async def test_install_by_name_installs_a_skill_and_reports_it_ready(
+    community_env: Path, offline_skill_download: None
+) -> None:
+    client, _ = _client_with_skills(community_env / "skills")
+    async with client:
+        resp = await client.post(
+            "/api/marketplace/community/install/three-point-check"
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["kind"] == "skill"
+    assert data["id"] == "three-point-check"
+    assert data["title"] == "Three Point Check"
+    # A valid skill is live the moment it parses — the CLI reports exactly this.
+    assert data["state"] == "validated"
+    assert data["ready"] is True
+    assert data["next_action"] == "none"
+    assert data["problem"] is None
+    assert data["location"].endswith("SKILL.md")
+    assert (community_env / "skills" / "three-point-check" / "SKILL.md").exists()
+
+
+def _broken_download(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str
+) -> None:
+    from jarvis.skills.finder import SkillFinder
+
+    async def fake_install(self: Any, candidate: Any) -> Path:
+        target_dir = tmp_path / "skills" / candidate.name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / "SKILL.md"
+        target.write_text(content, encoding="utf-8")
+        return target
+
+    monkeypatch.setattr(SkillFinder, "install", fake_install)
+
+
+@pytest.mark.asyncio
+async def test_install_by_name_reports_a_broken_skill_as_not_ready(
+    community_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file that lands but fails validation must NOT be reported as usable."""
+    _broken_download(
+        monkeypatch,
+        tmp_path,
+        _SKILL_MD.replace(
+            "category: productivity",
+            "category: productivity\ntriggers:\n  - type: voice\n",
+        ),
+    )
+    client, _ = _client_with_skills(community_env / "skills")
+    async with client:
+        resp = await client.post(
+            "/api/marketplace/community/install/three-point-check"
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is False
+    assert data["state"] == "draft"
+    assert data["next_action"] == "repair"
+    assert "pattern" in (data["problem"] or "")
+
+
+@pytest.mark.asyncio
+async def test_install_by_name_unreadable_file_422_names_the_path(
+    community_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No frontmatter at all: the file lands under no known name — say so.
+
+    The loader keys a skill by its frontmatter name, so such a download
+    registers under nothing the caller asked for. That used to surface as an
+    uncaught KeyError (HTTP 500) that never mentioned the downloaded file.
+    """
+    _broken_download(monkeypatch, tmp_path, "no frontmatter at all\n")
+    client, _ = _client_with_skills(community_env / "skills")
+    async with client:
+        resp = await client.post(
+            "/api/marketplace/community/install/three-point-check"
+        )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "SKILL.md" in detail
+    assert "three-point-check" in detail
+
+
+@pytest.mark.asyncio
+async def test_install_by_name_installs_a_plugin_as_not_connected(
+    community_env: Path,
+) -> None:
+    client, _ = _client_with_skills(community_env / "skills")
+    async with client:
+        resp = await client.post("/api/marketplace/community/install/todo-fox")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["kind"] == "plugin"
+    assert data["title"] == "TodoFox"
+    # Installed is NOT usable for a plugin: it still needs the user's account.
+    assert data["ready"] is False
+    assert data["state"] == "not_connected"
+    assert data["next_action"] == "connect"
+    assert data["plugin"]["id"] == "todo-fox"
+
+
+@pytest.mark.asyncio
+async def test_install_by_name_unknown_entry_404_names_the_closest_match(
+    community_env: Path,
+) -> None:
+    client, _ = _client_with_skills(community_env / "skills")
+    async with client:
+        resp = await client.post(
+            "/api/marketplace/community/install/three-point-chek"
+        )
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert "three-point-chek" in detail
+    assert "three-point-check" in detail
