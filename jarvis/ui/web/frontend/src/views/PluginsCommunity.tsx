@@ -233,18 +233,16 @@ export function CommunityTab() {
 
   const skillInstallMutation = useMutation({
     mutationFn: async (skill: CommunitySkillWire) => {
-      // The existing skill-catalog install route does the download,
-      // validation, and registry hot-swap.
-      const res = await fetch("/api/skills/catalog/install", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: skill.name,
-          title: skill.title,
-          raw_url: skill.raw_url,
-          source_url: skill.source_url ?? "",
-        }),
-      });
+      // The by-name route, same as the wallpaper below: it runs the existing
+      // catalog install (download, validation, registry hot-swap) and then
+      // writes the origin receipt. Posting to the catalog route directly
+      // skipped that receipt, so a skill installed from this card arrived
+      // with no mark on it — installed from the marketplace and unable to
+      // say so, which is the one thing this card exists to make visible.
+      const res = await fetch(
+        `/api/marketplace/community/install/${encodeURIComponent(skill.name)}`,
+        { method: "POST" },
+      );
       if (!res.ok) {
         const detail = await res
           .json()
@@ -332,9 +330,9 @@ export function CommunityTab() {
             Community marketplace
           </h2>
           <p className="text-xs text-muted-foreground">
-            Plugins and skills published by anyone. Nothing here is reviewed by
-            the {PRODUCT_NAME} team — read what a card would connect to before
-            installing it.
+            Plugins, skills and wallpapers published by anyone. Nothing here is
+            reviewed by the {PRODUCT_NAME} team — read what a card would connect
+            to before installing it.
           </p>
         </div>
         <Button
@@ -370,7 +368,7 @@ export function CommunityTab() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search community plugins and skills…"
+            placeholder="Search community plugins, skills and wallpapers…"
             className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
         </label>

@@ -65,11 +65,11 @@ function installFetchMock(overrides?: Partial<CommunityResponse>) {
         json: async () => ({ ok: true, plugin: { id: "todo-fox" } }),
       } as Response;
     }
-    if (url === "/api/skills/catalog/install") {
+    if (url === "/api/marketplace/community/install/three-point-check") {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ ok: true, name: "three-point-check" }),
+        json: async () => ({ ok: true, kind: "skill", id: "three-point-check" }),
       } as Response;
     }
     throw new Error(`unexpected fetch ${method} ${url}`);
@@ -167,18 +167,18 @@ describe("CommunityTab", () => {
     );
     fireEvent.click(confirm!);
 
+    // The by-name route, not the bare catalog install: that one downloads the
+    // skill but writes no origin receipt, so a skill installed from this very
+    // card showed up in Skills with nothing saying where it came from.
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/skills/catalog/install",
+        "/api/marketplace/community/install/three-point-check",
         expect.objectContaining({ method: "POST" }),
       );
     });
-    const body = JSON.parse(
-      (fetchMock.mock.calls.find(([u]) => u === "/api/skills/catalog/install")![1] as RequestInit)
-        .body as string,
-    );
-    expect(body.name).toBe("three-point-check");
-    expect(body.raw_url).toBe("https://raw.example/skills/three-point-check/SKILL.md");
+    expect(
+      fetchMock.mock.calls.some(([u]) => u === "/api/skills/catalog/install"),
+    ).toBe(false);
   });
 
   it("says honestly when it is showing a stale saved copy", async () => {
