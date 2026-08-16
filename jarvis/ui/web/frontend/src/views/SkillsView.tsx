@@ -37,6 +37,7 @@ import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { MarketplaceBadge } from "@/components/MarketplaceBadge";
 import { Switch } from "@/components/ui/switch";
 import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -605,6 +606,12 @@ function SkillRowDraggable({
                 aria-label="Builtin"
               />
             )}
+            {skill.origin?.source === "marketplace" && (
+              <MarketplaceBadge
+                compact
+                publisher={skill.origin.publisher}
+              />
+            )}
           </div>
           {skill.description && (
             <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
@@ -976,10 +983,32 @@ function SkillDetailPanel({ name }: { name: string }) {
                   builtin
                 </Badge>
               )}
+              {data.origin?.source === "marketplace" && (
+                <MarketplaceBadge publisher={data.origin.publisher} />
+              )}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               v{data.version} · {data.category} · {data.path}
             </p>
+            {data.origin?.source === "marketplace" && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("marketplace_origin.tooltip")}
+                {data.origin.publisher ? ` · ${data.origin.publisher}` : ""}
+                {data.origin.source_url ? (
+                  <>
+                    {" · "}
+                    <a
+                      href={data.origin.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline underline-offset-2 hover:text-foreground"
+                    >
+                      {t("marketplace_origin.view_source")}
+                    </a>
+                  </>
+                ) : null}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {!isDraft && (

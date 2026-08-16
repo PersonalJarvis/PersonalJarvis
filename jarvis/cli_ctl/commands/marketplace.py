@@ -42,14 +42,21 @@ def _fail(exc: ApiError) -> typer.Exit:
     return typer.Exit(code=1)
 
 
+#: Index section -> the kind a single entry of it is. One table, so adding a
+#: published kind never leaves the lookup and the suggester disagreeing.
+_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("skills", "skill"),
+    ("plugins", "plugin"),
+    ("wallpapers", "wallpaper"),
+)
+
+
 def _find_entry(index: dict[str, Any], item_id: str) -> tuple[str, dict[str, Any]] | None:
-    """Locate ``item_id`` in a community index payload as ("skill"|"plugin", entry)."""
-    for skill in index.get("skills") or []:
-        if skill.get("name") == item_id:
-            return "skill", skill
-    for plugin in index.get("plugins") or []:
-        if plugin.get("name") == item_id:
-            return "plugin", plugin
+    """Locate ``item_id`` in a community index payload as (kind, entry)."""
+    for section, kind in _SECTIONS:
+        for entry in index.get(section) or []:
+            if entry.get("name") == item_id:
+                return kind, entry
     return None
 
 
@@ -57,8 +64,11 @@ def _suggest(index: dict[str, Any], item_id: str) -> str:
     """Closest existing name, phrased as a hint — or an empty string."""
     import difflib
 
-    names = [s.get("name", "") for s in index.get("skills") or []]
-    names += [p.get("name", "") for p in index.get("plugins") or []]
+    names = [
+        str(entry.get("name") or "")
+        for section, _ in _SECTIONS
+        for entry in index.get(section) or []
+    ]
     close = difflib.get_close_matches(item_id, [n for n in names if n], n=1, cutoff=0.6)
     return f" Did you mean {close[0]!r}?" if close else ""
 
@@ -71,14 +81,25 @@ _field = render.field
 # ----------------------------------------------------------------------
 
 
-_SKILL_BLURB = (
-    "A written instruction sheet for the assistant. It adds no server and no "
-    "login of its own."
-)
-_PLUGIN_BLURB = (
-    "A connector to an outside service. Installing it only puts it on your "
-    "list — it stays powerless until you connect your account."
-)
+_BLURBS = {
+    "skill": (
+        "A written instruction sheet for the assistant. It adds no server and "
+        "no login of its own."
+    ),
+    "plugin": (
+        "A connector to an outside service. Installing it only puts it on your "
+        "list — it stays powerless until you connect your account."
+    ),
+    "wallpaper": (
+        "A picture for the app background. It is re-encoded on the way in, "
+        "exactly like one you would drag in yourself."
+    ),
+}
+_LANDS_IN = {
+    "skill": "your skills",
+    "plugin": "your plugin list",
+    "wallpaper": "your wallpapers",
+}
 
 
 def _preview(kind: str, entry: dict[str, Any], item_id: str) -> None:
@@ -92,12 +113,12 @@ def _preview(kind: str, entry: dict[str, Any], item_id: str) -> None:
     render.line()
     render.line(f"[bold]{title}[/bold]  ·  {'  ·  '.join(parts)}")
     render.line()
-    _field("What", _SKILL_BLURB if kind == "skill" else _PLUGIN_BLURB)
+    _field("What", _BLURBS.get(kind, "A marketplace entry."))
     if entry.get("description"):
         _field("Does", str(entry["description"]))
     if entry.get("source_url"):
         _field("From", str(entry["source_url"]))
-    _field("Goes to", "your skills" if kind == "skill" else "your plugin list")
+    _field("Goes to", _LANDS_IN.get(kind, "your library"))
     render.line()
 
 
@@ -119,6 +140,11 @@ def _report_installed(payload: dict[str, Any]) -> int:
         _field("File", str(payload["location"]))
 
     if payload.get("ready"):
+        if kind == "wallpaper":
+            _field("Status", "in your wallpapers now — open Wallpaper to pick it")
+            _field("From", "shown there as a Marketplace picture")
+            render.line()
+            return 0
         _field(
             "Status",
             "ready to use — Jarvis picked it up already, no restart needed",
@@ -152,6 +178,10 @@ def _report_already_there(kind: str, item_id: str, client: Any) -> int:
     render.line(f"[green]Already installed:[/green] [bold]{item_id}[/bold]")
     render.line()
     _field("Kind", kind)
+    if kind == "wallpaper":
+        _field("Status", "in your wallpapers — open Wallpaper to pick it")
+        render.line()
+        return 0
     if kind == "skill":
         try:
             detail = client.request("GET", f"/api/skills/{item_id}")
@@ -274,10 +304,10 @@ def browse() -> None:
             render.emit(index, as_json=json_out)
             return
         payload = index if isinstance(index, dict) else {}
-        for kind, key in (("Skills", "skills"), ("Plugins", "plugins")):
-            entries = payload.get(key) or []
+        for section, _ in _SECTIONS:
+            entries = payload.get(section) or []
             render.line()
-            render.line(f"[bold]{kind}[/bold] ({len(entries)})")
+            render.line(f"[bold]{section.capitalize()}[/bold] ({len(entries)})")
             if not entries:
                 render.line("  nothing published yet")
                 continue

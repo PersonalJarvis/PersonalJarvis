@@ -791,6 +791,7 @@ describe("plugin search matches more than the display name", () => {
     status: "not_connected",
     longevity: "permanent",
     oauthClientConfigured: false,
+    fromMarketplace: false,
     ...extra,
   });
 
@@ -855,6 +856,7 @@ describe("plugin status filter", () => {
     status,
     longevity: "permanent",
     oauthClientConfigured: false,
+    fromMarketplace: false,
   });
 
   it("lets everything through on 'all'", () => {

@@ -26,11 +26,22 @@ export const RESOURCE_LABELS: Record<ResourceKind, string> = {
   agents: "Agents",
 };
 
+/** Where an installed skill came from. Null for one the owner wrote. */
+export interface SkillOrigin {
+  source: string;
+  source_id: string;
+  publisher: string | null;
+  version: string | null;
+  source_url: string | null;
+  installed_at: string | null;
+}
+
 export interface SkillSummary {
   name: string;
   state: SkillState;
   is_builtin: boolean;
   error: string | null;
+  origin?: SkillOrigin | null;
   description: string;
   category: string;
   version: string;

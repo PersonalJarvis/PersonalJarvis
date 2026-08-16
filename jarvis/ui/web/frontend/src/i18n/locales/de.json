@@ -4267,5 +4267,10 @@
     "reveal_failed": "Die Datei konnte nicht im Ordner gezeigt werden.",
     "open_from_agent": "Visualisierungen",
     "open_from_agent_hint": "Zeigt als Graph, was die letzten Durchläufe getan und erzeugt haben."
+  },
+  "marketplace_origin": {
+    "badge": "Marketplace",
+    "tooltip": "Aus dem Marketplace installiert",
+    "view_source": "Eintrag ansehen"
   }
 }

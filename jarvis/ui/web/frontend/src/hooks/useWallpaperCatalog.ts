@@ -21,8 +21,14 @@ export interface WallpaperEntry {
   /**
    * True for a picture the owner uploaded. Those are the only wallpapers that
    * can be removed or re-themed, so the preview needs to know which it has.
+   * An installed marketplace wallpaper lives in the same store and is an
+   * upload in that sense: it can be re-themed and removed the same way.
    */
   isUpload?: boolean;
+  /** True for a picture installed from the community marketplace. */
+  fromMarketplace?: boolean;
+  /** GitHub login that published it, when the entry carried one. */
+  publisher?: string | null;
 }
 
 export interface WallpaperStyle {

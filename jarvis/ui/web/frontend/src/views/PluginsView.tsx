@@ -27,6 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { MarketplaceBadge } from "@/components/MarketplaceBadge";
 import { openExternalUrl } from "@/lib/openExternal";
 import { robustCopy } from "@/lib/clipboard";
 import { PRODUCT_NAME } from "@/lib/branding";
@@ -119,6 +120,13 @@ interface CatalogPlugin {
    *  reasons. Never carries provider error text. */
   reauth_reason?: ReauthReason | string | null;
   reauth_at?: string | null;
+  /** "seed" for a plugin the app ships, "community" for one installed from
+   *  the marketplace. Drives the Marketplace mark and keeps an installed
+   *  community plugin in the Installed tab before it is ever connected. */
+  source?: string;
+  publisher?: string | null;
+  version?: string | null;
+  source_url?: string | null;
 }
 
 interface CatalogResponse {
@@ -205,6 +213,10 @@ export interface Plugin {
   reauthReason?: ReauthReason | string;
   reauthAt?: string;
   oauthClientConfigured: boolean;
+  /** True for a plugin installed from the community marketplace. */
+  fromMarketplace: boolean;
+  publisher?: string;
+  sourceUrl?: string;
 }
 
 function adapt(p: CatalogPlugin): Plugin {
@@ -227,6 +239,9 @@ function adapt(p: CatalogPlugin): Plugin {
     reauthReason: p.reauth_reason ?? undefined,
     reauthAt: p.reauth_at ?? undefined,
     oauthClientConfigured: p.oauth_client_configured ?? false,
+    fromMarketplace: p.source === "community",
+    publisher: p.publisher ?? undefined,
+    sourceUrl: p.source_url ?? undefined,
   };
 }
 
@@ -641,13 +656,20 @@ export function PluginsView() {
   // "Installed" keeps every plugin the user ever connected — including a revoked
   // (needs_reauth) or errored one — so a dead token surfaces a Reconnect prompt
   // here instead of silently dropping back into Browse as a plain "+".
+  //
+  // A plugin installed from the marketplace belongs here from the moment it is
+  // installed, connected or not: the shipped catalog is always "available", so
+  // a community plugin that only appeared in Browse was indistinguishable from
+  // the twenty the app came with — somebody who had just installed one had no
+  // place to look for it.
   const installed = useMemo(
     () =>
       allPlugins.filter(
         (p) =>
           p.status === "connected" ||
           p.status === "needs_reauth" ||
-          p.status === "error",
+          p.status === "error" ||
+          p.fromMarketplace,
       ),
     [allPlugins],
   );
@@ -1620,6 +1642,9 @@ function PluginRow({
               <AlertTriangle className="h-2.5 w-2.5" />
               <span>Error</span>
             </span>
+          )}
+          {plugin.fromMarketplace && (
+            <MarketplaceBadge publisher={plugin.publisher} />
           )}
         </div>
         {needsReauth ? (

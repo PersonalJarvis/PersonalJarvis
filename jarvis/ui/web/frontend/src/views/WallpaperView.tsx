@@ -9,12 +9,14 @@ import {
   Loader2,
   Moon,
   RotateCcw,
+  Store,
   Sun,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 
+import { translate } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ViewHeader } from "@/views/ChatsView";
@@ -28,6 +30,7 @@ import {
   uploadAsEntry,
   useUploadMutations,
   useWallpaperUploads,
+  MARKETPLACE_WALLPAPER_STYLE,
   UPLOAD_WALLPAPER_STYLE,
 } from "@/hooks/useWallpaperUploads";
 import { useApplyWallpaper } from "@/hooks/useApplyWallpaper";
@@ -290,6 +293,18 @@ function WallpaperTile({
             {item.styleLabel}
           </span>
         </span>
+        {/* Over artwork, not over a themed surface: this mark is deliberately
+            white-on-scrim rather than a theme token, because the tile behind
+            it is an arbitrary picture in either mode. */}
+        {item.fromMarketplace && (
+          <span
+            className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-white backdrop-blur-sm"
+            title={`${translate("marketplace_origin.tooltip")}${item.publisher ? ` · ${item.publisher}` : ""}`}
+          >
+            <Store className="h-2.5 w-2.5" aria-hidden />
+            {translate("marketplace_origin.badge")}
+          </span>
+        )}
       </button>
       <FavoriteButton
         item={item}
@@ -371,6 +386,9 @@ function WallpaperPreview({
           <h3 className="truncate text-sm font-semibold">{item.title}</h3>
           <p className="truncate text-xs text-muted-foreground">
             {item.styleLabel} · {item.theme === "dark" ? "Dark" : "Light"}
+            {item.fromMarketplace
+              ? ` · ${translate("marketplace_origin.tooltip")}${item.publisher ? ` · ${item.publisher}` : ""}`
+              : ""}
           </p>
         </div>
         {/* Only an upload can be re-themed: the library's own light/dark comes
@@ -519,17 +537,25 @@ export function WallpaperView() {
     reconcile((id) => items.find((item) => item.id === id)?.theme ?? null);
   }, [data, items, reconcile]);
 
+  // Two chips, not one: a picture the owner brought and one they installed are
+  // different answers to "where did this come from", and somebody who just
+  // installed one needs a single click to find it among five hundred tiles.
   const styles = useMemo(() => {
     const known = data?.styles ?? [];
-    if (!ownEntries.length) return known;
-    const chip = {
-      slug: UPLOAD_WALLPAPER_STYLE,
-      label: "Yours",
-      count: ownEntries.length,
-    };
+    const own = ownEntries.filter((entry) => !entry.fromMarketplace).length;
+    const installed = ownEntries.length - own;
+    const chips = [
+      own > 0 && { slug: UPLOAD_WALLPAPER_STYLE, label: "Yours", count: own },
+      installed > 0 && {
+        slug: MARKETPLACE_WALLPAPER_STYLE,
+        label: "Marketplace",
+        count: installed,
+      },
+    ].filter(Boolean) as { slug: string; label: string; count: number }[];
+    if (!chips.length) return known;
     const [bundled, ...rest] = known;
-    return bundled ? [bundled, chip, ...rest] : [chip, ...known];
-  }, [data?.styles, ownEntries.length]);
+    return bundled ? [bundled, ...chips, ...rest] : [...chips, ...known];
+  }, [data?.styles, ownEntries]);
 
   const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
   // Counted against the catalog, not against the stored list: an id left over

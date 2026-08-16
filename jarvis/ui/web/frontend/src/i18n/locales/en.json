@@ -4267,5 +4267,10 @@
     "reveal_failed": "That file could not be shown in the folder.",
     "open_from_agent": "Visuals",
     "open_from_agent_hint": "Show what the latest runs did and produced, as a graph."
+  },
+  "marketplace_origin": {
+    "badge": "Marketplace",
+    "tooltip": "Installed from the marketplace",
+    "view_source": "view listing"
   }
 }

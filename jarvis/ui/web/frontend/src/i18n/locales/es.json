@@ -4267,5 +4267,10 @@
     "reveal_failed": "No se pudo mostrar el archivo en la carpeta.",
     "open_from_agent": "Visuales",
     "open_from_agent_hint": "Muestra como grafo lo que hicieron y produjeron las últimas ejecuciones."
+  },
+  "marketplace_origin": {
+    "badge": "Marketplace",
+    "tooltip": "Instalado desde el marketplace",
+    "view_source": "ver publicación"
   }
 }

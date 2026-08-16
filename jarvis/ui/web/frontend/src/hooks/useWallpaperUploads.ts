@@ -3,16 +3,30 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Theme } from "@/hooks/useTheme";
 import type { WallpaperEntry } from "@/hooks/useWallpaperCatalog";
 
-/** One wallpaper the owner brought themselves, as the server reports it. */
+/** One wallpaper outside the generated library, as the server reports it.
+ *
+ * Either the owner brought it (`source: "own"`) or they installed it from the
+ * marketplace (`source: "marketplace"`, plus the entry it came from). Both
+ * live in the same store, so both arrive through this list.
+ */
 export interface WallpaperUpload {
   id: string;
   title: string;
   theme: Theme;
   createdAt: number;
+  source?: string;
+  sourceId?: string;
+  publisher?: string | null;
+  version?: string | null;
+  sourceUrl?: string | null;
 }
 
 /** The filter slug and chip label the owner's own pictures live under. */
 export const UPLOAD_WALLPAPER_STYLE = "yours";
+
+/** Installed marketplace pictures get their own chip, so "what did I just
+ *  install?" is one click rather than a hunt through five hundred tiles. */
+export const MARKETPLACE_WALLPAPER_STYLE = "marketplace";
 
 const UPLOADS_URL = "/api/wallpapers/uploads";
 const UPLOADS_KEY = ["wallpapers", "uploads"] as const;
@@ -28,15 +42,18 @@ async function detail(response: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
-/** Present an upload the way the browse grid knows every other wallpaper. */
+/** Present a stored picture the way the browse grid knows every other one. */
 export function uploadAsEntry(upload: WallpaperUpload): WallpaperEntry {
+  const fromMarketplace = upload.source === "marketplace";
   return {
     id: upload.id,
     title: upload.title,
-    style: UPLOAD_WALLPAPER_STYLE,
-    styleLabel: "Yours",
+    style: fromMarketplace ? MARKETPLACE_WALLPAPER_STYLE : UPLOAD_WALLPAPER_STYLE,
+    styleLabel: fromMarketplace ? "Marketplace" : "Yours",
     theme: upload.theme,
     isUpload: true,
+    fromMarketplace,
+    publisher: upload.publisher ?? null,
   };
 }
 
