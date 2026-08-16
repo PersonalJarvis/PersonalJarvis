@@ -52,7 +52,7 @@ def test_the_process_can_still_start(machine: None) -> None:
 
 def test_the_plugin_still_gets_its_own_token(machine: None) -> None:
     env = isolated_environment({"TODOFOX_TOKEN": "tfx_this_plugins_own"})
-    assert env["TODOFOX_TOKEN"] == "tfx_this_plugins_own"
+    assert env["TODOFOX_TOKEN"] == "tfx_this_plugins_own"  # noqa: S105 - fixture
     assert "OPENAI_API_KEY" not in env
 
 
@@ -87,7 +87,7 @@ def test_the_client_actually_honours_the_flag(machine: None) -> None:
 
     isolated = build(True)
     assert "OPENAI_API_KEY" not in isolated
-    assert isolated["TODOFOX_TOKEN"] == "tfx_own"
+    assert isolated["TODOFOX_TOKEN"] == "tfx_own"  # noqa: S105 - fixture
 
     # The default is unchanged: the user's own servers still see everything.
     assert build(False)["OPENAI_API_KEY"] == SECRETS["OPENAI_API_KEY"]
