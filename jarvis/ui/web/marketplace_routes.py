@@ -7,6 +7,7 @@ Endpoints:
     GET    /api/marketplace/plugins/{id}/connect/poll/{flow_id} — poll until completion
     DELETE /api/marketplace/plugins/{id}                   — disconnect
     GET    /api/marketplace/community                      — community index browse
+    GET    /api/marketplace/community/{id}/contents        — read an entry before installing
     POST   /api/marketplace/community/refresh              — force index re-fetch
     POST   /api/marketplace/community/install/{id}         — install by name (any kind)
     POST   /api/marketplace/community/plugins/{id}/install — one-click install
@@ -16,7 +17,9 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -814,6 +817,12 @@ def _community_payload(
                     "categories": list(skill.categories),
                     "source_url": skill.source_url,
                     "raw_url": skill.raw_url,
+                    # Which frontmatter the file carries, and where else it
+                    # runs. A missing flavor stays missing on the wire: the
+                    # view treats absent and "jarvis" alike, and inventing a
+                    # value here would claim the registry said something.
+                    "flavor": skill.flavor,
+                    "compatible_agents": list(skill.compatible_agents),
                     "installed": (skills_root / skill.name / "SKILL.md").exists(),
                 }
             )
@@ -839,8 +848,13 @@ def _community_payload(
                     "published_at": paper.published_at,
                     "categories": list(paper.categories),
                     "source_url": paper.source_url,
-                    "raw_url": paper.raw_url,
+                    # Both names travel: `image_url` is what the registry
+                    # emits, `raw_url` keeps the shape the other two kinds use.
+                    "image_url": paper.download_url,
+                    "raw_url": paper.download_url,
+                    "thumb_url": paper.thumb_url,
                     "theme": paper.theme,
+                    "license": paper.license,
                     "installed": paper.name in installed_sources,
                 }
             )
@@ -873,6 +887,164 @@ async def community_refresh(response: Response) -> dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
     index, status = await community_source.get_index(force=True)
     return _community_payload(index, status)
+
+
+# ----------------------------------------------------------------------
+# Reading an entry BEFORE installing it
+#
+# "Nobody reviewed this" is only an honest warning if the reader can act on
+# it, and nobody can act on a one-line description plus a URL. So the whole
+# published package is served as text: the instructions a skill would hand the
+# assistant, the manifest that says where a plugin would send the token, the
+# picture a wallpaper would install. Reading runs the same fetch the install
+# would run, minus writing anything to disk.
+# ----------------------------------------------------------------------
+
+# A SKILL.md is prose. The ceiling exists so a hostile entry cannot stream
+# megabytes into the desktop app, not because real files come close to it.
+_MAX_CONTENT_BYTES = 256 * 1024
+# The same quarter hour the index itself caches for: reopening a card is free.
+_CONTENT_TTL_SECONDS = 900.0
+_content_cache: dict[str, tuple[float, str, bool]] = {}
+
+
+async def _download_text(raw_url: str, *, transport: Any = None) -> tuple[str, bool]:
+    """Fetch one published text file over https. Returns ``(text, truncated)``.
+
+    Oversize is cut, not refused: half a hostile file is still readable
+    evidence, while refusing outright would leave the reader with nothing. The
+    redirect chain is re-checked for the reason ``_download_image`` re-checks
+    it — the index validator only ever saw the URL it was given, and a 302 to
+    plain http would put the server back on an SSRF path.
+    """
+    hit = _content_cache.get(raw_url)
+    if hit is not None and (time.time() - hit[0]) < _CONTENT_TTL_SECONDS:
+        return hit[1], hit[2]
+
+    chunks: list[bytes] = []
+    total = 0
+    truncated = False
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=20.0),
+        transport=transport,
+    ) as client:
+        try:
+            async with client.stream("GET", raw_url) as resp:
+                if resp.url.scheme != "https":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"refusing a non-https redirect to {resp.url}",
+                    )
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes():
+                    if total + len(chunk) > _MAX_CONTENT_BYTES:
+                        chunks.append(chunk[: _MAX_CONTENT_BYTES - total])
+                        truncated = True
+                        break
+                    total += len(chunk)
+                    chunks.append(chunk)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"download from {raw_url} failed: {exc}"
+            ) from exc
+
+    # errors="replace": one broken byte must not hide the whole file, which is
+    # the only thing this route exists to show.
+    text = b"".join(chunks).decode("utf-8", errors="replace")
+    _content_cache[raw_url] = (time.time(), text, truncated)
+    return text, truncated
+
+
+def _text_file(path: str, text: str, *, truncated: bool = False) -> dict[str, Any]:
+    """One readable file in the wire shape the view renders."""
+    return {
+        "path": path,
+        "size": len(text.encode("utf-8")),
+        "text": text,
+        "truncated": truncated,
+    }
+
+
+def _plugin_manifest_files(entry: Any) -> list[dict[str, Any]]:
+    """A plugin's manifests, pretty-printed.
+
+    They travel inside the index itself, so this needs no network at all — and
+    they are the two files that decide what a plugin may do: ``plugin.json``
+    names it, ``mcp.json`` says which server or command it talks to.
+    """
+    files = [_text_file("plugin.json", json.dumps(entry.plugin_json, indent=2, ensure_ascii=False))]
+    if entry.mcp_json:
+        files.append(
+            _text_file("mcp.json", json.dumps(entry.mcp_json, indent=2, ensure_ascii=False))
+        )
+    return files
+
+
+@router.get("/community/{item_id}/contents", openapi_extra={"x-jarvis-readonly": True})
+async def community_contents(item_id: str, response: Response) -> dict[str, Any]:
+    """What one published entry actually contains — skill, plugin or wallpaper.
+
+    Reading is never installing: nothing is written, no registry is touched.
+    A download that fails degrades to an ``error`` string on an otherwise
+    complete answer rather than an exception, so one unreachable file leaves
+    the card usable instead of blanking the panel.
+    """
+    from jarvis.marketplace import community_source
+
+    response.headers["Cache-Control"] = "no-store"
+    index, _ = await community_source.get_index()
+    plugin = skill = paper = None
+    if index is not None:
+        plugin = next((e for e in index.plugins if e.name == item_id), None)
+        skill = next((s for s in index.skills if s.name == item_id), None)
+        paper = next((w for w in index.wallpapers if w.name == item_id), None)
+    entry = plugin or skill or paper
+    if entry is None:
+        raise _install_by_name_404(item_id, index)
+
+    kind = "plugin" if plugin is not None else "skill" if skill is not None else "wallpaper"
+    out: dict[str, Any] = {
+        "kind": kind,
+        "name": entry.name,
+        "title": getattr(entry, "title", None) or entry.name,
+        "publisher": entry.publisher,
+        "version": entry.version,
+        "source_url": entry.source_url,
+        "root": f"{kind}s/{entry.name}",
+        "files": [],
+        "image_url": None,
+        "error": None,
+    }
+
+    if plugin is not None:
+        out["files"] = _plugin_manifest_files(plugin)
+        return out
+
+    if paper is not None:
+        # A picture has no text to read — the preview IS the content. Both the
+        # url and the "nothing to show" verdict come from `download_url`, the
+        # same field the install fetches: judging by `raw_url` alone told every
+        # wallpaper the registry publishes as `image_url` that it had no image,
+        # right next to the preview that was already loading.
+        out["image_url"] = paper.download_url
+        if not paper.download_url:
+            out["error"] = "This wallpaper publishes no downloadable image."
+        return out
+
+    if not skill.raw_url:
+        out["error"] = "This skill publishes no direct download — open its source to read it."
+        return out
+    try:
+        text, truncated = await _download_text(skill.raw_url)
+    except HTTPException as exc:
+        # Honest degradation: say the text could not be fetched, rather than
+        # show an empty panel that reads like an empty skill.
+        log.warning("community contents: %s unreadable (%s)", item_id, exc.detail)
+        out["error"] = f"The file could not be downloaded: {exc.detail}"
+        return out
+    out["files"] = [_text_file("SKILL.md", text, truncated=truncated)]
+    return out
 
 
 async def _install_community_plugin(plugin_id: str) -> dict[str, Any]:
@@ -1073,7 +1245,8 @@ async def _install_community_wallpaper(entry: Any) -> dict[str, Any]:
         WallpaperUploads,
     )
 
-    if not entry.raw_url:
+    download_url = entry.download_url
+    if not download_url:
         # Either absent or dropped by the index validator for not being https.
         raise HTTPException(
             status_code=400,
@@ -1089,7 +1262,7 @@ async def _install_community_wallpaper(entry: Any) -> dict[str, Any]:
                 f"{existing.title!r}. Remove it there before installing again."
             ),
         )
-    data = await _download_image(entry.raw_url, MAX_UPLOAD_BYTES)
+    data = await _download_image(download_url, MAX_UPLOAD_BYTES)
     try:
         item = store.add(
             data,
@@ -1147,11 +1320,11 @@ def _install_by_name_404(item_id: str, index: Any) -> HTTPException:
 
 @router.post("/community/install/{item_id}")
 async def community_install_by_name(item_id: str, request: Request) -> dict[str, Any]:
-    """Install a marketplace entry by name — skill or plugin, one call.
+    """Install a marketplace entry by name — skill, plugin or wallpaper, one call.
 
     The one-liner a downloader copies off a marketplace page
-    (``jarvis marketplace install <name>``) never says which of the two an
-    entry is, so the KIND is resolved here and both kinds answer in one shape:
+    (``jarvis marketplace install <name>``) never says which of the three an
+    entry is, so the KIND is resolved here and all three answer in one shape:
     what landed, where it landed, whether it is usable right now, and what is
     still missing. Every surface (CLI, desktop, an agent driving the API) can
     therefore report an honest status instead of a bare 200.

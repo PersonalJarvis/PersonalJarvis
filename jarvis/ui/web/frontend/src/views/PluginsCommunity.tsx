@@ -11,7 +11,9 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { InstallTerminal } from "@/components/InstallTerminal";
 import { cn } from "@/lib/utils";
+import { installBlock } from "@/lib/installStandard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { PRODUCT_NAME } from "@/lib/branding";
 
@@ -67,6 +69,37 @@ export interface CommunitySkillWire {
   source_url?: string | null;
   raw_url?: string | null;
   installed: boolean;
+  /**
+   * Which frontmatter the published SKILL.md carries: `"jarvis"` uses this
+   * app's schema (triggers, risk policy), `"portable"` is a plain Agent Skill
+   * written for the open ecosystem. Absent on an older index — treated as
+   * `"jarvis"`, which is what every entry published before the split was.
+   */
+  flavor?: "jarvis" | "portable" | null;
+  /** Agents the publisher states this skill works in, for a portable entry. */
+  compatible_agents?: string[] | null;
+}
+
+/** The one-line "runs in other agents too" note, or null for a Jarvis skill. */
+function portableNote(skill: CommunitySkillWire): string | null {
+  if (skill.flavor !== "portable") return null;
+  const agents = (skill.compatible_agents ?? []).filter(Boolean);
+  return agents.length > 0
+    ? `Portable skill · also runs in ${agents.join(", ")}`
+    : "Portable skill · also runs in other agents";
+}
+
+export interface CommunityWallpaperWire {
+  name: string;
+  title: string;
+  description: string;
+  publisher?: string | null;
+  version?: string | null;
+  categories: string[];
+  source_url?: string | null;
+  raw_url?: string | null;
+  theme?: string | null;
+  installed: boolean;
 }
 
 export interface CommunityResponse {
@@ -75,12 +108,58 @@ export interface CommunityResponse {
   generated_at?: string | null;
   plugins: CommunityPluginWire[];
   skills: CommunitySkillWire[];
+  wallpapers?: CommunityWallpaperWire[];
+}
+
+/** One readable file of a published entry — mirrors ``_text_file`` server-side. */
+export interface EntryFileWire {
+  path: string;
+  size: number;
+  text: string;
+  truncated: boolean;
+}
+
+export interface EntryContentsWire {
+  kind: "skill" | "plugin" | "wallpaper";
+  name: string;
+  title: string;
+  root: string;
+  files: EntryFileWire[];
+  image_url?: string | null;
+  error?: string | null;
 }
 
 async function fetchCommunity(): Promise<CommunityResponse> {
   const res = await fetch("/api/marketplace/community", { cache: "no-store" });
   if (!res.ok) throw new Error(`Community index request failed (${res.status})`);
   return res.json();
+}
+
+/** The published package of ONE entry, fetched only when a card is opened.
+ *
+ *  Never part of the browse request: pulling every skill's text just to draw a
+ *  list would download the whole registry to show two lines per card. */
+function useEntryContents(name: string | null) {
+  return useQuery({
+    queryKey: ["marketplace-community-contents", name],
+    enabled: name !== null,
+    // The published bytes of a given version do not change under us, and the
+    // server caches the download too — refetching on every reopen is waste.
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<EntryContentsWire> => {
+      const res = await fetch(
+        `/api/marketplace/community/${encodeURIComponent(name ?? "")}/contents`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error(`Could not read that entry (${res.status})`);
+      return res.json();
+    },
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} kB`;
 }
 
 const AUTH_MODE_LABEL: Record<string, string> = {
@@ -100,6 +179,7 @@ export function CommunityTab() {
   const [query, setQuery] = useState("");
   const [consentPlugin, setConsentPlugin] = useState<CommunityPluginWire | null>(null);
   const [consentSkill, setConsentSkill] = useState<CommunitySkillWire | null>(null);
+  const [consentPaper, setConsentPaper] = useState<CommunityWallpaperWire | null>(null);
 
   const refreshMutation = useMutation({
     mutationFn: async (): Promise<CommunityResponse> => {
@@ -181,6 +261,31 @@ export function CommunityTab() {
     },
   });
 
+  const paperInstallMutation = useMutation({
+    mutationFn: async (paper: CommunityWallpaperWire) => {
+      // The by-name route already resolves the kind and does the download,
+      // re-encode and origin receipt — a picture needs no second install path.
+      const res = await fetch(
+        `/api/marketplace/community/install/${encodeURIComponent(paper.name)}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const detail = await res
+          .json()
+          .then((body: { detail?: string }) => body.detail)
+          .catch(() => undefined);
+        throw new Error(detail ?? `Install failed (${res.status})`);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setConsentPaper(null);
+      queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
+      // The picker reads its own store — it has to learn about the new tile.
+      queryClient.invalidateQueries({ queryKey: ["wallpapers"] });
+    },
+  });
+
   const q = query.trim().toLowerCase();
   const plugins = useMemo(
     () =>
@@ -202,6 +307,18 @@ export function CommunityTab() {
           s.name.toLowerCase().includes(q) ||
           s.title.toLowerCase().includes(q) ||
           s.description.toLowerCase().includes(q)
+        );
+      }),
+    [data, q],
+  );
+  const wallpapers = useMemo(
+    () =>
+      (data?.wallpapers ?? []).filter((w) => {
+        if (!q) return true;
+        return (
+          w.name.toLowerCase().includes(q) ||
+          w.title.toLowerCase().includes(q) ||
+          w.description.toLowerCase().includes(q)
         );
       }),
     [data, q],
@@ -244,7 +361,10 @@ export function CommunityTab() {
 
       <StatusNotice status={data?.status} error={error} isLoading={isLoading} />
 
-      {(data?.plugins.length ?? 0) + (data?.skills.length ?? 0) > 0 && (
+      {(data?.plugins.length ?? 0) +
+        (data?.skills.length ?? 0) +
+        (data?.wallpapers?.length ?? 0) >
+        0 && (
         <label className="flex items-center gap-2 rounded-lg border border-border bg-card/40 px-3 py-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <input
@@ -303,6 +423,40 @@ export function CommunityTab() {
             ))}
           </div>
         </section>
+      )}
+
+      {wallpapers.length > 0 && (
+        <section>
+          <h3 className="mb-3 font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Wallpapers
+          </h3>
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {wallpapers.map((w) => (
+              <CommunityWallpaperCard
+                key={w.name}
+                paper={w}
+                onOpen={() => setConsentPaper(w)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {consentPaper && (
+        <WallpaperPreviewDialog
+          paper={consentPaper}
+          isPending={paperInstallMutation.isPending}
+          errorMessage={
+            paperInstallMutation.error instanceof Error
+              ? paperInstallMutation.error.message
+              : null
+          }
+          onCancel={() => {
+            setConsentPaper(null);
+            paperInstallMutation.reset();
+          }}
+          onConfirm={() => paperInstallMutation.mutate(consentPaper)}
+        />
       )}
 
       {consentPlugin && (
@@ -417,6 +571,80 @@ function Notice({
   );
 }
 
+/** The published package itself, readable before anything is installed.
+ *
+ *  This is the answer to the badge above it: a card that says "not reviewed"
+ *  is only honest if the reader can see what they would be installing. Files
+ *  are shown open — a fold would put the content one click away again, which
+ *  is the state this panel exists to end. */
+function ContentsPanel({ name }: { name: string }) {
+  const { data, isLoading, error } = useEntryContents(name);
+
+  if (isLoading) {
+    return (
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading the published files…
+      </p>
+    );
+  }
+  if (error || !data) {
+    return (
+      <Notice tone="warn">
+        The published files could not be read just now. The install below is
+        unaffected — but you would be installing something you have not seen.
+      </Notice>
+    );
+  }
+  if (data.error) return <Notice tone="warn">{data.error}</Notice>;
+  if (data.files.length === 0) return null;
+
+  const total = data.files.reduce((sum, file) => sum + file.size, 0);
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <p className="text-xs font-medium text-foreground">What's inside</p>
+        <p className="shrink-0 text-[11px] text-muted-foreground">
+          {data.files.length === 1 ? "1 file" : `${data.files.length} files`} ·{" "}
+          {formatBytes(total)}
+        </p>
+      </div>
+      <div className="overflow-hidden rounded-md border border-border">
+        <p className="border-b border-border bg-muted/40 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground">
+          {data.root}
+        </p>
+        {data.files.map((file) => (
+          <div key={file.path} className="border-b border-border last:border-b-0">
+            <div className="flex items-baseline justify-between gap-3 bg-card/60 px-2.5 py-1.5">
+              <span className="truncate font-mono text-[11px] text-foreground">
+                {file.path}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                {formatBytes(file.size)}
+              </span>
+            </div>
+            {/* Long lines scroll inside the file rather than widening the
+                dialog. The text is interpolated, never dangerouslySetInnerHTML
+                — a publisher's file is untrusted text and stays text. */}
+            <pre className="max-h-[420px] overflow-auto bg-background/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+              {file.text}
+            </pre>
+            {file.truncated && (
+              <p className="bg-card/60 px-2.5 py-1.5 text-[11px] text-amber-500">
+                Shown up to 256 kB — the published file is longer. Open the
+                source to read the rest.
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground/70">
+        Exactly as published. These are the bytes {PRODUCT_NAME} downloads when
+        you install it — nothing is added or rewritten in between.
+      </p>
+    </div>
+  );
+}
+
 /** Coloured brand tile with monogram fallback — the same three-tier idea as
  *  the main store, minus bundled assets (community brands ship none). */
 function CommunityTile({ plugin }: { plugin: CommunityPluginWire }) {
@@ -493,7 +721,14 @@ function CommunityPluginRow({
       )}
     >
       <CommunityTile plugin={plugin} />
-      <div className="min-w-0 flex-1">
+      {/* The whole card body opens the entry — reading what a stranger
+          published must not require intending to install it. */}
+      <button
+        type="button"
+        onClick={onInstall}
+        className="min-w-0 flex-1 text-left"
+        title={`Read what ${name} contains`}
+      >
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {name}
@@ -514,7 +749,7 @@ function CommunityPluginRow({
           {plugin.publisher ? `by ${plugin.publisher}` : "unknown publisher"}
           {plugin.version ? ` · v${plugin.version}` : ""}
         </p>
-      </div>
+      </button>
       {plugin.source_url && (
         <button
           type="button"
@@ -576,7 +811,14 @@ function CommunitySkillRow({
           : "border-border hover:border-primary/40 hover:bg-card/70",
       )}
     >
-      <div className="min-w-0 flex-1">
+      {/* Same as the plugin card: the body opens the skill so its instructions
+          can be read without committing to an install. */}
+      <button
+        type="button"
+        onClick={onInstall}
+        className="min-w-0 flex-1 text-left"
+        title={`Read what ${skill.title} tells the assistant`}
+      >
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {skill.title}
@@ -584,6 +826,14 @@ function CommunitySkillRow({
           <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-amber-500/80">
             Community · not reviewed
           </span>
+          {skill.flavor === "portable" && (
+            <span
+              className="shrink-0 rounded-full border border-border px-1.5 text-[9px] font-medium uppercase tracking-wider text-muted-foreground"
+              title={portableNote(skill) ?? undefined}
+            >
+              Portable
+            </span>
+          )}
         </div>
         <p className="truncate text-xs text-muted-foreground" title={skill.description}>
           {skill.description}
@@ -592,7 +842,7 @@ function CommunitySkillRow({
           {skill.publisher ? `by ${skill.publisher}` : "unknown publisher"}
           {installError ? ` · ${installError}` : ""}
         </p>
-      </div>
+      </button>
       {skill.source_url && (
         <button
           type="button"
@@ -624,6 +874,160 @@ function CommunitySkillRow({
   );
 }
 
+/** A published wallpaper, shown as the thing it is: a picture.
+ *
+ *  A tile rather than a row — a filename tells nobody whether they want the
+ *  picture, and the whole card opens the full-size preview. */
+function CommunityWallpaperCard({
+  paper,
+  onOpen,
+}: {
+  paper: CommunityWallpaperWire;
+  onOpen: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`Preview ${paper.title}`}
+      className={cn(
+        "group overflow-hidden rounded-lg border bg-card/40 text-left transition-colors",
+        paper.installed
+          ? "border-primary/30"
+          : "border-border hover:border-primary/40 hover:bg-card/70",
+      )}
+    >
+      <div className="grid aspect-video place-items-center overflow-hidden bg-muted">
+        {failed || !paper.raw_url ? (
+          <span className="text-[11px] text-muted-foreground">No preview</span>
+        ) : (
+          <img
+            src={paper.raw_url}
+            alt=""
+            loading="lazy"
+            className="h-full w-full object-cover transition-transform group-hover:scale-[1.03]"
+            onError={() => setFailed(true)}
+          />
+        )}
+      </div>
+      <div className="px-2.5 py-2">
+        <div className="flex items-center gap-1.5">
+          <h4 className="min-w-0 truncate text-xs font-semibold text-foreground">
+            {paper.title}
+          </h4>
+          {paper.installed && (
+            <Check className="h-3 w-3 shrink-0 text-primary" aria-label="Installed" />
+          )}
+        </div>
+        <p className="truncate text-[11px] text-muted-foreground/70">
+          {paper.publisher ? `by ${paper.publisher}` : "unknown publisher"}
+        </p>
+      </div>
+    </button>
+  );
+}
+
+/** The picture at full size before it lands in the picker.
+ *
+ *  A wallpaper carries no code and no credentials, so there is nothing to
+ *  disclose beyond the image itself — which makes seeing it big the entire
+ *  decision. */
+export function WallpaperPreviewDialog({
+  paper,
+  isPending,
+  errorMessage,
+  onCancel,
+  onConfirm,
+}: {
+  paper: CommunityWallpaperWire;
+  isPending: boolean;
+  errorMessage: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isPending) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, isPending]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="community-wallpaper-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isPending) onCancel();
+      }}
+    >
+      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+        <header className="border-b border-border px-5 py-4">
+          <h2
+            id="community-wallpaper-title"
+            className="font-display text-base font-semibold tracking-tight"
+          >
+            {paper.installed ? paper.title : `Install ${paper.title}?`}
+          </h2>
+          <p className="text-[11px] uppercase tracking-wider text-amber-500/80">
+            Community wallpaper · not reviewed
+            {paper.installed ? " · installed" : ""}
+          </p>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4 text-sm">
+          {paper.raw_url ? (
+            <img
+              src={paper.raw_url}
+              alt={paper.title}
+              className="max-h-[52vh] w-full rounded-lg border border-border object-contain"
+            />
+          ) : (
+            <Notice tone="warn">This wallpaper publishes no downloadable image.</Notice>
+          )}
+          {paper.description && (
+            <p className="text-muted-foreground">{paper.description}</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Published by{" "}
+            <span className="text-foreground">
+              {paper.publisher ?? "an unknown author"}
+            </span>
+            {paper.version ? ` · version ${paper.version}` : ""}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Installing downloads the picture and stores it beside your own
+            uploads. It carries no code and no credentials.
+          </p>
+          {errorMessage && (
+            <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {errorMessage}
+            </p>
+          )}
+        </div>
+
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-3">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
+            {paper.installed ? "Close" : "Cancel"}
+          </Button>
+          {!paper.installed && paper.raw_url && (
+            <Button size="sm" onClick={onConfirm} disabled={isPending}>
+              {isPending ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Install
+            </Button>
+          )}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 /** Skills get the same trust boundary as plugins: a community skill is
  *  instructions the assistant will follow, downloaded from a URL nobody
  *  reviewed — so the dialog shows that exact URL and reminds the user to
@@ -649,6 +1053,14 @@ export function SkillInstallConsentDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel, isPending]);
 
+  // The published URLs travel into the command builder: a skill hosted on
+  // GitHub also has an `npx skills add` line, which installs it into every
+  // other agent that reads SKILL.md files.
+  const skillInstall = installBlock(skill.name, "skill", {
+    sourceUrl: skill.source_url,
+    rawUrl: skill.raw_url,
+  });
+
   return (
     <div
       role="dialog"
@@ -659,20 +1071,21 @@ export function SkillInstallConsentDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
         <header className="border-b border-border px-5 py-4">
           <h2
             id="community-skill-install-title"
             className="font-display text-base font-semibold tracking-tight"
           >
-            Install {skill.title}?
+            {skill.installed ? skill.title : `Install ${skill.title}?`}
           </h2>
           <p className="text-[11px] uppercase tracking-wider text-amber-500/80">
             Community skill · not reviewed
+            {skill.installed ? " · installed" : ""}
           </p>
         </header>
 
-        <div className="space-y-3 px-5 py-4 text-sm">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4 text-sm">
           <p className="text-muted-foreground">{skill.description}</p>
           <p className="text-xs text-muted-foreground">
             Published by{" "}
@@ -681,6 +1094,18 @@ export function SkillInstallConsentDialog({
             </span>
             {skill.version ? ` · version ${skill.version}` : ""}
           </p>
+          {/* A portable skill was written for the open format, not for this
+              app. Saying so up front explains both the extra install command
+              below and why settings meant for another agent are ignored. */}
+          {portableNote(skill) && (
+            <p className="text-xs text-muted-foreground">
+              {portableNote(skill)}. {PRODUCT_NAME} follows its instructions and
+              ignores the settings meant for other agents.
+            </p>
+          )}
+          {/* The instructions themselves, before the fine print: a skill IS
+              its text, so reading it is the decision this dialog asks for. */}
+          <ContentsPanel name={skill.name} />
           <div>
             <p className="mb-1 text-xs font-medium text-foreground">
               The instructions are downloaded from:
@@ -689,9 +1114,19 @@ export function SkillInstallConsentDialog({
               {skill.raw_url}
             </code>
           </div>
+          {/* The same line the storefront shows, and the same one the Install
+              button below runs — worth having when the install belongs in a
+              setup script or in a message to someone else. */}
+          {skillInstall && (
+            <InstallTerminal
+              commands={skillInstall.commands}
+              path={`~/marketplace/${skill.name}`}
+              comment="# The same install, from a terminal."
+            />
+          )}
           <p className="text-xs text-muted-foreground">
-            A skill is a set of instructions the assistant follows. Read the
-            installed instructions before you switch it on.
+            A skill is a set of instructions the assistant follows — the text
+            above is exactly what it would be told to do.
           </p>
           {errorMessage && (
             <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
@@ -701,16 +1136,18 @@ export function SkillInstallConsentDialog({
           )}
         </div>
 
-        <footer className="flex justify-end gap-2 border-t border-border px-5 py-3">
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-3">
           <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
-            Cancel
+            {skill.installed ? "Close" : "Cancel"}
           </Button>
-          <Button size="sm" onClick={onConfirm} disabled={isPending}>
-            {isPending ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : null}
-            Install
-          </Button>
+          {!skill.installed && (
+            <Button size="sm" onClick={onConfirm} disabled={isPending}>
+              {isPending ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Install
+            </Button>
+          )}
         </footer>
       </div>
     </div>
@@ -745,6 +1182,7 @@ export function InstallConsentDialog({
   const name = plugin.display_name ?? plugin.name;
   const mcp = plugin.mcp_server ?? null;
   const authLabel = plugin.auth ? AUTH_MODE_LABEL[plugin.auth.mode] : undefined;
+  const pluginInstall = installBlock(plugin.name, "plugin");
 
   return (
     <div
@@ -756,7 +1194,7 @@ export function InstallConsentDialog({
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
     >
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
         <header className="flex items-center gap-3 border-b border-border px-5 py-4">
           <CommunityTile plugin={plugin} />
           <div className="min-w-0">
@@ -764,15 +1202,16 @@ export function InstallConsentDialog({
               id="community-install-title"
               className="font-display text-base font-semibold tracking-tight"
             >
-              Install {name}?
+              {plugin.installed ? name : `Install ${name}?`}
             </h2>
             <p className="text-[11px] uppercase tracking-wider text-amber-500/80">
               Community plugin · not reviewed
+              {plugin.installed ? " · installed" : ""}
             </p>
           </div>
         </header>
 
-        <div className="space-y-3 px-5 py-4 text-sm">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4 text-sm">
           <p className="text-muted-foreground">{plugin.description}</p>
           <p className="text-xs text-muted-foreground">
             Published by{" "}
@@ -816,6 +1255,22 @@ export function InstallConsentDialog({
             </p>
           )}
 
+          {/* The manifests in full. The address above is the summary; this is
+              the document it was read from, so a claim can be checked rather
+              than trusted. */}
+          <ContentsPanel name={plugin.name} />
+
+          {/* The same line the storefront shows, and the same one the Install
+              button below runs — worth having when the install belongs in a
+              setup script or in a message to someone else. */}
+          {pluginInstall && (
+            <InstallTerminal
+              commands={pluginInstall.commands}
+              path={`~/marketplace/${plugin.name}`}
+              comment="# The same install, from a terminal."
+            />
+          )}
+
           {errorMessage && (
             <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -824,16 +1279,18 @@ export function InstallConsentDialog({
           )}
         </div>
 
-        <footer className="flex justify-end gap-2 border-t border-border px-5 py-3">
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-3">
           <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
-            Cancel
+            {plugin.installed ? "Close" : "Cancel"}
           </Button>
-          <Button size="sm" onClick={onConfirm} disabled={isPending}>
-            {isPending ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : null}
-            Install
-          </Button>
+          {!plugin.installed && (
+            <Button size="sm" onClick={onConfirm} disabled={isPending}>
+              {isPending ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Install
+            </Button>
+          )}
         </footer>
       </div>
     </div>

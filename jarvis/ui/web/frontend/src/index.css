@@ -233,6 +233,51 @@
       transform: scale(1.08);
     }
   }
+
+  /* ---- the marketplace install command ----------------------------------
+     A shell line has to render character by character: the mono face ligates
+     `--` into a single dash, which turns `uvx --from` into a command nobody
+     can retype from what they see. */
+  .install-cmd {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-variant-ligatures: none;
+    font-feature-settings:
+      "liga" 0,
+      "calt" 0;
+  }
+
+  /* The block cursor at the end of the command — the cue that says "this is a
+     terminal, and it is waiting for you". */
+  .install-caret {
+    display: inline-block;
+    width: 0.5em;
+    height: 1em;
+    margin-left: 0.25em;
+    vertical-align: text-bottom;
+    border-radius: 1px;
+    background: hsl(var(--accent));
+    animation: install-caret-blink 1.05s steps(1, end) infinite;
+  }
+
+  @keyframes install-caret-blink {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .install-caret {
+      animation: none;
+      opacity: 1;
+    }
+  }
 }
 ::-webkit-scrollbar {
   width: 10px;

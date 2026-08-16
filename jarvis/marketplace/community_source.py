@@ -70,6 +70,22 @@ class CommunityPluginEntry(_Tolerant):
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$")
 
 
+# The two frontmatter profiles a published skill can carry. ``jarvis`` is this
+# app's own schema (triggers, risk policy, execution mode); ``portable`` is a
+# plain Agent Skill written for the open ecosystem — the format `npx skills`
+# and every SKILL.md-reading agent consumes. Anything else is treated as
+# unknown and falls back to ``jarvis``, which is what every entry published
+# before the split was.
+SKILL_FLAVORS: frozenset[str] = frozenset({"jarvis", "portable"})
+
+# Ceilings for the publisher-written compatibility list. It is free text from
+# an auto-merged submission that lands in the store UI, so it is bounded here
+# rather than trusted: a hundred entries of a thousand characters each is a
+# layout attack, not a fact about the skill.
+_MAX_COMPATIBLE_AGENTS = 8
+_MAX_AGENT_NAME_LEN = 32
+
+
 class CommunitySkillEntry(_Tolerant):
     name: str
     title: str | None = None
@@ -82,6 +98,13 @@ class CommunitySkillEntry(_Tolerant):
     # Direct download of the SKILL.md — consumed by the existing
     # /api/skills/catalog/install route.
     raw_url: str | None = None
+    #: Which frontmatter the SKILL.md carries (see ``SKILL_FLAVORS``). Absent
+    #: on an index published by an older registry — the reader treats a missing
+    #: value exactly like ``"jarvis"``.
+    flavor: str | None = None
+    #: Agents the publisher states the skill works in ("Claude Code", "Cursor",
+    #: …). Display only: nothing in the app branches on it.
+    compatible_agents: list[str] = Field(default_factory=list)
 
     @field_validator("raw_url")
     @classmethod
@@ -94,6 +117,41 @@ class CommunitySkillEntry(_Tolerant):
             logger.warning("community index: dropping non-https raw_url %r", value)
             return None
         return value
+
+    @field_validator("flavor")
+    @classmethod
+    def _known_flavor(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip().lower()
+        if cleaned in SKILL_FLAVORS:
+            return cleaned
+        # A newer registry may invent a third profile. Forgetting the word is
+        # right: the entry stays browsable and installable under the default,
+        # instead of the whole index failing over one unknown string.
+        logger.warning("community index: unknown skill flavor %r", value)
+        return None
+
+    @field_validator("compatible_agents", mode="before")
+    @classmethod
+    def _clean_agents(cls, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            name = " ".join(item.split())[:_MAX_AGENT_NAME_LEN].strip()
+            if name and name not in cleaned:
+                cleaned.append(name)
+            if len(cleaned) >= _MAX_COMPATIBLE_AGENTS:
+                break
+        return cleaned
+
+    @property
+    def is_portable(self) -> bool:
+        """True when the SKILL.md is a plain Agent Skill, not a Jarvis one."""
+        return self.flavor == "portable"
 
 
 class CommunityWallpaperEntry(_Tolerant):
@@ -275,6 +333,7 @@ async def get_index(
 
 
 __all__ = [
+    "SKILL_FLAVORS",
     "CommunityIndex",
     "CommunityPluginEntry",
     "CommunitySkillEntry",
