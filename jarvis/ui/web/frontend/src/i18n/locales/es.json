@@ -4276,6 +4276,7 @@
     "view_source": "ver publicación"
   },
   "skill_upload": {
+    "blocked": "No se puede instalar así.",
     "button": "Subir",
     "title": "Añadir una skill",
     "subtitle": "Sube una skill propia u obtenla desde un enlace.",
@@ -4304,5 +4305,27 @@
     "blocker_no_files": "Aún no has elegido nada.",
     "will_land_as_draft": "Se guardará como borrador.",
     "ready": "Lista para instalar."
+  },
+  "plugin_upload": {
+    "blocked": "No se puede instalar así.",
+    "button": "Subir",
+    "title": "Añadir un plugin",
+    "subtitle": "Sube un manifiesto de plugin propio: un plugin.json, opcionalmente con un mcp.json.",
+    "drop_title": "Suelta aquí una carpeta de plugin",
+    "drop_hint": "Una carpeta con plugin.json, o un archivo .zip o .tar.gz.",
+    "choose_folder": "Elegir carpeta",
+    "choose_archive": "Elegir archivo",
+    "install": "Instalar",
+    "inspecting": "Leyendo la subida",
+    "files": "archivos",
+    "replace": "Reemplazar",
+    "clear": "Descartar",
+    "auth_mode": "Acceso",
+    "with_mcp": "con servidor MCP",
+    "no_plugin_detected": "Esta subida no contiene ningún plugin.json legible.",
+    "self_badge": "Propio",
+    "unreviewed": "Subido por ti: nadie ha revisado este plugin y no lleva editor.",
+    "blocker_no_files": "Aún no has elegido nada.",
+    "ready": "Listo para instalar."
   }
 }

@@ -4276,6 +4276,7 @@
     "view_source": "view listing"
   },
   "skill_upload": {
+    "blocked": "Cannot be installed as is.",
     "button": "Upload",
     "title": "Add a skill",
     "subtitle": "Upload a skill of your own, or fetch one from a link.",
@@ -4303,6 +4304,28 @@
     "ignored": "Left out",
     "blocker_no_files": "Nothing chosen yet.",
     "will_land_as_draft": "Will land as a draft.",
+    "ready": "Ready to install."
+  },
+  "plugin_upload": {
+    "blocked": "Cannot be installed as is.",
+    "button": "Upload",
+    "title": "Add a plugin",
+    "subtitle": "Upload a plugin manifest of your own — a plugin.json, optionally with an mcp.json.",
+    "drop_title": "Drop a plugin folder here",
+    "drop_hint": "A folder holding plugin.json, or a .zip / .tar.gz archive.",
+    "choose_folder": "Choose folder",
+    "choose_archive": "Choose archive",
+    "install": "Install",
+    "inspecting": "Reading the upload",
+    "files": "files",
+    "replace": "Replace",
+    "clear": "Discard",
+    "auth_mode": "Sign-in",
+    "with_mcp": "with an MCP server",
+    "no_plugin_detected": "This upload holds no readable plugin.json.",
+    "self_badge": "Self-added",
+    "unreviewed": "Self-uploaded: nobody reviewed this plugin, and it carries no publisher.",
+    "blocker_no_files": "Nothing chosen yet.",
     "ready": "Ready to install."
   }
 }

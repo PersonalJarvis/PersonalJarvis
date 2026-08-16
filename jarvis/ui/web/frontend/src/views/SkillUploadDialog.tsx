@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Check,
-  FileArchive,
   FolderOpen,
   Link2,
   Loader2,
@@ -15,15 +14,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { UploadDropzone, useUploadInputs } from "@/components/UploadDropzone";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useImportSkill } from "@/hooks/useSkills";
-import {
-  collectDroppedFiles,
-  filesFromInput,
-  formatBytes,
-  type PickedFile,
-} from "@/lib/filePicking";
+import { collectDroppedFiles, formatBytes, type PickedFile } from "@/lib/filePicking";
 import {
   inspectSkillUpload,
   uploadSkill,
@@ -70,8 +65,6 @@ export function SkillUploadDialog({
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [link, setLink] = useState("");
-  const folderInput = useRef<HTMLInputElement | null>(null);
-  const archiveInput = useRef<HTMLInputElement | null>(null);
   const importFromLink = useImportSkill();
 
   const reset = useCallback(() => {
@@ -89,16 +82,6 @@ export function SkillUploadDialog({
     if (!open) reset();
   }, [open, reset]);
 
-  // `webkitdirectory` has to be set through a ref: React does not know the
-  // attribute, and writing it into JSX drops it silently.
-  const setFolderInput = (node: HTMLInputElement | null) => {
-    folderInput.current = node;
-    if (node) {
-      node.setAttribute("webkitdirectory", "");
-      node.setAttribute("directory", "");
-    }
-  };
-
   const inspect = useCallback(
     async (files: PickedFile[]) => {
       setPicked(files);
@@ -115,6 +98,11 @@ export function SkillUploadDialog({
       }
     },
     [],
+  );
+
+  const { inputs, openFolder, openArchive } = useUploadInputs(
+    (files) => void inspect(files),
+    "skill",
   );
 
   const onDrop = (event: React.DragEvent) => {
@@ -207,66 +195,24 @@ export function SkillUploadDialog({
               <div className="flex flex-col gap-4">
                 <BackLink label={t("skill_upload.back")} onClick={reset} />
 
-                <input
-                  ref={setFolderInput}
-                  type="file"
-                  multiple
-                  className="sr-only"
-                  data-testid="skill-folder-input"
-                  onChange={(event) => void inspect(filesFromInput(event.target.files))}
-                />
-                <input
-                  ref={archiveInput}
-                  type="file"
-                  accept=".zip,.tgz,.tar.gz"
-                  className="sr-only"
-                  data-testid="skill-archive-input"
-                  onChange={(event) => void inspect(filesFromInput(event.target.files))}
-                />
+                {inputs}
 
                 {picked.length === 0 ? (
-                  <div
-                    className={cn(
-                      "flex flex-col items-center gap-3 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors",
-                      dragging
-                        ? "border-primary bg-primary/5"
-                        : "border-border bg-muted/20",
-                    )}
-                  >
-                    <Upload className="h-5 w-5 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">{t("skill_upload.drop_title")}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {t("skill_upload.drop_hint")}
-                      </p>
-                    </div>
-                    <div className="mt-1 flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => folderInput.current?.click()}
-                        className="gap-1.5"
-                      >
-                        <FolderOpen className="h-3.5 w-3.5" />
-                        {t("skill_upload.choose_folder")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => archiveInput.current?.click()}
-                        className="gap-1.5"
-                      >
-                        <FileArchive className="h-3.5 w-3.5" />
-                        {t("skill_upload.choose_archive")}
-                      </Button>
-                    </div>
-                  </div>
+                  <UploadDropzone
+                    dragging={dragging}
+                    title={t("skill_upload.drop_title")}
+                    hint={t("skill_upload.drop_hint")}
+                    folderLabel={t("skill_upload.choose_folder")}
+                    archiveLabel={t("skill_upload.choose_archive")}
+                    onChooseFolder={openFolder}
+                    onChooseArchive={openArchive}
+                  />
                 ) : (
                   <UploadReport
                     report={report}
                     inspecting={inspecting}
                     fileCount={picked.length}
-                    onReplace={() => folderInput.current?.click()}
+                    onReplace={openFolder}
                     onClear={() => void inspect([])}
                   />
                 )}
@@ -351,7 +297,13 @@ export function SkillUploadDialog({
   );
 }
 
-/** What is stopping the install, in one sentence — or what will happen. */
+/**
+ * Where the install stands, in one line.
+ *
+ * A short state, not the reason: when something blocks, the reason is already
+ * on screen in red right above this line, and repeating it verbatim reads as
+ * two separate problems.
+ */
 function describeBlocker(
   report: SkillUploadReport | null,
   fileCount: number,
@@ -359,7 +311,7 @@ function describeBlocker(
 ): string {
   if (fileCount === 0) return t("skill_upload.blocker_no_files");
   if (!report) return "";
-  if (report.problems.length > 0) return report.problems[0];
+  if (report.problems.length > 0) return t("skill_upload.blocked");
   if (report.lint_findings.length > 0) return t("skill_upload.will_land_as_draft");
   return t("skill_upload.ready");
 }

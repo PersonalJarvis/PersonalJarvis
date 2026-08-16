@@ -792,6 +792,7 @@ describe("plugin search matches more than the display name", () => {
     longevity: "permanent",
     oauthClientConfigured: false,
     fromMarketplace: false,
+    selfUploaded: false,
     ...extra,
   });
 
@@ -857,6 +858,7 @@ describe("plugin status filter", () => {
     longevity: "permanent",
     oauthClientConfigured: false,
     fromMarketplace: false,
+    selfUploaded: false,
   });
 
   it("lets everything through on 'all'", () => {

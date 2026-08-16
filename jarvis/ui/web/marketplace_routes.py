@@ -12,6 +12,8 @@ Endpoints:
     POST   /api/marketplace/community/install/{id}         — install by name (any kind)
     POST   /api/marketplace/community/plugins/{id}/install — one-click install
     DELETE /api/marketplace/community/plugins/{id}         — uninstall + revoke
+    POST   /api/marketplace/plugins/upload/inspect         — read a dropped manifest
+    POST   /api/marketplace/plugins/upload                 — install a dropped manifest
 """
 
 from __future__ import annotations
@@ -26,11 +28,21 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from jarvis.core.process_utils import resolve_executable
+from jarvis.core.uploads import UploadRejected, stage_upload
 from jarvis.marketplace.auth import (
     DcrConfig,
     DeviceFlowConfig,
@@ -61,6 +73,11 @@ from jarvis.marketplace.telegram_connect import (
     on_telegram_disconnected,
 )
 from jarvis.marketplace.token_store import Tokens, TokenStore
+from jarvis.ui.web.upload_intake import (
+    read_upload_entries,
+    upload_http_error,
+    upload_limits,
+)
 
 # Marketplace plugin ids whose "connect" enables an in-repo bidirectional chat
 # channel (token + config), not just a stored token. Kept in sync with the
@@ -1412,3 +1429,213 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
             log.info("plugin %s revocation skipped: %s", plugin_id, exc)
             revocation = "failed"
     return {"ok": True, "removed": removed, "revocation": revocation}
+# ----------------------------------------------------------------------
+# Upload — a plugin manifest dropped onto the UI
+# ----------------------------------------------------------------------
+
+#: What ``source`` a self-uploaded plugin carries. Deliberately not
+#: "community": it never passed through the registry, so claiming that origin
+#: would put a badge on the card naming a review nobody did.
+LOCAL_PLUGIN_SOURCE = "local"
+
+_MANIFEST_NAMES = {"plugin.json": "plugin", "mcp.json": "mcp"}
+
+
+def _locate_plugin_manifests(staged_root: Path) -> dict[str, Path]:
+    """Finds ``plugin.json`` (and its optional ``mcp.json``) in a staged upload.
+
+    A plugin here is a manifest, not a code package, so the upload may be a
+    bare pair of files, a folder holding them, or a repository ZIP with them a
+    few levels down. A single ``plugin.json`` anywhere names the plugin; more
+    than one means the upload holds a catalog, which is refused with the paths
+    listed rather than guessed at.
+    """
+    found: dict[str, list[Path]] = {"plugin": [], "mcp": []}
+    for path in sorted(staged_root.rglob("*")):
+        if not path.is_file():
+            continue
+        kind = _MANIFEST_NAMES.get(path.name.lower())
+        if kind:
+            found[kind].append(path)
+
+    if not found["plugin"]:
+        raise HTTPException(status_code=400, detail="No plugin.json found in the upload.")
+    if len(found["plugin"]) > 1:
+        listed = ", ".join(
+            str(path.relative_to(staged_root)).replace("\\", "/")
+            for path in found["plugin"][:5]
+        )
+        suffix = ", ..." if len(found["plugin"]) > 5 else ""
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The upload holds {len(found['plugin'])} plugins "
+                f"({listed}{suffix}). Upload one plugin at a time."
+            ),
+        )
+
+    manifest = found["plugin"][0]
+    out = {"plugin": manifest}
+    # Only an mcp.json sitting BESIDE the manifest belongs to it. One from a
+    # different folder would silently graft another plugin's server onto this
+    # one — the kind of mix-up that shows up much later as a wrong tool call.
+    sibling = manifest.parent / "mcp.json"
+    for candidate in found["mcp"]:
+        if candidate == sibling:
+            out["mcp"] = candidate
+            break
+    return out
+
+
+def _read_manifest(path: Path) -> dict[str, Any]:
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"{path.name} could not be read: {exc}"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail=f"{path.name} must be a JSON object.")
+    return parsed
+
+
+def _describe_staged_plugin(staged_root: Path) -> dict[str, Any]:
+    """What this upload would install — validated, but nothing written.
+
+    Returns collision problems instead of raising, so the dialog can show
+    every blocker at once. A manifest that does not convert at all is a
+    different matter: there is nothing left to describe, so it comes back as
+    the single problem it is.
+    """
+    from jarvis.marketplace.agent_plugins_loader import AgentPluginError, convert_manifest
+    from jarvis.marketplace.community_install import seed_plugin_ids
+
+    manifests = _locate_plugin_manifests(staged_root)
+    plugin_json = _read_manifest(manifests["plugin"])
+    mcp_json = _read_manifest(manifests["mcp"]) if "mcp" in manifests else None
+
+    try:
+        # publisher/version/source_url stay unset on purpose. On the community
+        # path they come from the registry index so a manifest cannot claim
+        # someone else's identity; a local upload has no such witness, and
+        # letting the file name its own publisher would invent exactly the
+        # authority that check exists to deny.
+        spec = convert_manifest(plugin_json, mcp_json)
+    except AgentPluginError as exc:
+        return {
+            "plugin": None,
+            "problems": [str(exc)],
+            "has_mcp": mcp_json is not None,
+            "ready": False,
+        }
+
+    problems: list[str] = []
+    if spec.id in seed_plugin_ids():
+        problems.append(f"'{spec.id}' is a built-in plugin id and cannot be uploaded.")
+    else:
+        existing = load_catalog().by_id(spec.id)
+        if existing is not None and existing.source not in (
+            "community",
+            LOCAL_PLUGIN_SOURCE,
+        ):
+            problems.append(f"'{spec.id}' already exists in the local catalog.")
+
+    return {
+        "plugin": {
+            "id": spec.id,
+            "display_name": spec.display_name,
+            "description": spec.description,
+            "category": spec.category,
+            "auth_mode": spec.auth.mode,
+            "longevity": spec.longevity,
+        },
+        "problems": problems,
+        "has_mcp": mcp_json is not None,
+        "ready": not problems,
+    }
+
+
+@router.post("/plugins/upload/inspect", openapi_extra={"x-jarvis-readonly": True})
+async def inspect_plugin_upload(
+    files: list[UploadFile] = File(...),  # noqa: B008 — FastAPI dependency default
+    paths: str | None = Form(default=None),  # noqa: B008 — same
+) -> dict[str, Any]:
+    """Reports what a dropped plugin manifest holds, without installing it."""
+    import tempfile
+
+    entries = await read_upload_entries(files, paths)
+
+    def _work() -> dict[str, Any]:
+        with tempfile.TemporaryDirectory(prefix="jarvis-plugin-inspect-") as tmp:
+            try:
+                staged = stage_upload(entries, Path(tmp) / "plugin")
+            except UploadRejected as exc:
+                raise upload_http_error(exc) from exc
+            described = _describe_staged_plugin(staged.root)
+            described["files"] = list(staged.files)
+            described["ignored"] = list(staged.ignored)
+            described["stripped_root"] = staged.stripped_root
+            described["total_bytes"] = staged.total_bytes
+            described["limits"] = upload_limits()
+            return described
+
+    return await asyncio.to_thread(_work)
+
+
+@router.post("/plugins/upload")
+async def upload_plugin(
+    files: list[UploadFile] = File(...),  # noqa: B008 — FastAPI dependency default
+    paths: str | None = Form(default=None),  # noqa: B008 — same
+) -> dict[str, Any]:
+    """Installs a plugin manifest dropped onto the UI.
+
+    The entry lands in the same override catalog a community install writes
+    to, so afterwards it behaves like any other plugin — connect flows,
+    relevance gate, worker bridge. What differs is its ``source``, which stays
+    honest about where it came from: this machine, reviewed by nobody.
+    """
+    import tempfile
+
+    from jarvis.marketplace.agent_plugins_loader import AgentPluginError, convert_manifest
+    from jarvis.marketplace.community_install import install_plugin_spec
+
+    entries = await read_upload_entries(files, paths)
+
+    def _work() -> dict[str, Any]:
+        with tempfile.TemporaryDirectory(prefix="jarvis-plugin-upload-") as tmp:
+            try:
+                staged = stage_upload(entries, Path(tmp) / "plugin")
+            except UploadRejected as exc:
+                raise upload_http_error(exc) from exc
+
+            described = _describe_staged_plugin(staged.root)
+            if not described["ready"]:
+                # A collision is a 409; a manifest that never converted is a
+                # 400 — the client can tell "yours is fine but taken" from
+                # "yours does not parse" without reading the sentence.
+                raise HTTPException(
+                    status_code=409 if described["plugin"] else 400,
+                    detail=described["problems"][0],
+                )
+
+            manifests = _locate_plugin_manifests(staged.root)
+            plugin_json = _read_manifest(manifests["plugin"])
+            mcp_json = _read_manifest(manifests["mcp"]) if "mcp" in manifests else None
+            try:
+                spec = convert_manifest(plugin_json, mcp_json)
+            except AgentPluginError as exc:  # already validated — belt and braces
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            spec = spec.model_copy(update={"source": LOCAL_PLUGIN_SOURCE})
+            try:
+                install_plugin_spec(spec)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            return {"spec": spec, "upload": staged.to_json()}
+
+    result = await asyncio.to_thread(_work)
+    spec = result["spec"]
+    _refresh_plugin_in_live_registry(spec.id)
+    item = spec.model_dump(mode="json")
+    item["status"] = "not_connected"
+    return {"ok": True, "plugin": item, "upload": result["upload"]}

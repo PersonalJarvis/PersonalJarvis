@@ -20,9 +20,12 @@ import {
   X,
   Loader2,
   AlertTriangle,
+  Upload,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { CommunityTab } from "@/views/PluginsCommunity";
+import { PluginUploadDialog } from "@/views/PluginUploadDialog";
+import { translate } from "@/i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
@@ -215,6 +218,8 @@ export interface Plugin {
   oauthClientConfigured: boolean;
   /** True for a plugin installed from the community marketplace. */
   fromMarketplace: boolean;
+  /** True for a plugin the owner uploaded here — no registry, no review. */
+  selfUploaded: boolean;
   publisher?: string;
   sourceUrl?: string;
 }
@@ -240,6 +245,7 @@ function adapt(p: CatalogPlugin): Plugin {
     reauthAt: p.reauth_at ?? undefined,
     oauthClientConfigured: p.oauth_client_configured ?? false,
     fromMarketplace: p.source === "community",
+    selfUploaded: p.source === "local",
     publisher: p.publisher ?? undefined,
     sourceUrl: p.source_url ?? undefined,
   };
@@ -439,6 +445,7 @@ export function matchesStatus(plugin: Plugin, status: StatusFilterId): boolean {
 export function PluginsView() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<TabId>("browse");
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilterId>("all");
@@ -770,16 +777,36 @@ export function PluginsView() {
                 }`
         }
         right={
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            title="Refresh catalog"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setUploadOpen(true)}
+              className="gap-1.5"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              {translate("plugin_upload.button")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              title="Refresh catalog"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+            </Button>
+          </div>
         }
+      />
+
+      <PluginUploadDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onInstalled={() => {
+          setTab("installed");
+          void refetch();
+        }}
       />
 
       <div className="flex items-center gap-6 border-b border-border px-6">
@@ -1648,6 +1675,19 @@ function PluginRow({
           )}
           {plugin.fromMarketplace && (
             <MarketplaceBadge publisher={plugin.publisher} />
+          )}
+          {plugin.selfUploaded && (
+            // Without this a plugin the owner dropped in themselves would
+            // read exactly like one the app ships — same card, same absence
+            // of a badge. The mark is what keeps "reviewed by nobody"
+            // visible after the install dialog is long gone.
+            <span
+              title={translate("plugin_upload.unreviewed")}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300"
+            >
+              <Upload className="h-3 w-3" aria-hidden />
+              {translate("plugin_upload.self_badge")}
+            </span>
           )}
         </div>
         {needsReauth ? (

@@ -133,7 +133,7 @@ describe("SkillUploadDialog", () => {
     pickFolder([skillFile("my-skill/SKILL.md")]);
 
     await waitFor(() =>
-      expect(screen.getAllByText("Skill 'my-skill' already exists.").length).toBeGreaterThan(0),
+      expect(screen.getByText("Skill 'my-skill' already exists.")).toBeTruthy(),
     );
     expect(screen.getByText("Install").closest("button")?.disabled).toBe(true);
   });
