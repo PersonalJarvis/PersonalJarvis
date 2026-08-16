@@ -145,9 +145,11 @@ class TestShellIsToldAboutTheEntry:
         # …after the property-store commit, which is the last write to the file.
         assert src.index("rw_store.Commit()") < src.index("_notify_shell_of_shortcut")
 
-    def test_is_a_noop_off_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_is_a_noop_off_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(icon_utils.sys, "platform", "linux")
-        icon_utils._notify_shell_of_shortcut(Path("/tmp/whatever.lnk"))
+        icon_utils._notify_shell_of_shortcut(tmp_path / "whatever.lnk")
 
     @windows_only
     def test_notifies_the_item_and_its_directory(
