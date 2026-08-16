@@ -30,9 +30,11 @@ import {
   GripVertical,
   ListChecks,
   Check,
+  Upload,
 } from "lucide-react";
 import { SkillFinderDialog } from "@/views/SkillFinderDialog";
 import { SkillCreateDialog } from "@/views/SkillCreateDialog";
+import { SkillUploadDialog } from "@/views/SkillUploadDialog";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -122,6 +124,7 @@ export function SkillsView() {
   const [selected, setSelected] = useState<string | null>(null);
   const [finderOpen, setFinderOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<SkillSummary | null>(null);
 
   // Multi-select: a "selection mode" turns the per-row drag handle into a
@@ -278,6 +281,15 @@ export function SkillsView() {
             <Button
               size="sm"
               variant="outline"
+              onClick={() => setUploadOpen(true)}
+              className="gap-1.5"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              {t("skill_upload.button")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => setFinderOpen(true)}
               className="gap-1.5"
             >
@@ -323,6 +335,12 @@ export function SkillsView() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={(name) => setSelected(name)}
+      />
+
+      <SkillUploadDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onInstalled={(name) => setSelected(name)}
       />
 
       {confirmDelete && (
