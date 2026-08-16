@@ -128,6 +128,100 @@ class TestShortcutWriterRefusesADeadTarget:
         assert sc.Arguments.strip() == f"-m {icon_utils._LAUNCHER_MODULE}"
 
 
+class TestShortcutTargetsOurOwnExe:
+    """Windows will not list a shortcut aimed at a GENERIC HOST as an app.
+
+    Forensic 2026-08-16, second half: the .lnk existed, opened the app on a
+    double-click, and was still absent from Windows Search. Its target was
+    `pythonw.exe`. The shell applies the same rule to its own entries — that is
+    why `Command Prompt` (cmd.exe), `Run` (rundll32.exe) and `File Explorer` are
+    likewise missing from the app list, while Obsidian and Discord, each aimed
+    at its own .exe, are present.
+
+    So the shortcut has to point at OUR exe. The in-venv `PersonalJarvis.exe`
+    is the one branded copy that needs no environment handed to it, which is
+    exactly what a shortcut can't supply.
+    """
+
+    def test_prefers_a_self_contained_branded_exe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        branded = tmp_path / "Scripts" / "PersonalJarvis.exe"
+        monkeypatch.setattr(icon_utils, "ensure_branded_launcher_exe", lambda: branded)
+        monkeypatch.setattr(
+            icon_utils, "_is_self_contained_branded_exe", lambda p: True
+        )
+        assert icon_utils._shortcut_launch_target() == branded
+
+    def test_falls_back_to_pythonw_when_the_copy_needs_an_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A per-user-dir copy needs __PYVENV_LAUNCHER__, which a shortcut has
+        no way to set — pointing at it would produce an entry that does nothing."""
+        branded = tmp_path / "bin" / "PersonalJarvis.exe"
+        monkeypatch.setattr(icon_utils, "ensure_branded_launcher_exe", lambda: branded)
+        monkeypatch.setattr(
+            icon_utils, "_is_self_contained_branded_exe", lambda p: False
+        )
+        assert icon_utils._shortcut_launch_target() == icon_utils._pythonw_executable()
+
+    def test_falls_back_when_nothing_can_be_branded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(icon_utils, "ensure_branded_launcher_exe", lambda: None)
+        assert icon_utils._shortcut_launch_target() == icon_utils._pythonw_executable()
+
+    @windows_only
+    def test_self_contained_test_keys_off_pyvenv_cfg(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "venv" / "Scripts"
+        scripts.mkdir(parents=True)
+        exe = scripts / "PersonalJarvis.exe"
+        assert icon_utils._is_self_contained_branded_exe(exe) is False
+        (tmp_path / "venv" / "pyvenv.cfg").write_text("home = x", encoding="utf-8")
+        assert icon_utils._is_self_contained_branded_exe(exe) is True
+
+    @windows_only
+    def test_written_shortcut_points_at_a_real_launchable_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End to end: whatever target is chosen, it must exist on disk."""
+        programs = tmp_path / "Programs"
+        programs.mkdir()
+        monkeypatch.setattr(icon_utils, "_interpreter_can_open_a_window", lambda: True)
+        assert icon_utils.ensure_start_menu_shortcut(
+            aumid=_TEST_AUMID, programs_dir=programs
+        )
+        from win32com.client import Dispatch
+
+        sc = Dispatch("WScript.Shell").CreateShortcut(
+            str(programs / icon_utils.START_MENU_SHORTCUT_NAME)
+        )
+        assert Path(sc.TargetPath).is_file(), "shortcut points at a missing exe"
+
+
+class TestReexecLoopGuard:
+    """Launching THROUGH the branded exe must not re-exec through it again."""
+
+    @windows_only
+    def test_running_as_the_branded_exe_short_circuits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`sys._base_executable` still names the interpreter behind the branded
+        copy (a Store alias, say), so the older guard could not see this and the
+        app spawned a second process on every Start-Menu launch."""
+        monkeypatch.delenv(icon_utils._BRANDED_LAUNCH_ENV, raising=False)
+        monkeypatch.delenv("JARVIS_DEBUG", raising=False)
+        monkeypatch.setattr(
+            icon_utils.sys,
+            "executable",
+            r"C:\proj\.venv\Scripts\PersonalJarvis.exe",
+        )
+        monkeypatch.setattr(
+            icon_utils.sys, "_base_executable", r"C:\store\pythonw.exe", raising=False
+        )
+        assert icon_utils.maybe_reexec_through_branded_launcher([]) is None
+
+
 class TestShellIsToldAboutTheEntry:
     """Writing the file is half the job — the app index needs the notification.
 

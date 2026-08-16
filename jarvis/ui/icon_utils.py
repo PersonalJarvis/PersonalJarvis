@@ -142,6 +142,32 @@ def _pythonw_executable() -> Path | None:
     return exe if exe.exists() else None
 
 
+def _shortcut_launch_target() -> Path | None:
+    """What the Start-Menu shortcut should launch — our own exe when we have one.
+
+    Windows does not list a shortcut whose target is a GENERIC HOST as an app.
+    That is not a quirk: the same rule hides the shell's own
+    ``Command Prompt`` (cmd.exe), ``Run`` (rundll32.exe) and ``File Explorer``
+    entries from the app list, because one host executable cannot stand for the
+    many different things launched through it. A shortcut aimed at
+    ``pythonw.exe`` falls in that bucket, so the entry exists on disk, opens the
+    app on a double-click, and is still absent from Windows Search — the exact
+    report from 2026-08-16, next to an Obsidian and a Discord entry that work
+    because each points at its own ``.exe``.
+
+    ``PersonalJarvis.exe`` built inside the venv IS our own executable and needs
+    no environment handed to it, so it is a valid shortcut target and makes the
+    entry a real app. The other branded homes need ``__PYVENV_LAUNCHER__``,
+    which a shortcut cannot supply — those keep the historical ``pythonw``
+    target, where the branded copy is reached through the re-exec in ``main()``
+    instead. Falls back to ``pythonw`` whenever no branded copy can be built.
+    """
+    branded = ensure_branded_launcher_exe()
+    if branded is not None and _is_self_contained_branded_exe(branded):
+        return branded
+    return _pythonw_executable()
+
+
 def _interpreter_can_open_a_window() -> bool:
     """Does the RUNNING interpreter have the toolkit the desktop window needs?
 
@@ -276,26 +302,73 @@ def _user_launcher_dir() -> Path | None:
     return Path(local) / WINDOWS_BRANDED_LAUNCHER_DIR_NAME / "bin"
 
 
-def _branded_launcher_candidates() -> list[Path]:
-    """Target paths for the branded copy, best first.
+def _venv_pythonw_executable() -> Path | None:
+    """The venv's OWN ``pythonw.exe``, when this process runs inside a venv.
 
-    1. NEXT TO the base interpreter — it finds ``pythonXX.dll`` without any
-       extra file, but needs a writable base dir (admin-only under
-       ``Program Files``).
-    2. The per-user dir — always writable, but the interpreter runtime DLLs
-       must be copied beside the exe (see ``_interpreter_runtime_dlls``).
+    Unlike the base interpreter this is a real ~250 KB launcher binary even when
+    the base Python came from the Microsoft Store, and it locates its
+    environment from ``pyvenv.cfg`` one directory up — by its LOCATION, not its
+    file name. A renamed copy beside it therefore boots the same venv with no
+    ``__PYVENV_LAUNCHER__`` and no copied runtime DLLs, which is what makes it
+    the only branding source that survives a Store install (see
+    ``_branded_launcher_candidates``).
+    """
+    exe = Path(sys.executable)
+    cand = exe.with_name("pythonw.exe")
+    if not cand.is_file():
+        return None
+    if not (cand.parent.parent / "pyvenv.cfg").is_file():
+        return None  # not a venv layout — the copy would not find an environment
+    try:
+        if cand.stat().st_size == 0:
+            return None  # an alias, not a launcher
+    except OSError:
+        return None
+    return cand
 
-    In both homes the venv/base is re-attached at launch via
+
+def _branded_launcher_candidates() -> list[tuple[Path, Path]]:
+    """``(source, target)`` pairs for the branded copy, best first.
+
+    1. INSIDE THE VENV, copied from the venv's own launcher. Self-contained: the
+       copy finds its environment from ``pyvenv.cfg`` by location, so it needs
+       no ``__PYVENV_LAUNCHER__`` and is therefore a valid *shortcut target* —
+       the others are not. This is also the only home that works on a **Microsoft
+       Store** Python, where the base "interpreter" is a 0-byte app-execution
+       alias and its real binary sits in an unwritable ``WindowsApps`` folder
+       whose copies refuse to run outside their app container (forensic
+       2026-08-16: that is why branding silently failed on such a machine and
+       the app never appeared in Windows Search — see
+       ``_shortcut_launch_target``).
+    2. NEXT TO the base interpreter — finds ``pythonXX.dll`` without any extra
+       file, but needs a writable base dir (admin-only under ``Program Files``).
+    3. The per-user dir — always writable, but the interpreter runtime DLLs must
+       be copied beside the exe (see ``_interpreter_runtime_dlls``).
+
+    In homes 2 and 3 the venv/base is re-attached at launch via
     ``__PYVENV_LAUNCHER__``, so path resolution inside the child is identical.
     """
+    candidates: list[tuple[Path, Path]] = []
+    venv = _venv_pythonw_executable()
+    if venv is not None:
+        candidates.append((venv, venv.with_name(BRANDED_LAUNCHER_EXE_NAME)))
     base = _base_pythonw_executable()
-    if base is None:
-        return []
-    candidates = [base.with_name(BRANDED_LAUNCHER_EXE_NAME)]
-    user_dir = _user_launcher_dir()
-    if user_dir is not None:
-        candidates.append(user_dir / BRANDED_LAUNCHER_EXE_NAME)
+    if base is not None:
+        candidates.append((base, base.with_name(BRANDED_LAUNCHER_EXE_NAME)))
+        user_dir = _user_launcher_dir()
+        if user_dir is not None:
+            candidates.append((base, user_dir / BRANDED_LAUNCHER_EXE_NAME))
     return candidates
+
+
+def _is_self_contained_branded_exe(exe: Path) -> bool:
+    """Does this branded copy run the app without ``__PYVENV_LAUNCHER__``?
+
+    True only for the in-venv copy (home 1): it resolves its environment from
+    its own location. That is exactly the property a Start-Menu shortcut needs,
+    since a shortcut carries no environment of its own.
+    """
+    return (exe.parent.parent / "pyvenv.cfg").is_file()
 
 
 def _interpreter_runtime_dlls(src_dir: Path) -> list[Path]:
@@ -312,13 +385,18 @@ def _interpreter_runtime_dlls(src_dir: Path) -> list[Path]:
 
 
 def _branded_copy_boots(exe: Path) -> bool:
-    """One out-of-process start of a freshly built *relocated* branded copy.
+    """One out-of-process start of a freshly built branded copy.
 
-    A relocated copy that cannot load its runtime DLLs dies before any window
-    exists — and the re-exec parent has already exited, so a broken copy would
-    mean NO app at all (observed during development). Verified once at build
-    time with the same ``__PYVENV_LAUNCHER__`` re-attach as the real launch;
-    on failure the caller deletes the copy and falls back to bare ``pythonw``.
+    A copy that cannot load its runtime DLLs dies before any window exists — and
+    the re-exec parent has already exited, so a broken copy would mean NO app at
+    all (observed during development). Since the in-venv copy is also the
+    Start-Menu shortcut's target, a broken one there would leave the user with a
+    Start-Menu entry that does nothing, so every fresh copy is verified.
+
+    The start mirrors how that copy is really launched: a self-contained in-venv
+    copy gets NO ``__PYVENV_LAUNCHER__``, because a shortcut hands it no
+    environment either; the other homes get the same re-attach ``main()`` uses.
+    On failure the caller deletes the copy and falls back to bare ``pythonw``.
     """
     try:
         import subprocess
@@ -327,7 +405,9 @@ def _branded_copy_boots(exe: Path) -> bool:
 
         env = dict(os.environ)
         venv_pythonw = Path(sys.executable).with_name("pythonw.exe")
-        if venv_pythonw.is_file():
+        if _is_self_contained_branded_exe(exe):
+            env.pop("__PYVENV_LAUNCHER__", None)
+        elif venv_pythonw.is_file():
             env["__PYVENV_LAUNCHER__"] = str(venv_pythonw)
         proc = subprocess.run(  # noqa: S603 — our own freshly built exe
             [str(exe), "-c", "import sys; sys.exit(0)"],
@@ -372,21 +452,18 @@ def ensure_branded_launcher_exe() -> Path | None:
     """
     if sys.platform != "win32":
         return None
-    src = _base_pythonw_executable()
-    if src is None:
-        return None
     ico = project_icon_path()
     if not ico.is_file():
         return None
-    try:
-        # MS Store base exe is a 0-byte alias → unbrandable.
-        if src.stat().st_size == 0:
-            logger.debug("base pythonw is a 0-byte alias (MS Store); cannot brand")
-            return None
-    except OSError as exc:
-        logger.debug("base pythonw not statable; cannot brand: {}", exc)
-        return None
-    for target in _branded_launcher_candidates():
+    for src, target in _branded_launcher_candidates():
+        try:
+            # A 0-byte app-execution alias (MS Store) copies to an empty husk.
+            if src.stat().st_size == 0:
+                logger.debug("{} is a 0-byte alias (MS Store); skipping", src)
+                continue
+        except OSError as exc:
+            logger.debug("{} not statable; skipping: {}", src, exc)
+            continue
         built = _ensure_branded_copy_at(src, target, ico)
         if built is not None:
             return built
@@ -425,8 +502,12 @@ def _ensure_branded_copy_at(src: Path, target: Path, ico: Path) -> Path | None:
             # remove it so the caller falls through to the next home / bare pythonw.
             _unlink_quietly(target)
             return None
-        if relocated and not _branded_copy_boots(target):
-            logger.debug("relocated branded copy does not boot, discarding: {}", target)
+        # Smoke-start EVERY fresh copy, not just a relocated one. The in-venv
+        # copy is the Start-Menu shortcut's target, so a broken one would leave
+        # a Start-Menu entry that does nothing at all — worse than the generic
+        # pythonw target it replaces. Runs once per rebuild, never per launch.
+        if not _branded_copy_boots(target):
+            logger.debug("branded copy does not boot, discarding: {}", target)
             _unlink_quietly(target)
             return None
         logger.debug("Branded launcher exe ready: {}", target)
@@ -474,8 +555,17 @@ def maybe_reexec_through_branded_launcher(argv: list[str]) -> int | None:
     # real running image is ``sys._base_executable`` (our branded copy).
     if os.environ.get(_BRANDED_LAUNCH_ENV) == "1":
         return None
+    branded_name = BRANDED_LAUNCHER_EXE_NAME.lower()
     base_exe = getattr(sys, "_base_executable", "") or ""
-    if Path(base_exe).name.lower() == BRANDED_LAUNCHER_EXE_NAME.lower():
+    if Path(base_exe).name.lower() == branded_name:
+        return None
+    # The in-venv branded copy IS the running image, yet `_base_executable`
+    # still names the interpreter behind it (a Store alias, say) — so the check
+    # above cannot see it and the app re-exec'd through the very exe that had
+    # just started it. Harmless (the child sets the env marker and stops) but a
+    # wasted process and boot delay on every Start-Menu launch, which is the
+    # normal way in once the shortcut targets this exe.
+    if Path(sys.executable).name.lower() == branded_name:
         return None
     # A visible-console/debug run wants python.exe's console; re-exec'ing through
     # a windowless pythonw copy would swallow it. Leave those alone.
@@ -620,7 +710,7 @@ def ensure_start_menu_shortcut(
         logger.debug("pywin32 unavailable; Start-Menu shortcut not ensured: {}", exc)
         return False
 
-    pythonw = _pythonw_executable()
+    pythonw = _shortcut_launch_target()
     if pythonw is None:
         return False
     ico = icon_path or project_icon_path()

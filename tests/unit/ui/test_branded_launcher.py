@@ -65,33 +65,65 @@ def test_reexec_skips_a_debug_console_run(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only branding")
-def test_branded_candidates_prefer_base_then_user_dir(
+def test_branded_candidates_prefer_the_venv_then_base_then_user_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Candidate 1 sits beside the BASE pythonw (zero-copy DLL adjacency);
-    candidate 2 is the always-writable per-user dir — the fix for machines
-    where the base dir is read-only (Program Files installs)."""
+    """Candidate 1 sits INSIDE the venv, copied from the venv's own launcher —
+    self-contained (finds its environment from pyvenv.cfg), so it is the only
+    one usable as a Start-Menu shortcut target, and the only one that survives a
+    Microsoft Store Python. Candidate 2 sits beside the BASE pythonw (zero-copy
+    DLL adjacency); candidate 3 is the always-writable per-user dir — the fix
+    for machines where the base dir is read-only (Program Files installs)."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     candidates = icon_utils._branded_launcher_candidates()
     if not candidates:
-        pytest.skip("no base pythonw resolvable in this environment")
-    assert candidates[0].parent == Path(sys.base_prefix)
-    assert candidates[1] == tmp_path / "PersonalJarvis" / "bin" / (
-        icon_utils.BRANDED_LAUNCHER_EXE_NAME
-    )
-    assert all(c.name == icon_utils.BRANDED_LAUNCHER_EXE_NAME for c in candidates)
+        pytest.skip("no interpreter resolvable in this environment")
+    venv = icon_utils._venv_pythonw_executable()
+    targets = [t for _src, t in candidates]
+    if venv is not None:
+        assert candidates[0] == (venv, venv.with_name(icon_utils.BRANDED_LAUNCHER_EXE_NAME))
+        targets = targets[1:]
+    if icon_utils._base_pythonw_executable() is not None:
+        assert targets[0].parent == Path(sys.base_prefix)
+        assert targets[1] == tmp_path / "PersonalJarvis" / "bin" / (
+            icon_utils.BRANDED_LAUNCHER_EXE_NAME
+        )
+    assert all(t.name == icon_utils.BRANDED_LAUNCHER_EXE_NAME for _s, t in candidates)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only branding")
-def test_no_localappdata_means_base_candidate_only(
+def test_no_localappdata_drops_only_the_per_user_home(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     candidates = icon_utils._branded_launcher_candidates()
     if not candidates:
-        pytest.skip("no base pythonw resolvable in this environment")
-    assert len(candidates) == 1
-    assert candidates[0].parent == Path(sys.base_prefix)
+        pytest.skip("no interpreter resolvable in this environment")
+    targets = [t for _s, t in candidates]
+    # Nothing may point into the (now unknown) per-user dir.
+    assert all("PersonalJarvis\\bin" not in str(t) for t in targets)
+    if icon_utils._base_pythonw_executable() is not None:
+        assert any(t.parent == Path(sys.base_prefix) for t in targets)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only branding")
+def test_venv_copy_is_recognised_as_self_contained() -> None:
+    """Only a copy inside the venv resolves its environment by location, which
+    is what lets a shortcut (which carries no environment) launch it."""
+    venv = icon_utils._venv_pythonw_executable()
+    if venv is None:
+        pytest.skip("not running inside a venv")
+    branded = venv.with_name(icon_utils.BRANDED_LAUNCHER_EXE_NAME)
+    assert icon_utils._is_self_contained_branded_exe(branded) is True
+    # A per-user home has no pyvenv.cfg above it, so it is NOT self-contained.
+    user_dir = icon_utils._user_launcher_dir()
+    if user_dir is not None:
+        assert (
+            icon_utils._is_self_contained_branded_exe(
+                user_dir / icon_utils.BRANDED_LAUNCHER_EXE_NAME
+            )
+            is False
+        )
 
 
 def _fake_interpreter_dir(tmp_path: Path) -> Path:
@@ -187,7 +219,9 @@ def test_unwritable_first_home_falls_through_to_the_user_dir(
     bad = blocker / icon_utils.BRANDED_LAUNCHER_EXE_NAME
     good = tmp_path / "user" / "bin" / icon_utils.BRANDED_LAUNCHER_EXE_NAME
     monkeypatch.setattr(icon_utils, "_base_pythonw_executable", lambda: src)
-    monkeypatch.setattr(icon_utils, "_branded_launcher_candidates", lambda: [bad, good])
+    monkeypatch.setattr(
+        icon_utils, "_branded_launcher_candidates", lambda: [(src, bad), (src, good)]
+    )
     monkeypatch.setattr(icon_utils, "project_icon_path", lambda: ico)
 
     assert icon_utils.ensure_branded_launcher_exe() == good
@@ -196,11 +230,22 @@ def test_unwritable_first_home_falls_through_to_the_user_dir(
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only branding")
-def test_ms_store_alias_base_is_not_branded(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 0-byte base exe (the MS Store app-execution alias) must bail gracefully."""
+def test_ms_store_alias_base_is_skipped_not_copied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 0-byte base exe (the MS Store app-execution alias) copies to an empty
+    husk, so that source must be skipped rather than branded.
+
+    Not the same as "no branding at all" any more: on a Store install the venv's
+    own launcher is a real binary and takes over (see the venv candidate). This
+    pins the SOURCE rule — never copy an alias — while leaving that fallback
+    free to succeed, which is what put the app back in Windows Search.
+    """
     fake_base = icon_utils._base_pythonw_executable()
     if fake_base is None:
         pytest.skip("no base pythonw resolvable")
+    # Isolate the base-source rule: drop the venv candidate for this test.
+    monkeypatch.setattr(icon_utils, "_venv_pythonw_executable", lambda: None)
 
     real_stat = os.stat
 
