@@ -1,6 +1,7 @@
 # Portable skills — a marketplace for more than Jarvis
 
-**Status:** app side live since 2026-08-16 · registry side open ·
+**Status:** app side live since 2026-08-16 · registry side written, awaiting
+the maintainer's push · storefront open ·
 **Registry:** [community-registry.md](community-registry.md) ·
 **Packaging (plugins):** [agent-plugins-standard.md](agent-plugins-standard.md)
 
@@ -45,6 +46,12 @@ The second line is **derived, never stored** — `installStandard.ts`
    installer resolves against github.com and nothing else, so inventing one
    would advertise a broken command.
 
+Verified live on 2026-08-16 against the real CLI — `npx skills add
+PersonalJarvis/marketplace --list` clones the registry and lists the
+published skill, and `-s, --skill <name>` is the flag it documents. The
+`skills/<name>/SKILL.md` layout the registry publishes is exactly what it
+searches, so no repo-side change was needed for the command to work.
+
 Plugins never get the second line: a plugin carries an MCP server and a
 sign-in flow, which that installer knows nothing about.
 
@@ -84,10 +91,10 @@ schema, so a typo in a hand-written skill is caught where it is made.
 Consent is unchanged: the install dialog shows the instructions verbatim
 before anything is downloaded, because the text IS the skill.
 
-## Feed contract (registry side — still open)
+## Feed contract
 
-`CommunitySkillEntry` in `jarvis/marketplace/community_source.py` already
-reads two new fields, both optional, both tolerated when absent or unknown:
+`CommunitySkillEntry` in `jarvis/marketplace/community_source.py` reads two
+fields, both optional, both tolerated when absent or unknown:
 
 ```jsonc
 {
@@ -106,19 +113,32 @@ reads two new fields, both optional, both tolerated when absent or unknown:
   UI, so the client bounds it: 8 entries, 32 characters each, deduplicated,
   non-strings dropped.
 
-What the registry repo (`PersonalJarvis/marketplace`) still has to do:
+### Registry side (`PersonalJarvis/marketplace`) — written, on branch
+`portable-skills`
 
-- [ ] Accept `flavor` and `compatible_agents` in `submissions/<name>.json`
-      and carry them into the compiled `index.json`.
-- [ ] Validate a `portable` submission against the OPEN format — `name` and
-      `description` present, name matching the shared slug rule, size limits,
-      https-only URLs, secret scan — and **not** against the Jarvis schema.
-- [ ] Keep publishing skills as `skills/<name>/SKILL.md` so
-      `npx skills add <owner>/marketplace --skill <name>` resolves. Verify
-      against the live CLI before the storefront announces it; the derivation
-      above is built from the published layout, not from a test run of `npx`.
-- [ ] Storefront: mirror the tabs and the "portable" mark, and let the submit
-      form pick the flavor.
+- [x] `build_index.py` emits `flavor` and `compatible_agents` on every skill.
+- [x] **The flavor is derived, not demanded.** A SKILL.md using none of
+      Jarvis' own keys (`schema_version`, `triggers`, `requires_tools`,
+      `risk_policy`, `execution`, `auto_fire`, `state`, `config`,
+      `token_budget_estimate`, `plugin_id`, `intent_verbs`, `intent_objects`)
+      is portable. Every submission published before the field gets the right
+      mark without its author touching anything; a submission may still state
+      `flavor` outright when the derivation would be wrong.
+- [x] `validate.py` bounds the two fields and rejects rather than truncates.
+- [x] The gate needed no loosening: it only ever required `name` and
+      `description` in the frontmatter, so a foreign SKILL.md always passed.
+- [x] `scripts/test_portable_flavor.py`, wired into `validate.yml`.
+- [x] Verified end to end: built feed → `CommunityIndex` → `parse_skill`,
+      with a portable probe reading as portable at every step.
+
+Not pushed — that is the maintainer's call (contract §2).
+
+### Storefront (personaljarvis.ai) — open
+
+- [ ] Mirror `src/lib/install-standard.ts` (the `commands` array and the
+      skills.sh derivation) and render the tabs.
+- [ ] Show the "portable · also runs in …" mark on the card.
+- [ ] Let the submit form pick a flavor and name the agents.
 
 ## Trust — unchanged, and why it holds for a foreign file
 
