@@ -142,6 +142,31 @@ def _pythonw_executable() -> Path | None:
     return exe if exe.exists() else None
 
 
+def _interpreter_can_open_a_window() -> bool:
+    """Does the RUNNING interpreter have the toolkit the desktop window needs?
+
+    The Start-Menu shortcut is written against ``sys.executable``, so it is only
+    a valid launch target if that interpreter can actually open the window.
+    Guarding on pywebview is what keeps a foreign interpreter out of the
+    shortcut: the identity call sits on an import path that headless runs, CLI
+    commands and stray virtualenvs all reach, and whichever one ran last used to
+    win. Repoint the shortcut at a python without pywebview and the Start-Menu
+    entry dies silently — ``pythonw`` has no console, so the ImportError goes
+    nowhere and the app simply never appears (live forensic 2026-08-16: a
+    ``--headless`` run from an unrelated venv rewrote the entry, after which
+    Windows Search launched a window-less interpreter and nothing happened).
+
+    ``find_spec`` only resolves the module, it never imports pywebview — this
+    runs on the boot critical path (AP-26).
+    """
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("webview") is not None
+    except (ImportError, ValueError):  # broken/partial install
+        return False
+
+
 def _replace_exe_icon(exe_path: Path, ico_path: Path) -> bool:
     """Overwrite ``exe_path``'s embedded application icon with ``ico_path``.
 
@@ -602,6 +627,17 @@ def ensure_start_menu_shortcut(
     lnk = programs / START_MENU_SHORTCUT_NAME
     iid = pywintypes.IID(_IID_IPROPERTYSTORE)
 
+    if not _interpreter_can_open_a_window():
+        # This interpreter cannot start the desktop app, so it must not become
+        # the shortcut's target. Leave whatever is there — a working entry from
+        # the installer or from a real desktop run — strictly alone.
+        logger.debug(
+            "Start-Menu shortcut left untouched: {} has no pywebview and would "
+            "be a dead launch target",
+            pythonw,
+        )
+        return lnk.is_file()
+
     # Idempotent BUT self-healing: leave an existing shortcut alone ONLY if it
     # still carries this AUMID *and* its icon + target resolve to real files.
     #
@@ -661,7 +697,9 @@ def ensure_start_menu_shortcut(
         return False
 
 
-def ensure_windows_app_identity(app_id: str = APP_USER_MODEL_ID) -> bool:
+def ensure_windows_app_identity(
+    app_id: str = APP_USER_MODEL_ID, *, write_shortcut: bool = True
+) -> bool:
     """Pin a stable Windows app identity for taskbar grouping AND name.
 
     Three layers, each a different shell surface:
@@ -679,6 +717,12 @@ def ensure_windows_app_identity(app_id: str = APP_USER_MODEL_ID) -> bool:
     Must run before the first window is created (idempotent across the desktop,
     orb and overlay processes, which all call this early). The return value
     reflects only step 1; steps 2 and 3 are best-effort side effects.
+
+    ``write_shortcut=False`` keeps layers 1 and 3 and skips layer 2. Callers on
+    an import path use it: importing ``jarvis.ui.desktop_app`` (which a headless
+    boot, a CLI command and the test suite all do) must not rewrite the user's
+    Start-Menu entry, because at import time nothing yet says this process will
+    ever show a window. Only a run that really opens one may claim the entry.
     """
     if sys.platform != "win32":
         return False
@@ -687,7 +731,8 @@ def ensure_windows_app_identity(app_id: str = APP_USER_MODEL_ID) -> bool:
     # Name the taskbar button (shortcut) + the toast identity (registry). Both
     # best-effort and must be in place before the AUMID is set + the window
     # appears, so Explorer resolves them on first button creation.
-    ensure_start_menu_shortcut(aumid=app_id, icon_path=ico_arg)
+    if write_shortcut:
+        ensure_start_menu_shortcut(aumid=app_id, icon_path=ico_arg)
     register_windows_app_user_model_id(app_id, icon_path=ico_arg)
     try:
         import ctypes

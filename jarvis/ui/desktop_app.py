@@ -44,7 +44,13 @@ if sys.platform == "win32":
     try:
         from jarvis.ui.icon_utils import ensure_windows_app_identity
 
-        ensure_windows_app_identity()
+        # No shortcut write on the import path: a headless boot, `jarvis <group>`
+        # and the test suite all import this module, and an import is no promise
+        # of a window. Rewriting the Start-Menu entry from here pointed it at
+        # whichever interpreter imported the module last — silently killing the
+        # Windows Search launch when that interpreter had no pywebview. The
+        # entry is claimed where a window is actually created (launcher.py).
+        ensure_windows_app_identity(write_shortcut=False)
     except Exception:  # noqa: S110
         # Taskbar-icon grouping is cosmetic and Windows-only; failing here must
         # not stop the app from starting on any other OS.
