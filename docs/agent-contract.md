@@ -229,6 +229,40 @@ check in order, name the layer (runbook:
 3. **OS gap** — assumed only after 1+2 match; then the parity rules above
    apply.
 
+### Marketplace — the standard binds US first (BINDING)
+
+Same figure as the rest of this section: the project's own work is never the
+exception. We publish a submission standard, so **everything the marketplace
+lists meets it — starting with ours.**
+
+1. **A listing is something that was published.** To appear anywhere in the
+   store — the browse list, the counts, the search, the category chips, the
+   sort tabs, a detail page — an entry must have come through the registry
+   (`PersonalJarvis/marketplace`) as an Agent Plugins **1.0.0** `plugin.json`
+   (+ `mcp.json` where it talks to a server), and therefore carry a
+   publisher, a version, a published date, a readable folder, and an install
+   command. No manifest, no listing.
+2. **What ships inside the app is NOT a listing.** The connectors in
+   `jarvis/marketplace/seed_catalog.json` are described by our internal
+   schema, cannot be installed, and must never be mixed into the catalog,
+   the totals, the search index, or a listing page. They belong in the
+   "built in" connector wall / product surface, which says plainly that they
+   come with the app. Reintroducing them as listings is the defect this rule
+   exists to prevent (2026-08-16: 21 of 22 store plugins were un-installable
+   built-ins under an "Official" tick, sorted ahead of the published work).
+3. **A built-in reaches the store only the way a stranger does** — a registry
+   PR, the standard manifest, the same CI. There is no internal shortcut and
+   no second, laxer shape.
+4. **"Official" says who wrote it, never that anyone checked it.** Every
+   registry entry — ours included — carries the "Not human-reviewed" mark,
+   because the merge is automated. An official tick that implies review is a
+   lie about the gate.
+5. Binds ALL THREE repos: the app (seed catalog + the Plugins view), the
+   registry (validation), and the storefront (`personal-jarvis-webui`, whose
+   `AGENTS.md`/`CLAUDE.md` carry the same rule in its own terms). This file
+   is the source; a change here is a change there, the same discipline as the
+   argument rules already shared across the three.
+
 ---
 
 ## 4. Naming — internal "Jarvis-Agents", user-visible brand is DYNAMIC (BINDING)

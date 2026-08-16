@@ -40,6 +40,14 @@ against the official live catalog when changed and use a current,
 hardware-fitting generation/quantization; an artifact shown as one year old
 or older must never be a default or recommendation. A measured compatibility
 pin may remain only as a documented non-general exception with a removal test.
+Marketplace — the standard binds US first: only a registry-published entry
+(Agent Plugins 1.0.0 `plugin.json` + `mcp.json`, publisher/version/date/install
+command) may appear in the store's list, counts, search, chips, tabs or detail
+pages; `seed_catalog.json` connectors ship with the app, are NOT listings, and
+belong in the "built in" wall; a built-in reaches the store only via a registry
+PR like anyone else's; "Official" names the author, never a review — every
+registry entry keeps "Not human-reviewed". Binds app + registry + storefront
+(`personal-jarvis-webui`) alike.
 
 ## 4. Naming (BINDING)
 Internal: **Jarvis-Agents**. User-visible brand is DYNAMIC from the wake word
