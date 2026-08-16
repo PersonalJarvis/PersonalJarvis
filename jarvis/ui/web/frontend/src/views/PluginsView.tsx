@@ -1053,8 +1053,11 @@ function InstalledLayout({
   return (
     <>
       <Hero
-        title="Your connected services"
-        subtitle="The plugins below are linked to your account. Disconnect from each row when you no longer need them."
+        // Not "connected" any more: a plugin installed from the marketplace
+        // belongs here before it is connected, and a heading that claims
+        // otherwise is wrong about the very row underneath it.
+        title="What you have added"
+        subtitle="Connect one before it can do anything. Disconnect or remove it from its own row when you no longer need it."
         {...controls}
       />
       {plugins.length === 0 && !emptyBecauseOfFilters ? (
