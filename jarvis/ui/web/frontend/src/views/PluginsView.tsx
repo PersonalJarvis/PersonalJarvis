@@ -184,7 +184,7 @@ interface PatPasteAuthDetail {
   } | null;
 }
 
-interface Plugin {
+export interface Plugin {
   id: string;
   name: string;
   description: string;
@@ -315,17 +315,6 @@ const AUTH_LABELS: Record<AuthMode, string> = {
   hosted_mcp_allowlist: "Allowlist",
 };
 
-const COMING_SOON = [
-  "Linear",
-  "Stripe",
-  "Cloudflare",
-  "Discord",
-  "Google Drive",
-  "Gmail",
-  "Telegram",
-  "Asana",
-];
-
 // PKCE plugins that ship a placeholder OAuth client: a downloader supplies their
 // OWN production client here (the durable fix for provider-side refresh-token
 // expiry — e.g. Google revokes a "Testing" app's token after 7 days). The Google
@@ -370,6 +359,14 @@ const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
 
 type TabId = "browse" | "installed" | "community";
 type FilterId = "all" | Category;
+export type StatusFilterId = "all" | "connected" | "not_connected" | "attention";
+
+const STATUS_FILTER_LABEL: Record<StatusFilterId, string> = {
+  all: "Any status",
+  connected: "Connected",
+  not_connected: "Not connected",
+  attention: "Needs attention",
+};
 
 /** Section order for the store, straight from the catalog. Any category the
  *  backend serves that the order does not mention is appended, so a new
@@ -385,11 +382,51 @@ function orderedCategories(
   return [...known, ...extra];
 }
 
+/** Free-text match over the fields a user actually remembers a plugin by: its
+ *  name, what it does, the category it sits under, its catalog id, and the
+ *  vendor family behind its OAuth client. Matching the name alone made the box
+ *  near-useless — "payments" found nothing because the word only ever appears
+ *  in Stripe's description, and "google" missed Gmail entirely, since the
+ *  vendor's name is nowhere in "Gmail".
+ *
+ *  Whitespace-separated words are AND-ed, so a second word narrows the result
+ *  instead of widening it. */
+export function matchesQuery(plugin: Plugin, query: string): boolean {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const haystack = [
+    plugin.name,
+    plugin.description,
+    plugin.category,
+    plugin.id,
+    oauthClientFamily(plugin)?.label ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+  return words.every((word) => haystack.includes(word));
+}
+
+/** "attention" groups needs_reauth and error: both mean the same thing to the
+ *  user — this plugin is listed but cannot be called until they act. */
+export function matchesStatus(plugin: Plugin, status: StatusFilterId): boolean {
+  switch (status) {
+    case "connected":
+      return plugin.status === "connected";
+    case "not_connected":
+      return plugin.status === "not_connected";
+    case "attention":
+      return plugin.status === "needs_reauth" || plugin.status === "error";
+    default:
+      return true;
+  }
+}
+
 export function PluginsView() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<TabId>("browse");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilterId>("all");
   const [connectingPlugin, setConnectingPlugin] = useState<Plugin | null>(null);
   // PKCE plugin awaiting the pre-connect dialog (own-client + keep-connected hint).
   const [pkceSetupPlugin, setPkceSetupPlugin] = useState<Plugin | null>(null);
@@ -628,13 +665,32 @@ export function PluginsView() {
 
   const visible = useMemo(() => {
     const base = tab === "installed" ? installed : allPlugins;
-    const q = query.trim().toLowerCase();
     return base.filter((p) => {
       if (filter !== "all" && p.category !== filter) return false;
-      if (q && !p.name.toLowerCase().includes(q)) return false;
-      return true;
+      if (!matchesStatus(p, statusFilter)) return false;
+      return matchesQuery(p, query);
     });
-  }, [tab, query, filter, allPlugins, installed]);
+  }, [tab, query, filter, statusFilter, allPlugins, installed]);
+
+  const filtersActive =
+    query.trim() !== "" || filter !== "all" || statusFilter !== "all";
+  const resetFilters = () => {
+    setQuery("");
+    setFilter("all");
+    setStatusFilter("all");
+  };
+
+  const searchControls: SearchControlsProps = {
+    query,
+    setQuery,
+    filter,
+    setFilter,
+    statusFilter,
+    setStatusFilter,
+    matchCount: visible.length,
+    filtersActive,
+    onReset: resetFilters,
+  };
 
   // Every plugin that needs a reconnect (revoked/expired token) or errored —
   // the ones the "needs attention" banner names and the "Jump to it" button
@@ -656,8 +712,7 @@ export function PluginsView() {
   const jumpToFirstProblem = () => {
     const target = attentionPlugins[0];
     if (!target) return;
-    setQuery("");
-    setFilter("all");
+    resetFilters();
     setScrollTarget(target.id);
   };
 
@@ -733,11 +788,8 @@ export function PluginsView() {
           ) : tab === "browse" ? (
             <BrowseLayout
               plugins={visible}
-              query={query}
               categoryOrder={categoryOrder}
-              setQuery={setQuery}
-              filter={filter}
-              setFilter={setFilter}
+              {...searchControls}
               onConnect={handleConnect}
               onDisconnect={(id) =>
                 setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null)
@@ -747,11 +799,8 @@ export function PluginsView() {
             <InstalledLayout
               plugins={visible}
               totalAvailable={allPlugins.length}
-              query={query}
               categoryOrder={categoryOrder}
-              setQuery={setQuery}
-              filter={filter}
-              setFilter={setFilter}
+              {...searchControls}
               onConnect={handleConnect}
               onDisconnect={(id) =>
                 setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null)
@@ -922,31 +971,41 @@ interface SearchControlsProps {
   setQuery: (v: string) => void;
   filter: FilterId;
   setFilter: (f: FilterId) => void;
+  statusFilter: StatusFilterId;
+  setStatusFilter: (s: StatusFilterId) => void;
+  /** How many plugins survived the filters — shown next to the reset button so
+   *  a narrow result set never reads as "the catalog shrank". */
+  matchCount: number;
+  filtersActive: boolean;
+  onReset: () => void;
 }
 
 function BrowseLayout({
   plugins,
-  query,
   categoryOrder,
-  setQuery,
-  filter,
-  setFilter,
   onConnect,
   onDisconnect,
+  ...controls
 }: { plugins: Plugin[]; categoryOrder: string[] } & SearchControlsProps &
   ConnectHandlers) {
+  const { query, filtersActive, onReset } = controls;
   return (
     <>
-      <Hero query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} />
-      <CarouselBanner />
+      <Hero {...controls} />
+      {/* The carousel promotes a fixed set of plugins regardless of the
+          filters. Once the user is searching, that is noise at best and
+          actively misleading at worst — it showed GitHub while the list below
+          held only Vercel. Hide it whenever a filter narrows the view. */}
+      {!filtersActive && <CarouselBanner />}
       <CategorizedList
         plugins={plugins}
         query={query}
+        filtersActive={filtersActive}
+        onReset={onReset}
         categoryOrder={categoryOrder}
         onConnect={onConnect}
         onDisconnect={onDisconnect}
       />
-      <ComingSoonStrip taken={plugins.map((p) => p.name)} />
     </>
   );
 }
@@ -954,35 +1013,36 @@ function BrowseLayout({
 function InstalledLayout({
   plugins,
   totalAvailable,
-  query,
   categoryOrder,
-  setQuery,
-  filter,
-  setFilter,
   onConnect,
   onDisconnect,
+  ...controls
 }: {
   plugins: Plugin[];
   totalAvailable: number;
   categoryOrder: string[];
 } & SearchControlsProps &
   ConnectHandlers) {
+  const { query, filtersActive, onReset } = controls;
+  // "Nothing connected yet" is only true when nothing is connected. With a
+  // filter narrowing the tab, an empty list means the filter excluded the
+  // user's plugins — saying they have none would be a lie they cannot undo.
+  const emptyBecauseOfFilters = plugins.length === 0 && filtersActive;
   return (
     <>
       <Hero
         title="Your connected services"
         subtitle="The plugins below are linked to your account. Disconnect from each row when you no longer need them."
-        query={query}
-        setQuery={setQuery}
-        filter={filter}
-        setFilter={setFilter}
+        {...controls}
       />
-      {plugins.length === 0 ? (
+      {plugins.length === 0 && !emptyBecauseOfFilters ? (
         <EmptyInstalled totalAvailable={totalAvailable} />
       ) : (
         <CategorizedList
           plugins={plugins}
           query={query}
+          filtersActive={filtersActive}
+          onReset={onReset}
           categoryOrder={categoryOrder}
           onConnect={onConnect}
           onDisconnect={onDisconnect}
@@ -999,6 +1059,11 @@ function Hero({
   setQuery,
   filter,
   setFilter,
+  statusFilter,
+  setStatusFilter,
+  matchCount,
+  filtersActive,
+  onReset,
 }: { title?: string; subtitle?: string } & SearchControlsProps) {
   return (
     <header className="mb-10 text-center">
@@ -1008,10 +1073,25 @@ function Hero({
           {subtitle}
         </p>
       )}
-      <div className="mx-auto mt-6 flex max-w-md items-center gap-2">
+      <div className="mx-auto mt-6 flex max-w-2xl flex-wrap items-center justify-center gap-2">
         <SearchInput value={query} onChange={setQuery} />
         <FilterMenu filter={filter} setFilter={setFilter} />
+        <StatusFilterMenu statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
       </div>
+      {filtersActive && (
+        <div className="mx-auto mt-3 flex items-center justify-center gap-3 text-xs text-muted-foreground">
+          <span aria-live="polite" className="tabular-nums">
+            {matchCount === 1 ? "1 plugin" : `${matchCount} plugins`}
+          </span>
+          <button
+            type="button"
+            onClick={onReset}
+            className="rounded-full border border-border/60 px-3 py-1 font-medium transition-colors hover:border-primary/40 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+          >
+            Clear filters
+          </button>
+        </div>
+      )}
     </header>
   );
 }
@@ -1051,6 +1131,32 @@ function FilterMenu({ filter, setFilter }: { filter: FilterId; setFilter: (f: Fi
             label: category,
           })),
         ]}
+      />
+    </div>
+  );
+}
+
+/** Filters by connection state. Sits next to the category menu because the two
+ *  questions a user arrives with are "what kind of thing is it" and "is it
+ *  already hooked up" — the second one had no answer before. */
+function StatusFilterMenu({
+  statusFilter,
+  setStatusFilter,
+}: {
+  statusFilter: StatusFilterId;
+  setStatusFilter: (s: StatusFilterId) => void;
+}) {
+  return (
+    <div>
+      <BrandedSelect
+        value={statusFilter}
+        onValueChange={(value) => setStatusFilter(value as StatusFilterId)}
+        ariaLabel="Connection status"
+        className="h-9 w-auto rounded-full bg-card/60 px-4 text-xs font-medium"
+        options={(Object.keys(STATUS_FILTER_LABEL) as StatusFilterId[]).map((id) => ({
+          value: id,
+          label: STATUS_FILTER_LABEL[id],
+        }))}
       />
     </div>
   );
@@ -1260,17 +1366,24 @@ function CarouselSlideView({ slide, active }: { slide: CarouselSlide; active: bo
 function CategorizedList({
   plugins,
   query,
+  filtersActive,
+  onReset,
   categoryOrder,
   onConnect,
   onDisconnect,
 }: {
   plugins: Plugin[];
   query: string;
+  filtersActive: boolean;
+  onReset: () => void;
   categoryOrder: string[];
 } & ConnectHandlers) {
   if (plugins.length === 0) {
-    if (!query.trim()) return null;
-    return <EmptyHits query={query} />;
+    // Keyed on the filters, not on the query alone: narrowing by category or
+    // connection state can empty the list just as easily, and that used to
+    // render nothing at all — a blank page with no way back.
+    if (!filtersActive) return null;
+    return <EmptyHits query={query} onReset={onReset} />;
   }
 
   const featured = plugins.filter((p) => p.featured);
@@ -1626,12 +1739,25 @@ export function ConnectIconButton({
   );
 }
 
-function EmptyHits({ query }: { query: string }) {
+function EmptyHits({ query, onReset }: { query: string; onReset: () => void }) {
   return (
     <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-12 text-center">
       <p className="text-sm text-muted-foreground">
-        No plugin matches <span className="font-mono text-foreground">"{query}"</span>.
+        {query.trim() ? (
+          <>
+            No plugin matches <span className="font-mono text-foreground">"{query}"</span>.
+          </>
+        ) : (
+          "No plugin matches the current filters."
+        )}
       </p>
+      <button
+        type="button"
+        onClick={onReset}
+        className="mt-4 rounded-full border border-border/60 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+      >
+        Show all plugins
+      </button>
     </div>
   );
 }
@@ -1651,30 +1777,6 @@ function EmptyInstalled({ totalAvailable }: { totalAvailable: number }) {
         your local machine.
       </p>
     </div>
-  );
-}
-
-function ComingSoonStrip({ taken = [] }: { taken?: string[] }) {
-  // Drop any teaser that now has a real catalog entry, so a newly-added
-  // connector (e.g. Linear) never shows as both connectable and "coming soon".
-  const upcoming = COMING_SOON.filter((name) => !taken.includes(name));
-  if (upcoming.length === 0) return null;
-  return (
-    <section className="mt-16 border-t border-border pt-8 text-center">
-      <h3 className="font-display text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-        Coming soon
-      </h3>
-      <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {upcoming.map((name) => (
-          <span
-            key={name}
-            className="rounded-full border border-border/60 bg-card/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
-          >
-            {name}
-          </span>
-        ))}
-      </div>
-    </section>
   );
 }
 

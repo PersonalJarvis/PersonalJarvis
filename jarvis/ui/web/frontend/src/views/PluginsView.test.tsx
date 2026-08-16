@@ -4,8 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConnectIconButton,
+  matchesQuery,
+  matchesStatus,
   PatConnectDialog,
   PkceConnectDialog,
+  type Plugin,
   PluginsView,
 } from "@/views/PluginsView";
 
@@ -331,9 +334,8 @@ describe("PluginsView opens the PKCE pre-connect dialog", () => {
       fetchMock as unknown as typeof fetch;
 
     renderPluginsView();
-    // Wait for the real row's Connect button (the "Gmail" text alone also appears
-    // in the static "Coming soon" strip before data loads, so it isn't a safe
-    // signal that the row has rendered).
+    // Wait for the real row's Connect button rather than the "Gmail" text: the
+    // button only exists once the catalog row has actually rendered.
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Connect plugin" }),
@@ -774,5 +776,239 @@ describe("PluginsView category sections are data-driven", () => {
       expect(screen.getByText("Stays connected")).toBeDefined();
     });
     expect(screen.getByText("Sign in again periodically")).toBeDefined();
+  });
+});
+
+describe("plugin search matches more than the display name", () => {
+  const plugin = (extra: Record<string, unknown> = {}): Plugin => ({
+    id: "stripe",
+    name: "Stripe",
+    description: "Payments, customers, invoices and balance",
+    category: "Developer",
+    logoSlug: "stripe",
+    authMode: "pat_paste",
+    authConfig: { mode: "pat_paste" },
+    status: "not_connected",
+    longevity: "permanent",
+    oauthClientConfigured: false,
+    ...extra,
+  });
+
+  it("matches everything when the query is blank or whitespace", () => {
+    expect(matchesQuery(plugin(), "")).toBe(true);
+    expect(matchesQuery(plugin(), "   ")).toBe(true);
+  });
+
+  it("matches on the description, so a capability word finds the plugin", () => {
+    // The old name-only match returned nothing here — the word "payments"
+    // never appears in "Stripe".
+    expect(matchesQuery(plugin(), "payments")).toBe(true);
+  });
+
+  it("matches on the category and on the catalog id", () => {
+    expect(matchesQuery(plugin(), "developer")).toBe(true);
+    expect(matchesQuery(plugin({ name: "Google Drive", id: "google_drive" }), "google_drive")).toBe(
+      true,
+    );
+  });
+
+  const gmail = () =>
+    plugin({
+      id: "gmail",
+      name: "Gmail",
+      description: "Read and send mail from your inbox",
+      category: "Calendar & Mail",
+    });
+
+  it("matches the vendor family, so 'google' finds Gmail", () => {
+    // "Google" appears nowhere in Gmail's name, description, category or id —
+    // only in the OAuth client family it shares with Drive and Calendar.
+    expect(matchesQuery(gmail(), "google")).toBe(true);
+  });
+
+  it("ANDs the words, so a second word narrows instead of widening", () => {
+    const drive = plugin({
+      id: "google_drive",
+      name: "Google Drive",
+      description: "Files Jarvis creates or you share with it",
+      category: "Files & Photos",
+    });
+    expect(matchesQuery(gmail(), "google mail")).toBe(true);
+    expect(matchesQuery(drive, "google mail")).toBe(false);
+  });
+
+  it("ignores case and rejects a word that appears in no field", () => {
+    expect(matchesQuery(plugin(), "INVOICES")).toBe(true);
+    expect(matchesQuery(plugin(), "kubernetes")).toBe(false);
+  });
+});
+
+describe("plugin status filter", () => {
+  const withStatus = (status: Plugin["status"]): Plugin => ({
+    id: "p",
+    name: "P",
+    description: "d",
+    category: "Developer",
+    logoSlug: "p",
+    authMode: "pat_paste",
+    authConfig: { mode: "pat_paste" },
+    status,
+    longevity: "permanent",
+    oauthClientConfigured: false,
+  });
+
+  it("lets everything through on 'all'", () => {
+    for (const s of ["connected", "not_connected", "needs_reauth", "error"] as const) {
+      expect(matchesStatus(withStatus(s), "all")).toBe(true);
+    }
+  });
+
+  it("separates connected from not connected", () => {
+    expect(matchesStatus(withStatus("connected"), "connected")).toBe(true);
+    expect(matchesStatus(withStatus("not_connected"), "connected")).toBe(false);
+    expect(matchesStatus(withStatus("not_connected"), "not_connected")).toBe(true);
+    expect(matchesStatus(withStatus("connected"), "not_connected")).toBe(false);
+  });
+
+  it("groups needs_reauth and error under 'attention'", () => {
+    // Both mean the same thing to the user: listed, but not callable until
+    // they act. A connected plugin must not appear in that bucket.
+    expect(matchesStatus(withStatus("needs_reauth"), "attention")).toBe(true);
+    expect(matchesStatus(withStatus("error"), "attention")).toBe(true);
+    expect(matchesStatus(withStatus("connected"), "attention")).toBe(false);
+    expect(matchesStatus(withStatus("not_connected"), "attention")).toBe(false);
+  });
+});
+
+describe("PluginsView search and filter controls", () => {
+  it("offers a connection-status menu next to the category menu", async () => {
+    installCatalogFetchMock();
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Connection status" })).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Connection status" }));
+    for (const label of ["Any status", "Connected", "Not connected", "Needs attention"]) {
+      expect(screen.getByRole("option", { name: label })).toBeDefined();
+    }
+  });
+
+  it("hides the match count and reset button until a filter is active", async () => {
+    installCatalogFetchMock();
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    });
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.queryByText(/plugins?$/)).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
+      target: { value: "deployments" },
+    });
+
+    // Vercel's description carries "Deployments"; GitHub's does not.
+    await waitFor(() => {
+      expect(screen.getByText("1 plugin")).toBeDefined();
+    });
+    expect(screen.getByText("Vercel")).toBeDefined();
+    expect(screen.queryByText("GitHub")).toBeNull();
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeDefined();
+  });
+
+  it("restores the full list when the filters are cleared", async () => {
+    installCatalogFetchMock();
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    });
+    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
+      target: { value: "kubernetes" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("0 plugins")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    expect(screen.getAllByText("Vercel").length).toBeGreaterThan(0);
+  });
+
+  it("explains an empty result from a non-text filter instead of blanking", async () => {
+    // Filtering by connection state alone can empty the list. That path used
+    // to render nothing at all — no message, no way back.
+    installCatalogFetchMock();
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Connection status" }));
+    fireEvent.click(screen.getByRole("option", { name: "Needs attention" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No plugin matches the current filters.")).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Show all plugins" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    });
+  });
+
+  it("never claims nothing is connected while a filter is hiding the plugins", async () => {
+    installCatalogFetchMock();
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Installed/ }));
+    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
+      target: { value: "kubernetes" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/No plugin matches/)).toBeDefined();
+    });
+    expect(screen.queryByText("Nothing connected yet")).toBeNull();
+  });
+
+  it("hides the promo carousel while a filter narrows the list", async () => {
+    // The carousel is a fixed promo strip: leaving it up during a search put
+    // GitHub on screen while the list below held only Vercel.
+    installCatalogFetchMock();
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getAllByText("GitHub").length).toBeGreaterThan(1);
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
+      target: { value: "deployments" },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("GitHub")).toBeNull();
+    });
+  });
+
+  it("drops the dead Coming-soon strip", async () => {
+    // Every name the strip listed now has a real catalog entry, so it could
+    // never render again. It stayed as a decoy for the next connector.
+    installCatalogFetchMock();
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByText("GitHub")).toBeDefined();
+    });
+    expect(screen.queryByText("Coming soon")).toBeNull();
   });
 });
