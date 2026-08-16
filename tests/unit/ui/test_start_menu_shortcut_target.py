@@ -128,6 +128,61 @@ class TestShortcutWriterRefusesADeadTarget:
         assert sc.Arguments.strip() == f"-m {icon_utils._LAUNCHER_MODULE}"
 
 
+class TestShellIsToldAboutTheEntry:
+    """Writing the file is half the job — the app index needs the notification.
+
+    Windows answers Start-menu searches from `shell:AppsFolder`, refreshed from
+    shell change notifications. The .lnk is finished by an IPropertyStore commit
+    *after* Save(), which announces nothing, so without this the entry can sit
+    on disk unindexed.
+    """
+
+    def test_writer_announces_the_entry(self) -> None:
+        import inspect
+
+        src = inspect.getsource(icon_utils.ensure_start_menu_shortcut)
+        assert "_notify_shell_of_shortcut(lnk)" in src
+        # …after the property-store commit, which is the last write to the file.
+        assert src.index("rw_store.Commit()") < src.index("_notify_shell_of_shortcut")
+
+    def test_is_a_noop_off_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(icon_utils.sys, "platform", "linux")
+        icon_utils._notify_shell_of_shortcut(Path("/tmp/whatever.lnk"))
+
+    @windows_only
+    def test_notifies_the_item_and_its_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import ctypes
+
+        lnk = tmp_path / "Programs" / "Personal Jarvis.lnk"
+        calls: list[tuple[int, object]] = []
+        monkeypatch.setattr(
+            ctypes.windll.shell32,
+            "SHChangeNotify",
+            lambda event, flags, a, b: calls.append((event, a.value)),
+            raising=False,
+        )
+        icon_utils._notify_shell_of_shortcut(lnk)
+        events = [c[0] for c in calls]
+        assert events == [0x0002, 0x1000], "announce the item, then its folder"
+        assert calls[0][1] == str(lnk)
+        assert calls[1][1] == str(lnk.parent)
+
+    @windows_only
+    def test_never_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failed notification must never take the shortcut write down."""
+        import ctypes
+
+        def _explode(*a: object) -> None:
+            raise OSError("shell is unavailable")
+
+        monkeypatch.setattr(
+            ctypes.windll.shell32, "SHChangeNotify", _explode, raising=False
+        )
+        icon_utils._notify_shell_of_shortcut(Path("C:/nope/x.lnk"))
+
+
 @windows_only
 class TestIdentityCallCanSkipTheShortcut:
     def test_write_shortcut_false_writes_nothing(

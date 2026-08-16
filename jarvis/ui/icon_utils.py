@@ -690,11 +690,45 @@ def ensure_start_menu_shortcut(
         )
         rw_store.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType(aumid))
         rw_store.Commit()
+        _notify_shell_of_shortcut(lnk)
         logger.debug("Start-Menu shortcut ensured: {}", lnk)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.debug("Start-Menu shortcut could not be written: {}", exc)
         return False
+
+
+def _notify_shell_of_shortcut(lnk: Path) -> None:
+    """Tell the shell the Start-Menu entry changed, so app search can pick it up.
+
+    Writing the .lnk is only half the job. Windows answers Start-menu searches
+    from its own app index (``shell:AppsFolder``), not by reading the folder, and
+    that index is refreshed from shell change notifications. We finish the file
+    with an ``IPropertyStore`` commit *after* ``Save()`` — a plain write the
+    shell is never told about — so nothing announces the final version.
+
+    ``SHChangeNotify`` is the documented announcement: the item itself, then its
+    directory. Best-effort by design; it only ever makes the entry appear
+    SOONER. A machine whose app index has stopped accepting new entries
+    altogether is a shell-side fault this cannot repair (verified 2026-08-16:
+    on such a machine a plain ``notepad.exe`` shortcut is refused just the same)
+    — there the fix is restarting Explorer or signing back in.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        SHCNE_CREATE, SHCNE_UPDATEDIR, SHCNF_PATHW = 0x0002, 0x1000, 0x0005
+        shell32 = ctypes.windll.shell32
+        shell32.SHChangeNotify(
+            SHCNE_CREATE, SHCNF_PATHW, ctypes.c_wchar_p(str(lnk)), None
+        )
+        shell32.SHChangeNotify(
+            SHCNE_UPDATEDIR, SHCNF_PATHW, ctypes.c_wchar_p(str(lnk.parent)), None
+        )
+    except Exception as exc:  # noqa: BLE001 — a nicety, never load-bearing
+        logger.debug("shell change notification skipped: {}", exc)
 
 
 def ensure_windows_app_identity(
