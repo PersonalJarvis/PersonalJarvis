@@ -2,7 +2,8 @@
 
 **Status:** live since 2026-08-12 ·
 **Decisions:** [public-marketplace-analysis.md](public-marketplace-analysis.md) ·
-**Packaging:** [agent-plugins-standard.md](agent-plugins-standard.md)
+**Packaging:** [agent-plugins-standard.md](agent-plugins-standard.md) ·
+**Skills for other agents:** [portable-skills.md](portable-skills.md)
 
 Anyone can publish plugins and skills for Personal Jarvis; every submission
 that passes automated checks is listed automatically — an open registry in

@@ -190,6 +190,13 @@ class Skill:
     resources: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: {k: () for k in RESOURCE_KINDS}
     )
+    # Read through the portable adapter (jarvis/skills/portable.py) because the
+    # strict schema rejected the file: a SKILL.md written for the open Agent
+    # Skills format rather than for Jarvis. Its instructions run; the fields
+    # Jarvis does not understand are listed in `ignored_fields` and shown in
+    # the UI, because a skill must never quietly gain — or lose — a meaning.
+    portable: bool = False
+    ignored_fields: tuple[str, ...] = ()
 
     @property
     def name(self) -> str:

@@ -722,6 +722,8 @@
     "select_from_list": "Wähle einen Skill aus der Liste.",
     "loading_skill": "Lade Skill…",
     "validation_error": "Validierungsfehler",
+    "portable_notice": "Portabler Skill — im offenen Agent-Skills-Format geschrieben und läuft damit auch in anderen Agenten. Seine Anweisungen gelten hier; Felder für andere Agenten werden ignoriert.",
+    "portable_ignored": "Ignorierte Felder:",
     "builtin_admin_needed": "Builtin — Admin-Passwort zum Speichern nötig",
     "admin_password": "Admin-Passwort",
     "admin_password_hint_a": "Builtin-Skills sind geschützt. Gib das in",

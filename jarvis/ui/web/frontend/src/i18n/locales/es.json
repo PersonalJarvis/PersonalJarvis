@@ -722,6 +722,8 @@
     "select_from_list": "Selecciona una habilidad de la lista.",
     "loading_skill": "Cargando la habilidad…",
     "validation_error": "Error de validación",
+    "portable_notice": "Habilidad portátil: escrita en el formato abierto de Agent Skills, así que también funciona en otros agentes. Aquí se siguen sus instrucciones; los campos destinados a otro agente se ignoran.",
+    "portable_ignored": "Campos ignorados:",
     "builtin_admin_needed": "Integrada: se requiere la contraseña de administrador para guardar",
     "admin_password": "Contraseña de administrador",
     "admin_password_hint_a": "Las habilidades integradas están protegidas. Introduce la contraseña de administrador definida en",

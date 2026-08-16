@@ -722,6 +722,8 @@
     "select_from_list": "Select a skill from the list.",
     "loading_skill": "Loading skill…",
     "validation_error": "Validation error",
+    "portable_notice": "Portable skill — written for the open Agent Skills format, so it also runs in other agents. Its instructions are followed here; fields meant for another agent are ignored.",
+    "portable_ignored": "Ignored fields:",
     "builtin_admin_needed": "Built-in — admin password required to save",
     "admin_password": "Admin password",
     "admin_password_hint_a": "Built-in skills are protected. Enter the admin password set in",

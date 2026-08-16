@@ -1045,6 +1045,21 @@ function SkillDetailPanel({ name }: { name: string }) {
             {t("skills_view.validation_error")}: {data.error}
           </div>
         )}
+        {/* Not an error: the file loaded, just through the portable adapter.
+            Neutral tokens rather than the destructive palette — and it names
+            the dropped keys, because the owner of the file has to be able to
+            see what this app did not read. */}
+        {data.portable && (
+          <div className="mt-3 rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground">
+            {t("skills_view.portable_notice")}
+            {data.ignored_fields && data.ignored_fields.length > 0 && (
+              <span className="mt-1 block font-mono text-[11px]">
+                {t("skills_view.portable_ignored")}{" "}
+                {data.ignored_fields.join(", ")}
+              </span>
+            )}
+          </div>
+        )}
         {saveError && !showAdminDialog && (
           <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
             {saveError}

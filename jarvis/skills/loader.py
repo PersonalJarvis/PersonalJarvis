@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover
 
 from pydantic import ValidationError
 
+from .portable import adapt_portable_frontmatter
 from .schema import RESOURCE_KINDS, Skill, SkillFrontmatter, SkillLifecycleState
 
 log = logging.getLogger(__name__)
@@ -130,17 +131,34 @@ def parse_skill(path: Path) -> Skill:
             resources=resources,
         )
 
+    portable = False
+    ignored_fields: tuple[str, ...] = ()
     try:
         fm = SkillFrontmatter.model_validate(meta)
     except ValidationError as exc:
-        return Skill(
-            path=path,
-            frontmatter=None,
-            body=body,
-            state=SkillLifecycleState.DRAFT,
-            body_hash=_body_hash(body),
-            error=f"frontmatter schema invalid: {exc}",
-            resources=resources,
+        # Second reading: a SKILL.md written for the open Agent Skills format
+        # instead of for Jarvis. One foreign key used to park the whole file as
+        # DRAFT — installed and dead — which is the wrong answer for a
+        # marketplace that carries skills from the wider ecosystem. See
+        # jarvis/skills/portable.py for what does and does not cross over.
+        adapted = adapt_portable_frontmatter(meta)
+        if adapted is None:
+            return Skill(
+                path=path,
+                frontmatter=None,
+                body=body,
+                state=SkillLifecycleState.DRAFT,
+                body_hash=_body_hash(body),
+                error=f"frontmatter schema invalid: {exc}",
+                resources=resources,
+            )
+        fm = adapted.frontmatter
+        portable = True
+        ignored_fields = adapted.ignored
+        log.info(
+            "skill %s read in portable mode; ignored frontmatter fields: %s",
+            path,
+            ", ".join(ignored_fields) or "none",
         )
 
     # Payload-Check pro Trigger (pattern/combo/cron passend zum type)
@@ -156,6 +174,8 @@ def parse_skill(path: Path) -> Skill:
             body_hash=_body_hash(body),
             error="; ".join(trigger_errors),
             resources=resources,
+            portable=portable,
+            ignored_fields=ignored_fields,
         )
 
     # Phase 7.5: if the frontmatter explicitly sets `state: draft`, honor it.
@@ -173,6 +193,8 @@ def parse_skill(path: Path) -> Skill:
         body_hash=_body_hash(body),
         error=None,
         resources=resources,
+        portable=portable,
+        ignored_fields=ignored_fields,
     )
 
 

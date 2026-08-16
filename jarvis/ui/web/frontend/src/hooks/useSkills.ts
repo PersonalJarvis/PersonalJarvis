@@ -49,6 +49,13 @@ export interface SkillSummary {
   tags: string[];
   resources: Record<ResourceKind, string[]>;
   resource_count: number;
+  /**
+   * Read through the portable adapter: a SKILL.md written for the open Agent
+   * Skills format rather than for Jarvis. Absent on an older backend.
+   */
+  portable?: boolean;
+  /** The frontmatter keys that adapter did not read. */
+  ignored_fields?: string[];
 }
 
 export interface SkillDetail extends SkillSummary {
