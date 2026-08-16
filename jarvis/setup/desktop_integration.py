@@ -214,6 +214,32 @@ def _windows_desktop_dir() -> Path | None:
     return Path(profile) / "Desktop" if profile else None
 
 
+def _remove_shell_launcher(path: Path) -> str | None:
+    """Delete a launcher where the SHELL sees it; return an error or ``None``.
+
+    Under a Microsoft-Store Python this process runs inside an MSIX container
+    that redirects deletes just as it redirects writes, so a plain ``unlink``
+    removes only the container's private copy and leaves the launcher the user
+    actually clicks sitting in the real Start Menu — pointing at an install that
+    no longer exists. The escape helper handles the redirected case and is a
+    no-op on every ordinary interpreter.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        # Returned, not logged: the caller turns this into the user-visible
+        # uninstall warning, and logging it here would report it twice.
+        return str(exc)
+    try:
+        from jarvis.ui.msix_redirection import remove_outside_container
+
+        if not remove_outside_container(path):
+            return "the launcher outside the app container could not be removed"
+    except Exception as exc:  # noqa: BLE001 - uninstall continues with other artifacts
+        return f"container cleanup failed: {exc}"
+    return None
+
+
 def _remove_windows_desktop_integration(
     *,
     programs_dir: Path | None = None,
@@ -224,18 +250,15 @@ def _remove_windows_desktop_integration(
     warnings: list[str] = []
     programs = programs_dir or _windows_programs_dir()
     if programs is not None:
-        shortcut = programs / WINDOWS_SHORTCUT_FILE_NAME
-        try:
-            shortcut.unlink(missing_ok=True)
-        except OSError as exc:
-            warnings.append(f"could not remove the Start-menu launcher: {exc}")
+        failure = _remove_shell_launcher(programs / WINDOWS_SHORTCUT_FILE_NAME)
+        if failure is not None:
+            warnings.append(f"could not remove the Start-menu launcher: {failure}")
     # An uninstall that leaves an icon on the desktop has not uninstalled.
     desktop = desktop_dir or _windows_desktop_dir()
     if desktop is not None:
-        try:
-            (desktop / WINDOWS_SHORTCUT_FILE_NAME).unlink(missing_ok=True)
-        except OSError as exc:
-            warnings.append(f"could not remove the Desktop launcher: {exc}")
+        failure = _remove_shell_launcher(desktop / WINDOWS_SHORTCUT_FILE_NAME)
+        if failure is not None:
+            warnings.append(f"could not remove the Desktop launcher: {failure}")
     if not _delete_windows_registry_key(registry_subkey):
         warnings.append("could not remove the Installed Apps registry entry")
     if not _delete_windows_registry_key(_windows_aumid_subkey(aumid)):

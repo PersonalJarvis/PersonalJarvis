@@ -9559,3 +9559,94 @@ the fixed-budget form, losing the final fragment exactly as the live call did;
 `test_a_loud_but_wordless_floor_still_releases_the_order` for the bounded
 half) and `tests/unit/realtime/test_gemini_live.py` (default sensitivity, the
 opt-out, and the old-SDK degradation).
+
+---
+
+## BUG-138: the app is absent from Windows Search — the Start-Menu launcher is written into the Store Python's MSIX container, and every check reads it back from there (HIGH, FIXED 2026-08-16)
+
+**Symptom.** Typing the product name into Windows Search returned a folder as
+the best match and no application. The app could only be started from its
+Desktop icon. On macOS and Linux the equivalent entry existed on disk but did
+not appear in the desktop's app search until the next login.
+
+**Root.** A Python installed from the Microsoft Store runs inside an MSIX
+package container, and a virtual environment built from it inherits that
+identity — `sys.executable` points at the venv's own `Scripts\python.exe`, so
+nothing in the process looks packaged. Windows redirects such a process's
+writes to `%APPDATA%` and `%LOCALAPPDATA%` into a private per-package tree
+under `%LOCALAPPDATA%\Packages\<family>\LocalCache`. The per-user Start Menu
+lives in `%APPDATA%`. So every launcher this code "wrote into the Start Menu"
+was diverted into the container, where no shell ever looks. The folder the
+shell reads was empty the whole time.
+
+The Desktop kept working because the Desktop is not one of the redirected
+roots — which is exactly why the report read "only the Desktop icon starts
+it", and why the previous fix (adding a Desktop launcher) appeared to help
+while leaving the real defect untouched.
+
+**Why it survived three attempts.** The redirection is invisible from the
+inside: reads are redirected too. `lnk.is_file()` answered `True` for the
+trapped copy, `_shortcut_matches_install` happily validated its target and
+icon, and `ensure_start_menu_shortcut` returned `True`. Every layer reported
+success against a file only it could see. An earlier session measured the
+shell's app index straight after writing, found the entry missing, wrote a
+plain `notepad.exe` shortcut as a control, saw that missing too, and concluded
+the machine's app index was broken. The control was written by the same
+packaged interpreter and landed in the same container — it proved the opposite
+of what it appeared to prove.
+
+**Second half: the file has to be somewhere the index reads.** Once the
+launcher reached the real per-user Start Menu, the content index still did not
+carry it: on this machine the index holds only the ALL-USERS Start Menu
+(`%ProgramData%`), which is where Chrome — the app the report used as the
+benchmark — installs itself. A per-user install is reachable through the app
+resolver rather than the file index, which is why the entry had to be a real
+app entry (own executable as the target, AUMID attached) and not merely a file
+in the right folder.
+
+**Fix.** `jarvis/ui/msix_redirection.py`, wired into the launcher lifecycle:
+
+- Detect package identity with `GetCurrentPackageFamilyName` — the only
+  trustworthy probe, since the interpreter path shows nothing.
+- Publish the trapped launcher into the real tree through a helper process
+  that has no package identity (`powershell.exe` from System32). Its exit code
+  is an honest answer to "does the shell see this file?", because the check
+  runs outside the container. A launcher that stays trapped is now reported as
+  NOT installed instead of as a success.
+- Drop the container copy afterwards, so MSIX's container-first read
+  resolution falls through to the real path and every later `is_file()` /
+  staleness check upstream reasons about what the shell sees.
+- Uninstall goes the same way: deletion is redirected exactly like writing, so
+  an uninstall used to remove only its own container copy and leave a working
+  launcher for a deleted install.
+
+Helper paths travel in the environment, never on the command line, so a path
+holding a space or a quote cannot become script.
+
+OS parity, same class of defect — the file was written and never announced:
+Linux now calls `update-desktop-database` (and carries `Keywords=`, since app
+search matches `Name=` and a two-word product name loses the half users type),
+macOS registers the bundle with `lsregister`. Both degrade honestly to
+"appears after the next login" when the tool is absent.
+
+**Class.** A success reported against a read that goes through the same lie as
+the write. Any check that verifies an external artifact from inside the process
+that produced it can only confirm its own intent. Where an artifact exists for
+ANOTHER program to find — a shell, an index, a package manager — the
+verification has to come from that side, or it is not a verification. The
+generalisation is not MSIX-specific: sandboxes, overlay mounts, and per-user
+virtual stores all fail this way.
+
+**Verification.** Live on the reporting machine: with the launcher published,
+typing "jarvis" returns Personal Jarvis as the best match, categorised as an
+App and carrying the mascot icon — previously the best match was a folder and
+the app appeared only as a Desktop file hit.
+
+**Tests.** `tests/unit/ui/test_msix_redirection.py` (redirection arithmetic as
+a pure function — Start Menu diverted, Desktop not, unpackaged interpreter
+untouched, a container path never shadowed twice; publish moves the file and
+clears the shadow; a failed publish reports failure rather than a phantom
+install; uninstall removes the copy the user actually clicks) and
+`tests/unit/ui/test_desktop_discoverability.py` (the announcement step on
+Linux and macOS, including that an unchanged entry is still announced so a
+half-finished earlier run heals). All run on every OS.

@@ -296,6 +296,57 @@ def macos_launch_services_command(
     return command
 
 
+_LSREGISTER = (
+    "/System/Library/Frameworks/CoreServices.framework/Frameworks"
+    "/LaunchServices.framework/Support/lsregister"
+)
+
+
+def register_with_launch_services(bundle: Path) -> bool:
+    """Announce the bundle to LaunchServices so Spotlight can find it.
+
+    Writing the ``.app`` is only half the job. Spotlight, Launchpad and the
+    ``open -a`` name lookup all resolve through the LaunchServices database,
+    which is rebuilt from directory scans that are not immediate — a bundle
+    written into ``~/Applications`` is routinely unsearchable until the next
+    login. ``lsregister`` is the documented way to register one bundle right
+    away, and it is the macOS counterpart of the Windows Start-Menu shell
+    notification and the Linux ``update-desktop-database`` call: without it the
+    freshly installed app is on disk but absent from the user's search.
+
+    Best-effort and idempotent: re-registering an already-known bundle is a
+    no-op for LaunchServices. Returns ``True`` only when the tool ran cleanly;
+    a failure degrades to "appears after the next login", never to an error.
+    """
+    if sys.platform != "darwin":
+        return False
+    tool = Path(_LSREGISTER)
+    if not tool.is_file():
+        log.debug("lsregister not present; relying on the periodic rescan")
+        return False
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed system path, no shell
+            [str(tool), "-f", str(bundle)],
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            log.debug(
+                "lsregister failed (rc=%s): %s",
+                result.returncode,
+                (result.stderr or "").strip()[:300],
+            )
+            return False
+        log.debug("Registered with LaunchServices: %s", bundle)
+        return True
+    except Exception as exc:  # noqa: BLE001 - search registration is best-effort
+        log.debug("LaunchServices registration skipped: %s", exc)
+        return False
+
+
 def _try_build_icns(resources_dir: Path) -> str | None:
     """Best-effort ``jarvis.icns`` creation; never block bundle creation."""
     if sys.platform != "darwin":
@@ -740,6 +791,11 @@ def ensure_macos_app_bundle(
             if _current_process_identity_valid(
                 bundle, install_root=install_root
             ) or _runtime_identity_valid(bundle, install_root=install_root):
+                # A healthy bundle is kept byte-for-byte, but LaunchServices may
+                # still not know it — an interrupted earlier run, or a database
+                # rebuilt since. Re-registering is a no-op when it is known, and
+                # repairs "installed but unsearchable" when it is not.
+                register_with_launch_services(bundle)
                 return bundle
             log.warning(
                 "Existing macOS bundle failed its runtime/import probe; rebuilding: %s",
@@ -748,6 +804,7 @@ def ensure_macos_app_bundle(
         if sys.platform != "darwin":
             return _write_cross_platform_fixture_bundle(bundle)
         installed = _install_native_bundle(install_root, bundle)
+        register_with_launch_services(installed)
         log.info("Native macOS app bundle installed: %s", installed)
         return installed
     except Exception as exc:  # noqa: BLE001 - installer consumes the None result
@@ -783,5 +840,6 @@ __all__ = [
     "macos_app_bundle_is_launchable",
     "macos_app_bundle_path",
     "macos_launch_services_command",
+    "register_with_launch_services",
     "remove_macos_app_bundle",
 ]

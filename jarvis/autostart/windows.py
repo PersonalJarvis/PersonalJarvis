@@ -360,6 +360,16 @@ def _tag_shortcut_aumid(link: Path) -> bool:
             propsys.PROPVARIANTType(APP_USER_MODEL_ID),
         )
         store.Commit()
+        # The .lnk itself is created by a PowerShell child, which is why it
+        # reaches the real Startup folder under a Store Python (BUG-138). This
+        # commit runs IN-PROCESS, so it is redirected: it would leave the real
+        # shortcut untagged and drop a container copy that masks it from every
+        # later in-process read. Publishing puts the tagged version back.
+        from jarvis.ui.msix_redirection import publish_out_of_container
+
+        if not publish_out_of_container(link):
+            log.debug("autostart shortcut AUMID stayed inside the app container")
+            return False
         return True
     except Exception as exc:  # noqa: BLE001 — pywin32 absent / COM failure → icon-only fallback
         log.debug("autostart shortcut AUMID not tagged (non-fatal): %s", exc)

@@ -178,6 +178,21 @@ existing macOS Screen Recording gate, Wayland refusal and headless refusal are
 unchanged, so an unavailable capture backend never becomes permission to act
 blindly. The cross-platform tkinter engine rig remains the release oracle.
 
+**Fix pass 2026-08-16 (the app is findable as an app).** BUG-138 was a Windows
+defect, but its shape was shared: on all three systems the launcher file was
+written and never announced to the index that answers the user's search, so a
+fresh install sat on disk and appeared only after the next login. Windows now
+publishes the Start-Menu launcher out of the MSIX container a Microsoft-Store
+Python imposes (and reports failure instead of a phantom install); Linux calls
+`update-desktop-database` and ships `Keywords=` so the app search matches the
+half of a two-word product name a user actually types; macOS registers the
+bundle with `lsregister`. Each announcement is capability-probed and degrades
+honestly to "appears after the next rescan" — `desktop-file-utils` is not
+installed everywhere and `lsregister` can be absent from a stripped system —
+so no platform silently claims an entry the shell cannot see. Announcement is
+re-run for an unchanged entry too, which heals an install whose earlier write
+succeeded while its announcement did not.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;

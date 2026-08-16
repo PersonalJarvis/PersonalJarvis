@@ -716,6 +716,15 @@ def ensure_start_menu_shortcut(
     lnk = programs / START_MENU_SHORTCUT_NAME
     iid = pywintypes.IID(_IID_IPROPERTYSTORE)
 
+    # Every check below asks the file system what is in the Start Menu. Under a
+    # Store Python those reads are answered from the package container first, so
+    # a copy trapped there by an older build would look like a healthy entry and
+    # this function would return True while the shell still sees nothing.
+    # Dropping the shadow first makes the reads report what the shell reports.
+    from jarvis.ui.msix_redirection import reveal_real_path
+
+    reveal_real_path(lnk)
+
     if not _interpreter_can_open_a_window():
         # This interpreter cannot start the desktop app, so it must not become
         # the shortcut's target. Leave whatever is there — a working entry from
@@ -795,6 +804,16 @@ def _write_branded_shortcut(
         )
         rw_store.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType(aumid))
         rw_store.Commit()
+        # Under a Microsoft-Store Python every write above was diverted into the
+        # package's private container, so the shortcut we just "saved into the
+        # Start Menu" is invisible to the shell. Publishing it out is what makes
+        # the entry real; a failure here means the app is NOT installed as far as
+        # Windows is concerned, so it must not be reported as a success.
+        from jarvis.ui.msix_redirection import publish_out_of_container
+
+        if not publish_out_of_container(lnk):
+            logger.debug("shortcut stayed trapped in the MSIX container: {}", lnk)
+            return False
         _notify_shell_of_shortcut(lnk)
         return True
     except Exception as exc:  # noqa: BLE001
@@ -844,6 +863,13 @@ def ensure_desktop_shortcut(
         return False
     ico = icon_path or project_icon_path()
     lnk = desktop / START_MENU_SHORTCUT_NAME
+
+    # Normally a no-op — the Desktop is not one of the redirected roots — but a
+    # profile that relocates it under %LOCALAPPDATA% would hit the same trap as
+    # the Start Menu, and the check costs a path comparison.
+    from jarvis.ui.msix_redirection import reveal_real_path
+
+    reveal_real_path(lnk)
 
     if not lnk.is_file() and not create_if_missing:
         return False
@@ -1330,6 +1356,59 @@ def _default_linux_applications_dir() -> Path:
     return base / "applications"
 
 
+def _refresh_linux_desktop_database(applications_dir: Path) -> bool:
+    """Tell the desktop shell a new application entry exists.
+
+    Writing the ``.desktop`` file is only half the job, exactly as on Windows:
+    GNOME, KDE and friends answer app searches from ``mimeinfo.cache`` /
+    ``desktop.<arch>.cache`` built by ``update-desktop-database``, not by reading
+    the folder on every keystroke. Without this call the entry typically appears
+    only after the next login — the Linux twin of the Windows Start-Menu index
+    problem, and the reason a fresh install "isn't in the search" while the file
+    is demonstrably on disk.
+
+    Best-effort by design: ``update-desktop-database`` ships with
+    ``desktop-file-utils``, which is not installed everywhere, and several
+    desktops watch the directory with inotify and need no prompting at all. A
+    missing tool therefore degrades to "appears after the next login", never to
+    an error. Returns ``True`` only when the database was actually rebuilt.
+    """
+    if sys.platform != "linux":
+        return False
+    import shutil
+
+    tool = shutil.which("update-desktop-database")
+    if tool is None:
+        logger.debug(
+            "update-desktop-database not installed; the menu entry appears "
+            "once the desktop rescans (usually at next login)"
+        )
+        return False
+    try:
+        import subprocess
+
+        result = subprocess.run(  # noqa: S603 — resolved absolute path, no shell
+            [tool, str(applications_dir)],
+            timeout=30,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.debug(
+                "update-desktop-database failed (rc={}): {}",
+                result.returncode,
+                (result.stderr or "").strip()[:300],
+            )
+            return False
+        logger.debug("desktop database refreshed for {}", applications_dir)
+        return True
+    except Exception as exc:  # noqa: BLE001 — never block the window on a menu refresh
+        logger.debug("desktop database could not be refreshed: {}", exc)
+        return False
+
+
 def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
     """Install/refresh the applications-menu ``.desktop`` entry (Linux only).
 
@@ -1374,12 +1453,25 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
             f"{icon_line}"
             f"StartupWMClass={escape_value(LINUX_WM_CLASS)}\n"
             "Categories=Utility;\n"
+            # The app search matches Name, and only some shells also match
+            # Comment — the product name is two words, so a user typing the
+            # half they remember ("jarvis", or what the assistant is FOR) needs
+            # these to be hit at all. Same role as the Windows Start-Menu file
+            # name being the searchable token.
+            "Keywords=jarvis;assistant;voice;agent;automation;\n"
         )
         entry = applications_dir / LINUX_DESKTOP_ENTRY_NAME
         try:
             if entry.read_text(encoding="utf-8") == content:
+                # Content is current, but the menu database may still not know
+                # the entry — an interrupted earlier run could have written the
+                # file and never registered it. Re-announcing is cheap and
+                # idempotent, so a repaired install never needs a re-login.
+                _refresh_linux_desktop_database(applications_dir)
                 return True
         except OSError:
+            # No readable entry yet (first install, or an unreadable leftover):
+            # that is the normal path into the write below, not a fault.
             pass
         applications_dir.mkdir(parents=True, exist_ok=True)
         # Atomic-ish (same idiom as the autostart entry): never leave a
@@ -1387,6 +1479,12 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
         tmp = entry.with_name(entry.name + ".tmp")
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(entry)
+        try:
+            # Some shells refuse to offer an entry that is not user-executable.
+            entry.chmod(0o755)
+        except OSError as exc:
+            logger.debug("could not mark {} executable: {}", entry, exc)
+        _refresh_linux_desktop_database(applications_dir)
         logger.debug("Linux applications .desktop entry written: {}", entry)
         return True
     except Exception as exc:  # noqa: BLE001 — menu entry is a nicety, never load-bearing
