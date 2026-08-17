@@ -1,6 +1,0 @@
-import{c as d,a3 as i}from"./index-M4GJYKVl.js";/**
- * @license lucide-react v0.445.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */const b=d("Waypoints",[["circle",{cx:"12",cy:"4.5",r:"2.5",key:"r5ysbb"}],["path",{d:"m10.2 6.3-3.9 3.9",key:"1nzqf6"}],["circle",{cx:"4.5",cy:"12",r:"2.5",key:"jydg6v"}],["path",{d:"M7 12h10",key:"b7w52i"}],["circle",{cx:"19.5",cy:"12",r:"2.5",key:"1piiel"}],["path",{d:"m13.8 17.7 3.9-3.9",key:"1wyg1y"}],["circle",{cx:"12",cy:"19.5",r:"2.5",key:"13o1pw"}]]),s="jarvis.providers.localMode",r=!1;function u(e){return e==="1"?!0:e==="0"?!1:null}function y(){try{return u(window.localStorage.getItem(s))??r}catch{return r}}function f(e){try{window.localStorage.setItem(s,e?"1":"0")}catch{}}function l(e){return e.billing==="local"}function M(e,t,o=c=>c.active===!0){if(!t)return{visible:e,hiddenCount:0,keptActiveHosted:!1};const c=e.filter(n=>l(n)||o(n));return{visible:c,hiddenCount:e.length-c.length,keptActiveHosted:c.some(n=>o(n)&&!l(n))}}const a=i(e=>({enabled:y(),setEnabled:t=>{f(t),e({enabled:t})}}));function p(e){a.getState().setEnabled(e)}function h(){const e=a(o=>o.enabled),t=a(o=>o.setEnabled);return{localMode:e,setLocalMode:t}}export{b as W,M as f,p as s,h as u};
