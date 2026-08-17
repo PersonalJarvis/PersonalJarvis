@@ -443,3 +443,154 @@ async def test_runner_telegram_posts_to_api(
     assert body["chat_id"] == "987654"
     assert body["text"] == "hallo von jarvis"
     assert "TESTTOKEN" in captured_payloads[0]["url"]
+
+
+# ----------------------------------------------------------------------
+# Runtime dependency attachment (audit AU-03)
+# ----------------------------------------------------------------------
+#
+# The runner defined ``attach_harness_manager`` and ``attach_tools`` but the
+# bootstrap never called them, so EVERY ``tool_call`` step died on "Tool
+# registry/executor not available" and every ``harness_dispatch`` step on
+# "No HarnessManager available". These two tests pin the wiring down.
+
+
+class FakeTool:
+    """Minimal Tool stand-in — the executor is what calls it, not the runner."""
+
+    name = "note_down"
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+
+class FakeToolExecutor:
+    """Stands in for ToolExecutor — records the call, returns a ToolResult."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict, str]] = []
+
+    async def execute(self, tool, args: dict, **kwargs):  # noqa: ANN001
+        from jarvis.core.protocols import ToolResult
+
+        self.calls.append((tool.name, dict(args), kwargs.get("user_utterance", "")))
+        tool.calls.append(dict(args))
+        return ToolResult(success=True, output={"stored": args.get("text")})
+
+
+class FakeBrainWithTools:
+    """Brain stand-in exposing the two attributes BrainToolSurface reads."""
+
+    def __init__(self, tools: dict, executor: FakeToolExecutor) -> None:
+        self._tools = tools
+        self._executor = executor
+
+    @property
+    def _tool_executor_ref(self) -> FakeToolExecutor:
+        return self._executor
+
+
+async def test_runner_tool_call_reaches_the_tool_via_attached_brain_surface(
+    store: WorkflowStore,
+) -> None:
+    """``tool_call`` runs the tool once the brain surface is attached.
+
+    Also covers the reason the surface is a live view: the brain replaces
+    ``_tools`` wholesale on every ``refresh_tools()`` (each CLI/MCP connect),
+    so we swap the dict AFTER attaching and the runner must still find the
+    tool the brain holds *now*.
+    """
+    from jarvis.workflows.runner import BrainToolSurface
+    from jarvis.workflows.schema import ToolCallStep
+
+    executor = FakeToolExecutor()
+    brain = FakeBrainWithTools({}, executor)
+
+    bus = EventBus()
+    runner = WorkflowRunner(store=store, bus=bus)
+    surface = BrainToolSurface(lambda: brain)
+    runner.attach_tools(surface, surface)
+
+    # The tool only shows up after the attachment — as it does in the real
+    # bootstrap, where the brain builds in the background.
+    tool = FakeTool()
+    brain._tools = {"note_down": tool}
+
+    wf = WorkflowDef(
+        name="Tool-Call",
+        trigger=ManualTrigger(),
+        steps=(
+            BrainPromptStep(prompt="what is going on"),
+            ToolCallStep(tool_name="note_down", args={"text": "{{prev.output}}"}),
+        ),
+    )
+    # brain_prompt feeds the tool arg, so the template path is covered too.
+    runner.attach_brain(FakeBrain())
+    wid = await store.upsert_workflow(wf)
+    run_id = await runner.trigger(wid)
+
+    import asyncio
+    for _ in range(200):
+        await asyncio.sleep(0.02)
+        run = await store.get_run(run_id)
+        if run and run["state"] in ("completed", "failed"):
+            break
+
+    run = await store.get_run(run_id)
+    assert run["state"] == "completed", f"Runner failed: {run['error']}"
+    assert len(executor.calls) == 1
+    tool_name, args, utterance = executor.calls[0]
+    assert tool_name == "note_down"
+    assert args["text"].startswith("ECHO:")
+    assert utterance == "<workflow:note_down>"
+    assert tool.calls == [args]
+    assert "stored" in run["steps"][1]["output"]
+
+
+async def test_runner_harness_dispatch_reaches_the_attached_manager(
+    store: WorkflowStore,
+) -> None:
+    """``harness_dispatch`` streams from the manager instead of raising."""
+    from jarvis.core.protocols import HarnessResult
+
+    class FakeHarnessManager:
+        def __init__(self) -> None:
+            self.dispatched: list[tuple[str, str, bool]] = []
+
+        async def dispatch(self, name: str, task):  # noqa: ANN001
+            self.dispatched.append((name, task.prompt, task.allow_computer_use))
+            yield HarnessResult(stdout="window focused")
+            yield HarnessResult(stdout="", exit_code=0, is_final=True)
+
+    manager = FakeHarnessManager()
+    bus = EventBus()
+    runner = WorkflowRunner(store=store, bus=bus)
+    runner.attach_harness_manager(manager)
+
+    wf = WorkflowDef(
+        name="Harness-Dispatch",
+        trigger=ManualTrigger(),
+        steps=(
+            HarnessDispatchStep(
+                harness="jarvis_agent",
+                prompt="bring the window to the front",
+                allow_computer_use=True,
+            ),
+        ),
+    )
+    wid = await store.upsert_workflow(wf)
+    run_id = await runner.trigger(wid)
+
+    import asyncio
+    for _ in range(200):
+        await asyncio.sleep(0.02)
+        run = await store.get_run(run_id)
+        if run and run["state"] in ("completed", "failed"):
+            break
+
+    run = await store.get_run(run_id)
+    assert run["state"] == "completed", f"Runner failed: {run['error']}"
+    assert manager.dispatched == [
+        ("jarvis_agent", "bring the window to the front", True)
+    ]
+    assert run["steps"][0]["output"] == "window focused"

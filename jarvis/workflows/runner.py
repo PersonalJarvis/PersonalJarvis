@@ -23,6 +23,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from jarvis.core.bus import EventBus
@@ -63,6 +64,53 @@ class _HarnessManagerLike(Protocol):
 
 class _ToolExecutorLike(Protocol):
     async def execute(self, tool: Any, args: dict[str, Any], **kwargs: Any) -> Any: ...
+
+
+# ----------------------------------------------------------------------
+# Live view onto a BrainManager's tools
+# ----------------------------------------------------------------------
+
+class BrainToolSurface:
+    """Live view of the brain's tool registry AND its ToolExecutor.
+
+    Serves both ``attach_tools`` arguments — ``attach_tools(surface, surface)``
+    — because both sides hang off the same brain reference: ``brain._tools``
+    is the registry, ``brain._tool_executor_ref`` the executor.
+
+    Why a view instead of the dict itself: ``BrainManager.refresh_tools()``
+    REPLACES ``_tools`` wholesale, and it fires on every CLI/MCP server that
+    connects. A dict captured at wiring time would freeze the workflow runner
+    on the tool set from boot. Every lookup here re-reads the current one.
+
+    The brain reference is a callable, so the bootstrap can wire this up
+    before the (deferred) brain build has finished. Until it does, the
+    registry simply reads empty and a ``tool_call`` step fails with an honest
+    "tool not in registry" instead of silently doing nothing.
+    """
+
+    def __init__(self, brain_ref: Callable[[], Any]) -> None:
+        self._brain_ref = brain_ref
+
+    def _registry(self) -> dict[str, Any]:
+        brain = self._brain_ref()
+        return getattr(brain, "_tools", None) or {}
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._registry()
+
+    def __getitem__(self, name: str) -> Any:
+        return self._registry()[name]
+
+    def get(self, name: str, default: Any = None) -> Any:
+        return self._registry().get(name, default)
+
+    async def execute(self, tool: Any, args: dict[str, Any], **kwargs: Any) -> Any:
+        executor = getattr(self._brain_ref(), "_tool_executor_ref", None)
+        if executor is None:
+            raise RuntimeError(
+                "No ToolExecutor available — the brain is still starting up"
+            )
+        return await executor.execute(tool, args, **kwargs)
 
 
 # ----------------------------------------------------------------------

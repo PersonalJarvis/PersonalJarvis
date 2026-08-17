@@ -2040,10 +2040,41 @@ class DesktopApp:
             workflow_runner = WorkflowRunner(
                 store=workflow_store,
                 bus=server.bus,
-                brain=None,
+                brain=None,               # set later via attach_brain
                 tool_registry=None,       # set later via attach_tools
                 tool_executor=None,
             )
+            # Harness + tools (audit 2026-08-17, AU-03): the runner shipped
+            # with attach_harness_manager/attach_tools defined and NEVER
+            # called, so every harness_dispatch step died on "No
+            # HarnessManager available" and every tool_call on "Tool
+            # registry/executor not available" — a scheduled workflow could
+            # not touch the desktop or call a single tool. Same defect the
+            # TaskRunner had (deep-dive H-02, server.py:3224), fixed the same
+            # way. Both attachments are references, not work: the
+            # HarnessManager ctor only zeroes four fields (entry-point scan
+            # is lazy, on first dispatch), and BrainToolSurface resolves the
+            # brain per lookup — so the boot critical path stays untouched.
+            # A live surface rather than brain._tools, because
+            # BrainManager.refresh_tools() swaps that dict out on every
+            # CLI/MCP connect.
+            try:
+                from jarvis.harness.manager import HarnessManager
+                from jarvis.workflows.runner import BrainToolSurface
+
+                workflow_runner.attach_harness_manager(
+                    HarnessManager(bus=server.bus)
+                )
+                tool_surface = BrainToolSurface(
+                    lambda: getattr(server.app.state, "brain", None)
+                )
+                workflow_runner.attach_tools(tool_surface, tool_surface)
+            except Exception as exc:  # noqa: BLE001 — degrade, don't kill workflows.
+                from loguru import logger as _wf_logger
+                _wf_logger.opt(exception=exc).warning(
+                    "Workflow runner has no harness/tools — harness_dispatch "
+                    "and tool_call steps will fail; the rest still runs."
+                )
             workflow_scheduler = WorkflowScheduler(
                 store=workflow_store,
                 runner=workflow_runner,
@@ -2206,11 +2237,9 @@ class DesktopApp:
                 added = await ensure_seed_workflows(store)
                 _logger.info("Workflow store ready ({} new seed workflow(s)).",
                              added)
-                # Attaching the tool registry would activate ``tool_call``
-                # steps, but that requires a ToolExecutor adapter with
-                # risk-tier integration. MVP: we run the runner without
-                # tools — the seed workflows use brain_prompt/harness_dispatch/
-                # speak, which don't need a ToolExecutor.
+                # Harness manager + tool surface are attached above, at runner
+                # construction — ``tool_call`` and ``harness_dispatch`` steps
+                # run through the brain's own risk-tier-aware ToolExecutor.
                 if scheduler is not None:
                     scheduler.start()
                     _logger.info("Workflow scheduler started.")
