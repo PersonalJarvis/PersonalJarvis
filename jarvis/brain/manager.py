@@ -5731,12 +5731,12 @@ class BrainManager:
         blinded the very run_shell call the local-outcome mandate requires.
 
         2026-08-17: the hide is now a narrow deny-list, because the boundary it
-        was standing in for is enforced where it actually belongs. A turn that
-        mixes a look with an action ("Schau mal hier. Mach das Fenster zu.") is
-        classified SCREEN whenever ``intent.requests_screen_operation``'s
-        clause anchoring misses the action verb — and an emptied surface then
-        left the model describing a picture with no way to do the thing that was
-        asked. ``computer_use`` therefore stays: every call runs through
+        was standing in for is enforced where it actually belongs. A turn can
+        carry a screen image and still ask for an action — the image may come
+        from an earlier utterance, from an explicit attach, or from a mixed
+        request — and an emptied surface left the model describing a picture
+        with no way to do the thing that was asked. ``computer_use`` therefore
+        stays: every call runs through
         ``cu_gate.llm_computer_use_allowed`` first, which refuses a look request
         even inside a live desktop episode, so the two paths still cannot both
         run for one utterance. That gate reads the USER's utterance, never the

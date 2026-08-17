@@ -111,6 +111,70 @@ def test_desktop_operations_belong_to_computer_use(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
+        # i18n-allow: German speech-input fixtures
+        "Mach das Fenster zu",  # i18n-allow: DE input
+        "Mach den Browser auf",  # i18n-allow: DE input
+        "Bitte mach den Browser auf",  # i18n-allow: DE input
+        "Mach das Fenster zu, bitte",  # i18n-allow: DE input
+        "Machst du das Fenster zu?",  # i18n-allow: DE input
+        "Fahr den Rechner runter",  # i18n-allow: DE input
+        "Schalt den Bildschirm aus",  # i18n-allow: DE input
+        "Klapp das Menü zu",  # i18n-allow: DE input
+        # The joined infinitive is the same verb with the particle back on the
+        # front — the shape a transcript usually carries.
+        "Kannst du das Fenster zumachen?",  # i18n-allow: DE input
+        "Kannst du bitte den Browser aufmachen?",  # i18n-allow: DE input
+        # A look glued to an action: the action owns the turn.
+        "Schau mal hier. Mach das Fenster zu.",  # i18n-allow: DE input
+        "Schau dir das an und mach das Fenster zu",  # i18n-allow: DE input
+    ],
+)
+def test_german_separable_verbs_are_desktop_operations(utterance: str) -> None:
+    """A separable verb parks its particle at the clause END.
+
+    Anchoring action verbs on the clause-initial token saw only the bare stem
+    ("mach"), so an unambiguous command read as a pure look while
+    ``jarvis/brain/cu_gate.py`` already read the same sentence as an action.
+    """
+    assert requests_screen_operation(utterance)
+    assert classify(utterance).intent is VisualIntent.NONE
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # The particle words are ordinary prepositions mid-clause. These are
+        # the sentences the separable-verb rule must never swallow.
+        # i18n-allow: German speech-input fixtures
+        "Was ist da auf dem Bildschirm?",  # i18n-allow: DE input
+        "Was siehst du auf meinem Monitor?",  # i18n-allow: DE input
+        "Was steht da auf dem Bildschirm?",  # i18n-allow: DE input
+        "Schau mal auf meinen Bildschirm",  # i18n-allow: DE input
+    ],
+)
+def test_a_particle_word_alone_is_not_an_operation(utterance: str) -> None:
+    assert not requests_screen_operation(utterance)
+    assert classify(utterance).wants_capture
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # A separable stem with no clause-final particle, and nouns that merely
+        # start with one. i18n-allow: German speech-input fixtures
+        "Mach dir keine Sorgen um das Update",  # i18n-allow: DE input
+        "Was macht das Programm auf dem Bildschirm?",  # i18n-allow: DE input
+        "Die Ausfahrt Nummer 3 ist gesperrt",  # i18n-allow: DE input
+        "Ich fahre morgen nach Berlin",  # i18n-allow: DE input
+    ],
+)
+def test_separable_stems_without_a_closing_particle_stay_quiet(utterance: str) -> None:
+    assert not requests_screen_operation(utterance)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
         "which button should I click on my screen?",
         "Welchen Knopf soll ich auf meinem Bildschirm anklicken?",  # i18n-allow: DE input
         "¿qué botón debo pulsar en mi pantalla?",

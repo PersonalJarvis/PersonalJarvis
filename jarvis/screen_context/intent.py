@@ -382,6 +382,12 @@ _DE_ACTION = (
     r"(?:ein)?tipp|zieh|verschieb|drueck|(?:ein)?fueg|(?:aus)?waehl|markier|"  # i18n-allow
     r"kopier|reich\w*\s+ein|send\w*\s+ab|zoom|speicher|loesch|entfern|"
     r"lad\w*\s+(?:hoch|runter)|oeffn|schliess|aktualisier|neu\s+lad|"
+    # Separable verbs in their JOINED form: the infinitive and the participle
+    # put the particle back on the front ("zumachen", "aufmachen",
+    # "runterfahren", "umschalten"). "fahr" is spelled out per particle so the
+    # ordinary nouns "Zufahrt" and "Ausfahrt" cannot enter through it.
+    r"(?:auf|zu|an|aus|ein|um|weg|rein|raus|zurueck)(?:ge)?"  # i18n-allow
+    r"(?:mach|klapp|schalt)|(?:runter|hoch)(?:ge)?fahr|"  # i18n-allow
     r"anmeld|abmeld|minimier|maximier|verkleiner|vergroesser|wechsel|navigier)\w*"
 )
 _ES_ACTION = (
@@ -391,8 +397,47 @@ _ES_ACTION = (
     r"mueve|cambia|navega|amplia|reduce)\w*"
 )
 
+# German separable verbs park the particle at the END of the clause: "mach das
+# Fenster ZU", "mach den Browser AUF", "fahr den Rechner RUNTER". A matcher
+# anchored on the clause-INITIAL token therefore sees a bare stem, and "mach"
+# on its own is the most generic verb the language has — the particle is what
+# makes the clause a command. Missing that shape read "Schau mal hier. Mach das
+# Fenster zu." as a pure look, while jarvis/brain/cu_gate.py's
+# ``\bmach\w*\b[^.?!]{0,40}\b(?:auf|zu)\b`` already read the same sentence as an
+# action: the two halves of one ownership boundary disagreed about one turn.
+#
+# The stem list is short on purpose. Verbs whose particle form is more often a
+# phone or travel command than a desktop one are left out ("leg auf", "ruf an",
+# "fahr los"), because a false positive here costs the screenshot.
+_DE_SEPARABLE_STEM = (  # i18n-allow: German speech-input matching data
+    r"(?:mach|fahr|klapp|schalt|blend)(?:e|st|t|en)?"
+)
+
+# Particles that actually close a spoken desktop command. "nach", "vor" and
+# "los" are deliberately absent: they open ordinary phrases far more often than
+# they close a command.
+_DE_SEPARABLE_PARTICLE = (  # i18n-allow: German speech-input matching data
+    r"(?:auf|zu|an|aus|ein|um|runter|hoch|weg|rein|raus|zurueck)"
+)
+
+# The particle must CLOSE its clause, spoken fillers and a trailing comma
+# aside. Mid-clause the very same token is a preposition, and that is the
+# reading this boundary must never swallow: "Was ist da AUF dem Bildschirm?"
+# is a question about the screen, not an order to operate it.
+_DE_PARTICLE_CLAUSE_END = (  # i18n-allow: German speech-input matching data
+    r"(?:\s+(?:bitte|mal|kurz|jetzt|nochmal|danke))*\s*(?:$|[,.;:!?])"
+)
+
+# Same bounded gap cu_gate uses, and ``[^.?!]`` so the verb of one sentence can
+# never bind the particle of the next.
+_DE_SEPARABLE_ACTION = (
+    rf"{_DE_SEPARABLE_STEM}\b[^.?!]{{0,40}}?"
+    rf"\b{_DE_SEPARABLE_PARTICLE}{_DE_PARTICLE_CLAUSE_END}"
+)
+
 _ACTION_CONNECTOR_SPLIT_RE: re.Pattern[str] = re.compile(
-    rf"\b(?:and|und|y)\s+(?=(?:{_EN_ACTION}|{_DE_ACTION}|{_ES_ACTION})\b)",
+    rf"\b(?:and|und|y)\s+"
+    rf"(?=(?:{_EN_ACTION}|{_DE_ACTION}|{_ES_ACTION})\b|(?:{_DE_SEPARABLE_ACTION}))",
     re.IGNORECASE,
 )
 
@@ -418,6 +463,10 @@ _SCREEN_OPERATION_CLAUSE_RE: re.Pattern[str] = re.compile(
     rf"|^bitte\s+[^.?!]{{0,96}}?{_DE_ACTION}\b"  # i18n-allow
     rf"|^(?:kannst|koenntest|wuerdest|wirst)\s+du\s+(?:bitte\s+)?"
     rf"[^.?!]{{0,96}}?{_DE_ACTION}\b"  # i18n-allow
+    # German separable verbs, split across the clause ("mach das Fenster zu").
+    rf"|^(?:bitte\s+)?{_DE_SEPARABLE_ACTION}"  # i18n-allow
+    rf"|^(?:kannst|koenntest|wuerdest|wirst)\s+du\s+(?:bitte\s+)?"
+    rf"[^.?!]{{0,72}}?{_DE_SEPARABLE_ACTION}"  # i18n-allow
     # Spanish imperative and modal request forms.
     rf"|^(?:por\s+favor\s+)?{_ES_ACTION}\b"
     rf"|^(?:puedes|podrias)\s+(?:por\s+favor\s+)?[^.?!]{{0,96}}?{_ES_ACTION}\b",

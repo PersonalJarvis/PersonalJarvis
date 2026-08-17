@@ -4,15 +4,16 @@ Historically hard ``{}`` (docs/screen-context.md §3.1a, maintainer mandate
 2026-08-02 "looking is not operating"), then widened once for a mandated WRITE
 tool (code-review finding 2026-08-08).
 
-2026-08-17 review: an emptied surface left a turn that MIXES a look with an
-action ("Schau mal hier. Mach das Fenster zu.") describing a picture with no way
-to do the thing that was asked — ``intent.requests_screen_operation`` anchors its
-action verbs at the clause start, so a separable German verb slips through and
-the turn still classifies SCREEN. ``computer_use`` therefore stays in the
-surface; the look/operate boundary is enforced per call by
-``cu_gate.llm_computer_use_allowed``, which reads the USER's utterance and so
-refuses a pure look request anyway (pinned in
-``test_screen_turn_computer_use_boundary`` below).
+2026-08-17 review: an emptied surface left a turn that arrives WITH an image but
+still asks for an action describing a picture with no way to do the thing that
+was asked. ``computer_use`` therefore stays in the surface; the look/operate
+boundary is enforced per call by ``cu_gate.llm_computer_use_allowed``, which
+reads the USER's utterance and so refuses a pure look request anyway (pinned in
+``test_screen_turn_computer_use_boundary_still_holds`` below).
+
+A turn whose utterance itself mixes a look with an action ("Schau mal hier. Mach
+das Fenster zu.") never reaches this surface at all: ``intent`` now reads the
+German separable verb and hands the turn to Computer-Use with no capture.
 """  # i18n-allow: verbatim quote of the German utterance
 
 from __future__ import annotations
@@ -103,11 +104,15 @@ def test_screen_turn_computer_use_boundary_still_holds() -> None:
     for look in ("Was siehst du auf meinem Bildschirm?", "Lies mir das mal vor"):
         assert not llm_computer_use_allowed(look), look
 
-    # The turn the empty surface used to break: a look glued to an action whose
-    # verb ``requests_screen_operation`` misses (German separable "mach … zu"),
-    # so it still classifies SCREEN and still captures — but the action is real
-    # and the vehicle must be both visible AND allowed.
+    # A look glued to an action belongs to Computer-Use outright: the ownership
+    # boundary reads the German separable verb ("mach … zu") and stands Screen
+    # Context down, so no one-shot capture happens first.
     mixed = "Schau mal hier. Mach das Fenster zu."
-    assert classify(mixed).intent is VisualIntent.SCREEN
+    assert classify(mixed).intent is VisualIntent.NONE
     assert llm_computer_use_allowed(mixed)
+
+    # The surface still carries computer_use on a captured-screen turn. A turn
+    # can arrive with an image for reasons other than the utterance (an
+    # explicit screenshot, a pointing turn), and emptying the surface left the
+    # model describing a picture with no way to act.
     assert "computer_use" in _mgr(_surface())._image_turn_tool_override()
