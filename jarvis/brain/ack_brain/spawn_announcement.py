@@ -581,6 +581,21 @@ class SpawnAnnouncementComposer:
                 f"{content}\n[Task: {interpreted}]" if content
                 else f"[Task: {interpreted}]"
             )
+        # Instant acknowledgment (2026-08-17): when the user already heard a
+        # first line for this very request seconds ago, the handover must
+        # continue from it -- name the handover, do not re-announce the task.
+        try:
+            from jarvis.voice.instant_ack import recently_spoken
+
+            already = recently_spoken()
+        except Exception:  # noqa: BLE001 -- the note is a hint, never a dependency
+            already = ""
+        if already:
+            content = (
+                f"{content}\n[Already said to the user seconds ago: "
+                f"\"{already}\" -- continue from it, do not repeat it or "
+                "re-announce the task; state only the handover.]"
+            )
         return content
 
     async def _try_provider(

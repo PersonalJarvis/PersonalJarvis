@@ -49,6 +49,7 @@ from jarvis.audio.player import AudioPlayer
 from jarvis.audio.vad import SileroEndpointer
 from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.brain.turn_planner import plan_turn
 from jarvis.core.events import (
     CU_PROGRESS_EVENTS,
     DICTATION_REFUSAL_REASONS,
@@ -147,6 +148,14 @@ from jarvis.speech.wake_verifier import (
 )
 from jarvis.telemetry.latency import LatencyPhase, LatencyTracker
 from jarvis.trigger.hotkey import HotkeyTrigger
+from jarvis.voice.instant_ack import (
+    PROGRESS_AFTER_S,
+    InstantAckPlan,
+    compose_contextual_ack,
+    note_spoken,
+    pick_instant_ack_text,
+    plan_instant_ack,
+)
 
 if TYPE_CHECKING:
     from jarvis.core.bus import EventBus
@@ -2603,7 +2612,10 @@ class SpeechPipeline:
         # apart, while the mission is in flight — hard-bounded so it can never run
         # forever (the in-flight hold equals the watchdog lifetime, see
         # _live_spawn_watchdogs). Tests override these.
-        self._spawn_watchdog_delay_s: float = 30.0
+        # 30 -> 20 s (2026-08-17, instant-ack contract): the user heard the
+        # handover line at the start; twenty seconds of nothing afterwards
+        # is where "is it still working?" begins.
+        self._spawn_watchdog_delay_s: float = 20.0
         self._heartbeat_interval_s: float = 60.0
         self._heartbeat_max_count: int = 3
         self._heartbeat_recent: deque[str] = deque(maxlen=2)
@@ -4432,9 +4444,28 @@ class SpeechPipeline:
         # the Flash-Brain streaming path uses); a turn that answers within
         # the grace stays ack-free. Announcements arriving with no voice turn
         # in flight (chat path) keep legacy behavior.
+        source_layer = getattr(event, "source_layer", None)
+        is_instant_ack = bool(
+            is_preamble and source_layer == self._INSTANT_ACK_SOURCE_LAYER
+        )
         if (
             is_preamble
-            and getattr(event, "source_layer", None) == "brain.router.ack"
+            and source_layer == "brain.router.ack"
+            and self._instant_ack_spoke_recently(PROGRESS_AFTER_S)
+        ):
+            # Instant acknowledgment (2026-08-17): the user just heard the
+            # turn's first line. A second "let me check" seconds later is the
+            # double-tap; the grounded router ack is welcome again only once
+            # the wait has grown long enough to deserve a progress line.
+            log.info(
+                "Grounded ack dropped — instant ack spoken %.1fs ago: %r",
+                time.monotonic() - float(getattr(self, "_instant_ack_spoken_at", 0.0)),
+                event.text[:80],
+            )
+            return
+        if (
+            is_preamble
+            and source_layer == "brain.router.ack"
             and getattr(self, "_turn_state", TurnTakingState.IDLE)
             is TurnTakingState.PROCESSING
         ):
@@ -4502,7 +4533,8 @@ class SpeechPipeline:
             spoken_text = scrubbed.cleaned.strip()
             last_spoken = getattr(self, "_last_preamble_spoken", None)
             if (
-                dedup_window_s > 0
+                not is_instant_ack
+                and dedup_window_s > 0
                 and last_spoken is not None
                 and last_spoken[0] == spoken_text
                 and (time.monotonic() - last_spoken[1]) < dedup_window_s
@@ -4526,7 +4558,11 @@ class SpeechPipeline:
                 spoken_times = deque(maxlen=32)
                 self._preamble_spoken_times = spoken_times
             now_monotonic = time.monotonic()
-            if rate_limit > 0:
+            # The instant ack is exempt from the anti-loop cap: it is armed
+            # exactly once per user utterance and cancels its predecessor, so
+            # it cannot loop -- and a user issuing four commands in a minute
+            # deserves four first-signs-of-life (maintainer rule 2026-08-17).
+            if rate_limit > 0 and not is_instant_ack:
                 recent_count = sum(
                     1 for t in spoken_times if now_monotonic - t < 60.0
                 )
@@ -4538,7 +4574,12 @@ class SpeechPipeline:
                     )
                     return
             self._last_preamble_spoken = (spoken_text, now_monotonic)
-            spoken_times.append(now_monotonic)
+            if is_instant_ack:
+                # Not counted against the cap either: one instant line must
+                # never eat the budget of a later owed progress line.
+                self._note_instant_ack_spoken(spoken_text)
+            else:
+                spoken_times.append(now_monotonic)
         if await self._deliver_announcement_via_realtime(
             event,
             text=scrubbed.cleaned,
@@ -4720,6 +4761,137 @@ class SpeechPipeline:
                 text[:80],
             )
         return accepted
+
+    # ------------------------------------------------------------------
+    # Instant acknowledgment (2026-08-17)
+    # ------------------------------------------------------------------
+
+    _INSTANT_ACK_SOURCE_LAYER = "brain.instant_ack"
+
+    def _instant_ack_enabled(self) -> bool:
+        ack_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+        return bool(getattr(ack_cfg, "instant_ack", True))
+
+    def _agent_brand_name(self) -> str:
+        """Wake-word-derived agent brand for spoken lines (never hardcoded)."""
+        try:
+            from jarvis.brain.assistant_name import agent_brand
+
+            return agent_brand(getattr(self, "_config", None))
+        except Exception:  # noqa: BLE001 — a spoken line must not depend on config shape
+            return "Assistant-Agent"
+
+    def _arm_instant_ack(self, text: str, language: str) -> None:
+        """Schedule the instant ack for a heavy turn; a no-op for plain talk.
+
+        The plan comes from the same deterministic planner the brain uses
+        (regex, no I/O). Long work (research, screen, mission) speaks at
+        once; short work (an action, a personal lookup) waits a grace window
+        and speaks only if the turn is STILL processing — a fast result stays
+        chatter-free. Actions get a request-specific line from the flash
+        composer or nothing (maintainer rule: no stock "on it" for actions).
+        """
+        seq = int(getattr(self, "_instant_ack_turn_seq", 0)) + 1
+        self._instant_ack_turn_seq = seq
+        previous = getattr(self, "_instant_ack_task", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._instant_ack_task = None
+        if not self._instant_ack_enabled():
+            return
+        try:
+            from jarvis.brain.ack_generator import is_voice_control_utterance
+
+            if is_voice_control_utterance(text):
+                return
+            plan = plan_instant_ack(plan_turn(text), text)
+        except Exception:  # noqa: BLE001 — planning must never break the turn
+            log.debug("Instant ack: planning failed", exc_info=True)
+            return
+        if plan is None:
+            return
+        log.info(
+            "Instant ack armed: class=%s delay=%.1fs contextual=%s",
+            plan.work_class.value,
+            plan.delay_s,
+            plan.contextual,
+        )
+        self._instant_ack_task = asyncio.create_task(
+            self._instant_ack_body(plan, text, language, seq),
+            name="instant-ack",
+        )
+
+    async def _instant_ack_body(
+        self, plan: InstantAckPlan, text: str, language: str, seq: int
+    ) -> None:
+        try:
+            if plan.delay_s > 0:
+                if not await self._await_ack_turn_commit(int(plan.delay_s * 1000)):
+                    log.info(
+                        "Instant ack dropped — turn left PROCESSING inside the "
+                        "%.1fs grace (class=%s)",
+                        plan.delay_s,
+                        plan.work_class.value,
+                    )
+                    return
+            if not self._instant_ack_still_wanted(seq):
+                return
+            if plan.contextual:
+                line = await compose_contextual_ack(
+                    getattr(self._brain, "_readback_composer", None),
+                    utterance=text,
+                    language=language,
+                    agent_brand=self._agent_brand_name(),
+                )
+                if not line:
+                    log.info(
+                        "Instant ack skipped — no valid contextual line for the "
+                        "action (no composer, timeout, or rejected output)"
+                    )
+                    return
+            else:
+                line = pick_instant_ack_text(
+                    plan.work_class, language, agent_brand=self._agent_brand_name()
+                )
+            if not line or not self._instant_ack_still_wanted(seq):
+                return
+            tracker = getattr(self, "_latency_tracker", None)
+            if tracker is not None:
+                try:
+                    tracker.mark(LatencyPhase.ACK_FIRST_TOKEN)
+                except Exception:  # noqa: BLE001, S110 — telemetry never breaks voice
+                    pass
+            await self._publish_event(
+                AnnouncementRequested(
+                    source_layer=self._INSTANT_ACK_SOURCE_LAYER,
+                    text=line,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — the ack is best-effort by design
+            log.warning("Instant ack failed", exc_info=True)
+
+    def _instant_ack_still_wanted(self, seq: int) -> bool:
+        """The line is only coherent while THIS turn is still thinking."""
+        if int(getattr(self, "_instant_ack_turn_seq", 0)) != seq:
+            return False
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) is not TurnTakingState.PROCESSING:
+            return False
+        return not bool(getattr(self, "_brain_first_frame_played", False))
+
+    def _note_instant_ack_spoken(self, text: str) -> None:
+        """Record the moment an instant ack actually went to the speaker."""
+        self._instant_ack_spoken_at = time.monotonic()
+        self._instant_ack_spoken_text = text
+        note_spoken(text)
+
+    def _instant_ack_spoke_recently(self, within_s: float) -> bool:
+        spoken_at = getattr(self, "_instant_ack_spoken_at", None)
+        return spoken_at is not None and (time.monotonic() - spoken_at) < within_s
 
     async def _await_ack_turn_commit(self, grace_ms: int) -> bool:
         """Poll the turn-state for up to ``grace_ms``; True only if it stays
@@ -12756,6 +12928,12 @@ class SpeechPipeline:
                 self._spawn_flash_brain_ack(text, lang),
                 name="flash-brain-ack",
             )
+
+        # Instant acknowledgment (2026-08-17): the turn's first sign of life
+        # for heavy work, decided HERE from the deterministic turn plan —
+        # never after the router's first model round. See
+        # jarvis/voice/instant_ack.py for the contract.
+        self._arm_instant_ack(text, lang)
 
         # Latenz-Sprint-1: Streaming-Pfad — Brain-Output wird Satz-fuer-Satz
         # an die TTS gereicht waehrend das Brain noch generiert. Speakt

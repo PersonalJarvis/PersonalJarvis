@@ -10,6 +10,7 @@ def test_realtime_phases_exist_and_are_accepted_by_the_span_guard():
         LatencyPhase.REALTIME_FIRST_TRANSCRIPT,
         LatencyPhase.REALTIME_FIRST_AUDIO,
         LatencyPhase.REALTIME_DELEGATE_STARTED,
+        LatencyPhase.REALTIME_DELEGATE_BRIDGE_REQUESTED,
         LatencyPhase.REALTIME_DELEGATE_COMPLETED,
         LatencyPhase.REALTIME_TOOL_COMPLETED,
         LatencyPhase.REALTIME_SCRUB_CANCEL,

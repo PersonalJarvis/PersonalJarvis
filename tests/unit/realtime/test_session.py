@@ -3790,16 +3790,20 @@ class _SlowDelegateBridgeSession(FakeSession):
         bridge_sent,
         result_delivered,
         bridge_line="I'm still working on it.",
+        utterance="Write this to my wiki.",
+        result_line="Stored on your page: note.",
     ):
         super().__init__(events)
         self._bridge_sent = bridge_sent
         self._result_delivered = result_delivered
         self._bridge_line = bridge_line
+        self._utterance = utterance
+        self._result_line = result_line
 
     async def receive(self):
         yield RealtimeEvent(
             type="input_transcript",
-            text="Write this to my wiki.",
+            text=self._utterance,
             is_final=True,
         )
         await self._bridge_sent.wait()
@@ -3821,7 +3825,7 @@ class _SlowDelegateBridgeSession(FakeSession):
         await self._result_delivered.wait()
         yield RealtimeEvent(
             type="output_transcript_delta",
-            text="Stored on your page: note.",
+            text=self._result_line,
         )
         yield RealtimeEvent(
             type="audio_delta",
@@ -3848,11 +3852,15 @@ class _SlowDelegateBridgeProvider(FakeProvider):
         bridge_sent,
         result_delivered,
         bridge_line="I'm still working on it.",
+        utterance="Write this to my wiki.",
+        result_line="Stored on your page: note.",
     ):
         super().__init__([])
         self._bridge_sent = bridge_sent
         self._result_delivered = result_delivered
         self._bridge_line = bridge_line
+        self._utterance = utterance
+        self._result_line = result_line
 
     async def open_session(self, cfg):
         self.opened_with = cfg
@@ -3861,25 +3869,50 @@ class _SlowDelegateBridgeProvider(FakeProvider):
             bridge_sent=self._bridge_sent,
             result_delivered=self._result_delivered,
             bridge_line=self._bridge_line,
+            utterance=self._utterance,
+            result_line=self._result_line,
         )
         return self.session
 
 
-@pytest.mark.asyncio
-async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
-    """BUG-051: dead air between dispatch and result gets one interim line."""
-    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.05)
-    # Pin the varied progress-line pick to the line the fake session speaks.
+# A connected-data question is LONG work for the instant-ack planner: the
+# pooled line fires immediately, and the turn runs through the Brain delegate
+# (a public-fact question would take the bounded grounding path instead). An
+# action like "Write this to my wiki." is the CONTEXTUAL class and is covered
+# by its own tests below.
+_RESEARCH_UTTERANCE = "What's on my calendar tomorrow?"
+_RESEARCH_RESULT = "Tomorrow you have the standup and a lunch meeting."
+
+
+def _pin_instant_ack(monkeypatch, line):
+    """Pin both the class pool pick and the legacy progress pick to ``line``."""
+    monkeypatch.setattr(
+        "jarvis.realtime.session.pick_instant_ack_text",
+        lambda work_class, language, *, agent_brand="": line,
+    )
     monkeypatch.setattr(
         "jarvis.realtime.session._pick_delegate_bridge_text",
-        lambda language: "I'm still working on it.",
+        lambda language: line,
     )
+
+
+@pytest.mark.asyncio
+async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
+    """BUG-051 / instant ack: a delegated research turn gets its first sign of
+    life immediately -- a closed-pool line naming the kind of work."""
+    # The research class fires at 0 s; the legacy delay is only the cap.
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 6.0)
+    # Pin the varied pool pick to the line the fake session speaks.
+    _pin_instant_ack(monkeypatch, "I'm still working on it.")
     gate = asyncio.Event()
     bridge_sent = asyncio.Event()
     result_delivered = asyncio.Event()
-    brain = FakeBrain(replies=("Stored on your page: note.",), gate=gate)
+    brain = FakeBrain(replies=(_RESEARCH_RESULT,), gate=gate)
     provider = _SlowDelegateBridgeProvider(
-        bridge_sent=bridge_sent, result_delivered=result_delivered
+        bridge_sent=bridge_sent,
+        result_delivered=result_delivered,
+        utterance=_RESEARCH_UTTERANCE,
+        result_line=_RESEARCH_RESULT,
     )
     thinking_sent = asyncio.Event()
 
@@ -3910,7 +3943,7 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     # (a quoted line flipped Gemini's native voice, forensic 2026-07-17).
     assert '"I\'m still working on it."' not in bridge
     assert "same voice" in bridge
-    assert "Write this to my wiki." not in bridge
+    assert _RESEARCH_UTTERANCE not in bridge
     # While the bridge response is live, provider output must flow.
     assert sess._must_withhold_provider_output() is False
 
@@ -3921,35 +3954,123 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     await asyncio.wait_for(result_delivered.wait(), timeout=2)
     result = provider.session.text_inputs[-1]
     assert "<trusted_action_result>" in result
-    assert "Stored on your page: note." in result
+    assert _RESEARCH_RESULT in result
     # The bridge's completed response must not have closed the turn: the
     # result is delivered into the live turn, not as a late follow-up.
     assert "finished only now" not in result
+    # The rendering order continues from the line the user already heard.
+    assert "already told the user" in result
+    assert "I'm still working on it." in result
     await sess.wait_finished()
     assert binaries
     spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
     assert [(event.text, event.spoken_kind) for event in spoken] == [
         ("I'm still working on it.", "progress"),
+        (_RESEARCH_RESULT, "reply"),
+    ]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_action_delegate_speaks_a_contextual_line(monkeypatch):
+    """Instant ack for an ACTION: the live model composes a request-specific
+    line ("I'm writing this to your wiki.") that the structural validator
+    accepts; a stock filler is never ordered for actions."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 6.0)
+    monkeypatch.setattr("jarvis.realtime.session._INSTANT_ACK_GRACE_S", 0.05)
+    gate = asyncio.Event()
+    bridge_sent = asyncio.Event()
+    result_delivered = asyncio.Event()
+    brain = FakeBrain(replies=("Stored on your page: note.",), gate=gate)
+    provider = _SlowDelegateBridgeProvider(
+        bridge_sent=bridge_sent,
+        result_delivered=result_delivered,
+        bridge_line="I'm writing this to your wiki.",
+    )
+    thinking_sent = asyncio.Event()
+
+    class _StatusMessages(list[dict]):
+        def append(self, message: dict) -> None:
+            super().append(message)
+            if message == {"type": "thinking"}:
+                thinking_sent.set()
+
+    jsons = _StatusMessages()
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(provider, brain=brain, jsons=jsons, binaries=binaries, bus=bus)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(bridge_sent.wait(), timeout=2)
+
+    bridge = provider.session.text_inputs[0]
+    assert "<trusted_action_result>" not in bridge
+    # A contextual order: it names the request and asks for the subject in the
+    # user's own words -- no closed-pool line is dictated.
+    assert "Write this to my wiki." in bridge
+    assert "I'm still working on it." not in bridge
+    assert "no result" in bridge
+    assert "same voice" in bridge
+
+    await asyncio.wait_for(thinking_sent.wait(), timeout=2)
+    gate.set()
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+    result = provider.session.text_inputs[-1]
+    assert "<trusted_action_result>" in result
+    assert "already told the user" in result
+    assert "I'm writing this to your wiki." in result
+    await sess.wait_finished()
+    assert binaries
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert [(event.text, event.spoken_kind) for event in spoken] == [
+        ("I'm writing this to your wiki.", "progress"),
         ("Stored on your page: note.", "reply"),
     ]
     await sess.end(reason="test")
 
 
 @pytest.mark.asyncio
-async def test_capability_limited_provider_acknowledges_delegate_early(monkeypatch):
-    """A capability-limited provider streams its trusted acknowledgement early."""
-    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 60.0)
-    monkeypatch.setattr(
-        "jarvis.realtime.session._CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S",
-        0.01,
+async def test_contextual_action_line_that_claims_a_result_is_dropped(monkeypatch):
+    """A contextual ACTION ack is trusted only through the structural validator:
+    a result claim ("Your wiki is updated.") never reaches the speaker, and the
+    grounded result still arrives."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 6.0)
+    monkeypatch.setattr("jarvis.realtime.session._INSTANT_ACK_GRACE_S", 0.05)
+    gate = asyncio.Event()
+    bridge_sent = asyncio.Event()
+    result_delivered = asyncio.Event()
+    brain = FakeBrain(replies=("Stored on your page: note.",), gate=gate)
+    provider = _SlowDelegateBridgeProvider(
+        bridge_sent=bridge_sent,
+        result_delivered=result_delivered,
+        bridge_line="Your wiki is updated with the note.",
     )
-    monkeypatch.setattr(
-        "jarvis.realtime.session._pick_delegate_bridge_text",
-        lambda language: "I'm still working on it.",
-    )
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(provider, brain=brain, jsons=[], binaries=binaries, bus=bus)
 
-    speech_requested = asyncio.Event()
-    first_audio = asyncio.Event()
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(bridge_sent.wait(), timeout=2)
+    # Let the hostile bridge response complete, then release the result.
+    await asyncio.sleep(0.2)
+    assert binaries == []  # not one leaked sample
+    gate.set()
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+    result = provider.session.text_inputs[-1]
+    assert "<trusted_action_result>" in result
+    # Nothing was heard, so nothing is claimed as already said.
+    assert "already told the user" not in result
+    await sess.wait_finished()
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert [(event.text, event.spoken_kind) for event in spoken] == [
+        ("Stored on your page: note.", "reply"),
+    ]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+def _authoritative_speech_provider(*, utterance, speech_requested):
+    """A tool-less transport whose direct-speech channel renders text verbatim."""
 
     class _AuthoritativeSpeechSession(FakeSession):
         direct_speech_is_authoritative = True
@@ -3957,7 +4078,7 @@ async def test_capability_limited_provider_acknowledges_delegate_early(monkeypat
         async def receive(self):
             yield RealtimeEvent(
                 type="input_transcript",
-                text="Write this to my wiki.",
+                text=utterance,
                 is_final=True,
             )
             await speech_requested.wait()
@@ -3983,17 +4104,51 @@ async def test_capability_limited_provider_acknowledges_delegate_early(monkeypat
             self.session = _AuthoritativeSpeechSession([])
             return self.session
 
+    return _CapabilityLimitedProvider([])
+
+
+class _FakeAckComposer:
+    """Duck-typed ReadbackComposer: one canned contextual line, or nothing."""
+
+    def __init__(self, line: str = "") -> None:
+        self.line = line
+        self.calls: list[dict] = []
+
+    @property
+    def has_llm(self) -> bool:
+        return True
+
+    async def compose(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.line or kwargs["canned"]()
+
+
+@pytest.mark.asyncio
+async def test_capability_limited_provider_acknowledges_delegate_early(monkeypatch):
+    """A capability-limited provider streams its pooled acknowledgement early."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 60.0)
+    monkeypatch.setattr(
+        "jarvis.realtime.session._CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S",
+        0.01,
+    )
+    _pin_instant_ack(monkeypatch, "I'm still working on it.")
+
+    speech_requested = asyncio.Event()
+    first_audio = asyncio.Event()
+
     class _AudioMessages(list[bytes]):
         def append(self, data: bytes) -> None:
             super().append(data)
             first_audio.set()
 
     gate = asyncio.Event()
-    provider = _CapabilityLimitedProvider([])
+    provider = _authoritative_speech_provider(
+        utterance=_RESEARCH_UTTERANCE, speech_requested=speech_requested
+    )
     binaries = _AudioMessages()
     sess = _session(
         provider,
-        brain=FakeBrain(replies=("Stored.",), gate=gate),
+        brain=FakeBrain(replies=(_RESEARCH_RESULT,), gate=gate),
         binaries=binaries,
     )
 
@@ -4007,6 +4162,81 @@ async def test_capability_limited_provider_acknowledges_delegate_early(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_verbatim_transport_action_ack_comes_from_the_flash_composer(monkeypatch):
+    """On a verbatim-speech transport an ACTION ack is composed by the Brain's
+    flash composer (bounded) and validated; the user hears the request's own
+    subject, never a stock line."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 60.0)
+    monkeypatch.setattr(
+        "jarvis.realtime.session._CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S",
+        0.01,
+    )
+    monkeypatch.setattr("jarvis.realtime.session._INSTANT_ACK_GRACE_S", 0.01)
+    _pin_instant_ack(monkeypatch, "I'm still working on it.")
+
+    speech_requested = asyncio.Event()
+    first_audio = asyncio.Event()
+
+    class _AudioMessages(list[bytes]):
+        def append(self, data: bytes) -> None:
+            super().append(data)
+            first_audio.set()
+
+    gate = asyncio.Event()
+    provider = _authoritative_speech_provider(
+        utterance="Write this to my wiki.", speech_requested=speech_requested
+    )
+    brain = FakeBrain(replies=("Stored.",), gate=gate)
+    brain._readback_composer = _FakeAckComposer("I'm writing this to your wiki.")
+    binaries = _AudioMessages()
+    sess = _session(provider, brain=brain, binaries=binaries)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(first_audio.wait(), timeout=1)
+
+    assert provider.session.text_inputs == ["I'm writing this to your wiki."]
+    assert brain._readback_composer.calls[0]["in_progress"] is True
+    assert "Write this to my wiki." in brain._readback_composer.calls[0]["instruction"]
+    assert binaries
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_verbatim_transport_action_without_composer_stays_silent(monkeypatch):
+    """No composer, no valid contextual line -> no stock filler for an action.
+
+    The maintainer's rule: an action ack must reference the request. A
+    verbatim transport without a composing model therefore says nothing and
+    lets the result speak (the pooled classes are unaffected)."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 60.0)
+    monkeypatch.setattr(
+        "jarvis.realtime.session._CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S",
+        0.01,
+    )
+    monkeypatch.setattr("jarvis.realtime.session._INSTANT_ACK_GRACE_S", 0.01)
+    _pin_instant_ack(monkeypatch, "I'm still working on it.")
+
+    speech_requested = asyncio.Event()
+    gate = asyncio.Event()
+    provider = _authoritative_speech_provider(
+        utterance="Write this to my wiki.", speech_requested=speech_requested
+    )
+    binaries: list[bytes] = []
+    sess = _session(
+        provider,
+        brain=FakeBrain(replies=("Stored.",), gate=gate),
+        binaries=binaries,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.sleep(0.3)
+
+    assert provider.session.text_inputs == []
+    assert binaries == []
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_varied_bridge_line_passes_validation_and_is_persisted(monkeypatch):
     """A non-default pool line must clear the withhold and reach the record.
 
@@ -4016,18 +4246,17 @@ async def test_varied_bridge_line_passes_validation_and_is_persisted(monkeypatch
     """  # i18n-allow: quoted German forensic phrase
     varied_line = "One moment, almost there."
     monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.05)
-    monkeypatch.setattr(
-        "jarvis.realtime.session._pick_delegate_bridge_text",
-        lambda language: varied_line,
-    )
+    _pin_instant_ack(monkeypatch, varied_line)
     gate = asyncio.Event()
     bridge_sent = asyncio.Event()
     result_delivered = asyncio.Event()
-    brain = FakeBrain(replies=("Stored on your page: note.",), gate=gate)
+    brain = FakeBrain(replies=(_RESEARCH_RESULT,), gate=gate)
     provider = _SlowDelegateBridgeProvider(
         bridge_sent=bridge_sent,
         result_delivered=result_delivered,
         bridge_line=varied_line,
+        utterance=_RESEARCH_UTTERANCE,
+        result_line=_RESEARCH_RESULT,
     )
     thinking_sent = asyncio.Event()
 
@@ -4059,7 +4288,7 @@ async def test_varied_bridge_line_passes_validation_and_is_persisted(monkeypatch
     spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
     assert [(event.text, event.spoken_kind) for event in spoken] == [
         (varied_line, "progress"),
-        ("Stored on your page: note.", "reply"),
+        (_RESEARCH_RESULT, "reply"),
     ]
     await sess.end(reason="test")
 

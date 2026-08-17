@@ -599,6 +599,33 @@ def is_contextual_follow_up(text: str, context: Sequence[str]) -> bool:
     )
 
 
+# Recall-shaped openers ("do you remember", "weisst du noch") read as ACTION to
+# the planner (``remember`` is a save verb) although the user is asking, not
+# ordering. Kept next to the lookup regex so ``is_lookup_shape`` covers both.
+_RECALL_QUESTION_RE = re.compile(
+    r"(?:do you (?:remember|know|recall)|weisst du(?: noch)?|"  # i18n-allow: speech input
+    r"erinnerst du dich|kennst du|te acuerdas|recuerdas|sabes)"  # i18n-allow: speech input
+)
+
+
+def is_lookup_shape(text: str) -> bool:
+    """Return whether ``text`` is phrased as a lookup / question, not an order.
+
+    A form classifier only (deterministic, hot-path safe): a trailing question
+    mark, a lookup opener ("what", "wann", "zeig", ...) or a recall opener
+    ("weisst du noch", "do you remember"). Callers use it to tell "read my
+    notes" from "write to my notes" when both carry the same planner reasons.
+    """
+    normalized = _normalize(text).strip()
+    if not normalized:
+        return False
+    if normalized.endswith("?"):
+        return True
+    return bool(
+        _LOOKUP_SHAPE_RE.search(normalized) or _RECALL_QUESTION_RE.search(normalized)
+    )
+
+
 def is_public_fact_question(text: str) -> bool:
     """Return whether ``text`` asks for a concrete public-world fact.
 

@@ -137,6 +137,14 @@ class AckBrainConfig(BaseModel):
     # (skip-list-aware) and re-scrubbed at the speech layer. Set False to go
     # back to pure silence during tool execution.
     grounded_tool_ack: bool = Field(default=True)
+    # Instant acknowledgment (2026-08-17, jarvis/voice/instant_ack.py): the
+    # turn's FIRST sign of life for heavy work, decided from the deterministic
+    # turn plan at dispatch (research / screen / mission speak at once; an
+    # action or personal lookup after a 1.2 s grace, only if still running).
+    # Independent of `enabled` (the closed pools need no LLM); the ACTION
+    # class alone uses the flash composer and stays silent without one.
+    # False = back to the pre-2026-08-17 silence until the router acks.
+    instant_ack: bool = Field(default=True)
     # 2026-07-06 interim-ack redesign (spec: docs/superpowers/specs/
     # 2026-07-06-interim-ack-redesign-design.md). Forensic finding: one voice
     # session spoke the identical grounded ack once per utterance, three

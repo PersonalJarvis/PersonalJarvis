@@ -1512,6 +1512,9 @@ class LatencyPhase(StrEnum):
     REALTIME_FIRST_TRANSCRIPT = "realtime_first_transcript"
     REALTIME_FIRST_AUDIO = "realtime_first_audio"
     REALTIME_DELEGATE_STARTED = "realtime_delegate_started"
+    # The instant acknowledgment / bridge line was ordered from the live
+    # model (detail carries class, delay and whether it is contextual).
+    REALTIME_DELEGATE_BRIDGE_REQUESTED = "realtime_delegate_bridge_requested"
     REALTIME_DELEGATE_COMPLETED = "realtime_delegate_completed"
     REALTIME_TOOL_COMPLETED = "realtime_tool_completed"
     REALTIME_SCRUB_CANCEL = "realtime_scrub_cancel"

@@ -1,0 +1,100 @@
+# ADR-0033 — Instant acknowledgment: the first sign of life comes from the plan, not the model
+
+**Status:** Accepted · **Date:** 2026-08-17 · **Phase:** Voice UX (both engines)
+
+## Context
+
+When a request needs the Tool Model or a background agent, the user waited
+5–30 s with no sign of life. Measured on the maintainer's box (BUG-072):
+delegated realtime turns p50 12–18 s before the fix, 4.5–12.5 s after; the
+classic pipeline's action turns are non-streaming by construction
+(`manager.generate_stream` withholds every chunk while
+`plan_turn(...).requires_orchestrator`).
+
+Every earlier interim-speech mechanism was structurally late or gated away:
+
+| Mechanism | Why it did not cover the wait |
+|---|---|
+| Flash-Brain preamble (ADR-0014) | speculative, median 2.98 s to first token, only output on 22 % of turns — retired 2026-06-21 |
+| Grounded per-tool ack (`brain.router.ack`) | fires only after the router's FIRST model round has streamed (2–16 s), then 2.5 s commit grace, 30 s min gap, 3/min cap, 180 s dedup |
+| Realtime delegate bridge (BUG-051/054) | deliberately 6 s after dispatch (the "double-tap" fear), one generic pool line ("still on it") |
+| Provider-requested delegate | no bridge at all |
+| Public-fact grounding ack | immediate, but a surface-TTS second voice reading the whole question back |
+
+The maintainer's rule (2026-08-17): under two seconds, always, for heavy
+work — never for plain conversation; never a stock filler; never an
+ack-then-answer double-tap; the ack for an ACTION must reference the request.
+
+## Decision
+
+One shared core, `jarvis/voice/instant_ack.py`, used by both voice engines.
+
+1. **Trigger = the committed plan, at dispatch.** `plan_instant_ack(plan_turn(text))`
+   maps the deterministic planner reasons to a work class with an expected
+   duration: RESEARCH / SCREEN / MISSION and connected personal lookups speak
+   **immediately**; ACTION and local personal lookups wait a **1.2 s grace**
+   and speak only if the turn is still processing. Plain conversation, voice
+   control and vague orchestrator turns get nothing.
+2. **State only what Jarvis is doing.** Closed de/en/es pools per class
+   (no-repeat memory, `{agent}` = wake-word brand). The ACTION pool is empty
+   by design: an action line is model-composed (the live model in realtime,
+   the flash `ReadbackComposer` in the pipeline) and accepted only by the
+   structural validator `contextual_ack_is_valid` — intent grammar, ≤ 12
+   words, every content word from the user's own request, no digits, no
+   result marker, no forbidden vocabulary, at least one subject word. An
+   invented outcome needs new words or a non-intent verb, so it cannot pass.
+   No composer → silence, never "on it".
+3. **No double-tap.** A result ready before the line's first sample wins; a
+   line already playing finishes (never cut mid-word). Realtime passes the
+   spoken line into the trusted-result rendering order (*continue, do not
+   repeat*); the pipeline drops the grounded router ack within 8 s of an
+   instant ack (later it doubles as the progress line) and the spawn
+   announcer receives the recently spoken line as context.
+4. **One voice per call.** Realtime renders the line through the live model
+   (existing bridge mechanics: exact-line or contextual order, transcript
+   validated at the response boundary); verbatim-speech transports use the
+   composer or stay silent for actions. The public-fact grounding path hands
+   its surface-TTS ack to the bridge whenever a plan exists.
+5. **Gates.** The instant ack is exempt from the pipeline's anti-loop cap and
+   wording dedup (it is armed once per user utterance and cancels its
+   predecessor); the "user holds the floor" and "Jarvis already speaking"
+   drops and the `should_play` predicate still apply. `[ack_brain].instant_ack
+   = false` is the kill switch. Mission heartbeat first beat 30 → 20 s.
+
+## Consequences
+
+- Realtime: first audio for a research question moves from ~7 s (generic) to
+  ~1.5–2 s (class line, same voice); actions get "I'm opening Spotify."
+  after 1.2 s if still running. `_DELEGATE_BRIDGE_DELAY_S` (6 s) is now only
+  the cap / the delay for unclassified turns.
+- Pipeline: heavy turns speak at 0 / 1.2 s instead of after round one; the
+  grounded router ack becomes the 8 s+ progress line.
+- Two chargeable flash calls per action turn at most (ack + spawn/interim),
+  both bounded (700 ms ack budget) and breaker-guarded.
+- Amends ADR-0014 gate 1 (suppress-if-fast) — superseded by the class grace
+  for the classic pipeline; BUG-054's closed-pool rule is extended, not
+  relaxed: the contextual class is validated structurally, never by prompt
+  compliance.
+
+## Alternatives considered
+
+- **Earcon at t≈0** — fastest honest signal, but the maintainer's target is
+  a conversational partner, not a beep; kept out (the chime generator exists
+  if wanted later).
+- **Surface TTS for the realtime ack** (~0.8 s) — a second voice mid-call is
+  the exact BUG-090 failure; rejected in favour of the live model (+~1 s).
+- **Flash-LLM topic line for every class** — the pool line already fits
+  research/personal/screen/mission and costs 0 ms; the composed line stays
+  the ACTION-only path (and an Etappe-2 opt-in elsewhere).
+- **Prompt-only "do not invent" for the action line** — BUG-054 proved
+  prompt compliance is not a boundary; the structural validator is.
+
+## References
+
+- `jarvis/voice/instant_ack.py`, `tests/unit/voice/test_instant_ack.py`
+- `jarvis/realtime/session.py` (`_run_delegate_bridge`, boundary validation,
+  `_delegate_result_prompt(already_said=…)`), `tests/unit/realtime/test_session.py`
+- `jarvis/speech/pipeline.py` (`_arm_instant_ack`, `_on_announcement` gates),
+  `tests/unit/speech/test_instant_ack_pipeline.py`
+- `jarvis/brain/turn_planner.py::is_lookup_shape`
+- ADR-0014, BUG-051, BUG-054, BUG-070, BUG-072, BUG-090

@@ -70,6 +70,7 @@ def test_latency_phase_is_a_string_enum_source_of_truth() -> None:
         "realtime_first_transcript",
         "realtime_first_audio",
         "realtime_delegate_started",
+        "realtime_delegate_bridge_requested",
         "realtime_delegate_completed",
         "realtime_tool_completed",
         "realtime_scrub_cancel",
