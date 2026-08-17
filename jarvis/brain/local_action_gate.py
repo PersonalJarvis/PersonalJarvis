@@ -8,6 +8,7 @@ runs the in-process screenshot/click/keyboard loop
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -697,6 +698,41 @@ def requires_external_integration(text: str) -> bool:
     return False
 
 
+def external_integration_terms(text: str) -> tuple[str, ...]:
+    """Name the SPECIFIC external systems an utterance asks for.
+
+    Companion to :func:`requires_external_integration`: that function answers
+    *whether* a dedicated integration is needed, this one answers *which* one.
+    The terms are what the live tool surface is checked against before any
+    refusal is spoken (GT-16) — the registry may be stale, an attached tool
+    named after the system is not.
+    """
+    t = text or ""
+    terms = [m.group(0).lower() for m in _EXTERNAL_INTEGRATION_NOUN_RE.finditer(t)]
+    if re.search(r"\b(?:auf|on)\s+x\b", t, re.I):
+        # The Twitter/X rebrand hides the platform behind a single letter —
+        # hand the matcher the names a connected tool would actually carry.
+        terms.extend(("twitter", "x"))
+    return tuple(dict.fromkeys(terms))
+
+
+def _live_surface_covers(terms: Sequence[str], tool_names: Sequence[str]) -> bool:
+    """Thin wrapper around ``evidence_gate.live_surface_covers``.
+
+    Late import for the same reason as :func:`_get_capability_registry` — this
+    module stays importable without pulling in ``jarvis.core.capabilities``.
+    A fault here must never turn into a refusal, so it degrades to "not
+    covered" only when the helper itself is missing.
+    """
+    if not tool_names or not terms:
+        return False
+    try:
+        from jarvis.brain.evidence_gate import live_surface_covers
+    except ImportError:  # pragma: no cover — module always ships with the gate
+        return False
+    return live_surface_covers(terms, tool_names)
+
+
 def _get_capability_registry() -> _CapabilityRegistryLike | None:
     """Return the global capability registry singleton, or *None* if Agent A's
     module has not been installed yet.
@@ -717,6 +753,7 @@ def match_local_action(
     lang: Literal["de", "en"] = "de",
     *,
     _registry: _CapabilityRegistryLike | None = _SENTINEL,  # type: ignore[assignment]
+    live_tool_names: Sequence[str] = (),
 ) -> LocalActionPlan | None:
     """Return a deterministic local action plan for narrow local commands.
 
@@ -732,6 +769,12 @@ def match_local_action(
         registry to exercise the UNSUPPORTED path without importing the real
         ``jarvis.core.capabilities`` module.  When omitted the production
         singleton is loaded via a late import.
+    live_tool_names:
+        Names of the tools attached to the CURRENT turn, read live by the
+        caller.  They veto the UNSUPPORTED refusal: a tool named after the
+        requested system is proof the capability exists, whatever the registry
+        believes (GT-16).  Empty means "caller knows of no tools" and leaves
+        the historical registry-only behaviour untouched.
     """
     original = text.strip()
     if not original:
@@ -769,6 +812,15 @@ def match_local_action(
             # it must NOT be refused here — it falls through to the force-spawn
             # path (the sub-agent is the universal capability for generic work).
             and requires_external_integration(normalized)
+            # GT-16: the registry is a cache, the attached tools are the truth.
+            # A plugin/CLI/MCP server connected mid-session is callable long
+            # before ``resolve_intent`` learns about it — refusing then is the
+            # live complaint ("I'm told it's impossible while the capability is
+            # right there"). A tool named after the requested system stands the
+            # refusal down; the turn proceeds and the tool answers for itself.
+            and not _live_surface_covers(
+                external_integration_terms(normalized), live_tool_names
+            )
         ):
             return LocalActionPlan(
                 mode=LocalActionMode.UNSUPPORTED,

@@ -8,6 +8,7 @@ from jarvis.brain.local_action_gate import (
     LocalToolCall,
     _CapabilityRegistryLike,
     _unsupported_response,
+    external_integration_terms,
     is_open_app_intent,
     match_local_action,
     requires_external_integration,
@@ -1061,3 +1062,70 @@ def test_open_prefixed_product_names_do_not_hijack_the_cu_gate(utterance) -> Non
 def test_real_english_open_verbs_still_route(utterance, mode) -> None:
     plan = match_local_action(utterance)
     assert plan is not None and plan.mode is mode
+
+
+# ---------------------------------------------------------------------------
+# The live tool surface beats the stale registry (GT-16)
+#
+# ``resolve_intent`` speaks for the capability registry, and that registry
+# lags reality: a plugin/CLI/MCP server connected mid-session is callable long
+# before it is registered. The UNSUPPORTED refusal used to fire anyway, which
+# is the maintainer's complaint — "I'm told it's impossible while the
+# capability is right there". The pairs below run the SAME utterance against
+# the SAME unresolving registry; only the attached tools differ.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("utterance", "tool_name"),
+    [
+        ("schick eine email an harald@example.com", "gmail"),
+        ("trag einen termin morgen 10 uhr ein", "google_calendar"),
+        ("sende eine whatsapp an mama", "mcp__whatsapp__send_message"),
+    ],
+)
+def test_attached_tool_stands_the_unsupported_refusal_down(
+    utterance: str, tool_name: str
+) -> None:
+    """A tool named after the requested system means the capability exists."""
+    plan = match_local_action(
+        utterance, _registry=_FAKE_REG, live_tool_names=(tool_name, "spawn_worker")
+    )
+
+    assert plan is None or plan.mode != LocalActionMode.UNSUPPORTED, (
+        f"{utterance!r} must not be refused while {tool_name!r} is attached"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "schick eine email an harald@example.com",
+        "trag einen termin morgen 10 uhr ein",
+        "sende eine whatsapp an mama",
+    ],
+)
+def test_unsupported_refusal_still_fires_without_a_matching_tool(
+    utterance: str,
+) -> None:
+    """The refusal is correct when the capability genuinely is absent — an
+    honest refusal beats a hallucinated success. An ordinary tool surface must
+    not cancel it."""
+    plan = match_local_action(
+        utterance,
+        _registry=_FAKE_REG,
+        live_tool_names=("spawn_worker", "open_app", "click", "search_web"),
+    )
+
+    assert plan is not None
+    assert plan.mode == LocalActionMode.UNSUPPORTED
+    assert plan.response_text
+
+
+def test_external_integration_terms_names_the_matched_systems() -> None:
+    assert external_integration_terms("schick eine email an mama") == ("email",)
+    assert external_integration_terms("bestell eine pizza") == ("pizza",)
+    # The Twitter/X rebrand hides the platform behind a bare letter — the
+    # matcher needs the product names a connected tool would carry.
+    assert "twitter" in external_integration_terms("poste das auf X")
+    assert external_integration_terms("analysier das repo") == ()

@@ -15,12 +15,15 @@ Verdicts:
 
 from __future__ import annotations
 
+import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from jarvis.core.capabilities import _normalize
+
+log = logging.getLogger(__name__)
 
 # A domain keyword alone must not trigger (hard negative: "Ich habe dir das
 # per Mail geschickt" mentions mail in passing). The utterance must also look
@@ -45,6 +48,117 @@ _DEFINITION_RE = re.compile(
 _OWNERSHIP_RE = re.compile(
     r"\b(mein|meine|meinem|meinen|meines|my|our|unser|unsere|unserem|unseren)\b"
 )
+
+
+# Everything that is not a letter or a digit separates two identifier tokens:
+# "mcp__google_calendar__list-events" carries the tokens that matter.
+_SEPARATOR_RE = re.compile(r"[^a-z0-9]+")
+
+# Below this length a separator-free substring match is noise ("pr" would hit
+# "switch_provider"), so short terms are matched as whole tokens only. Four is
+# the lowest useful bar: it is what makes "mail" find the tool named "gmail".
+_MIN_SQUASHED_TERM_LEN = 4
+
+# Words that name the SAME system. Purely lexical — the user says "Termin",
+# the tool is called "google_calendar"; the user says "E-Mail", the tool is
+# called "gmail". Without this bridge a name-only match misses the most common
+# real integrations, which is precisely the false refusal being fixed. Each
+# group is one system: WhatsApp and Telegram stay apart, because handing a
+# Telegram tool a WhatsApp request would be a wrong call, not a lenient one.
+_SYSTEM_SYNONYMS: tuple[frozenset[str], ...] = (
+    frozenset({
+        "mail", "mails", "e-mail", "e-mails", "email", "emails", "gmail",
+        "outlook", "postfach", "posteingang", "inbox", "mailbox",
+    }),
+    frozenset({
+        "kalender", "calendar", "termin", "termine", "appointment",
+        "appointments", "meeting", "meetings", "gcal",
+    }),
+    frozenset({
+        "aufgabe", "aufgaben", "todo", "todos", "to-do", "task", "tasks",
+        "reminder", "reminders", "todoist",
+    }),
+    frozenset({
+        "repo", "repos", "repository", "repositories", "pull request",
+        "pull requests", "issue", "issues", "github", "gitlab",
+    }),
+    frozenset({"spotify", "musik", "music"}),
+    frozenset({"twitter", "x", "tweet", "tweets"}),
+    frozenset({
+        "pizza", "lieferando", "doordash", "uber eats", "ubereats", "wolt",
+        "lieferservice",
+    }),
+    frozenset({
+        "flug", "fluege", "flight", "flights", "hotel", "hotels", "airbnb",
+        "booking", "trip", "trips", "reise", "reisen", "travel", "ticket",
+        "tickets",
+    }),
+    frozenset({
+        "tisch", "restaurant", "reservierung", "reservation", "opentable",
+        "resy",
+    }),
+    frozenset({"deployment", "deployments", "deploy", "vercel", "netlify"}),
+)
+
+_SYNONYM_INDEX: dict[str, frozenset[str]] = {
+    _normalize(word): group for group in _SYSTEM_SYNONYMS for word in group
+}
+
+
+def live_surface_covers(terms: Iterable[str], tool_names: Iterable[str]) -> bool:
+    """True when a tool ATTACHED TO THIS TURN plausibly serves ``terms``.
+
+    Ground truth for every honest refusal (GT-16/GT-17). The refusals used to
+    consult the capability registry alone, and that registry lags reality: a
+    plugin, CLI or MCP server connected mid-session is callable immediately
+    while the registry still knows nothing about it, so the user was told "I
+    can't do that" with the tool sitting right there in the tool surface.
+
+    The rule is deliberately shallow. A tool's REGISTERED NAME is its identity
+    — "gmail", "google_calendar", "spotify", "mcp__todoist__add_task" — and a
+    connected integration is named after the system it serves. A term matches
+    when its tokens appear as a run inside the name, or, from
+    ``_MIN_SQUASHED_TERM_LEN`` characters up, when the separator-free forms
+    overlap, so "whats-app" still finds a tool called ``whatsapp``. Each term
+    is first widened by ``_SYSTEM_SYNONYMS``, the lexical bridge between what
+    the user says and what the tool is called.
+
+    Descriptions are NOT searched: everyday words from the domain lists
+    ("task", "post", "repository", "issue") appear in the prose of unrelated
+    tools and would silently disable every refusal — trading one dishonest
+    answer for another. This is not a second guessing layer: it decides only
+    whether to SPEAK a refusal, never which tool to call. A false positive
+    costs one ordinary model turn; a false negative is the bug being fixed.
+    """
+    haystacks: list[tuple[str, str]] = []
+    for raw_name in tool_names:
+        name = _normalize(str(raw_name or ""))
+        spaced = _SEPARATOR_RE.sub(" ", name).strip()
+        if spaced:
+            haystacks.append((spaced, _SEPARATOR_RE.sub("", name)))
+    if not haystacks:
+        return False
+
+    wanted: set[str] = set()
+    for raw_term in terms:
+        term = _normalize(str(raw_term or "")).strip()
+        if not term:
+            continue
+        wanted.add(term)
+        wanted.update(_SYNONYM_INDEX.get(term, ()))
+
+    for term in wanted:
+        spaced_term = _SEPARATOR_RE.sub(" ", term).strip()
+        if not spaced_term:
+            continue
+        squashed_term = _SEPARATOR_RE.sub("", term)
+        token_re = re.compile(r"\b" + re.escape(spaced_term) + r"\b")
+        for name_spaced, name_squashed in haystacks:
+            if token_re.search(name_spaced):
+                return True
+            if len(squashed_term) >= _MIN_SQUASHED_TERM_LEN and squashed_term in name_squashed:
+                return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -105,8 +219,16 @@ def check_evidence_domain(
     capability_registry: Any,
     domain_tool_map: Mapping[str, str],
     refusal_hint_fn: Callable[[str, str], str] | None = None,
+    live_tool_names: Sequence[str] = (),
 ) -> EvidenceVerdict:
-    """Classify one utterance against the evidence-required domains."""
+    """Classify one utterance against the evidence-required domains.
+
+    ``live_tool_names`` are the names of the tools attached to THIS turn, read
+    at decision time. They are the last word before a refusal is spoken: a
+    matching tool on the live surface beats an empty registry (see
+    :func:`live_surface_covers`). Defaulting to ``()`` keeps every existing
+    caller on the registry-only behaviour.
+    """
     if not enabled:
         return _PASS
     t = (text or "").strip()
@@ -160,6 +282,20 @@ def check_evidence_domain(
         if matched_domain in objs or objs.intersection(domain_keywords):
             return _PASS
 
+    # Last stop before the refusal (GT-16): the registry said "nothing covers
+    # this domain", but the registry is a cache and the tool surface is the
+    # truth. A plugin/CLI/MCP tool connected seconds ago is callable now and
+    # unknown to the registry — refusing then is the exact bug the maintainer
+    # reported. Stand down and let the model call the tool; if it turns out
+    # dead, the tool's own result still fails honestly.
+    if live_surface_covers([matched_domain, *domains[matched_domain]], live_tool_names):
+        log.info(
+            "Evidence gate stood down: domain=%s is covered by a tool on the "
+            "live surface, so the honest refusal would have been wrong.",
+            matched_domain,
+        )
+        return _PASS
+
     lang = _detect_lang(t)
     base = (
         _REFUSAL_DE.get(matched_domain, _REFUSAL_DE_FALLBACK)
@@ -179,4 +315,4 @@ def check_evidence_domain(
     )
 
 
-__all__ = ["EvidenceVerdict", "check_evidence_domain"]
+__all__ = ["EvidenceVerdict", "check_evidence_domain", "live_surface_covers"]

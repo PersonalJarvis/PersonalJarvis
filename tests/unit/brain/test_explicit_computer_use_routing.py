@@ -174,7 +174,9 @@ async def test_repro_phrase_actually_dispatches_and_executes_harness(
     # Use the REAL routing logic, pinned hermetic (no capability-registry singleton).
     monkeypatch.setattr(
         "jarvis.brain.manager.match_local_action",
-        lambda text: real_match_local_action(text, _registry=None),
+        lambda text, **kwargs: real_match_local_action(
+            text, _registry=None, **kwargs
+        ),
     )
 
     bus = _FakeBus()

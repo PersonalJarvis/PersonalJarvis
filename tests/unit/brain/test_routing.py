@@ -1918,6 +1918,13 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # MCP server block, so it must be router-visible directly; per-action
             # risk gating (reads safe, writes monitor, share/delete ask).
             "google_drive",
+            # Spotify Marketplace plugin (2026-08-17): native REST tool, same
+            # rationale as gmail — Spotify publishes no MCP server at all, so it
+            # must be router-visible directly; otherwise connected Spotify is
+            # not callable by voice, which is the entire point of a music
+            # plugin. risk_tier "monitor" (starting music is audible and
+            # instantly undone). Never a spawn (AP-5/AP-14).
+            "spotify",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,
@@ -2320,11 +2327,9 @@ def test_check_unsupported_intent_fires_for_unregistered_action() -> None:
         resolve_intent=lambda _t: None,
         render_for_prompt=lambda lang="de": "",
     )
-    mock_module = types.ModuleType("jarvis.core.capabilities")
-    mock_module.get_registry = lambda: mock_reg  # type: ignore[attr-defined]
-
     original = sys.modules.get("jarvis.core.capabilities")
-    sys.modules["jarvis.core.capabilities"] = mock_module
+    # Delegating mock, not a bare ModuleType — see _capabilities_mock_module.
+    sys.modules["jarvis.core.capabilities"] = _capabilities_mock_module(mock_reg)
     try:
         manager, _executor = _manager_with_spawn()
         result = manager._check_unsupported_intent(
@@ -2433,6 +2438,31 @@ def test_check_unsupported_intent_returns_none_when_registry_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _capabilities_mock_module(mock_reg):
+    """A ``jarvis.core.capabilities`` stand-in that overrides ONLY
+    ``get_registry`` and delegates every other attribute to the real module.
+
+    A bare ``ModuleType`` shadows the real module completely, so the first
+    LAZY importer of anything else from it fails inside the code under test:
+    ``_check_unsupported_intent`` imports ``jarvis.brain.evidence_gate``, whose
+    module body does ``from jarvis.core.capabilities import _normalize``. Under
+    a bare mock that raises ImportError, which the method's broad ``except``
+    turns into ``return None`` — every refusal silently became "supported" and
+    the guard tests failed with no visible reason. Whether it fired at all
+    depended on test ORDER (an earlier import of evidence_gate hides it via the
+    module cache), which is exactly what makes this shape worth a helper.
+    """
+    import importlib
+    import types
+
+    real = importlib.import_module("jarvis.core.capabilities")
+    module = types.ModuleType("jarvis.core.capabilities")
+    module.get_registry = lambda: mock_reg  # type: ignore[attr-defined]
+    # PEP 562: only consulted for attributes the mock does not define itself.
+    module.__getattr__ = lambda name: getattr(real, name)  # type: ignore[attr-defined]
+    return module
+
+
 def _strict_manager_with_mock_registry(
     *, has_action: bool = True, resolves: bool = False, populated: bool = True
 ):
@@ -2451,9 +2481,7 @@ def _strict_manager_with_mock_registry(
         resolve_intent=lambda _t: (object() if resolves else None),
         render_for_prompt=lambda lang="de": "",
     )
-    mock_module = types.ModuleType("jarvis.core.capabilities")
-    mock_module.get_registry = lambda: mock_reg  # type: ignore[attr-defined]
-    sys.modules["jarvis.core.capabilities"] = mock_module
+    sys.modules["jarvis.core.capabilities"] = _capabilities_mock_module(mock_reg)
     manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
     return manager
 
@@ -3609,4 +3637,97 @@ def test_agentic_ide_gate_is_fault_tolerant() -> None:
     assert (
         manager._hide_agentic_ide_tools_without_workspace(sentinel)  # type: ignore[arg-type]
         is sentinel
+    )
+
+
+# ---------------------------------------------------------------------------
+# GT-16: the honest refusal must consult the LIVE tool surface
+#
+# `_check_unsupported_intent` asks the capability registry, and the registry
+# lags reality: a plugin/CLI/MCP server connected mid-session is callable long
+# before it is registered. The refusal fired anyway — the maintainer's exact
+# complaint, "I ask for something and am told it is impossible while the
+# capability sits right there". Both tests below run the SAME utterance
+# against the SAME unresolving registry; only the attached tools differ.
+# ---------------------------------------------------------------------------
+
+
+class _FakeGmailTool:
+    name = "gmail"
+    schema: dict[str, Any] = {}
+
+
+def _unresolving_registry_module():
+    import types
+
+    mock_reg = types.SimpleNamespace(
+        all=lambda: (object(),),          # seeded, but nothing resolves
+        has_action_intent=lambda _t: True,
+        resolve_intent=lambda _t: None,
+        render_for_prompt=lambda lang="de": "",
+    )
+    module = types.ModuleType("jarvis.core.capabilities")
+    module.get_registry = lambda: mock_reg  # type: ignore[attr-defined]
+    return module
+
+
+def test_unsupported_refusal_fires_when_no_tool_covers_the_request() -> None:
+    """Nothing on the surface serves mail — the honest refusal is correct."""
+    import sys
+
+    original = sys.modules.get("jarvis.core.capabilities")
+    sys.modules["jarvis.core.capabilities"] = _unresolving_registry_module()
+    try:
+        manager, _executor = _manager_with_spawn()
+        result = manager._check_unsupported_intent(
+            "Schick bitte eine E-Mail an Beispielkontakt"
+        )
+        assert result is not None and "kann ich noch nicht" in result
+    finally:
+        if original is not None:
+            sys.modules["jarvis.core.capabilities"] = original
+        else:
+            sys.modules.pop("jarvis.core.capabilities", None)
+
+
+def test_unsupported_refusal_stands_down_for_a_freshly_connected_tool() -> None:
+    """Same utterance, same stale registry — but the Gmail plugin is attached.
+
+    The tool arrives the way it does live: `refresh_tools()` replaces
+    `self._tools` wholesale after the connect, so the surface read at decision
+    time is the only truthful one. The turn must proceed and let the model call
+    the tool instead of speaking "Das kann ich noch nicht".
+    """
+    import sys
+
+    original = sys.modules.get("jarvis.core.capabilities")
+    sys.modules["jarvis.core.capabilities"] = _unresolving_registry_module()
+    try:
+        manager, _executor = _manager_with_spawn()
+        utterance = "Schick bitte eine E-Mail an Beispielkontakt"
+        assert manager._check_unsupported_intent(utterance) is not None
+
+        # The Gmail plugin connects mid-session (what refresh_tools() does).
+        manager._tools = {"spawn_worker": _FakeTool(), "gmail": _FakeGmailTool()}
+
+        assert manager._check_unsupported_intent(utterance) is None, (
+            "a connected gmail tool must stand the refusal down"
+        )
+    finally:
+        if original is not None:
+            sys.modules["jarvis.core.capabilities"] = original
+        else:
+            sys.modules.pop("jarvis.core.capabilities", None)
+
+
+def test_live_tool_names_reads_both_surfaces_fresh() -> None:
+    """The evidence is read live and covers the local-action tools too."""
+    manager, _executor = _manager_with_local_actions()
+    names = manager._live_tool_names()
+    assert "spawn_worker" in names and "open_app" in names
+
+    manager._tools = {"gmail": _FakeGmailTool()}
+    assert "gmail" in manager._live_tool_names()
+    assert "spawn_worker" not in manager._live_tool_names(), (
+        "_live_tool_names must never serve a cached snapshot"
     )

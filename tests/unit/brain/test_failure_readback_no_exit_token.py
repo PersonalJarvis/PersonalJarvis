@@ -114,7 +114,7 @@ def _make_manager(executor, *, reply_language: str = "auto") -> BrainManager:
     return mgr
 
 
-def _direct_plan(_text: str) -> LocalActionPlan:
+def _direct_plan(_text: str, **_kwargs: object) -> LocalActionPlan:
     return LocalActionPlan(
         mode=LocalActionMode.DIRECT,
         tool_calls=(LocalToolCall(name="open_app", args={"app_name": "x"}),),

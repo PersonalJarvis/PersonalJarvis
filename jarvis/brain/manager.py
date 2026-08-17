@@ -92,12 +92,14 @@ from .assistant_name import (
     resolve_assistant_name,
 )
 from .dispatcher import BrainDispatcher
+from .evidence_gate import live_surface_covers
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
     LocalActionMode,
     LocalToolCall,
     _looks_like_desktop_control,
+    external_integration_terms,
     is_open_app_intent,
     match_local_action,
     requires_external_integration,
@@ -4519,6 +4521,21 @@ class BrainManager:
         self._jarvis_agent_status_fn = status_fn
         self._jarvis_agent_cancel_fn = cancel_fn
 
+    def _live_tool_names(self) -> tuple[str, ...]:
+        """Names of every tool attached RIGHT NOW — the honest-refusal evidence.
+
+        Read fresh on every call and never cached: ``refresh_tools()`` replaces
+        ``self._tools`` wholesale each time a CLI or MCP server connects, so a
+        snapshot taken earlier in the turn would be exactly the stale picture
+        the refusals are being fixed for (GT-16). ``_local_action_tools`` is
+        included because the deterministic fast path can serve a request just
+        as well as the brain surface can. The ``getattr`` guards tolerate
+        __init__-bypassing tests, like the other readers of ``_tools``.
+        """
+        names = set(getattr(self, "_tools", None) or {})
+        names.update(getattr(self, "_local_action_tools", None) or {})
+        return tuple(sorted(names))
+
     def _check_unsupported_intent(self, user_text: str) -> str | None:
         """Agent-C capability gate: return a deterministic refusal when the
         utterance has an action intent that no registered capability covers.
@@ -4575,6 +4592,22 @@ class BrainManager:
             if not requires_external_integration(t):
                 return None
             if reg.has_action_intent(t) and reg.resolve_intent(t) is None:
+                # GT-16: `resolve_intent` speaks for the registry, and the
+                # registry lags the tool surface — a plugin/CLI/MCP server
+                # connected mid-session is callable while the registry still
+                # knows nothing. Ask the LIVE tools before speaking a refusal;
+                # a tool named after the requested system means the capability
+                # is there and the turn must proceed. A wrong tool call is
+                # recoverable, a false "I can't do that" is the bug.
+                wanted = external_integration_terms(t)
+                if live_surface_covers(wanted, self._live_tool_names()):
+                    log.info(
+                        "Unsupported-intent refusal stood down: a tool on the "
+                        "live surface covers %s — proceeding instead of "
+                        "refusing (registry had not caught up).",
+                        ", ".join(wanted) or "the request",
+                    )
+                    return None
                 # Detect user language from text heuristic (simple: if latin
                 # chars + german umlaut present → DE, else EN).
                 _de_markers = re.search(r"[äöüÄÖÜß]|(?:bitte|kannst|schick|trag|sende)", t, re.I)
@@ -4660,6 +4693,11 @@ class BrainManager:
                 capability_registry=get_registry(),
                 domain_tool_map=domain_map,
                 refusal_hint_fn=_hint,
+                # Read HERE, at decision time (GT-16): refresh_tools() swaps
+                # self._tools out wholesale on every CLI/MCP connect, so any
+                # earlier snapshot is the stale picture that made the gate
+                # refuse a domain it could actually serve.
+                live_tool_names=self._live_tool_names(),
             )
         except Exception:  # noqa: BLE001
             log.debug("evidence gate degraded to PASS", exc_info=True)
@@ -7830,7 +7868,7 @@ class BrainManager:
         if self._tool_executor is None:
             return None
 
-        plan = match_local_action(user_text)
+        plan = match_local_action(user_text, live_tool_names=self._live_tool_names())
         if plan is None:
             return None
 
@@ -9913,7 +9951,9 @@ class BrainManager:
         # keeps its skill, and a non-app skill turn ("starte die Morgenroutine",
         # gate → None) is untouched.
         if self._skill_turn_match is not None:
-            _gate_plan = match_local_action(user_text)
+            _gate_plan = match_local_action(
+                user_text, live_tool_names=self._live_tool_names()
+            )
             _claiming = _gate_plan is not None and _gate_plan.mode in (
                 LocalActionMode.DIRECT,
                 LocalActionMode.COMPUTER_USE,

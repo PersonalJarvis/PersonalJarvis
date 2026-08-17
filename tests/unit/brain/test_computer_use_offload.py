@@ -76,7 +76,9 @@ async def test_computer_use_acks_immediately_not_blocking_on_harness(monkeypatch
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open chrome"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     start = time.monotonic()
     reply = await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
@@ -109,7 +111,9 @@ async def test_computer_use_result_announced_when_done(monkeypatch) -> None:
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open chrome"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
@@ -135,7 +139,9 @@ async def test_computer_use_failure_is_announced_not_dropped(monkeypatch) -> Non
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open chrome"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
@@ -176,7 +182,9 @@ async def test_user_cancel_offload_is_silent_not_announced(monkeypatch) -> None:
         harness="computer-use",
         prompt="screenshot the repo",
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path("mach einen screenshot")
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
@@ -205,7 +213,9 @@ async def test_three_parallel_cancels_speak_nothing(monkeypatch) -> None:
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="do it"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     # Each turn spawns its own background mission off a shared manager.
     executor = _SlowHarnessExecutor(
@@ -259,7 +269,9 @@ async def test_cu_failure_outcome_is_written_back_to_history(monkeypatch) -> Non
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open spotify"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path("öffne mein spotify und spiel das lied")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
@@ -294,7 +306,9 @@ async def test_cu_success_outcome_is_written_back_to_history(monkeypatch) -> Non
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open spotify"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path("öffne spotify und spiel das lied")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
@@ -325,7 +339,9 @@ async def test_cu_user_cancel_writes_nothing_to_history(monkeypatch) -> None:
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="do it"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path("mach einen screenshot")
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
@@ -481,7 +497,9 @@ async def test_cu_goal_carries_recent_conversation_context(monkeypatch) -> None:
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt=utterance
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     token = _TURN_HISTORY_OVERRIDE.set((
         BrainMessage(
@@ -516,7 +534,9 @@ async def test_cu_goal_without_history_stays_bare(monkeypatch) -> None:
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open chrome"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
@@ -540,7 +560,9 @@ async def test_cu_goal_context_falls_back_to_live_history(monkeypatch) -> None:
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt=utterance
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
     await mgr._run_local_action_fast_path(utterance)
     await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))

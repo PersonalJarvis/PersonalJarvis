@@ -70,7 +70,9 @@ def _pin_cu_plan(monkeypatch) -> None:
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open chrome"
     )
-    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+    monkeypatch.setattr(
+        "jarvis.brain.manager.match_local_action", lambda _t, **_kw: plan
+    )
 
 
 @pytest.mark.asyncio

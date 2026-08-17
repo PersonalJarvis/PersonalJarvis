@@ -1,5 +1,5 @@
 """Evidence gate verdicts + hard negatives (AD-CLI4..AD-CLI8)."""
-from jarvis.brain.evidence_gate import check_evidence_domain
+from jarvis.brain.evidence_gate import check_evidence_domain, live_surface_covers
 from jarvis.core.capabilities import Capability, CapabilityRegistry
 
 DOMAINS = {
@@ -9,7 +9,15 @@ DOMAINS = {
 }
 
 
-def _gate(text, *, registry=None, tool_map=None, hint_fn=None, enabled=True):
+def _gate(
+    text,
+    *,
+    registry=None,
+    tool_map=None,
+    hint_fn=None,
+    enabled=True,
+    live_tools=(),
+):
     return check_evidence_domain(
         text,
         enabled=enabled,
@@ -17,6 +25,7 @@ def _gate(text, *, registry=None, tool_map=None, hint_fn=None, enabled=True):
         capability_registry=registry if registry is not None else CapabilityRegistry(),
         domain_tool_map=tool_map or {},
         refusal_hint_fn=hint_fn,
+        live_tool_names=live_tools,
     )
 
 
@@ -255,3 +264,59 @@ def test_broken_registry_degrades_to_pass():
 
     v = _gate("Was steht heute noch an?", registry=_Broken())
     assert v.kind == "pass"
+
+
+# --- live tool surface beats the stale registry (GT-16) ----------------------
+#
+# The registry is a cache; the tools attached to the turn are the truth. A
+# plugin/CLI/MCP server connected mid-session is callable immediately and
+# unknown to the registry, so a registry-only refusal tells the user "I can't"
+# while the tool sits right there. Same utterance, same empty registry — only
+# the live surface differs between the two tests below.
+
+
+def test_calendar_refusal_fires_when_no_tool_is_attached():
+    v = _gate("Was steht heute noch an?", live_tools=("spawn_worker", "search_web"))
+    assert v.kind == "honest_refusal"
+    assert "Kalenderzugriff" in v.refusal_text
+
+
+def test_calendar_question_proceeds_when_a_calendar_tool_is_attached():
+    v = _gate(
+        "Was steht heute noch an?",
+        live_tools=("spawn_worker", "google_calendar", "search_web"),
+    )
+    assert v.kind == "pass", (
+        "a connected calendar tool must stand the refusal down, whatever the "
+        "capability registry believes"
+    )
+
+
+def test_namespaced_mcp_tool_also_counts_as_coverage():
+    # MCP servers arrive namespaced; the domain word still sits in the name.
+    v = _gate("Hab ich neue Mails?", live_tools=("mcp__fastmail__list_inbox",))
+    assert v.kind == "pass"
+
+
+def test_unrelated_tool_names_do_not_cancel_the_refusal():
+    # The matcher must stay narrow enough that the refusal survives an ordinary
+    # tool surface — an honest refusal beats a hallucinated success.
+    v = _gate(
+        "Hab ich neue Mails?",
+        live_tools=("spawn_worker", "open_app", "click", "reset_orb_position"),
+    )
+    assert v.kind == "honest_refusal"
+
+
+def test_live_surface_covers_matching_rule():
+    # Token run inside a separator-split name, and the separator-free form for
+    # terms of five characters and up ("whats-app" -> "whatsapp").
+    assert live_surface_covers(["calendar"], ["mcp__google_calendar__list-events"])
+    assert live_surface_covers(["whats-app"], ["whatsapp"])
+    assert live_surface_covers(["pull request"], ["cli_pull_request"])
+    # Short terms are whole-token only: "pr" must not hit "switch_provider".
+    assert not live_surface_covers(["pr"], ["switch_provider"])
+    assert live_surface_covers(["pr"], ["gh_pr"])
+    # Nothing attached, or nothing related, is not coverage.
+    assert not live_surface_covers(["calendar"], [])
+    assert not live_surface_covers(["calendar"], ["spawn_worker", "search_web"])

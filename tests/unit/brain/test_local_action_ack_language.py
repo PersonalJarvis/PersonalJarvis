@@ -60,7 +60,7 @@ def _make_direct_manager(*, reply_language: str = "auto", turn_lang: str = ""):
     return mgr
 
 
-def _direct_open_explorer_plan(_text: str) -> LocalActionPlan:
+def _direct_open_explorer_plan(_text: str, **_kwargs: object) -> LocalActionPlan:
     return LocalActionPlan(
         mode=LocalActionMode.DIRECT,
         tool_calls=(LocalToolCall(name="open_app", args={"app_name": "explorer"}),),
