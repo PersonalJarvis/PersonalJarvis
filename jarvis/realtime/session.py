@@ -147,6 +147,17 @@ _CONVERSATION_LANGUAGE_MIN_VOICED_MS = 500
 # cut; a turn silent for longer than that is stuck, not busy.
 _TURN_STALL_TIMEOUT_S = 20.0
 _TURN_STALL_POLL_S = 0.5
+# An unbacked action promise is a TERMINAL judgement (see
+# ``_recover_unbacked_action_claim``): it may only be made once the response has
+# stopped growing.  ``turn_complete`` is the primary evidence for that.  Some
+# transports finish a response without ever emitting one — the live forensic in
+# ``_recover_unbacked_action_claim`` is that exact shape — so total provider
+# silence is the second, bounded piece of evidence.  It is accepted ONLY for a
+# response that produced transcript and not a single audio frame: while any
+# audio is buffered the response is demonstrably still being rendered, and
+# cutting it on a pause is exactly the bug this timing fixes.
+_UNBACKED_CLAIM_SETTLE_S = 0.35
+_UNBACKED_CLAIM_SETTLE_POLL_S = 0.05
 # Withheld provider output used to leave no trace anywhere (AP-30): a turn could
 # be dropped in full and the log looked like a healthy call. Report it, bounded.
 _OUTPUT_DROP_LOG_INTERVAL_S = 2.0
@@ -1972,6 +1983,11 @@ class RealtimeVoiceSession:
         self._local_barge_short_echo_until = 0.0
         self._last_outage_notice_at = float("-inf")
         self._provider_output_probe = ""
+        # Transcript deltas held back while the unbacked-promise judgement is
+        # armed. Released the moment the answer grows past the promise, or at
+        # the response close when the recovery declines to take the turn.
+        self._withheld_promise_parts: list[str] = []
+        self._promise_confirm_task: asyncio.Task[None] | None = None
         self._executed_tool_names: set[str] = set()
         self._direct_tool_results: list[tuple[str, dict[str, Any]]] = []
         self._pending_tool_events: list[Any] = []
@@ -4182,14 +4198,30 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
+                    self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
                     self._provider_output_probe = (
                         f"{self._provider_output_probe}{event.text}"[-4_096:]
                     )
-                    if await self._recover_unbacked_action_claim():
+                    self._withheld_promise_parts.append(event.text)
+                    if has_deferred_action_claim(self._provider_output_probe):
+                        # ARM ONLY — never cancel here. Whether a commitment was
+                        # left without a delivered result is a judgement about a
+                        # FINISHED response; on a streaming prefix the sentence
+                        # after "Ich schaue mal kurz" / "Let me check" simply has
+                        # not arrived yet, so every real answer that opens with
+                        # one of those phrases looked like a bare promise and was
+                        # cancelled mid-sentence. Hold the text out of the scrub
+                        # gate (which keeps this response's audio with it) and
+                        # let the response close decide.
+                        self._arm_promise_confirm()
                         continue
-                    self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
+                    # The answer grew past the promise: release everything held
+                    # for it, in order, as one delta.
+                    self._cancel_promise_confirm()
+                    transcript_text = "".join(self._withheld_promise_parts)
+                    self._withheld_promise_parts.clear()
                     display = await self._gate.feed_transcript(
-                        event.text,
+                        transcript_text,
                         response_id=str(
                             getattr(event, "provider_turn_id", "") or ""
                         ),
@@ -4434,6 +4466,18 @@ class RealtimeVoiceSession:
                         self._pending_tool_events = []
                         for pending_event in pending:
                             await self._reject_untranscribed_tool_call(pending_event)
+                    # The response is closed, so the transcript is final and the
+                    # armed promise judgement can be made on the WHOLE text. It
+                    # runs before the text-only fallback below so an unbacked
+                    # promise is never handed to the surface TTS, and before the
+                    # delegate lookup so its own deterministic delegate is the
+                    # state this boundary then holds for. A declined recovery
+                    # (a tool DID run, the delegate owns the reply) releases the
+                    # held text so the answer is still spoken.
+                    if not await self._recover_unbacked_action_claim():
+                        await self._release_withheld_promise_text(
+                            str(getattr(event, "provider_turn_id", "") or "")
+                        )
                     if (
                         self._turn_id not in self._delegate_turns
                         and self._output_transcript
@@ -5517,6 +5561,8 @@ class RealtimeVoiceSession:
             self._gate.drain()
             self._output_transcript.clear()
             self._provider_output_probe = ""
+            self._withheld_promise_parts.clear()
+            self._cancel_promise_confirm()
             self._output_active = False
             self._output_samples_sent = 0
             self._reset_echo_horizon()
@@ -5681,7 +5727,14 @@ class RealtimeVoiceSession:
         return True
 
     async def _recover_unbacked_action_claim(self) -> bool:
-        """Turn a provider's unsupported action promise into a real outcome."""
+        """Turn a provider's unsupported action promise into a real outcome.
+
+        TERMINAL ONLY. ``has_deferred_action_claim`` asks whether a commitment
+        was left without a delivered result, which a still-growing stream can
+        never answer. Call this from a closed response (``turn_complete``) or
+        from the settled-silence backstop in the turn stall watchdog — never
+        from a transcript delta.
+        """
         if (
             self._external_update is not None
             or self._executed_tool_names
@@ -5690,6 +5743,13 @@ class RealtimeVoiceSession:
         ):
             return False
 
+        # One judgement per accumulated text: a delegate hold keeps this turn
+        # open past the boundary, and a later boundary (the bridge line's, for
+        # example) must not re-dispatch the same recovery. The held text is
+        # exactly what this recovery replaces, so it is dropped, not released.
+        self._provider_output_probe = ""
+        self._withheld_promise_parts.clear()
+        self._cancel_promise_confirm()
         self._gate.drain()
         self._output_transcript.clear()
         self._output_active = False
@@ -5730,6 +5790,100 @@ class RealtimeVoiceSession:
             fallback_text=action_not_started_phrase(self._language),
         )
         return True
+
+    def _cancel_promise_confirm(self) -> None:
+        task = self._promise_confirm_task
+        self._promise_confirm_task = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
+    def _arm_promise_confirm(self) -> None:
+        """Watch for the response close a silent transport never announces.
+
+        ``turn_complete`` decides an armed promise everywhere it arrives. This
+        is the bounded backstop for the transport that finishes a response
+        without one (the live forensic in ``_recover_unbacked_action_claim``):
+        without it the held text would sit in the gate until the 20 s stall
+        watchdog, and the promised action would never run. Re-armed per turn
+        and cancelled with the turn (AP-19).
+        """
+        task = self._promise_confirm_task
+        if task is not None and not task.done():
+            return
+        turn_id = self._turn_id
+        if not turn_id:
+            return
+        self._promise_confirm_task = asyncio.create_task(
+            self._confirm_promise_after_silence(turn_id),
+            name=f"rt-promise-confirm-{self.session_id}",
+        )
+
+    async def _confirm_promise_after_silence(self, turn_id: str) -> None:
+        """Run the terminal judgement once the provider has gone fully quiet."""
+        try:
+            while True:
+                await asyncio.sleep(_UNBACKED_CLAIM_SETTLE_POLL_S)
+                if (
+                    self._turn_id != turn_id
+                    or self._ended
+                    or self._failed.is_set()
+                    or not self._withheld_promise_parts
+                ):
+                    return
+                if (
+                    self._output_active
+                    or self._output_samples_sent > 0
+                    or self._gate.pending_audio_ms > 0
+                ):
+                    # Audio exists for this response, so it is still being
+                    # rendered or its boundary is still owed. Only the real
+                    # boundary may judge it.
+                    return
+                if (
+                    time.monotonic() - self._turn_activity_at
+                    < _UNBACKED_CLAIM_SETTLE_S
+                ):
+                    continue
+                log.info(
+                    "realtime[%s] judging an armed action promise on settled "
+                    "silence; the transport closed the response without a "
+                    "boundary",
+                    self.session_id,
+                )
+                await self._recover_unbacked_action_claim()
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a backstop must never end the call
+            log.warning(
+                "realtime[%s] promise confirmation failed for turn %s",
+                self.session_id,
+                turn_id,
+                exc_info=True,
+            )
+
+    async def _release_withheld_promise_text(self, response_id: str) -> None:
+        """Feed text held for an armed promise judgement that did not confirm.
+
+        The gate holds this response's audio behind its transcript, so nothing
+        of the answer is lost by waiting — but nothing may be silently dropped
+        either. Any hard leak this raises is handled by the caller's own
+        ``finalize()`` check, which runs right after.
+        """
+        self._cancel_promise_confirm()
+        if not self._withheld_promise_parts:
+            return
+        held = "".join(self._withheld_promise_parts)
+        self._withheld_promise_parts.clear()
+        display = await self._gate.feed_transcript(
+            held,
+            response_id=response_id,
+            enforce_output_language=(
+                self._output_language_validation_is_active()
+            ),
+        )
+        if display:
+            self._output_transcript.append(display)
 
     async def _publish_error(
         self, error_type: str, message: str, *, recoverable: bool
@@ -6914,6 +7068,8 @@ class RealtimeVoiceSession:
         self._input_turn_observed = False
         self._output_transcript.clear()
         self._provider_output_probe = ""
+        self._withheld_promise_parts.clear()
+        self._cancel_promise_confirm()
         self._executed_tool_names.clear()
         self._direct_tool_results.clear()
         self._turn_final_text = ""
