@@ -62,6 +62,22 @@ _END_SENSITIVITY_MEMBERS = {
     "high": "END_SENSITIVITY_HIGH",
 }
 
+# Per-turn steering keys, in the order they are written into one delta.
+# ``language`` first: it changes how everything after it is spoken.
+_STEERING_ORDER = ("language", "turn", "standing")
+
+# Framing for the steering delta. The session's own one-speaker directive —
+# already in this connection's fixed system instruction — declares developer
+# messages silent configuration that the model must never acknowledge, with
+# exactly one opener as the exception. This header deliberately does NOT use
+# that opener, and restates the silence so a model whose connect-time rule has
+# faded still stays quiet.
+_STEERING_HEADER = (
+    "Developer message — silent configuration update. It is NOT something the "
+    "user said and NOT a request to speak. Apply it from now on: do not "
+    "acknowledge it, do not answer it, and do not mention it."
+)
+
 
 def _end_of_speech_sensitivity(types: Any, preference: str | None) -> Any | None:
     """Resolve the requested end-of-speech patience, or None on an old SDK.
@@ -175,6 +191,13 @@ class _GeminiLiveSession:
     # reason=error (BUG-071). This adapter has no in-protocol resume, so the
     # orchestrator may reopen a fresh session in place and continue the call.
     rebuild_on_transport_death = True
+    # An answer blocked at the speech boundary cannot be re-requested here:
+    # this transport only ever generates on its own VAD boundary, so the
+    # orchestrator's plain ``request_response()`` fallback is a no-op and the
+    # turn stays silent until the 20 s stall watchdog fires. A developer text
+    # turn IS a working trigger on this channel (the same one that carries
+    # every delegate readback), so the retry travels that way instead.
+    supports_prompted_response_retry = True
     # Gemini's native audio is a GENERATIVE renderer, not a fixed-voice
     # synthesizer: the pinned prebuilt voice is a starting point the model
     # can audibly drift from when the spoken content reads as a performance
@@ -195,6 +218,8 @@ class _GeminiLiveSession:
         connection_cm: Any,
         client: Any,
         session_id: str,
+        instructions: str = "",
+        language: str = "",
     ) -> None:
         self._session = session
         self._connection_cm = connection_cm
@@ -206,6 +231,23 @@ class _GeminiLiveSession:
         # orchestrator can sum generations without double counting the
         # progressive snapshots some SDK versions repeat mid-generation.
         self._pending_usage: dict[str, int] | None = None
+        # The system instruction THIS connection was opened with. It can never
+        # be replaced (see update_session), so it is also the baseline: a
+        # directive whose exact text already stands in it needs no delivery.
+        self._connect_instructions = str(instructions or "")
+        # Steering the model has already been told, and steering that still
+        # has to travel: key -> (compared value, text to send).
+        self._delivered_steering: dict[str, str] = {
+            "language": str(language or "")
+        }
+        self._pending_steering: dict[str, tuple[str, str]] = {}
+        # Where the conversation stands, read off the stream this adapter
+        # already parses. A steering text is a USER-side realtime input, so it
+        # may only travel while the user's turn is open and the model is not
+        # generating — anywhere else it would interrupt a reply in flight or
+        # open a turn of its own.
+        self._user_turn_open = False
+        self._model_generating = False
 
     async def send_audio(self, chunk: Any) -> None:
         from google.genai import types  # lazy (AP-26)
@@ -238,6 +280,7 @@ class _GeminiLiveSession:
                 # including Gemini 3.1 events that carry multiple parts at once.
                 data = getattr(message, "data", None)
                 if data:
+                    self._note_model_output()
                     yield _ProviderEvent(
                         type="audio_delta",
                         audio=_PcmChunk(pcm=bytes(data), sample_rate=_OUTPUT_RATE),
@@ -258,6 +301,8 @@ class _GeminiLiveSession:
                     # the follow-up generation's snapshot cannot overwrite it.
                     yield _ProviderEvent(type="usage", usage=self._pending_usage)
                     self._pending_usage = None
+                if function_calls:
+                    self._note_model_output()
                 for function_call in function_calls:
                     raw_args = getattr(function_call, "args", None) or {}
                     if hasattr(raw_args, "model_dump"):
@@ -282,6 +327,7 @@ class _GeminiLiveSession:
                         getattr(output_transcription, "text", "") or ""
                     )
                     if output_text:
+                        self._note_model_output()
                         yield _ProviderEvent(
                             type="output_transcript_delta", text=output_text
                         )
@@ -298,6 +344,9 @@ class _GeminiLiveSession:
                                 type="usage", usage=self._pending_usage
                             )
                             self._pending_usage = None
+                        # A barge-in ends the generation, so the channel is
+                        # free again for the user turn that just started.
+                        self._model_generating = False
                         yield _ProviderEvent(type="interrupted")
 
                     input_transcription = getattr(
@@ -307,12 +356,21 @@ class _GeminiLiveSession:
                         getattr(input_transcription, "text", "") or ""
                     )
                     if input_text:
+                        # The user is audibly mid-turn: this is the one window
+                        # in which steering may travel. Flush whatever an
+                        # earlier update_session could not deliver BEFORE the
+                        # orchestrator reacts to the transcript, so the delta
+                        # is in context for the reply this turn produces.
+                        self._user_turn_open = True
+                        await self._flush_steering()
                         yield _ProviderEvent(
                             type="input_transcript", text=input_text, is_final=True
                         )
 
                     if bool(getattr(content, "turn_complete", False)):
                         turn_boundary_seen = True
+                        self._model_generating = False
+                        self._user_turn_open = False
                         # Every named TurnCompleteReason except UNSPECIFIED is
                         # an ABNORMAL stop (safety filter, response rejection,
                         # regeneration limit, ...). A natural end leaves the
@@ -369,6 +427,83 @@ class _GeminiLiveSession:
             if not turn_boundary_seen:
                 return
 
+    def _note_model_output(self) -> None:
+        """The model is producing this turn — the user's turn is over."""
+        self._model_generating = True
+        self._user_turn_open = False
+
+    def _note_steering(self, key: str, value: str, rendered: str) -> None:
+        """Queue one steering key when it differs from what the model knows."""
+        value = str(value or "")
+        if not value:
+            return
+        queued = self._pending_steering.get(key)
+        known = queued[0] if queued is not None else self._delivered_steering.get(key)
+        if known == value:
+            # Unchanged since the model was last told: nothing travels. The
+            # orchestrator rebuilds these strings every turn even when nothing
+            # in them moved, and re-asserting an identical directive is pure
+            # cost on a channel that re-bills its whole context per turn.
+            return
+        if (
+            key not in self._delivered_steering
+            and queued is None
+            and value in self._connect_instructions
+        ):
+            # First sighting, and this exact text already stands in the fixed
+            # system instruction of this connection — the model has it.
+            self._delivered_steering[key] = value
+            return
+        self._pending_steering[key] = (value, rendered)
+
+    async def _flush_steering(self) -> None:
+        """Send the queued steering delta, if the channel is safe right now."""
+        if not self._pending_steering:
+            return
+        if self._model_generating or not self._user_turn_open:
+            # Outside the user's open turn a text input is a turn of its own:
+            # it would interrupt a reply in flight or provoke an unprompted
+            # one. The delta waits for the next user utterance instead.
+            return
+        # ONE ordered pass decides both what travels and what counts as told.
+        # Building the text from one sequence and marking delivered from
+        # another is how a key silently becomes "the model knows this" without
+        # ever leaving the process — the same swallow this method exists to
+        # remove, one level deeper. A key outside the known order is appended
+        # last instead of vanishing.
+        ordered = [key for key in _STEERING_ORDER if key in self._pending_steering]
+        ordered += [
+            key for key in self._pending_steering if key not in _STEERING_ORDER
+        ]
+        ordered = [key for key in ordered if self._pending_steering[key][1]]
+        if not ordered:
+            # Every queued key renders to nothing, so there is nothing to say.
+            self._pending_steering.clear()
+            return
+        body = "\n\n".join(self._pending_steering[key][1] for key in ordered)
+        try:
+            await self._session.send_realtime_input(
+                text=f"{_STEERING_HEADER}\n\n{body}"
+            )
+        except Exception:  # noqa: BLE001 — steering must not kill the call
+            log.warning(
+                "gemini-live: delivering the per-turn directive update failed; "
+                "the model keeps the previous one and the next user turn "
+                "retries",
+                exc_info=True,
+            )
+            return
+        for key in ordered:
+            self._delivered_steering[key] = self._pending_steering[key][0]
+        self._pending_steering.clear()
+        # Keys only, never the directive text: this line exists so a call where
+        # the model "did not answer the way it normally would" can be checked
+        # against what actually reached it.
+        log.debug(
+            "gemini-live: delivered a per-turn steering delta (%s)",
+            ", ".join(ordered),
+        )
+
     async def update_session(
         self,
         *,
@@ -378,12 +513,41 @@ class _GeminiLiveSession:
         turn_directive: str | None = None,
         standing_directive: str | None = None,
     ) -> None:
-        # Gemini fixes system instructions at connect time. The orchestrator
-        # reconnects on a substantive language change in a later session.
-        # Accepting the directive keywords keeps the per-turn update off the
-        # session's TypeError-retry path; both are already embedded in the
-        # (fixed) instructions.
-        del instructions, language, tools, turn_directive, standing_directive
+        """Deliver what CHANGED; everything fixed stays at connect time.
+
+        The Live protocol has no mid-session setup message — a
+        ``LiveClientMessage`` carries setup, client_content, realtime_input or
+        tool_response, and setup is sent once at connect — so this
+        connection's system instruction and tool declarations genuinely cannot
+        be replaced. That used to mean the orchestrator's per-turn rebuild was
+        dropped whole: a delegate directive or a language pin that changed
+        mid-call never reached the model, which then answered from a frozen
+        connect-time prompt while the session filtered as if the new rules
+        were in force.
+
+        The changed part now travels as a short developer text turn on the
+        same realtime-input channel that carries every delegate readback.
+        Only the DELTA travels: the ~21k instruction block is never re-sent,
+        an unchanged directive sends nothing at all, and a newer value
+        supersedes an older undelivered one whole.
+        """
+        # Both are connect-time on this transport. ``tools`` is not silently
+        # lost either: the session reads ``supports_tool_updates = False``
+        # above and warns that changed declarations stand until the next
+        # session. ``instructions`` is the block whose changing parts arrive
+        # below as the delta.
+        del instructions, tools
+        self._note_steering(
+            "language",
+            str(language or ""),
+            "Output language pin: speak every following reply in this "
+            f"language only: {language}.",
+        )
+        turn_text = str(turn_directive or "")
+        self._note_steering("turn", turn_text, turn_text)
+        standing_text = str(standing_directive or "")
+        self._note_steering("standing", standing_text, standing_text)
+        await self._flush_steering()
 
     async def request_response(self, *, required_tool: str | None = None) -> None:
         # Gemini Live creates a response automatically at the VAD turn boundary.
@@ -731,6 +895,11 @@ class GeminiLiveProvider:
             connection_cm=connection_cm,
             client=client,
             session_id=str(uuid4()),
+            # The baseline for the per-turn steering delta: whatever already
+            # stands in this connection's fixed instruction never has to be
+            # re-delivered (see update_session).
+            instructions=str(getattr(cfg, "instructions", "") or ""),
+            language=str(getattr(cfg, "language", "") or ""),
         )
 
 

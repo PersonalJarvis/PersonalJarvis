@@ -246,6 +246,288 @@ async def test_text_update_uses_realtime_input_for_gemini_31() -> None:
     assert calls == [{"text": "Deliver the completed mission update."}]
 
 
+_TURN_DIRECTIVE = "Delegate this turn: call jarvis_action before you answer."
+_STANDING_DIRECTIVE = "Live-call discipline: you are ONE voice."
+
+
+def _user_speaking_message(text="was ist die uhrzeit", turn_complete=False):
+    """One server message that puts the user mid-turn (no model output yet)."""
+    return _fake_message(
+        server_content=SimpleNamespace(
+            output_transcription=None,
+            input_transcription=SimpleNamespace(text=text),
+            interrupted=False,
+            turn_complete=turn_complete,
+        )
+    )
+
+
+def _model_speaking_message(text="hier ist die antwort"):
+    return _fake_message(
+        server_content=SimpleNamespace(
+            output_transcription=SimpleNamespace(text=text),
+            input_transcription=None,
+            interrupted=False,
+            turn_complete=False,
+        )
+    )
+
+
+def _turn_complete_message():
+    return _fake_message(
+        server_content=SimpleNamespace(
+            output_transcription=None,
+            input_transcription=None,
+            interrupted=False,
+            turn_complete=True,
+        )
+    )
+
+
+def _steering_session(sent, *, instructions="", language="", session_id="s-steer"):
+    """A session whose realtime-input sends are captured, driven by messages."""
+    queue: list[list[object]] = []
+
+    async def fake_receive():
+        if queue:
+            for message in queue.pop(0):
+                yield message
+
+    async def send_realtime_input(**kwargs):
+        sent.append(kwargs)
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(
+            receive=fake_receive, send_realtime_input=send_realtime_input
+        ),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id=session_id,
+        instructions=instructions,
+        language=language,
+    )
+    return session, queue
+
+
+async def _drive(session, queue, messages):
+    queue.append(list(messages))
+    return [event async for event in session.receive()]
+
+
+@pytest.mark.asyncio
+async def test_changed_turn_directive_reaches_the_model_as_a_text_turn() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(sent, instructions="fixed prompt")
+
+    await _drive(session, queue, [_user_speaking_message()])
+    await session.update_session(
+        instructions="x" * 21_000, turn_directive=_TURN_DIRECTIVE
+    )
+
+    assert len(sent) == 1
+    text = sent[0]["text"]
+    assert _TURN_DIRECTIVE in text
+    # A developer message, explicitly not a request to speak.
+    assert "silent configuration" in text
+    # The rebuilt instruction block never travels; only the delta does.
+    assert "x" * 100 not in text
+    assert len(text) < 1_000
+
+
+@pytest.mark.asyncio
+async def test_unchanged_directive_sends_nothing_on_the_next_turn() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(sent, instructions="fixed prompt")
+
+    await _drive(session, queue, [_user_speaking_message()])
+    await session.update_session(turn_directive=_TURN_DIRECTIVE)
+    assert len(sent) == 1
+
+    # Second turn, same directive: the model already has it.
+    await _drive(session, queue, [_user_speaking_message("und morgen")])
+    await session.update_session(turn_directive=_TURN_DIRECTIVE)
+    assert len(sent) == 1
+
+    # Third turn with a DIFFERENT directive travels again.
+    await _drive(session, queue, [_user_speaking_message("mach es")])
+    await session.update_session(turn_directive="Answer directly this turn.")
+    assert len(sent) == 2
+    assert "Answer directly this turn." in sent[1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_directive_already_in_the_fixed_instructions_sends_nothing() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(
+        sent,
+        instructions=f"You are Jarvis.\n\n{_STANDING_DIRECTIVE}\n\n{_TURN_DIRECTIVE}",
+    )
+
+    await _drive(session, queue, [_user_speaking_message()])
+    await session.update_session(
+        turn_directive=_TURN_DIRECTIVE, standing_directive=_STANDING_DIRECTIVE
+    )
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_language_pin_travels_only_when_it_changes() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(sent, instructions="fixed", language="de")
+
+    await _drive(session, queue, [_user_speaking_message()])
+    await session.update_session(language="de")
+    assert sent == []
+
+    await _drive(session, queue, [_user_speaking_message("switch please")])
+    await session.update_session(language="en")
+    assert len(sent) == 1
+    assert "en" in sent[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_steering_waits_while_the_model_is_generating() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(sent, instructions="fixed")
+
+    # The model is mid-reply: a text input here would interrupt it.
+    await _drive(session, queue, [_model_speaking_message()])
+    await session.update_session(turn_directive=_TURN_DIRECTIVE)
+    assert sent == []
+
+    # The finished model turn alone is not the window either — between two
+    # turns a text input would open one of its own.
+    await _drive(session, queue, [_turn_complete_message()])
+    assert sent == []
+
+    # The next user utterance IS the window, and the delta is delivered
+    # BEFORE the transcript reaches the orchestrator.
+    events = await _drive(session, queue, [_user_speaking_message()])
+    assert [event.type for event in events] == ["input_transcript"]
+    assert len(sent) == 1
+    assert _TURN_DIRECTIVE in sent[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_newer_directive_supersedes_an_undelivered_one() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(sent, instructions="fixed")
+
+    await _drive(
+        session, queue, [_model_speaking_message(), _turn_complete_message()]
+    )
+    await session.update_session(turn_directive=_TURN_DIRECTIVE)
+    await session.update_session(turn_directive="Answer directly this turn.")
+    assert sent == []
+
+    await _drive(session, queue, [_user_speaking_message()])
+    assert len(sent) == 1
+    assert "Answer directly this turn." in sent[0]["text"]
+    assert _TURN_DIRECTIVE not in sent[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_steering_send_keeps_the_delta_for_the_next_turn() -> None:
+    sent: list[dict[str, str]] = []
+    failures = {"count": 1}
+
+    async def send_realtime_input(**kwargs):
+        if failures["count"] > 0:
+            failures["count"] -= 1
+            raise RuntimeError("socket hiccup")
+        sent.append(kwargs)
+
+    queue: list[list[object]] = []
+
+    async def fake_receive():
+        if queue:
+            for message in queue.pop(0):
+                yield message
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(
+            receive=fake_receive, send_realtime_input=send_realtime_input
+        ),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="s-retry",
+        instructions="fixed",
+    )
+
+    await _drive(session, queue, [_user_speaking_message()])
+    await session.update_session(turn_directive=_TURN_DIRECTIVE)
+    assert sent == []
+
+    await _drive(session, queue, [_user_speaking_message("noch mal")])
+    assert len(sent) == 1
+    assert _TURN_DIRECTIVE in sent[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_barge_in_reopens_the_steering_window() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(sent, instructions="fixed")
+
+    await session.update_session(turn_directive=_TURN_DIRECTIVE)
+    assert sent == []
+
+    # Model output, then the user cutting in inside ONE server message.
+    await _drive(
+        session,
+        queue,
+        [
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=SimpleNamespace(text="ich erklaere"),
+                    input_transcription=SimpleNamespace(text="stop"),
+                    interrupted=True,
+                    turn_complete=False,
+                )
+            )
+        ],
+    )
+
+    assert len(sent) == 1
+    assert _TURN_DIRECTIVE in sent[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_each_steering_key_is_tracked_on_its_own() -> None:
+    sent: list[dict[str, str]] = []
+    session, queue = _steering_session(sent, instructions="fixed", language="de")
+
+    await _drive(session, queue, [_user_speaking_message()])
+    await session.update_session(
+        turn_directive=_TURN_DIRECTIVE, standing_directive=_STANDING_DIRECTIVE
+    )
+    assert len(sent) == 1
+    assert _TURN_DIRECTIVE in sent[0]["text"]
+    assert _STANDING_DIRECTIVE in sent[0]["text"]
+
+    # Only the turn directive moves: the standing one is already told, so it
+    # must NOT ride along again on a channel that re-bills its whole context.
+    await _drive(session, queue, [_user_speaking_message("und jetzt")])
+    await session.update_session(
+        turn_directive="Answer directly this turn.",
+        standing_directive=_STANDING_DIRECTIVE,
+    )
+    assert len(sent) == 2
+    assert "Answer directly this turn." in sent[1]["text"]
+    assert _STANDING_DIRECTIVE not in sent[1]["text"]
+
+
+def test_prompted_response_retry_is_advertised() -> None:
+    # request_response() is a no-op on this transport, so without the
+    # capability an answer blocked at the speech boundary is never replaced.
+    assert _GeminiLiveSession.supports_prompted_response_retry is True
+    # The capability is a PAIR: the orchestrator's retry path reads the flag
+    # and then calls send_text, and raises "advertises prompted retries
+    # without send_text" if the adapter has none. Advertising one without the
+    # other turns a recoverable blocked answer into a failed retry.
+    assert callable(_GeminiLiveSession.send_text)
+
+
 class _FakeConnectCM:
     def __init__(self) -> None:
         self.exited = False
