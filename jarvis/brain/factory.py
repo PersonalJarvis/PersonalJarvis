@@ -471,10 +471,21 @@ def _load_tools_for_tier(
             elif ep.name == "computer-use":
                 # Wave 1: wraps the harness-dispatch plumbing with a fixed
                 # computer-use harness identity (see computer_use_tool.py).
+                #
+                # The mission ceiling comes from [computer_use].mission_timeout_s
+                # (audit AU-07): without it every voice/chat-triggered desktop
+                # mission ran under the tool's own fallback and no user could
+                # change it. ``None`` (config absent, e.g. a minimal test config)
+                # keeps the tool's fallback.
                 inst = cls(
                     bus=bus,
                     manager=harness_manager,
                     max_output_chars=config.harness.max_output_chars,
+                    timeout_s=getattr(
+                        getattr(config, "computer_use", None),
+                        "mission_timeout_s",
+                        None,
+                    ),
                 )
             elif ep.name in ("verify-via-curl", "verify-localhost"):
                 inst = cls()

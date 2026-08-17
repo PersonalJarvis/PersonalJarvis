@@ -2068,6 +2068,15 @@ class ComputerUseConfig(BaseModel):
     # no-progress guard in the loop still aborts dead-ends early.
     max_replans: int = Field(default=2, ge=0, le=40)
     per_step_timeout_s: float = Field(default=30.0, gt=0.0, le=300.0)
+    # Wall-clock ceiling for ONE whole computer-use mission (audit AU-07). This
+    # is the budget the router-tier ``computer_use`` tool hands the harness; the
+    # harness turns it into a deadline and raises TimeoutError when it passes.
+    # Default 600 (was a hardcoded 120): at a realistic 6-15 s per step the old
+    # ceiling exhausted after 8-20 steps while ``step_budget`` allowed 100, so
+    # every longer desktop task died halfway. Lower it to cut runaway missions
+    # short, raise it for long GUI flows. Read at brain build time — a change
+    # applies after a restart.
+    mission_timeout_s: float = Field(default=600.0, ge=10.0, le=3600.0)
     # L10 (CU speed): ceiling on a single CU model (think/plan/judge) call.
     # Default keeps the legacy 10.0 (no behaviour change); lower it -- with the
     # cu_bench harness as proof -- to bound tail latency. The configured

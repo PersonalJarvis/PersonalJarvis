@@ -62,10 +62,15 @@ def _ctx_output_language(ctx: ExecutionContext) -> str:
     return resolve_phrase_language(None, ctx.user_utterance)
 
 
-#: Default ceiling for a single computer-use run, in seconds. A multi-step GUI
-#: loop (open app → screenshot → click/type → verify) needs a generous budget;
-#: the per-step timeout inside the loop bounds individual actions.
-_DEFAULT_TIMEOUT_S = 120.0
+#: Fallback ceiling for a single computer-use run, in seconds, used only when
+#: no config value is wired (tests / minimal wiring). Production reads
+#: ``[computer_use].mission_timeout_s`` (jarvis/brain/factory.py).
+#:
+#: A multi-step GUI loop (open app → screenshot → click/type → verify) needs a
+#: generous budget: at a realistic 6-15 s per step the old fixed 120 s cut every
+#: mission off after 8-20 of its 100 allowed steps, so real desktop tasks died
+#: halfway. The per-step timeout inside the loop still bounds individual actions.
+_DEFAULT_TIMEOUT_S = 600.0
 
 
 def _cu_failure_detail(output: Any) -> tuple[int | None, str | None]:
@@ -149,8 +154,11 @@ class ComputerUseTool:
         bus: EventBus | None = None,
         manager: HarnessManager | None = None,
         max_output_chars: int = 4000,
-        timeout_s: float = _DEFAULT_TIMEOUT_S,
+        timeout_s: float | None = None,
     ) -> None:
+        # ``None`` = "no config wired" and resolves to the module fallback, so
+        # the mission ceiling has exactly ONE default (AP: no second source of
+        # truth drifting away from [computer_use].mission_timeout_s).
         # Reuse the harness-dispatch plumbing (streaming, trimming, timeout)
         # rather than re-implementing it; we only fix the harness identity.
         self._dispatch = DispatchToHarnessTool(
@@ -159,7 +167,9 @@ class ComputerUseTool:
             max_output_chars=max_output_chars,
         )
         self._bus = bus
-        self._timeout_s = float(timeout_s)
+        self._timeout_s = (
+            _DEFAULT_TIMEOUT_S if timeout_s is None else float(timeout_s)
+        )
         # Strong refs so background missions are never garbage-collected
         # mid-flight (same pattern as BrainManager._cu_background_tasks).
         self._background_tasks: set[asyncio.Task[None]] = set()

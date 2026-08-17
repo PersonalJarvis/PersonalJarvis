@@ -22,14 +22,22 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from jarvis.core.config import ComputerUseConfig
 from jarvis.harness import cu_run_registry
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/computer-use", tags=["computer-use"])
 
-#: Matches the LLM tool's default mission timeout.
-_DEFAULT_TIMEOUT_S = 120.0
+#: Mission ceiling for a goal started over HTTP, taken from the SAME schema
+#: default as voice/tool launches (``[computer_use].mission_timeout_s``) so the
+#: two surfaces cannot drift apart — a hardcoded literal here silently kept the
+#: REST/CLI path on the old 120 s after audit AU-07 raised the tool to 600 s.
+#: Reading the field default keeps this import-time and I/O-free; a value set in
+#: jarvis.toml reaches this surface only when the caller passes ``timeout_s``.
+_DEFAULT_TIMEOUT_S = float(
+    ComputerUseConfig.model_fields["mission_timeout_s"].default
+)
 _MIN_TIMEOUT_S = 10.0
 _MAX_TIMEOUT_S = 3600.0
 

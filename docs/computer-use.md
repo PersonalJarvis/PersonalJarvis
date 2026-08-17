@@ -168,9 +168,14 @@ cursor_glide_ms = 0  # set a positive value to opt into cursor animation
 max_steps = 100
 max_replans = 2
 per_step_timeout_s = 30.0
+mission_timeout_s = 600.0  # wall-clock ceiling for one whole mission
 verify_after_each_step = true
 step_budget = 100
 ```
+
+`mission_timeout_s` bounds a whole mission, `per_step_timeout_s` a single step.
+Raise it for long GUI flows; lower it to cut runaway missions short. It is read
+when the brain is built, so a change applies after a restart.
 
 `ROUTER_TOOLS` should remain a pure router-visible dispatcher set. Direct local
 tools are loaded separately as hidden BrainManager tools so the model does not
