@@ -47,6 +47,7 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
     "plugin-airtable",
     "plugin-cal_com",
     "plugin-home_assistant",
+    "plugin-spotify",
 )
 
 BUILTIN_SKILL_NAMES: tuple[str, ...] = (

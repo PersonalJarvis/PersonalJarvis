@@ -637,6 +637,15 @@ google_calendar = "jarvis.plugins.tool.google_calendar_rest:GoogleCalendarRestTo
 # monitored, share/delete ask), never a spawn (AP-5/AP-14). Entry-point name
 # matches the catalog native_tool + token-store key "google_drive".
 google_drive = "jarvis.plugins.tool.drive_rest:DriveRestTool"
+# Spotify (marketplace plugin, 2026-08-17) — play/pause/skip/volume/search over
+# the Spotify Web API using the marketplace-stored OAuth token. Native because
+# Spotify ships NO MCP server and no agent integration at all; the community
+# servers want a plaintext client secret in a config file plus a terminal auth
+# step, which would trade the keyring-backed connect button for a worse flow
+# (AP-2). Router-tier, risk_tier "monitor" — audible and instantly reversible,
+# so it is audited without prompting. Never a spawn (AP-5/AP-14). Entry-point
+# name matches the catalog native_tool + token-store key "spotify".
+spotify = "jarvis.plugins.tool.spotify_rest:SpotifyRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"

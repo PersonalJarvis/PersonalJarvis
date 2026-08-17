@@ -195,6 +195,12 @@ ROUTER_TOOLS = frozenset({
     # directly; otherwise a connected Drive is not callable by voice/chat. Never
     # a spawn (AP-5/AP-14).
     "google_drive",
+    # Spotify Marketplace plugin (2026-08-17): native REST tool, same rationale
+    # as gmail — Spotify publishes no MCP server at all, so it must be
+    # router-visible directly; otherwise connected Spotify is not callable by
+    # voice, which is the entire point of a music plugin. risk_tier "monitor":
+    # starting music is audible and instantly undone. Never a spawn (AP-5/AP-14).
+    "spotify",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker

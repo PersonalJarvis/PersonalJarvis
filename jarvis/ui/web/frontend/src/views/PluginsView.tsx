@@ -358,6 +358,7 @@ const OAUTH_FAMILY_LABEL: Record<string, string> = {
   slack: "Slack",
   asana: "Asana",
   microsoft: "Microsoft",
+  spotify: "Spotify",
 };
 
 function oauthClientFamily(
@@ -376,6 +377,7 @@ const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
   google: "https://console.cloud.google.com/auth/clients",
   slack: "https://api.slack.com/apps",
   asana: "https://app.asana.com/0/my-apps",
+  spotify: "https://developer.spotify.com/dashboard",
 };
 
 type TabId = "browse" | "installed" | "community";

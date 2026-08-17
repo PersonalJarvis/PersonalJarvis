@@ -529,6 +529,42 @@
       },
       "native_tool": "home_assistant",
       "post_install_hint_md": "Try “turn off the living room lights” or “is the garage door still open”. Acting on a device asks for confirmation first."
+    },
+    {
+      "id": "spotify",
+      "display_name": "Spotify",
+      "description": "Play music, skip tracks and hear what is playing",
+      "category": "Media & Creativity",
+      "logo_slug": "spotify",
+      "logo_color": "1ED760",
+      "featured": true,
+      "longevity": "provider_limited",
+      "longevity_note": "Spotify caps a refresh token at six months, so the connection asks to be renewed twice a year. Nothing can extend that.",
+      "oauth_client_family": "spotify",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.spotify.com/authorize",
+        "token_url": "https://accounts.spotify.com/api/token",
+        "client_id": "REPLACE_WITH_YOUR_SPOTIFY_CLIENT_ID",
+        "callback_port": 3125,
+        "callback_path": "/callback",
+        "scopes": [
+          "user-read-playback-state",
+          "user-modify-playback-state",
+          "user-read-currently-playing",
+          "playlist-read-private",
+          "playlist-modify-private",
+          "playlist-modify-public",
+          "user-library-read"
+        ],
+        "scope_separator": "space",
+        "user_scopes_only": false,
+        "refresh_supported": true,
+        "refresh_token_ttl_days": 180,
+        "offline_access": false
+      },
+      "native_tool": "spotify",
+      "post_install_hint_md": "Setup: see docs/marketplace/spotify-oauth-setup.md. Spotify has no shared client — every install registers its own app, which takes about five minutes and needs no client secret. Register the redirect URI **exactly** as `http://127.0.0.1:3125/callback`; Spotify rejects `localhost`.\n\nControlling playback (play, pause, skip, volume) requires Spotify **Premium** — Spotify's own rule, not ours. Reading what is playing works on a free account. Spotify offers no revoke endpoint, so disconnecting here removes the local credential; remove the app itself under Account → Apps."
     }
   ]
 }
