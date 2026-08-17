@@ -12,6 +12,7 @@ exempt from the anti-loop cap because it is one line per user utterance.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -298,6 +299,8 @@ async def test_router_ack_shortly_after_an_instant_ack_is_dropped(monkeypatch) -
 
     # Long wait: the router ack becomes the progress line.
     pipeline._instant_ack_spoken_at -= 30.0
+    last_text, last_at = pipeline._last_preamble_spoken
+    pipeline._last_preamble_spoken = (last_text, last_at - 30.0)
     await bus.publish(
         AnnouncementRequested(
             text="Still checking your calendar for tomorrow.",
@@ -361,3 +364,83 @@ async def test_a_new_utterance_cancels_the_pending_ack_of_the_previous_one(
 
     assert first is not None and first.cancelled()
     assert _instant_acks(seen) == []
+
+
+@pytest.mark.asyncio
+async def test_long_turn_gets_one_progress_line_grounded_in_the_running_tool(
+    monkeypatch,
+) -> None:
+    """Instant ack, then — after PROGRESS_AFTER_S with the turn still
+    processing — ONE line that names the tool actually running (search_web
+    -> the search pool). A handover (spawn_worker) speaks nothing: its reply
+    states the handover."""
+    from jarvis.core.events import ActionProposed
+    from jarvis.speech import pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "PROGRESS_AFTER_S", 0.2)
+    monkeypatch.setattr(
+        instant_ack_module,
+        "_POOLS",
+        {
+            **instant_ack_module._POOLS,
+            instant_ack_module.WorkClass.RESEARCH: {
+                "de": ("Ich suche das gerade online.",),  # i18n-allow: fixture
+                "en": ("I'm looking that up online.",),
+                "es": ("Lo estoy buscando en línea.",),
+            },
+        },
+    )
+    bus = EventBus()
+    seen: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda e: seen.append(e))
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+
+    pipeline._arm_instant_ack("What's the weather in Berlin right now?", "en")
+    await _settle(0.05)
+    await bus.publish(ActionProposed(tool_name="search_web"))
+    await _settle(0.35)
+
+    texts = [a.text for a in _instant_acks(seen)]
+    assert texts[0] == "I'm looking that up online."
+    assert len(texts) == 2
+    assert texts[1] in instant_ack_module.progress_pool(
+        instant_ack_module.ToolActivity.SEARCH, "en"
+    )
+    assert player.plays == 2
+    # Nothing more while the turn keeps running: one progress line per turn.
+    await _settle(0.3)
+    assert len(_instant_acks(seen)) == 2
+
+    # Handover: the spawn reply states it — no progress line.
+    seen.clear()
+    pipeline._arm_instant_ack("What's the weather in Berlin right now?", "en")
+    await _settle(0.05)
+    await bus.publish(ActionProposed(tool_name="spawn_worker"))
+    await _settle(0.4)
+    assert len(_instant_acks(seen)) == 1
+
+
+@pytest.mark.asyncio
+async def test_progress_line_yields_to_a_router_ack_that_just_spoke(monkeypatch) -> None:
+    """If the grounded router ack covered the wait seconds ago, the progress
+    line stays silent (no two interim lines within the window)."""
+    from jarvis.speech import pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "PROGRESS_AFTER_S", 0.2)
+    bus = EventBus()
+    seen: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda e: seen.append(e))
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+
+    pipeline._arm_instant_ack("What's the weather in Berlin right now?", "en")
+    await _settle(0.05)
+    assert player.plays == 1
+    # A router ack 0.25 s later is still inside the window -> dropped; then
+    # simulate that one DID speak just before the progress deadline.
+    pipeline._last_preamble_spoken = ("Checking the weather for you.", time.monotonic())
+    await _settle(0.35)
+    assert len(_instant_acks(seen)) == 1, "the progress line spoke over a fresh interim line"

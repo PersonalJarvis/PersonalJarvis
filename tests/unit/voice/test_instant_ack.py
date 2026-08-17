@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from jarvis.brain.turn_planner import plan_turn
 from jarvis.voice.instant_ack import (
+    _POOLS,
     IMMEDIATE_DELAY_S,
     SHORT_GRACE_S,
+    ToolActivity,
     WorkClass,
     all_instant_ack_lines,
+    all_progress_lines,
+    classify_tool_activity,
     contextual_ack_is_valid,
     instant_ack_pool,
     normalize_ack_line,
     pick_instant_ack_text,
+    pick_progress_text,
     plan_instant_ack,
+    progress_pool,
+    start_chat_instant_ack,
 )
 
 # ---------------------------------------------------------------------------
@@ -241,3 +250,110 @@ def test_a_digit_from_the_request_is_allowed_a_new_one_is_not():
     assert not contextual_ack_is_valid(
         "I'm opening terminal 4.", utterance="Open terminal 3", language="en"
     )
+
+
+# ---------------------------------------------------------------------------
+# progress line — grounded in the running tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "activity"),
+    [
+        ("search_web", ToolActivity.SEARCH),
+        ("browse_url", ToolActivity.SEARCH),
+        ("wiki_recall", ToolActivity.READ),
+        ("gmail_list_messages", ToolActivity.READ),
+        ("computer_use", ToolActivity.SCREEN),
+        ("open_app", ToolActivity.SCREEN),
+        ("spawn_worker", ToolActivity.HANDOVER),
+        ("run_shell", ToolActivity.OTHER),
+        ("", ToolActivity.OTHER),
+    ],
+)
+def test_tool_names_map_onto_progress_activities(tool_name, activity):
+    assert classify_tool_activity(tool_name) is activity
+
+
+@pytest.mark.parametrize("language", ["de", "en", "es"])
+def test_progress_pools_exist_for_every_activity_except_handover(language):
+    for activity in ToolActivity:
+        pool = progress_pool(activity, language)
+        if activity is ToolActivity.HANDOVER:
+            assert pool == ()
+            assert pick_progress_text(activity, language) == ""
+        else:
+            assert len(pool) >= 2
+            assert pick_progress_text(activity, language) in pool
+
+
+def test_all_progress_lines_are_normalized():
+    assert normalize_ack_line("Still searching.") in all_progress_lines("en")
+
+
+# ---------------------------------------------------------------------------
+# chat surface — the visual twin
+# ---------------------------------------------------------------------------
+
+
+class _Bus:
+    def __init__(self) -> None:
+        self.events: list = []
+
+    async def publish(self, event) -> None:
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_chat_instant_ack_publishes_a_preamble_bubble(monkeypatch):
+    monkeypatch.setattr(
+        "jarvis.voice.instant_ack._POOLS",
+        {
+            **_POOLS,
+            WorkClass.RESEARCH: {
+                "de": ("Ich suche das gerade online.",),  # i18n-allow: fixture
+                "en": ("I'm looking that up online.",),
+                "es": ("Lo estoy buscando en línea.",),
+            },
+        },
+    )
+    bus = _Bus()
+    task = start_chat_instant_ack(
+        bus,
+        text="What's the weather in Berlin right now?",
+        thread_id="t-1",
+        language="en",
+    )
+    assert task is not None
+    await asyncio.wait_for(task, timeout=2)
+    assert len(bus.events) == 1
+    event = bus.events[0]
+    assert event.role == "preamble"
+    assert event.thread_id == "t-1"
+    assert event.text == "I'm looking that up online."
+    assert event.source_layer == "brain.instant_ack"
+
+
+@pytest.mark.asyncio
+async def test_chat_instant_ack_is_silent_when_cancelled_before_the_grace(monkeypatch):
+    monkeypatch.setattr("jarvis.voice.instant_ack.SHORT_GRACE_S", 0.2)
+    bus = _Bus()
+    task = start_chat_instant_ack(
+        bus, text="What's in my notes about Albel?", thread_id="t-1", language="en"
+    )
+    assert task is not None
+    await asyncio.sleep(0.02)
+    task.cancel()
+    await asyncio.sleep(0.3)
+    assert bus.events == []
+
+
+@pytest.mark.asyncio
+async def test_chat_instant_ack_skips_plain_conversation_and_voice_control():
+    bus = _Bus()
+    assert (
+        start_chat_instant_ack(bus, text="Hallo, wie geht's?", thread_id="t") is None
+    )  # i18n-allow
+    assert start_chat_instant_ack(bus, text="Sei still", thread_id="t") is None  # i18n-allow
+    assert start_chat_instant_ack(bus, text="", thread_id="t") is None
+    assert start_chat_instant_ack(None, text="Open Spotify", thread_id="t") is None

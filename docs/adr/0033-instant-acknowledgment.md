@@ -60,6 +60,22 @@ One shared core, `jarvis/voice/instant_ack.py`, used by both voice engines.
    predecessor); the "user holds the floor" and "Jarvis already speaking"
    drops and the `should_play` predicate still apply. `[ack_brain].instant_ack
    = false` is the kill switch. Mission heartbeat first beat 30 → 20 s.
+6. **One grounded progress line.** When the work outlasts the first line by
+   `PROGRESS_AFTER_S` (8 s), both engines speak ONE more line grounded in
+   the tool the turn is actually running — `ToolExecutor`'s `ActionProposed`
+   is classified into search / read / screen / handover / other pools
+   ("Still searching.", "Still on the screen."); a handover speaks nothing
+   (the spawn reply states it). At most one per turn, and never within 8 s
+   of any other interim line (the grounded router ack may have covered it).
+7. **Chat surface.** The text-chat path (desktop app and headless launcher)
+   shows the same first line as a muted pre-ack bubble
+   (`MessageSent(role="preamble")`, the bubble the chat view already
+   renders), armed before the brain call and cancelled the moment the reply
+   is in. Never spoken.
+8. **Opt-in topic lines for pooled classes.** `[ack_brain].instant_ack_compose_all
+   = true` lets the composer / live model produce a request-specific line for
+   research / personal / screen / mission too, under the same validator, with
+   the pool line as fallback. Off by default.
 
 ## Consequences
 
@@ -88,6 +104,12 @@ One shared core, `jarvis/voice/instant_ack.py`, used by both voice engines.
   the ACTION-only path (and an Etappe-2 opt-in elsewhere).
 - **Prompt-only "do not invent" for the action line** — BUG-054 proved
   prompt compliance is not a boundary; the structural validator is.
+- **A bridge for provider-requested `jarvis_action` calls** — the live model
+  usually speaks its own line before calling; injecting a response while a
+  native function call is pending behaves differently per transport (Gemini
+  Live blocks on the tool response) and cannot be verified without a live
+  session, so this path keeps the model's own pre-call line as its ack.
+  Follow-up once a transport declares the capability.
 
 ## References
 

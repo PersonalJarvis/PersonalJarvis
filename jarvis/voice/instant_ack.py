@@ -37,6 +37,8 @@ German/Spanish strings below are runtime voice output (CLAUDE.md §1).
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import random
 import re
 import time
@@ -44,8 +46,11 @@ import unicodedata
 from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from jarvis.brain.turn_planner import TurnPlan, TurnReason, is_lookup_shape
+
+log = logging.getLogger(__name__)
 
 _SUPPORTED_LANGUAGES = ("de", "en", "es")
 _DEFAULT_LANGUAGE = "en"
@@ -952,6 +957,268 @@ def recently_spoken(within_s: float = PROGRESS_AFTER_S, *, now: float | None = N
     line, at = _last_spoken
     current = time.monotonic() if now is None else float(now)
     return line if (current - at) < float(within_s) else ""
+
+
+# ---------------------------------------------------------------------------
+# Progress line — grounded in the tool that is ACTUALLY running
+# ---------------------------------------------------------------------------
+
+
+class ToolActivity(StrEnum):
+    """Coarse class of a running tool, for an honest "still on it" line."""
+
+    SEARCH = "search"
+    READ = "read"
+    SCREEN = "screen"
+    HANDOVER = "handover"  # a background agent took over — the reply says so
+    OTHER = "other"
+
+
+_TOOL_ACTIVITY_MARKERS: tuple[tuple[ToolActivity, tuple[str, ...]], ...] = (
+    (ToolActivity.HANDOVER, ("spawn", "mission", "dispatch_harness", "worker")),
+    (
+        ToolActivity.SCREEN,
+        (
+            "computer_use",
+            "click",
+            "type_text",
+            "hotkey",
+            "scroll",
+            "screen",
+            "open_app",
+            "switch_window",
+            "move_mouse",
+            "window",
+            "screenshot",
+        ),
+    ),
+    (ToolActivity.SEARCH, ("search", "web", "browse", "fetch", "http", "crawl")),
+    (
+        ToolActivity.READ,
+        (
+            "wiki",
+            "memory",
+            "recall",
+            "note",
+            "read",
+            "calendar",
+            "mail",
+            "gmail",
+            "contact",
+            "list",
+            "get",
+            "inspect",
+            "status",
+            "lookup",
+        ),
+    ),
+)
+
+
+def classify_tool_activity(tool_name: str) -> ToolActivity:
+    """Map a tool name (any registry, any casing) onto a progress class."""
+    name = str(tool_name or "").casefold()
+    if not name:
+        return ToolActivity.OTHER
+    for activity, markers in _TOOL_ACTIVITY_MARKERS:
+        if any(marker in name for marker in markers):
+            return activity
+    return ToolActivity.OTHER
+
+
+# i18n-allow: localized runtime voice output (whole table)
+_PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
+    ToolActivity.SEARCH: {
+        "de": (  # i18n-allow: localized runtime voice output
+            "Die Suche läuft noch.",  # i18n-allow
+            "Ich bin noch am Suchen.",  # i18n-allow
+            "Die Online-Suche braucht noch einen Moment.",  # i18n-allow
+        ),
+        "en": (
+            "Still searching.",
+            "The search is still running.",
+            "The online lookup needs another moment.",
+        ),
+        "es": (  # i18n-allow: localized runtime voice output
+            "Sigo buscando.",
+            "La búsqueda sigue en marcha.",
+            "La consulta en línea necesita un momento más.",
+        ),
+    },
+    ToolActivity.READ: {
+        "de": (  # i18n-allow: localized runtime voice output
+            "Ich lese noch in deinen Unterlagen.",  # i18n-allow
+            "Bin noch am Nachlesen.",  # i18n-allow
+            "Ich gehe das noch durch.",  # i18n-allow
+        ),
+        "en": (
+            "Still reading through your records.",
+            "Still going through it.",
+            "Reading on, one moment.",
+        ),
+        "es": (  # i18n-allow: localized runtime voice output
+            "Sigo leyendo tus registros.",
+            "Todavía lo estoy revisando.",
+            "Sigo con ello, un momento.",
+        ),
+    },
+    ToolActivity.SCREEN: {
+        "de": (  # i18n-allow: localized runtime voice output
+            "Ich bin noch am Bildschirm dran.",  # i18n-allow
+            "Der Bildschirm-Schritt läuft noch.",  # i18n-allow
+            "Noch einen Moment am Bildschirm.",  # i18n-allow
+        ),
+        "en": (
+            "Still working on the screen.",
+            "The screen step is still running.",
+            "One more moment on the screen.",
+        ),
+        "es": (  # i18n-allow: localized runtime voice output
+            "Sigo con la pantalla.",
+            "El paso en pantalla sigue en marcha.",
+            "Un momento más en la pantalla.",
+        ),
+    },
+    ToolActivity.OTHER: {
+        "de": (  # i18n-allow: localized runtime voice output
+            "Ich bin noch dran.",  # i18n-allow
+            "Dauert noch einen kleinen Moment.",  # i18n-allow
+            "Bin gleich so weit.",  # i18n-allow
+        ),
+        "en": (
+            "I'm still working on it.",
+            "Still on it, give me a moment.",
+            "Almost there.",
+        ),
+        "es": (  # i18n-allow: localized runtime voice output
+            "Sigo trabajando en ello.",
+            "Un momento más.",
+            "Ya casi está.",
+        ),
+    },
+    # HANDOVER: no line of its own — the spawn reply states the handover.
+    ToolActivity.HANDOVER: {"de": (), "en": (), "es": ()},
+}
+
+_RECENT_PROGRESS: dict[tuple[ToolActivity, str], deque[str]] = {}
+
+
+def progress_pool(activity: ToolActivity, language: str) -> tuple[str, ...]:
+    return tuple(_PROGRESS_POOLS.get(activity, {}).get(_language_key(language), ()))
+
+
+def pick_progress_text(activity: ToolActivity, language: str) -> str:
+    """One honest progress line for the running activity; ``""`` for handover."""
+    pool = progress_pool(activity, language)
+    if not pool:
+        return ""
+    key = (activity, _language_key(language))
+    recent = _RECENT_PROGRESS.setdefault(key, deque(maxlen=_RECENT_DEPTH))
+    candidates = [line for line in pool if line not in recent] or list(pool)
+    # noqa comment: variety, not security — any pool member is equally safe.
+    chosen = random.choice(candidates)  # noqa: S311
+    recent.append(chosen)
+    return chosen
+
+
+def all_progress_lines(language: str) -> frozenset[str]:
+    """Every progress-pool line for ``language``, normalized (transcript whitelist)."""
+    return frozenset(
+        normalize_ack_line(line)
+        for activity in ToolActivity
+        for line in progress_pool(activity, language)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chat surface — the visual twin of the spoken line
+# ---------------------------------------------------------------------------
+
+
+def start_chat_instant_ack(
+    bus: Any,
+    *,
+    text: str,
+    thread_id: str,
+    trace_id: Any = None,
+    brain: Any = None,
+    agent_brand: str = "",
+    language: str = "",
+) -> asyncio.Task[None] | None:
+    """Show the instant ack as a muted pre-ack bubble in a text-chat thread.
+
+    The chat path has no streaming and no interim voice: the user sees
+    "thinking…" until the whole turn returns. This publishes the same line the
+    voice engines would speak — as ``MessageSent(role="preamble")``, the
+    bubble the chat view already renders for pre-acks — after the plan's
+    delay, and only if the task is still alive (the caller cancels it the
+    moment the reply arrives, so a fast turn shows nothing). Never speaks:
+    it is a bus message for the UI, not an announcement.
+
+    Returns the task (cancel it in the caller's ``finally``) or ``None`` when
+    the turn warrants no ack.
+    """
+    request = str(text or "").strip()
+    if bus is None or not request:
+        return None
+    try:
+        from jarvis.brain.ack_generator import is_voice_control_utterance
+        from jarvis.brain.turn_planner import plan_turn
+
+        if is_voice_control_utterance(request):
+            return None
+        plan = plan_instant_ack(plan_turn(request), request)
+    except Exception:  # noqa: BLE001 — planning must never break a chat turn
+        log.debug("chat instant ack: planning failed", exc_info=True)
+        return None
+    if plan is None:
+        return None
+    if not language:
+        try:
+            from jarvis.core.turn_language import resolve_output_language
+
+            language = resolve_output_language(
+                getattr(brain, "_reply_language", None),
+                "unknown",
+                request,
+                conversation_language=getattr(brain, "_conversation_language", None),
+            )
+        except Exception:  # noqa: BLE001 — fall back to the module default
+            language = _DEFAULT_LANGUAGE
+
+    async def _body() -> None:
+        try:
+            if plan.delay_s > 0:
+                await asyncio.sleep(plan.delay_s)
+            if plan.contextual:
+                line = await compose_contextual_ack(
+                    getattr(brain, "_readback_composer", None),
+                    utterance=request,
+                    language=language,
+                    agent_brand=agent_brand,
+                )
+            else:
+                line = pick_instant_ack_text(plan.work_class, language, agent_brand=agent_brand)
+            if not line:
+                return
+            from jarvis.core.events import MessageSent
+
+            kwargs: dict[str, Any] = {
+                "thread_id": thread_id,
+                "role": "preamble",
+                "text": line,
+                "source_layer": "brain.instant_ack",
+            }
+            if trace_id is not None:
+                kwargs["trace_id"] = trace_id
+            await bus.publish(MessageSent(**kwargs))
+            note_spoken(line)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — best-effort by design
+            log.debug("chat instant ack failed", exc_info=True)
+
+    return asyncio.create_task(_body(), name="chat-instant-ack")
 
 
 #: Hard budget for a flash-LLM composed ACTION line. The line is worthless

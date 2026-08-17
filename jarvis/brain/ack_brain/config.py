@@ -145,6 +145,12 @@ class AckBrainConfig(BaseModel):
     # class alone uses the flash composer and stays silent without one.
     # False = back to the pre-2026-08-17 silence until the router acks.
     instant_ack: bool = Field(default=True)
+    # Opt-in: request-specific lines for the POOLED instant-ack classes too
+    # ("I'm pulling the flight data for Friday." instead of "I'm looking that
+    # up online."). Same flash composer / live model, same structural
+    # validator, the pool line stays the instant fallback. Off by default:
+    # the pool lines already fit their class at 0 ms and zero cost.
+    instant_ack_compose_all: bool = Field(default=False)
     # 2026-07-06 interim-ack redesign (spec: docs/superpowers/specs/
     # 2026-07-06-interim-ack-redesign-design.md). Forensic finding: one voice
     # session spoke the identical grounded ack once per utterance, three

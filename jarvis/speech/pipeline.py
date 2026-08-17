@@ -54,6 +54,7 @@ from jarvis.core.events import (
     CU_PROGRESS_EVENTS,
     DICTATION_REFUSAL_REASONS,
     ActionPlanned,
+    ActionProposed,
     AnnouncementRequested,
     AudioOutFirst,
     BrainTTFT,
@@ -151,9 +152,12 @@ from jarvis.trigger.hotkey import HotkeyTrigger
 from jarvis.voice.instant_ack import (
     PROGRESS_AFTER_S,
     InstantAckPlan,
+    ToolActivity,
+    classify_tool_activity,
     compose_contextual_ack,
     note_spoken,
     pick_instant_ack_text,
+    pick_progress_text,
     plan_instant_ack,
 )
 
@@ -2644,6 +2648,10 @@ class SpeechPipeline:
             # Wave 0 (omni-latency): perceived time-to-first-audio (ack OR
             # brain, whichever speaks first) feeds the per-turn latency tracker.
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
+            # Instant-ack progress line (2026-08-17): remember which tool the
+            # turn is actually running so a long wait gets an HONEST "still
+            # searching" instead of a generic filler.
+            self._bus.subscribe(ActionProposed, self._on_action_proposed)
             # Computer-use liveness: a desktop-automation loop (computer_use)
             # runs as ONE opaque tool call that streams NO text, so the brain
             # stall guard cannot tell "stepping through a 20-action plan" from
@@ -4451,15 +4459,16 @@ class SpeechPipeline:
         if (
             is_preamble
             and source_layer == "brain.router.ack"
-            and self._instant_ack_spoke_recently(PROGRESS_AFTER_S)
+            and self._interim_line_spoke_recently(PROGRESS_AFTER_S)
         ):
-            # Instant acknowledgment (2026-08-17): the user just heard the
-            # turn's first line. A second "let me check" seconds later is the
-            # double-tap; the grounded router ack is welcome again only once
-            # the wait has grown long enough to deserve a progress line.
+            # Instant acknowledgment (2026-08-17): the user just heard an
+            # interim line for this turn. A second "let me check" seconds later
+            # is the double-tap; the grounded router ack is welcome again only
+            # once the wait has grown long enough to deserve a progress line.
+            last = getattr(self, "_last_preamble_spoken", None)
             log.info(
-                "Grounded ack dropped — instant ack spoken %.1fs ago: %r",
-                time.monotonic() - float(getattr(self, "_instant_ack_spoken_at", 0.0)),
+                "Grounded ack dropped — an interim line spoke %.1fs ago: %r",
+                time.monotonic() - (last[1] if last else time.monotonic()),
                 event.text[:80],
             )
             return
@@ -4816,9 +4825,17 @@ class SpeechPipeline:
             plan.delay_s,
             plan.contextual,
         )
+        self._turn_tool_activity = ""
         self._instant_ack_task = asyncio.create_task(
             self._instant_ack_body(plan, text, language, seq),
             name="instant-ack",
+        )
+        previous_progress = getattr(self, "_instant_progress_task", None)
+        if previous_progress is not None and not previous_progress.done():
+            previous_progress.cancel()
+        self._instant_progress_task = asyncio.create_task(
+            self._instant_progress_body(language, seq),
+            name="instant-ack-progress",
         )
 
     async def _instant_ack_body(
@@ -4850,9 +4867,21 @@ class SpeechPipeline:
                     )
                     return
             else:
-                line = pick_instant_ack_text(
-                    plan.work_class, language, agent_brand=self._agent_brand_name()
-                )
+                line = ""
+                if self._instant_ack_compose_all():
+                    # Opt-in: a request-specific line for the pooled classes
+                    # too ("I'm pulling the flight data for Friday."), same
+                    # validator, the pool line as the instant fallback.
+                    line = await compose_contextual_ack(
+                        getattr(self._brain, "_readback_composer", None),
+                        utterance=text,
+                        language=language,
+                        agent_brand=self._agent_brand_name(),
+                    )
+                if not line:
+                    line = pick_instant_ack_text(
+                        plan.work_class, language, agent_brand=self._agent_brand_name()
+                    )
             if not line or not self._instant_ack_still_wanted(seq):
                 return
             tracker = getattr(self, "_latency_tracker", None)
@@ -4874,6 +4903,62 @@ class SpeechPipeline:
             raise
         except Exception:  # noqa: BLE001 — the ack is best-effort by design
             log.warning("Instant ack failed", exc_info=True)
+
+    def _instant_ack_compose_all(self) -> bool:
+        ack_cfg = getattr(getattr(self, "_config", None), "ack_brain", None)
+        return bool(getattr(ack_cfg, "instant_ack_compose_all", False))
+
+    async def _on_action_proposed(self, event: ActionProposed) -> None:
+        """Remember the tool the current voice turn is running (progress line)."""
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) is not TurnTakingState.PROCESSING:
+            return
+        self._turn_tool_activity = str(getattr(event, "tool_name", "") or "")
+
+    async def _instant_progress_body(self, language: str, seq: int) -> None:
+        """One honest progress line when the work outlasts the ack by 8 s.
+
+        Grounded in the tool the turn is ACTUALLY running (``ActionProposed``):
+        "still searching", "still reading through your records", "still on the
+        screen" — the generic pool only when no tool is known. Skipped when a
+        background agent took over (its reply states the handover) or when
+        any interim line spoke in the last 8 s (the grounded router ack may
+        have covered it). At most one per turn.
+        """
+        try:
+            await asyncio.sleep(PROGRESS_AFTER_S)
+            if not self._instant_ack_still_wanted(seq):
+                return
+            if self._interim_line_spoke_recently(PROGRESS_AFTER_S):
+                return
+            activity = classify_tool_activity(getattr(self, "_turn_tool_activity", ""))
+            if activity is ToolActivity.HANDOVER:
+                return
+            line = pick_progress_text(activity, language)
+            if not line or not self._instant_ack_still_wanted(seq):
+                return
+            log.info("Instant progress line (activity=%s): %r", activity.value, line)
+            # kind="preamble", not "progress": a progress announcement is the
+            # background-mission heartbeat and is dropped unless LISTENING; this
+            # line belongs to the FOREGROUND turn that is still PROCESSING and
+            # obeys the same gates as the instant ack (speaking answer, floor).
+            await self._publish_event(
+                AnnouncementRequested(
+                    source_layer=self._INSTANT_ACK_SOURCE_LAYER,
+                    text=line,
+                    priority="normal",
+                    language=language,
+                    kind="preamble",
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — best-effort by design
+            log.warning("Instant progress line failed", exc_info=True)
+
+    def _interim_line_spoke_recently(self, within_s: float) -> bool:
+        """Any preamble/progress line (instant ack, router ack, heartbeat) just spoke."""
+        last = getattr(self, "_last_preamble_spoken", None)
+        return bool(last is not None and (time.monotonic() - last[1]) < within_s)
 
     def _instant_ack_still_wanted(self, seq: int) -> bool:
         """The line is only coherent while THIS turn is still thinking."""

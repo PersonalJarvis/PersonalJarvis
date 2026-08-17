@@ -77,14 +77,19 @@ from jarvis.speech.interrupt_intent import (
     classify_interrupt,
 )
 from jarvis.voice.instant_ack import (
+    PROGRESS_AFTER_S,
     InstantAckPlan,
+    ToolActivity,
     WorkClass,
     all_instant_ack_lines,
+    all_progress_lines,
+    classify_tool_activity,
     compose_contextual_ack,
     contextual_ack_is_valid,
     contextual_ack_prompt,
     instant_ack_pool,
     pick_instant_ack_text,
+    pick_progress_text,
     plan_instant_ack,
 )
 
@@ -1086,6 +1091,15 @@ def _delegate_bridge_texts(language: str) -> tuple[str, ...]:
     return _DELEGATE_BRIDGE_TEXTS.get(language, _DELEGATE_BRIDGE_TEXTS["en"])
 
 
+def _all_progress_pool_lines(language: str) -> tuple[str, ...]:
+    """Every progress-pool line (jarvis.voice.instant_ack), rendered."""
+    from jarvis.voice.instant_ack import progress_pool
+
+    return tuple(
+        line for activity in ToolActivity for line in progress_pool(activity, language)
+    )
+
+
 def _all_instant_ack_pool_lines(language: str, agent_brand: str) -> tuple[str, ...]:
     """Every closed instant-ack pool line (jarvis.voice.instant_ack), rendered.
 
@@ -1835,6 +1849,19 @@ class RealtimeVoiceSession:
         # task — it must never hold a turn open, defer a VAD edge, or refuse
         # an announcement on behalf of work that is merely a sleeping timer.
         self._delegate_bridge_task: asyncio.Task[None] | None = None
+        # The tool the delegated turn is ACTUALLY running (ToolExecutor's
+        # ActionProposed on the bus) — grounds the +8 s progress line
+        # ("still searching" / "still on the screen") instead of a filler.
+        self._running_tool_name = ""
+        self._action_proposed_subscribed = False
+        if self._bus is not None:
+            try:
+                from jarvis.core.events import ActionProposed
+
+                self._bus.subscribe(ActionProposed, self._on_action_proposed)
+                self._action_proposed_subscribed = True
+            except Exception:  # noqa: BLE001 — telemetry-grade, never load-bearing
+                log.debug("realtime: ActionProposed subscription failed", exc_info=True)
         self._delegate_turns: dict[str, _DelegateTurnState] = {}
         self._delegate_history: list[BrainMessage] = []
         self._announcement_context_signatures: list[tuple[str, str, str]] = []
@@ -4476,6 +4503,7 @@ class RealtimeVoiceSession:
                         allowed_bridge_lines |= all_instant_ack_lines(
                             self._language, agent_brand=agent_brand
                         )
+                        allowed_bridge_lines |= all_progress_lines(self._language)
                         expected_bridge = (
                             delegate_state.bridge_expected_text
                             or next(iter(_delegate_bridge_texts(self._language)))
@@ -4555,6 +4583,7 @@ class RealtimeVoiceSession:
                                         *_all_instant_ack_pool_lines(
                                             self._language, agent_brand
                                         ),
+                                        *_all_progress_pool_lines(self._language),
                                     )
                                     if _normalized_bridge_text(candidate)
                                     == _normalized_bridge_text(bridge_text)
@@ -6213,6 +6242,16 @@ class RealtimeVoiceSession:
         tracker = self._latency_tracker
         if tracker is not None and phase not in tracker.stages_snapshot():
             tracker.mark(phase, detail=self._latency_detail(detail))
+
+    async def _on_action_proposed(self, event: Any) -> None:
+        """Remember the tool a delegated turn is running (progress line grounding)."""
+        if self._ended:
+            return
+        self._running_tool_name = str(getattr(event, "tool_name", "") or "")
+
+    def _instant_ack_compose_all(self) -> bool:
+        ack_cfg = getattr(self._config, "ack_brain", None)
+        return bool(getattr(ack_cfg, "instant_ack_compose_all", False))
 
     def _agent_brand(self) -> str:
         """The wake-word-derived agent brand for spoken lines (never hardcoded)."""
@@ -8149,12 +8188,12 @@ class RealtimeVoiceSession:
         turn_id: str,
         turn_state: _DelegateTurnState,
     ) -> None:
-        """Speak the turn's first sign of life while the delegate is running.
+        """Speak the turn's first sign of life, then one honest progress line.
 
         Instant acknowledgment (2026-08-17): the delay comes from the
         instant-ack plan decided at dispatch — immediately for long work
         (research, screen, mission), after a short grace for actions and
-        memory reads so a fast result stays chatter-free — capped by the
+        personal lookups so a fast result stays chatter-free — capped by the
         legacy ``_DELEGATE_BRIDGE_DELAY_S`` (which alone applies to
         unclassified turns). The line names the KIND of work from a closed
         pool, or for actions is a model-composed line naming the request's
@@ -8162,6 +8201,11 @@ class RealtimeVoiceSession:
         complete transcript is a closed-pool member or passes the structural
         contextual validator. A trusted result that is ready before the line
         was released preempts it; a line already playing finishes.
+
+        When the work outlasts the first line by ``PROGRESS_AFTER_S`` the
+        same machinery speaks ONE progress line grounded in the tool the
+        delegate is actually running ("still searching" / "still on the
+        screen"), or the generic pool when no tool is known. At most one.
         """
         try:
             capability_limited = not bool(
@@ -8185,120 +8229,39 @@ class RealtimeVoiceSession:
                 pass
             else:
                 return  # the result beat the bridge — no interim line needed
-            if self._delegate_bridge_must_stand_down(turn_id, turn_state):
-                return
-            await self._await_provider_response_boundary(turn_state)
-            if self._delegate_bridge_must_stand_down(turn_id, turn_state):
-                return
-            send_text = getattr(self._session, "send_text", None)
-            send_speech = getattr(self._session, "send_speech", None)
-            authoritative_speech = bool(
-                callable(send_speech)
-                and getattr(
-                    self._session,
-                    "direct_speech_is_authoritative",
-                    False,
-                )
+            self._running_tool_name = ""
+            await self._inject_delegate_bridge_line(
+                turn_id,
+                turn_state,
+                plan=plan,
+                progress=False,
+                delay_s=bridge_delay_s,
             )
-            if not authoritative_speech and not callable(send_text):
+            if plan is None:
+                # Unclassified turn: the legacy single late line, as before.
                 return
-            contextual = bool(plan is not None and plan.contextual)
-            if contextual and authoritative_speech:
-                # A verbatim direct-speech channel cannot compose; ask the
-                # flash composer the Brain already carries (bounded, breaker
-                # guarded). No composer or no valid line -> stay silent: a
-                # stock line is exactly what an ACTION ack must not be, and
-                # the result speaks for itself.
-                composed = await compose_contextual_ack(
-                    getattr(self._brain, "_readback_composer", None),
-                    utterance=turn_state.user_text,
-                    language=self._language,
-                    agent_brand=self._agent_brand(),
-                )
-                if self._delegate_bridge_must_stand_down(turn_id, turn_state):
-                    return
-                if not composed:
-                    log.debug(
-                        "realtime[%s] instant ack skipped: no valid contextual "
-                        "action line for a verbatim-speech transport",
-                        self.session_id,
-                    )
-                    return
-                bridge_line = composed
-            elif contextual:
-                bridge_line = ""
-            elif plan is not None:
-                bridge_line = pick_instant_ack_text(
-                    plan.work_class,
-                    self._language,
-                    agent_brand=self._agent_brand(),
-                )
-            else:
-                bridge_line = _pick_delegate_bridge_text(self._language)
-            turn_state.bridge_delivery_started = True
-            turn_state.bridge_preempted = False
-            turn_state.bridge_direct_speech = False
-            turn_state.bridge_direct_audio_emitted = False
-            turn_state.bridge_contextual = contextual
-            turn_state.bridge_spoken_text = ""
-            turn_state.bridge_expected_text = bridge_line
-            turn_state.bridge_transcript_parts.clear()
-            turn_state.bridge_audio_chunks.clear()
-            # The bridge renderer starts a distinct provider response. The
-            # trusted result must wait for THIS boundary, not one observed
-            # before the bridge began.
-            turn_state.provider_boundary_seen = False
-            turn_state.provider_ready.clear()
-            drop_before_bridge = self._drop_provider_output_until_new_response
-            self._drop_provider_output_until_new_response = False
             try:
-                if authoritative_speech:
-                    turn_state.bridge_direct_speech = True
-                    self._register_spoken_reference(
-                        turn_state.bridge_expected_text,
-                        slot=f"bridge:{turn_id}",
-                    )
-                    await send_speech(turn_state.bridge_expected_text)
-                elif contextual:
-                    await send_text(
-                        _contextual_bridge_prompt(
-                            language=self._language,
-                            utterance=turn_state.user_text,
-                        )
-                    )
-                else:
-                    await send_text(
-                        _delegate_bridge_prompt(
-                            language=self._language,
-                            exact_text=turn_state.bridge_expected_text,
-                        )
-                    )
-            except Exception:  # noqa: BLE001 — a broken bridge must not hurt the action
-                turn_state.bridge_delivery_started = False
-                self._drop_provider_output_until_new_response = drop_before_bridge
-                log.debug(
-                    "realtime[%s] delegate bridge injection failed",
-                    self.session_id,
-                    exc_info=True,
+                await asyncio.wait_for(
+                    turn_state.result_ready.wait(),
+                    timeout=PROGRESS_AFTER_S,
                 )
+            except TimeoutError:
+                pass
+            else:
                 return
-            self._mark_latency_named(
-                "REALTIME_DELEGATE_BRIDGE_REQUESTED",
-                detail=(
-                    f"class={plan.work_class.value if plan is not None else 'unclassified'};"
-                    f"delay_s={bridge_delay_s:.2f};contextual={contextual}"
-                ),
-            )
-            log.info(
-                "realtime[%s] delegate bridge: %s line requested %.2f s after "
-                "dispatch while the action is still running",
-                self.session_id,
-                (
-                    "contextual action"
-                    if contextual
-                    else (plan.work_class.value if plan is not None else "progress")
-                ),
-                bridge_delay_s,
+            if turn_state.bridge_delivery_started and not turn_state.provider_boundary_seen:
+                # The first line's response never closed in 8 s: the provider
+                # is stuck, not the action — a second order would only pile up.
+                return
+            # Re-arm the bridge slot for the progress line (the first line's
+            # response is closed; its audio was released or dropped).
+            turn_state.bridge_delivery_started = False
+            await self._inject_delegate_bridge_line(
+                turn_id,
+                turn_state,
+                plan=None,
+                progress=True,
+                delay_s=bridge_delay_s + PROGRESS_AFTER_S,
             )
         except asyncio.CancelledError:
             raise
@@ -8308,6 +8271,162 @@ class RealtimeVoiceSession:
                 self.session_id,
                 exc_info=True,
             )
+
+    async def _inject_delegate_bridge_line(
+        self,
+        turn_id: str,
+        turn_state: _DelegateTurnState,
+        *,
+        plan: InstantAckPlan | None,
+        progress: bool,
+        delay_s: float,
+    ) -> None:
+        """Order one bridge line from the live model (or the direct-speech channel).
+
+        ``progress=False``: the instant ack for ``plan`` (class pool line, or a
+        model-composed ACTION line under the structural validator).
+        ``progress=True``: one honest progress line grounded in the running
+        tool. Both stay muted until the transcript validates at the response
+        boundary; a broken injection resets the bridge slot and stays silent.
+        """
+        if self._delegate_bridge_must_stand_down(turn_id, turn_state):
+            return
+        await self._await_provider_response_boundary(turn_state)
+        if self._delegate_bridge_must_stand_down(turn_id, turn_state):
+            return
+        send_text = getattr(self._session, "send_text", None)
+        send_speech = getattr(self._session, "send_speech", None)
+        authoritative_speech = bool(
+            callable(send_speech)
+            and getattr(
+                self._session,
+                "direct_speech_is_authoritative",
+                False,
+            )
+        )
+        if not authoritative_speech and not callable(send_text):
+            return
+        contextual = bool(not progress and plan is not None and plan.contextual)
+        # Opt-in: request-specific lines for the pooled classes too — the
+        # live model composes, the same validator decides, the pool line is
+        # the whitelist fallback (a pool transcript still passes).
+        compose_pooled = bool(
+            not progress
+            and plan is not None
+            and not plan.contextual
+            and not authoritative_speech
+            and self._instant_ack_compose_all()
+        )
+        activity = ToolActivity.OTHER
+        if progress:
+            activity = classify_tool_activity(self._running_tool_name)
+            if activity is ToolActivity.HANDOVER:
+                # A background agent took over; its reply states the handover.
+                return
+            bridge_line = pick_progress_text(activity, self._language)
+            if not bridge_line:
+                return
+        elif contextual and authoritative_speech:
+            # A verbatim direct-speech channel cannot compose; ask the
+            # flash composer the Brain already carries (bounded, breaker
+            # guarded). No composer or no valid line -> stay silent: a
+            # stock line is exactly what an ACTION ack must not be, and
+            # the result speaks for itself.
+            composed = await compose_contextual_ack(
+                getattr(self._brain, "_readback_composer", None),
+                utterance=turn_state.user_text,
+                language=self._language,
+                agent_brand=self._agent_brand(),
+            )
+            if self._delegate_bridge_must_stand_down(turn_id, turn_state):
+                return
+            if not composed:
+                log.debug(
+                    "realtime[%s] instant ack skipped: no valid contextual "
+                    "action line for a verbatim-speech transport",
+                    self.session_id,
+                )
+                return
+            bridge_line = composed
+        elif contextual:
+            bridge_line = ""
+        elif plan is not None:
+            bridge_line = pick_instant_ack_text(
+                plan.work_class,
+                self._language,
+                agent_brand=self._agent_brand(),
+            )
+        else:
+            bridge_line = _pick_delegate_bridge_text(self._language)
+        turn_state.bridge_delivery_started = True
+        turn_state.bridge_preempted = False
+        turn_state.bridge_direct_speech = False
+        turn_state.bridge_direct_audio_emitted = False
+        turn_state.bridge_contextual = contextual or compose_pooled
+        turn_state.bridge_expected_text = bridge_line
+        turn_state.bridge_transcript_parts.clear()
+        turn_state.bridge_audio_chunks.clear()
+        # The bridge renderer starts a distinct provider response. The
+        # trusted result must wait for THIS boundary, not one observed
+        # before the bridge began.
+        turn_state.provider_boundary_seen = False
+        turn_state.provider_ready.clear()
+        drop_before_bridge = self._drop_provider_output_until_new_response
+        self._drop_provider_output_until_new_response = False
+        try:
+            if authoritative_speech:
+                turn_state.bridge_direct_speech = True
+                self._register_spoken_reference(
+                    turn_state.bridge_expected_text,
+                    slot=f"bridge:{turn_id}",
+                )
+                await send_speech(turn_state.bridge_expected_text)
+            elif contextual or compose_pooled:
+                await send_text(
+                    _contextual_bridge_prompt(
+                        language=self._language,
+                        utterance=turn_state.user_text,
+                    )
+                )
+            else:
+                await send_text(
+                    _delegate_bridge_prompt(
+                        language=self._language,
+                        exact_text=turn_state.bridge_expected_text,
+                    )
+                )
+        except Exception:  # noqa: BLE001 — a broken bridge must not hurt the action
+            turn_state.bridge_delivery_started = False
+            self._drop_provider_output_until_new_response = drop_before_bridge
+            log.debug(
+                "realtime[%s] delegate bridge injection failed",
+                self.session_id,
+                exc_info=True,
+            )
+            return
+        kind = (
+            f"progress:{activity.value}"
+            if progress
+            else (
+                "contextual action"
+                if contextual
+                else (plan.work_class.value if plan is not None else "unclassified")
+            )
+        )
+        self._mark_latency_named(
+            "REALTIME_DELEGATE_BRIDGE_REQUESTED",
+            detail=(
+                f"kind={kind};delay_s={delay_s:.2f};"
+                f"contextual={contextual or compose_pooled}"
+            ),
+        )
+        log.info(
+            "realtime[%s] delegate bridge: %s line requested %.2f s after "
+            "dispatch while the action is still running",
+            self.session_id,
+            kind,
+            delay_s,
+        )
 
     async def _preempt_delegate_bridge(
         self,
@@ -9703,6 +9822,14 @@ class RealtimeVoiceSession:
         ):
             self._delegate_bridge_task.cancel()
         self._delegate_bridge_task = None
+        if self._action_proposed_subscribed and self._bus is not None:
+            try:
+                from jarvis.core.events import ActionProposed
+
+                self._bus.unsubscribe(ActionProposed, self._on_action_proposed)
+            except Exception:  # noqa: BLE001, S110 — teardown is best-effort
+                pass
+            self._action_proposed_subscribed = False
         if (
             self._late_delegate_flush_task is not None
             and not self._late_delegate_flush_task.done()

@@ -1889,6 +1889,26 @@ class DesktopApp:
                 return
 
             loop = asyncio.get_running_loop()
+            # Instant acknowledgment (2026-08-17): the chat path has no
+            # streaming, so a heavy turn shows only "thinking…" until the whole
+            # reply returns. Show the same first-sign-of-life line the voice
+            # engines speak as a muted pre-ack bubble; cancelled the moment the
+            # reply is in (a fast turn shows nothing).
+            ack_task = None
+            try:
+                from jarvis.brain.assistant_name import agent_brand
+                from jarvis.voice.instant_ack import start_chat_instant_ack
+
+                ack_task = start_chat_instant_ack(
+                    server.bus,
+                    text=evt.text,
+                    thread_id=thread_id,
+                    trace_id=evt.trace_id,
+                    brain=brain,
+                    agent_brand=agent_brand(self.cfg),
+                )
+            except Exception:  # noqa: BLE001 — a missing ack must never block chat
+                logger.opt(exception=True).debug("chat instant ack not armed")
             try:
                 await supervisor.set_state("THINKING")
                 generate = getattr(brain, "generate", None)
@@ -1918,6 +1938,8 @@ class DesktopApp:
                 detail = f"{type(exc).__name__}: {exc}"
                 message = f"Brain error: {detail}"
                 logger.opt(exception=exc).warning("BrainManager call failed")
+                if ack_task is not None and not ack_task.done():
+                    ack_task.cancel()
                 await server.bus.publish(
                     ErrorOccurred(
                         layer="brain",
@@ -1943,6 +1965,8 @@ class DesktopApp:
                 await supervisor.set_state("IDLE")
                 return
 
+            if ack_task is not None and not ack_task.done():
+                ack_task.cancel()
             if reply is _CHAT_TURN_ABORTED:
                 # The user pressed the bar's X mid-think — honour it and drop
                 # back to IDLE instead of speaking a half-finished turn.

@@ -604,6 +604,26 @@ async def _run_headless(args) -> int:
                 text=message,
             )
             return
+        # Instant acknowledgment (2026-08-17): the same first-sign-of-life
+        # line the voice engines speak, as a muted pre-ack bubble; cancelled
+        # the moment the reply is in (desktop_app.py mirrors it).
+        ack_task = None
+        try:
+            from jarvis.brain.assistant_name import agent_brand
+            from jarvis.voice.instant_ack import start_chat_instant_ack
+
+            ack_task = start_chat_instant_ack(
+                server.bus,
+                text=evt.text,
+                thread_id=thread_id,
+                trace_id=evt.trace_id,
+                brain=brain,
+                agent_brand=agent_brand(server.cfg),
+            )
+        except Exception:  # noqa: BLE001 — a missing ack must never block chat
+            import logging as _ack_logging
+
+            _ack_logging.getLogger(__name__).debug("chat instant ack not armed", exc_info=True)
         try:
             generate = getattr(brain, "generate", None)
             if callable(generate):
@@ -620,6 +640,8 @@ async def _run_headless(args) -> int:
             else:
                 reply = await brain(evt.text)
         except Exception as exc:  # noqa: BLE001
+            if ack_task is not None and not ack_task.done():
+                ack_task.cancel()
             detail = f"{type(exc).__name__}: {exc}"
             message = f"Brain error: {detail}"
             await server.bus.publish(
@@ -636,6 +658,8 @@ async def _run_headless(args) -> int:
                 text=message,
             )
             return
+        if ack_task is not None and not ack_task.done():
+            ack_task.cancel()
         if reply:
             role = "system" if _is_brain_diagnostic(reply) else "assistant"
             await chat_store.add_message(thread_id=thread_id, role=role, text=reply)

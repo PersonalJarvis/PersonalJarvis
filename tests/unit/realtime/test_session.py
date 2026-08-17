@@ -4029,6 +4029,113 @@ async def test_action_delegate_speaks_a_contextual_line(monkeypatch):
     await sess.end(reason="test")
 
 
+class _TwoLineBridgeSession(FakeSession):
+    """Speak the instant line, then the progress line, then the result."""
+
+    def __init__(self, *, lines, orders_sent, result_delivered, utterance, result_line):
+        super().__init__([])
+        self._lines = list(lines)
+        self._orders_sent = orders_sent  # list of asyncio.Event, one per line
+        self._result_delivered = result_delivered
+        self._utterance = utterance
+        self._result_line = result_line
+        self.orders: list[str] = []
+
+    async def receive(self):
+        yield RealtimeEvent(type="input_transcript", text=self._utterance, is_final=True)
+        for line, sent in zip(self._lines, self._orders_sent, strict=True):
+            await sent.wait()
+            yield RealtimeEvent(type="output_transcript_delta", text=line)
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(pcm=b"\x01\x02" * 8, sample_rate=24_000, timestamp_ns=0),
+            )
+            yield RealtimeEvent(type="turn_complete")
+        await self._result_delivered.wait()
+        yield RealtimeEvent(type="output_transcript_delta", text=self._result_line)
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=b"\x03\x04" * 8, sample_rate=24_000, timestamp_ns=0),
+        )
+        yield RealtimeEvent(type="turn_complete")
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        if "<trusted_action_result>" in text:
+            self._result_delivered.set()
+            return
+        self.orders.append(text)
+        index = len(self.orders) - 1
+        if index < len(self._orders_sent):
+            self._orders_sent[index].set()
+
+
+class _TwoLineBridgeProvider(FakeProvider):
+    def __init__(self, **kwargs):
+        super().__init__([])
+        self._kwargs = kwargs
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _TwoLineBridgeSession(**self._kwargs)
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_long_delegate_gets_one_grounded_progress_line_after_the_ack(monkeypatch):
+    """Instant ack, then — when the work outlasts it — ONE progress line that
+    names the tool actually running (search_web -> the search pool), then the
+    result. Never a second ack, never a third line."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 6.0)
+    monkeypatch.setattr("jarvis.realtime.session.PROGRESS_AFTER_S", 0.15)
+    _pin_instant_ack(monkeypatch, "I'm still working on it.")
+    monkeypatch.setattr(
+        "jarvis.realtime.session.pick_progress_text",
+        lambda activity, language: "Still searching."
+        if activity.value == "search"
+        else "I'm still working on it.",
+    )
+    from jarvis.core.events import ActionProposed
+
+    gate = asyncio.Event()
+    orders_sent = [asyncio.Event(), asyncio.Event()]
+    result_delivered = asyncio.Event()
+    brain = FakeBrain(replies=(_RESEARCH_RESULT,), gate=gate)
+    provider = _TwoLineBridgeProvider(
+        lines=("I'm still working on it.", "Still searching."),
+        orders_sent=orders_sent,
+        result_delivered=result_delivered,
+        utterance=_RESEARCH_UTTERANCE,
+        result_line=_RESEARCH_RESULT,
+    )
+    bus = FakeBus()
+    binaries: list[bytes] = []
+    sess = _session(provider, brain=brain, jsons=[], binaries=binaries, bus=bus)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(orders_sent[0].wait(), timeout=2)
+    # The delegate is running a web search (ToolExecutor publishes this).
+    await sess._on_action_proposed(ActionProposed(tool_name="search_web"))
+    await asyncio.wait_for(orders_sent[1].wait(), timeout=2)
+    orders = provider.session.orders
+    assert len(orders) == 2
+    assert "I'm still working on it." in orders[0]
+    assert "Still searching." in orders[1]
+    # Nothing else is ordered while the action keeps running.
+    await asyncio.sleep(0.4)
+    assert len(provider.session.orders) == 2
+    gate.set()
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+    await sess.wait_finished()
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert [(event.text, event.spoken_kind) for event in spoken] == [
+        ("I'm still working on it.", "progress"),
+        ("Still searching.", "progress"),
+        (_RESEARCH_RESULT, "reply"),
+    ]
+    await sess.end(reason="test")
+
+
 @pytest.mark.asyncio
 async def test_contextual_action_line_that_claims_a_result_is_dropped(monkeypatch):
     """A contextual ACTION ack is trusted only through the structural validator:
