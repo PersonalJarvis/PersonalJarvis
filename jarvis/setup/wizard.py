@@ -177,6 +177,45 @@ SECRETS: list[SecretSpec] = [
         required_for="Brain (Gemini)",
         section="brain",
     ),
+    # Vertex AI. Not prompted during setup: the ordinary Vertex path is a Cloud
+    # project signed with Application Default Credentials and stores no key at
+    # all, so asking for one in the wizard would be asking for the exception.
+    # The slots must still be DECLARED — this table is what the Control API
+    # accepts as a writable secret, and without a row here saving from the
+    # Vertex card fails with "Unknown secret key" (field report 2026-08-17).
+    SecretSpec(
+        key="vertex_api_key",
+        env_fallback="VERTEX_API_KEY",
+        label="Vertex AI express-mode API Key",
+        help_url="https://console.cloud.google.com/vertex-ai/studio/settings/api-keys",
+        required_for="Vertex AI (express mode; the Cloud project path needs no key)",
+        section="brain",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="google_vertex_api_key",
+        env_fallback="GOOGLE_VERTEX_API_KEY",
+        label="Vertex AI API Key (alias slot)",
+        help_url="https://console.cloud.google.com/vertex-ai/studio/settings/api-keys",
+        required_for="Vertex AI (compatibility alias)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="realtime_vertex_api_key",
+        env_fallback="JARVIS_REALTIME_VERTEX_API_KEY",
+        label="Vertex AI Live API Key",
+        help_url="https://console.cloud.google.com/vertex-ai/studio/settings/api-keys",
+        required_for="Realtime Voice (Vertex AI Live)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="jarvis_agent_vertex_api_key",
+        env_fallback="JARVIS_AGENT_VERTEX_API_KEY",
+        label="Vertex AI API Key for Jarvis-Agents",
+        help_url="https://console.cloud.google.com/vertex-ai/studio/settings/api-keys",
+        required_for="Jarvis-Agents (Vertex AI)",
+        prompt=False,
+    ),
     SecretSpec(
         key="grok_api_key",
         env_fallback="GROK_API_KEY",
