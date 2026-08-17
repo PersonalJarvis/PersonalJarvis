@@ -103,6 +103,11 @@ _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     # (subscription-first) when its binary is present; this is the API fallback.
     "claude-api": ("jarvis.plugins.brain.claude_api", "ClaudeAPIBrain"),
     "gemini": ("jarvis.plugins.brain.gemini", "GeminiBrain"),
+    # Google Cloud Vertex AI — the same Gemini tool loop on the enterprise
+    # endpoint. Keyless is legitimate here (unlike for the cloud API families
+    # above): the Cloud project path signs with Application Default
+    # Credentials, so VertexBrain builds fine with no key in any slot.
+    "vertex": ("jarvis.plugins.brain.vertex", "VertexBrain"),
     # Keyless local providers (2026-07-25): same in-process tool loop against
     # the user's own server — heavy missions with zero cloud keys. Keyless is
     # tolerated by design: get_jarvis_agent_secret returns None and the
@@ -129,6 +134,9 @@ _DEFAULT_MODEL: dict[str, str] = {
     # NVIDIA's own reasoning flagship for heavy subagent work.
     "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
 }
+# Vertex serves the same Gemini catalogue on Google Cloud, so its worker default
+# is the Gemini one rather than a second literal that would drift from it.
+_DEFAULT_MODEL["vertex"] = _DEFAULT_MODEL["gemini"]
 
 
 def _resolve_worker_model(provider: str, explicit: str) -> str:

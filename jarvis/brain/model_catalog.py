@@ -641,6 +641,30 @@ STT_CATALOG: dict[str, list[ModelInfo]] = {
 }
 
 
+def _gemini_audio_models(default_first: str) -> list[ModelInfo]:
+    """The Gemini brain catalogue, reordered so ``default_first`` leads.
+
+    Gemini transcription is not a separate speech model: it is an ordinary
+    ``generateContent`` call with an audio part, so ANY multimodal Gemini id can
+    do it — which is why the recognizer's own module refuses to pin one (AP-21).
+    Reusing the brain list is therefore both correct and the only way to avoid a
+    second literal that drifts on the next model rotation. Putting the
+    recognizer's actual default at the top keeps the picker from opening on a
+    model the provider would not have used.
+    """
+    models = list(CURATED_MODELS.get("gemini", ()))
+    leader = [m for m in models if m.id == default_first]
+    return leader + [m for m in models if m.id != default_first]
+
+
+# Both Google recognizers share one derived list — same models, two accounts.
+# The default id mirrors ``jarvis.plugins.stt.gemini_api.DEFAULT_MODEL``; it is
+# spelled here rather than imported so the catalog module keeps importing on a
+# host without google-genai.
+STT_CATALOG["gemini-api"] = _gemini_audio_models("gemini-3-flash-preview")
+STT_CATALOG["vertex-stt"] = STT_CATALOG["gemini-api"]
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogSpec:
     """Per-provider picker spec: which tier, what it selects, the curated list,
@@ -706,6 +730,18 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
     # model as Anthropic rotates it, which is exactly right for a subscription
     # path where the account's plan decides what is reachable anyway. Leaving the
     # model unset is also valid and means "whatever this plan defaults to".
+    # Vertex AI — the SAME Gemini catalogue on Google's enterprise endpoint, so
+    # the curated list is REUSED rather than re-typed (a second literal would
+    # drift on the next model rotation). Curated-only, `live=False`: express
+    # mode documents exactly three methods — generateContent,
+    # streamGenerateContent, countTokens — and no model-list endpoint, and the
+    # project path's list call needs an OAuth token rather than the key the
+    # catalog fetcher attaches. Promising a live fetch we cannot make would show
+    # the user an empty picker on a working account; the curated list is the
+    # honest one, and a newer model can still be typed into the model field.
+    cat["vertex"] = CatalogSpec(
+        "brain", "model", tuple(CURATED_MODELS.get("gemini", ())), live=False
+    )
     cat["claude-cli"] = CatalogSpec(
         "brain",
         "model",
@@ -724,6 +760,13 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
         cat[p] = CatalogSpec("tts", selects, tuple(opts), live=False)
     for p, opts in STT_CATALOG.items():
         cat[p] = CatalogSpec("stt", "model", tuple(opts), live=False)
+    # The Vertex TTS card offers the identical 30-voice Gemini roster on a
+    # different account, so it mirrors its sibling's picker rather than repeating
+    # it — a voice added to the curated catalogue reaches both in one edit. (The
+    # two STT cards share their list inside ``STT_CATALOG`` itself, above.)
+    mirrored_tts = cat.get("gemini-flash-tts")
+    if mirrored_tts is not None:
+        cat["vertex-tts"] = mirrored_tts
     return cat
 
 

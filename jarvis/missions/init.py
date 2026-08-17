@@ -85,8 +85,11 @@ def _spawn_boot_cleanup(coro: Any, *, name: str) -> asyncio.Task[Any]:
 # decision so the UI "runs on Claude" badge can never drift from reality.
 # ollama/local-openai (2026-07-25): keyless local servers, same in-process
 # tool-loop path — a mission can run fully on the user's own hardware.
+# vertex: Google Cloud Vertex AI runs the SAME in-process tool loop as the
+# other API providers, on the VertexBrain — so picking it as the subagent
+# actually runs the mission on Vertex instead of silently falling back to Claude.
 _API_AGENT_SLUGS: frozenset[str] = frozenset(
-    {"openai", "openrouter", "grok", "nvidia", "ollama", "local-openai"}
+    {"openai", "openrouter", "grok", "nvidia", "ollama", "local-openai", "vertex"}
 )
 
 

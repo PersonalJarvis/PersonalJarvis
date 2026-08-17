@@ -355,7 +355,22 @@ async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> f
     credentials = tuple(getattr(provider_cls, "credential_candidates", ()) or ())
     api_key = get_secret_any(credentials) if credentials else None
     if credentials and not api_key:
-        raise RuntimeError("No API key configured for the realtime provider")
+        # Declaring key slots does not mean a key is the ONLY way in. A provider
+        # that also authenticates through a login outside this app exposes the
+        # same ``external_login_ready`` capability the session factory reads —
+        # Vertex AI's Google Cloud project path is the case, where Application
+        # Default Credentials sign the request and no key is stored anywhere.
+        # Refusing on the empty slot alone reported that working setup as
+        # unconfigured, which is the "I added it and nothing happened" failure.
+        external_login_ready = getattr(provider_cls, "external_login_ready", None)
+        ready = False
+        if callable(external_login_ready):
+            try:
+                ready = bool(external_login_ready(cfg))
+            except TypeError:
+                ready = bool(external_login_ready())
+        if not ready:
+            raise RuntimeError("No API key configured for the realtime provider")
     if api_key:
         provider = provider_cls(api_key=api_key)
     else:

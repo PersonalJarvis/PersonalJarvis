@@ -102,7 +102,47 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     # (config.PROVIDER_SECRET_CANDIDATES["codex"]); without this entry the
     # presence check saw only the dedicated slot.
     "codex": "codex",
+    # The Vertex family shares ONE credential across brain, STT, TTS and
+    # realtime, exactly as the Gemini rows above share theirs. ``vertex-live``
+    # keeps its own dedicated-slot-first family (a realtime-scoped key wins on
+    # its own surface).
+    "vertex": "vertex",
+    "vertex-stt": "vertex",
+    "vertex-tts": "vertex",
+    "vertex-live": "vertex-live",
 }
+
+#: API-key providers that can ALSO authenticate with no key stored at all, and
+#: the ``jarvis.core.config`` probe that answers for them.
+#:
+#: Vertex AI is the case: its Google Cloud project path signs requests with
+#: Application Default Credentials — a service account, a ``gcloud`` login,
+#: workload identity — so nothing lands in the keyring. Without this the setup
+#: Google documents for production reads as "open" on all four cards and every
+#: switch to it is refused for a missing key. Same shape as the ``codex`` and
+#: ``antigravity`` branches below, which fall back to a login probe for exactly
+#: the same reason; this table just makes it declarative instead of a fourth
+#: hand-written branch.
+KEYLESS_CREDENTIAL_PROBES: dict[str, str] = {
+    "vertex": "vertex_credential_configured",
+    "vertex-stt": "vertex_credential_configured",
+    "vertex-tts": "vertex_credential_configured",
+    "vertex-live": "vertex_credential_configured",
+}
+
+
+def _keyless_credential_present(provider_id: str) -> bool:
+    """Whether *provider_id* authenticates without a stored key. Never raises."""
+    probe_name = KEYLESS_CREDENTIAL_PROBES.get(provider_id)
+    if not probe_name:
+        return False
+    try:
+        return bool(getattr(cfg_mod, probe_name)())
+    except Exception as exc:  # noqa: BLE001 — a probe must never break a card
+        log.debug(
+            "Keyless credential probe %s for %s failed: %s", probe_name, provider_id, exc
+        )
+        return False
 
 # Local providers that need no credential at all — the same spec-derived set
 # as LOCAL_PROVIDERS (auth_mode "none" IS the definition of "no credential").
@@ -224,8 +264,13 @@ def is_credential_present(spec: ProviderSpec, binary_path: str | None = None) ->
     if spec.auth_mode == "api_key":
         secret_provider = AUTH_PROVIDER_ALIASES.get(spec.id)
         if secret_provider is not None:
-            return bool(cfg_mod.get_provider_secret(secret_provider))
-        return all(bool(cfg_mod.get_secret(k)) for k in spec.secret_keys)
+            if cfg_mod.get_provider_secret(secret_provider):
+                return True
+        elif all(bool(cfg_mod.get_secret(k)) for k in spec.secret_keys):
+            return True
+        # A key is the usual answer but not the only one — see
+        # KEYLESS_CREDENTIAL_PROBES (Vertex's Cloud project path).
+        return _keyless_credential_present(spec.id)
     if spec.auth_mode == "codex":
         if any(bool(cfg_mod.get_secret(k)) for k in spec.secret_keys):
             return True
@@ -765,6 +810,17 @@ async def _switch_subagent(
                 has_credential = native_status is not None
             except Exception:  # noqa: BLE001 — optional native CLI auth path
                 has_credential = False
+    if not has_credential and canon == "vertex":
+        # Vertex AI's Google Cloud project path signs with Application Default
+        # Credentials and stores NO key, so the key probe above reports the
+        # setup Google documents for production as unconfigured. Sibling of the
+        # claude-api OAuth rescue directly above: an on-disk login is a
+        # credential (AP-22). Asked through the shared credential state so this
+        # gate and the Vertex card can never disagree.
+        try:
+            has_credential = bool(cfg_mod.vertex_credential_configured())
+        except Exception as exc:  # noqa: BLE001 — a probe must not block the switch
+            log.debug("Vertex credential probe failed during switch: %s", exc)
     if not has_credential:
         return {
             "ok": False,

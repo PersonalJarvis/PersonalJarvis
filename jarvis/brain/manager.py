@@ -394,6 +394,23 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
     },
 }
 
+def _mirror_tier_defaults(source: str, target: str) -> None:
+    """Give ``target`` the same per-tier default models as ``source``.
+
+    For provider families that are the same catalogue on a different endpoint.
+    Re-typing the ids instead would create a second literal list that drifts on
+    the next model rotation — the BUG-008 shape — and it would drift on exactly
+    the tier a production project cares about most.
+    """
+    for tier in TIER_DEFAULTS_BY_PROVIDER.values():
+        if source in tier:
+            tier[target] = tier[source]
+
+
+# Vertex AI serves the SAME Gemini model ids as AI Studio; the endpoint and the
+# billing account differ, the catalogue does not.
+_mirror_tier_defaults("gemini", "vertex")
+
 
 # Hard loop bounds for DELEGATED realtime voice turns (prefer_tool_model).
 # A voice turn must stay conversational: 6 rounds cover plan → 2-3 tools →

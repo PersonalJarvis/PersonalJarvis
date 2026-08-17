@@ -119,6 +119,14 @@ MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
     # selectable subagent in the API-Keys "Subagents" tab and env/slug lookups
     # stay consistent.
     ProviderMapping("nvidia", "nvidia", "NVIDIA_API_KEY"),
+    # Google Cloud Vertex AI: runs through the in-process ApiAgentWorker on the
+    # VertexBrain, like nvidia — there is no worker-harness slug for it, so
+    # ``worker_slug`` is a stable identity for display and reverse lookup only.
+    # The row is what makes Vertex selectable in the API-Keys "Subagents" tab.
+    # ENV names mirror the Vertex key slots; on the Google Cloud project path
+    # there is no key to hand over and the worker authenticates via Application
+    # Default Credentials inherited from the parent process env.
+    ProviderMapping("vertex", "vertex", "VERTEX_API_KEY", "GOOGLE_VERTEX_API_KEY"),
     # Keyless local providers (2026-07-25, local-first mandate): both run
     # through the in-process ApiAgentWorker like nvidia — the row exists so
     # they are selectable in the Agents tab. The env vars are credential-shaped
