@@ -1972,6 +1972,14 @@ class ScreenContextConfig(BaseModel):
     #: A capture is also discarded on first use, whichever comes first.
     ttl_s: float = 120.0
 
+    #: Seconds the mission deck shows the picture Jarvis just took, so the
+    #: user can see what was looked at. A separate in-memory copy of ONE frame
+    #: (``jarvis/screen_context/last_frame.py``), gone after this budget; the
+    #: model's single-use handle above is unaffected. ``0`` switches the
+    #: preview off. Read by ``ScreenContextService`` and served by
+    #: ``GET /api/deck/frame``.
+    deck_preview_s: float = 120.0
+
     #: OCR supplement for windows whose accessibility layer exposes no text.
     #: Off by default and dependency-free: the base install stays torch-free
     #: (§3), so this only does anything when a local OCR engine is present.

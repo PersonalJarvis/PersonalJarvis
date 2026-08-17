@@ -37,6 +37,7 @@ from uuid import UUID, uuid4
 
 from jarvis.screen_context import intent as intent_module
 from jarvis.screen_context import redaction, uitext
+from jarvis.screen_context.last_frame import LastFrameMirror, get_last_frame_mirror
 from jarvis.screen_context.models import (
     CaptureTarget,
     Degradation,
@@ -99,6 +100,10 @@ class ScreenContextSettings:
     max_text_chars: int = 4000
     #: Seconds an unconsumed capture stays in memory.
     ttl_s: float = 120.0
+    #: Seconds the mission deck may show the picture that was just taken. This
+    #: is a separate, user-facing copy (see ``last_frame.py``): one frame, in
+    #: memory only. ``0`` switches that preview off.
+    deck_preview_s: float = 120.0
     #: OCR is a supplement, off unless the user asks for it.
     ocr_enabled: bool = False
     #: ``[computer_use].main_monitor``-style override for the last-resort pick.
@@ -167,11 +172,17 @@ class ScreenContextService:
         ui_text_reader: Any | None = None,
         permission_probe: Any | None = None,
         clock: Any | None = None,
+        last_frame_mirror: LastFrameMirror | None = None,
     ) -> None:
         self._settings = settings or ScreenContextSettings()
         self._bus = None
         if bus is not None:
             self.bind_bus(bus)
+        # The deck's copy of the last picture. Injected in tests; the shared
+        # process-wide mirror otherwise. It adopts THIS service's budget so a
+        # settings change (or `0` = off) takes effect on the next capture.
+        self._last_frame = last_frame_mirror or get_last_frame_mirror()
+        self._last_frame.set_ttl(self._settings.deck_preview_s)
         # Ports are constructed lazily on first use, never at import or at
         # boot (AP-26): building a cursor backend or an accessibility source
         # costs native library loads that must not sit on the startup path.
@@ -607,6 +618,7 @@ class ScreenContextService:
                     ),
                 )
             await self._publish_completed(context, trace_id=event_trace_id)
+            self._mirror_for_deck(context, trace_id=event_trace_id)
             log.info("screen_context: %s", context.describe())
             return CaptureOutcome(
                 status="captured",
@@ -953,10 +965,35 @@ class ScreenContextService:
             return count
 
     def close(self) -> int:
-        """Reject in-flight stores and remove every pixel held by this instance."""
+        """Reject in-flight stores and remove every pixel held by this instance.
+
+        The deck's mirror goes with it: a settings change that tightens the
+        privacy rules must not leave the previous picture on the front page.
+        """
         with self._handle_lock:
             self._closed = True
+            self._last_frame.clear()
             return self.discard_all()
+
+    def _mirror_for_deck(self, context: ScreenContext, *, trace_id: UUID) -> None:
+        """Hand the finished, already-redacted picture to the deck's mirror.
+
+        Best effort and outside the capture contract: the handle above is the
+        model's copy and is unaffected. The label is the same scrubbed one the
+        receipt event carries — never a raw window title.
+        """
+        try:
+            self._last_frame.set(
+                context.image,
+                mime=context.mime,
+                width=context.size[0],
+                height=context.size[1],
+                source="screen_context",
+                target_label=_safe_target_label(context.target),
+                trace_id=str(trace_id),
+            )
+        except Exception:  # noqa: BLE001 - a preview must never fail the capture
+            log.warning("screen_context: deck preview mirror failed", exc_info=True)
 
     @property
     def held_count(self) -> int:
@@ -1167,6 +1204,7 @@ def settings_from_config(cfg: Any) -> ScreenContextSettings:
         ),
         max_text_chars=int(getattr(block, "max_text_chars", 4000)),
         ttl_s=float(getattr(block, "ttl_s", 120.0)),
+        deck_preview_s=float(getattr(block, "deck_preview_s", 120.0)),
         ocr_enabled=bool(getattr(block, "ocr_enabled", False)),
         main_monitor=main_monitor,
     )

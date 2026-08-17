@@ -376,6 +376,7 @@ class WebServer:
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
+        from .deck_routes import router as deck_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -507,6 +508,9 @@ class WebServer:
         # machine with no display, so `jarvis api screen-context status` is a
         # valid capability probe everywhere.
         app.include_router(screen_context_router)
+        # The mission deck's pictures: the last Screen-Context capture (one
+        # frame, in memory, TTL) and Computer-Use frames by content hash.
+        app.include_router(deck_router)
         # Voice-session transcription view (sidebar -> "Transcription").
         # Returns 503 as long as app.state.session_store isn't set.
         app.include_router(sessions_router)

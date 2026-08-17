@@ -381,6 +381,22 @@ to `data/flight_recorder/blobs/`. That behaviour is correct for Computer-Use
 replay and wrong for this feature; Screen Context therefore does not use
 `ScreenshotSource` at all, only the stateless `capture_region` primitive.
 
+#### The deck preview (added 2026-08-17)
+
+The mission deck shows the picture Jarvis just took, so the person at the
+keyboard sees what was looked at. That is a second copy with its own, narrower
+promise (`jarvis/screen_context/last_frame.py`):
+
+- At most ONE frame, in memory only, replaced by the next capture.
+- Gone after `[screen_context].deck_preview_s` seconds (default 120, the same
+  budget as an unconsumed handle). `0` switches the preview off entirely.
+- Served by `GET /api/deck/frame` with `Cache-Control: no-store`; the label
+  next to it is the same scrubbed one the receipt event carries.
+- The model's single-use handle above is unaffected: consuming it does not
+  touch the preview, and the preview never feeds a turn.
+- Cleared whenever the service is reset (a settings change tightening the
+  rules must not leave the previous picture on the front page).
+
 ---
 
 ## 5. MVP roadmap
