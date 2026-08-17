@@ -37,10 +37,17 @@ has to be inferred. The dedicated ``vertex`` provider family is the other case:
 there the user picked Vertex explicitly, so :func:`build_vertex_client` pins the
 route with no probe at all and additionally serves the FULL Google Cloud path —
 ``[google].vertex_project``/``vertex_location`` with Application Default
-Credentials instead of a key. That path is what a production Cloud project
-actually uses, and it is the one an ``AIza`` key restricted to
-``aiplatform.googleapis.com`` needs, since its shape is indistinguishable from
-an AI Studio key.
+Credentials instead of a key.
+
+Which of the two a caller lands on is not a preference. Measured 2026-08-17
+against a live Cloud project: Vertex accepts an API key ONLY in express mode. A
+standard Cloud API key — including one created with
+``--api-target=service=aiplatform.googleapis.com`` — is refused on every Vertex
+surface (countTokens, generateContent, and the Live socket, which closes with
+1008) with "API keys are not supported by this API. Expected OAuth2 access token
+or other authentication credentials that assert a principal", while the very
+same key answers 200 on AI Studio. So for an ordinary Cloud project the project
+path is the only route in, and the express key is the exception.
 """
 
 from __future__ import annotations

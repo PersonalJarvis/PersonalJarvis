@@ -11,13 +11,15 @@
  */
 
 export type KeyFormatKind =
+  // `AIza` — works on AI Studio, refused by Vertex (measured 2026-08-17).
   | "google-aistudio"
-  // What a Vertex AI slot EXPECTS. Never returned by `detectKeyFormat`: a
-  // Vertex key wears the same `AIza` / `AQ.` shape as an AI Studio one, so no
-  // amount of staring at the string can tell them apart. It exists so the UI
-  // can name what a slot wants, while `keyMatchesSecret` treats the two Google
-  // kinds as compatible and stays silent instead of crying mismatch over a
-  // perfectly good key.
+  // `AQ.` — issued by BOTH AI Studio and Vertex express mode, and accepted by
+  // both. The one Google shape that genuinely cannot be pinned to a service.
+  | "google-express"
+  // What a Vertex AI slot EXPECTS. Never returned by `detectKeyFormat`: the
+  // only key Vertex takes is an express key, whose `AQ.` shape it shares with
+  // AI Studio. The kind exists so the UI can name what a slot wants — and so
+  // `keyMatchesSecret` can accept `AQ.` there while warning about `AIza`.
   | "google-vertex"
   | "vertex-service-account"
   | "anthropic"
@@ -69,11 +71,16 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   // Google Cloud API key restricted to aiplatform.googleapis.com. Which one it
   // is depends on the project it was created in, not on the string, so the slot
   // it is pasted into is what decides where Jarvis sends it.
+  // AIza is the classic Google API-key prefix. Measured 2026-08-17: a key of
+  // this shape works on AI Studio and is REFUSED by Vertex ("API keys are not
+  // supported by this API") even when it was created restricted to
+  // aiplatform.googleapis.com — so this kind is genuinely AI-Studio-only, and a
+  // Vertex slot warns about it rather than accepting it silently.
   if (/^AIza/.test(v)) {
     return {
       kind: "google-aistudio",
-      label: "Google API key",
-      note: "A Google API key. Jarvis sends it to AI Studio or to Vertex AI depending on which card you saved it under.",
+      label: "Google AI Studio key",
+      note: "This shape works on Google AI Studio. Vertex AI refuses it — Vertex takes only an express-mode key (AQ.) or a Cloud project via [google].vertex_project.",
     };
   }
   // AQ. is issued by BOTH Google AI Studio and Vertex AI express mode — the
@@ -82,8 +89,8 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   // slot the endpoint is already decided by the card.
   if (/^AQ\./.test(v)) {
     return {
-      kind: "google-aistudio",
-      label: "Google API key (AI Studio or Vertex)",
+      kind: "google-express",
+      label: "Google API key (AI Studio or Vertex express)",
       note: "AI Studio and Vertex AI express keys share this format — the card you save it under decides the endpoint, and for a Gemini card Jarvis detects it automatically.",
     };
   }
@@ -146,15 +153,20 @@ export interface KeyMatchResult {
 }
 
 /**
- * Google API-key kinds that no string inspection can separate. An `AIza` /
- * `AQ.` key is valid for an AI Studio slot or a Vertex AI slot depending only on
- * the project it came from, so a mismatch warning between them would be a guess
- * dressed up as a finding — and would fire on every correctly pasted Vertex key.
+ * Which detected kinds satisfy which expected kind, where equality is too
+ * strict. Only ONE Google shape is genuinely ambiguous: `AQ.`, issued by AI
+ * Studio and by Vertex express alike and accepted by both, so it must never
+ * draw a warning in either slot.
+ *
+ * `AIza` is deliberately NOT in the Vertex row. It used to be, on the
+ * assumption that a Cloud API key restricted to aiplatform would work; measured
+ * 2026-08-17, Vertex refuses that key outright. Staying silent there would let
+ * the user save a key that cannot ever work and find out from a failed call.
  */
-const GOOGLE_KEY_KINDS: ReadonlySet<KeyFormatKind> = new Set<KeyFormatKind>([
-  "google-aistudio",
-  "google-vertex",
-]);
+const COMPATIBLE_KINDS: Partial<Record<KeyFormatKind, ReadonlySet<KeyFormatKind>>> = {
+  "google-aistudio": new Set<KeyFormatKind>(["google-express"]),
+  "google-vertex": new Set<KeyFormatKind>(["google-express"]),
+};
 
 /**
  * Compares an entered value against the format its slot expects. Stays neutral
@@ -173,7 +185,7 @@ export function keyMatchesSecret(secretKey: string, value: string): KeyMatchResu
   if (detected.kind === "unknown") {
     return { match: true, detected, expected };
   }
-  if (GOOGLE_KEY_KINDS.has(detected.kind) && GOOGLE_KEY_KINDS.has(expected)) {
+  if (COMPATIBLE_KINDS[expected]?.has(detected.kind)) {
     return { match: true, detected, expected };
   }
   return { match: detected.kind === expected, detected, expected };
@@ -184,15 +196,15 @@ export function keyMatchesSecret(secretKey: string, value: string): KeyMatchResu
  * condition for the green reassurance, as opposed to merely "no complaint".
  *
  * Separate from `match` because the two differ: `match` is also true for a key
- * we simply do not recognize, where saying "looks right" would be a guess. The
- * Google pair counts as confirmed even though the kinds are not equal, since an
- * `AIza` / `AQ.` key IS the shape a Vertex slot wants — it is the account behind
+ * we simply do not recognize, where saying "looks right" would be a guess. An
+ * `AQ.` express key counts as confirmed in a Vertex slot even though the kinds
+ * are not equal, since that IS the shape Vertex takes — it is the account behind
  * it that no local check can see, and withholding the tick over that would leave
- * every correctly pasted Vertex key looking unverified.
+ * every correctly pasted express key looking unverified.
  */
 export function keyFormatConfirmed(result: KeyMatchResult): boolean {
   const { detected, expected, match } = result;
   if (!match || !detected || expected === null) return false;
   if (detected.kind === expected) return true;
-  return GOOGLE_KEY_KINDS.has(detected.kind) && GOOGLE_KEY_KINDS.has(expected);
+  return Boolean(COMPATIBLE_KINDS[expected]?.has(detected.kind));
 }

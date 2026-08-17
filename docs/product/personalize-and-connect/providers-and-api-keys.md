@@ -87,17 +87,34 @@ one Vertex setup covers the whole stack — and so an install can hold an AI
 Studio key and a Vertex credential side by side and point each capability at
 the one it should bill.
 
-Two ways to authenticate, and you only need one:
+Two ways to authenticate, and which one applies depends on your account:
 
-- **A Vertex AI API key.** Either an express-mode key (starts with `AQ.`) or a
-  Google Cloud API key restricted to `aiplatform.googleapis.com` (starts with
-  `AIza`). Paste it into any Vertex card; the cards share one credential.
+- **A Vertex AI express-mode key** (starts with `AQ.`). Paste it into any Vertex
+  card; the cards share one credential.
 - **A Google Cloud project, with no key at all.** Set `[google]` in
   `jarvis.toml`: `vertex_project` to the project ID that owns the Vertex AI
-  API, `vertex_location` to a region (`global` is the default and has the
-  widest model availability), and `service_account_path` only if this machine
-  is not already signed in with `gcloud`. Requests are then signed with
-  Application Default Credentials. This is the path a production project uses.
+  API, `vertex_location` to a region, and `service_account_path` only if this
+  machine is not already signed in with `gcloud`. Run
+  `gcloud auth application-default login` once. Requests are then signed with
+  Application Default Credentials.
+
+For an ordinary Cloud project the second path is not the fancy option — it is
+the only one. **A Google Cloud API key does not work with Vertex AI**, not even
+one created restricted to `aiplatform.googleapis.com`. Vertex answers every
+such request with "API keys are not supported by this API. Expected OAuth2
+access token or other authentication credentials that assert a principal", and
+the realtime socket closes with the same message. The identical key works fine
+on the AI Studio cards, which is what makes the mistake easy to make.
+
+Two more things that bite on a real project:
+
+- **The region.** `global` reaches the most models, but an organisation policy
+  can block it (`constraints/gcp.restrictEndpointUsage`). Then name a real
+  region such as `europe-west4` or `us-central1`.
+- **The model.** Which models a region serves, and which of them your project is
+  allowed to use, are separate gates — a region can list a model your project
+  still gets a 404 for. Regions also differ a lot from one another. If a model
+  404s, pick another one in the picker.
 
 Two reasons to prefer Vertex over the AI Studio cards: the billing lands in
 your Cloud project, and the text-to-speech preview model that AI Studio caps at

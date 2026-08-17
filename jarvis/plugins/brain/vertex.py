@@ -18,16 +18,24 @@ to Vertex, and that a missing key is not automatically a missing credential.
 That last one is the substantive difference. Vertex has two authentication
 shapes:
 
-* **An API key** — an express-mode key (``AQ.``) or a Google Cloud API key
-  restricted to ``aiplatform.googleapis.com`` (ordinary ``AIza`` shape).
-  Because the ``AIza`` shape is indistinguishable from an AI Studio key, the
-  routing probe in :mod:`jarvis.core.google_genai` would send it to the wrong
-  host — which is precisely why this class pins the route instead of probing.
+* **An express-mode API key** (``AQ.``). This is the ONLY key shape Vertex
+  accepts. Measured 2026-08-17 against a live Cloud project: a standard Google
+  Cloud API key — even one created with
+  ``--api-target=service=aiplatform.googleapis.com`` — is refused on every
+  Vertex surface (countTokens, generateContent, and the Live socket) with "API
+  keys are not supported by this API. Expected OAuth2 access token or other
+  authentication credentials that assert a principal." The same key answers 200
+  on AI Studio, so it is a valid key pointed at the wrong service.
 * **A Google Cloud project** — ``[google].vertex_project`` plus Application
   Default Credentials (a service account, a ``gcloud`` login, workload
   identity). There is no key at all on this path, so the inherited
   "no credential" refusal has to widen or the documented production setup
-  would be rejected as unconfigured.
+  would be rejected as unconfigured. For an ordinary project this is not an
+  alternative to the key, it is the only route.
+
+The route is still PINNED rather than probed. An ``AQ.`` express key is
+ambiguous by shape — AI Studio issues that prefix too — so a probe would be a
+coin flip on the endpoint the user already chose by picking this card.
 """
 
 from __future__ import annotations

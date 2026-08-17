@@ -19,17 +19,22 @@ versioning per [SemVer](https://semver.org/).
   the brain, the tool model, voice input, voice output and realtime, and is
   selectable as a subagent. All of them read ONE shared Vertex credential, so
   setting it up once covers the whole stack.
-  - Two ways in. A Vertex AI API key — express mode (`AQ.`) or a Cloud API key
-    restricted to `aiplatform.googleapis.com` (`AIza`) — or a Google Cloud
+  - Two ways in. A Vertex AI express-mode key (`AQ.`), or a Google Cloud
     project with no key at all: `[google].vertex_project` plus
     `vertex_location` and an optional `service_account_path`, signed with
     Application Default Credentials. That second path is what a production
-    project uses, and it was previously wired to text-to-speech only.
-  - The endpoint is now decided by the card, not guessed from the key. A Cloud
-    API key restricted to Vertex wears the ordinary `AIza` shape, so the
-    existing routing probe sent it to AI Studio, where it failed every call
-    with an auth error that explained nothing. Keys in a Vertex card are pinned
-    to Vertex with no probe at all.
+    project uses, and it was previously wired to text-to-speech only. Measured
+    against a live Cloud project: a Google Cloud API KEY does not work with
+    Vertex at all — not even one restricted to `aiplatform.googleapis.com`. It
+    is refused everywhere with "API keys are not supported by this API", while
+    the same key answers 200 on AI Studio. The cards, the docs and the
+    type-time key hint all say so now, and an `AIza` key pasted into a Vertex
+    field draws a warning instead of a shrug.
+  - The endpoint is decided by the card, not guessed from the key, so an
+    express key is never probed onto the wrong host.
+  - Vertex publishes its own Live model ids. The realtime card would otherwise
+    have inherited the AI Studio one and 404'd on the model even once
+    authentication succeeded.
   - Vertex is a distinct credential family, deliberately with no cross-read to
     the Gemini slots in either direction. The two accounts run out of quota
     independently, which makes crossing between them a real fallback rather

@@ -113,7 +113,7 @@
     "provider": "grok"
   },
   "brain.computer_use": {
-    "provider": "gemini"
+    "provider": "ollama"
   },
   "brain.providers.grok-realtime": {
     "voice": "lux"

@@ -12,9 +12,14 @@ describe("detectKeyFormat", () => {
     expect(detectKeyFormat("   ")).toBeNull();
   });
 
-  it("recognizes Google AI Studio keys (AIza / AQ.)", () => {
+  // The two Google shapes are DIFFERENT kinds, because they reach different
+  // services. Measured 2026-08-17 against a live Cloud project: an AIza key
+  // answers 200 on AI Studio and is refused by every Vertex surface ("API keys
+  // are not supported by this API"), even when it was created restricted to
+  // aiplatform.googleapis.com. Only the AQ. express shape reaches both.
+  it("separates the AI-Studio-only shape from the express shape", () => {
     expect(detectKeyFormat("AIzaSyABCDEF1234567890")?.kind).toBe("google-aistudio");
-    expect(detectKeyFormat("AQ.Ab8RN6...rest")?.kind).toBe("google-aistudio");
+    expect(detectKeyFormat("AQ.Ab8RN6...rest")?.kind).toBe("google-express");
   });
 
   it("tells AQ. keys they may be Vertex express (auto-routed), never 'Vertex stays off'", () => {
@@ -22,16 +27,13 @@ describe("detectKeyFormat", () => {
     // promise a fixed endpoint (the old text claimed "Vertex stays off" and
     // sent express-key users into a silent auth dead end).
     const hint = detectKeyFormat("AQ.Ab8RN6...rest");
-    expect(hint?.label).toBe("Google API key (AI Studio or Vertex)");
+    expect(hint?.label).toBe("Google API key (AI Studio or Vertex express)");
     expect(hint?.note).toContain("decides the endpoint");
-    // The AIza label stays endpoint-NEUTRAL too. It used to read "Google AI
-    // Studio key", which became actively misleading once the same shape could be
-    // a Cloud API key restricted to aiplatform.googleapis.com — a Vertex user
-    // would be told their correct key was an AI Studio one, in the very field
-    // this module exists to keep straight.
+    // The AIza note must name the limit, so nobody spends an afternoon on a key
+    // Vertex will never take.
     const classic = detectKeyFormat("AIzaSyABCDEF1234567890");
-    expect(classic?.label).toBe("Google API key");
-    expect(classic?.note).toContain("Vertex AI");
+    expect(classic?.label).toBe("Google AI Studio key");
+    expect(classic?.note).toContain("Vertex AI refuses it");
   });
 
   it("recognizes a Vertex AI service-account JSON, not an AI Studio key", () => {
@@ -108,17 +110,24 @@ describe("keyMatchesSecret", () => {
     expect(keyMatchesSecret("gemini_api_key", "   ").detected).toBeNull();
   });
 
-  // A Vertex key wears the SAME AIza / AQ. shape as an AI Studio one — which
-  // account it belongs to is invisible in the string. Warning about that would
-  // fire on every correctly pasted Vertex key, so the two Google kinds are
-  // treated as compatible in both directions.
-  it("never cries mismatch between the two indistinguishable Google kinds", () => {
-    for (const slot of ["vertex_api_key", "realtime_vertex_api_key"]) {
-      for (const key of ["AIzaSy123", "AQ.Ab8RN6xyz"]) {
-        expect(keyMatchesSecret(slot, key).match).toBe(true);
-      }
+  // The express shape is the one Google issues for both services, so it must
+  // never draw a warning in either slot.
+  it("accepts an AQ. express key in every Google slot", () => {
+    for (const slot of ["vertex_api_key", "realtime_vertex_api_key", "gemini_api_key"]) {
+      expect(keyMatchesSecret(slot, "AQ.Ab8RN6xyz").match).toBe(true);
     }
-    expect(keyMatchesSecret("gemini_api_key", "AQ.Ab8RN6xyz").match).toBe(true);
+  });
+
+  // The correction that cost a live debugging session: an AIza key in a Vertex
+  // field is not "probably fine", it is a key Vertex will refuse on every call.
+  it("warns about an AI-Studio-only key in a Vertex slot", () => {
+    for (const slot of ["vertex_api_key", "realtime_vertex_api_key"]) {
+      const r = keyMatchesSecret(slot, "AIzaSy123");
+      expect(r.match).toBe(false);
+      expect(r.detected?.note).toContain("Vertex AI refuses it");
+    }
+    // ...while the same key is exactly right one card over.
+    expect(keyMatchesSecret("gemini_api_key", "AIzaSy123").match).toBe(true);
   });
 
   it("still flags a genuinely foreign key in a Vertex field", () => {
@@ -137,10 +146,14 @@ describe("keyMatchesSecret", () => {
 });
 
 describe("keyFormatConfirmed", () => {
-  it("gives a Vertex slot the green tick for a Google-shaped key", () => {
+  it("gives a Vertex slot the green tick for an express key", () => {
     // Without the compatibility rule the tick never appears on a Vertex card,
-    // leaving every correct key looking unverified.
-    expect(keyFormatConfirmed(keyMatchesSecret("vertex_api_key", "AIzaSy123"))).toBe(true);
+    // leaving every correct express key looking unverified.
+    expect(keyFormatConfirmed(keyMatchesSecret("vertex_api_key", "AQ.Ab8RN6xyz"))).toBe(true);
+  });
+
+  it("withholds it for an AI-Studio-only key in a Vertex slot", () => {
+    expect(keyFormatConfirmed(keyMatchesSecret("vertex_api_key", "AIzaSy123"))).toBe(false);
   });
 
   it("withholds it for a key we do not recognize", () => {

@@ -571,6 +571,10 @@ class GeminiLiveProvider:
     """Structural provider entry point for the Gemini Live family."""
 
     name = "gemini-live"
+    #: Live model used when the card pins none. A class attribute, not the bare
+    #: module constant, because the AI Studio and Vertex catalogues do NOT share
+    #: their Live ids — see VertexLiveProvider.
+    default_model = _MODEL
     # Optional provider capability consumed by the shared session fallback.
     # Every adapter that draws from the same account quota must expose the
     # same value so a terminal billing/auth failure is not retried through an
@@ -708,7 +712,7 @@ class GeminiLiveProvider:
             **_compression_kwargs(types),
         )
         connection_cm = client.aio.live.connect(
-            model=str(getattr(cfg, "model", "") or _MODEL),
+            model=str(getattr(cfg, "model", "") or self.default_model),
             config=live_config,
         )
         try:
@@ -741,16 +745,29 @@ class VertexLiveProvider(GeminiLiveProvider):
     Studio account fail independently, so crossing between them is a real
     fallback rather than a doomed retry.
 
-    Availability honesty: Google documents the Live API as reachable in express
-    mode through the Gen AI SDK, while the express REST surface itself lists
-    only the three unary methods. If a given key or project cannot open the
-    duplex socket, the handshake fails and the realtime factory crosses to the
-    next credential-ready provider — and finally to the classic pipeline. That
-    is the honest degradation this tier already implements; nothing here claims
-    a capability it has not proven.
+    Authentication, measured 2026-08-17 against a live Cloud project: Vertex
+    accepts an API key ONLY in express mode. A standard Google Cloud API key —
+    even one restricted to ``aiplatform.googleapis.com`` — is refused on every
+    Vertex surface with "API keys are not supported by this API. Expected OAuth2
+    access token or other authentication credentials that assert a principal",
+    and the Live socket closes with 1008 carrying that same text. So the Cloud
+    project path (``[google].vertex_project`` + Application Default
+    Credentials) is not a nicety here; for a normal project it is the only way
+    in. The card says so.
+
+    If a given key or project cannot open the duplex socket, the handshake fails
+    and the realtime factory crosses to the next credential-ready provider — and
+    finally to the classic pipeline. Nothing here claims a capability it has not
+    proven.
     """
 
     name = "vertex-live"
+    #: Vertex publishes its OWN Live model ids; the AI Studio id this class
+    #: would otherwise inherit does not exist there, so realtime 404'd on the
+    #: model even once authentication succeeded. Verified present in both probed
+    #: regions (europe-west4 and us-central1, live publisher catalogue
+    #: 2026-08-17). A per-card model pin still overrides it.
+    default_model = "gemini-live-2.5-flash-native-audio"
     credential_family = "vertex"
     credential_candidates = (
         ("realtime_vertex_api_key", "JARVIS_REALTIME_VERTEX_API_KEY"),

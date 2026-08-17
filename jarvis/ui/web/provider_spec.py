@@ -171,13 +171,18 @@ _VERTEX_PROJECT_PATH = AltCredential(
     credential_help=(
         "Instead of a key, point Jarvis at a Cloud project: set "
         "[google].vertex_project to the project id that owns "
-        "aiplatform.googleapis.com, [google].vertex_location to a region "
-        "(\"global\" is the default and has the widest Gemini availability), and "
+        "aiplatform.googleapis.com, [google].vertex_location to a region, and "
         "— only if this machine is not already signed in with gcloud — "
         "[google].service_account_path to a service-account JSON. Requests are "
-        "then signed with Application Default Credentials. This is the path a "
-        "production project uses, and the one without the preview-model daily "
-        "cap that the AI Studio account has."
+        "then signed with Application Default Credentials (run 'gcloud auth "
+        "application-default login' once). For an ordinary Cloud project this "
+        "is not the fancy option, it is the ONLY one: Vertex takes API keys "
+        "only in express mode. On the region: \"global\" reaches the most "
+        "models, but an organisation policy can block it "
+        "(constraints/gcp.restrictEndpointUsage) — then name a real region such "
+        "as europe-west4 or us-central1. Which models a region serves, and "
+        "which of them your project may use, are two separate gates; a 404 on "
+        "the model means pick another one in the picker."
     ),
     dashboard_url="https://console.cloud.google.com/iam-admin/serviceaccounts",
     credential_path_hint="~/.config/jarvis/vertex-sa.json",
@@ -398,16 +403,18 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         secret_keys=("vertex_api_key",),
         dashboard_url="https://console.cloud.google.com/vertex-ai/studio",
         credential_help=(
-            "Vertex AI API key from your Google Cloud project — either an "
-            "express-mode key (AQ.) or a Cloud API key restricted to "
-            "aiplatform.googleapis.com (AIza). Same Gemini models as the card "
-            "above, billed to your Cloud project instead of an AI Studio "
-            "account. For a production project you can skip the key entirely: "
-            "set [google].vertex_project (plus vertex_location, and "
-            "service_account_path if you are not already signed in with gcloud) "
-            "and Vertex authenticates through Application Default Credentials. "
-            "One Vertex setup serves the brain, the tool model, voice input, "
-            "voice output, realtime and the subagents."
+            "Same Gemini models as the card above, billed to a Google Cloud "
+            "project instead of an AI Studio account. Two ways in, and which "
+            "one you need depends on the account: a Vertex AI EXPRESS-mode key "
+            "(starts with AQ.) goes in the field below; a normal Cloud project "
+            "needs no key at all — set [google].vertex_project plus "
+            "vertex_location, and service_account_path if this machine is not "
+            "already signed in with gcloud. A Google Cloud API KEY (AIza) does "
+            "NOT work here even when restricted to aiplatform.googleapis.com: "
+            "Vertex refuses it with \"API keys are not supported by this API\" "
+            "and asks for a credential that asserts a principal. One Vertex "
+            "setup serves the brain, the tool model, voice input, voice output, "
+            "realtime and the subagents."
         ),
         alt_credential=_VERTEX_PROJECT_PATH,
     ),
