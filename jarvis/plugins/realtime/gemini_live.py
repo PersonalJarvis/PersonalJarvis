@@ -937,6 +937,15 @@ class VertexLiveProvider(GeminiLiveProvider):
     #: regions (europe-west4 and us-central1, live publisher catalogue
     #: 2026-08-17). A per-card model pin still overrides it.
     default_model = "gemini-live-2.5-flash-native-audio"
+    #: Measured 2026-08-17 on an idle machine: 3.7-5.5 s per open, of which
+    #: 1.6-2.8 s is minting an OAuth token from Application Default Credentials
+    #: before the socket is even attempted — a cost the API-key providers never
+    #: pay. The shared 12 s ceiling divided by the candidate count handed this
+    #: adapter 6.0 s, i.e. the measured worst case plus half a second, so a
+    #: busy machine timed out the handshake and dropped the call to the
+    #: pipeline. Declaring the real need (a capability, never a provider-name
+    #: check — AP-21) is what the session's deadline stretch exists for.
+    handshake_budget_s = 20.0
     credential_family = "vertex"
     credential_candidates = (
         ("realtime_vertex_api_key", "JARVIS_REALTIME_VERTEX_API_KEY"),
@@ -950,6 +959,31 @@ class VertexLiveProvider(GeminiLiveProvider):
             "(VERTEX_API_KEY / the Vertex AI card in the API-Keys view), or set "
             "[google].vertex_project for the Google Cloud project path."
         )
+
+    @staticmethod
+    async def warm_transport(cfg: Any = None) -> None:
+        """Mint the ADC token at boot so the first call does not pay for it.
+
+        Measured: building the client costs 1.6-2.8 s, nearly all of it the
+        OAuth token exchange, and it happens INSIDE the first handshake. Doing
+        it once at boot takes that off the first spoken turn; google-auth caches
+        the token, so later opens only pay for the socket.
+
+        Best-effort by contract — the factory swallows failures, and a warm that
+        did not happen only costs the latency it was meant to save.
+        """
+        del cfg  # the credential state is read from config, not the session
+        import asyncio  # lazy (AP-26)
+        import importlib
+
+        google_genai = importlib.import_module("jarvis.core.google_genai")
+        if not VertexLiveProvider.external_login_ready(None):
+            return
+        # Off the event loop: the token exchange is a blocking HTTPS call.
+        await asyncio.to_thread(
+            google_genai.build_vertex_client, "", realtime=True
+        )
+        log.info("vertex-live: Application Default Credentials warmed.")
 
     @staticmethod
     def external_login_ready(cfg: Any = None) -> bool:
