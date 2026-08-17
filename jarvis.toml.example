@@ -96,10 +96,19 @@ service_account_path = "~/.config/jarvis/vertex-sa.json"
 # and the same slug as a subagent). Leave vertex_project empty to authenticate
 # with a Vertex API key; set it to use a Google Cloud project with Application
 # Default Credentials and no key at all.
+# Note that Vertex takes an API key ONLY in express mode (AQ.). A normal Cloud
+# project authenticates via Application Default Credentials — no key at all:
+#   gcloud auth application-default login
 [google]
 vertex_mode = "auto"
 vertex_project = ""
-vertex_location = "global"    # "global" = widest Gemini availability; or e.g. "europe-west4"
+# "global" carries the current Gemini generation; a named region (europe-west4,
+# us-central1, …) is what data residency needs — and regions lag on new models.
+vertex_location = "global"
+# The Live/realtime socket is a DIFFERENT endpoint: "global" serves no Live
+# session at all, so realtime needs a region. Empty = follow vertex_location
+# when it names a region, else fall back to a region and log which one.
+vertex_realtime_location = ""
 service_account_path = ""     # only when this machine is not signed in with gcloud
 
 # ── Brain (multi-provider; never hardcode a single vendor) ──

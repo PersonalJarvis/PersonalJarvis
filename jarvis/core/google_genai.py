@@ -56,7 +56,7 @@ import hashlib
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -127,6 +127,13 @@ def classify_google_key(api_key: str) -> KeyRoute | None:
     return "aistudio"
 
 
+#: Region the Live socket falls back to when ``vertex_location`` is ``global``.
+#: Not a preference: ``global`` opens no Live session, so SOME region has to be
+#: named. us-central1 carries the widest published model set, which makes it the
+#: least surprising default — and the warning above tells the user it happened.
+_REALTIME_FALLBACK_LOCATION = "us-central1"
+
+
 @dataclass(frozen=True, slots=True)
 class VertexProject:
     """The full-Vertex (Google Cloud project) half of ``[google]``.
@@ -140,10 +147,44 @@ class VertexProject:
     project: str | None
     location: str
     service_account_path: str | None
+    #: Where the DUPLEX (Live) socket is opened. Separate from ``location``
+    #: because the two are genuinely different endpoints — see
+    #: :meth:`realtime_location`.
+    realtime_location: str | None = None
 
     @property
     def configured(self) -> bool:
         return bool(self.project)
+
+    def for_realtime(self) -> VertexProject:
+        """The same project, pointed at an endpoint that can serve Live.
+
+        Measured 2026-08-17: the ``global`` endpoint serves the current Gemini
+        generation for ordinary requests but opens NO Live session at all — not
+        even the ``gemini-live-*`` id its own catalogue lists there; every
+        attempt closes with 1008 "Publisher model not found". Regional endpoints
+        do open it. So one location cannot serve both tiers, and a config with a
+        single knob would force the user to choose between a current brain and a
+        working voice.
+
+        Precedence: an explicit ``[google].vertex_realtime_location`` wins; a
+        regional ``vertex_location`` is used as-is; only a ``global``
+        ``vertex_location`` falls back to :data:`_REALTIME_FALLBACK_LOCATION`,
+        and says so in the log — a silent region change is a data-residency
+        decision nobody asked for.
+        """
+        if self.realtime_location:
+            return replace(self, location=self.realtime_location)
+        if self.location.lower() != "global":
+            return self
+        log.warning(
+            "Vertex realtime: the global endpoint serves no Live session, so "
+            "the socket falls back to %s. Set [google].vertex_realtime_location "
+            "to choose the region yourself — it decides where the audio is "
+            "processed.",
+            _REALTIME_FALLBACK_LOCATION,
+        )
+        return replace(self, location=_REALTIME_FALLBACK_LOCATION)
 
 
 def vertex_project_settings() -> VertexProject:
@@ -160,6 +201,7 @@ def vertex_project_settings() -> VertexProject:
         project = str(getattr(google, "vertex_project", "") or "").strip() or None
         location = str(getattr(google, "vertex_location", "") or "").strip() or "global"
         sa_path = str(getattr(google, "service_account_path", "") or "").strip() or None
+        rt_location = str(getattr(google, "vertex_realtime_location", "") or "").strip() or None
     except Exception as exc:  # noqa: BLE001 — config trouble must never break clients
         log.debug(
             "Vertex project settings unreadable (%s: %s) — using express mode.",
@@ -167,7 +209,12 @@ def vertex_project_settings() -> VertexProject:
             exc,
         )
         return VertexProject(project=None, location="global", service_account_path=None)
-    return VertexProject(project=project, location=location, service_account_path=sa_path)
+    return VertexProject(
+        project=project,
+        location=location,
+        service_account_path=sa_path,
+        realtime_location=rt_location,
+    )
 
 
 def _export_service_account(path: str | None) -> None:
@@ -440,18 +487,23 @@ def _project_for(route: KeyRoute) -> VertexProject | None:
     return settings
 
 
-def build_vertex_client(api_key: str = "", *, http_options: Any | None = None) -> Any:
+def build_vertex_client(
+    api_key: str = "", *, http_options: Any | None = None, realtime: bool = False
+) -> Any:
     """Build a client PINNED to Vertex AI — no probe, no AI Studio fallback.
 
     The dedicated ``vertex`` provider family calls this instead of
     :func:`build_genai_client` because its endpoint is a user decision, not a
-    guess: a Google Cloud API key restricted to ``aiplatform.googleapis.com``
-    carries the ordinary ``AIza`` shape, so the shape classifier would send it
-    to AI Studio and it would fail on every call with an auth error that names
-    nothing useful. Pinning also skips the probe round-trip entirely.
+    guess: an ``AIza``-shaped key would be classified as AI Studio and sent to
+    the wrong host. Pinning also skips the probe round-trip entirely.
 
     ``api_key`` may be empty on the Cloud project path, where Application
     Default Credentials do the authenticating.
+
+    ``realtime=True`` resolves the DUPLEX endpoint instead of the ordinary one
+    (:meth:`VertexProject.for_realtime`). The two differ: ``global`` serves the
+    current Gemini generation for normal requests and no Live session at all, so
+    a single location cannot drive both tiers.
     """
     from google import genai
 
@@ -461,17 +513,21 @@ def build_vertex_client(api_key: str = "", *, http_options: Any | None = None) -
             "Vertex AI is not configured: store a Vertex AI API key (or set "
             "[google].vertex_project for the Google Cloud project path)."
         )
+    if realtime and settings is not None and settings.configured:
+        settings = settings.for_realtime()
     return genai.Client(**_client_kwargs(api_key, "vertex", http_options, settings))
 
 
-async def build_vertex_client_async(api_key: str = "", *, http_options: Any | None = None) -> Any:
+async def build_vertex_client_async(
+    api_key: str = "", *, http_options: Any | None = None, realtime: bool = False
+) -> Any:
     """Async twin of :func:`build_vertex_client`.
 
     Pinning means there is no probe to keep off the event loop, so this is a
     thin wrapper — it exists so realtime callers reach the Vertex path through
     the same await-shaped door as :func:`build_genai_client_async`.
     """
-    return build_vertex_client(api_key, http_options=http_options)
+    return build_vertex_client(api_key, http_options=http_options, realtime=realtime)
 
 
 def build_genai_client(

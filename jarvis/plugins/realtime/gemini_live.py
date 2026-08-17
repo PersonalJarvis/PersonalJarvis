@@ -821,8 +821,15 @@ class VertexLiveProvider(GeminiLiveProvider):
         return bool(config.vertex_credential_configured())
 
     async def _build_client(self) -> Any:
-        """Pinned to Vertex — no probe, and the Cloud project path included."""
+        """Pinned to Vertex, and pointed at the endpoint that serves Live.
+
+        ``realtime=True`` matters: the ``global`` endpoint a Vertex brain wants
+        (it is where the current Gemini generation lives) opens no Live session
+        whatsoever, so the socket resolves its own region.
+        """
         import importlib  # lazy (AP-26)
 
         google_genai = importlib.import_module("jarvis.core.google_genai")
-        return await google_genai.build_vertex_client_async(self._api_key)
+        return await google_genai.build_vertex_client_async(
+            self._api_key, realtime=True
+        )

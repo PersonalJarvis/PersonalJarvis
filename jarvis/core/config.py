@@ -3547,6 +3547,13 @@ class GoogleAuthConfig(BaseModel):
     #: with the broadest Gemini availability; a single region (``us-central1``,
     #: ``europe-west4``, …) is what a data-residency requirement needs.
     vertex_location: str = "global"
+    #: Region for the DUPLEX (Live) socket, which is a different endpoint from
+    #: the one ordinary requests use: measured 2026-08-17, ``global`` serves the
+    #: current Gemini generation for normal calls and opens NO Live session at
+    #: all. Empty = follow ``vertex_location`` when that names a region, and
+    #: fall back to a documented region (with a warning) when it is ``global``.
+    #: Set it explicitly when the audio must be processed somewhere specific.
+    vertex_realtime_location: str | None = None
     #: Service-account JSON for the project path. Exported as
     #: ``GOOGLE_APPLICATION_CREDENTIALS`` so the Cloud SDK auth chain finds it.
     #: ``None`` = use whatever Application Default Credentials already resolve

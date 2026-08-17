@@ -108,9 +108,15 @@ on the AI Studio cards, which is what makes the mistake easy to make.
 
 Two more things that bite on a real project:
 
-- **The region.** `global` reaches the most models, but an organisation policy
-  can block it (`constraints/gcp.restrictEndpointUsage`). Then name a real
-  region such as `europe-west4` or `us-central1`.
+- **The region.** `global` is where the current Gemini generation lives; named
+  regions lag behind, sometimes by a whole generation. An organisation policy
+  can block `global` outright (`constraints/gcp.restrictEndpointUsage` with
+  `aiplatform.googleapis.com` in its deny list) — the symptom is a 403 on every
+  call while the same model works in a region.
+- **Realtime uses a different endpoint than everything else.** `global` serves
+  no Live session at all, so the voice socket needs a named region even when the
+  brain runs on `global`. That is what `[google].vertex_realtime_location` is
+  for; leave it empty and Jarvis picks a region and logs which one.
 - **The model.** Which models a region serves, and which of them your project is
   allowed to use, are separate gates — a region can list a model your project
   still gets a 404 for. Regions also differ a lot from one another. If a model

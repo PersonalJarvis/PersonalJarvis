@@ -42,8 +42,67 @@ def _no_ambient_adc(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
 
 
-def _project(project: str | None, location: str = "global", sa: str | None = None):
-    return gg.VertexProject(project=project, location=location, service_account_path=sa)
+def _project(
+    project: str | None,
+    location: str = "global",
+    sa: str | None = None,
+    realtime_location: str | None = None,
+):
+    return gg.VertexProject(
+        project=project,
+        location=location,
+        service_account_path=sa,
+        realtime_location=realtime_location,
+    )
+
+
+# ── chat and Live are different endpoints ────────────────────────────────────
+#
+# Measured 2026-08-17 against a live Cloud project: `global` serves the current
+# Gemini generation for ordinary requests and opens NO Live session at all —
+# every attempt closes with 1008, including the gemini-live-* id its own
+# catalogue lists there. Regional endpoints do open it. One location therefore
+# cannot drive both tiers, and the split below is what stops a user from having
+# to choose between a current brain and a working voice.
+
+
+def test_an_explicit_realtime_region_always_wins() -> None:
+    settings = _project("p", location="global", realtime_location="europe-west4")
+    assert settings.for_realtime().location == "europe-west4"
+    assert settings.location == "global", "the chat endpoint must be untouched"
+
+
+def test_a_regional_location_is_used_for_live_as_is() -> None:
+    """No second setting needed when the user already named a region."""
+    settings = _project("p", location="europe-west4")
+    assert settings.for_realtime().location == "europe-west4"
+
+
+def test_a_global_location_falls_back_to_a_region_for_live() -> None:
+    """Otherwise the socket would be opened where nothing answers."""
+    settings = _project("p", location="global")
+    resolved = settings.for_realtime()
+    assert resolved.location == gg._REALTIME_FALLBACK_LOCATION
+    assert resolved.location.lower() != "global"
+
+
+def test_the_fallback_keeps_the_rest_of_the_project_identical() -> None:
+    settings = _project("p", location="global", sa="~/.config/jarvis/vertex-sa.json")
+    resolved = settings.for_realtime()
+    assert resolved.project == "p"
+    assert resolved.service_account_path == "~/.config/jarvis/vertex-sa.json"
+    assert resolved.configured is True
+
+
+def test_the_region_fallback_is_announced(caplog) -> None:
+    """A silent region change is a data-residency decision nobody asked for."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="jarvis.google_genai"):
+        _project("p", location="global").for_realtime()
+    assert any(gg._REALTIME_FALLBACK_LOCATION in record.message for record in caplog.records), (
+        "the fallback must say which region it picked"
+    )
 
 
 # ── kwargs assembly: the two shapes never mix ────────────────────────────────
@@ -198,6 +257,21 @@ def test_build_vertex_client_never_probes(
     gg.build_vertex_client("AIza-cloud-restricted")
 
     assert stub_genai.calls == [{"api_key": "AIza-cloud-restricted", "vertexai": True}]
+
+
+def test_the_realtime_build_resolves_its_own_endpoint(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule
+) -> None:
+    """One config, two endpoints — the whole point of the split."""
+    monkeypatch.setattr(
+        gg,
+        "vertex_project_settings",
+        lambda: _project("prod-proj", location="global", realtime_location="us-central1"),
+    )
+    gg.build_vertex_client("")
+    gg.build_vertex_client("", realtime=True)
+    assert stub_genai.calls[0]["location"] == "global"
+    assert stub_genai.calls[1]["location"] == "us-central1"
 
 
 def test_build_vertex_client_uses_the_project_when_configured(
