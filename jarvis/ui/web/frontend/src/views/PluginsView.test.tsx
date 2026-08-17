@@ -210,6 +210,57 @@ describe("ConnectIconButton reconnect state", () => {
   });
 });
 
+// Hitting a 28px "+" is the wrong ask for "I want this plugin". The whole card
+// starts the same connect flow — except a connected one, where a stray click
+// must never disconnect anything.
+describe("plugin card click", () => {
+  it("starts the connect flow when the card body is clicked", async () => {
+    installCatalogFetchMock();
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Deployments, runtime logs, domains and env-vars"),
+      ).toBeDefined();
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Vercel is not_connected + pat_paste → the paste dialog IS its connect flow.
+    await act(async () => {
+      fireEvent.click(
+        screen.getByText("Deployments, runtime logs, domains and env-vars"),
+      );
+    });
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
+  });
+
+  it("leaves a connected plugin alone — no dialog, no disconnect request", async () => {
+    installCatalogFetchMock();
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Repos, issues, pull requests and Actions runs"),
+      ).toBeDefined();
+    });
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByText("Repos, issues, pull requests and Actions runs"),
+      );
+    });
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const urls = (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(urls.every((u: string) => u === "/api/marketplace/plugins")).toBe(true);
+  });
+});
+
 // The PKCE pre-connect dialog is the in-app path to run your OWN production
 // OAuth client (the durable fix for the 7-day Google revocation) without env
 // vars, plus the honest provider-side hint.
