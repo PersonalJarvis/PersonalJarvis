@@ -20,7 +20,10 @@ from jarvis.brain.router import SYSTEM_PROMPT
 class TestDelegatorPolicyInPrompt:
     def test_delegator_principle_present(self) -> None:
         assert "Delegator" in SYSTEM_PROMPT or "Dispatcher" in SYSTEM_PROMPT
-        assert "Millisekunden" in SYSTEM_PROMPT or "reasonst nicht lange" in SYSTEM_PROMPT.lower()  # i18n-allow
+        assert (
+            "Millisekunden" in SYSTEM_PROMPT  # i18n-allow
+            or "reasonst nicht lange" in SYSTEM_PROMPT.lower()  # i18n-allow
+        )
 
     def test_three_categories_named(self) -> None:
         assert "TRIVIAL" in SYSTEM_PROMPT
