@@ -234,18 +234,22 @@ def test_local_whisper_is_the_floor_not_the_first_choice():
 
 
 def test_groq_is_the_last_cloud_fallback():
-    """Poor dictation quality keeps Groq available, but never preferred."""
-    assert _STT_CROSS_FAMILY_ORDER == (
-        "openrouter-stt",
-        "openai-api",
-        "gemini-api",
-        "groq-api",
-    )
+    """Poor dictation quality keeps Groq available, but never preferred.
+
+    The invariant is Groq's POSITION, not the membership of the list: a new
+    cloud recognizer joining the order is ordinary, and pinning the whole tuple
+    turned every such addition into a failure of a test about Groq.
+    """
+    assert _STT_CROSS_FAMILY_ORDER[-1] == "groq-api"
+    assert "groq-api" in _STT_CROSS_FAMILY_ORDER  # available, just never first
 
     order = alternate_provider_names(
         "openrouter-stt", [*_STT_CROSS_FAMILY_ORDER, "faster-whisper"]
     )
-    assert order == ["openai-api", "gemini-api", "groq-api", "faster-whisper"]
+    # Groq sits behind every other cloud family, and the keyless local engine
+    # stays the floor beneath all of them.
+    assert order[-2:] == ["groq-api", "faster-whisper"]
+    assert order[0] != "groq-api"
 
 
 def test_a_single_key_install_is_not_wrapped():

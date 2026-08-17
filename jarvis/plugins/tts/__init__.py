@@ -42,6 +42,9 @@ _GROK_TTS_ALIASES = frozenset({
     "grok-voice", "grok_voice", "grok-tts", "xai-tts", "xai-voice",
 })
 _GEMINI_TTS_ALIASES = frozenset({"gemini-flash-tts", "gemini-flash", "gemini"})
+_VERTEX_TTS_ALIASES = frozenset(
+    {"vertex-tts", "vertex", "vertex-ai", "vertex_ai", "vertex-flash-tts"}
+)
 _OPENROUTER_TTS_ALIASES = frozenset({
     "openrouter", "openrouter-tts", "openrouter_tts", "open-router-tts",
 })
@@ -74,15 +77,25 @@ _TTS_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     # Jarvis-Agent providers — a fresh downloader whose only credential is an
     # OpenRouter key (a gateway to many models) gets working voice for free.
     "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
+    # Vertex TTS reads the shared Vertex slots — the same credential the Vertex
+    # brain, STT and realtime tiers use. Its Cloud project path carries no key at
+    # all, which ``_tts_has_credential`` answers for separately.
+    "vertex-tts": (
+        ("vertex_api_key", "VERTEX_API_KEY"),
+        ("google_vertex_api_key", "GOOGLE_VERTEX_API_KEY"),
+    ),
 }
 
 # Cross-family probe order when the configured provider has no key: native
 # premium families first (Inworld leads — the arena-#1 realtime default), then
 # the common BYO-key alternatives, with OpenRouter LAST as the last-resort
 # gateway (design 2026-07-07). Only a family that actually has a key is chosen.
+# Vertex leads its AI-Studio sibling among the Google entries: same voices, but
+# without the 100-requests/day preview cap that makes the AI Studio path go
+# quiet mid-day.
 _TTS_CROSS_FAMILY_ORDER: tuple[str, ...] = (
-    "inworld", "gemini-flash-tts", "elevenlabs", "cartesia", "grok-voice",
-    "openrouter",
+    "inworld", "vertex-tts", "gemini-flash-tts", "elevenlabs", "cartesia",
+    "grok-voice", "openrouter",
 )
 
 
@@ -97,6 +110,8 @@ def _canonical_tts_name(name: str) -> str:
         return "cartesia"
     if n in _GROK_TTS_ALIASES:
         return "grok-voice"
+    if n in _VERTEX_TTS_ALIASES:
+        return "vertex-tts"
     if n in _GEMINI_TTS_ALIASES:
         return "gemini-flash-tts"
     if n in _OPENROUTER_TTS_ALIASES:
@@ -110,7 +125,9 @@ def _tts_has_credential(canonical: str, tts_cfg: Any) -> bool:
     Unknown / third-party providers (no entry in ``_TTS_SECRET_CANDIDATES``)
     return True so their path is never gated. Gemini via Vertex AI uses a service
     account rather than an API key, so a configured Vertex setup counts as a
-    credential.
+    credential — for the legacy ``[tts].use_vertex`` route and for the dedicated
+    Vertex card alike, the latter asking the shared credential state so the card
+    and the runtime can never disagree.
     """
     candidates = _TTS_SECRET_CANDIDATES.get(canonical)
     if candidates is None:
@@ -118,6 +135,13 @@ def _tts_has_credential(canonical: str, tts_cfg: Any) -> bool:
     if canonical == "gemini-flash-tts" and bool(getattr(tts_cfg, "use_vertex", False)):
         return True
     from jarvis.core import config as _cfg
+
+    if canonical == "vertex-tts":
+        try:
+            if _cfg.vertex_credential_configured():
+                return True
+        except Exception as exc:  # noqa: BLE001 — a probe must never break TTS build
+            log.debug("Vertex credential probe failed (%s); using key candidates.", exc)
 
     return _cfg.get_secret_any(candidates) is not None
 
@@ -724,6 +748,31 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             getattr(tts_cfg, "voice_en", None)
         )
         return PiperLocalTTS(gender=profile, speed=tts_cfg.speed)
+
+    if provider in _VERTEX_TTS_ALIASES:
+        try:
+            from jarvis.plugins.tts.gemini_flash_tts import VertexTTS
+        except ImportError as exc:
+            raise RuntimeError(
+                f"Vertex TTS plugin not importable: {exc}",
+            ) from exc
+        # The voice catalogue is IDENTICAL to the AI-Studio card's (same 30
+        # prebuilt Gemini voices), so the same resolver and the same default
+        # apply — a user switching between the two accounts keeps their voice.
+        vertex_voice = _resolve_voice_for_provider(
+            tts_cfg.voice_de, "gemini-flash-tts", "Charon", _GEMINI_VOICES,
+        )
+        return VertexTTS(
+            model=tts_cfg.model or "gemini-3.1-flash-tts-preview",
+            default_voice=vertex_voice,
+            language_code=tts_cfg.language_code or "de-DE",
+            style_prompt=tts_cfg.style_prompt or None,
+            allow_sapi5_fallback=allow_sapi5,
+            chunk_by_sentence=bool(getattr(tts_cfg, "chunk_by_sentence", True)),
+            streaming=bool(getattr(tts_cfg, "streaming", False)),
+            seed=getattr(tts_cfg, "seed", None),
+            temperature=getattr(tts_cfg, "temperature", None),
+        )
 
     if provider not in ("gemini-flash-tts", "gemini-flash", "gemini"):
         log.warning(

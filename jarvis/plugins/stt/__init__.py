@@ -43,7 +43,39 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
     ),
+    # Vertex STT reuses the shared Vertex credential — the same slots the Vertex
+    # brain, TTS and realtime tiers read, so one Cloud setup serves the whole
+    # stack. Deliberately NOT the Gemini slots: an AI Studio key sent at the
+    # Vertex endpoint fails on every call.
+    "vertex-stt": (
+        ("vertex_api_key", "VERTEX_API_KEY"),
+        ("google_vertex_api_key", "GOOGLE_VERTEX_API_KEY"),
+    ),
 }
+
+#: Cloud families that can authenticate with NO key in any slot, and how to ask.
+#: Vertex is the case: its Google Cloud project path signs with Application
+#: Default Credentials, so a key probe alone would report the documented
+#: production setup as unconfigured and silently drop voice input to the local
+#: engine. Each entry is a callable so the probe stays lazy — nothing here runs
+#: on the boot path (AP-26).
+_STT_KEYLESS_CREDENTIAL_PROBES: dict[str, str] = {
+    "vertex-stt": "vertex_credential_configured",
+}
+
+
+def _stt_keyless_credential(provider_name: str) -> bool:
+    """Whether *provider_name* authenticates without a stored key. Never raises."""
+    probe_name = _STT_KEYLESS_CREDENTIAL_PROBES.get(provider_name)
+    if not probe_name:
+        return False
+    try:
+        from jarvis.core import config as _cfg
+
+        return bool(getattr(_cfg, probe_name)())
+    except Exception as exc:  # noqa: BLE001 — a probe must never break the STT build
+        logger.debug("STT keyless credential probe for {} failed ({}).", provider_name, exc)
+        return False
 
 # Cross-family probe order when the configured cloud STT has no usable key.
 # OpenRouter leads because its shared Brain key commonly needs no second setup;
@@ -54,8 +86,11 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
 # (a keyed-but-unregistered name is skipped, so we never promise an STT we cannot
 # build). The key-free local engine remains the final floor below every cloud
 # family when it is installed.
+# Vertex sits next to its AI-Studio sibling: same recognizer, same quality, and
+# a host that set Vertex up has a paid Cloud project rather than a free-tier key,
+# so it is the better takeover of the two Google entries.
 _STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
-    "openrouter-stt", "openai-api", "gemini-api", "groq-api",
+    "openrouter-stt", "openai-api", "vertex-stt", "gemini-api", "groq-api",
 )
 
 # Constructor kwargs the factory offers but no provider is required to accept.
@@ -120,7 +155,9 @@ def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
         return True
     from jarvis.core import config as _cfg
 
-    return _cfg.get_secret_any(candidates) is not None
+    if _cfg.get_secret_any(candidates) is not None:
+        return True
+    return _stt_keyless_credential(provider_name)
 
 
 def _stt_family_has_key(provider_name: str) -> bool:
@@ -144,7 +181,9 @@ def _stt_family_has_key(provider_name: str) -> bool:
     candidates = _STT_SECRET_CANDIDATES.get(provider_name)
     if candidates is None:
         return True
-    return _cfg.get_secret_any(candidates) is not None
+    if _cfg.get_secret_any(candidates) is not None:
+        return True
+    return _stt_keyless_credential(provider_name)
 
 
 def _resolve_keyed_stt_provider(primary_name: str) -> str:
@@ -635,11 +674,12 @@ def _maybe_hint_no_working_stt() -> None:
     _NO_STT_HINT_EMITTED = True
     logger.warning(
         "No speech-to-text is available on this host: no cloud STT key is "
-        "configured (Groq / OpenRouter / OpenAI / Gemini) and the local "
-        "faster-whisper engine is not installed, so voice input cannot work. "
-        "To fix it in-app: add a Groq, OpenRouter, OpenAI, or Gemini key in the "
-        "API-Keys view. Or install the local engine via the '[full]' or "
-        "'[local-voice]' extra (e.g. pip install 'personal-jarvis[full]')."
+        "configured (Groq / OpenRouter / OpenAI / Gemini / Vertex AI) and the "
+        "local faster-whisper engine is not installed, so voice input cannot "
+        "work. To fix it in-app: add a Groq, OpenRouter, OpenAI, Gemini, or "
+        "Vertex AI key in the API-Keys view. Or install the local engine via "
+        "the '[full]' or '[local-voice]' extra "
+        "(e.g. pip install 'personal-jarvis[full]')."
     )
 
 

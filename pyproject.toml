@@ -510,6 +510,9 @@ openai-api = "jarvis.plugins.stt.openai_api:OpenAIWhisperAPI"
 # Gemini AI-Studio key; the Gemini-only downloader gets voice input with no
 # second credential.
 gemini-api = "jarvis.plugins.stt.gemini_api:GeminiSTT"
+# Same recognizer on Google Cloud Vertex AI — reuses the shared Vertex
+# credential, so setting Vertex up once serves brain, voice input and voice out.
+vertex-stt = "jarvis.plugins.stt.gemini_api:VertexSTT"
 
 [project.entry-points."jarvis.tts"]
 # Local, keyless neural speech (Piper VITS voices via sherpa-onnx / ONNX
@@ -519,6 +522,10 @@ piper-local = "jarvis.plugins.tts.piper_local:PiperLocalTTS"
 inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
+# Same voices on Google Cloud Vertex AI. Worth its own card beyond billing:
+# the AI-Studio TTS preview model is hard-capped at 100 requests/day, which a
+# production voice cannot live inside — a Cloud project has no preview cap.
+vertex-tts = "jarvis.plugins.tts.gemini_flash_tts:VertexTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
 # Phase L.4 — Streaming-TTS mit niedriger TTFB.
 cartesia = "jarvis.plugins.tts.cartesia_tts:CartesiaTTS"
@@ -531,6 +538,11 @@ openrouter = "jarvis.plugins.brain.openrouter:OpenRouterBrain"
 nvidia = "jarvis.plugins.brain.nvidia:NvidiaBrain"
 openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
+# Google Cloud Vertex AI — the same Gemini models on Google's enterprise
+# endpoint, billed against a Cloud project instead of an AI Studio account.
+# A family of its own (not a Gemini routing detail) because the two accounts
+# bill separately and an install may hold both credentials at once.
+vertex = "jarvis.plugins.brain.vertex:VertexBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 # Anthropic subscription (Claude CLI, print mode). Sibling of codex/antigravity:
@@ -574,6 +586,10 @@ discord = "jarvis.channels.discord:DiscordChannel"
 # "codex-subscription-voice"), which uses the audited app-server TEXT protocol.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
+# Same duplex socket on Google Cloud Vertex AI. A DISTINCT credential family:
+# a Cloud project and an AI Studio account fail independently, so crossing
+# between them on a terminal auth/billing error is a real fallback (AP-22).
+vertex-live = "jarvis.plugins.realtime.gemini_live:VertexLiveProvider"
 # Self-hosted endpoint speaking the same realtime protocol — the local option
 # this tier lacked entirely. Keyless; only ever used when explicitly selected
 # with a server URL configured.

@@ -29,8 +29,16 @@ from jarvis.plugins.tts import (
     build_realtime_surface_tts,
 )
 from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
+from jarvis.ui.web.provider_spec import PROVIDERS
 
-_REALTIME_PROVIDER_IDS = ("gemini-live", "openai-realtime")
+# The realtime tier's own provider ids — the ones ALLOWED to put a
+# ``realtime_``-scoped slot first, because that slot IS their primary credential.
+# DERIVED from the provider cards rather than written down here: a hardcoded pair
+# silently turned every new realtime family into a violation of the invariant
+# below instead of a member of the exempt set.
+_REALTIME_PROVIDER_IDS = tuple(
+    spec.id for spec in PROVIDERS if spec.tier == "realtime"
+)
 
 
 def _cfg(voice: str = "Fenrir") -> SimpleNamespace:

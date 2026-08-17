@@ -76,7 +76,12 @@ def _install_sdk_free_client(
 ) -> tuple[GeminiBrain, _CompatHarness]:
     harness = _CompatHarness(responses)
 
-    def _native_import_failure(_endpoint: Any) -> Any:
+    # ``pinned_route`` is accepted (and ignored) so the double keeps matching
+    # the real signature: the Vertex sibling passes its pinned endpoint through
+    # here, and a double that refuses the argument would fail for a reason that
+    # has nothing to do with the missing SDK this test is about.
+    def _native_import_failure(_endpoint: Any, *, pinned_route: str | None = None) -> Any:
+        del pinned_route
         raise ModuleNotFoundError(
             f"No module named {missing_module!r}",
             name=missing_module,

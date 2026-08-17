@@ -467,14 +467,24 @@ def _openai_compat_base_url(resolved_base_url: str | None) -> str:
     return f"{base}/openai/"
 
 
-def _create_native_client(endpoint: Any) -> Any:
+def _create_native_client(endpoint: Any, *, pinned_route: str | None = None) -> Any:
     """Create the preferred google-genai client at the import boundary.
 
     Routing: an explicitly resolved ``base_url`` (team proxy / override)
     speaks the AI Studio wire format, so it pins the AI Studio route; a bare
     key is routed by ``jarvis.core.google_genai`` (AI Studio vs Vertex AI
     express mode, decided once per process).
+
+    ``pinned_route`` short-circuits both: the dedicated Vertex brain KNOWS its
+    endpoint because the user chose it, so it neither probes nor lets a base
+    URL rewrite the decision — and it reaches the Google Cloud project path,
+    where there may be no key to route in the first place.
     """
+    if pinned_route == "vertex":
+        from jarvis.core.google_genai import build_vertex_client
+
+        return build_vertex_client(endpoint.credential or "")
+
     from jarvis.core.google_genai import build_genai_client
 
     http_options: Any = None
@@ -489,14 +499,25 @@ def _create_native_client(endpoint: Any) -> Any:
     )
 
 
-def _reject_compat_fallback_for_vertex(endpoint: Any, cause: BaseException) -> None:
+def _reject_compat_fallback_for_vertex(
+    endpoint: Any, cause: BaseException, *, pinned_route: str | None = None
+) -> None:
     """Fail loudly when the OpenAI-compat fallback cannot serve this key.
 
     The compatibility transport only speaks AI Studio's endpoint. A key that
     routes through Vertex AI express mode would hit it with a foreign
     credential and die on every call with a bare auth error — an honest
-    RuntimeError naming the real conflict beats that silent dead end (§3).
+    RuntimeError naming the real conflict beats that silent dead end (§3). For
+    the dedicated Vertex brain the conflict is certain rather than probed: its
+    route is pinned, so there is nothing to ask.
     """
+    if pinned_route == "vertex":
+        raise RuntimeError(
+            "The Vertex AI brain requires the google-genai SDK; the "
+            "OpenAI-compatible fallback only reaches Google AI Studio. "
+            "Install google-genai (pip install google-genai), or switch the "
+            "brain to Google Gemini and use an AI Studio key."
+        ) from cause
     if endpoint.base_url:
         return
     from jarvis.core.google_genai import resolve_google_key_route
@@ -576,6 +597,20 @@ class GeminiBrain:
     context_window: int = 1_048_576
     supports_tools: bool = True
     supports_vision: bool = True
+    #: Credential/endpoint identity used for ``resolve_provider_endpoint`` and
+    #: for the pinned-route decision. Split from ``name`` so a sibling class can
+    #: serve the SAME models off a different account without duplicating a line
+    #: of the request/tool/cache machinery below.
+    provider_id: str = "gemini"
+    #: ``None`` = let the key decide (probe once, cache). A concrete route means
+    #: the user picked the endpoint and nothing may override it.
+    pinned_route: str | None = None
+    #: What the user has to fix when no credential resolves. Kept next to the
+    #: identity so the sibling class says "Vertex" instead of "Gemini".
+    missing_credential_hint: str = (
+        "No Gemini API key found. Set GEMINI_API_KEY or "
+        "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."
+    )
 
     def __init__(
         self,
@@ -615,16 +650,27 @@ class GeminiBrain:
         # cache; insertion-ordered, oldest evicted beyond the cap.
         self._cache_slots: dict[tuple[str, str], str] = {}
 
+    def _resolve_endpoint(self) -> Any:
+        """Endpoint + credential for this brain's own provider identity."""
+        return cfg.resolve_provider_endpoint(self.provider_id)
+
+    def _credential_is_sufficient(self, endpoint: Any) -> bool:
+        """Whether this brain can authenticate with what the endpoint carries.
+
+        A key is the answer for every route but one: the Vertex Cloud project
+        path signs with Application Default Credentials and legitimately has no
+        key at all, so the sibling class widens this instead of inheriting a
+        refusal that would reject its documented production setup.
+        """
+        return bool(endpoint.credential)
+
     def _ensure_client(self) -> Any:
         if self._client is None:
-            ep = cfg.resolve_provider_endpoint("gemini")
-            if not ep.credential:
-                raise RuntimeError(
-                    "No Gemini API key found. Set GEMINI_API_KEY or "
-                    "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."
-                )
+            ep = self._resolve_endpoint()
+            if not self._credential_is_sufficient(ep):
+                raise RuntimeError(self.missing_credential_hint)
             try:
-                self._client = _create_native_client(ep)
+                self._client = _create_native_client(ep, pinned_route=self.pinned_route)
                 self._transport = _TRANSPORT_NATIVE
             except (ImportError, AttributeError) as exc:
                 # A platform can have the OpenAI SDK and a valid Gemini key
@@ -633,7 +679,9 @@ class GeminiBrain:
                 # documented HTTPS compatibility API. Log only the exception
                 # class: dependency messages can contain local paths, and the
                 # credential must never enter logs.
-                _reject_compat_fallback_for_vertex(ep, exc)
+                _reject_compat_fallback_for_vertex(
+                    ep, exc, pinned_route=self.pinned_route
+                )
                 log.info(
                     "Gemini native SDK unavailable (%s); using the "
                     "OpenAI-compatible transport",
@@ -1133,10 +1181,12 @@ class GeminiBrain:
                     # only when the first stream starts. Recover only before
                     # any delta was emitted, so a retry can never duplicate
                     # text or execute a tool twice.
-                    ep = cfg.resolve_provider_endpoint("gemini")
-                    if not ep.credential:
+                    ep = self._resolve_endpoint()
+                    if not self._credential_is_sufficient(ep):
                         raise
-                    _reject_compat_fallback_for_vertex(ep, exc)
+                    _reject_compat_fallback_for_vertex(
+                        ep, exc, pinned_route=self.pinned_route
+                    )
                     log.info(
                         "Gemini native stream dependency unavailable (%s); "
                         "using the OpenAI-compatible transport",

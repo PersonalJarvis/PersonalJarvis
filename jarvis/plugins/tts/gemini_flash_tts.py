@@ -775,6 +775,66 @@ class GeminiFlashTTS:
         return list(DEFAULT_VOICES)
 
 
+class VertexTTS(GeminiFlashTTS):
+    """Gemini speech synthesis on Google Cloud Vertex AI, as its own card.
+
+    Its parent already knows how to reach Vertex — that path exists because the
+    AI Studio preview TTS model is hard-capped at 100 requests/day, and a
+    production voice cannot live inside that (2026-05-26). What it did NOT have
+    was a way for the user to CHOOSE it: the route hung off ``[tts].use_vertex``
+    plus a hand-set env var, invisible in the app, with a project id derived
+    from a service-account file.
+
+    This class is that choice made visible. It resolves the shared Vertex
+    credential — the same key slot and the same ``[google].vertex_project`` the
+    brain, STT and realtime tiers use — so setting Vertex up once serves the
+    whole stack instead of one tier at a time. The voice catalogue, the
+    sentence chunking, the streaming path, and the sibling-model bridge are all
+    inherited untouched.
+    """
+
+    name = "vertex-tts"
+
+    def _resolve_api_key(self) -> str:
+        """The Vertex key, or an empty string on the Cloud project path.
+
+        Empty is a legitimate answer here, unlike on the AI Studio parent:
+        Application Default Credentials do the authenticating when a project is
+        configured. Only a host with neither raises — and it names both fixes.
+        """
+        if self._api_key:
+            return self._api_key
+        key = cfg.get_provider_secret("vertex")
+        if key:
+            return key
+        if cfg.vertex_credential_configured():
+            return ""
+        raise RuntimeError(
+            "Vertex AI is not configured. Store a Vertex AI API key "
+            "(VERTEX_API_KEY / the Vertex AI card in the API-Keys view), or set "
+            "[google].vertex_project for the Google Cloud project path."
+        )
+
+    def _ensure_client(self) -> None:
+        """Build the pinned Vertex client from the shared ``[google]`` settings.
+
+        Deliberately bypasses the inherited ``use_vertex`` branch: that one is
+        the legacy ``[tts]``-scoped path with its own project field, and running
+        both would give one install two places to configure the same project —
+        the drift this card exists to remove.
+        """
+        if self._client is not None:
+            return
+        from jarvis.core.google_genai import build_vertex_client
+
+        self._client = build_vertex_client(self._resolve_api_key())
+        logging.getLogger("jarvis.tts").info(
+            "Vertex TTS client built (model=%s, voice=%s).",
+            self._model_name,
+            self._default_voice,
+        )
+
+
 def _split_sentences(text: str) -> list[str]:
     """Heuristic sentence splitter. Small overhead, notably better perceived latency."""
     parts = _SENTENCE_END.split(text)

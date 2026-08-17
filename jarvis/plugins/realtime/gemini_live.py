@@ -593,22 +593,31 @@ class GeminiLiveProvider:
     async def can_open_duplex_session(self) -> bool:
         return bool(self._api_key)
 
-    async def open_session(self, cfg: Any) -> _GeminiLiveSession:
-        if not self._api_key:
-            raise RuntimeError("Gemini Live API key is not configured")
+    async def _build_client(self) -> Any:
+        """Routed builder: AI Studio or Vertex express, decided per key.
 
+        The async twin keeps a first-ever key's routing probe off the event
+        loop; every later session open hits the process-wide cache. importlib,
+        not a literal ``from jarvis...``: the plugin-module contract (no jarvis
+        imports, AST-checked) counts lazy imports too.
+
+        Overridden by :class:`VertexLiveProvider`, which knows its endpoint.
+        """
         import importlib  # lazy (AP-26)
+
+        google_genai = importlib.import_module("jarvis.core.google_genai")
+        return await google_genai.build_genai_client_async(self._api_key)
+
+    def _unconfigured_message(self) -> str:
+        return "Gemini Live API key is not configured"
+
+    async def open_session(self, cfg: Any) -> _GeminiLiveSession:
+        if not await self.can_open_duplex_session():
+            raise RuntimeError(self._unconfigured_message())
 
         from google.genai import types  # lazy (AP-26)
 
-        # Routed builder: AI Studio or Vertex express, decided per key. The
-        # async twin keeps a first-ever key's routing probe off the event
-        # loop; every later session open hits the process-wide cache.
-        # importlib, not a literal ``from jarvis...``: the plugin-module
-        # contract (no jarvis imports, AST-checked) counts lazy imports too.
-        google_genai = importlib.import_module("jarvis.core.google_genai")
-
-        client = await google_genai.build_genai_client_async(self._api_key)
+        client = await self._build_client()
         voice = str(getattr(cfg, "voice", "") or "").strip()
         speech_config: dict[str, Any] = {}
         if voice:
@@ -719,3 +728,84 @@ class GeminiLiveProvider:
             client=client,
             session_id=str(uuid4()),
         )
+
+
+class VertexLiveProvider(GeminiLiveProvider):
+    """The Gemini Live duplex socket opened on Google Cloud Vertex AI.
+
+    Same wire protocol, same session machinery, same event translation — the
+    difference is which account pays and which host answers. It is a distinct
+    ``credential_family`` on purpose: that value is what stops the shared
+    session fallback from retrying a terminal billing or auth failure through an
+    alias backed by the very same credential (AP-22). A Cloud project and an AI
+    Studio account fail independently, so crossing between them is a real
+    fallback rather than a doomed retry.
+
+    Availability honesty: Google documents the Live API as reachable in express
+    mode through the Gen AI SDK, while the express REST surface itself lists
+    only the three unary methods. If a given key or project cannot open the
+    duplex socket, the handshake fails and the realtime factory crosses to the
+    next credential-ready provider — and finally to the classic pipeline. That
+    is the honest degradation this tier already implements; nothing here claims
+    a capability it has not proven.
+    """
+
+    name = "vertex-live"
+    credential_family = "vertex"
+    credential_candidates = (
+        ("realtime_vertex_api_key", "JARVIS_REALTIME_VERTEX_API_KEY"),
+        ("vertex_api_key", "VERTEX_API_KEY"),
+        ("google_vertex_api_key", "GOOGLE_VERTEX_API_KEY"),
+    )
+
+    def _unconfigured_message(self) -> str:
+        return (
+            "Vertex AI is not configured. Store a Vertex AI API key "
+            "(VERTEX_API_KEY / the Vertex AI card in the API-Keys view), or set "
+            "[google].vertex_project for the Google Cloud project path."
+        )
+
+    @staticmethod
+    def external_login_ready(cfg: Any = None) -> bool:
+        """Whether a credential OUTSIDE this app can sign Vertex requests.
+
+        The factory hands API providers a resolved key and skips the ones with
+        none; a provider that authenticates by some other means declares this
+        capability instead. It was written for subscription CLI logins, and a
+        Google Cloud project reached through Application Default Credentials is
+        the same shape of fact: a credential that lives on the machine, not in
+        the keyring. Declaring it is what makes the project path selectable at
+        all — and the factory only ever honours it for a provider the user
+        EXPLICITLY chose, so an ambient Cloud login is never spent by accident.
+        """
+        del cfg  # the answer comes from the credential state, not the session
+        import importlib  # lazy (AP-26)
+
+        try:
+            config = importlib.import_module("jarvis.core.config")
+            return bool(config.vertex_credential_configured())
+        except Exception:  # noqa: BLE001 — an unreadable config is an unset one
+            return False
+
+    async def can_open_duplex_session(self) -> bool:
+        """A key OR a configured Cloud project makes this transport eligible.
+
+        The factory hands every API provider a resolved key and treats an empty
+        one as "skip". Vertex breaks that assumption legitimately: the project
+        path authenticates via Application Default Credentials and stores no
+        key, so without this the documented production setup would never become
+        a candidate at all.
+        """
+        if self._api_key:
+            return True
+        import importlib  # lazy (AP-26)
+
+        config = importlib.import_module("jarvis.core.config")
+        return bool(config.vertex_credential_configured())
+
+    async def _build_client(self) -> Any:
+        """Pinned to Vertex — no probe, and the Cloud project path included."""
+        import importlib  # lazy (AP-26)
+
+        google_genai = importlib.import_module("jarvis.core.google_genai")
+        return await google_genai.build_vertex_client_async(self._api_key)

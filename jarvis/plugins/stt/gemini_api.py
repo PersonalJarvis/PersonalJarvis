@@ -123,6 +123,15 @@ class GeminiSTT:
 
     name = "gemini-api"
     supports_streaming = False
+    #: Credential family this recognizer bills against. Distinct from ``name``
+    #: (the entry-point id) because several plugin ids can share one account —
+    #: and, for the Vertex sibling, because the account is a different one.
+    provider_id: str = "gemini"
+    missing_credential_hint: str = (
+        "No Gemini API key found (gemini_api_key / GEMINI_API_KEY / "
+        "GOOGLE_AIStudio_API_KEY). Add it in the app's API-Keys view; the "
+        "key is shared with the Gemini brain and TTS."
+    )
 
     def __init__(
         self,
@@ -265,14 +274,10 @@ class GeminiSTT:
             # Lazy import keeps the plugin ``jarvis.*``-free at import time.
             from jarvis.core import config as _cfg
 
-            ep = _cfg.resolve_provider_endpoint("gemini")
+            ep = _cfg.resolve_provider_endpoint(self.provider_id)
             key = ep.credential or None
-        if not key:
-            raise RuntimeError(
-                "No Gemini API key found (gemini_api_key / GEMINI_API_KEY / "
-                "GOOGLE_AIStudio_API_KEY). Add it in the app's API-Keys view; the "
-                "key is shared with the Gemini brain and TTS."
-            )
+        if not key and not self._keyless_credential_ok():
+            raise RuntimeError(self.missing_credential_hint)
         try:
             # Availability check only — the client itself is built below by the
             # routed builder. A plain import (not find_spec) so a broken
@@ -287,13 +292,30 @@ class GeminiSTT:
         # ``Any`` keeps that fact from needing a types import the plugin must
         # not make (the SDK is absent on a base install).
         http_options: Any = self._http_options()
-        # Routed builder: AI Studio or Vertex express, decided per key. Lazy
-        # import, like the config import above (plugin stays jarvis.*-free at
-        # import time).
+        self._client = self._build_client(key or "", http_options)
+        return self._client
+
+    # ------------------------------------------------------------------
+    # Endpoint identity — the seam the Vertex sibling overrides
+    # ------------------------------------------------------------------
+
+    def _keyless_credential_ok(self) -> bool:
+        """Whether this recognizer can authenticate without an API key.
+
+        False for AI Studio, which has no other way in. The Vertex sibling says
+        yes when a Google Cloud project is configured.
+        """
+        return False
+
+    def _build_client(self, key: str, http_options: Any) -> Any:
+        """Routed builder: AI Studio or Vertex express, decided per key.
+
+        Lazy import, like the config import above (plugin stays jarvis.*-free
+        at import time).
+        """
         from jarvis.core.google_genai import build_genai_client
 
-        self._client = build_genai_client(key, http_options=http_options)
-        return self._client
+        return build_genai_client(key, http_options=http_options)
 
     def _build_contents(
         self, wav_bytes: bytes, *, language: str | None = None
@@ -450,4 +472,44 @@ def _response_to_transcript(response: Any, language: str | None) -> Transcript:
     )
 
 
-__all__ = ["GeminiSTT", "Transcript"]
+class VertexSTT(GeminiSTT):
+    """The same Gemini audio understanding on Google Cloud Vertex AI.
+
+    Audio transcription on Vertex is a plain ``generateContent`` call with an
+    inline audio part — byte-for-byte the request its AI Studio sibling builds —
+    so this class changes only the account it bills and the endpoint it opens.
+    Everything above it (the WAV framing, the language handling, the transcript
+    cleanup, the error mapper) is shared.
+
+    Why it is a separate card rather than a routing detail: a Cloud project has
+    its own quota and its own bill, and an install may hold both credentials.
+    The user picks which one transcribes their voice.
+    """
+
+    name = "vertex-stt"
+    provider_id: str = "vertex"
+    missing_credential_hint: str = (
+        "Vertex AI is not configured. Store a Vertex AI API key (VERTEX_API_KEY "
+        "/ the Vertex AI card in the API-Keys view), or set "
+        "[google].vertex_project for the Google Cloud project path."
+    )
+
+    def _keyless_credential_ok(self) -> bool:
+        """A configured Cloud project authenticates without any key (ADC)."""
+        from jarvis.core.config import vertex_credential_configured
+
+        return vertex_credential_configured()
+
+    def _build_client(self, key: str, http_options: Any) -> Any:
+        """Pinned to Vertex: no probe, and the Cloud project path is reachable.
+
+        Pinning matters here for the same reason it does on the brain: a Google
+        Cloud API key restricted to ``aiplatform.googleapis.com`` wears the
+        ordinary ``AIza`` shape, which the routing probe reads as AI Studio.
+        """
+        from jarvis.core.google_genai import build_vertex_client
+
+        return build_vertex_client(key, http_options=http_options)
+
+
+__all__ = ["GeminiSTT", "Transcript", "VertexSTT"]
