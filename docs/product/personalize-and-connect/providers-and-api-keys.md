@@ -77,6 +77,37 @@ Card labels describe state, not a guarantee:
    with `AQ.`) into the same field — the app detects which service issued it
    and routes every capability (brain, tool model, realtime, speech) through
    the matching endpoint automatically.
+
+### Google Cloud Vertex AI
+
+Google serves the same Gemini models twice: through an AI Studio account, and
+through Google Cloud Vertex AI. There are separate **Vertex AI** cards for the
+brain, voice input, voice output, and realtime, plus Vertex as a subagent, so
+one Vertex setup covers the whole stack — and so an install can hold an AI
+Studio key and a Vertex credential side by side and point each capability at
+the one it should bill.
+
+Two ways to authenticate, and you only need one:
+
+- **A Vertex AI API key.** Either an express-mode key (starts with `AQ.`) or a
+  Google Cloud API key restricted to `aiplatform.googleapis.com` (starts with
+  `AIza`). Paste it into any Vertex card; the cards share one credential.
+- **A Google Cloud project, with no key at all.** Set `[google]` in
+  `jarvis.toml`: `vertex_project` to the project ID that owns the Vertex AI
+  API, `vertex_location` to a region (`global` is the default and has the
+  widest model availability), and `service_account_path` only if this machine
+  is not already signed in with `gcloud`. Requests are then signed with
+  Application Default Credentials. This is the path a production project uses.
+
+Two reasons to prefer Vertex over the AI Studio cards: the billing lands in
+your Cloud project, and the text-to-speech preview model that AI Studio caps at
+100 requests per day — regardless of how you are billed — has no such cap
+there. That cap is what used to make the voice go quiet mid-day.
+
+Because a Vertex key and an AI Studio key can look identical, the endpoint is
+decided by the card you save the key under, not by the key's shape. A key in a
+Vertex card always goes to Vertex; a key in a Gemini card is detected and
+routed as described above.
 3. Paste the value into the password field and select **Save**. The field then
    becomes masked. The page receives only whether the credential exists; it
    does not read the saved value back.

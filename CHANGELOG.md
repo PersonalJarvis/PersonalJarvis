@@ -9,6 +9,48 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Google Cloud Vertex AI as a provider family of its own, on every tier.**
+  Vertex serves the same Gemini models as Google AI Studio, but bills a Cloud
+  project — and until now it was reachable only by accident: an express-mode key
+  pasted into the Gemini field, detected by a probe, sharing that field so an
+  install could never hold both credentials. Vertex now has its own cards for
+  the brain, the tool model, voice input, voice output and realtime, and is
+  selectable as a subagent. All of them read ONE shared Vertex credential, so
+  setting it up once covers the whole stack.
+  - Two ways in. A Vertex AI API key — express mode (`AQ.`) or a Cloud API key
+    restricted to `aiplatform.googleapis.com` (`AIza`) — or a Google Cloud
+    project with no key at all: `[google].vertex_project` plus
+    `vertex_location` and an optional `service_account_path`, signed with
+    Application Default Credentials. That second path is what a production
+    project uses, and it was previously wired to text-to-speech only.
+  - The endpoint is now decided by the card, not guessed from the key. A Cloud
+    API key restricted to Vertex wears the ordinary `AIza` shape, so the
+    existing routing probe sent it to AI Studio, where it failed every call
+    with an auth error that explained nothing. Keys in a Vertex card are pinned
+    to Vertex with no probe at all.
+  - Vertex is a distinct credential family, deliberately with no cross-read to
+    the Gemini slots in either direction. The two accounts run out of quota
+    independently, which makes crossing between them a real fallback rather
+    than a doomed retry — and an AI Studio key forced onto the Vertex endpoint
+    would not degrade, it would 401 while the UI showed a configured provider.
+  - Worth picking for voice: the AI Studio text-to-speech preview model is
+    capped at 100 requests per day no matter how you are billed, which is what
+    made the voice go quiet mid-day. A Cloud project has no such cap.
+
+- **Gemini speech-to-text got the card it never had.** The recognizer shipped as
+  a working entry point with no card anywhere in the app, so selecting it meant
+  hand-editing `jarvis.toml`. Both Google recognizers now appear in Voice Input
+  with a model picker.
+
+### Fixed
+
+- The key-format hint no longer calls an `AIza` key a "Google AI Studio key".
+  The same shape is issued for Google Cloud, so the label is endpoint-neutral
+  now and the note says which card decides where the key is sent. A correctly
+  pasted Vertex key also gets its green confirmation instead of silence.
+
 ---
 
 ## [1.3.2] — 2026-08-12

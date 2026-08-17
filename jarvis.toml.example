@@ -44,7 +44,7 @@ sensitivity = 0.5            # 0.5..1 (values below 0.5 are lifted — the wake 
 
 # ── Speech-to-Text ──
 [stt]
-provider = "groq-api"        # groq-api | openai-api | openrouter-stt | gemini-api | faster-whisper (local)
+provider = "groq-api"        # groq-api | openai-api | openrouter-stt | gemini-api | vertex-stt | faster-whisper (local)
 device = "cpu"               # cpu | cuda — keep "cpu" unless you have a local GPU
 language = "auto"            # auto, or a weak ISO-639 preference such as "fr"
 bias_prompt = ""             # optional comma-separated vocab to stabilize proper nouns
@@ -80,16 +80,32 @@ voice_de = "Charon"
 voice_en = "Charon"
 language_code = "auto"
 streaming = true
-# Vertex AI routing avoids the AI-Studio preview RPD cap. Off by default;
-# set JARVIS__TTS__VERTEX_PROJECT (env) + the SA path to enable.
+# Legacy TTS-only Vertex route (predates the [google] section below). Kept for
+# existing installs; new setups should pick provider = "vertex-tts" instead, which
+# shares ONE Vertex credential with the brain, STT and realtime tiers.
 use_vertex = false
 vertex_project = ""
 service_account_path = "~/.config/jarvis/vertex-sa.json"
 
+# ── Google endpoint routing (AI Studio vs Google Cloud Vertex AI) ──
+# vertex_mode decides where an AMBIGUOUS key stored in a Gemini slot goes:
+#   "auto"   probe once per process and remember (default)
+#   "always" force Vertex   |   "never" force AI Studio
+# The vertex_* fields below configure the dedicated Vertex provider family
+# (brain "vertex", stt "vertex-stt", tts "vertex-tts", realtime "vertex-live",
+# and the same slug as a subagent). Leave vertex_project empty to authenticate
+# with a Vertex API key; set it to use a Google Cloud project with Application
+# Default Credentials and no key at all.
+[google]
+vertex_mode = "auto"
+vertex_project = ""
+vertex_location = "global"    # "global" = widest Gemini availability; or e.g. "europe-west4"
+service_account_path = ""     # only when this machine is not signed in with gcloud
+
 # ── Brain (multi-provider; never hardcode a single vendor) ──
 # Cloud-reachable default = Gemini (needs only GEMINI_API_KEY). Switch the
 # whole stack by changing these four to "claude-api" | "openai" | "grok" |
-# "openrouter" and supplying that provider's key.
+# "openrouter" | "vertex" and supplying that provider's key.
 [brain]
 primary = "gemini"
 fallback = "gemini"
