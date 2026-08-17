@@ -31,13 +31,26 @@ dictation polish, computer use, ack brain):
 An explicitly configured ``base_url`` (team proxy, W2) must bypass routing
 entirely — the proxy speaks the AI Studio wire format — which callers get by
 passing ``route="aistudio"`` to :func:`build_genai_client`.
+
+Everything above is about a key stored in the GEMINI slots, where the endpoint
+has to be inferred. The dedicated ``vertex`` provider family is the other case:
+there the user picked Vertex explicitly, so :func:`build_vertex_client` pins the
+route with no probe at all and additionally serves the FULL Google Cloud path —
+``[google].vertex_project``/``vertex_location`` with Application Default
+Credentials instead of a key. That path is what a production Cloud project
+actually uses, and it is the one an ``AIza`` key restricted to
+``aiplatform.googleapis.com`` needs, since its shape is indistinguishable from
+an AI Studio key.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import threading
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 log = logging.getLogger("jarvis.google_genai")
@@ -105,6 +118,74 @@ def classify_google_key(api_key: str) -> KeyRoute | None:
     if key.startswith("AQ."):
         return None
     return "aistudio"
+
+
+@dataclass(frozen=True, slots=True)
+class VertexProject:
+    """The full-Vertex (Google Cloud project) half of ``[google]``.
+
+    ``project`` empty means express mode — the API key carries the billing
+    project itself and no project/location may be sent. Anything else selects
+    the enterprise path: Application Default Credentials against
+    ``project``/``location``, optionally from ``service_account_path``.
+    """
+
+    project: str | None
+    location: str
+    service_account_path: str | None
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.project)
+
+
+def vertex_project_settings() -> VertexProject:
+    """Read the Vertex project path from ``[google]``; never raises.
+
+    Same lazy-import + broad-fallback discipline as :func:`_configured_mode`:
+    an unreadable or older config yields express mode, which is exactly the
+    behaviour every install had before this path existed.
+    """
+    try:
+        from jarvis.core.config import load_config
+
+        google = load_config().google
+        project = str(getattr(google, "vertex_project", "") or "").strip() or None
+        location = str(getattr(google, "vertex_location", "") or "").strip() or "global"
+        sa_path = str(getattr(google, "service_account_path", "") or "").strip() or None
+    except Exception as exc:  # noqa: BLE001 — config trouble must never break clients
+        log.debug(
+            "Vertex project settings unreadable (%s: %s) — using express mode.",
+            type(exc).__name__,
+            exc,
+        )
+        return VertexProject(project=None, location="global", service_account_path=None)
+    return VertexProject(project=project, location=location, service_account_path=sa_path)
+
+
+def _export_service_account(path: str | None) -> None:
+    """Point the Cloud SDK auth chain at *path* for this process.
+
+    Only ever ADDS the pointer, and only when the file is really there: a
+    ``GOOGLE_APPLICATION_CREDENTIALS`` aimed at a missing file makes google-auth
+    fail outright, which is strictly worse than letting the ambient ADC chain
+    (gcloud login, workload identity, an env var the user already set) answer.
+    An env var the user set themselves is left untouched.
+    """
+    if not path:
+        return
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return
+    resolved = Path(path).expanduser()
+    if not resolved.is_file():
+        log.warning(
+            "Vertex service account %s does not exist — falling back to the "
+            "ambient Application Default Credentials.",
+            resolved,
+        )
+        return
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(resolved)
+    log.info("Vertex AI: authenticating via the service account at %s.", resolved)
 
 
 def _configured_mode() -> str:
@@ -296,21 +377,94 @@ async def resolve_google_key_route_async(api_key: str, *, transport: Any | None 
     return _remember_route(fp, route, source=detail)
 
 
-def _client_kwargs(api_key: str, route: KeyRoute, http_options: Any | None) -> dict[str, Any]:
+def _client_kwargs(
+    api_key: str,
+    route: KeyRoute,
+    http_options: Any | None,
+    project: VertexProject | None = None,
+) -> dict[str, Any]:
     """Pure kwargs assembly for ``genai.Client`` — unit-testable sans SDK.
 
-    Express mode is exactly ``vertexai=True`` plus the key; no project or
-    location — the express endpoint infers the trial/billing project from the
-    key itself. The explicit ``api_key`` argument outranks any ambient
-    ``GOOGLE_API_KEY``/``GEMINI_API_KEY`` env, so no env-stripping is needed
-    here (unlike the TTS service-account path, which authenticates via env).
+    Two shapes, never mixed. Express mode is exactly ``vertexai=True`` plus the
+    key; no project or location — the express endpoint infers the trial/billing
+    project from the key itself. The Google Cloud project path is
+    ``vertexai=True`` plus ``project``/``location`` and NO key at all: the SDK
+    enforces that mutual exclusion, and sending both is a hard construction
+    error rather than a preference.
+
+    The explicit ``api_key`` argument outranks any ambient
+    ``GOOGLE_API_KEY``/``GEMINI_API_KEY`` env, so no env-stripping is needed on
+    the key paths. The project path authenticates through Application Default
+    Credentials instead, so it drops the key argument entirely — an ambient
+    ``GOOGLE_API_KEY`` next to it makes the SDK warn and pick one.
     """
-    kwargs: dict[str, Any] = {"api_key": api_key}
+    if route == "vertex" and project is not None and project.configured:
+        kwargs: dict[str, Any] = {
+            "vertexai": True,
+            "project": project.project,
+            "location": project.location,
+        }
+        if http_options is not None:
+            kwargs["http_options"] = http_options
+        return kwargs
+    kwargs = {"api_key": api_key}
     if route == "vertex":
         kwargs["vertexai"] = True
     if http_options is not None:
         kwargs["http_options"] = http_options
     return kwargs
+
+
+def _project_for(route: KeyRoute) -> VertexProject | None:
+    """Project settings for a resolved route, plus the ADC side effect.
+
+    ``None`` for AI Studio: that path has no notion of a Cloud project, and
+    returning anything else would put a config read on every client build for
+    the endpoint the vast majority of installs use. On the Vertex route the
+    settings are read AND the service account is exported here, because the
+    Cloud SDK reads that env at client construction — after this returns is
+    already too late.
+    """
+    if route != "vertex":
+        return None
+    settings = vertex_project_settings()
+    if settings.configured:
+        _export_service_account(settings.service_account_path)
+    return settings
+
+
+def build_vertex_client(api_key: str = "", *, http_options: Any | None = None) -> Any:
+    """Build a client PINNED to Vertex AI — no probe, no AI Studio fallback.
+
+    The dedicated ``vertex`` provider family calls this instead of
+    :func:`build_genai_client` because its endpoint is a user decision, not a
+    guess: a Google Cloud API key restricted to ``aiplatform.googleapis.com``
+    carries the ordinary ``AIza`` shape, so the shape classifier would send it
+    to AI Studio and it would fail on every call with an auth error that names
+    nothing useful. Pinning also skips the probe round-trip entirely.
+
+    ``api_key`` may be empty on the Cloud project path, where Application
+    Default Credentials do the authenticating.
+    """
+    from google import genai
+
+    settings = _project_for("vertex")
+    if not api_key and not (settings and settings.configured):
+        raise RuntimeError(
+            "Vertex AI is not configured: store a Vertex AI API key (or set "
+            "[google].vertex_project for the Google Cloud project path)."
+        )
+    return genai.Client(**_client_kwargs(api_key, "vertex", http_options, settings))
+
+
+async def build_vertex_client_async(api_key: str = "", *, http_options: Any | None = None) -> Any:
+    """Async twin of :func:`build_vertex_client`.
+
+    Pinning means there is no probe to keep off the event loop, so this is a
+    thin wrapper — it exists so realtime callers reach the Vertex path through
+    the same await-shaped door as :func:`build_genai_client_async`.
+    """
+    return build_vertex_client(api_key, http_options=http_options)
 
 
 def build_genai_client(
@@ -331,7 +485,7 @@ def build_genai_client(
     from google import genai
 
     resolved = route or resolve_google_key_route(api_key)
-    return genai.Client(**_client_kwargs(api_key, resolved, http_options))
+    return genai.Client(**_client_kwargs(api_key, resolved, http_options, _project_for(resolved)))
 
 
 async def build_genai_client_async(
@@ -349,7 +503,7 @@ async def build_genai_client_async(
     from google import genai
 
     resolved = route or await resolve_google_key_route_async(api_key)
-    return genai.Client(**_client_kwargs(api_key, resolved, http_options))
+    return genai.Client(**_client_kwargs(api_key, resolved, http_options, _project_for(resolved)))
 
 
 def reset_route_cache() -> None:

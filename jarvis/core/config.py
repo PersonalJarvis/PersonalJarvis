@@ -157,6 +157,21 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("google_api_key", "GOOGLE_API_KEY"),
         ("realtime_gemini_api_key", "JARVIS_REALTIME_GEMINI_API_KEY"),
     ),
+    # Google Cloud Vertex AI — the SAME Gemini models on Google's enterprise
+    # endpoint, billed against a Cloud project instead of an AI Studio account.
+    # It is a family of its OWN rather than a fourth Gemini slot on purpose:
+    # the two accounts bill separately (the 2026-06-22 forensic), so a user who
+    # holds both must be able to store both and point each tier at the one they
+    # mean. There is deliberately NO cross-read to the ``gemini`` slots in
+    # either direction — an AI Studio key forced onto the Vertex endpoint dies
+    # with an auth error on every call, which is worse than an honest "no key".
+    # A project-path install authenticates via a service account and stores no
+    # key at all; ``vertex_credential_configured`` is what answers for those.
+    "vertex": (
+        ("vertex_api_key", "VERTEX_API_KEY"),
+        ("google_vertex_api_key", "GOOGLE_VERTEX_API_KEY"),
+        ("realtime_vertex_api_key", "JARVIS_REALTIME_VERTEX_API_KEY"),
+    ),
     "grok": (
         ("grok_api_key", "GROK_API_KEY"),
         ("xai_api_key", "XAI_API_KEY"),
@@ -181,6 +196,13 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("gemini_api_key", "GEMINI_API_KEY"),
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
+    ),
+    # Vertex Live — same dedicated-slot-first precedence as its siblings, but
+    # the trailing fallbacks stay INSIDE the Vertex family (see "vertex" above).
+    "vertex-live": (
+        ("realtime_vertex_api_key", "JARVIS_REALTIME_VERTEX_API_KEY"),
+        ("vertex_api_key", "VERTEX_API_KEY"),
+        ("google_vertex_api_key", "GOOGLE_VERTEX_API_KEY"),
     ),
     # "grok-realtime" was removed 2026-07-16 (BUG-064 deaf-session wedge);
     # any stored realtime_grok_api_key simply stays unused in its backend.
@@ -217,6 +239,10 @@ JARVIS_AGENT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "nvidia": (
         ("jarvis_agent_nvidia_api_key", "JARVIS_AGENT_NVIDIA_API_KEY"),
         *PROVIDER_SECRET_CANDIDATES["nvidia"],
+    ),
+    "vertex": (
+        ("jarvis_agent_vertex_api_key", "JARVIS_AGENT_VERTEX_API_KEY"),
+        *PROVIDER_SECRET_CANDIDATES["vertex"],
     ),
 }
 
@@ -3489,11 +3515,34 @@ class GoogleAuthConfig(BaseModel):
     answer; ``always``/``never`` force the route for installs where the probe
     guesses wrong or the network blocks it. Read exclusively by
     ``jarvis.core.google_genai`` (AP-31: no unread switch).
+
+    The ``vertex_*`` fields below describe the FULL Vertex AI path — a real
+    Google Cloud project rather than express mode — and are what the dedicated
+    ``vertex`` provider family (brain, tool model, realtime, STT, TTS,
+    subagents) resolves against. Express mode and the full path are mutually
+    exclusive at the SDK boundary (``genai.Client`` refuses an ``api_key``
+    together with ``project``/``location``), so exactly one of the two is ever
+    sent: a configured ``vertex_project`` selects the project path and
+    authenticates via Application Default Credentials (optionally the service
+    account named here), an empty one keeps the express-key path. Both are read
+    by ``jarvis.core.google_genai``.
     """
 
     model_config = ConfigDict(extra="allow")
 
     vertex_mode: Literal["auto", "always", "never"] = "auto"
+    #: Google Cloud project that owns the Vertex AI quota. Empty = express
+    #: mode (the key itself carries the trial/billing project).
+    vertex_project: str | None = None
+    #: Vertex region. ``global`` is Google's cross-region endpoint and the one
+    #: with the broadest Gemini availability; a single region (``us-central1``,
+    #: ``europe-west4``, …) is what a data-residency requirement needs.
+    vertex_location: str = "global"
+    #: Service-account JSON for the project path. Exported as
+    #: ``GOOGLE_APPLICATION_CREDENTIALS`` so the Cloud SDK auth chain finds it.
+    #: ``None`` = use whatever Application Default Credentials already resolve
+    #: (gcloud login, workload identity, an ambient env var).
+    service_account_path: str | None = None
 
 
 class JarvisConfig(BaseModel):
@@ -3745,6 +3794,14 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__TTS__USE_VERTEX",
     "JARVIS__TTS__VOICE_DE",
     "JARVIS__TTS__VOICE_EN",
+    # Google endpoint routing, same class of bug one section over: these decide
+    # WHICH Google account every tier bills (AI Studio vs a Cloud project). A
+    # stale inherited value sends the whole stack at an endpoint the user's key
+    # cannot open, and the failure reads as "the key is broken".
+    "JARVIS__GOOGLE__VERTEX_MODE",
+    "JARVIS__GOOGLE__VERTEX_PROJECT",
+    "JARVIS__GOOGLE__VERTEX_LOCATION",
+    "JARVIS__GOOGLE__SERVICE_ACCOUNT_PATH",
 )
 
 
@@ -4566,6 +4623,36 @@ def get_provider_secret(provider: str) -> str | None:
     if overrides is not None and provider in overrides:
         return overrides[provider]
     return get_secret_any(PROVIDER_SECRET_CANDIDATES.get(provider, ()))
+
+
+def vertex_credential_configured(config: JarvisConfig | None = None) -> bool:
+    """Whether Vertex AI can authenticate on this host at all.
+
+    Vertex is the one family whose credential is not always a key: the Google
+    Cloud project path signs requests with Application Default Credentials (a
+    service account, a ``gcloud`` login, workload identity), so a perfectly
+    configured install can hold no ``vertex_api_key`` whatsoever. Every
+    reachability probe that asks "is this provider set up" has to ask THIS
+    instead of ``get_provider_secret`` alone, or the whole family is dead-listed
+    on exactly the setup Google documents for production.
+
+    A configured ``[google].vertex_project`` is the signal, not the presence of
+    a credentials file: ADC resolves through several sources we deliberately do
+    not enumerate here, and the honest answer to "can it authenticate" is the
+    first real call. ``config`` is a test seam; production passes ``None``.
+    """
+    if get_provider_secret("vertex"):
+        return True
+    try:
+        cfg = config if config is not None else load_config()
+        return bool(str(getattr(cfg.google, "vertex_project", "") or "").strip())
+    except Exception as exc:  # noqa: BLE001 — an unreadable config is an unset one
+        logging.getLogger(__name__).debug(
+            "Vertex project lookup failed (%s: %s) — treating Vertex as unconfigured.",
+            type(exc).__name__,
+            exc,
+        )
+        return False
 
 
 def get_jarvis_agent_secret(provider: str) -> str | None:
