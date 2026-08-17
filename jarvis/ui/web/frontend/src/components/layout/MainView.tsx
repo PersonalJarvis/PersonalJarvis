@@ -14,8 +14,10 @@ import { DetachedViewPlaceholder } from "@/components/layout/DetachedViewPlaceho
 import type { AgenticIdeViewProps } from "@/views/AgenticIdeView";
 // The default section is the one view that must be on screen the moment React
 // mounts, so it stays statically linked into the entry chunk. Every other view
-// is code-split below.
-import { ChatsView } from "@/views/ChatsView";
+// is code-split below. `ChatsSurface` picks the mission deck or the classic
+// chat view from the stored preference — both travel in the entry chunk because
+// either one can be the very first thing painted.
+import { ChatsSurface } from "@/views/ChatsSurface";
 
 /**
  * Section views are CODE-SPLIT, then prefetched while the app is idle.
@@ -361,7 +363,7 @@ export function MainView() {
 function SwitchOnActiveSection({ active }: { active: string }) {
   switch (active) {
     case "chats":
-      return <ChatsView />;
+      return <ChatsSurface />;
     case "agents":
       return <JarvisAgentsView />;
     // Skills + Plugins + MCPs are merged behind the "Skills & Tools" entry with
@@ -451,6 +453,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "chat-workspace":
       return null;
     default:
-      return <ChatsView />;
+      return <ChatsSurface />;
   }
 }

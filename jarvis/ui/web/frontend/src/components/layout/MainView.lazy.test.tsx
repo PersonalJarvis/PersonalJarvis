@@ -62,9 +62,15 @@ describe("MainView lazy sections", () => {
 
   it("keeps the default section statically imported", () => {
     // The first-paint section must not cost an extra round trip on startup.
+    // That section is the surface shell, which picks the mission deck or the
+    // classic chat view from the stored preference — EITHER can be the first
+    // thing painted, so the shell (and with it both surfaces) has to travel in
+    // the entry chunk rather than behind a lazy boundary.
     const source = readFileSync(MAIN_VIEW, "utf8");
-    expect(source).toMatch(/import \{ ChatsView \} from "@\/views\/ChatsView"/);
+    expect(source).toMatch(/import \{ ChatsSurface \} from "@\/views\/ChatsSurface"/);
+    expect(lazyViews.some((v) => v.exportName === "ChatsSurface")).toBe(false);
     expect(lazyViews.some((v) => v.exportName === "ChatsView")).toBe(false);
+    expect(lazyViews.some((v) => v.exportName === "MissionDeckView")).toBe(false);
   });
 
   it.each(lazyViewsDeclaredInMainView().map((v) => [v.modulePath, v.exportName]))(
@@ -83,5 +89,11 @@ describe("MainView lazy sections", () => {
           "section would resolve to undefined and blow up when opened",
       ).toBeTypeOf("function");
     },
+    // This case really imports the section module — the heaviest ones (Settings,
+    // the Agentic IDE) pull a large tree through the jsdom transform and sit
+    // right at the 5 s default on a loaded machine, which made the case fail for
+    // being slow rather than for a missing export. What is under test is the
+    // export, not the load time, so the budget is generous on purpose.
+    20_000,
   );
 });

@@ -1,33 +1,15 @@
 import {
-  MessageSquare,
-  Users,
-  Boxes,
-  BookOpen,
-  KeyRound,
-  Settings,
-  UserCircle2,
-  ListTodo,
-  Drama,
-  FolderOpen,
-  Gauge,
-  Notebook,
-  Sparkles,
-  Mic,
-  Terminal,
-  Share2,
-  Contact,
-  MessageSquareWarning,
-  ScrollText,
-  MessagesSquare,
-  Frame,
-  Image as ImageIcon,
   Loader2,
-  type LucideIcon,
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
-import { useEventStore, type SectionId } from "@/store/events";
+import {
+  NAV_GROUPS,
+  resolveNavLabel,
+  type NavItem,
+} from "@/components/layout/navGroups";
+import { useEventStore } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
@@ -38,165 +20,11 @@ import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 import { PRODUCT_NAME } from "@/lib/branding";
 
-interface NavItem {
-  id: SectionId;
-  labelKey: string;
-  icon: LucideIcon;
-  // When set, the row is highlighted while the active section is any of these
-  // ids — used by the merged section entries ("Skills & Tools" fronting
-  // skills/plugins/mcps, "CLIs" fronting clis/cli-test-hub); the active id
-  // doubles as the tab state.
-  matchIds?: SectionId[];
-  // English fallback shown when `labelKey` has no translation yet in the active
-  // locale (the i18n resolver returns the key itself on a miss).
-  fallbackLabel?: string;
-  // Draws a small "Beta" pill after the label — the Agentic IDE runs real
-  // coding-agent CLIs against the user's own filesystem, which is a step
-  // riskier than the rest of the app, so the row says so up front.
-  beta?: boolean;
-}
-
-// Resolve a nav row's label, preferring the active-locale translation and
-// falling back to the English `fallbackLabel` when the key is not yet present
-// (the i18n resolver returns the key itself on a miss).
-function resolveNavLabel(t: (key: string) => string, item: NavItem): string {
-  const resolved = t(item.labelKey);
-  return resolved === item.labelKey && item.fallbackLabel ? item.fallbackLabel : resolved;
-}
-
 // A logo request that fails once (backend restarting, dist mid-rebuild) would
 // otherwise stick as the browser's broken-image glyph forever — an <img> never
 // retries on its own. Bounded cache-busted retries let it heal itself.
 const LOGO_RETRY_MAX = 5;
 const LOGO_RETRY_BASE_MS = 1500;
-
-// Sidebar nav, clustered into logical groups separated by a thin divider:
-//   1) daily tools   2) content & data   3) configuration   4) social links.
-// The render walks the groups in order and draws a separator between them, so
-// the order below IS the on-screen order.
-const NAV_GROUPS: NavItem[][] = [
-  // 1) Daily tools — what the user reaches for most often.
-  [
-    { id: "chats", labelKey: "nav.chats", icon: MessageSquare },
-    { id: "agents", labelKey: "nav.agents", icon: Users },
-    // Skills & Tools — Skills + Plugins + MCPs behind one tab switch. The id
-    // "skills" is the default landing (Skills tab); matchIds keeps the row
-    // highlighted for any of the fronted sections.
-    {
-      id: "skills",
-      labelKey: "nav.extensions",
-      icon: Boxes,
-      matchIds: ["skills", "plugins", "mcps"],
-    },
-    // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
-    { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
-  ],
-  // 2) Content & data — things the user reads, edits, or browses.
-  [
-    { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
-    { id: "sessions", labelKey: "nav.sessions", icon: Mic },
-    { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
-    // The visual stage. Sits with the content group next to Outputs on
-    // purpose: it reads the same run archive, it just shows the pictures in it
-    // instead of listing the files.
-    {
-      id: "visualization",
-      labelKey: "nav.visualization",
-      icon: Frame,
-      fallbackLabel: "Visualization",
-    },
-    { id: "board", labelKey: "nav.board", icon: Sparkles },
-    { id: "memory", labelKey: "nav.wiki", icon: Notebook },
-    { id: "contacts", labelKey: "nav.contacts", icon: Contact },
-    { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
-    {
-      id: "agent-instructions",
-      labelKey: "nav.agent_instructions",
-      icon: ScrollText,
-      fallbackLabel: "Instructions",
-    },
-    { id: "docs", labelKey: "nav.docs", icon: BookOpen },
-  ],
-  // 3) Configuration. API Keys now also fronts the former "Telephony" screen —
-  // the telephony status/credentials/scripts/calls live as a section inside the
-  // API-Keys view, so matchIds keeps this row highlighted when a "geh zur
-  // Telefonie" voice command lands on the "telephony" id. Settings likewise
-  // fronts the former "Taskbar" + "Languages" sections (overlay/dictation
-  // controls live in OverlayTaskbarGroup, language selectors in LanguagesGroup).
-  [
-    {
-      id: "apikeys",
-      labelKey: "nav.apikeys",
-      icon: KeyRound,
-      matchIds: ["apikeys", "telephony", "telephony-setup"],
-    },
-    {
-      id: "settings",
-      labelKey: "nav.settings",
-      icon: Settings,
-      matchIds: ["settings", "taskbar", "languages"],
-    },
-    // The voice section — dictation, the custom vocabulary, the keys that start
-    // it, the dictation language and the speech-to-text providers — behind one
-    // tab switch. "dictation" is the default landing; matchIds keeps the row
-    // highlighted for any of the fronted tabs. The label carries the {name}
-    // token, so the row reads as the user's own wake-word brand.
-    {
-      id: "dictation",
-      labelKey: "nav.voice",
-      icon: Mic,
-      matchIds: [
-        "dictation",
-        "dictionary",
-        "voice-shortcuts",
-        "voice-language",
-        "voice-api-keys",
-      ],
-      // Name-FREE on purpose: the fallback is rendered verbatim when the key is
-      // missing from a locale, and it is NOT interpolated.
-      fallbackLabel: "Voice",
-    },
-    { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
-    // The assistant's character. Sits with the configuration group because it
-    // changes how the assistant behaves everywhere, not what any one page holds.
-    {
-      id: "modes",
-      labelKey: "nav.modes",
-      icon: Drama,
-      fallbackLabel: "Modes",
-    },
-    // Appearance. Sits with the configuration group rather than with the
-    // content views: it changes how the app looks, not what it holds.
-    {
-      id: "wallpaper",
-      labelKey: "nav.wallpaper",
-      icon: ImageIcon,
-      fallbackLabel: "Wallpaper",
-    },
-  ],
-  // 4) Social links + in-app feedback.
-  [
-    { id: "socials", labelKey: "nav.socials", icon: Share2 },
-    { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
-  ],
-  // 5) The Agentic IDE — its own bottom group on purpose. It is not one more
-  // page among the tools above: opening it puts real coding agents to work in a
-  // folder and can narrow the assistant to that workspace, so it sits apart
-  // with its own divider rather than blending into the list.
-  [
-    {
-      id: "agentic-ide",
-      labelKey: "nav.agentic_ide",
-      icon: MessagesSquare,
-      fallbackLabel: "Agentic IDE",
-      // The classic grid is the same destination as far as the row is
-      // concerned: someone who stepped back into it should still see where
-      // they are in the navigation.
-      matchIds: ["agentic-ide", "chat-workspace", "agentic-ide-classic"],
-      beta: true,
-    },
-  ],
-];
 
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   idle: { dot: "bg-muted-foreground/50", pulse: false },

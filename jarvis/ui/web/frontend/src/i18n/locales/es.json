@@ -4327,5 +4327,24 @@
     "unreviewed": "Subido por ti: nadie ha revisado este plugin y no lleva editor.",
     "blocker_no_files": "Aún no has elegido nada.",
     "ready": "Listo para instalar."
+  },
+  "deck": {
+    "sections": "Secciones",
+    "running": "En marcha",
+    "running_empty": "Nada en marcha. Di tu palabra de activación o escribe abajo.",
+    "thinking_now": "Pensando",
+    "thinking_starting": "Empezando…",
+    "idle_headline": "Listo. Di tu palabra de activación o simplemente escribe.",
+    "warming": "Arrancando. Ya puedes escribir; hablar funcionará enseguida.",
+    "mood_ready": "listo",
+    "mood_busy": "trabajando",
+    "mood_listening": "escuchando",
+    "mood_fail": "con fallos",
+    "mood_offline": "sin conexión",
+    "stat_brain": "Cerebro",
+    "stat_model": "Modelo",
+    "stat_running": "Activos",
+    "switch_to_classic": "Chat clásico",
+    "switch_to_deck": "Panel"
   }
 }

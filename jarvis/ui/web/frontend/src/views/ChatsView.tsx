@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { MessageSquare, Mic, Plus, Trash2, AudioLines } from "lucide-react";
 import {
   useEventStore,
@@ -26,7 +26,16 @@ import {
 
 const LIST_REFRESH_MS = 5000;
 
-export function ChatsView() {
+export function ChatsView({
+  headerAccessory,
+}: {
+  /**
+   * The surface switch, handed down by the shell that owns the mode. Absent
+   * when this view is rendered on its own (tests, detached window), which is
+   * why it stays optional rather than required.
+   */
+  headerAccessory?: ReactNode;
+} = {}) {
   const t = useT();
   const messages = useEventStore((s) => s.messages);
   const chatThinking = useEventStore((s) => s.chatThinking);
@@ -142,22 +151,25 @@ export function ChatsView() {
           title={activeTitle}
           subtitle={t("chats_view.subtitle")}
           right={
-            <button
-              type="button"
-              onClick={speak}
-              disabled={!activeThreadId}
-              title={t("chats_view.speak")}
-              className={cn(
-                "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
-                activeThreadId
-                  ? "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
-                  : "cursor-not-allowed border-border text-muted-foreground/50",
-              )}
-            >
-              <AudioLines className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{t("chats_view.speak")}</span>
-              <span className="sm:hidden">{t("chats_view.speak_short")}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={speak}
+                disabled={!activeThreadId}
+                title={t("chats_view.speak")}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                  activeThreadId
+                    ? "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+                    : "cursor-not-allowed border-border text-muted-foreground/50",
+                )}
+              >
+                <AudioLines className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{t("chats_view.speak")}</span>
+                <span className="sm:hidden">{t("chats_view.speak_short")}</span>
+              </button>
+              {headerAccessory}
+            </div>
           }
         />
 
@@ -490,13 +502,13 @@ export function ViewHeader({
   subtitle,
   right,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   // Optional inline accessory rendered right next to the title (e.g. a
   // "Research Preview" / "Beta" pill). Absent for every other view.
-  titleBadge?: React.ReactNode;
+  titleBadge?: ReactNode;
   subtitle?: string;
-  right?: React.ReactNode;
+  right?: ReactNode;
 }) {
   return (
     <header className="flex items-center gap-3 border-b border-border px-6 py-4">

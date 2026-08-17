@@ -34,8 +34,11 @@ vi.mock("@/views/AgenticIdeView", async () => {
   };
 });
 
-vi.mock("@/views/ChatsView", () => ({
-  ChatsView: () => <div data-testid="chats-stub">chats</div>,
+// The "chats" section renders through the surface shell now (mission deck
+// or classic chat). MainView imports the shell, so that is what must be
+// stubbed for these tests to keep asserting about section switching.
+vi.mock("@/views/ChatsSurface", () => ({
+  ChatsSurface: () => <div data-testid="chats-stub">chats</div>,
   ViewHeader: () => null,
 }));
 

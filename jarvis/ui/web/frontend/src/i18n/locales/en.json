@@ -4327,5 +4327,24 @@
     "unreviewed": "Self-uploaded: nobody reviewed this plugin, and it carries no publisher.",
     "blocker_no_files": "Nothing chosen yet.",
     "ready": "Ready to install."
+  },
+  "deck": {
+    "sections": "Sections",
+    "running": "Running now",
+    "running_empty": "Nothing running. Say your wake word or type below.",
+    "thinking_now": "Thinking",
+    "thinking_starting": "Starting…",
+    "idle_headline": "Ready. Say your wake word, or just type.",
+    "warming": "Starting up. You can already type — speaking works in a moment.",
+    "mood_ready": "ready",
+    "mood_busy": "working",
+    "mood_listening": "listening",
+    "mood_fail": "trouble",
+    "mood_offline": "offline",
+    "stat_brain": "Brain",
+    "stat_model": "Model",
+    "stat_running": "Running",
+    "switch_to_classic": "Classic chat",
+    "switch_to_deck": "Deck"
   }
 }

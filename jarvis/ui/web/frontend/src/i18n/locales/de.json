@@ -4327,5 +4327,24 @@
     "unreviewed": "Selbst hochgeladen: niemand hat dieses Plugin geprüft, und es trägt keinen Herausgeber.",
     "blocker_no_files": "Noch nichts ausgewählt.",
     "ready": "Bereit zum Installieren."
+  },
+  "deck": {
+    "sections": "Sektionen",
+    "running": "Läuft gerade",
+    "running_empty": "Nichts läuft. Sag dein Wake-Word oder tippe unten.",
+    "thinking_now": "Denkt gerade",
+    "thinking_starting": "Startet…",
+    "idle_headline": "Bereit. Sag dein Wake-Word oder tippe einfach los.",
+    "warming": "Startet gerade. Tippen geht schon, sprechen gleich.",
+    "mood_ready": "bereit",
+    "mood_busy": "arbeitet",
+    "mood_listening": "hört zu",
+    "mood_fail": "gestört",
+    "mood_offline": "getrennt",
+    "stat_brain": "Hirn",
+    "stat_model": "Modell",
+    "stat_running": "Läuft",
+    "switch_to_classic": "Klassischer Chat",
+    "switch_to_deck": "Deck"
   }
 }
