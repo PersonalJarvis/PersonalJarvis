@@ -57,6 +57,20 @@ from .provider_spec import (
 
 log = logging.getLogger(__name__)
 
+#: Why a card is ready WITHOUT a key, per provider id. Shown in place of the
+#: empty key input, because an empty input is a question ("give me a key") and
+#: these cards are already answered. Vertex is the case: its Cloud project path
+#: signs with Application Default Credentials, and it refuses ordinary Cloud API
+#: keys — so the input was not merely unnecessary there, it pointed at a
+#: credential that cannot work.
+_KEYLESS_CREDENTIAL_NOTES: dict[str, str] = dict.fromkeys(
+    ("vertex", "vertex-stt", "vertex-tts", "vertex-live"),
+    "Ready through your Google Cloud project — no key needed. Vertex signs "
+    "requests with Application Default Credentials (gcloud auth "
+    "application-default login). A key field is only for a Vertex express-mode "
+    "key (AQ.); an ordinary Google Cloud API key does not work with Vertex.",
+)
+
 router = APIRouter(prefix="/api", tags=["providers"])
 
 
@@ -504,6 +518,21 @@ def _spec_to_payload(
                 family_present = False
         if family_present:
             secrets_effective = dict.fromkeys(spec.secret_keys, True)
+    # A key is not the only credential there is. Vertex AI's Google Cloud
+    # project path signs with Application Default Credentials and stores
+    # nothing in any slot, so the loop above leaves the card showing an empty
+    # "Paste your key here…" box — which every reader takes as "you must supply
+    # a key", when in fact Vertex refuses ordinary Cloud API keys outright. The
+    # field report that produced this: "what exactly does the user have to
+    # bring? I don't get it." Same shape as the family-fallback case above:
+    # report what the runtime will actually do.
+    credential_note: str | None = None
+    if spec.auth_mode == "api_key" and not any(secrets_effective.values()):
+        from jarvis.brain.app_control import _keyless_credential_present
+
+        if _keyless_credential_present(spec.id):
+            secrets_effective = dict.fromkeys(spec.secret_keys, True)
+            credential_note = _KEYLESS_CREDENTIAL_NOTES.get(spec.id)
     from .provider_spec import secret_slot_consumers
 
     secret_shared_with = {
@@ -530,6 +559,9 @@ def _spec_to_payload(
         # slot; the form renders "covered by your shared key" and warns
         # before deleting a key that other tiers still read.
         "secrets_effective": secrets_effective,
+        # Set only when the card is ready WITHOUT a key; the form shows this
+        # instead of an empty input (see _KEYLESS_CREDENTIAL_NOTES).
+        "credential_note": credential_note,
         "secret_shared_with": secret_shared_with,
         "dashboard_url": spec.dashboard_url,
         "login_cli": list(spec.login_cli) if spec.login_cli else None,

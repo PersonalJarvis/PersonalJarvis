@@ -25,6 +25,15 @@ interface ApiKeyFormProps {
    */
   effectiveConfigured?: boolean;
   /**
+   * Why this card is already served WITHOUT a key, in the provider's own
+   * words. When set, it replaces the generic "covered by your shared key"
+   * line — because for Vertex the truth is not "a shared key covers you" but
+   * "there is no key here at all, and an ordinary Cloud API key would not
+   * work if you pasted one". An empty input asks a question the card has
+   * already answered.
+   */
+  coveredNote?: string | null;
+  /**
    * Labels of the OTHER provider surfaces that read this same slot at
    * runtime. Non-empty ⇒ deleting asks for confirmation, because the delete
    * silently disables those surfaces too.
@@ -63,7 +72,7 @@ function announceSecretChange(secretKey: string, action: "set" | "delete") {
  * existing value. Writes directly to POST /api/secrets/{key}; the value
  * never leaves the frontend again after submit (read-only flag in the backend).
  */
-export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, effectiveConfigured, sharedWith, onChanged, onSavedActivate }: ApiKeyFormProps) {
+export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, effectiveConfigured, coveredNote, sharedWith, onChanged, onSavedActivate }: ApiKeyFormProps) {
   const t = useT();
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
@@ -223,7 +232,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     return (
       <div className="space-y-2">
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {t("apikeys_view.shared_key_covered")}
+          {coveredNote || t("apikeys_view.shared_key_covered")}
         </p>
         <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
           {t("apikeys_view.add_dedicated_key")}

@@ -57,6 +57,8 @@ export interface ProviderDescriptor {
    * cached older payloads keep parsing.
    */
   secrets_effective?: Record<string, boolean>;
+  /** Why the card is ready WITHOUT a key (Vertex's Cloud project path). */
+  credential_note?: string | null;
   /** Other provider surfaces (labels) that read the same slot at runtime. */
   secret_shared_with?: Record<string, string[]>;
   dashboard_url: string | null;
