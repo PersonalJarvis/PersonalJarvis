@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.control import CancelToken
+from jarvis.core.config import ComputerUseConfig
 from jarvis.harness import cu_run_registry as reg
 from jarvis.ui.web import computer_use_routes as cu_routes
 from jarvis.ui.web.computer_use_routes import router as computer_use_router
@@ -76,7 +77,13 @@ def test_start_returns_a_pollable_mission_id(app: FastAPI, wired: list) -> None:
     assert got.status_code == 200
     assert got.json()["goal"] == "open the browser"
     assert got.json()["source"] == "api"
-    assert wired == [(mission_id, "open the browser", 120.0)]
+    # The default mission ceiling comes from the SAME schema field the voice and
+    # tool paths read ([computer_use].mission_timeout_s), so a literal here would
+    # re-open the drift this route already had once (audit AU-07).
+    expected_timeout = float(
+        ComputerUseConfig.model_fields["mission_timeout_s"].default
+    )
+    assert wired == [(mission_id, "open the browser", expected_timeout)]
 
 
 def test_start_absorbs_a_duplicate_active_goal(app: FastAPI, wired: list) -> None:
