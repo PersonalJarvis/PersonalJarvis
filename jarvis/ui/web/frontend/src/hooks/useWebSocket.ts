@@ -21,6 +21,7 @@ import {
   useCommandActivityStore,
   COMMAND_ACTIVITY_EVENTS,
 } from "@/store/commandActivity";
+import { useDeckStore } from "@/store/deck";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
@@ -178,6 +179,13 @@ export function useWebSocket(): void {
               Math.floor(env.timestamp_ns / 1_000_000),
             );
         }
+
+        // Mission deck: cost, computer-use, capture, terminals, wiki, words.
+        // The reducer hands back the same object for every event it does not
+        // read, so this is one cheap call, not a re-render per event.
+        useDeckStore
+          .getState()
+          .ingest(env.event_name, env.payload, Math.floor(env.timestamp_ns / 1_000_000));
 
         // Jarvis-Agents dashboard: build the live tree from the Phase-5.5 events.
         if (SUB_AGENT_EVENT_NAMES.has(env.event_name)) {

@@ -1,7 +1,6 @@
-import { useState } from "react";
 import { ChatsView } from "@/views/ChatsView";
 import { MissionDeckView, SurfaceSwitch } from "@/views/MissionDeckView";
-import { readDeckMode, type DeckMode } from "@/lib/deckMode";
+import { useDeckStore } from "@/store/deck";
 
 /**
  * The "chats" section: the mission deck, with the classic chat view one click
@@ -14,12 +13,12 @@ import { readDeckMode, type DeckMode } from "@/lib/deckMode";
  * remembered. When the deck grows those features the switch can go; until then
  * it is what makes this a safe change rather than a lossy one.
  *
- * The mode lives here rather than in the event store on purpose: nothing on the
- * backend cares which surface is on screen, and a preference that never leaves
- * the browser has no business on the event bus.
+ * The mode lives in the deck store rather than here: the app shell reads it to
+ * hide the sidebar while the deck (which brings its own dock) is on screen.
  */
 export function ChatsSurface() {
-  const [mode, setMode] = useState<DeckMode>(() => readDeckMode());
+  const mode = useDeckStore((s) => s.mode);
+  const setMode = useDeckStore((s) => s.setMode);
   const accessory = <SurfaceSwitch mode={mode} onChange={setMode} />;
 
   return mode === "classic" ? (

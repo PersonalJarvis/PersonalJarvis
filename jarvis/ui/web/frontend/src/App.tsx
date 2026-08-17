@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { isSectionId, useEventStore } from "@/store/events";
+import { useDeckStore } from "@/store/deck";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
@@ -235,6 +236,16 @@ export default function App() {
   const activeSection = useEventStore((s) => s.activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
+  const deckMode = useDeckStore((s) => s.mode);
+
+  /*
+   * The mission deck is a full stage: it brings its own section dock, so the
+   * sidebar (and the resizer that belongs to it) steps aside while the deck is
+   * on screen. Every other section — and the classic chat view behind the
+   * deck's switch — keeps the sidebar exactly as before; a section reached
+   * from the dock lands there.
+   */
+  const deckOnStage = activeSection === "chats" && deckMode === "deck";
 
   /*
    * The realtime broker must exist exactly ONCE across all windows: it
@@ -283,20 +294,24 @@ export default function App() {
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <DesktopWallpaper />
 
-      <Sidebar
-        width={sidebar.size}
-        collapsed={navCollapsed}
-        onToggleCollapsed={toggleNav}
-      />
+      {!deckOnStage && (
+        <>
+          <Sidebar
+            width={sidebar.size}
+            collapsed={navCollapsed}
+            onToggleCollapsed={toggleNav}
+          />
 
-      <PaneResizer
-        orientation="vertical"
-        onPointerDown={startSidebarResize}
-        onDoubleClick={sidebar.reset}
-        onNudge={sidebar.nudge}
-        active={sidebar.isResizing}
-        title="Drag to resize the sidebar — double-click to reset"
-      />
+          <PaneResizer
+            orientation="vertical"
+            onPointerDown={startSidebarResize}
+            onDoubleClick={sidebar.reset}
+            onNudge={sidebar.nudge}
+            active={sidebar.isResizing}
+            title="Drag to resize the sidebar — double-click to reset"
+          />
+        </>
+      )}
 
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
         {/* App-wide macOS permission alert — topmost so a missing grant is
