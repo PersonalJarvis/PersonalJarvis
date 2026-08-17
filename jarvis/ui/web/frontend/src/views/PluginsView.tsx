@@ -380,6 +380,46 @@ const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
   spotify: "https://developer.spotify.com/dashboard",
 };
 
+// What a client id actually looks like, per provider. The field used to show
+// Google's `…apps.googleusercontent.com` to everyone, which reads as "you are
+// in the wrong place" when the provider is Spotify or Slack.
+const OAUTH_CLIENT_ID_PLACEHOLDER: Record<string, string> = {
+  google: "…apps.googleusercontent.com",
+  spotify: "32-character id from the app's settings",
+  slack: "1234567890123.1234567890123",
+  asana: "1234567890123456",
+};
+
+// Providers whose PKCE flow needs no secret at all. Saying so beats an empty
+// box captioned "optional for some providers", which leaves the reader to
+// guess whether they are one of them.
+const OAUTH_NO_SECRET_NEEDED: Record<string, string> = {
+  spotify: "not needed — leave this empty",
+  google: "usually not needed",
+};
+
+/** The redirect URI the provider must have registered for the login to work.
+ *
+ *  Built from the catalog entry rather than written out per provider, so this
+ *  hint and the loopback listener that actually binds cannot drift apart. Only
+ *  meaningful for a plugin with a FIXED port; one with an ephemeral port has
+ *  nothing stable to register.
+ *
+ *  Worth surfacing because a mismatch here is the single most common reason a
+ *  first connect fails, and the provider's error ("INVALID_CLIENT: Invalid
+ *  redirect URI") names neither the expected value nor where to put it. */
+function loopbackRedirectUri(plugin: Plugin): string | undefined {
+  if (plugin.authMode !== "oauth_pkce_loopback") return undefined;
+  const auth = plugin.authConfig as {
+    callback_port?: unknown;
+    callback_path?: unknown;
+  };
+  const port = typeof auth?.callback_port === "number" ? auth.callback_port : 0;
+  if (!port) return undefined;
+  const path = typeof auth?.callback_path === "string" ? auth.callback_path : "";
+  return `http://127.0.0.1:${port}${path}`;
+}
+
 type TabId = "browse" | "installed" | "community";
 type FilterId = "all" | Category;
 export type StatusFilterId = "all" | "connected" | "not_connected" | "attention";
@@ -1624,12 +1664,19 @@ function PluginRow({
   const needsReauth = plugin.status === "needs_reauth";
   const isError = plugin.status === "error";
 
+  // "I want this plugin" should not require hitting a 28px "+". The whole card
+  // starts the same flow. A CONNECTED card stays inert on purpose: disconnecting
+  // is destructive and must remain a deliberate click on the check.
+  const { busy, run } = useConnectLock(() => onConnect(plugin));
+  const cardStartsConnect = !isConnected;
+
   return (
     <article
       // Stable DOM id so the "Jump to it" affordance in AttentionBanner can
       // scrollIntoView + flash this exact row. `scroll-mt-24` leaves headroom
       // under the sticky tab bar so the scrolled-to row isn't hidden beneath it.
       id={`plugin-row-${plugin.id}`}
+      onClick={cardStartsConnect ? () => void run() : undefined}
       className={cn(
         "group flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-[colors,box-shadow] scroll-mt-24",
         isConnected && "border-primary/30",
@@ -1639,6 +1686,8 @@ function PluginRow({
           !needsReauth &&
           !isError &&
           "border-border hover:border-primary/40 hover:bg-card/70",
+        cardStartsConnect && "cursor-pointer",
+        busy && "cursor-wait",
       )}
     >
       <BrandTile plugin={plugin} />
@@ -1711,45 +1760,29 @@ function PluginRow({
 
       <ConnectIconButton
         status={plugin.status}
-        onConnect={() => onConnect(plugin)}
+        onConnect={run}
+        busy={busy}
         onDisconnect={() => onDisconnect(plugin.id)}
       />
     </article>
   );
 }
 
-export function ConnectIconButton({
-  status,
-  onConnect,
-  onDisconnect,
-}: {
-  status: PluginStatus;
-  onConnect: () => void | Promise<void>;
-  onDisconnect: () => void;
-}) {
-  // `/connect/start` (DCR registration) takes ~0.6s with no other feedback, so
-  // without a lock the user re-clicks and each click launches its OWN OAuth flow
-  // — a burst of browser tabs and stray client registrations. `busyRef` is the
-  // SYNCHRONOUS guard (React state is async and would let a fast double-click
-  // through before the re-render disables the button); `busy` drives the UI.
+/** One in-flight connect per plugin, no matter what started it.
+ *
+ *  `/connect/start` (DCR registration) takes ~0.6s with no other feedback, so
+ *  without a lock the user re-clicks and each click launches its OWN OAuth flow
+ *  — a burst of browser tabs and stray client registrations. `busyRef` is the
+ *  SYNCHRONOUS guard (React state is async and would let a fast double-click
+ *  through before the re-render disables the button); `busy` drives the UI.
+ *  PluginRow owns one lock and hands it to the icon button, so a click on the
+ *  card and a click on the "+" can never race into two flows.
+ */
+export function useConnectLock(onConnect: () => void | Promise<void>) {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
 
-  if (status === "connected") {
-    return (
-      <button
-        type="button"
-        onClick={onDisconnect}
-        className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/15 text-primary transition-colors hover:bg-destructive/20 hover:text-destructive"
-        aria-label="Disconnect plugin"
-        title="Disconnect"
-      >
-        <Check className="h-3.5 w-3.5" />
-      </button>
-    );
-  }
-
-  const handleClick = async () => {
+  const run = async () => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
@@ -1759,6 +1792,49 @@ export function ConnectIconButton({
       busyRef.current = false;
       setBusy(false);
     }
+  };
+
+  return { busy, run };
+}
+
+export function ConnectIconButton({
+  status,
+  onConnect,
+  onDisconnect,
+  busy: busyFromRow,
+}: {
+  status: PluginStatus;
+  onConnect: () => void | Promise<void>;
+  onDisconnect: () => void;
+  /** Set when the surrounding card owns the lock, so a flow started by clicking
+   *  the card still spins this button. */
+  busy?: boolean;
+}) {
+  const lock = useConnectLock(onConnect);
+  const busy = busyFromRow ?? lock.busy;
+
+  if (status === "connected") {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDisconnect();
+        }}
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/15 text-primary transition-colors hover:bg-destructive/20 hover:text-destructive"
+        aria-label="Disconnect plugin"
+        title="Disconnect"
+      >
+        <Check className="h-3.5 w-3.5" />
+      </button>
+    );
+  }
+
+  // The card around this button is clickable too — without stopPropagation the
+  // same click would reach both handlers.
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void lock.run();
   };
 
   // A revoked / errored token re-runs the SAME connect flow, but is shown as a
@@ -2283,6 +2359,7 @@ export function PkceConnectDialog({
   const fam = oauthClientFamily(plugin);
   const isGoogle = fam?.family === "google";
   const clientRequired = Boolean(fam && !plugin.oauthClientConfigured);
+  const redirectUri = loopbackRedirectUri(plugin);
   const [showClient, setShowClient] = useState(clientRequired);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -2425,6 +2502,25 @@ export function PkceConnectDialog({
                     {fam.family === "google" &&
                       "One client covers Gmail, Drive and Calendar."}
                   </p>
+                  {redirectUri && (
+                    <div className="rounded-md border border-border bg-background/40 px-2.5 py-2">
+                      <p className="text-[10px] leading-relaxed text-muted-foreground">
+                        While creating the app, register this as its{" "}
+                        <span className="font-medium text-foreground">
+                          redirect URI
+                        </span>
+                        , character for character:
+                      </p>
+                      <code className="mt-1 block select-all break-all rounded bg-muted/60 px-1.5 py-1 text-[11px] text-foreground">
+                        {redirectUri}
+                      </code>
+                      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                        It must be the numeric address, not{" "}
+                        <code className="text-[10px]">localhost</code>, and
+                        carry no trailing slash.
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <label
                       htmlFor="pkce-client-id"
@@ -2437,7 +2533,10 @@ export function PkceConnectDialog({
                       value={clientId}
                       onChange={(e) => setClientId(e.target.value)}
                       className="mt-1 h-8 w-full rounded-md border border-border bg-background/60 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none"
-                      placeholder="…apps.googleusercontent.com"
+                      placeholder={
+                        OAUTH_CLIENT_ID_PLACEHOLDER[fam.family] ??
+                        `Client ID from ${fam.label}`
+                      }
                     />
                   </div>
                   <div>
@@ -2453,7 +2552,10 @@ export function PkceConnectDialog({
                       value={clientSecret}
                       onChange={(e) => setClientSecret(e.target.value)}
                       className="mt-1 h-8 w-full rounded-md border border-border bg-background/60 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none"
-                      placeholder="optional for some providers"
+                      placeholder={
+                        OAUTH_NO_SECRET_NEEDED[fam.family] ??
+                        "optional for some providers"
+                      }
                     />
                   </div>
                 </div>
