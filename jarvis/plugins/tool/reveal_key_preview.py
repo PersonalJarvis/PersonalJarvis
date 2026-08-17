@@ -11,9 +11,12 @@ which returns only 6 characters and never logs the full value. On a real API key
 that leaves 30+ characters hidden, so the preview alone is useless to an attacker
 (the GitHub/Stripe "last 4" pattern).
 
-Refusing the FULL key is handled in the router system prompt (a reasoned,
-multilingual, non-canned refusal) — not here. This tool simply has no way to
-return the full value.
+Refusing the FULL key is handled by this tool's own ``description`` below (a
+reasoned, multilingual, non-canned refusal), which travels with the tool
+wherever it is offered. It used to live in the router system prompt as well;
+that copy was removed when the prompt was cut, because a rule stated next to
+the tool reaches the model exactly when the tool does — and only then.
+This tool simply has no way to return the full value.
 """
 from __future__ import annotations
 

@@ -117,7 +117,14 @@ class TestDelegatorPolicyInPrompt:
     def test_absolute_rules_preserved(self) -> None:
         # The existing ABSOLUTE REGELN (anti-hallucination) stay in.
         assert "ABSOLUTE REGELN" in SYSTEM_PROMPT
-        assert "Provider" in SYSTEM_PROMPT  # anti-provider-switch rule
+        # The self-control rule ("never claim a setting changed unless a tool
+        # call returned success") is NOT pinned here any more: it moved to
+        # _SELF_CONTROL_STANDING in the brain manager, which appends it to
+        # every prompt. Asserting the bare word "Provider" here passed for the
+        # wrong reason after the prompt was cut — it matched an unrelated
+        # settings line. Pin what this prompt still genuinely owns instead:
+        # the rule that a tool result decides the truth of the answer.
+        assert "Tool" in SYSTEM_PROMPT and "success" in SYSTEM_PROMPT.lower()
 
     def test_argument_format_preserved(self) -> None:
         # The SPAWN_WORKER argument format (action/target) stays documented.
