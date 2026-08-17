@@ -8,23 +8,28 @@ from jarvis.brain.manager import BrainManager
 
 def _bare_manager() -> BrainManager:
     m = BrainManager.__new__(BrainManager)
-    m._tools = {"screenshot": object(), "cli_gam": object(), "spawn-worker": object()}
+    m._tools = {"screenshot": object(), "cli_gam": object(), "spawn_worker": object()}
     return m
 
 
 def test_smalltalk_override_keeps_required_evidence_tool():
+    # "was steht heute an" classifies as smalltalk; the mandated evidence tool
+    # must stay visible or the directive is unfulfillable (AD-CLI8).
     m = _bare_manager()
     m._evidence_required_tool = "cli_gam"
     visible = m._smalltalk_tool_override()
     assert "cli_gam" in visible
-    assert "spawn-worker" not in visible
+    assert "spawn_worker" not in visible
 
 
-def test_smalltalk_override_unchanged_without_required_tool():
+def test_smalltalk_override_keeps_a_cli_tool_without_a_mandate():
+    # Since 2026-08-17 the override is a hide-list, not an allowlist: only the
+    # spawn vehicles go. A CLI read tool needs no mandate to stay reachable.
     m = _bare_manager()
     m._evidence_required_tool = ""
     visible = m._smalltalk_tool_override()
-    assert "cli_gam" not in visible
+    assert "cli_gam" in visible
+    assert "spawn_worker" not in visible
 
 
 def test_run_evidence_gate_degrades_to_pass_on_missing_config():

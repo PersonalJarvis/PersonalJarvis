@@ -3380,12 +3380,12 @@ def _manager_with_cu_spawn_search() -> BrainManager:
     )
 
 
-# GENERAL rule (user mandate 2026-06-27 — "this must apply to ALL questions"):
-# ANY turn with no action signal of its own — short or long, with or without a
-# trailing "?" — loses computer_use/spawn so it cannot inherit the previous
-# turn's CU action. Mis-transcriptions, smalltalk, and plain questions all
-# qualify. (The real "Was geht ab?" is ALSO caught upstream by the smalltalk
-# gate; here we prove the filter itself no longer exempts it.)
+# User mandate 2026-06-27 ("this must apply to ALL questions"): a turn with no
+# action signal of its own — short or long, with or without a trailing "?" —
+# cannot inherit the previous turn's CU action. Since 2026-08-17 the hide is
+# gated on the evidence that makes inheritance possible at all: a desktop
+# episode that is live or just ended. Cold, the vehicle stays — see
+# tests/unit/brain/test_signalless_action_vehicles.py.
 NO_ACTION_SIGNAL_TURNS = [
     "Lask it up!",                                   # the live STT junk
     "Mask it up.",                                   # sibling STT-junk variant
@@ -3398,11 +3398,13 @@ NO_ACTION_SIGNAL_TURNS = [
 
 @pytest.mark.parametrize("utterance", NO_ACTION_SIGNAL_TURNS)
 def test_no_action_signal_turn_hides_computer_use_and_spawn(utterance: str) -> None:
-    """ANY turn with no action signal of its own (question, remark, or
-    mis-transcription — regardless of length or a trailing '?') cannot reach
-    computer_use/spawn, so the LLM cannot inherit the previous turn's CU action.
-    The read-only search tool stays visible so the turn is still answerable."""
+    """Inside a live desktop episode, ANY turn with no action signal of its own
+    (question, remark, or mis-transcription — regardless of length or a trailing
+    '?') cannot reach computer_use/spawn, so the LLM cannot inherit the previous
+    turn's CU action. The read-only search tool stays visible so the turn is
+    still answerable."""
     manager = _manager_with_cu_spawn_search()
+    manager._desktop_episode_is_live = lambda: True  # type: ignore[method-assign]
     gated = manager._hide_action_tools_on_signalless_turn(
         dict(manager._tools), utterance
     )

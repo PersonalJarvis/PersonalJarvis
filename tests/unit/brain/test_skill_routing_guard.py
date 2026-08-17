@@ -202,10 +202,15 @@ def test_smalltalk_override_keeps_run_skill_on_skill_turn(skill_ctx) -> None:
     assert "run-skill" in tools
 
 
-def test_smalltalk_override_hides_run_skill_without_match() -> None:
+def test_smalltalk_override_keeps_run_skill_without_match() -> None:
+    # Since 2026-08-17 the override hides only the spawn vehicles, so run-skill
+    # is reachable on any smalltalk turn — the SKILLS-FIRST router rule wants it
+    # there, and a skill the deterministic matcher missed can still be invoked.
+    # The AD-S3 keep above is belt and braces for a matched turn.
     m = _make_manager()
     tools = m._smalltalk_tool_override()
-    assert "run-skill" not in tools
+    assert "run-skill" in tools
+    assert "spawn_worker" not in tools
 
 
 # ----------------------------------------------------------------------

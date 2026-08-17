@@ -857,19 +857,30 @@ _AGENTIC_IDE_WORKSPACE_TOOL_NAMES: frozenset[str] = frozenset({
     "agentic-ide-continue-interrupted",
 })
 
-# Consequential action tools a turn with NO action signal of its own must never
-# INHERIT from the conversation context. GENERAL rule (not one phrase): a
-# question, a remark, or a mis-transcription asks for no desktop action, so it
-# must not be able to re-run the PREVIOUS turn's computer_use/spawn pulled from
-# context. Forensic 2026-06-27: the German smalltalk "Was geht ab?" was
-# mis-transcribed as "Lask it up!" [en] conf 0.509, missed every smalltalk /
+# Consequential action tools a signalless turn must never INHERIT from the
+# conversation context. Forensic 2026-06-27: the German smalltalk "Was geht ab?"
+# was mis-transcribed as "Lask it up!" [en] conf 0.509, missed every smalltalk /
 # whisper-junk list, and the router-LLM (reading a 30k-token context full of the
 # prior "open Discord, bridge-mine channel" command) re-ran that exact CU plan on
 # a turn that asked for nothing. ``computer_use`` + the spawn vehicles are the
 # heavy, irreversible-looking actions hidden here. Deliberately NOT hidden: the
 # read-only ``screenshot`` tool (so "Was siehst du auf dem Bildschirm?" still
 # works) and ``open_app`` (lighter; naming an app already reads as action-intent).
+# INHERITANCE NEEDS SOMETHING TO INHERIT (2026-08-17): the hide applies only
+# while a desktop episode is live or just ended — see
+# ``_hide_action_tools_on_signalless_turn``. Outside one there is no prior plan
+# in the context, and hiding the vehicle then only costs the turn its ability
+# to act.
 _INHERITABLE_ACTION_TOOL_NAMES: frozenset[str] = _SPAWN_TOOL_NAMES | {"computer_use"}
+
+# The only tools a SMALLTALK turn may not see. The 2026-05-01 incident was ONE
+# tool class, not the whole surface: the LLM hallucinated a ``spawn_worker`` on
+# chit-chat and then reported test work it had never started. Nothing else in the
+# surface caused that. The historical full-hide additionally removed every action
+# vehicle from a turn the substring allowlist merely READ as chit-chat, which is
+# its own bug — the model then has nothing to act with, whatever the user asked
+# for. See ``_smalltalk_tool_override``.
+_SMALLTALK_HIDDEN_TOOL_NAMES: frozenset[str] = _SPAWN_TOOL_NAMES
 
 # Deterministic write/record tools that create user-visible state (a contact, a
 # profile field, a wiki note, a calendar event, a phone call). On a turn with NO
@@ -890,6 +901,20 @@ _DETERMINISTIC_WRITE_TOOL_NAMES: frozenset[str] = frozenset({
     "contact-upsert", "update_profile", "wiki-ingest", "google_calendar",
     "call-contact",
 })
+
+# Tools withheld on a turn that carries a CAPTURED SCREEN image. Screen pixels
+# and UI text are untrusted evidence (docs/screen-context.md §4.2), so injected
+# on-screen text must not be able to start something expensive and unattended:
+# a background worker, or a silent record write (a contact, a calendar entry, a
+# wiki note, an outbound call). Everything else stays — including
+# ``computer_use``, whose "looking is not operating" boundary (maintainer mandate
+# 2026-08-02) is enforced per call by ``cu_gate.llm_computer_use_allowed`` in
+# ``tool_use_loop``/``realtime.tools``. That gate reads the USER's utterance, so
+# a look request is refused there even inside a live desktop episode, and text
+# rendered on screen can never unlock it. See ``_image_turn_tool_override``.
+_SCREEN_TURN_HIDDEN_TOOL_NAMES: frozenset[str] = (
+    _SPAWN_TOOL_NAMES | _DETERMINISTIC_WRITE_TOOL_NAMES
+)
 
 # The user literally names a skill ("nutz den Skill cloud-debug", "run the
 # skill …"). An explicit skill request is its own vehicle and always keeps
@@ -4754,8 +4779,8 @@ class BrainManager:
         and hallucinated a Jarvis-Agent spawn. Result: main Jarvis claimed to have
         started tests that it never started.
 
-        Used in ``generate()`` to hide tools on clear smalltalk turns — the
-        tool-use loop receives ``tools={}``, so the LLM can no longer spawn.
+        Used in ``generate()`` to hide the spawn vehicles on clear smalltalk
+        turns (``_smalltalk_tool_override``), so the LLM can no longer spawn.
 
         Greeting-prefix guard (live bug 2026-06-07, data/jarvis_desktop.log
         18:19:07): the user said "Hallo, öffne ihn für mich". The allowlist i18n-allow
@@ -4803,16 +4828,15 @@ class BrainManager:
             return False
         return True
 
-    # Read-only tools that stay visible even on a smalltalk turn. The toolless
-    # smalltalk path (2026-05-01) exists to stop the LLM hallucinating a
-    # spawn_worker on chit-chat — that risk is the spawn/action tools, NOT the
-    # read-only screenshot tool. Keeping `screenshot` here lets the brain look
-    # at the screen on demand (Wave 2) even on a greeting-prefixed turn, e.g.
-    # "Hallo, lies mir vor was oben links steht" (live failure 2026-05-31).
-    # NOTE: `_gate_screen_tool` runs AFTER this override and removes `screenshot`
-    # again unless the utterance carries a visual-reference marker (2026-06-14
-    # screen-narration guard) — the 2026-05-31 case survives because "lies" /
-    # "oben links" / "steht" are markers, so it still reaches the tool.
+    # Back-compat alias for the read-only tool the smalltalk path used to keep
+    # by allowlist. The override is a HIDE-list now
+    # (``_SMALLTALK_HIDDEN_TOOL_NAMES``), so screenshot survives like every
+    # other non-spawn tool; the name is kept because external introspection
+    # (telemetry, eval harness) reads it. NOTE: `_gate_screen_tool` still runs
+    # AFTER the override and removes `screenshot` unless the utterance carries a
+    # visual-reference marker (2026-06-14 screen-narration guard) — the
+    # 2026-05-31 "Hallo, lies mir vor was oben links steht" case survives
+    # because "lies" / "oben links" / "steht" are markers.
     _SMALLTALK_SAFE_TOOLS: frozenset[str] = frozenset({"screenshot"})
 
     # Skill-aware routing guard (AD-S3, 2026-06-09 rebuild): the Skill matched
@@ -5662,48 +5686,72 @@ class BrainManager:
         return str(result.output or "")
 
     def _smalltalk_tool_override(self) -> dict[str, Tool]:
-        """Tool set visible on a smalltalk turn: only the read-only safe tools.
+        """Tool set visible on a smalltalk turn: everything but the spawn vehicles.
 
-        Returns ``{}`` when none of the safe tools are registered — identical to
-        the previous full-hide behaviour for deployments without a screenshot
-        tool, so the anti-fake-spawn guard is unchanged there. On a
-        skill-matched turn (AD-S3) ``run-skill`` stays visible so a greeting-
-        style trigger ("guten Morgen" → morning-routine) can still invoke the
-        skill.
+        The 2026-05-01 incident this gate exists for was ONE tool class. The
+        user said "es geht ab", the allowlist did not match, the LLM had the
+        full surface and hallucinated a Jarvis-Agent spawn — Jarvis then claimed
+        to have started tests it never started. Hiding ``spawn_worker`` /
+        ``multi_spawn`` removes exactly that, and an unwanted background agent
+        is the one tool whose wrong call is expensive and surprising.
+
+        Hiding EVERYTHING else was the bug on the other side (2026-08-17
+        review): smalltalk here is a substring allowlist, so a real request
+        that merely reads as chit-chat arrived at the model with no action tool
+        at all and could only be talked about. A tool the model declines to call
+        is free; a tool it cannot see is the failure users report. The genuinely
+        conversational turns still lose ``computer_use`` and the write/record
+        tools further down the chain — see
+        ``_hide_action_tools_on_signalless_turn``.
+
+        A tool the deterministic layer mandated this turn is never hidden
+        ("was steht heute an" can classify as smalltalk — AD-CLI8), and on a
+        skill-matched turn (AD-S3) ``run-skill`` stays visible so a
+        greeting-style trigger ("guten Morgen" → morning-routine) still fires.
         """
-        allowed = self._SMALLTALK_SAFE_TOOLS
+        hidden = _SMALLTALK_HIDDEN_TOOL_NAMES
+        keep = {self._evidence_required_tool} if self._evidence_required_tool else set()
         if self._skill_turn_match is not None:
-            allowed = allowed | {"run-skill"}
-        if self._evidence_required_tool:
-            # "was steht heute an" can classify as smalltalk; the mandated
-            # evidence tool must stay visible or the directive is
-            # unfulfillable (AD-CLI8).
-            allowed = allowed | {self._evidence_required_tool}
+            keep.add("run-skill")
         return {
             n: t for n, t in self._tools.items()
-            if n in allowed
+            if n not in hidden or n in keep
         }
 
     def _image_turn_tool_override(self) -> dict[str, Tool]:
-        """Tool surface for a turn that carries an attached image.
+        """Tool surface for a turn that carries a CAPTURED SCREEN image.
 
-        Historically hard ``{}`` — an image turn answers from the pixels, so
-        the tool loop was withheld entirely. But a WRITE mandate must survive
-        it (code-review finding 2026-08-08): "erstell einen Ordner hier auf
+        Historically hard ``{}`` — the reasoning being that pixels answer the
+        turn and that emptying the surface is what keeps Screen Context and
+        Computer-Use from both running for one utterance (docs/screen-context.md
+        §3.1a, maintainer mandate 2026-08-02). The first exception was a WRITE
+        mandate (code-review finding 2026-08-08): "erstell einen Ordner hier auf
         dem Desktop" matches the screen-intent phrase "hier auf dem", the
-        explicit screen-context path attaches a screenshot, and zeroing the
-        surface would blind the very run_shell call the local-outcome mandate
-        requires — the honest "never ran" fallback would fire instead of the
-        action. Mirrors the mandated-tool exemption in the smalltalk override
-        above: ONLY the mandated write tool stays visible, every other tool
-        keeps the historical image-turn hide.
+        explicit screen-context path attaches a screenshot, and a zeroed surface
+        blinded the very run_shell call the local-outcome mandate requires.
+
+        2026-08-17: the hide is now a narrow deny-list, because the boundary it
+        was standing in for is enforced where it actually belongs. A turn that
+        mixes a look with an action ("Schau mal hier. Mach das Fenster zu.") is
+        classified SCREEN whenever ``intent.requests_screen_operation``'s
+        clause anchoring misses the action verb — and an emptied surface then
+        left the model describing a picture with no way to do the thing that was
+        asked. ``computer_use`` therefore stays: every call runs through
+        ``cu_gate.llm_computer_use_allowed`` first, which refuses a look request
+        even inside a live desktop episode, so the two paths still cannot both
+        run for one utterance. That gate reads the USER's utterance, never the
+        model's reasoning, so untrusted on-screen text cannot unlock it either.
+
+        What stays hidden is what injected screen text could otherwise start
+        unattended: the spawn vehicles and the deterministic record writes
+        (``_SCREEN_TURN_HIDDEN_TOOL_NAMES``) — minus any tool the deterministic
+        layer mandated this turn.
         """
-        if self._evidence_required_is_write and self._evidence_required_tool:
-            return {
-                n: t for n, t in self._tools.items()
-                if n == self._evidence_required_tool
-            }
-        return {}
+        keep = self._evidence_required_tool or ""
+        return {
+            n: t for n, t in self._tools.items()
+            if n not in _SCREEN_TURN_HIDDEN_TOOL_NAMES or n == keep
+        }
 
     def _gate_screen_tool(
         self,
@@ -5877,32 +5925,84 @@ class BrainManager:
             log.debug("visualize request gate failed", exc_info=True)
             return tools
 
+    @staticmethod
+    def _desktop_episode_is_live() -> bool:
+        """True while a Computer-Use mission is running or has just ended.
+
+        The one honest signal that the conversation context still holds a
+        desktop plan a signalless turn could INHERIT: every launch route
+        registers its mission (voice fast path, LLM tool, REST, scheduled). It
+        is deliberately the same registry and the same window
+        ``jarvis.brain.cu_gate`` consults for the mirror-image decision, so the
+        two readings of "are we in a desktop episode" cannot drift apart.
+
+        A failed probe answers "no episode": the default must be the full tool
+        surface, never a blinded one.
+        """
+        try:
+            from jarvis.brain.cu_gate import FOLLOW_UP_WINDOW_S  # noqa: PLC0415
+            from jarvis.harness.cu_run_registry import (  # noqa: PLC0415
+                has_recent_run,
+            )
+
+            return bool(has_recent_run(FOLLOW_UP_WINDOW_S))
+        except Exception:  # noqa: BLE001 — never blind the brain on a probe
+            log.debug("desktop-episode probe failed", exc_info=True)
+            return False
+
+    def _turn_reads_as_conversation(self, user_text: str) -> bool:
+        """True when the turn's own SHAPE says it asks for no record to be written.
+
+        Smalltalk or a plain question — the shapes the 2026-06-30 deep-dive
+        found exposed to the write/record tools ("does my budget fit?"). Each
+        detector is guarded on its own: ``_is_smalltalk`` needs the compiled
+        routing patterns, and a manager built without them must degrade to
+        "not obviously conversational" rather than take the whole gate down.
+        """
+        try:
+            if self._is_smalltalk(user_text):
+                return True
+        except Exception:  # noqa: BLE001 — pattern cache unavailable
+            log.debug("smalltalk probe failed in the signalless gate", exc_info=True)
+        return _is_plain_knowledge_question(user_text)
+
     def _hide_action_tools_on_signalless_turn(
         self, tools: dict[str, Tool], user_text: str
     ) -> dict[str, Tool]:
-        """Remove computer_use + the spawn vehicles from ANY turn that carries no
-        action signal of its own, so the router-LLM cannot INHERIT the previous
-        turn's desktop action from the conversation context.
+        """Withhold the consequential tools a turn could only have INHERITED.
 
-        GENERAL rule, not one phrase (user mandate 2026-06-27 — "this must apply
-        to ALL questions, that was only an example"): a question, a remark, or a
-        mis-transcription asks for no desktop action. If the turn names no action
-        of its own, it must not be able to fire ``computer_use``/spawn — whatever
-        the conversation context holds. Length- and ``?``-agnostic: a long
-        question is still a question; a trailing ``?`` no longer keeps the heavy
-        tools (the prior version did, which let a mis-heard question still inherit
-        a CU action). Forensic: "Was geht ab?" → STT "Lask it up!" [en] conf
-        0.509 → the brain re-ran the prior "open Discord, bridge-mine channel" CU
-        plan on a turn that asked for nothing.
+        Two distinct risks with two distinct pieces of evidence — and "the
+        action regex did not fire" is neither of them. The forensics:
 
-        A turn KEEPS the consequential tools only when it carries a real signal:
-        an action-intent (open-app / PC-control / screen-surface / registry), an
-        artifact-build request, or an explicitly named spawn vehicle. The
-        read-only ``screenshot`` tool is never in the hidden set, so a visual
-        question ("Was siehst du auf dem Bildschirm?") is still answered by
-        looking — only the click/type AGENT loop is withheld. Any fault returns
-        the tools unchanged so a gate bug can never blind the brain. Pure regex +
-        the existing deterministic detectors (AP-11 safe, provider-agnostic).
+        1. **Inheritance (2026-06-27).** "Was geht ab?" → STT "Lask it up!" [en]
+           conf 0.509 → the router-LLM, reading a 30k-token context full of the
+           prior "open Discord, bridge-mine channel" command, re-ran that exact
+           computer_use plan on a turn that asked for nothing. That risk needs
+           something to inherit: a desktop episode that is live or just ended
+           (``_desktop_episode_is_live``). Cold, there is no prior plan in the
+           context to re-run.
+        2. **Write reflex (deep-dive 2026-06-30).** A "does my budget fit?" turn
+           carried google_calendar / contact-upsert / wiki-ingest /
+           update_profile in its surface. The evidence there is the turn's own
+           shape: smalltalk or a plain question asks for no record to be written
+           (``_turn_reads_as_conversation``).
+
+        What changed, and why (2026-08-17 review): the previous version hid both
+        sets from EVERY turn that missed ``is_open_app_intent`` /
+        ``_looks_like_pc_control`` / the capability registry. That regex knows
+        "klick" and "Bildschirm"; it does not know "spiel Musik", "ruf Anna an"
+        or "trag das in meinen Kalender ein" — so those turns reached the model
+        with no vehicle at all and could only be talked about. Absence of a
+        keyword is not evidence of absence of intent. A tool the model declines
+        to call is free; a tool it cannot see is the bug users report.
+
+        Both protections above still fire, on their own evidence. A genuine
+        action signal (action-intent, artifact-build request, named spawn
+        vehicle, request framing) short-circuits the gate, the read-only ``screenshot``
+        tool is never hidden, and a tool the deterministic layer mandated this
+        turn is never stripped (AD-CLI8). Pure regex + registry lookups, no
+        model in the path (AP-11 safe). Any fault returns the tools unchanged so
+        a gate bug can never blind the brain.
         """
         if not isinstance(tools, dict):
             return tools
@@ -5912,20 +6012,30 @@ class BrainManager:
                 return tools
             # Any genuine ACTION signal keeps the consequential tools: an action
             # intent (open-app / PC-control / names the screen surface / registry
-            # intent), an artifact-build request, or an explicitly named spawn
-            # vehicle. A turn with NONE of these asks for no desktop action.
+            # intent), an artifact-build request, an explicitly named spawn
+            # vehicle — or REQUEST FRAMING. The last one is the same signal
+            # ``_is_smalltalk`` already trusts to call a turn a command rather
+            # than chit-chat: "Kannst du Anna anrufen?" is question-SHAPED and
+            # would otherwise lose call-contact to the write-reflex half below,
+            # and "kannst du das nochmal machen?" is the corrective follow-up
+            # cu_gate's episode window exists to keep alive.
             if (
                 self._turn_has_action_intent(t)
                 or self._research_wants_artifact(t)
                 or self._is_explicit_heavy_request(t)
+                or _ACTION_REQUEST_RE.search(t)
             ):
                 return tools
-            # Hide computer_use/spawn AND the deterministic write/record tools so
-            # the model cannot pick one on a no-action conversational turn — but
+            hidden: set[str] = set()
+            if self._desktop_episode_is_live():
+                hidden |= _INHERITABLE_ACTION_TOOL_NAMES
+            if self._turn_reads_as_conversation(t):
+                hidden |= _DETERMINISTIC_WRITE_TOOL_NAMES
+            if not hidden:
+                return tools
             # NEVER strip a tool the deterministic layer already mandated this
             # turn (a say-do write via resolve_save_mandate, or a calendar/email
             # READ via the evidence gate), or those features regress (AD-CLI8).
-            hidden = _INHERITABLE_ACTION_TOOL_NAMES | _DETERMINISTIC_WRITE_TOOL_NAMES
             mandated = getattr(self, "_evidence_required_tool", "") or ""
             return {
                 n: tool
@@ -10325,15 +10435,14 @@ class BrainManager:
             if self._cost_meter.over_daily_budget():
                 return "Tagesbudget ueberschritten."
 
-        # Smalltalk near-toolless path (bug fix 2026-05-01): on clearly
-        # identified smalltalk the spawn/action tools are hidden so the LLM
-        # cannot be tempted to hallucinate "spawn_worker" (see voice session
-        # 2026-04-30 22:38, "es geht ab" → fake spawn). The read-only screenshot
-        # tool stays visible (see _smalltalk_tool_override) so the brain can
-        # still look at the screen on demand even on a greeting-prefixed turn
-        # like "Hallo, lies mir vor was oben links steht" (live failure
-        # 2026-05-31). Force-spawn already ran (smalltalk wins there against verb
-        # match); now we also constrain the LLM tool-choice path.
+        # Smalltalk spawn-hide (bug fix 2026-05-01): on clearly identified
+        # smalltalk the spawn vehicles are hidden so the LLM cannot be tempted to
+        # hallucinate "spawn_worker" (see voice session 2026-04-30 22:38, "es
+        # geht ab" → fake spawn). Only those — the rest of the surface stays, so
+        # a request the substring allowlist merely READS as chit-chat still has
+        # something to act with (see _smalltalk_tool_override). Force-spawn
+        # already ran (smalltalk wins there against verb match); now we also
+        # constrain the LLM tool-choice path.
         is_smalltalk_turn = self._is_smalltalk(user_text)
         if is_smalltalk_turn:
             log.info(
@@ -10629,8 +10738,10 @@ class BrainManager:
                 vision_capable_seen = True
 
             _turn_tools = (
-                # Image turn: pixels answer the turn — tools withheld, EXCEPT
-                # a mandated write tool (see _image_turn_tool_override).
+                # Captured-screen turn: the pixels answer it, but the surface is
+                # NARROWED, not emptied — a look glued to an action still needs
+                # its vehicle, and cu_gate enforces the look/operate boundary per
+                # call (see _image_turn_tool_override).
                 self._image_turn_tool_override()
                 if screen_context.has_image
                 else self._smalltalk_tool_override() if is_smalltalk_turn
@@ -10658,11 +10769,12 @@ class BrainManager:
                 _turn_tools = self._hide_spawn_on_knowledge_question(
                     _turn_tools, user_text
                 )
-            # Signalless-turn action-hide (forensic 2026-06-27): a short turn with
-            # NO actionable signal of its own ("Was geht ab?" mis-heard as "Lask
-            # it up!" conf 0.509) must not be able to reach computer_use/spawn —
-            # the router-LLM would otherwise INHERIT the previous turn's CU action
-            # from the conversation context and fire a wrong desktop action.
+            # Signalless-turn action-hide (forensic 2026-06-27): inside a live
+            # desktop episode a turn with NO actionable signal of its own ("Was
+            # geht ab?" mis-heard as "Lask it up!" conf 0.509) must not reach
+            # computer_use/spawn — the router-LLM would otherwise INHERIT the
+            # previous turn's CU action from the conversation context. Outside an
+            # episode there is nothing to inherit and the vehicle stays.
             if isinstance(_turn_tools, dict):
                 _turn_tools = self._hide_action_tools_on_signalless_turn(
                     _turn_tools, user_text
@@ -11267,9 +11379,9 @@ class BrainManager:
                 return injected
 
         # A turn under a WRITE mandate is an ACTION turn, not a vision turn
-        # (shell-consistency rework 2026-08-08): an attached image zeroes the
-        # tool surface downstream (screen_context.has_image → tools={}), which
-        # would blind the very tool the mandate requires. "erstell einen Ordner
+        # (shell-consistency rework 2026-08-08): an attached image narrows the
+        # tool surface downstream (_image_turn_tool_override), and the mandated
+        # write tool is the one it must not lose. "erstell einen Ordner
         # hier auf dem Desktop" carries the visual marker "hier auf" yet wants
         # a shell action, not a screen answer — same for a mandated contact/
         # wiki write. Read mandates are untouched (they never attach anyway:
