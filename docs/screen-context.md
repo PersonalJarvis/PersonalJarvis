@@ -254,8 +254,16 @@ two paths are enforced apart in three places, and all three are load-bearing:
    mission even when it names a surface, and even inside the recent-run
    follow-up window. Before the split, the bare noun "Bildschirm" was itself
    sufficient authority — which is how a question moved the user's mouse.
-3. **`BrainManager.generate`** — a successful capture strips every tool from
-   the turn, so the two paths can never both run for one utterance.
+3. **`BrainManager.generate`** — a successful capture narrows the turn's tool
+   surface: the spawn vehicles and the deterministic record writes go, the
+   read-only tools and `computer_use` stay. Until 2026-08-17 it stripped
+   *every* tool, which enforced the mandate by making a mixed utterance
+   impossible to answer at all — "look here, close that window" produced a
+   description of the screen and no action. Point 2 is what actually keeps a
+   look request off the desktop, and it does so on the user's words, not on
+   the surface, so it holds for a pure look even inside a live episode. What
+   the narrowed surface adds is that the ACTION half of a mixed utterance now
+   has a vehicle. A question is still never answered by driving the desktop.
 
 Two consequences worth stating, because both were regressions waiting to
 happen. A screenshot request ("mach mal einen Screenshot") is the *least*
@@ -356,9 +364,11 @@ Five layers, in the order they run:
 
 Screen pixels, OCR, and accessibility text are untrusted evidence. They are
 wrapped in fixed `SCREEN_EVIDENCE` delimiters with an instruction boundary, and
-the production brain exposes no tools on a captured look turn. Text rendered by
-a webpage or document therefore cannot turn a read-only inspection into an
-action or tool call.
+the production brain hides the unattended vehicles on a captured turn — the
+spawn tools and every deterministic record write. Text rendered by a webpage or
+document therefore cannot start a background agent or write a contact, calendar
+or wiki entry. It cannot unlock the desktop either: `llm_computer_use_allowed`
+reads the USER's utterance, never the model's reasoning and never the pixels.
 
 Default patterns ship for card numbers, IBANs, API-key shapes, and
 `Authorization:`-style headers. They are configurable, additive, and each entry

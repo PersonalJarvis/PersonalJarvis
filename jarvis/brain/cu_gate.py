@@ -34,9 +34,14 @@ into ACTION verbs and SURFACE nouns, and a turn that
 ``jarvis.screen_context.intent`` reads as a look request is refused even when it
 names a surface and even inside a live desktop episode. Only an action verb, an
 explicitly named Computer-Use, or a surface noun in a turn that is NOT a look
-request may still drive the desktop. This gate is the enforcement half; the
-other half is that a successful Screen Context capture strips every tool from
-the turn (``BrainManager.generate``), so the two paths can never both run.
+request may still drive the desktop. This gate is where the boundary is
+actually enforced: it decides on the USER's words, so a look request is refused
+even inside a live episode. A successful Screen Context capture additionally
+narrows the turn's surface (``BrainManager.generate``) — the spawn vehicles and
+the deterministic record writes go, the read tools and ``computer_use`` stay.
+Until 2026-08-17 that capture stripped EVERY tool, which also left the action
+half of a mixed utterance ("look here, close that window") with no vehicle at
+all; the narrowing keeps the boundary and gives that half its vehicle back.
 
 Everything else is blocked and fed back to the model as a tool error telling
 it to answer inline (or via ``search_web`` for fresh facts). Over-ALLOWING is
