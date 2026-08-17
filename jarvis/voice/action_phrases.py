@@ -159,6 +159,25 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "Application '{app}' was not found.",
         "es": "No se encontró la aplicación '{app}'.",
     },
+    # Computer-use is NOT wired on this machine — the honest counterpart of
+    # ``cu_dispatch_ack`` below, spoken INSTEAD of it. The harness only works
+    # once the app set its ComputerUseContext, and that needs
+    # [computer_use].enabled (false by default) AND a vision engine
+    # (``brain/factory.py``). Unwired, every step died deep inside the harness
+    # long after the ACK had already promised "Mach ich" — the user heard a
+    # commitment, then nothing (GT-19). This says the one thing they can act on.
+    # No Settings toggle exists yet, so the config value is named outright; it is
+    # spoken, so keep it to one fact plus one action and nothing else.
+    "cu_not_wired": {
+        "de": "Die Bildschirmsteuerung ist auf diesem Rechner aus. "  # i18n-allow
+              "Schalte sie in der Konfiguration mit computer_use.enabled ein "  # i18n-allow
+              "und starte mich einmal neu.",  # i18n-allow
+        "en": "Screen control is switched off on this machine. Turn it on in "
+              "the config with computer_use.enabled, then restart me once.",
+        "es": "El control de pantalla está desactivado en este equipo. "
+              "Actívalo en la configuración con computer_use.enabled y "
+              "reiníciame una vez.",
+    },
     # Computer-use dispatch — the immediate optimistic ACK.
     "cu_dispatch_ack": {
         "de": "Mach ich. Ich erledige das direkt am Bildschirm "  # i18n-allow

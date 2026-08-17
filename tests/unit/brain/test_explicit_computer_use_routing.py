@@ -36,6 +36,16 @@ from jarvis.brain.local_action_gate import (
     match_local_action,
 )
 
+
+@pytest.fixture(autouse=True)
+def _wired(wired_computer_use):
+    """The dispatch half below asserts a real dispatch, so declare CU wired.
+
+    Unwired, the fast path refuses before dispatch (GT-19) — see
+    ``test_cu_fast_path_unwired.py``.
+    """
+
+
 # The exact live utterance that broke, plus adjacent explicit-CU phrasings that
 # carry NO open verb (so the open-app fallback can never save them).
 REPRO_PHRASE = (

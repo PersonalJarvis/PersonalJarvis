@@ -1732,7 +1732,9 @@ async def test_internal_realtime_reply_can_defer_response_event_to_session() -> 
 
 
 @pytest.mark.asyncio
-async def test_local_visual_click_fast_path_dispatches_computer_use() -> None:
+async def test_local_visual_click_fast_path_dispatches_computer_use(
+    wired_computer_use,
+) -> None:
     """Visual target commands offload to the computer-use harness (Wave-4).
 
     The spoken turn ACKs immediately instead of blocking up to ~31 s on the
@@ -1767,7 +1769,7 @@ async def test_local_visual_click_fast_path_dispatches_computer_use() -> None:
 
 
 @pytest.mark.asyncio
-async def test_local_computer_use_respects_cost_cooldown() -> None:
+async def test_local_computer_use_respects_cost_cooldown(wired_computer_use) -> None:
     """Visual local commands can invoke paid planner work and must honor cooldown."""
     manager, executor = _manager_with_local_actions()
     manager._cost_meter = _CooldownCostMeter()

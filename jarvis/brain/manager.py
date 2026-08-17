@@ -7907,12 +7907,56 @@ class BrainManager:
         if plan.mode == LocalActionMode.COMPUTER_USE:
             tool = self._local_action_tools.get("dispatch_to_harness")
             if tool is None:
+                # Never swallow this silently (contract §7): the gate matched a
+                # screen action but the fast path has no dispatcher. Falling
+                # through to the full brain turn is correct — the `computer_use`
+                # router tool carries its own preflight and speaks honestly —
+                # but the drop must be visible in the log, not invisible.
+                log.warning(
+                    "CU fast path: 'dispatch_to_harness' is not registered in "
+                    "_local_action_tools; handing the request to the brain turn "
+                    "instead of running it deterministically (trace=%s)",
+                    tid,
+                )
                 return None
             # Resolve the turn language ONCE here (while it is current) for the
-            # spoken cost messages, the immediate ACK, and the background
-            # readback — the offloaded task runs after the turn returns and must
-            # not read the per-turn state itself (live bug 2026-06-15).
+            # availability refusal, the spoken cost messages, the immediate ACK,
+            # and the background readback — the offloaded task runs after the
+            # turn returns and must not read the per-turn state itself (live bug
+            # 2026-06-15).
             cu_lang = self._direct_ack_language(user_text)
+            # Availability preflight (GT-19). The harness only works once the
+            # app wired its ComputerUseContext, and that happens only when
+            # [computer_use].enabled AND a vision engine exist (factory.py).
+            # Unwired, every step died deep inside the harness — but the ACK
+            # below had already promised "Mach ich", so the user heard a
+            # commitment, then nothing, then a failure up to 180 s later. Peek
+            # the singleton BEFORE dispatching and refuse immediately and
+            # honestly instead. Same guard the LLM tool path uses
+            # (plugins/tool/computer_use_tool.py::execute).
+            from jarvis.harness.computer_use_context import (  # noqa: PLC0415
+                peek_computer_use_context,
+            )
+            if peek_computer_use_context() is None:
+                log.warning(
+                    "CU fast path: computer-use is not wired on this machine "
+                    "([computer_use].enabled false or no vision engine); "
+                    "refusing the screen action instead of acknowledging it "
+                    "(trace=%s)",
+                    tid,
+                )
+                return await render_readback(
+                    getattr(self, "_readback_composer", None),
+                    instruction=(
+                        "Desktop control is switched off on this machine, so "
+                        "you cannot do anything on the screen right now. It is "
+                        "turned on with the config value "
+                        "computer_use.enabled=true, followed by a restart."
+                    ),
+                    language=cu_lang,
+                    canned=lambda: action_phrase("cu_not_wired", cu_lang),
+                    latency_budget_ms=900,
+                )
             # A multi-step CU mission ("navigate to amazon, search, click") needs a
             # generous OUTER cap — the harness has its own per-step timeout +
             # step-budget + no-progress/consecutive-failure guards, so this is only

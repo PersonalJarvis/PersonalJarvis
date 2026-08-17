@@ -18,6 +18,15 @@ from jarvis.brain.local_action_gate import LocalActionMode, LocalActionPlan
 from jarvis.brain.manager import BrainManager
 
 
+@pytest.fixture(autouse=True)
+def _wired(wired_computer_use):
+    """Every test in this file exercises the WIRED offload path.
+
+    Unwired, the fast path refuses before dispatch (GT-19) — that half lives in
+    ``test_cu_fast_path_unwired.py``.
+    """
+
+
 class _FakeBus:
     def __init__(self) -> None:
         self.published: list = []

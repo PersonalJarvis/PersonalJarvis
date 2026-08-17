@@ -748,6 +748,7 @@ class _FakeHarnessTool:
 
 async def test_open_discord_e2e_dispatches_computer_use_not_refusal(
     tmp_path: Path,
+    wired_computer_use,
 ) -> None:
     _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")
     executor = _HarnessDispatchExecutor()
