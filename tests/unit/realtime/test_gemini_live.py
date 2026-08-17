@@ -568,7 +568,7 @@ class _FakeGenaiClient:
 def _patch_genai_client(monkeypatch: pytest.MonkeyPatch) -> dict:
     holder: dict = {}
 
-    def _make_client(*, api_key=None):
+    def _make_client(*, api_key=None, **_transport):  # http_options: shared TLS
         client = _FakeGenaiClient(api_key=api_key)
         holder["client"] = client
         return client
@@ -860,7 +860,7 @@ def _patch_seedable_genai_client(monkeypatch: pytest.MonkeyPatch) -> dict:
             self.last_cm = _SeedableConnectCM()
             return self.last_cm
 
-    def _make_client(*, api_key=None):
+    def _make_client(*, api_key=None, **_transport):  # http_options: shared TLS
         client = SimpleNamespace(
             api_key=api_key,
             aio=SimpleNamespace(live=_SeedableLiveAPI()),
@@ -947,7 +947,7 @@ async def test_history_seeding_failure_keeps_the_session_alive(
         async def __aexit__(self, *_args):
             return None
 
-    def _make_client(*, api_key=None):
+    def _make_client(*, api_key=None, **_transport):  # http_options: shared TLS
         return SimpleNamespace(
             api_key=api_key,
             aio=SimpleNamespace(

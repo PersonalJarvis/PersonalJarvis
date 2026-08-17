@@ -375,7 +375,9 @@ def test_gemini_client_is_built_with_the_timeout(monkeypatch: pytest.MonkeyPatch
     GeminiSTT(api_key="k", timeout_s=4.0)._ensure_client()
 
     assert captured["api_key"] == "k"
-    assert captured["http_options"] == {"timeout": 4000}
+    # The timeout travels; the builder merges its shared TLS transport args
+    # next to it (google_genai._with_shared_tls) without touching the value.
+    assert captured["http_options"]["timeout"] == 4000
 
 
 def test_the_factory_forwards_a_configured_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

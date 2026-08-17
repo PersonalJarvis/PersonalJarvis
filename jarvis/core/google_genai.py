@@ -52,10 +52,12 @@ path is the only route in, and the express key is the exception.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -240,6 +242,275 @@ def _export_service_account(path: str | None) -> None:
         return
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(resolved)
     log.info("Vertex AI: authenticating via the service account at %s.", resolved)
+
+
+# ── Application Default Credentials, loaded ONCE per process ─────────────────
+#
+# On the Cloud project path every ``genai.Client`` that is handed no
+# ``credentials`` resolves them itself on its first call, via
+# ``google.auth.default()``. Measured 2026-08-17 on the maintainer box (Windows,
+# gcloud login as ADC): that call costs 5.3-8.5 s — google-auth reads the ADC
+# file, finds no project id in it, and spawns ``gcloud config config-helper``
+# to ask for one (a full CLI start), regardless of the project we already pass.
+# Jarvis builds a fresh client per Live session and per brain instance, so the
+# price was paid on every voice handshake (5.7-12.2 s to "session ready", one
+# 6 s budget timeout) and on the first turn of every brain. With ONE shared
+# credentials object the very same handshake measured 1.1-1.3 s. The object
+# is safe to share: it is what Google's own client libraries pass around, and
+# the SDK refreshes the token on it only when expired.
+
+#: OAuth scope Vertex AI requests are signed under (what the SDK asks for).
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+
+_ADC_LOCK = threading.Lock()
+_ADC_CACHE: dict[str, Any] = {}
+
+
+def _adc_cache_key() -> str:
+    """Which credential file google-auth would read right now.
+
+    A service account exported by :func:`_export_service_account` after a
+    gcloud login was cached must not be answered from that cache.
+    """
+    return os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "") or ""
+
+
+def _load_application_default_credentials() -> Any:
+    """The one call into google-auth (test seam). Blocking; raises on failure."""
+    import google.auth  # lazy (AP-26)
+
+    credentials, _project = google.auth.default(scopes=[_CLOUD_PLATFORM_SCOPE])
+    return credentials
+
+
+def cached_vertex_credentials() -> Any | None:
+    """The shared credentials if a load already happened; never blocks.
+
+    Deliberately lock-free (a dict read is atomic under the GIL): the event
+    loop asks this while a warm-up thread may be holding ``_ADC_LOCK`` for the
+    whole 5-8 s load, and it must get "not yet" instantly rather than wait.
+    """
+    return _ADC_CACHE.get(_adc_cache_key())
+
+
+def vertex_credentials() -> Any | None:
+    """Application Default Credentials for the Vertex project path, loaded once.
+
+    BLOCKING on the first call (see the measurement above) — call it from a
+    worker thread, never on the event loop. Later calls answer from the cache.
+    ``None`` means google-auth could not resolve a credential; nothing is
+    cached for that case, so a login that appears later is picked up, and the
+    caller leaves the SDK's own lazy resolution in place, which surfaces
+    Google's honest error on the first real call.
+    """
+    key = _adc_cache_key()
+    cached = _ADC_CACHE.get(key)
+    if cached is not None:
+        return cached
+    with _ADC_LOCK:
+        cached = _ADC_CACHE.get(key)  # a concurrent loader may have won
+        if cached is not None:
+            return cached
+        started = time.perf_counter()
+        try:
+            credentials = _load_application_default_credentials()
+        except Exception as exc:  # noqa: BLE001 — auth trouble surfaces on the first call
+            log.info(
+                "Vertex AI: Application Default Credentials not resolvable (%s: %s) — "
+                "the SDK resolves auth on the first call instead.",
+                type(exc).__name__,
+                exc,
+            )
+            return None
+        if credentials is None:
+            return None
+        _ADC_CACHE[key] = credentials
+        log.info(
+            "Vertex AI: Application Default Credentials loaded once for this "
+            "process in %.0f ms; every client shares them from here on.",
+            (time.perf_counter() - started) * 1000.0,
+        )
+        return credentials
+
+
+def _adc_for_sync_build() -> Any | None:
+    """Credentials for a synchronous client build without ever blocking a loop.
+
+    A cold cache is filled only where blocking is legal — a thread with no
+    running event loop (the brain builds its client under ``to_thread``). On
+    the loop the build proceeds without credentials and the SDK's threaded lazy
+    load applies, exactly as before.
+    """
+    cached = cached_vertex_credentials()
+    if cached is not None:
+        return cached
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:  # no loop in this thread — blocking here is legal
+        return vertex_credentials()
+    return None
+
+
+def warm_vertex_credentials() -> bool:
+    """Load the shared credentials AND mint the first token. Blocking.
+
+    Meant for a boot warm-up off the critical path (a worker thread). After a
+    successful warm the first Live handshake and the first brain call pay for
+    neither the credential resolution nor the OAuth exchange. Returns whether
+    a token is ready; a ``False`` costs nothing but the latency it was meant
+    to save (the first call resolves auth itself, as it always did).
+    """
+    warm_shared_transport()  # the trust store is per process too — see below
+    settings = _project_for("vertex")
+    if settings is None or not settings.configured:
+        return False
+    credentials = vertex_credentials()
+    if credentials is None:
+        return False
+    if bool(getattr(credentials, "valid", False)):
+        return True
+    try:
+        from google.auth.transport.requests import Request  # lazy (AP-26)
+
+        credentials.refresh(Request())
+    except Exception as exc:  # noqa: BLE001 — the first call retries the exchange
+        log.info(
+            "Vertex AI: token pre-mint failed (%s: %s) — the first call refreshes.",
+            type(exc).__name__,
+            exc,
+        )
+        return False
+    return bool(getattr(credentials, "valid", False))
+
+
+def reset_vertex_credentials_cache() -> None:
+    """Forget the shared credentials (tests; login changes)."""
+    with _ADC_LOCK:
+        _ADC_CACHE.clear()
+
+
+# ── one TLS trust store per process ──────────────────────────────────────────
+#
+# ``genai.Client.__init__`` builds THREE ``ssl.SSLContext`` objects (httpx,
+# aiohttp, websocket) unless the caller hands it one, and each parses the whole
+# certifi bundle. Measured 2026-08-17 on the maintainer box: 445 ms apiece,
+# 1.34 s per client — on the event loop for the Live path, on top of every
+# session open and every brain instance. The SDK takes a caller-supplied
+# context from ``client_args["verify"]`` / ``async_client_args["verify"|"ssl"]``
+# and then skips its own. The context below is built with the SDK's exact
+# parameters (``SSL_CERT_FILE``/certifi, ``SSL_CERT_DIR``), so trust behaviour
+# is identical — it is simply built once and shared, which is what an
+# ``SSLContext`` is for.
+
+_TLS_LOCK = threading.Lock()
+_TLS_CONTEXT: Any = None
+
+
+def _shared_tls_context() -> Any:
+    """The process-wide TLS context, built on first use. Raises if it cannot be.
+
+    The fast path reads without the lock (an attribute read is atomic), so a
+    caller on the event loop never waits behind a thread that is mid-build.
+    """
+    global _TLS_CONTEXT
+    if _TLS_CONTEXT is not None:
+        return _TLS_CONTEXT
+    with _TLS_LOCK:
+        if _TLS_CONTEXT is None:
+            import ssl  # lazy (AP-26)
+
+            import certifi  # lazy — ships with google-genai/httpx
+
+            started = time.perf_counter()
+            _TLS_CONTEXT = ssl.create_default_context(
+                cafile=os.environ.get("SSL_CERT_FILE", certifi.where()),
+                capath=os.environ.get("SSL_CERT_DIR"),
+            )
+            log.debug(
+                "Google GenAI: shared TLS context built in %.0f ms.",
+                (time.perf_counter() - started) * 1000.0,
+            )
+        return _TLS_CONTEXT
+
+
+def _with_shared_tls(http_options: Any) -> Any:
+    """Hand the client the shared TLS context unless the caller set its own.
+
+    Accepts every shape ``genai.Client`` accepts — ``None``, a plain dict, or a
+    typed ``HttpOptions`` — and returns the same shape with the transport args
+    filled in. Anything the caller already put there wins. If the context
+    cannot be built the options pass through untouched and the SDK builds its
+    own, exactly as before.
+    """
+    try:
+        ctx = _shared_tls_context()
+    except Exception as exc:  # noqa: BLE001 — the SDK's own default remains
+        log.debug("Shared TLS context unavailable (%s: %s).", type(exc).__name__, exc)
+        return http_options
+
+    def _filled(client_args: Any, async_args: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        sync_filled = dict(client_args or {})
+        async_filled = dict(async_args or {})
+        sync_filled.setdefault("verify", ctx)
+        async_filled.setdefault("verify", ctx)
+        async_filled.setdefault("ssl", ctx)
+        return sync_filled, async_filled
+
+    if http_options is None:
+        sync_filled, async_filled = _filled(None, None)
+        return {"client_args": sync_filled, "async_client_args": async_filled}
+    if isinstance(http_options, dict):
+        merged = dict(http_options)
+        merged["client_args"], merged["async_client_args"] = _filled(
+            merged.get("client_args"), merged.get("async_client_args")
+        )
+        return merged
+    # A typed HttpOptions (pydantic model): a copy with the args filled in.
+    try:
+        sync_filled, async_filled = _filled(
+            getattr(http_options, "client_args", None),
+            getattr(http_options, "async_client_args", None),
+        )
+        return http_options.model_copy(
+            update={"client_args": sync_filled, "async_client_args": async_filled}
+        )
+    except Exception as exc:  # noqa: BLE001 — an unknown shape passes through
+        log.debug("http_options of type %s left untouched: %s", type(http_options).__name__, exc)
+        return http_options
+
+
+def reset_shared_tls_context() -> None:
+    """Forget the shared TLS context (tests)."""
+    global _TLS_CONTEXT
+    with _TLS_LOCK:
+        _TLS_CONTEXT = None
+
+
+def warm_shared_transport() -> bool:
+    """Build the shared TLS context ahead of the first client. Blocking.
+
+    Provider-agnostic: the AI Studio route pays the same three-context build
+    per client as Vertex does, so a boot warm-up on either route calls this
+    from a worker thread. Returns whether the context is ready.
+    """
+    try:
+        _shared_tls_context()
+    except Exception as exc:  # noqa: BLE001 — the SDK's own default remains
+        log.debug("Shared TLS context warm failed (%s: %s).", type(exc).__name__, exc)
+        return False
+    return True
+
+
+async def _ensure_shared_tls_off_loop() -> None:
+    """Fill a cold TLS context in a worker thread (async builders only).
+
+    The context build parses the whole certifi bundle (~0.4 s measured); the
+    async twins run on the event loop, so a cold first build must not happen
+    inline. Failures are left to :func:`_with_shared_tls`, which passes the
+    caller's options through untouched.
+    """
+    if _TLS_CONTEXT is None:
+        await asyncio.to_thread(warm_shared_transport)
 
 
 def _configured_mode() -> str:
@@ -504,6 +775,12 @@ def build_vertex_client(
     (:meth:`VertexProject.for_realtime`). The two differ: ``global`` serves the
     current Gemini generation for normal requests and no Live session at all, so
     a single location cannot drive both tiers.
+
+    On the project path the client is handed the process-wide Application
+    Default Credentials (:func:`vertex_credentials`) whenever they are loaded,
+    so it never resolves — and never re-pays for — auth on its own. A cold cache
+    is filled here only off the event loop; on the loop the SDK's own threaded
+    lazy load stays in charge (see :func:`_adc_for_sync_build`).
     """
     from google import genai
 
@@ -515,7 +792,12 @@ def build_vertex_client(
         )
     if realtime and settings is not None and settings.configured:
         settings = settings.for_realtime()
-    return genai.Client(**_client_kwargs(api_key, "vertex", http_options, settings))
+    kwargs = _client_kwargs(api_key, "vertex", _with_shared_tls(http_options), settings)
+    if "project" in kwargs:
+        credentials = _adc_for_sync_build()
+        if credentials is not None:
+            kwargs["credentials"] = credentials
+    return genai.Client(**kwargs)
 
 
 async def build_vertex_client_async(
@@ -523,10 +805,20 @@ async def build_vertex_client_async(
 ) -> Any:
     """Async twin of :func:`build_vertex_client`.
 
-    Pinning means there is no probe to keep off the event loop, so this is a
-    thin wrapper — it exists so realtime callers reach the Vertex path through
-    the same await-shaped door as :func:`build_genai_client_async`.
+    Pinning means there is no probe to keep off the event loop. What this twin
+    does keep off it is the ONE-TIME credential resolution on the project path:
+    a cold cache is filled in a worker thread first, so the client built below
+    already carries the shared credentials and the handshake that follows pays
+    for the socket alone.
     """
+    await _ensure_shared_tls_off_loop()
+    if not api_key and cached_vertex_credentials() is None:
+        # _project_for, not vertex_project_settings: it exports a configured
+        # service account FIRST, so the load below reads that file and the
+        # cache key the sync build looks up afterwards is the same one.
+        settings = _project_for("vertex")
+        if settings is not None and settings.configured:
+            await asyncio.to_thread(vertex_credentials)
     return build_vertex_client(api_key, http_options=http_options, realtime=realtime)
 
 
@@ -544,11 +836,20 @@ def build_genai_client(
     :func:`resolve_google_key_route`. The SDK import stays inside the
     function so headless installs without google-genai import this module
     cleanly (AP-26).
+
+    The client is handed the shared TLS context (see :func:`_with_shared_tls`)
+    but NOT the shared Application Default Credentials: a key stored in a
+    Gemini slot always authenticates by that key, even on the express route.
+    Only the dedicated Vertex family (:func:`build_vertex_client`) walks the
+    Cloud project path where ADC signs — the speed-up for that resolution
+    lives there on purpose.
     """
     from google import genai
 
     resolved = route or resolve_google_key_route(api_key)
-    return genai.Client(**_client_kwargs(api_key, resolved, http_options, _project_for(resolved)))
+    return genai.Client(
+        **_client_kwargs(api_key, resolved, _with_shared_tls(http_options), _project_for(resolved))
+    )
 
 
 async def build_genai_client_async(
@@ -566,7 +867,10 @@ async def build_genai_client_async(
     from google import genai
 
     resolved = route or await resolve_google_key_route_async(api_key)
-    return genai.Client(**_client_kwargs(api_key, resolved, http_options, _project_for(resolved)))
+    await _ensure_shared_tls_off_loop()
+    return genai.Client(
+        **_client_kwargs(api_key, resolved, _with_shared_tls(http_options), _project_for(resolved))
+    )
 
 
 def reset_route_cache() -> None:

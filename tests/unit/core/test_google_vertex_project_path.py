@@ -30,16 +30,32 @@ from jarvis.core import google_genai as gg
 
 
 @pytest.fixture(autouse=True)
-def _fresh_cache():
+def _fresh_cache(monkeypatch: pytest.MonkeyPatch):
     gg.reset_route_cache()
+    gg.reset_vertex_credentials_cache()
+    gg.reset_shared_tls_context()
+    # No test here may reach google-auth: on a gcloud-login host that call
+    # spawns the gcloud CLI (5-8 s) and on a bare host it raises. The seam
+    # answers "no ambient credential" unless a test installs its own fake.
+    monkeypatch.setattr(gg, "_load_application_default_credentials", lambda: None)
     yield
     gg.reset_route_cache()
+    gg.reset_vertex_credentials_cache()
+    gg.reset_shared_tls_context()
 
 
 @pytest.fixture
 def _no_ambient_adc(monkeypatch: pytest.MonkeyPatch):
-    """Start from a host with no ``GOOGLE_APPLICATION_CREDENTIALS`` set."""
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    """Start from a host with no ``GOOGLE_APPLICATION_CREDENTIALS`` set.
+
+    ``setenv`` first, then ``delenv``: the SUT writes this variable itself with
+    a raw ``os.environ`` assignment, and ``delenv(raising=False)`` on an unset
+    name records nothing — so a value written during the test would leak into
+    every later test. Recording the original state first makes the teardown
+    restore it whatever the test body did.
+    """
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 
 def _project(
@@ -238,6 +254,16 @@ def stub_genai(monkeypatch: pytest.MonkeyPatch) -> _StubGenaiModule:
     return stub
 
 
+def _sans_transport(call: dict) -> dict:
+    """The auth/endpoint shape of a build, without the shared transport args.
+
+    Every builder hands the client the process-wide TLS context via
+    ``http_options`` (see the TLS tests below); the shape tests here are about
+    which credential travels to which host and read past that.
+    """
+    return {k: v for k, v in call.items() if k != "http_options"}
+
+
 def test_build_vertex_client_never_probes(
     monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule
 ) -> None:
@@ -256,7 +282,9 @@ def test_build_vertex_client_never_probes(
 
     gg.build_vertex_client("AIza-cloud-restricted")
 
-    assert stub_genai.calls == [{"api_key": "AIza-cloud-restricted", "vertexai": True}]
+    assert [_sans_transport(c) for c in stub_genai.calls] == [
+        {"api_key": "AIza-cloud-restricted", "vertexai": True}
+    ]
 
 
 def test_the_realtime_build_resolves_its_own_endpoint(
@@ -279,7 +307,7 @@ def test_build_vertex_client_uses_the_project_when_configured(
 ) -> None:
     monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "us-central1"))
     gg.build_vertex_client("")
-    assert stub_genai.calls == [
+    assert [_sans_transport(c) for c in stub_genai.calls] == [
         {"vertexai": True, "project": "prod-proj", "location": "us-central1"}
     ]
 
@@ -303,7 +331,9 @@ async def test_async_twin_builds_the_same_client(
 ) -> None:
     monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project(None))
     await gg.build_vertex_client_async("AQ.key")
-    assert stub_genai.calls == [{"api_key": "AQ.key", "vertexai": True}]
+    assert [_sans_transport(c) for c in stub_genai.calls] == [
+        {"api_key": "AQ.key", "vertexai": True}
+    ]
 
 
 def test_aistudio_build_does_not_read_the_project_config(
@@ -316,7 +346,7 @@ def test_aistudio_build_does_not_read_the_project_config(
 
     monkeypatch.setattr(gg, "vertex_project_settings", _must_not_run)
     gg.build_genai_client("AIza-studio", route="aistudio")
-    assert stub_genai.calls == [{"api_key": "AIza-studio"}]
+    assert [_sans_transport(c) for c in stub_genai.calls] == [{"api_key": "AIza-studio"}]
 
 
 # ── "is Vertex configured" is one question with one answer ───────────────────
@@ -338,3 +368,250 @@ def test_neither_key_nor_project_is_unconfigured() -> None:
     config = SimpleNamespace(google=SimpleNamespace(vertex_project=""))
     with cfg.override_provider_secrets({"vertex": None}):
         assert cfg.vertex_credential_configured(config) is False
+
+
+# ── Application Default Credentials are resolved ONCE per process ────────────
+#
+# Measured 2026-08-17: a client that resolves ADC itself pays 5.3-8.5 s on a
+# gcloud-login host (google-auth spawns ``gcloud config config-helper`` for a
+# project id) plus the OAuth exchange — inside every Live handshake and on the
+# first call of every brain instance. One shared credentials object took the
+# handshake from 5.7-12.2 s to 1.1-1.3 s.
+
+
+class _FakeCredentials:
+    """The shape the SDK and the warm-up read: ``valid`` plus ``refresh``."""
+
+    def __init__(self, *, valid: bool = False) -> None:
+        self.valid = valid
+        self.refreshes = 0
+
+    def refresh(self, _request) -> None:
+        self.refreshes += 1
+        self.valid = True
+
+
+@pytest.fixture
+def adc(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """A fake ADC loader that counts how often google-auth would have run."""
+    state = {"loads": 0, "credentials": _FakeCredentials()}
+
+    def _load():
+        state["loads"] += 1
+        return state["credentials"]
+
+    monkeypatch.setattr(gg, "_load_application_default_credentials", _load)
+    return state
+
+
+def test_credentials_are_loaded_once_and_shared(adc: dict) -> None:
+    first = gg.vertex_credentials()
+    second = gg.vertex_credentials()
+    assert first is second is adc["credentials"]
+    assert adc["loads"] == 1, "google.auth.default() must run once per process"
+
+
+def test_a_failed_resolution_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A login that appears later must be picked up, not shadowed by a miss."""
+    attempts = {"n": 0}
+
+    def _boom():
+        attempts["n"] += 1
+        raise RuntimeError("no ADC on this host")
+
+    monkeypatch.setattr(gg, "_load_application_default_credentials", _boom)
+    assert gg.vertex_credentials() is None
+    assert gg.cached_vertex_credentials() is None
+    assert gg.vertex_credentials() is None
+    assert attempts["n"] == 2
+
+
+def test_the_project_client_is_handed_the_shared_credentials(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule, adc: dict
+) -> None:
+    """The whole point: no client resolves auth on its own any more."""
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "global"))
+    gg.build_vertex_client("")
+    gg.build_vertex_client("", realtime=True)
+    assert [c["credentials"] for c in stub_genai.calls] == [adc["credentials"]] * 2
+    assert adc["loads"] == 1
+
+
+def test_an_express_key_client_never_touches_adc(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule, adc: dict
+) -> None:
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project(None))
+    gg.build_vertex_client("AQ.express")
+    assert "credentials" not in stub_genai.calls[0]
+    assert adc["loads"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_cold_cache_is_never_filled_on_the_event_loop_by_the_sync_build(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule, adc: dict
+) -> None:
+    """On a running loop the sync build must not block; the SDK's lazy path stays."""
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "global"))
+    gg.build_vertex_client("")
+    assert adc["loads"] == 0
+    assert "credentials" not in stub_genai.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_the_async_build_resolves_a_cold_cache_off_the_loop(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule, adc: dict
+) -> None:
+    """The Live handshake path: pays the resolution once, in a thread, then shares."""
+    import threading
+
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    real_load = gg._load_application_default_credentials
+
+    def _load_recording_thread():
+        seen.append(threading.get_ident())
+        return real_load()
+
+    monkeypatch.setattr(gg, "_load_application_default_credentials", _load_recording_thread)
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "global"))
+
+    await gg.build_vertex_client_async("", realtime=True)
+    await gg.build_vertex_client_async("", realtime=True)
+
+    assert adc["loads"] == 1
+    assert seen and all(t != loop_thread for t in seen), "resolution ran on the loop thread"
+    assert [c["credentials"] for c in stub_genai.calls] == [adc["credentials"]] * 2
+
+
+def test_warm_mints_the_token_once(monkeypatch: pytest.MonkeyPatch, adc: dict) -> None:
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "global"))
+    assert gg.warm_vertex_credentials() is True
+    assert adc["credentials"].refreshes == 1
+    # Already valid: a second warm neither reloads nor re-mints.
+    assert gg.warm_vertex_credentials() is True
+    assert adc["loads"] == 1
+    assert adc["credentials"].refreshes == 1
+
+
+def test_warm_is_a_no_op_without_a_project(monkeypatch: pytest.MonkeyPatch, adc: dict) -> None:
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project(None))
+    assert gg.warm_vertex_credentials() is False
+    assert adc["loads"] == 0
+
+
+def test_a_service_account_exported_later_gets_its_own_load(
+    adc: dict, tmp_path, _no_ambient_adc
+) -> None:
+    """The cache is keyed by the credential file google-auth would read."""
+    gg.vertex_credentials()
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}", encoding="utf-8")
+    gg._export_service_account(str(sa))
+    gg.vertex_credentials()
+    assert adc["loads"] == 2
+
+
+# ── one TLS trust store per process ──────────────────────────────────────────
+#
+# Measured 2026-08-17: ``genai.Client()`` builds three SSL contexts and parses
+# the certifi bundle for each — 1.34 s per client on the maintainer box, paid
+# on the event loop for every Live session and by every brain instance. The
+# SDK skips its own contexts when the caller supplies one.
+
+
+def test_every_builder_hands_the_client_the_shared_tls_context(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule
+) -> None:
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "global"))
+    gg.build_vertex_client("")
+    gg.build_genai_client("AIza-studio", route="aistudio")
+    ctx = gg._shared_tls_context()
+    for call in stub_genai.calls:
+        opts = call["http_options"]
+        assert opts["client_args"]["verify"] is ctx
+        assert opts["async_client_args"]["verify"] is ctx
+        assert opts["async_client_args"]["ssl"] is ctx
+    assert gg._shared_tls_context() is ctx, "built once, shared by every client"
+
+
+def test_a_callers_transport_options_are_merged_not_replaced() -> None:
+    """A dict with a timeout keeps it; a caller-supplied verify wins."""
+    ctx = gg._shared_tls_context()
+    merged = gg._with_shared_tls({"timeout": 1500, "client_args": {"verify": "mine"}})
+    assert merged["timeout"] == 1500
+    assert merged["client_args"]["verify"] == "mine"
+    assert merged["async_client_args"]["verify"] is ctx
+    assert merged["async_client_args"]["ssl"] is ctx
+
+
+def test_a_typed_http_options_object_is_copied_with_the_context() -> None:
+    class _Typed:
+        client_args = None
+        async_client_args = {"ssl": "theirs"}
+
+        def model_copy(self, *, update):
+            copy = _Typed()
+            for key, value in update.items():
+                setattr(copy, key, value)
+            return copy
+
+    ctx = gg._shared_tls_context()
+    typed = gg._with_shared_tls(_Typed())
+    assert typed.client_args["verify"] is ctx
+    assert typed.async_client_args["ssl"] == "theirs"
+    assert typed.async_client_args["verify"] is ctx
+
+
+def test_an_unbuildable_context_leaves_the_options_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom():
+        raise RuntimeError("no certifi here")
+
+    monkeypatch.setattr(gg, "_shared_tls_context", _boom)
+    assert gg._with_shared_tls(None) is None
+    opts = {"timeout": 5}
+    assert gg._with_shared_tls(opts) is opts
+
+
+def test_the_vertex_warm_up_also_builds_the_trust_store(
+    monkeypatch: pytest.MonkeyPatch, adc: dict
+) -> None:
+    """One warm, both process-wide costs: credentials AND the TLS context."""
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "global"))
+    assert gg._TLS_CONTEXT is None
+    assert gg.warm_vertex_credentials() is True
+    assert gg._TLS_CONTEXT is not None
+
+
+def test_the_transport_warm_is_provider_agnostic() -> None:
+    assert gg._TLS_CONTEXT is None
+    assert gg.warm_shared_transport() is True
+    assert gg._TLS_CONTEXT is gg._shared_tls_context()
+
+
+@pytest.mark.asyncio
+async def test_the_async_builders_build_a_cold_trust_store_off_the_loop(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule
+) -> None:
+    """The first client of the process must not parse the CA bundle on the loop."""
+    import threading
+
+    loop_thread = threading.get_ident()
+    built_on: list[int] = []
+    real_build = gg._shared_tls_context
+
+    def _recording_build():
+        built_on.append(threading.get_ident())
+        return real_build()
+
+    monkeypatch.setattr(gg, "_shared_tls_context", _recording_build)
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project(None))
+
+    await gg.build_genai_client_async("AIza-studio", route="aistudio")
+    await gg.build_vertex_client_async("AQ.express")
+
+    assert built_on, "the context was never built"
+    assert built_on[0] != loop_thread, "the cold build ran on the loop thread"
+    ctx = stub_genai.calls[0]["http_options"]["client_args"]["verify"]
+    assert stub_genai.calls[1]["http_options"]["client_args"]["verify"] is ctx

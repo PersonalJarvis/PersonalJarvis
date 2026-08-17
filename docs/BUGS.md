@@ -9650,3 +9650,120 @@ install; uninstall removes the copy the user actually clicks) and
 `tests/unit/ui/test_desktop_discoverability.py` (the announcement step on
 Linux and macOS, including that an unchanged entry is still announced so a
 half-finished earlier run heals). All run on every OS.
+
+## BUG-139: the router runs on the AI Studio account while the user's Vertex project sits idle — a key-slot check dead-lists the keyless credential family (HIGH, FIXED 2026-08-17)
+
+**Symptom.** With `brain.primary = "vertex"` and a configured
+`[google].vertex_project`, small talk answered fine on Vertex Live, but every
+delegated turn (anything the router handles) came back as "the account of my
+language model is blocked — credit exhausted or limit reached". The log showed
+`Brain gemini(...) failed: 429 ... Your prepayment credits are depleted` and
+`All 1 provider attempts failed`: the chain held ONE entry, and it was the
+AI Studio brain, not Vertex.
+
+**Root.** The pre-boot key check in `BrainManager.from_config` walks
+`PROVIDER_SECRET_CANDIDATES` and pushes every provider without a stored key
+into `_dead_providers`. Commit `59aa705f` (same day) gave Vertex a credential
+family of its own — and on the Google Cloud project path Vertex stores no key
+at all: Application Default Credentials (a `gcloud` login, a service account,
+workload identity) sign every request. So each boot logged
+`no key in ['vertex'] -> provider 'vertex' disabled`, `_build_fallback_chain`
+filtered the active provider out, and the cross-provider fallback (`gemini`,
+AI Studio, prepaid, empty) answered instead. `config.py` already had
+`vertex_credential_configured()` — with a docstring warning that any probe
+asking "is this provider set up" must use it "or the whole family is
+dead-listed" — and `app_control.KEYLESS_CREDENTIAL_PROBES` already declared
+the same for every card. The key check knew neither.
+
+**Fix.** `_keyless_provider_is_rescued_by_oauth` (`jarvis/brain/manager.py`)
+now consults the declarative `KEYLESS_CREDENTIAL_PROBES` table after the codex
+branch, so the pre-boot check gives the SAME answer every provider card and
+every switch already gives. Log lines translated to English while touched.
+
+**Class.** Two truths for one question. "Is this provider configured?" had a
+declarative, capability-aware answer used by the UI, and a second, key-only
+answer used by the boot path — and they disagreed exactly on the setup Google
+documents for production. Any predicate that exists in two places will drift
+on the case only one of them was taught. Same shape as BUG-138's "success
+reported against a read that goes through the same lie as the write": here the
+UI showed Vertex as configured while the brain had already buried it.
+
+**Verification.** Live: the boot log line for `vertex` reads "kept active";
+the fallback chain leads with `vertex` again; delegated turns answer on
+`gemini-3-flash-preview` via Vertex (0.7-1.4 s measured) instead of the 429.
+
+**Tests.** `tests/unit/brain/test_codex_oauth_rescue.py` — a project without a
+key is rescued for `vertex` and `vertex-live`; no project and no key stays
+dead.
+
+## BUG-140: every Vertex Live handshake and every first brain call pays 5-8 s of local auth work — each client resolves credentials and builds its TLS trust store on its own (HIGH, FIXED 2026-08-17)
+
+**Symptom.** "Session ready" 5.7-12.2 s after the wake word on Vertex Live
+(one call ran past the 6 s provider budget and fell back to the classic
+pipeline); the first turn of every brain instance 5-18 s; the log line
+`vertex-live: Application Default Credentials warmed` at boot with no visible
+effect. The user could not tell whether the internet or Vertex was slow.
+
+**Root.** Measured on the maintainer box (Windows, gcloud login as ADC):
+
+- DNS/TCP/TLS to every Google host under 200 ms; Vertex Live's first audio
+  270-750 ms; text models 0.7-2.8 s. Neither the line nor Vertex was slow.
+- `google.auth.default()` cost 5.3-8.5 s: google-auth reads the ADC file,
+  finds no project id in it, and spawns `gcloud config config-helper` for one
+  — a full CLI start — regardless of the project the caller already passes.
+  Every `genai.Client` that is handed no `credentials` runs that call on its
+  first request, and Jarvis built a fresh client per Live session and per
+  brain instance.
+- The boot warm-up built such a client and made no call — nothing was
+  resolved, no token minted; the log claimed otherwise.
+- `genai.Client()` itself cost 1.34 s: three `ssl.create_default_context()`
+  calls (httpx, aiohttp, websocket), each parsing the certifi bundle, on the
+  event loop for the Live path.
+
+**Fix.** `jarvis/core/google_genai.py`:
+
+- `vertex_credentials()` loads Application Default Credentials ONCE per
+  process (thread-safe, keyed by the credential file in effect, failures not
+  cached); every Vertex client build on the project path is handed the shared
+  object. A cold cache is filled only off the event loop — the sync builder
+  probes for a running loop, the async twin loads in a worker thread.
+- `warm_vertex_credentials()` loads AND mints the token; `VertexLiveProvider.
+  warm_transport` calls it and logs whether it succeeded.
+- One shared TLS context, built with the SDK's exact parameters
+  (`SSL_CERT_FILE`/certifi, `SSL_CERT_DIR`), handed to every google-genai
+  client via `http_options` — the SDK's own escape hatch — for the AI Studio
+  route as well; caller-supplied transport args always win. Both Live routes
+  warm it at boot (`GeminiLiveProvider.warm_transport` builds the context,
+  `VertexLiveProvider.warm_transport` builds it and resolves the credentials),
+  and the async builders fill a cold context in a worker thread, so no first
+  client of the process parses the CA bundle on the event loop.
+
+Measured through the real code path afterwards: session open 1.07-1.5 s
+(client build 2-4 ms, handshake ~1.1 s); first brain call 0.9 s.
+
+**Class.** Per-instance resolution of a process-wide fact. Credentials and a
+trust store describe the process, not the client; resolving them per client
+multiplies a fixed cost by the number of sessions and hides it inside the
+first request of each. The tell was a warm-up that reported success without
+producing the artifact later callers would read — a warm-up must warm the
+object that is actually shared, or it warms nothing.
+
+**Tests.** `tests/unit/core/test_google_vertex_project_path.py` (loaded once
+and shared; failures not cached; project clients receive the credentials, an
+express key never touches ADC; the sync build never fills a cold cache on the
+loop; the async build resolves off the loop; warm mints once; a service
+account exported later gets its own load; every builder hands over the shared
+TLS context; caller options merged not replaced; unbuildable context leaves
+options untouched) and `tests/unit/brain/test_vertex_family_parity.py`
+(`warm_transport` goes through the shared loader, off the loop).
+
+## BUG-141: "handshake-budget probe failed ... not 'property'" ten times per voice call — a class-level read of an instance declaration (LOW, FIXED 2026-08-17)
+
+**Root.** `realtime_handshake_budget_s` reads `handshake_budget_s` off the
+instance when the factory instantiated the provider, and off the CLASS
+otherwise. The local card declares it as a `property`; installed but not
+selected, it was never instantiated, so the class read yielded the descriptor
+and `float()` raised — logged as a WARNING on every probe. A provider that was
+not instantiated has no handshake this session could wait for, so its
+declaration cannot stretch the budget; the probe now skips a descriptor
+quietly. **Tests.** `tests/unit/realtime/test_factory_handshake_budget.py`.

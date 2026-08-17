@@ -2753,18 +2753,20 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 key_value = None
             if not key_value:
-                # An OAuth-login brain (codex via ChatGPT) has no API key but a
-                # usable on-disk login — don't dead-list it (open-source AP-22).
+                # A keyless-but-credentialed provider — an OAuth login on disk
+                # (codex via ChatGPT) or a Google Cloud project signing with
+                # Application Default Credentials (vertex) — is NOT dead-listed
+                # (open-source AP-22).
                 if _keyless_provider_is_rescued_by_oauth(provider_name):
                     log.info(
-                        "Pre-Boot-Key-Check: '%s' ohne API-Key, aber verbundene "
-                        "OAuth-Anmeldung -> NICHT deaktiviert.",
+                        "Pre-boot key check: '%s' has no API key but a login / "
+                        "Cloud project credential -> kept active.",
                         provider_name,
                     )
                     continue
                 manager._dead_providers.add(provider_name)
                 log.info(
-                    "Pre-Boot-Key-Check: kein Key in %s -> Provider '%s' deaktiviert.",
+                    "Pre-boot key check: no key in %s -> provider '%s' disabled.",
                     provider_to_slots.get(provider_name, [provider_name]),
                     provider_name,
                 )
@@ -12285,6 +12287,17 @@ def _keyless_provider_is_rescued_by_oauth(provider_name: str) -> bool:
     chat AND voice turn bricks with the provider-down apology. The OAuth login IS a
     usable credential. Open-source single-provider mandate (AP-22). Any import/probe
     failure is treated as "not rescued" (fail-safe → dead-list).
+
+    Vertex AI is the second shape: its Google Cloud project path signs with
+    Application Default Credentials (a ``gcloud`` login, a service account,
+    workload identity), so a fully configured install stores no key in any of
+    the family's slots. The declarative ``KEYLESS_CREDENTIAL_PROBES`` table in
+    ``app_control`` is the ONE place that names the probe, and it is the same
+    answer every provider card and every switch already gives — so this check
+    can never dead-list a family the UI shows as configured. Live 2026-08-17:
+    the check knew only key slots, pushed ``vertex`` into ``_dead_providers``
+    at every boot, and the router silently ran on the AI Studio account (whose
+    prepaid credit was empty) while the user's Vertex project sat idle.
     """
     if provider_name == "codex":
         try:
@@ -12292,7 +12305,13 @@ def _keyless_provider_is_rescued_by_oauth(provider_name: str) -> bool:
             return bool(_codex_oauth_connected())
         except Exception:  # noqa: BLE001
             return False
-    return False
+    try:
+        from jarvis.brain.app_control import _keyless_credential_present
+
+        return bool(_keyless_credential_present(provider_name))
+    except Exception as exc:  # noqa: BLE001 — a failed probe is not a credential
+        log.debug("Keyless-credential rescue probe failed for %s: %s", provider_name, exc)
+        return False
 
 
 _PROVIDER_SETUP_HINTS: dict[str, str] = {

@@ -250,6 +250,66 @@ def test_realtime_is_eligible_on_a_keyless_cloud_project(
     assert VertexLiveProvider.external_login_ready(None) is False
 
 
+@pytest.mark.asyncio
+async def test_the_realtime_warm_up_really_warms_the_shared_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``warm_transport`` must resolve ADC and mint the token — off the loop.
+
+    Live 2026-08-17: the warm-up built a client nobody reused and minted no
+    token, so "Application Default Credentials warmed" was logged while every
+    handshake still paid 5-8 s for ``google.auth.default()`` plus the OAuth
+    exchange (5.7-12.2 s to "session ready"). The warm has to go through the
+    process-wide loader that every later client build reads from.
+    """
+    import threading
+
+    from jarvis.core import config as cfg
+    from jarvis.core import google_genai as gg
+    from jarvis.plugins.realtime.gemini_live import VertexLiveProvider
+
+    loop_thread = threading.get_ident()
+    calls: list[int] = []
+
+    def _warm() -> bool:
+        calls.append(threading.get_ident())
+        return True
+
+    monkeypatch.setattr(cfg, "vertex_credential_configured", lambda *_a, **_k: True)
+    monkeypatch.setattr(gg, "warm_vertex_credentials", _warm)
+
+    await VertexLiveProvider.warm_transport(None)
+
+    assert len(calls) == 1
+    assert calls[0] != loop_thread, "the blocking warm ran on the event loop"
+
+
+@pytest.mark.asyncio
+async def test_the_ai_studio_live_route_warms_the_shared_trust_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plain gemini-live route pays the same per-client TLS build — so it
+    warms the same shared context at boot, off the loop."""
+    import threading
+
+    from jarvis.core import google_genai as gg
+    from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
+
+    loop_thread = threading.get_ident()
+    calls: list[int] = []
+
+    def _warm() -> bool:
+        calls.append(threading.get_ident())
+        return True
+
+    monkeypatch.setattr(gg, "warm_shared_transport", _warm)
+
+    await GeminiLiveProvider.warm_transport(None)
+
+    assert len(calls) == 1
+    assert calls[0] != loop_thread
+
+
 # ── subagents ────────────────────────────────────────────────────────────────
 
 

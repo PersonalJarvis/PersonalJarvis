@@ -228,7 +228,16 @@ def realtime_handshake_budget_s(cfg: Any) -> float:
                 source = load(_GROUP, provider_id, protocol=RealtimeProvider)
                 if not bool(getattr(source, "supports_realtime", False)):
                     continue
-            declared.append(float(getattr(source, "handshake_budget_s", 0.0) or 0.0))
+            budget = getattr(source, "handshake_budget_s", 0.0)
+            if isinstance(budget, property):
+                # A class-level read of a per-instance declaration. The plugin
+                # was NOT instantiated above, i.e. it holds no credential and no
+                # explicit selection this session could open with — so it has
+                # no handshake to stretch the budget for. Skipping is the
+                # correct answer, not a failure (live 2026-08-17: the installed
+                # but unselected local card logged this ~10x per voice call).
+                continue
+            declared.append(float(budget or 0.0))
         except Exception as exc:  # noqa: BLE001 - one broken plugin is skipped
             log.warning("Realtime handshake-budget probe failed for %s: %s", provider_id, exc)
     return max(declared)

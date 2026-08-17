@@ -779,6 +779,26 @@ class GeminiLiveProvider:
     def _unconfigured_message(self) -> str:
         return "Gemini Live API key is not configured"
 
+    @staticmethod
+    async def warm_transport(cfg: Any = None) -> None:
+        """Build the shared TLS trust store at boot, off the first handshake.
+
+        Every ``genai.Client`` used to build three SSL contexts of its own —
+        each parsing the certifi bundle, ~1.3 s per client on the maintainer
+        box, on the event loop for a Live open. The process now shares ONE
+        context (``jarvis.core.google_genai``); warming it here means the first
+        session of the call pays for the socket alone. Best-effort by contract
+        — a warm that did not happen only costs the latency it was meant to
+        save. Overridden by :class:`VertexLiveProvider`, which additionally
+        resolves its Cloud credentials.
+        """
+        del cfg  # nothing session-specific about a trust store
+        import asyncio  # lazy (AP-26)
+        import importlib
+
+        google_genai = importlib.import_module("jarvis.core.google_genai")
+        await asyncio.to_thread(google_genai.warm_shared_transport)
+
     async def open_session(self, cfg: Any) -> _GeminiLiveSession:
         if not await self.can_open_duplex_session():
             raise RuntimeError(self._unconfigured_message())
@@ -937,14 +957,18 @@ class VertexLiveProvider(GeminiLiveProvider):
     #: regions (europe-west4 and us-central1, live publisher catalogue
     #: 2026-08-17). A per-card model pin still overrides it.
     default_model = "gemini-live-2.5-flash-native-audio"
-    #: Measured 2026-08-17 on an idle machine: 3.7-5.5 s per open, of which
-    #: 1.6-2.8 s is minting an OAuth token from Application Default Credentials
-    #: before the socket is even attempted — a cost the API-key providers never
-    #: pay. The shared 12 s ceiling divided by the candidate count handed this
-    #: adapter 6.0 s, i.e. the measured worst case plus half a second, so a
-    #: busy machine timed out the handshake and dropped the call to the
-    #: pipeline. Declaring the real need (a capability, never a provider-name
-    #: check — AP-21) is what the session's deadline stretch exists for.
+    #: Measured 2026-08-17 on an idle machine: 3.7-6.5 s per open when the
+    #: client resolves Application Default Credentials itself (a ``gcloud``
+    #: subprocess plus the OAuth exchange, 5.3-8.5 s on a busy box) before the
+    #: socket is even attempted — a cost the API-key providers never pay. The
+    #: shared 12 s ceiling divided by the candidate count handed this adapter
+    #: 6.0 s, i.e. the measured worst case plus half a second, so a busy
+    #: machine timed out the handshake and dropped the call to the pipeline.
+    #: With the process-wide credentials from ``warm_transport`` an open costs
+    #: 1.1-1.3 s; the budget stays generous for the cold path (no warm yet, a
+    #: login that changed) — declaring the real need is a capability, never a
+    #: provider-name check (AP-21), and it is what the session's deadline
+    #: stretch exists for.
     handshake_budget_s = 20.0
     credential_family = "vertex"
     credential_candidates = (
@@ -962,12 +986,17 @@ class VertexLiveProvider(GeminiLiveProvider):
 
     @staticmethod
     async def warm_transport(cfg: Any = None) -> None:
-        """Mint the ADC token at boot so the first call does not pay for it.
+        """Resolve the ADC and mint the first token at boot, off the first turn.
 
-        Measured: building the client costs 1.6-2.8 s, nearly all of it the
-        OAuth token exchange, and it happens INSIDE the first handshake. Doing
-        it once at boot takes that off the first spoken turn; google-auth caches
-        the token, so later opens only pay for the socket.
+        Measured 2026-08-17: resolving Application Default Credentials costs
+        5.3-8.5 s on a gcloud-login host (google-auth spawns ``gcloud config
+        config-helper`` for a project id) and the OAuth exchange another
+        0.7-1.9 s — and both used to happen INSIDE every handshake, because
+        each session built a client that resolved auth on its own (5.7-12.2 s
+        to "session ready"). ``warm_vertex_credentials`` loads ONE process-wide
+        credentials object and mints its token; every later client build is
+        handed that object, so a session open pays for the socket alone
+        (measured 1.1-1.3 s).
 
         Best-effort by contract — the factory swallows failures, and a warm that
         did not happen only costs the latency it was meant to save.
@@ -979,11 +1008,19 @@ class VertexLiveProvider(GeminiLiveProvider):
         google_genai = importlib.import_module("jarvis.core.google_genai")
         if not VertexLiveProvider.external_login_ready(None):
             return
-        # Off the event loop: the token exchange is a blocking HTTPS call.
-        await asyncio.to_thread(
-            google_genai.build_vertex_client, "", realtime=True
-        )
-        log.info("vertex-live: Application Default Credentials warmed.")
+        # Off the event loop: the credential resolution and the token exchange
+        # are blocking calls (a subprocess and an HTTPS round-trip).
+        ready = await asyncio.to_thread(google_genai.warm_vertex_credentials)
+        if ready:
+            log.info(
+                "vertex-live: Application Default Credentials warmed — token "
+                "minted, later session opens pay for the socket alone."
+            )
+        else:
+            log.info(
+                "vertex-live: Application Default Credentials not warmed — the "
+                "first handshake resolves auth itself."
+            )
 
     @staticmethod
     def external_login_ready(cfg: Any = None) -> bool:

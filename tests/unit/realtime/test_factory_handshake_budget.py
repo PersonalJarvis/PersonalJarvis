@@ -203,3 +203,40 @@ def test_installed_local_plugin_declares_a_real_budget() -> None:
     budget = factory.realtime_handshake_budget_s(cfg)
 
     assert budget > _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
+
+
+def test_unselected_property_declaration_is_skipped_quietly(monkeypatch, caplog) -> None:
+    """Installed but not selected, and declared as a property: no instance exists.
+
+    Live 2026-08-17: the local card sat installed next to a selected cloud
+    provider; the probe read the class, got the descriptor, and logged
+    ``float() argument must be ... not 'property'`` as a WARNING about ten
+    times per voice call. A plugin that was not instantiated has no handshake
+    this session could wait for, so its declaration must neither raise nor
+    warn — the budget simply comes from the providers that can open.
+    """
+    _fake_registry(
+        monkeypatch,
+        {
+            "plain-budget-realtime": _PlainBudgetProvider,
+            "property-budget-realtime": _PropertyBudgetProvider,
+        },
+    )
+    # Only the plain provider is selected; the property one is merely installed
+    # and gets no key, so it stays a class in the probe.
+    monkeypatch.setattr(
+        factory,
+        "get_secret_any",
+        lambda candidates: "fake-key" if candidates else None,
+    )
+
+    def _identified(cfg_arg, **_kwargs):
+        return [("plain-budget-realtime", _PlainBudgetProvider(api_key="fake-key"))]
+
+    monkeypatch.setattr(factory, "_identified_provider_candidates", _identified)
+
+    with caplog.at_level("WARNING", logger=factory.log.name):
+        budget = factory.realtime_handshake_budget_s(_cfg("plain-budget-realtime"))
+
+    assert budget == pytest.approx(30.0)
+    assert "handshake-budget probe failed" not in caplog.text

@@ -184,5 +184,10 @@ def test_gemini_no_override_omits_http_options(monkeypatch):
     from jarvis.plugins.brain.gemini import GeminiBrain
 
     GeminiBrain()._ensure_client()
-    assert "http_options" not in _FakeGenaiClient.last_kwargs
+    # No override → no endpoint rewrite. The builder still hands every client
+    # the process-wide TLS context via http_options (google_genai), so the
+    # assertion is about the base_url, not about the key being absent.
+    http_options = _FakeGenaiClient.last_kwargs.get("http_options") or {}
+    assert not getattr(http_options, "base_url", None)
+    assert "base_url" not in http_options
     assert _FakeGenaiClient.last_kwargs["api_key"] == "sk-test"
