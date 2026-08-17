@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Eye, EyeOff, ExternalLink, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { deleteSecret, postSecret } from "@/hooks/useProviders";
-import { keyMatchesSecret } from "@/lib/keyFormat";
+import { keyFormatConfirmed, keyMatchesSecret } from "@/lib/keyFormat";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -296,7 +296,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
           the format this slot expects. A non-technical user pasting a long
           random string has no way to tell "right kind of key" from "garbage" —
           this answers it before they hit Save. Format only, never validity. */}
-      {fmt && fmt.match && fmt.expected && fmt.detected?.kind === fmt.expected && (
+      {fmt && keyFormatConfirmed(fmt) && (
         <p className="flex items-start gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{t("apikeys_view.format_match_hint")}</span>

@@ -594,6 +594,9 @@ const PROVIDER_ICON: Record<string, string> = {
   "openai-codex": "openai",
   "claude-api": "claude",
   gemini: "gemini",
+  // Vertex AI serves the same Gemini models; the Gemini mark is the honest
+  // nominative-use glyph for it (TRADEMARK.md) and beats a letter monogram.
+  vertex: "gemini",
   openrouter: "openrouter",
   nvidia: "nvidia",
   antigravity: "antigravity",

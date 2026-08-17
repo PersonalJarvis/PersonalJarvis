@@ -160,6 +160,30 @@ _GEMINI_VERTEX = AltCredential(
 )
 
 
+# The Vertex cards' OWN alternative path: a real Cloud project instead of a key.
+# Same split as above, mirrored — the key field is the easy way in, and this note
+# is what tells a user with a production project that they do not need a key at
+# all. Shared by all four Vertex cards (brain, STT, TTS, realtime) so the
+# instructions cannot drift between tiers.
+_VERTEX_PROJECT_PATH = AltCredential(
+    label="Google Cloud project (no key)",
+    billing="api",
+    credential_help=(
+        "Instead of a key, point Jarvis at a Cloud project: set "
+        "[google].vertex_project to the project id that owns "
+        "aiplatform.googleapis.com, [google].vertex_location to a region "
+        "(\"global\" is the default and has the widest Gemini availability), and "
+        "— only if this machine is not already signed in with gcloud — "
+        "[google].service_account_path to a service-account JSON. Requests are "
+        "then signed with Application Default Credentials. This is the path a "
+        "production project uses, and the one without the preview-model daily "
+        "cap that the AI Studio account has."
+    ),
+    dashboard_url="https://console.cloud.google.com/iam-admin/serviceaccounts",
+    credential_path_hint="~/.config/jarvis/vertex-sa.json",
+)
+
+
 # ── Dictation polish: the cards are DERIVED, not declared ─────────────────────
 # The family list itself lives in ``jarvis.dictation.polish_client`` and is the
 # single source of truth for ids, labels, credential slots and default models.
@@ -360,6 +384,32 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         # Badge on the brain card; the model picker highlights gemini-3.5-flash.
         recommended=True,
         recommended_model="gemini-3.5-flash",
+    ),
+    # ── Brain: the SAME Gemini models on Google Cloud Vertex AI ──
+    # Its own card, not a checkbox on the Gemini one, for a reason the 2026-06-22
+    # forensic paid for: the two accounts bill separately, so an install must be
+    # able to hold BOTH credentials and point each tier at the one it means. A
+    # shared slot forces a choice the user then cannot see they made.
+    ProviderSpec(
+        id="vertex",
+        label="Google Vertex AI",
+        tier="brain",
+        auth_mode="api_key",
+        secret_keys=("vertex_api_key",),
+        dashboard_url="https://console.cloud.google.com/vertex-ai/studio",
+        credential_help=(
+            "Vertex AI API key from your Google Cloud project — either an "
+            "express-mode key (AQ.) or a Cloud API key restricted to "
+            "aiplatform.googleapis.com (AIza). Same Gemini models as the card "
+            "above, billed to your Cloud project instead of an AI Studio "
+            "account. For a production project you can skip the key entirely: "
+            "set [google].vertex_project (plus vertex_location, and "
+            "service_account_path if you are not already signed in with gcloud) "
+            "and Vertex authenticates through Application Default Credentials. "
+            "One Vertex setup serves the brain, the tool model, voice input, "
+            "voice output, realtime and the subagents."
+        ),
+        alt_credential=_VERTEX_PROJECT_PATH,
     ),
     # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
     # OAuth-only (no API-key slot): we drive the official ``agy``/``gemini`` CLI
@@ -598,6 +648,27 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
         alt_credential=_GEMINI_VERTEX,
     ),
+    # The production half of the card above. The AI Studio TTS preview model is
+    # hard-capped at 100 requests/day regardless of billing, which is what forced
+    # a daily mid-session voice switch (2026-05-26); a Cloud project has no such
+    # cap. Same 30 voices, same picker, same default — only the account differs.
+    ProviderSpec(
+        id="vertex-tts",
+        label="Vertex AI Text to Speech",
+        tier="tts",
+        auth_mode="api_key",
+        secret_keys=("vertex_api_key",),
+        dashboard_url="https://console.cloud.google.com/vertex-ai/studio",
+        credential_help=(
+            "The Gemini voices on Google Cloud Vertex AI, using the shared "
+            "Vertex credential. Pick this over the card above for a voice that "
+            "has to keep working all day: the AI Studio preview TTS model is "
+            "capped at 100 requests per day no matter how you are billed, and a "
+            "Cloud project is not. Works with a Vertex API key or, with no key "
+            "at all, a Cloud project via [google].vertex_project."
+        ),
+        alt_credential=_VERTEX_PROJECT_PATH,
+    ),
     ProviderSpec(
         id="grok-voice",
         label="xAI Text to Speech",
@@ -685,6 +756,38 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "no second key needed) for cloud transcription. The model picker "
             "lists only transcription-capable models."
         ),
+    ),
+    # Both Google recognizers get a card. Gemini STT shipped as an entry-point
+    # with no card at all, which made a working provider selectable only by
+    # hand-editing jarvis.toml — a feature the app had but did not offer.
+    ProviderSpec(
+        id="gemini-api",
+        label="Gemini STT",
+        tier="stt",
+        auth_mode="api_key",
+        secret_keys=("gemini_api_key",),
+        dashboard_url="https://aistudio.google.com/app/apikey",
+        credential_help=(
+            "Uses the same Google AI Studio key as the Gemini brain — no second "
+            "key needed. Transcribes through Gemini's audio understanding "
+            "rather than a dedicated speech model."
+        ),
+        alt_credential=_GEMINI_VERTEX,
+    ),
+    ProviderSpec(
+        id="vertex-stt",
+        label="Vertex AI STT",
+        tier="stt",
+        auth_mode="api_key",
+        secret_keys=("vertex_api_key",),
+        dashboard_url="https://console.cloud.google.com/vertex-ai/studio",
+        credential_help=(
+            "The same recognizer on Google Cloud Vertex AI, using the shared "
+            "Vertex credential — set Vertex up once and it serves voice input "
+            "too. Works with a Vertex API key or, with no key at all, a Cloud "
+            "project via [google].vertex_project."
+        ),
+        alt_credential=_VERTEX_PROJECT_PATH,
     ),
     # Local, keyless STT. This card was REMOVED once (2026-07-03, v1.0.1) and is
     # back under the condition that made the removal necessary: it may never
@@ -788,6 +891,27 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "the Gemini Brain or Jarvis-Agents. Existing shared Gemini credentials "
             "remain a compatibility fallback until a dedicated key is saved."
         ),
+    ),
+    # The same duplex socket on Google Cloud. A DISTINCT credential family, which
+    # is what makes it a genuine fallback for its sibling rather than a retry: a
+    # Cloud project and an AI Studio account run out of quota independently
+    # (AP-22).
+    ProviderSpec(
+        id="vertex-live",
+        label="Vertex AI Live",
+        tier="realtime",
+        auth_mode="api_key",
+        secret_keys=("realtime_vertex_api_key",),
+        dashboard_url="https://console.cloud.google.com/vertex-ai/studio",
+        credential_help=(
+            "Vertex AI key dedicated to the realtime voice socket. Falls back to "
+            "the shared Vertex key, and needs no key at all when "
+            "[google].vertex_project points at a Cloud project. Google documents "
+            "the Live API as reachable this way through the Gen AI SDK; if your "
+            "project or key cannot open the socket, Jarvis says so and moves to "
+            "the next realtime provider instead of failing the call."
+        ),
+        alt_credential=_VERTEX_PROJECT_PATH,
     ),
     # The local option this tier lacked entirely: every other realtime card
     # bills a hosted account, so an install running brain, recognizer and voice
