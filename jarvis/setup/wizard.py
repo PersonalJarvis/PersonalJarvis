@@ -450,6 +450,29 @@ SECRETS: list[SecretSpec] = [
         optional=True,
         prompt=False,
     ),
+    # Spotify is the one family where bring-your-own-client is not the durable
+    # fix but the ONLY option: since 2026-02-11 a Development Mode app allows
+    # five authorized users, so no shipped client could serve arbitrary
+    # downloaders. The secret is genuinely unused (PKCE) and kept only so a
+    # user who pasted one is not silently ignored.
+    SecretSpec(
+        key="spotify_oauth_client_id",
+        env_fallback="SPOTIFY_OAUTH_CLIENT_ID",
+        label="Spotify OAuth Client ID",
+        help_url="https://developer.spotify.com/dashboard",
+        required_for="Marketplace plugin (Spotify) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="spotify_oauth_client_secret",
+        env_fallback="SPOTIFY_OAUTH_CLIENT_SECRET",
+        label="Spotify OAuth Client Secret (not needed — PKCE)",
+        help_url="https://developer.spotify.com/dashboard",
+        required_for="Marketplace plugin (Spotify) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
     # UltraWiki (semantic memory mode) — app-only slots configured from the
     # UltraWiki settings section, never in the first-run wizard. The Postgres
     # connection string is a credential (AP-12) and rides the same chain.
