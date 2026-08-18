@@ -24,6 +24,13 @@ export interface ContinuityNode {
   vx?: number;
   vy?: number;
   vz?: number;
+  /**
+   * d3-force pin. When set, the simulation writes `x = fx` (and the same
+   * for y/z) every tick and zeroes the velocity — the node cannot drift.
+   */
+  fx?: number;
+  fy?: number;
+  fz?: number;
   /** The liveliness force's applied offset — travels with the position. */
   __lively?: { x: number; y: number; z: number };
 }
@@ -120,4 +127,47 @@ export function carryOverPositions(
     node.vz = 0;
   }
   return { kept, seated: newcomers.length };
+}
+
+/**
+ * Nail the hub to the origin so the map turns around a point that does not
+ * move. Other pages are translated with it, so a layout they already have is
+ * kept; d3-force's `fx`/`fy`/`fz` then holds the hub there every tick.
+ *
+ * Without this the charge and link forces keep shoving the hub around, the
+ * camera eases after it, and the main page wanders off the middle of the
+ * panel — the opposite of what the orbit is for.
+ *
+ * @returns true when a hub was found and pinned
+ */
+export function pinPivotAtOrigin(
+  nodes: ContinuityNode[],
+  pivotId: string | null | undefined,
+): boolean {
+  if (!pivotId) return false;
+  const pivot = nodes.find((node) => node.id === pivotId);
+  if (!pivot) return false;
+
+  const dx = Number.isFinite(pivot.x) ? (pivot.x as number) : 0;
+  const dy = Number.isFinite(pivot.y) ? (pivot.y as number) : 0;
+  const dz = Number.isFinite(pivot.z) ? (pivot.z as number) : 0;
+
+  if (dx !== 0 || dy !== 0 || dz !== 0) {
+    for (const node of nodes) {
+      if (Number.isFinite(node.x)) node.x = (node.x as number) - dx;
+      if (Number.isFinite(node.y)) node.y = (node.y as number) - dy;
+      if (Number.isFinite(node.z)) node.z = (node.z as number) - dz;
+    }
+  }
+
+  pivot.x = 0;
+  pivot.y = 0;
+  pivot.z = 0;
+  pivot.vx = 0;
+  pivot.vy = 0;
+  pivot.vz = 0;
+  pivot.fx = 0;
+  pivot.fy = 0;
+  pivot.fz = 0;
+  return true;
 }

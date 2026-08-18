@@ -46,9 +46,12 @@ import {
   createLivelinessForce,
   type LivelyNode,
 } from "@/lib/graphForces";
-import { carryOverPositions } from "@/lib/graphContinuity";
+import { carryOverPositions, pinPivotAtOrigin } from "@/lib/graphContinuity";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
+
+/** The hub is nailed here; the camera looks here. Never a live, moving node. */
+const PINNED_ORIGIN: Vec3 = { x: 0, y: 0, z: 0 };
 
 /** Sphere radius in graph units for a node whose size score is 1.0. */
 const NODE_REL_SIZE = 3;
@@ -268,8 +271,9 @@ export function WikiGraph3D({
   const [frameSignal, setFrameSignal] = useState(0);
   const reframe = useCallback(() => setFrameSignal((tick) => tick + 1), []);
 
-  // The live node object for the pivot: the simulation writes its position
-  // onto this very object, so handing it to the orbit lets the camera follow.
+  // The live node object for the hub — liveliness and drag-lock read it.
+  // The camera does not: it looks at the origin the hub is pinned to, so a
+  // settling layout cannot walk the main page off the middle of the panel.
   const pivotNode = useMemo(
     () => (pivotSlug ? (graphData.nodes.find((n) => n.id === pivotSlug) ?? null) : null),
     [graphData.nodes, pivotSlug],
@@ -280,7 +284,7 @@ export function WikiGraph3D({
     graphRef: graphRef as RefObject<GraphCameraApi | undefined>,
     hostRef,
     nodes: graphData.nodes as Array<Partial<Vec3>>,
-    pivot: pivotNode as Partial<Vec3> | null,
+    pivot: pivotSlug ? PINNED_ORIGIN : null,
     frameSignal,
   });
 
@@ -411,12 +415,29 @@ export function WikiGraph3D({
   const data = useMemo(() => {
     const previous = previousNodesRef.current;
     if (previous !== graphData.nodes) {
-      const pivot = previous.find((n) => n.id === pivotSlugRef.current);
+      const pivot = previous.find((n) => n.id === pivotSlug);
       carryOverPositions(previous, graphData.nodes, graphData.links, pivot ?? {});
       previousNodesRef.current = graphData.nodes;
     }
+    // First generation, every refresh, and a late-arriving hub: the main
+    // page sits at the origin and stays there. The rest of the cloud is
+    // translated with it so the layout they already have is not torn up.
+    pinPivotAtOrigin(graphData.nodes, pivotSlug);
     return graphData;
-  }, [graphData]);
+  }, [graphData, pivotSlug]);
+
+  const holdHub = useCallback((node: NodeObject<RenderNode>): void => {
+    if (node.id !== pivotSlugRef.current) return;
+    node.fx = 0;
+    node.fy = 0;
+    node.fz = 0;
+    node.x = 0;
+    node.y = 0;
+    node.z = 0;
+    node.vx = 0;
+    node.vy = 0;
+    node.vz = 0;
+  }, []);
 
   return (
     // The renderer paints into its own canvas; this wrapper is what the camera
@@ -458,6 +479,8 @@ export function WikiGraph3D({
       linkDirectionalParticleColor={() => PARTICLE_COLOUR}
       onNodeClick={handleNodeClick}
       onNodeHover={handleNodeHover}
+      onNodeDrag={holdHub}
+      onNodeDragEnd={holdHub}
       // Drag to rotate, wheel to zoom, right-drag to pan — the mapping people
       // already know from every other 3D viewer.
       controlType="orbit"

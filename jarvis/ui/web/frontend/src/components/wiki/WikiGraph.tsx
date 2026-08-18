@@ -815,6 +815,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
             width={winSize.w}
             height={winSize.h}
             highlightSlug={highlightSlug}
+            pivotSlug={data?.hub ?? null}
             onNodeClick={selectNode}
             resetSignal={resetTick}
             nodeLabel={nodeLabel}

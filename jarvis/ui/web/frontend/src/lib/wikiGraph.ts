@@ -55,8 +55,14 @@ export interface RenderNode extends WikiGraphNode {
   colour: string;
   x?: number;
   y?: number;
+  z?: number;
   vx?: number;
   vy?: number;
+  vz?: number;
+  /** d3-force pin — the hub is nailed to the origin so the map turns around it. */
+  fx?: number;
+  fy?: number;
+  fz?: number;
 }
 
 /**

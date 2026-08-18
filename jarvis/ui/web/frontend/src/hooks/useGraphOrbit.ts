@@ -106,10 +106,10 @@ export interface GraphOrbitOptions {
   /** Live node array; the simulation writes x/y/z onto these objects. */
   nodes: readonly Partial<Vec3>[];
   /**
-   * The node to turn around, when the map has one — the user's own page. The
-   * simulation keeps moving it, so the object is read fresh every frame and
-   * the camera follows; absent, the orbit turns around the network's trimmed
-   * mean as before.
+   * The point to turn around, when the map has one — the user's own page,
+   * pinned at the origin. The camera looks at this point directly (no ease)
+   * so the hub stays dead-centre of the panel while everything else sweeps
+   * past. Absent, the orbit turns around the network's trimmed mean.
    */
   pivot?: Partial<Vec3> | null;
   /** Bump to re-frame: new data, a settled layout, the Center button. */
@@ -249,15 +249,20 @@ export function useGraphOrbit({
         resyncRef.current = false;
       }
 
-      // Where the turn is centred: the pivot page, read live because the
-      // layout keeps moving it (settling, new data), else the framed middle.
-      // Eased, never set — a re-frame or a settling pivot glides the view.
+      // Where the turn is centred. A pinned hub is looked at directly so it
+      // stays dead-centre of the panel — easing after it is what let it
+      // wander last time. Without a hub, a re-frame still glides.
       const pivotNode = pivotRef.current;
-      const wanted: Vec3 =
-        pivotNode && Number.isFinite(pivotNode.x)
-          ? { x: pivotNode.x ?? 0, y: pivotNode.y ?? 0, z: pivotNode.z ?? 0 }
-          : (targetRef.current?.centre ?? centreRef.current);
-      centreRef.current = approachPoint(centreRef.current, wanted, elapsed, CENTRE_TAU_MS);
+      if (pivotNode && Number.isFinite(pivotNode.x)) {
+        centreRef.current = {
+          x: pivotNode.x ?? 0,
+          y: pivotNode.y ?? 0,
+          z: pivotNode.z ?? 0,
+        };
+      } else {
+        const wanted = targetRef.current?.centre ?? centreRef.current;
+        centreRef.current = approachPoint(centreRef.current, wanted, elapsed, CENTRE_TAU_MS);
+      }
 
       const orbit = orbitRef.current;
       if (targetRef.current) {
