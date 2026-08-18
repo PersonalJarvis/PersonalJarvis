@@ -50,7 +50,7 @@ that have their own guides.
 | **Realtime voice (browser)** | Pipeline or Realtime voice mode | Saves immediately. An active desktop call reconnects when its mode changes; otherwise the next call uses the choice |
 | **System Prompt** | The assistant's general style and behavior | On the next message; no restart |
 | **Wake Word** | Activation, phrase, spoken language, detection engine, and self-test | Usually live when desktop voice is ready; otherwise on the next voice start |
-| **Thinking pause** | End-of-speech timing for Pipeline mode; in Realtime mode the voice model detects the end of your turn itself | Live with Pipeline running; otherwise on the next Pipeline start |
+| **Thinking pause** | How long you may pause before Jarvis takes your turn — one value for Pipeline and Realtime. If you keep talking inside the pause, the words are added to the same request instead of being sent twice | Live with Pipeline running; Realtime uses the value on the next turn (some voice models on the next call) |
 | **Volume** | Local spoken-output volume | Live in running desktop voice; browser-owned Realtime uses browser or system volume |
 | **Audio devices** | Local microphone and voice output | Live for devices known to the running app; a newly connected device may need the next app start |
 | **Voice Keybinds** | **Call (answer / start talking)** and **Hangup** shortcuts | Live with the desktop voice listener running; otherwise on the next voice start |
@@ -174,7 +174,7 @@ keys are allowed but warn you that they also fire while editing text.
    microphone, speaker, activation phrase, and spoken-language setting. Voice
    keybinds provide another way to start the desktop voice path.
 4. [Languages and Voices](languages-and-voices) controls recognition and reply
-   language. Thinking pause affects Pipeline only. Local Volume and Audio
+   language. Thinking pause applies to Pipeline and Realtime. Local Volume and Audio
    device controls cover desktop voice, while browser-owned Realtime uses the
    browser's audio devices and volume.
 5. [Permissions](permissions) decides whether macOS allows microphone input,

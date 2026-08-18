@@ -127,7 +127,7 @@ from jarvis.speech.completion import (
     is_cancel,
     is_incomplete,
 )
-from jarvis.speech.continuation_buffer import ContinuationBuffer
+from jarvis.speech.continuation_buffer import REASON_MIC_RESUMED, ContinuationBuffer
 from jarvis.speech.continuation_window import ContinuationWindow
 from jarvis.speech.echo_guard import SelfEchoGuard
 from jarvis.speech.hangup import (
@@ -1406,6 +1406,27 @@ _DRAIN_HOLDS_FLOOR: frozenset[TurnTakingState] = frozenset({
     TurnTakingState.USER_SPEAKING,
     TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT,
 })
+
+# The pipeline's Thinking-pause hold (maintainer directive 2026-08-18: "wait
+# for a clear pause; when I keep talking, append"). The VAD already waits the
+# configured pause before it ends an utterance — but its final TRANSCRIPT
+# arrives a recognizer round-trip later, and by then the user may audibly be
+# into the next sentence. Dispatching at that moment answers half a request
+# and lets the instant ack talk over the user's second half; the recombine
+# window then cancels and re-dispatches the joined text — a wasted brain call
+# and an audible stumble. So a complete utterance whose final lands while the
+# VAD reports speech again is HELD (``ContinuationBuffer.hold``) and joined
+# with the next utterance instead: one dispatch, no interruption. Bounded by
+# the drain timer, which defers only while the user holds the floor.
+#
+# How long a mic-held text waits for its continuation once the floor is free
+# again (the next utterance transcribed to nothing, or never came). Short:
+# the VAD's own pause has already been paid; this only bridges the gap
+# between "the floor is free" and "nothing more is coming".
+_MIC_HOLD_DRAIN_S = 1.0
+# A VAD false start (a cough, a chair) is a promise of speech that never came:
+# release the held text at once — a frame later than the false-start verdict.
+_MIC_HOLD_RELEASE_S = 0.15
 
 
 # Hang-up patterns + the END_CALL sentinel live in jarvis/speech/hangup.py
@@ -3524,6 +3545,11 @@ class SpeechPipeline:
     def _on_vad_speech_start(self) -> None:
         log.info("voice activity start")
         self._schedule_turn_state(TurnTakingState.USER_SPEAKING)
+        # The microphone's own word on "the user is talking again" — read by
+        # the turn handler when a final transcript lands (Thinking-pause hold).
+        # Cleared at the next endpoint, so it always describes speech AFTER
+        # the utterance currently being transcribed.
+        self._vad_speech_after_endpoint = True
         # A resumed utterance freezes the continuation grace so a slow follow-up
         # still recombines with the just-finished turn (session 71f2d2de). The
         # SAME freeze must reach the pre-dispatch ContinuationBuffer: a fragment
@@ -3547,6 +3573,7 @@ class SpeechPipeline:
     def _on_vad_silence_cancel(self) -> None:
         log.info("silence timer cancel")
         self._schedule_turn_state(TurnTakingState.USER_SPEAKING)
+        self._vad_speech_after_endpoint = True
 
     def _on_vad_endpoint(self, reason: str) -> None:
         log.info("voice activity stop: reason=%s", reason)
@@ -3558,6 +3585,8 @@ class SpeechPipeline:
         # same field is also exposed as a C-signal to a future completeness
         # classifier ("max_utterance" = hard-chopped utterance).
         self._last_endpoint_reason = reason
+        # This utterance is over; whatever speech follows is the NEXT one.
+        self._vad_speech_after_endpoint = False
         self._cancel_stale_probe()
         self._reset_probe_state()
         if reason != "false_start":
@@ -3573,6 +3602,10 @@ class SpeechPipeline:
                 TurnTakingState.LISTENING,
                 only_from=TurnTakingState.USER_SPEAKING,
             )
+            # ...and a text held for that promised speech is released now:
+            # nothing is coming, the user gets their answer at once instead
+            # of after the drain grace.
+            self._release_mic_hold_soon()
 
     def _reset_probe_state(self) -> None:
         self._probe_last_text = ""
@@ -12945,6 +12978,10 @@ class SpeechPipeline:
         )
         log.info("→ Transcribing (%.1f KB) via %s …", len(pcm) / 1024, utt_stt_name)
         await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+        # Only speech the VAD reports from HERE on counts as "the user resumed"
+        # for the Thinking-pause hold — a stale flag from a path that never
+        # endpointed (push-to-talk, a hotkey call) must not hold this turn.
+        self._vad_speech_after_endpoint = False
         transcript = await self._transcribe_final(pcm)
         if transcript is None:
             # AD-OE6 zero-silent-drop: every retry of the final transcription
@@ -13121,6 +13158,18 @@ class SpeechPipeline:
                 coalesced[:120],
             )
             text = coalesced
+
+        # Thinking-pause hold: the words are complete, but the MICROPHONE says
+        # the user is already talking again (the VAD reported speech after
+        # this utterance's endpoint, while the recognizer was still working).
+        # Dispatching now would answer half a request and let the instant ack
+        # talk over the second half; hold the text and let the next utterance
+        # join it — one dispatch for the whole request. Bounded: a drain timer
+        # dispatches the held text once the floor is free, and a VAD false
+        # start releases it at once (``_release_mic_hold_soon``).
+        if self._mic_says_user_resumed():
+            self._hold_for_resumed_speech(text, lang)
+            return True
 
         # Privacy-Voice-Toggle (Wave-2 B7): matcht Privacy-Phrasen aus Config,
         # pausiert/resumed den VisionContextProvider und spricht kurzen ACK
@@ -13744,7 +13793,83 @@ class SpeechPipeline:
 
     # --- Continuation drain timer (autonomous flush; AD-OE6 zero-silent-drop) - #
 
-    def _arm_continuation_drain(self, lang: str) -> None:
+    def _mic_says_user_resumed(self) -> bool:
+        """The VAD reported speech AFTER the utterance now being finalized.
+
+        Two readings of the same microphone, either suffices: the explicit
+        flag ``_on_vad_speech_start`` / ``_on_vad_silence_cancel`` raise and
+        ``_on_vad_endpoint`` clears, and the turn state itself, which those
+        callbacks move to USER_SPEAKING (the transcription of THIS utterance
+        runs in WAITING_FOR_FINAL_TRANSCRIPT, so USER_SPEAKING at final time
+        can only mean a newer start).
+        """
+        if bool(getattr(self, "_vad_speech_after_endpoint", False)):
+            return True
+        return (
+            getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is TurnTakingState.USER_SPEAKING
+        )
+
+    def _hold_for_resumed_speech(self, text: str, lang: str) -> None:
+        """Park a complete utterance until the sentence the user began finishes.
+
+        The next final joins it through the ordinary ``ContinuationBuffer``
+        path; the drain timer (deferred while the floor is held) dispatches it
+        if that final never carries words; a VAD false start releases it at
+        once. The turn state is left to the VAD — it already reads
+        USER_SPEAKING, which is the truth.
+        """
+        buf = getattr(self, "_continuation_buffer", None)
+        if buf is None:
+            return
+        try:
+            buf.hold(text, language=lang)
+        except Exception:  # noqa: BLE001 — a hold that fails must not lose the turn
+            log.warning("Thinking-pause hold failed; dispatching as-is", exc_info=True)
+            return
+        # A recombine earlier this turn parked the prior dispatched text for a
+        # history drop that ``_arm_continuation`` would apply at dispatch. The
+        # held text WILL dispatch (joined, or drained) — outside this turn, so
+        # apply the drop now; leaving it would let the brain see the prior
+        # fragment twice, once as its own turn and once inside the join.
+        prior = getattr(self, "_continuation_pending_drop", None)
+        if prior:
+            self._continuation_pending_drop = None
+            brain = getattr(self, "_brain", None)
+            if brain is not None and hasattr(brain, "drop_last_turn"):
+                try:
+                    brain.drop_last_turn(prior)
+                except Exception:  # noqa: BLE001 — history hygiene never crashes the turn
+                    log.debug("drop_last_turn failed (non-fatal)", exc_info=True)
+        log.info(
+            "⏸ Thinking-pause hold: the user is already speaking again — holding "
+            "%r for the rest of the sentence",
+            text[:80],
+        )
+        self._arm_continuation_drain(lang, delay_s=_MIC_HOLD_DRAIN_S)
+
+    def _release_mic_hold_soon(self) -> None:
+        """A promised continuation will not come (VAD false start): drain now."""
+        buf = getattr(self, "_continuation_buffer", None)
+        if buf is None or not buf.has_pending():
+            return
+        if getattr(buf, "last_reason", "") != REASON_MIC_RESUMED:
+            return
+        # The language the hold was armed with (always set by the hold); the
+        # single resolver decides otherwise, exactly as a fresh turn would.
+        lang = getattr(self, "_mic_hold_language", "")
+        if not lang:
+            try:
+                lang = self._output_language(None, "")
+            except Exception:  # noqa: BLE001 — never let a release crash the callback
+                lang = ""
+        log.info(
+            "Thinking-pause hold: the speech that held the text was a false "
+            "start — releasing it now"
+        )
+        self._arm_continuation_drain(lang, delay_s=_MIC_HOLD_RELEASE_S)
+
+    def _arm_continuation_drain(self, lang: str, *, delay_s: float | None = None) -> None:
         """Arm an autonomous drain timer for a silently-held continuation fragment.
 
         The ``ContinuationBuffer`` holds an open-ended fragment with NO timer of
@@ -13763,7 +13888,9 @@ class SpeechPipeline:
         utterance arrives (``_handle_utterance``); deferred while the user holds
         the floor so it never pre-empts a continuation in progress. Fail-open: a
         missing event loop (sync teardown / tests) is a no-op. The drain delay
-        matches the buffer's own discard deadline (``timeout_s``).
+        matches the buffer's own discard deadline (``timeout_s``) unless the
+        caller names a shorter one (the Thinking-pause hold, whose pause the
+        VAD already paid).
         """
         self._cancel_continuation_drain()
         buf = getattr(self, "_continuation_buffer", None)
@@ -13773,9 +13900,14 @@ class SpeechPipeline:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+        # Remember the language of the held text so a later release from a
+        # sync VAD callback (no ``lang`` in hand) drains it in the same one.
+        self._mic_hold_language = lang
         # buf is non-None here (checked above) and ``timeout_s`` is a guaranteed
         # property — match the drain delay to the buffer's own discard deadline.
-        delay_s = max(0.05, float(buf.timeout_s))
+        if delay_s is None:
+            delay_s = float(buf.timeout_s)
+        delay_s = max(0.05, float(delay_s))
         self._continuation_drain_task = loop.create_task(
             self._continuation_drain_fire(delay_s, lang),
             name="continuation-drain",
@@ -13815,7 +13947,9 @@ class SpeechPipeline:
                 "(state=%s); re-arming so it can coalesce.",
                 self._turn_state.name,
             )
-            self._arm_continuation_drain(lang)
+            # Same delay as before: a short Thinking-pause release stays short
+            # across deferrals instead of growing into the full buffer grace.
+            self._arm_continuation_drain(lang, delay_s=delay_s)
             return
         fragment = buf.flush_pending()
         if not fragment:

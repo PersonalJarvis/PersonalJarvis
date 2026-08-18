@@ -52,10 +52,12 @@ contain several turns.
    press the configured **Call (answer / start talking)** shortcut. Wake
    detection opens the microphone; it does not answer or transcribe the
    request itself.
-2. **Speak while the app shows Listening.** Pipeline waits for a pause long
-   enough to mark the end of your request. Realtime lets the live voice model
-   detect that boundary. The Pipeline **Thinking pause** setting therefore
-   does not control Realtime.
+2. **Speak while the app shows Listening.** Jarvis waits for a pause long
+   enough to mark the end of your request — the **Thinking pause** setting
+   says how long, in Pipeline and Realtime alike. If you keep talking inside
+   that pause, the new words are added to the same request instead of being
+   sent as a second one; a clearly finished sentence is answered as soon as
+   the pause has passed.
 3. **Jarvis prepares one understood request.** Pipeline converts the captured
    audio into text first. Realtime receives transcript updates from the live
    connection. Your Speech Dictionary corrects known names and terms in both

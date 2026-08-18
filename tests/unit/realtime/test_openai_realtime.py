@@ -173,9 +173,33 @@ async def test_default_config_keeps_native_server_vad_window(
     )
     payload = holder["client"].realtime.last_conn.session_updates[0]
     turn_detection = payload["audio"]["input"]["turn_detection"]
-    # No forced window: OpenAI's native server-VAD default decides the turn
-    # end (the Settings "Thinking pause" endpoints the pipeline only).
+    # No forced window: OpenAI's native server-VAD default commits the input;
+    # the user's Thinking pause is waited out by the session itself.
     assert "silence_duration_ms" not in turn_detection
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_thinking_pause_stays_off_the_server_vad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A manual-response transport must not double-wait the user's pause.
+
+    ``create_response`` is False here, so the SESSION applies the Thinking
+    pause on the microphone before it requests the response. Forwarding the
+    same value as a server silence window would make every finished sentence
+    wait twice (the lag the 2026-07-21 directive rejected).
+    """
+    holder = _patch_openai_client(monkeypatch)
+    provider = OpenAIRealtimeProvider(api_key="test-key")
+
+    session = await provider.open_session(
+        RealtimeSessionConfig(voice="echo", language="en", turn_pause_ms=2_700)
+    )
+    payload = holder["client"].realtime.last_conn.session_updates[0]
+    turn_detection = payload["audio"]["input"]["turn_detection"]
+    assert "silence_duration_ms" not in turn_detection
+    assert turn_detection["create_response"] is False
     await session.close()
 
 

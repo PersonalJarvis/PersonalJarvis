@@ -94,27 +94,47 @@ class RealtimeSessionConfig:
     # GA Realtime schema rejects requesting text and audio simultaneously.
     modalities: tuple[str, ...] = ("audio",)
     turn_detection: str = "server_vad"       # "server_vad" | "semantic_vad"
-    # None (the default) = the provider's NATIVE turn detection decides when
-    # the user's turn ends. The Settings "Thinking pause"
-    # (SpeechConfig.vad_silence_ms) endpoints the classic pipeline only —
-    # forcing it into realtime sessions made the realtime model wait the full
-    # window after every utterance, which reads as "done speaking but still
-    # listening" (maintainer directive 2026-07-21). An explicit int still
-    # overrides the provider default for callers that need a fixed window.
+    # An EXPLICIT fixed silence window for the provider's native VAD. None
+    # (the default) sends nothing: the provider commits the user's input on
+    # its own timing. This is a raw override for callers that need a fixed
+    # window; the user-facing pause travels as ``turn_pause_ms`` below.
     silence_duration_ms: int | None = None
     # How eagerly the provider's native VAD may declare the user finished.
     # "low" = read a pause as a pause; "high" = the provider's own eager
     # default; None = send nothing and inherit whatever the provider ships.
-    #
-    # This is deliberately NOT ``silence_duration_ms``. A fixed silence window
-    # taxes EVERY utterance with the same wait, which is why the 2026-07-21
-    # directive removed it — that directive stands. End-of-speech sensitivity
-    # changes only how a PAUSE is interpreted, so a finished short sentence
-    # still commits immediately while a hesitation inside a long order no
-    # longer ends the turn (live 2026-08-13 16:46/16:47: a spoken brief for a
-    # coding pane was closed twice mid-sentence and delivered truncated).
-    # Providers without the concept ignore it.
+    # End-of-speech sensitivity changes only how a PAUSE is interpreted, so a
+    # finished short sentence still commits immediately while a hesitation
+    # inside a long order no longer ends the turn (live 2026-08-13
+    # 16:46/16:47: a spoken brief for a coding pane was closed twice
+    # mid-sentence and delivered truncated). Providers without the concept
+    # ignore it.
     end_of_speech_sensitivity: str | None = "low"
+    # How long the user may PAUSE before their turn is taken — the Settings
+    # "Thinking pause" (SpeechConfig.vad_silence_ms), one value for both voice
+    # engines since 2026-08-18. Which lever applies is a transport
+    # CAPABILITY, never a provider name (AP-21):
+    #
+    # * A transport that answers on its own boundary
+    #   (``creates_responses_automatically``) has exactly one lever — its
+    #   native end-of-turn detection — so it folds this window into that
+    #   detection (Gemini Live: ``automatic_activity_detection
+    #   .silence_duration_ms``). A user who resumes inside the window keeps
+    #   the same activity: the words append, nothing is submitted twice.
+    # * A transport whose responses Jarvis requests itself must IGNORE this
+    #   field: the session applies the same pause locally, on the last
+    #   voiced microphone frame, before it calls ``request_response`` — so
+    #   the transcription latency counts towards the pause instead of on top
+    #   of it, and a final that arrives while the user is still talking
+    #   appends to the open turn (one response for the whole request).
+    #
+    # History: a fixed window on every realtime transport was removed on
+    # 2026-07-21 because the extra wait after a clearly finished sentence read
+    # as "done speaking but still listening"; on 2026-08-18 the maintainer
+    # asked for the opposite — wait for a clear pause, and keep listening
+    # while the sentence continues — so the pause is back, as the SAME
+    # setting the classic pipeline uses, adjustable in Settings → Voice.
+    # None = the provider's own timing (tests, callers without a config).
+    turn_pause_ms: int | None = None
     tools: tuple[dict[str, Any], ...] = ()
     # Bounded transcript of the call so far, oldest first, as
     # ``{"role": "user" | "assistant", "text": ...}`` mappings. A fresh

@@ -612,15 +612,61 @@ async def test_every_selectable_model_uses_live_audio_and_transcriptions(
 
 
 @pytest.mark.asyncio
+async def test_thinking_pause_becomes_geminis_silence_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user's Thinking pause is the ONE lever on a self-answering transport.
+
+    Gemini answers on its own activity boundary — Jarvis cannot hold a reply
+    back once the turn is closed — so "wait for a clear pause before you take
+    the turn" (maintainer 2026-08-18) can only be Gemini's own silence window.
+    A user who resumes inside it continues the same activity: the words
+    append, nothing is submitted twice. LOW sensitivity stays alongside.
+    """
+    from google.genai import types
+
+    holder = _patch_genai_client(monkeypatch)
+    provider = GeminiLiveProvider(api_key="test-key")
+
+    session = await provider.open_session(
+        RealtimeSessionConfig(voice="Puck", turn_pause_ms=1_500)
+    )
+    _selected, config = holder["client"].aio.live.connect_calls[0]
+    detection = config.realtime_input_config.automatic_activity_detection
+    assert detection.silence_duration_ms == 1_500
+    assert detection.end_of_speech_sensitivity == types.EndSensitivity.END_SENSITIVITY_LOW
+    assert detection.disabled is False
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_silence_window_outranks_the_thinking_pause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_genai_client(monkeypatch)
+    provider = GeminiLiveProvider(api_key="test-key")
+
+    session = await provider.open_session(
+        RealtimeSessionConfig(
+            voice="Puck", silence_duration_ms=2_700, turn_pause_ms=1_500
+        )
+    )
+    _selected, config = holder["client"].aio.live.connect_calls[0]
+    detection = config.realtime_input_config.automatic_activity_detection
+    assert detection.silence_duration_ms == 2_700
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_default_config_asks_gemini_to_sit_through_a_pause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A default session is patient about pauses without a forced window.
+    """Without a configured pause the session is patient, not fixed-windowed.
 
     Live 2026-08-13 16:46/16:47: Gemini's own default read a mid-sentence
     pause as end-of-turn and a coding pane was briefed with a quarter of the
-    sentence. LOW fixes that; silence_duration_ms must STAY unset, because a
-    fixed window taxes every short utterance (directive 2026-07-21).
+    sentence. LOW fixes that; with no ``turn_pause_ms`` and no explicit
+    override, silence_duration_ms stays unset (the provider's own timing).
     """
     from google.genai import types
 

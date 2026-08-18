@@ -261,17 +261,22 @@ def _session_payload(
         "interrupt_response": False,
     }
     # An unset window (None/0) keeps OpenAI's native server-VAD default so the
-    # realtime model decides the turn end itself; only an explicit override is
-    # forwarded.
+    # server commits the input on its own timing; only an explicit override is
+    # forwarded. The user's Thinking pause (``cfg.turn_pause_ms``) is
+    # deliberately NOT applied here: this is a manual-response transport
+    # (``create_response`` is False), so the SESSION waits out that pause on
+    # its own microphone before it requests the response — the transcription
+    # latency then counts towards the pause instead of on top of it, and a
+    # final that lands while the user is still talking appends to the open
+    # turn. A server window on top would make every finished sentence wait
+    # twice (the lag the 2026-07-21 directive rejected).
     silence_ms = getattr(cfg, "silence_duration_ms", None)
     if turn_detection == "server_vad" and silence_ms:
         turn_detection_config["silence_duration_ms"] = int(silence_ms)
     # OpenAI's name for end-of-speech sensitivity is semantic-VAD "eagerness":
     # low = let the user take their time before the turn is called over. Plain
     # server_vad has no equivalent knob at all, so a session configured for it
-    # honestly keeps the provider default rather than faking patience with a
-    # fixed silence window (which would tax every short utterance — the very
-    # trade the 2026-07-21 directive rejected).
+    # honestly keeps the provider default; the pause is the session's job.
     sensitivity = str(getattr(cfg, "end_of_speech_sensitivity", "") or "").lower()
     if turn_detection == "semantic_vad" and sensitivity in {"low", "high"}:
         turn_detection_config["eagerness"] = sensitivity

@@ -909,17 +909,26 @@ class GeminiLiveProvider:
                     voice_name=voice
                 )
             )
-        # An unset window (None/0) sends no silence_duration_ms at all, so
-        # Gemini keeps deciding turn ends on its own timing; only an explicit
-        # override forces a fixed window (the 2026-07-21 directive).
-        silence_ms = getattr(cfg, "silence_duration_ms", None)
-        # End-of-speech SENSITIVITY is a different knob and the one that
-        # matters here: Gemini's native default reads an ordinary mid-sentence
-        # pause as the end of the turn. Live 2026-08-13 16:46/16:47 — one
-        # spoken brief for a coding pane was committed twice while the
-        # microphone still carried the user's voice, and the pane was handed a
-        # quarter of the sentence. LOW reads a pause as a pause and costs a
-        # finished short utterance nothing.
+        # This transport answers on its own activity boundary
+        # (``creates_responses_automatically``): Jarvis cannot hold a reply
+        # back once Gemini has closed the user's turn, so the ONE lever for
+        # "wait for a clear pause before you take the turn" is Gemini's own
+        # silence window. The user's Thinking pause (``turn_pause_ms``, the
+        # same Settings value the classic pipeline endpoints on) is folded in
+        # here; an explicit ``silence_duration_ms`` override still wins, and
+        # with neither set Gemini keeps deciding turn ends on its own timing.
+        # A user who resumes inside the window continues the SAME activity —
+        # the words append, nothing is submitted twice (2026-08-18).
+        silence_ms = getattr(cfg, "silence_duration_ms", None) or getattr(
+            cfg, "turn_pause_ms", None
+        )
+        # End-of-speech SENSITIVITY is a different knob and stays: Gemini's
+        # native default reads an ordinary mid-sentence pause as the end of
+        # the turn. Live 2026-08-13 16:46/16:47 — one spoken brief for a
+        # coding pane was committed twice while the microphone still carried
+        # the user's voice, and the pane was handed a quarter of the sentence.
+        # LOW reads a pause as a pause; the silence window above then says how
+        # long that pause may be.
         aad_kwargs: dict[str, Any] = {}
         if silence_ms:
             aad_kwargs["silence_duration_ms"] = int(silence_ms)

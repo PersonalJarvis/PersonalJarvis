@@ -357,6 +357,36 @@ _MIC_HOLD_ABSOLUTE_CAP_S = 45.0
 # was held by the microphone settles for this long before giving up on the
 # remaining words. Paid ONLY on a turn the provider already cut short.
 _UTTERANCE_TAIL_SETTLE_S = 2.5
+# The Thinking pause — how long the user may pause before their turn is
+# TAKEN. One value for both voice engines (SpeechConfig.vad_silence_ms, the
+# Settings → Voice slider); these mirror that field's own bounds so a stray
+# value can never wedge a call, and the default is the pipeline's 1.5 s.
+#
+# On a transport whose responses Jarvis requests itself, the pause is measured
+# HERE, on the microphone (``_turn_pause_settled``): a final input transcript
+# does not request the response until the last voiced frame is at least this
+# old. Whatever the provider committed, the user gets to keep talking — the
+# next final appends to the same turn (``_note_user_final``) and ONE response
+# answers the whole request. A transport that answers on its own boundary
+# receives the same value as its native silence window instead
+# (``RealtimeSessionConfig.turn_pause_ms``). Maintainer directive
+# 2026-08-18: "wait for a clear pause; when I keep talking, append."
+_TURN_PAUSE_DEFAULT_MS = 1_500
+_TURN_PAUSE_MIN_MS = 500
+_TURN_PAUSE_MAX_MS = 5_000
+# How often the pause waiter re-checks the microphone. Fine enough that a
+# settled pause is noticed within a frame or two, coarse enough to be free.
+_TURN_PAUSE_POLL_S = 0.05
+# A stale voiced stamp only proves silence if the microphone kept REPORTING
+# in between. Frames normally arrive every 20-100 ms; when the last processed
+# frame is older than this, the stream stalled — typically the event loop was
+# blocked (a first-turn import measured 0.7 s in tests) and the frames are
+# still queued — and the pause is not settled until the stream catches up.
+_MIC_FRAME_STALL_S = 0.25
+# ...unless it never does: a microphone that has sent nothing for this long is
+# closed or paused, not stalled, and holding a reply on it would mute the
+# assistant. Past this the voiced stamp is trusted as-is (bounded, AP-30).
+_MIC_STREAM_GONE_S = 1.5
 # In-place transport rebuild (BUG-071). A provider server may drop the duplex
 # WebSocket at any time mid-call (live incident 2026-07-17 10:44: Gemini Live
 # closed with ``1006 abnormal closure`` right as a 69 s surface-TTS fallback
@@ -2193,6 +2223,19 @@ class RealtimeVoiceSession:
         # The one local answer to "is the user talking right now" while the
         # provider owns turn detection (see _USER_VOICE_PEAK).
         self._last_voiced_input_monotonic = 0.0
+        # Monotonic stamp of the last microphone frame processed at all, voiced
+        # or silent: the proof that the voiced stamp above is CURRENT rather
+        # than stale behind a stalled frame stream (see _MIC_FRAME_STALL_S).
+        self._last_input_frame_monotonic = 0.0
+        # The Thinking-pause waiter of the CURRENT turn on a manual-response
+        # transport: a final transcript arrived, but the microphone had not
+        # yet been quiet for the configured pause, so the response request is
+        # deferred to this task (see ``_request_native_response_after_pause``).
+        # ``_turn_pause_held_input_ids`` collects the provider item ids of the
+        # finals folded into that one deferred request, so the eventual
+        # request marks every one of them as answered.
+        self._turn_pause_waiter: asyncio.Task[None] | None = None
+        self._turn_pause_held_input_ids: set[str] = set()
         self._loop_lag = _LoopLagProbe()
         # A write-only transport stall does not necessarily wake the provider
         # receive iterator. Queue a rebuild request for the long-lived pump so
@@ -2819,10 +2862,14 @@ class RealtimeVoiceSession:
                 input_sample_rate=input_rate,
                 output_sample_rate=output_rate,
                 modalities=("audio",),
-                # silence_duration_ms stays at its None default: the realtime
-                # model's native turn detection decides when the user is done.
-                # The Settings "Thinking pause" endpoints the classic pipeline
-                # only (maintainer directive 2026-07-21).
+                # silence_duration_ms stays at its None default (no raw
+                # override). The user's Thinking pause travels as
+                # turn_pause_ms: a transport that answers on its own boundary
+                # folds it into its native turn detection; a manual-response
+                # transport ignores it because THIS session waits out the
+                # same pause on the microphone before requesting the response
+                # (``_turn_pause_settled``). One setting, both engines.
+                turn_pause_ms=self._turn_pause_ms(),
                 tools=self._declared_tools(),
                 # Empty at the first open of a call; after an in-place
                 # transport rebuild (or a mid-call cross-family fallback) it
@@ -3157,6 +3204,214 @@ class RealtimeVoiceSession:
             return False
         return (time.monotonic() - stamp) < _USER_SPEAKING_HOLD_S
 
+    # ------------------------------------------------------------------
+    # The Thinking pause: how long the user may pause before the turn is taken
+    # ------------------------------------------------------------------
+
+    def _turn_pause_ms(self) -> int:
+        """The user's Thinking pause in ms, read live from the config.
+
+        The Settings → Voice slider writes ``speech.vad_silence_ms`` into the
+        running config, so a manual-response transport picks a new value up on
+        the very next turn; an automatic-response transport bakes it into its
+        native turn detection at open and follows on the next call. Clamped to
+        the field's own bounds — a stray value can slow a call, never wedge it.
+        """
+        speech_cfg = getattr(self._config, "speech", None)
+        raw = getattr(speech_cfg, "vad_silence_ms", None)
+        try:
+            ms = int(raw) if raw is not None else _TURN_PAUSE_DEFAULT_MS
+        except (TypeError, ValueError):
+            ms = _TURN_PAUSE_DEFAULT_MS
+        return max(_TURN_PAUSE_MIN_MS, min(_TURN_PAUSE_MAX_MS, ms))
+
+    def _turn_pause_settled(self) -> bool:
+        """True once the microphone has been quiet for the whole Thinking pause.
+
+        The pause is measured from the last voiced input frame, so the time the
+        provider spent committing and transcribing the audio already counts
+        towards it — a finished sentence pays little or nothing extra. A
+        microphone that never carried voice (below the peak gate, or a text
+        surface) has no evidence to hold the turn on and reads as settled: the
+        debounce can only DELAY a request while the user audibly talks on, it
+        can never deafen a quiet talker. Speaker echo is excluded exactly as in
+        ``_user_is_speaking`` — output frames never stamp the microphone.
+        ``_user_speech_active`` is the provider's own "the user started again"
+        edge, held until its transcript arrives; while it stands the pause has
+        not settled either, whatever the peak gate saw.
+
+        An old voiced stamp is trusted only while the frame stream is current:
+        if the microphone stopped REPORTING (an event loop blocked by a
+        first-turn import leaves the frames queued, the stamp stale, and the
+        user mid-word) the pause is not settled until the stream catches up —
+        bounded by ``_MIC_STREAM_GONE_S``, past which a silent microphone is
+        a closed one and can hold nothing.
+        """
+        if self._user_speech_active:
+            return False
+        stamp = self._last_voiced_input_monotonic
+        if not stamp:
+            return True
+        now = time.monotonic()
+        if (now - stamp) < self._turn_pause_ms() / 1000.0:
+            return False
+        stream_age = now - self._last_input_frame_monotonic
+        return not (_MIC_FRAME_STALL_S < stream_age < _MIC_STREAM_GONE_S)
+
+    def _turn_held_for_pause(self) -> bool:
+        """A final arrived, and its response waits for the user's pause to settle."""
+        waiter = self._turn_pause_waiter
+        return waiter is not None and not waiter.done()
+
+    def _hold_native_response_for_pause(self, input_item_id: str) -> None:
+        """Defer this turn's response request until the Thinking pause settles.
+
+        Idempotent per turn: a later final that lands while the waiter runs
+        only adds its item id — the waiter re-reads the growing turn text on
+        every tick, so the ONE request it eventually makes answers the whole
+        request, and every folded item is marked answered with it.
+        """
+        if input_item_id:
+            self._turn_pause_held_input_ids.add(input_item_id)
+        if self._turn_held_for_pause():
+            return
+        turn_id = self._turn_id
+        log.info(
+            "realtime[%s] holding the response request — the user is still "
+            "talking %.2fs after the provider closed its input turn; waiting "
+            "for a %.1fs pause",
+            self.session_id,
+            max(0.0, time.monotonic() - self._last_voiced_input_monotonic)
+            if self._last_voiced_input_monotonic
+            else 0.0,
+            self._turn_pause_ms() / 1000.0,
+        )
+        self._turn_pause_waiter = asyncio.create_task(
+            self._request_native_response_after_pause(turn_id),
+            name=f"rt-turn-pause-{self.session_id}",
+        )
+
+    def _cancel_turn_pause_waiter(self) -> None:
+        waiter = self._turn_pause_waiter
+        self._turn_pause_waiter = None
+        self._turn_pause_held_input_ids = set()
+        if waiter is not None and not waiter.done():
+            waiter.cancel()
+
+    async def _request_native_response_after_pause(self, turn_id: str) -> None:
+        """Request the deferred response the moment the user's pause settles.
+
+        Every check is a reason NOT to request: another path answered the turn
+        (a delegate, a tool call, the retry paths), the turn moved on, the
+        session ended. Otherwise the request fires when ``_turn_pause_settled``
+        first holds. Two bounds keep a stuck floor from muting the assistant
+        (AP-30, never silent): a loud microphone that produces no new WORDS for
+        ``_MIC_HOLD_STALE_TRANSCRIPT_S`` is room noise, not a talking user, and
+        the absolute ceiling ends any wait. Both are logged as what they are.
+        """
+        started = time.monotonic()
+        stale_deadline = started + _MIC_HOLD_STALE_TRANSCRIPT_S
+        hard_deadline = started + _MIC_HOLD_ABSOLUTE_CAP_S
+        last_text = self._last_user_text
+        try:
+            while True:
+                await asyncio.sleep(_TURN_PAUSE_POLL_S)
+                if self._ended or self._failed.is_set():
+                    return
+                if self._response_requested_for_turn or self._turn_id != turn_id:
+                    # Answered by another path, or the turn is over — the
+                    # next turn's own final requests its own response.
+                    return
+                now = time.monotonic()
+                if self._last_user_text != last_text:
+                    # Words are the one thing a stuck floor cannot produce:
+                    # a growing transcript renews the microphone's authority.
+                    last_text = self._last_user_text
+                    stale_deadline = now + _MIC_HOLD_STALE_TRANSCRIPT_S
+                if self._turn_pause_settled():
+                    log.info(
+                        "realtime[%s] the user's pause settled after a %.2fs "
+                        "hold — requesting one response for the whole turn "
+                        "(%d words)",
+                        self.session_id,
+                        now - started,
+                        len(str(self._last_user_text or "").split()),
+                    )
+                    await self._request_native_response()
+                    return
+                if now >= stale_deadline:
+                    log.warning(
+                        "realtime[%s] the microphone stayed loud for %.1fs "
+                        "without a single new word; treating the floor as "
+                        "stuck and requesting the response",
+                        self.session_id,
+                        _MIC_HOLD_STALE_TRANSCRIPT_S,
+                    )
+                    await self._request_native_response()
+                    return
+                if now >= hard_deadline:
+                    log.warning(
+                        "realtime[%s] the pause hold reached its %.0fs "
+                        "ceiling; requesting the response for the %d words "
+                        "the turn has",
+                        self.session_id,
+                        _MIC_HOLD_ABSOLUTE_CAP_S,
+                        len(str(self._last_user_text or "").split()),
+                    )
+                    await self._request_native_response()
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a failed hold must never mute the turn
+            log.exception(
+                "realtime[%s] the pause hold failed; requesting the response now",
+                self.session_id,
+            )
+            try:
+                await self._request_native_response()
+            except Exception:  # noqa: BLE001 — logged above; nothing more to do
+                log.debug("realtime[%s] fallback request failed", self.session_id)
+        finally:
+            if self._turn_pause_waiter is asyncio.current_task():
+                self._turn_pause_waiter = None
+
+    async def _request_native_response(self) -> None:
+        """Ask a manual-response transport for THIS turn's answer, once.
+
+        The one place the request is made after a final input transcript —
+        directly when the pause is already settled, or from the pause waiter.
+        Marks the turn as requested and every folded input item as answered,
+        and lifts the post-barge-in output guard on transports that isolate
+        response generations (the same bookkeeping the inline path did).
+        """
+        if self._response_requested_for_turn:
+            return
+        try:
+            await self._session.request_response(required_tool=None)
+        except TypeError:
+            # Compatibility with third-party realtime adapters built against
+            # the older no-argument protocol.
+            await self._session.request_response()
+        if bool(getattr(self._session, "isolates_response_generations", False)):
+            self._drop_provider_output_until_new_response = False
+        self._response_requested_for_turn = True
+        held = self._turn_pause_held_input_ids
+        self._turn_pause_held_input_ids = set()
+        for item_id in held:
+            self._note_input_answered(item_id)
+
+    def _note_input_answered(self, input_item_id: str) -> None:
+        """Remember that a provider input item has had its response requested."""
+        if not input_item_id:
+            return
+        self._response_requested_input_ids.add(input_item_id)
+        if len(self._response_requested_input_ids) > _ANSWERED_INPUT_ID_MAX:
+            # Bounded: a long call must not accumulate one entry per
+            # utterance for its whole lifetime.
+            self._response_requested_input_ids = set(
+                tuple(self._response_requested_input_ids)[-_ANSWERED_INPUT_ID_MAX:]
+            )
+
     def owes_the_user_a_reply(self) -> bool:
         """True while a turn is being worked on and nothing is audible yet.
 
@@ -3225,10 +3480,11 @@ class RealtimeVoiceSession:
             return
         if not pcm16:
             return
+        self._last_input_frame_monotonic = time.monotonic()
         if not self._output_active and _pcm16_peak(pcm16) >= _USER_VOICE_PEAK:
             # Measured on the frame we are about to FORWARD, so the floor
             # tracks exactly the audio the provider is judging.
-            self._last_voiced_input_monotonic = time.monotonic()
+            self._last_voiced_input_monotonic = self._last_input_frame_monotonic
         target_session = self._session
         try:
             await asyncio.wait_for(
@@ -4242,38 +4498,37 @@ class RealtimeVoiceSession:
                         event.is_final
                         and input_observed
                         and not self._response_requested_for_turn
+                        and not self._delegate_required_for_turn
+                        and not bool(
+                            getattr(
+                                self._session,
+                                "creates_responses_automatically",
+                                False,
+                            )
+                        )
+                        and not self._turn_pause_settled()
+                    ):
+                        # The provider closed its input turn, but the
+                        # microphone says the user is still talking (or has
+                        # not been quiet for the Thinking pause yet). On a
+                        # transport whose responses Jarvis requests itself
+                        # the request simply WAITS: nothing is submitted, the
+                        # turn stays open, and a later final appends to it —
+                        # so ONE response answers the whole request instead
+                        # of a first answer talking over the user's second
+                        # half (maintainer directive 2026-08-18). The turn is
+                        # NOT marked as requested here — that is what lets the
+                        # next final of this turn re-enter this branch.
+                        self._hold_native_response_for_pause(input_item_id)
+                    elif (
+                        event.is_final
+                        and input_observed
+                        and not self._response_requested_for_turn
                     ):
                         if not self._delegate_required_for_turn:
-                            try:
-                                await self._session.request_response(
-                                    required_tool=None
-                                )
-                            except TypeError:
-                                # Compatibility with third-party realtime adapters
-                                # built against the older no-argument protocol.
-                                await self._session.request_response()
-                            if bool(
-                                getattr(
-                                    self._session,
-                                    "isolates_response_generations",
-                                    False,
-                                )
-                            ):
-                                self._drop_provider_output_until_new_response = False
+                            await self._request_native_response()
                         self._response_requested_for_turn = True
-                        if input_item_id:
-                            self._response_requested_input_ids.add(input_item_id)
-                            if (
-                                len(self._response_requested_input_ids)
-                                > _ANSWERED_INPUT_ID_MAX
-                            ):
-                                # Bounded: a long call must not accumulate one
-                                # entry per utterance for its whole lifetime.
-                                self._response_requested_input_ids = set(
-                                    tuple(self._response_requested_input_ids)[
-                                        -_ANSWERED_INPUT_ID_MAX:
-                                    ]
-                                )
+                        self._note_input_answered(input_item_id)
                 elif event.type == "handoff_requested" and (
                     self._stale_generation_drop_active()
                 ):
@@ -4655,6 +4910,27 @@ class RealtimeVoiceSession:
                         )
                     self._deferred_provider_speech_start = True
                     self._arm_interruption_settle()
+                elif (
+                    event.type == "speech_started"
+                    and self._turn_held_for_pause()
+                    and not self._output_active
+                    and self._gate.pending_audio_ms <= 0
+                ):
+                    # The user resumed INSIDE the Thinking pause: no response
+                    # was requested for this turn yet and nothing is playing,
+                    # so there is no reply to cut and no reason to close the
+                    # turn. Keep it open — the next final appends to it and
+                    # the held request answers the whole request. Closing here
+                    # (the barge-in path below) would split one spoken request
+                    # into two recorded turns and cost the second half its
+                    # first half in the answer.
+                    self._user_speech_active = True
+                    log.info(
+                        "realtime[%s] the user resumed inside the Thinking "
+                        "pause — keeping the turn open for the rest of the "
+                        "sentence",
+                        self.session_id,
+                    )
                 elif event.type == "speech_started":
                     await self._begin_user_speech_turn()
                     await self._barge_in(interrupt_provider=True)
@@ -7479,6 +7755,9 @@ class RealtimeVoiceSession:
         self._output_language_retry_task = None
         if retry_task is not None and not retry_task.done():
             retry_task.cancel()
+        # A response held for the Thinking pause belongs to the turn that is
+        # closing; the next turn's own final requests its own response.
+        self._cancel_turn_pause_waiter()
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker = None
@@ -10858,6 +11137,7 @@ class RealtimeVoiceSession:
         self._cancel_turn_stall_watchdog()
         self._cancel_interruption_settle()
         self._cancel_tool_transcript_wait()
+        self._cancel_turn_pause_waiter()
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()
         self._end_call_timer = None

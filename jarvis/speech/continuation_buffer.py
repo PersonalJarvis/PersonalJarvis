@@ -44,6 +44,14 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT_S: Final[float] = 8.0
 _DEFAULT_MAX_CHAIN: Final[int] = 3
 
+#: ``last_reason`` of a fragment held by :meth:`ContinuationBuffer.hold` — the
+#: text was COMPLETE, but the microphone reported the user speaking again
+#: before it could be dispatched (the pipeline's Thinking-pause hold,
+#: 2026-08-18). Distinct from every ``completion.REASON_*`` value so the
+#: pipeline can tell a mic hold from a syntactic one (no clarifying question
+#: for it, an immediate release on a VAD false start).
+REASON_MIC_RESUMED: Final[str] = "mic_resumed"
+
 
 class ContinuationBuffer:
     """Holds an open-ended voice fragment until the continuation arrives."""
@@ -95,6 +103,41 @@ class ContinuationBuffer:
         keeping every other incomplete reason on the silent-hold default.
         """
         return self._last_reason if self._fragments else ""
+
+    def hold(self, text: str, language: str = "") -> None:
+        """Hold a COMPLETE utterance because the user is already talking again.
+
+        The pipeline's Thinking-pause hold (2026-08-18): the final transcript
+        of one utterance arrived while the VAD already reported the next one
+        starting. Dispatching now would answer half a request and let the
+        instant ack talk over the user's second half; the next utterance's
+        ``process()`` joins the held text with it instead — the same append
+        the syntactic hold does, without any judgement about the words. Uses
+        the buffer's ordinary deadline so a hold whose continuation never
+        finalizes is still dropped before an unrelated later turn; the
+        pipeline's drain timer dispatches it long before that.
+
+        Replaces nothing: a fragment already held (a syntactic hold, or a
+        previous mic hold) is joined into one entry, so a chain of holds still
+        counts as ONE fragment against ``max_chain`` and never flushes early
+        just because the user paused twice.
+        """
+        cleaned = " ".join(str(text or "").split())
+        if not cleaned:
+            return
+        del language  # accepted for symmetry with ``process``; unused
+        if self._fragments:
+            self._fragments = [" ".join([*self._fragments, cleaned])]
+        else:
+            self._fragments = [cleaned]
+        self._last_reason = REASON_MIC_RESUMED
+        self._deadline = time.monotonic() + self._timeout_s
+        logger.info(
+            "ContinuationBuffer: holding a complete utterance — the microphone "
+            "says the user is already speaking again (%d chars, deadline=+%.1fs)",
+            len(self._fragments[0]),
+            self._timeout_s,
+        )
 
     def discard(self) -> None:
         """Drop the buffer unconditionally. Called by hangup / cancel paths."""
