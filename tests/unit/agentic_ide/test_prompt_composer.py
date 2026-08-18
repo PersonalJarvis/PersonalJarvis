@@ -284,6 +284,15 @@ async def test_the_writer_is_shown_an_outline_of_the_candidate_files(
 
     assert "candidate_shape_ok" in seen["user"]
     assert "Vosk keyword spotting." in seen["user"]
+    # House rules stay out: the receiving agent already has them. Re-loading
+    # the 1200-char dump would go green without this pin.
+    assert "HOUSE RULES" not in seen["user"]
+
+
+def test_the_outline_budget_stays_slim() -> None:
+    """Five files at 34 k was most of the input tokens on every call."""
+    assert prompt_composer._OUTLINE_FILES == 3  # noqa: SLF001
+    assert prompt_composer._OUTLINE_CHARS == 1800  # noqa: SLF001
 
 
 async def test_no_quality_writer_degrades_openly(

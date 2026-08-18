@@ -223,8 +223,8 @@ the agent should read the relevant files before answering and should not \
 change anything.
 - Be specific about what is actually being asked and what a useful answer \
 would cover, so the agent does not return either a one-liner or an essay.
-- A question rarely needs `## Scope` or `## Done when`; omit them unless the \
-user set a real boundary.\
+- A question rarely needs `## Done when`; omit it unless the user set a \
+real boundary.\
 """,
     KIND_NEUTRAL: """\
 The kind of work is not clearly determined. Stay with what the user said:

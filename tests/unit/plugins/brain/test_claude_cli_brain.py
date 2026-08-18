@@ -153,8 +153,7 @@ def test_an_older_cli_never_sees_a_flag_it_would_die_on() -> None:
 
 
 def test_the_callers_reasoning_effort_is_forwarded() -> None:
-    """The composer documents "medium" as its quality floor; the CLI's own
-    default may think longer without writing a better brief."""
+    """A graded effort is forwarded; an older CLI never sees the flag."""
     from jarvis.core.protocols import BrainMessage, BrainRequest
 
     req = BrainRequest(
@@ -166,9 +165,24 @@ def test_the_callers_reasoning_effort_is_forwarded() -> None:
     brain = ClaudeCliBrain(structured_prompts=True)
     argv, _prompt = brain.build_invocation(req, cli_flags=_FAST_FLAGS)
     assert argv[argv.index("--effort") + 1] == "medium"
-    # An unsupported CLI never sees it; "none" has no CLI level and stays home.
     bare, _prompt = brain.build_invocation(req, cli_flags=frozenset())
     assert "--effort" not in bare
+
+
+def test_none_maps_to_the_lowest_cli_effort() -> None:
+    """The composer asks for no thinking. The CLI has no off switch, so
+    ``low`` is the cheapest level it will run — same as Antigravity."""
+    from jarvis.core.protocols import BrainMessage, BrainRequest
+
+    req = BrainRequest(
+        messages=(BrainMessage(role="user", content="payload"),),
+        system="CONTRACT",
+        reasoning_effort="none",
+        stream=True,
+    )
+    brain = ClaudeCliBrain(structured_prompts=True)
+    argv, _prompt = brain.build_invocation(req, cli_flags=_FAST_FLAGS)
+    assert argv[argv.index("--effort") + 1] == "low"
 
 
 def test_conversational_turns_keep_their_shape() -> None:

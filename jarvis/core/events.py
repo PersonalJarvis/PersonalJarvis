@@ -774,9 +774,9 @@ class AgenticIdePromptSent(Event):
 class AgenticIdeComposeProgress(Event):
     """One beat of a task brief being written for one pane.
 
-    Writing a brief is 10-30 s of real model work, and the typed prompt bar
-    used to show a silent spinner for all of it — a working composer and a
-    wedged one looked identical from the outside. The composer already
+    Writing a brief is a no-thinking rewrite (target 1-5 s), and the typed
+    prompt bar used to show a silent spinner for all of it — a working
+    composer and a wedged one looked identical from the outside. The composer already
     narrates its progress (``jarvis.agentic_ide.prompt_composer``, the
     ``STAGE_*`` beats); this event carries each line to every client on the
     app socket they already hold, the same route ``AgenticIdePromptSent``

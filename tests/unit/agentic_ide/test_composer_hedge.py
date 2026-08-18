@@ -362,6 +362,13 @@ async def test_the_hedge_respects_the_shared_budget(
 # ---------------------------------------------------------------------------
 
 
+def test_the_api_first_boot_ceiling_is_eight_seconds() -> None:
+    """A no-thinking Flash brief is supposed to land inside 5 s. The old
+    20 s first-boot ceiling let a hung writer sit four times the tolerance
+    before insurance started. Behaviour tests below still monkeypatch."""
+    assert prompt_composer.HEDGE_AFTER_API_S == 8.0
+
+
 def test_without_history_the_ceilings_apply(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_S", 30.0)
     monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 20.0)

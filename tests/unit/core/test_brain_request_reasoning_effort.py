@@ -1,9 +1,8 @@
 """The reasoning-effort field must admit the values callers actually pass.
 
-Found while wiring the Agentic IDE writer: the composer has been passing
-"medium" since it was written, into a field declared to accept only "none". It
-survives only because nothing validates it — the annotation is documentation
-that is wrong, and the next person to trust it writes a bug.
+The composer now passes ``none``; the work splitter still passes ``medium``.
+Both must stay in the annotation — an annotation that is wrong is worse
+than none, because the next caller trusts it.
 """
 from __future__ import annotations
 

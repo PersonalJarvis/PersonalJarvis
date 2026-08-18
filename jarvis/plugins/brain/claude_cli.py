@@ -117,8 +117,11 @@ _FAST_STRUCTURED_ARGS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 # ``BrainRequest.reasoning_effort`` values the CLI's ``--effort`` accepts
-# verbatim. "none" is deliberately absent: the CLI has no such level, and the
-# composer's documented floor is a modest effort, never zero.
+# verbatim. "none" is mapped to ``low`` at the call site — the CLI has no
+# off switch, and ``low`` is the cheapest thinking it will run (same as
+# ``antigravity._agy_effort``). The composer now asks for none; dropping
+# the flag would leave the CLI on its own default, which is the 10-30 s
+# wait this mapping exists to stop.
 _EFFORT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high"})
 
 # The probed set of long options this install's CLI understands, filled once
@@ -291,10 +294,13 @@ class ClaudeCliBrain:
                 if flag in known:
                     argv += args
             # The caller's reasoning_effort is a QUALITY decision it already
-            # made (the composer documents "medium" as its floor). The CLI's
-            # own default may think longer without writing a better brief, so
-            # the choice is forwarded rather than dropped.
+            # made. "none" has no CLI spelling, so it becomes the lowest
+            # level the binary accepts; anything else in ``_EFFORT_LEVELS``
+            # is forwarded. Dropping the flag would leave the CLI on its
+            # own default, which thinks longer without writing a better brief.
             effort = str(getattr(req, "reasoning_effort", "") or "").strip()
+            if effort == "none":
+                effort = "low"
             if "--effort" in known and effort in _EFFORT_LEVELS:
                 argv += ["--effort", effort]
             system = str(getattr(req, "system", "") or "").strip()
