@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useEventStore } from "@/store/events";
+import { useEventStore, type VoiceState } from "@/store/events";
 import { VoiceOrb } from "@/components/agentic/VoiceOrb";
 import { MascotGigi } from "@/components/MascotGigi";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
@@ -31,12 +31,24 @@ export function DeckOrb({
   size = 240,
   readouts,
   className,
+  onPress,
+  pressLabel,
+  pressDisabled = false,
 }: {
   steps: ThinkingStep[];
   busy: boolean;
   size?: number;
   readouts?: OrbReadouts;
   className?: string;
+  /**
+   * The click-shaped wake word: pressing the orb (the mascot in it) does what
+   * saying the wake phrase does — starts the conversation, or ends the one
+   * that runs. Without it the orb is display only.
+   */
+  onPress?: () => void;
+  /** What the press does right now — the accessible name and the tooltip. */
+  pressLabel?: string;
+  pressDisabled?: boolean;
 }) {
   const voiceState = useEventStore((s) => s.voiceState);
   const reduced = useMemo(
@@ -164,12 +176,28 @@ export function DeckOrb({
       </svg>
 
       <div className="absolute inset-0 grid place-items-center">
-        <div className="relative" style={{ width: orbSize, height: orbSize }}>
-          <VoiceOrb state={voiceState} size={orbSize} className="absolute inset-0" />
-          <div className="absolute inset-0 grid place-items-center">
-            <MascotGigi size={Math.round(orbSize * 0.46)} reactToVoice enableComments={false} />
+        {onPress ? (
+          <button
+            type="button"
+            onClick={onPress}
+            disabled={pressDisabled}
+            aria-label={pressLabel}
+            title={pressLabel}
+            className={cn(
+              "relative rounded-full transition-transform duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              pressDisabled
+                ? "cursor-wait"
+                : "cursor-pointer hover:scale-[1.04] active:scale-[0.97] motion-reduce:transform-none",
+            )}
+            style={{ width: orbSize, height: orbSize }}
+          >
+            <OrbFace voiceState={voiceState} orbSize={orbSize} />
+          </button>
+        ) : (
+          <div className="relative" style={{ width: orbSize, height: orbSize }}>
+            <OrbFace voiceState={voiceState} orbSize={orbSize} />
           </div>
-        </div>
+        )}
       </div>
 
       {readouts && (
@@ -181,6 +209,18 @@ export function DeckOrb({
         </>
       )}
     </div>
+  );
+}
+
+/** The orb and the mascot inside it — the part of the centre a press lands on. */
+function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: number }) {
+  return (
+    <>
+      <VoiceOrb state={voiceState} size={orbSize} className="absolute inset-0" />
+      <div className="absolute inset-0 grid place-items-center">
+        <MascotGigi size={Math.round(orbSize * 0.46)} reactToVoice enableComments={false} />
+      </div>
+    </>
   );
 }
 

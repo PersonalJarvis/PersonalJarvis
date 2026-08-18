@@ -17,6 +17,8 @@ import { LogCard } from "@/components/deck/DeckLogCard";
 import { TurnCard } from "@/components/deck/DeckTurnCard";
 import { WikiCard } from "@/components/deck/DeckWiki";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
+import { useWakeWord } from "@/hooks/useWakeWord";
+import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -75,6 +77,14 @@ export function MissionDeckView({
   const wordsSession = useDeckStore((s) => s.wordsSession);
   const turnPhase = useDeckStore((s) => s.turn.phase);
   const { warming } = useVoiceReadiness();
+  // The orb is the click-shaped wake word: the same start/stop path the
+  // classic surface's voice bubble uses, so both do exactly one thing.
+  const { active: callActive, busy: callBusy, connecting, toggleCall } = useVoiceCall();
+  // The idle line names the real phrase ("Hey Nova"), never "your wake word":
+  // a person who just installed the app should read what to say. Until the
+  // phrase is known the name it derives from stands in.
+  const { config: wakeConfig } = useWakeWord();
+  const wakePhrase = wakeConfig?.phrase.trim() || assistantName;
 
   const running = useMemo(
     () => thinkingSteps.filter((s) => s.status === "active"),
@@ -109,7 +119,10 @@ export function MissionDeckView({
     ? lastAssistant.content
     : warming
       ? t("deck.warming")
-      : t("deck.idle_headline");
+      : t("deck.idle_headline").replace("{0}", wakePhrase);
+  const orbPressLabel = callActive
+    ? t("deck.orb_hangup")
+    : t("deck.orb_call").replace("{0}", wakePhrase);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -203,8 +216,16 @@ export function MissionDeckView({
                   sw: brainProvider || "—",
                   se: `${wordsSession} ${t("deck.orb_words")}`,
                 }}
+                onPress={() => void toggleCall()}
+                pressLabel={orbPressLabel}
+                pressDisabled={callBusy || connecting || !connected}
               />
-              <p className="max-w-[44ch] text-pretty text-sm leading-relaxed text-foreground">
+              <p
+                className={cn(
+                  "max-w-[44ch] text-pretty text-sm leading-relaxed",
+                  lastAssistant ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
                 {headline}
               </p>
             </div>

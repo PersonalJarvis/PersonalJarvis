@@ -77,7 +77,7 @@ describe("TurnCard", () => {
 
   test("says so before the first turn", () => {
     render(<TurnCard />);
-    expect(screen.getByText("No response yet. Say your wake word.")).toBeTruthy();
+    expect(screen.getByText("No response yet.")).toBeTruthy();
   });
 
   test("shows the phases, the marks and the model of the last turn", () => {
