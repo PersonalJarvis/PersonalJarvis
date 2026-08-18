@@ -9303,6 +9303,8 @@ class RealtimeVoiceSession:
                     timeout=PROGRESS_AFTER_S,
                 )
             except TimeoutError:
+                # Expected: the result is still not in after PROGRESS_AFTER_S,
+                # so fall through to the spoken progress line below.
                 pass
             else:
                 return
