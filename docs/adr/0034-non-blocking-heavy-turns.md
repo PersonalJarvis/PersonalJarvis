@@ -2,6 +2,12 @@
 
 **Status:** Accepted · **Date:** 2026-08-18 · **Phase:** Voice UX + text surfaces (every engine, every provider)
 
+**Implementation status (v1.4.0):** the realtime engine (§2) and the text
+surfaces (§4) shipped in 1.4.0. The classic pipeline (§3) is in flight:
+`[voice].background_heavy_turns` is declared in the config and documented
+here, but its pipeline reader lands with that change — until then a heavy
+turn on the classic pipeline still waits inline, exactly as before.
+
 ## Context
 
 A heavy turn — the tool model, a router round trip, a background agent —

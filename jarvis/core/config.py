@@ -2673,7 +2673,9 @@ class VoiceConfig(BaseModel):
     # ordinary utterances are answered meanwhile, and the heavy answer is
     # spoken at the next quiet turn boundary, tied back to the request. False
     # = the pre-2026-08-18 inline wait (speech during the wait cancels and
-    # recombines). Read per turn by the pipeline.
+    # recombines). Read per turn by the pipeline once the classic-pipeline
+    # half of ADR-0034 lands (in flight at 1.4.0 — the realtime half shipped
+    # first); until then the switch is declared and not yet read.
     background_heavy_turns: bool = True
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
