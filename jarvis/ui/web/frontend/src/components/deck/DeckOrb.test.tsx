@@ -1,21 +1,24 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-// The orb's face is canvas + the mascot's timers — both proven elsewhere
-// (VoiceOrb.test, MascotGigi.test). Here only the press affordance matters.
-vi.mock("@/components/agentic/VoiceOrb", () => ({
-  VoiceOrb: () => <div data-testid="voice-orb" />,
-}));
-vi.mock("@/components/MascotGigi", () => ({
-  MascotGigi: () => <div data-testid="mascot" />,
-}));
+// framer-motion's motion.img is a plain <img> for these assertions.
+vi.mock("framer-motion", async () => {
+  const actual = await vi.importActual<typeof import("framer-motion")>("framer-motion");
+  return {
+    ...actual,
+    useReducedMotion: () => true,
+  };
+});
 
 import { DeckOrb } from "@/components/deck/DeckOrb";
 
 /**
  * The orb is the click-shaped wake word (maintainer, 2026-08-18): pressing
- * the mascot in the centre does what saying the phrase does. Display-only
- * callers get no button at all.
+ * the orb in the centre does what saying the phrase does. Display-only
+ * callers get no button at all. The orb is the product's own artwork — the
+ * sphere cut out of `hero-orb.png` — with the mascot in its core (maintainer's
+ * pick, 2026-08-18, replacing the dark mask), and it carries the live voice
+ * state so it can breathe with it.
  */
 describe("DeckOrb", () => {
   afterEach(() => cleanup());
@@ -23,10 +26,23 @@ describe("DeckOrb", () => {
   test("is display only without a press handler", () => {
     render(<DeckOrb steps={[]} busy={false} />);
     expect(screen.queryByRole("button")).toBeNull();
-    expect(screen.getByTestId("mascot")).toBeTruthy();
+    expect(screen.getByTestId("jarvis-orb")).toBeTruthy();
   });
 
-  test("a press on the mascot fires the handler and carries its label", () => {
+  test("the centre is the Jarvis orb artwork with the mascot in its core", () => {
+    render(<DeckOrb steps={[]} busy={false} />);
+    const orb = screen.getByTestId("jarvis-orb");
+    expect(orb.getAttribute("data-voice")).toBe("idle");
+    const images = orb.querySelectorAll("img");
+    expect(images).toHaveLength(2);
+    expect(images[0].getAttribute("src")).toBe("/deck-orb.png");
+    expect(images[1].getAttribute("src")).toBe("/jarvis-gigi-256.png");
+    // Artwork, not content: nothing here is read out.
+    expect(images[0].getAttribute("alt")).toBe("");
+    expect(images[1].getAttribute("alt")).toBe("");
+  });
+
+  test("a press on the orb fires the handler and carries its label", () => {
     const onPress = vi.fn();
     render(
       <DeckOrb
@@ -38,7 +54,7 @@ describe("DeckOrb", () => {
     );
     const button = screen.getByRole("button", { name: /saying “Hey Nova”/ });
     expect(button.getAttribute("title")).toContain("Hey Nova");
-    fireEvent.click(screen.getByTestId("mascot"));
+    fireEvent.click(screen.getByTestId("jarvis-orb"));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 

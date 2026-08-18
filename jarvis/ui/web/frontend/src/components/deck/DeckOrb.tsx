@@ -1,22 +1,23 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useEventStore, type VoiceState } from "@/store/events";
-import { VoiceOrb } from "@/components/agentic/VoiceOrb";
-import { MascotGigi } from "@/components/MascotGigi";
+import { JarvisOrb } from "@/components/deck/JarvisOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import { HudHaloDefs } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
 
 /**
- * The centre of the deck: the voice orb with the mascot inside it, set in a
- * reticle — a dial ring, corner brackets, one bright arc per running step,
+ * The centre of the deck: the Jarvis orb with the mascot in its core, set in
+ * a reticle — a dial ring, corner brackets, one bright arc per running step,
  * and four small readouts at the compass points.
  *
- * The orb is the app's own (`agentic/VoiceOrb`), driven by the real voice
- * state — it breathes, listens and speaks the way it does everywhere else in
- * the product, so the deck's centre is recognisably the assistant. The
- * reticle is the deck's addition, and every part of it carries information:
- * the arcs are parallel work made visible, the sweep turns only while
- * something runs, the readouts are live values the caller sources.
+ * The orb is the product's own artwork (`JarvisOrb`: the sphere cut out of
+ * `hero-orb.png`), moved a little by the real voice state, with a soft gold
+ * glow carrying it past its own edge. The maintainer asked for the picture
+ * itself in the middle (2026-08-18) after the procedural cloud with a dark
+ * mascot on it read as a blob. The reticle is the deck's addition, and every
+ * part of it carries information: the arcs are parallel work made visible,
+ * the sweep turns only while something runs, the readouts are live values the
+ * caller sources.
  */
 export interface OrbReadouts {
   nw: string;
@@ -41,7 +42,7 @@ export function DeckOrb({
   readouts?: OrbReadouts;
   className?: string;
   /**
-   * The click-shaped wake word: pressing the orb (the mascot in it) does what
+   * The click-shaped wake word: pressing the orb (the mask in it) does what
    * saying the wake phrase does — starts the conversation, or ends the one
    * that runs. Without it the orb is display only.
    */
@@ -73,7 +74,7 @@ export function DeckOrb({
   }, [busy, reduced]);
 
   const R = size / 2;
-  const orbSize = Math.round(size * 0.58);
+  const orbSize = Math.round(size * 0.78);
   const point = (deg: number, r: number): [number, number] => {
     const rad = ((deg - 90) * Math.PI) / 180;
     return [R + r * Math.cos(rad), R + r * Math.sin(rad)];
@@ -109,8 +110,11 @@ export function DeckOrb({
           `M ${size - 0.5} ${size - B} V ${size - 0.5} H ${size - B}`,
           `M ${B} ${size - 0.5} H 0.5 V ${size - B}`,
         ].map((d) => (
-          <path key={d} d={d} fill="none" stroke="hsl(var(--primary))" strokeWidth={1.5} opacity={0.6} />
+          <path key={d} d={d} fill="none" stroke="hsl(var(--primary))" strokeWidth={1.25} opacity={0.8} />
         ))}
+
+        {/* bezel — the hairline the ticks hang from */}
+        <circle cx={R} cy={R} r={R * 0.94} fill="none" stroke="hsl(var(--primary))" strokeWidth={1} opacity={0.5} />
 
         {/* outer dial: 72 ticks, long every 15° */}
         {Array.from({ length: 72 }, (_, i) => {
@@ -127,7 +131,7 @@ export function DeckOrb({
               y2={by}
               stroke="hsl(var(--primary))"
               strokeWidth={1}
-              opacity={long ? 0.5 : 0.18}
+              opacity={long ? 0.78 : 0.42}
             />
           );
         })}
@@ -135,11 +139,11 @@ export function DeckOrb({
         {[0, 90, 180, 270].map((deg) => {
           const [ax, ay] = point(deg, R * 0.96);
           const [bx, by] = point(deg, R * 1.0);
-          return <line key={deg} x1={ax} y1={ay} x2={bx} y2={by} stroke="hsl(var(--primary))" strokeWidth={1.5} opacity={0.7} />;
+          return <line key={deg} x1={ax} y1={ay} x2={bx} y2={by} stroke="hsl(var(--primary))" strokeWidth={1.5} opacity={0.9} />;
         })}
 
         {/* inner scale ring around the orb */}
-        <circle cx={R} cy={R} r={R * 0.84} fill="none" stroke="hsl(var(--border))" strokeWidth={1} opacity={0.7} />
+        <circle cx={R} cy={R} r={R * 0.84} fill="none" stroke="hsl(var(--primary))" strokeWidth={1} opacity={0.5} />
         <circle
           cx={R}
           cy={R}
@@ -148,7 +152,7 @@ export function DeckOrb({
           stroke="hsl(var(--primary))"
           strokeWidth={1}
           strokeDasharray="2 6"
-          opacity={0.35}
+          opacity={0.55}
         />
 
         {arcs.map((a) => (
@@ -169,7 +173,7 @@ export function DeckOrb({
             stroke="hsl(var(--primary))"
             strokeWidth={2}
             strokeLinecap="butt"
-            opacity={0.6}
+            opacity={0.7}
           />
         )}
         </g>
@@ -212,14 +216,24 @@ export function DeckOrb({
   );
 }
 
-/** The orb and the mascot inside it — the part of the centre a press lands on. */
+/**
+ * The orb and the mask inside it — the part of the centre a press lands on.
+ *
+ * Back to front: a soft gold glow wider than the sphere; the weather itself;
+ * a bronze tint that darkens the weather toward the core so the gold sits at
+ * the rim; the dark core with the glowing eyes.
+ */
 function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: number }) {
+  const glow = Math.round(orbSize * 1.35);
   return (
     <>
-      <VoiceOrb state={voiceState} size={orbSize} className="absolute inset-0" />
-      <div className="absolute inset-0 grid place-items-center">
-        <MascotGigi size={Math.round(orbSize * 0.46)} reactToVoice enableComments={false} />
-      </div>
+      <div
+        aria-hidden
+        className="deck-orb-glow pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+        data-voice={voiceState}
+        style={{ width: glow, height: glow }}
+      />
+      <JarvisOrb size={orbSize} voiceState={voiceState} className="absolute inset-0" />
     </>
   );
 }
