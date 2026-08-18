@@ -266,7 +266,12 @@ _DELEGATE_READBACK_POLL_S = 0.1
 # a provider-rendered delegate readback, with NO new user input in between,
 # answers nothing the user asked. The window bounds the guard so a genuine
 # later answer is never at risk; local microphone voice, a new transcript, or
-# any deliberate injection disarms it immediately.
+# any deliberate injection disarms it immediately. It is measured from the
+# SURFACE boundary, not from the provider's: the desktop drains its speaker
+# queue inside that boundary, and the provider streams a reply faster than
+# real time, so a stamp taken at the provider boundary is stale by the
+# reply's remaining playback — 7.6 s and 4.6 s readbacks both slipped past a
+# 2.5 s window and were spoken twice (live 2026-08-18 18:40, BUG-148).
 _STALE_GENERATION_WINDOW_S = 2.5
 # A discarded generation is released by its own boundary. Every awaited state
 # in this file carries a bound (the turn stall watchdog, the late-result
@@ -1353,6 +1358,10 @@ class _DelegateTurnState:
     requires_public_fact_grounding: bool = False
     public_fact_grounding_timeout_s: float = 0.0
     delivery_started: bool = False
+    # When the trusted result left for the provider (monotonic); 0.0 until
+    # then. Forensics only: it lets a boundary that closes the turn with no
+    # audio say how long after the delivery it arrived (BUG-148).
+    delivered_at: float = 0.0
     provider_boundary_seen: bool = False
     provider_stream_ended: bool = False
     user_text: str = ""
@@ -4864,8 +4873,16 @@ class RealtimeVoiceSession:
                             self._output_transcript.append(fallback_text)
                         log.warning(
                             "realtime[%s] provider produced no audio for a "
-                            "grounded Brain result; using surface TTS fallback",
+                            "grounded Brain result (boundary %.2fs after "
+                            "delivery, transcript=%d chars); using surface "
+                            "TTS fallback",
                             self.session_id,
+                            (
+                                time.monotonic() - delegate_state.delivered_at
+                                if delegate_state.delivered_at
+                                else -1.0
+                            ),
+                            len("".join(self._output_transcript)),
                         )
                         # One reply, one voice (live forensic 2026-07-16
                         # 11:43: THREE renderings of the same answer). The
@@ -4926,6 +4943,7 @@ class RealtimeVoiceSession:
                         self._external_update is not None
                         and self._output_samples_sent > 0
                     )
+                    guard_reply = ""
                     if rendered_delegate_reply or rendered_injected_readback:
                         # The provider just rendered a text Jarvis injected (a
                         # delegate result, a late result, an announcement) and
@@ -4933,10 +4951,16 @@ class RealtimeVoiceSession:
                         # transport a SECOND generation can follow within
                         # milliseconds — the answer to the user's trailing
                         # speech, which re-renders the same text (BUG-143).
-                        # Arm the guard before the turn resets so that
-                        # generation is discarded instead of opening a phantom
-                        # turn and speaking the reply twice.
-                        self._arm_stale_generation_guard(
+                        # The guard is armed AFTER the surface boundary below,
+                        # not here: on the desktop that boundary blocks until
+                        # the speaker queue has drained, and the provider had
+                        # streamed the whole reply faster than real time — so
+                        # a stamp taken now is already seconds old when the
+                        # next event is judged, and every reply longer than
+                        # the guard window slipped through as a phantom turn
+                        # (live 2026-08-18 18:40: 7.6 s and 4.6 s readbacks,
+                        # both spoken twice; BUG-148).
+                        guard_reply = (
                             str(delegate_state.last_reply or "")
                             if rendered_delegate_reply and delegate_state is not None
                             else str(
@@ -4944,7 +4968,12 @@ class RealtimeVoiceSession:
                                 or ""
                             )
                         )
+                    boundary_at = time.monotonic()
                     await self._complete_surface_turn()
+                    if guard_reply and self._may_arm_stale_generation_guard(
+                        boundary_at
+                    ):
+                        self._arm_stale_generation_guard(guard_reply)
                     if self._end_after_turn:
                         # end_call was acknowledged; the model has now spoken
                         # its goodbye to the end — hang up.
@@ -7596,6 +7625,28 @@ class RealtimeVoiceSession:
             return
         self._stale_generation_guard_armed_at = time.monotonic()
         self._stale_generation_guard_reply = str(reply or "")
+        log.info(
+            "realtime[%s] stale-generation guard armed for %.1fs after the "
+            "rendered readback",
+            self.session_id,
+            _STALE_GENERATION_WINDOW_S,
+        )
+
+    def _may_arm_stale_generation_guard(self, boundary_at: float) -> bool:
+        """Whether the readback turn closed quietly enough to arm the guard.
+
+        ``boundary_at`` is when the provider's boundary was received; the
+        surface boundary that follows it can take seconds (the desktop drains
+        its speaker queue inside ``send_json``). Anything the user did in
+        that span — a confirmed barge-in, local voice, a transcript that
+        opened the next turn — is fresh evidence that whatever the provider
+        says next was asked for, so the guard must not arm at all.
+        """
+        return bool(
+            not self._turn_id
+            and not self._user_speech_active
+            and self._last_voiced_input_monotonic <= boundary_at
+        )
 
     def _disarm_stale_generation_guard(self) -> None:
         self._stale_generation_guard_armed_at = 0.0
@@ -9666,6 +9717,7 @@ class RealtimeVoiceSession:
                 )
                 turn_state.pending_tool_calls.clear()
             if turn_state.pending_tool_calls:
+                delivery_wire = "tool result"
                 for call_id, wire_name in tuple(turn_state.pending_tool_calls):
                     await self._session.send_tool_result(
                         call_id,
@@ -9676,6 +9728,7 @@ class RealtimeVoiceSession:
             else:
                 send_speech = getattr(self._session, "send_speech", None)
                 if callable(send_speech):
+                    delivery_wire = "direct speech"
                     await send_speech(trusted_reply)
                     if getattr(
                         self._session, "direct_speech_is_authoritative", False
@@ -9689,6 +9742,7 @@ class RealtimeVoiceSession:
                         for chunk in self._gate.release_available():
                             await self._emit_audio(chunk)
                 else:
+                    delivery_wire = "text"
                     await self._session.send_text(
                         _delegate_result_prompt(
                             trusted_reply,
@@ -9710,6 +9764,14 @@ class RealtimeVoiceSession:
                 turn_state.last_reply,
             )
             return
+        turn_state.delivered_at = time.monotonic()
+        log.info(
+            "realtime[%s] deterministic delegate result delivered via %s "
+            "(%d chars) — awaiting the provider's readback",
+            self.session_id,
+            delivery_wire,
+            len(trusted_reply),
+        )
         await self._verify_delegate_readback(turn_id, turn_state)
 
     async def _verify_delegate_readback(
@@ -9924,6 +9986,13 @@ class RealtimeVoiceSession:
                 exc_info=True,
             )
             return
+        turn_state.delivered_at = time.monotonic()
+        log.info(
+            "realtime[%s] delegate result delivered via tool result "
+            "(%d chars) — awaiting the provider's readback",
+            self.session_id,
+            len(str(turn_state.last_reply or "")),
+        )
         await self._verify_delegate_readback(turn_id, turn_state)
 
     async def _dispatch_brain_turn(

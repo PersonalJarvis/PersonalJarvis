@@ -520,6 +520,104 @@ async def test_follow_up_landing_mid_drop_keeps_its_own_turn(
 
 
 # ---------------------------------------------------------------------------
+# The surface boundary drains the speaker (BUG-148)
+# ---------------------------------------------------------------------------
+
+
+async def _run_with_draining_surface(
+    provider: _ServerVadProvider,
+    *,
+    drain_s: float,
+    on_drain: Any = None,
+    settle_s: float = 0.6,
+) -> tuple[RealtimeVoiceSession, list[dict[str, Any]], list[bytes], _FakeBus]:
+    """Like ``_run``, but ``send_json`` blocks on ``turn_complete`` the way
+    the desktop surface does while its speaker queue drains."""
+    brain = _DelegatingBrain()
+    messages: list[dict[str, Any]] = []
+    binaries: list[bytes] = []
+    bus = _FakeBus()
+    holder: dict[str, RealtimeVoiceSession] = {}
+
+    async def _send_json(message: dict[str, Any]) -> None:
+        messages.append(message)
+        if message.get("type") == "turn_complete":
+            await asyncio.sleep(drain_s)
+            if on_drain is not None:
+                await on_drain(holder["session"])
+
+    session = RealtimeVoiceSession(
+        session_id="stale-generation-guard-drain",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=_send_json,
+        provider=provider,
+        config=_config(),
+        bus=bus,
+        browser_sample_rate=16_000,
+        surface="desktop",
+        brain=brain,
+    )
+    holder["session"] = session
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    try:
+        await asyncio.wait_for(provider.session.text_sent.wait(), timeout=10.0)
+        await asyncio.wait_for(provider.session.readback_done.wait(), timeout=10.0)
+        await asyncio.sleep(drain_s + settle_s)
+    finally:
+        await session.end(reason="test")
+    return session, messages, binaries, bus
+
+
+@pytest.mark.asyncio
+async def test_second_generation_is_discarded_even_after_a_long_speaker_drain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-08-18 18:40 (BUG-148): the provider streams a 7.6 s reply in
+    a couple of seconds and sends its boundary; the desktop then drains the
+    speaker for the rest of the reply INSIDE the surface boundary. A guard
+    stamped at the provider boundary is older than its own window by the
+    time the phantom generation is judged — so the reply was spoken twice.
+    The window must run from the surface boundary."""
+    _shorten_delegate_waits(monkeypatch)
+    # Window shorter than the drain: the old stamp would already be stale.
+    monkeypatch.setattr(session_module, "_STALE_GENERATION_WINDOW_S", 0.1)
+    provider = _ServerVadProvider(script="second-generation")
+
+    session, messages, binaries, bus = await _run_with_draining_surface(
+        provider, drain_s=0.35
+    )
+
+    assert len(binaries) == 1
+    assert _assistant_texts(messages) == [REPLY]
+    assert sum(1 for m in messages if m.get("type") == "turn_complete") == 1
+    assert _turn_starts(bus) == 1
+    assert session._stale_generations_dropped == 1
+
+
+@pytest.mark.asyncio
+async def test_voice_during_the_speaker_drain_keeps_the_next_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user barged in while the reply was still draining: what the
+    provider says next was asked for, so the guard must not arm at all."""
+    _shorten_delegate_waits(monkeypatch)
+    provider = _ServerVadProvider(script="after-local-voice")
+
+    async def _user_barges_in(session: RealtimeVoiceSession) -> None:
+        # What handle_audio_frame stamps for the confirmed barge-in frame.
+        session._last_voiced_input_monotonic = time.monotonic()
+
+    session, messages, binaries, _bus = await _run_with_draining_surface(
+        provider, drain_s=0.2, on_drain=_user_barges_in
+    )
+
+    assert len(binaries) == 2
+    assert _assistant_texts(messages) == [REPLY, FOLLOW_UP_ANSWER]
+    assert session._stale_generations_dropped == 0
+    assert session._stale_generation_guard_armed_at == 0.0
+
+
+# ---------------------------------------------------------------------------
 # Capability gate and predicate
 # ---------------------------------------------------------------------------
 

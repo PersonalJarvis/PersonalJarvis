@@ -28,7 +28,7 @@ from jarvis.plugins.tts import (
     _tts_has_credential,
     build_realtime_surface_tts,
 )
-from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
+from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS, VertexTTS
 from jarvis.ui.web.provider_spec import PROVIDERS
 
 # The realtime tier's own provider ids — the ones ALLOWED to put a
@@ -44,7 +44,10 @@ _REALTIME_PROVIDER_IDS = tuple(
 def _cfg(voice: str = "Fenrir") -> SimpleNamespace:
     return SimpleNamespace(
         brain=SimpleNamespace(
-            providers={"gemini-live": SimpleNamespace(voice=voice)},
+            providers={
+                "gemini-live": SimpleNamespace(voice=voice),
+                "vertex-live": SimpleNamespace(voice=voice),
+            },
         ),
         tts=SimpleNamespace(
             language_code="de-DE",
@@ -155,6 +158,51 @@ def test_surface_fallback_always_streams_whatever_the_pipeline_knob_says() -> No
         "into a blocking whole-answer take"
     )
     assert tts._chunk_by_sentence is False
+
+
+# ---------------------------------------------------------------------------
+# Vertex Live: same voices, Cloud project credential path (BUG-148).
+# ---------------------------------------------------------------------------
+
+
+def test_vertex_live_builds_vertex_tts_with_session_voice() -> None:
+    """Live 2026-08-18 18:41: three grounded Vertex Live answers were never
+    heard because the family map knew only gemini-live — the surface fallback
+    stayed text-only while the host had a working Vertex TTS. Provider parity:
+    vertex-live gets its own sibling, keyed through the Vertex slots."""
+    with override_provider_secrets({"vertex-live": "rt-vertex-key"}):
+        tts = build_realtime_surface_tts(_cfg(), "vertex-live")
+    assert isinstance(tts, VertexTTS)
+    assert tts._default_voice == "Fenrir"
+    assert tts._resolve_api_key() == "rt-vertex-key"
+    # Same emergency-render profile as the AI-Studio sibling.
+    assert tts._streaming is True
+    assert tts._chunk_by_sentence is False
+
+
+def test_vertex_live_builds_on_the_project_path_without_a_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Application Default Credentials: a configured [google].vertex_project
+    is a full Vertex setup with no key anywhere. The sibling must still be
+    built; VertexTTS resolves the credential state itself."""
+    monkeypatch.setattr(
+        "jarvis.core.config.vertex_credential_configured", lambda *_a, **_k: True
+    )
+    with override_provider_secrets({"vertex-live": None}):
+        tts = build_realtime_surface_tts(_cfg(), "vertex-live")
+    assert isinstance(tts, VertexTTS)
+    assert tts._api_key is None
+
+
+def test_vertex_live_without_any_credential_yields_no_surface_tts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.core.config.vertex_credential_configured", lambda *_a, **_k: False
+    )
+    with override_provider_secrets({"vertex-live": None}):
+        assert build_realtime_surface_tts(_cfg(), "vertex-live") is None
 
 
 def test_keyless_realtime_provider_yields_no_surface_tts() -> None:

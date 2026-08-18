@@ -9,6 +9,7 @@ mono PCM at 16 kHz and emits the same format at 24 kHz.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -253,6 +254,55 @@ class _GeminiLiveSession:
         # open a turn of its own.
         self._user_turn_open = False
         self._model_generating = False
+        # Wire forensics (BUG-148). One line per client text/tool input and
+        # one per server generation boundary — the minimum that lets a
+        # doubled or missing reply be attributed from the log alone. The
+        # 2026-08-18 18:40 session (a readback spoken twice, then three
+        # answers never rendered) was undiagnosable without it: neither what
+        # was sent nor which generation a boundary closed was recorded.
+        self._gen_audio_bytes = 0
+        self._gen_transcript_chars = 0
+        self._gen_function_calls = 0
+        self._gen_started_at = 0.0
+        self._last_input_kind = "connect"
+        self._last_input_at = time.monotonic()
+
+    def _note_input_sent(self, kind: str) -> None:
+        self._last_input_kind = kind
+        self._last_input_at = time.monotonic()
+
+    def _note_generation_output(
+        self, *, audio_bytes: int = 0, transcript_chars: int = 0, calls: int = 0
+    ) -> None:
+        if not self._gen_started_at:
+            self._gen_started_at = time.monotonic()
+            log.info(
+                "gemini-live: generation started %.2fs after the last %s input",
+                self._gen_started_at - self._last_input_at,
+                self._last_input_kind,
+            )
+        self._gen_audio_bytes += audio_bytes
+        self._gen_transcript_chars += transcript_chars
+        self._gen_function_calls += calls
+
+    def _log_generation_boundary(self, *, kind: str, reason: str = "") -> None:
+        started = self._gen_started_at
+        log.info(
+            "gemini-live: %s — audio=%.1fs transcript=%d chars function_calls=%d "
+            "generation=%s; %.2fs after the last %s input%s",
+            kind,
+            self._gen_audio_bytes / float(_OUTPUT_RATE * 2),
+            self._gen_transcript_chars,
+            self._gen_function_calls,
+            (f"{time.monotonic() - started:.2f}s" if started else "none"),
+            time.monotonic() - self._last_input_at,
+            self._last_input_kind,
+            f" reason={reason}" if reason else "",
+        )
+        self._gen_audio_bytes = 0
+        self._gen_transcript_chars = 0
+        self._gen_function_calls = 0
+        self._gen_started_at = 0.0
 
     async def send_audio(self, chunk: Any) -> None:
         from google.genai import types  # lazy (AP-26)
@@ -286,6 +336,7 @@ class _GeminiLiveSession:
                 data = getattr(message, "data", None)
                 if data:
                     self._note_model_output()
+                    self._note_generation_output(audio_bytes=len(data))
                     yield _ProviderEvent(
                         type="audio_delta",
                         audio=_PcmChunk(pcm=bytes(data), sample_rate=_OUTPUT_RATE),
@@ -308,6 +359,14 @@ class _GeminiLiveSession:
                     self._pending_usage = None
                 if function_calls:
                     self._note_model_output()
+                    self._note_generation_output(calls=len(function_calls))
+                    log.info(
+                        "gemini-live: function call(s) %s",
+                        ", ".join(
+                            str(getattr(call, "name", "") or "?")
+                            for call in function_calls
+                        ),
+                    )
                 for function_call in function_calls:
                     raw_args = getattr(function_call, "args", None) or {}
                     if hasattr(raw_args, "model_dump"):
@@ -333,6 +392,9 @@ class _GeminiLiveSession:
                     )
                     if output_text:
                         self._note_model_output()
+                        self._note_generation_output(
+                            transcript_chars=len(output_text)
+                        )
                         yield _ProviderEvent(
                             type="output_transcript_delta", text=output_text
                         )
@@ -352,6 +414,7 @@ class _GeminiLiveSession:
                         # A barge-in ends the generation, so the channel is
                         # free again for the user turn that just started.
                         self._model_generating = False
+                        self._log_generation_boundary(kind="interrupted")
                         yield _ProviderEvent(type="interrupted")
 
                     input_transcription = getattr(
@@ -401,6 +464,15 @@ class _GeminiLiveSession:
                                 type="usage", usage=self._pending_usage
                             )
                             self._pending_usage = None
+                        self._log_generation_boundary(
+                            kind=(
+                                "turn complete (function call, boundary "
+                                "withheld)"
+                                if function_calls
+                                else "turn complete"
+                            ),
+                            reason=reason_name,
+                        )
                         if not function_calls:
                             yield _ProviderEvent(type="turn_complete")
 
@@ -501,12 +573,15 @@ class _GeminiLiveSession:
         for key in ordered:
             self._delivered_steering[key] = self._pending_steering[key][0]
         self._pending_steering.clear()
+        self._note_input_sent("steering text")
         # Keys only, never the directive text: this line exists so a call where
         # the model "did not answer the way it normally would" can be checked
-        # against what actually reached it.
-        log.debug(
-            "gemini-live: delivered a per-turn steering delta (%s)",
+        # against what actually reached it — and, since it is a text input of
+        # its own on this channel, so a generation it provokes is attributable.
+        log.info(
+            "gemini-live: delivered a per-turn steering delta (%s; %d chars)",
             ", ".join(ordered),
+            len(body),
         )
 
     async def update_session(
@@ -563,7 +638,16 @@ class _GeminiLiveSession:
         """Send an incremental text turn through the current Gemini 3.1 API."""
         # Gemini 3.1 permits send_client_content only for initial history.
         # Runtime text updates must use the realtime-input text stream.
-        await self._session.send_realtime_input(text=str(text))
+        payload = str(text)
+        log.info(
+            "gemini-live: text input sent (%d chars; model_generating=%s "
+            "user_turn_open=%s)",
+            len(payload),
+            self._model_generating,
+            self._user_turn_open,
+        )
+        await self._session.send_realtime_input(text=payload)
+        self._note_input_sent("text")
 
     async def truncate(self, audio_end_ms: int) -> None:
         del audio_end_ms  # Gemini interrupts generation when new audio arrives.
@@ -577,6 +661,11 @@ class _GeminiLiveSession:
     ) -> None:
         from google.genai import types  # lazy (AP-26)
 
+        log.info(
+            "gemini-live: tool response sent for %s (model_generating=%s)",
+            name or "?",
+            self._model_generating,
+        )
         await self._session.send_tool_response(
             function_responses=[
                 types.FunctionResponse(
@@ -586,6 +675,7 @@ class _GeminiLiveSession:
                 )
             ]
         )
+        self._note_input_sent("tool response")
 
     async def close(self) -> None:
         if self._closed:

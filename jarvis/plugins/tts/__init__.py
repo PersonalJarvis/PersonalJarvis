@@ -294,6 +294,13 @@ def resolve_keyed_fallback(
 # not even as a last resort.
 _REALTIME_SURFACE_TTS_FAMILY: dict[str, str] = {
     "gemini-live": "gemini-flash-tts",
+    # Vertex Live's own sibling: the same Gemini voices on the Cloud project
+    # path, keyed by the Vertex slots or Application Default Credentials —
+    # never the AI-Studio key. Without this entry a Vertex Live turn whose
+    # provider rendered no audio stayed TEXT-ONLY while the pipeline had a
+    # working Vertex TTS all along (live 2026-08-18 18:41: three grounded
+    # answers in a row were never heard; provider & mode parity, BUG-148).
+    "vertex-live": "vertex-tts",
 }
 
 
@@ -317,10 +324,19 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
     if not family:
         return None
     try:
-        from jarvis.core.config import get_provider_secret
+        from jarvis.core.config import (
+            get_provider_secret,
+            vertex_credential_configured,
+        )
 
-        api_key = get_provider_secret(provider_id)
-        if not api_key:
+        api_key = get_provider_secret(provider_id) or ""
+        if not api_key and family == "vertex-tts" and vertex_credential_configured():
+            # The Cloud project path signs with Application Default
+            # Credentials: a fully configured Vertex host may hold no key at
+            # all. ``VertexTTS`` resolves that itself; an empty key here
+            # simply means "the shared Vertex credential state decides".
+            api_key = ""
+        elif not api_key:
             log.info(
                 "Realtime surface TTS: no key for realtime provider %r — "
                 "the emergency re-render stays text-only (strict mode "
@@ -336,8 +352,11 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
         session_voice = str(getattr(provider_cfg, "voice", "") or "").strip()
         tts_cfg = getattr(cfg, "tts", None)
 
-        if family == "gemini-flash-tts":
-            from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
+        if family in {"gemini-flash-tts", "vertex-tts"}:
+            from jarvis.plugins.tts.gemini_flash_tts import (
+                GeminiFlashTTS,
+                VertexTTS,
+            )
 
             # The Live API and Gemini Flash TTS share one prebuilt-voice
             # catalog, so the session voice usually carries over verbatim.
@@ -359,7 +378,12 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
                     if profile_gender
                     else None
                 ) or "Charon"
-            surface: Any = GeminiFlashTTS(
+            # Same voice catalogue, same emergency-render knobs; only the
+            # credential path differs (AI-Studio key vs. Vertex key/ADC).
+            surface_cls: Any = (
+                VertexTTS if family == "vertex-tts" else GeminiFlashTTS
+            )
+            surface: Any = surface_cls(
                 default_voice=voice,
                 language_code=getattr(tts_cfg, "language_code", None) or "de-DE",
                 allow_sapi5_fallback=bool(
@@ -389,7 +413,7 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
                 chunk_by_sentence=False,
                 seed=getattr(tts_cfg, "seed", None),
                 temperature=getattr(tts_cfg, "temperature", None),
-                api_key=api_key,
+                api_key=api_key or None,
             )
         else:  # pragma: no cover — map entries always name a buildable family
             return None
