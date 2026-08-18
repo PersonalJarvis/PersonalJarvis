@@ -14,6 +14,8 @@ Feature 2026-08-13. These lock the four contracts everything else depends on:
 """
 from __future__ import annotations
 
+import functools
+
 import pytest
 
 import jarvis.core.config as core_config
@@ -202,10 +204,19 @@ def test_a_user_copy_shadows_a_builtin_but_stays_restorable() -> None:
     edited = modes.get_mode(modes.MODE_FRIEND)
     assert edited is not None and edited.character == "Totally different."
     assert edited.built_in is True, "still offers 'restore the original'"
+    # ``edited`` is what tells a UI that "restore" would actually do something.
+    assert edited.edited is True
+    assert edited.to_payload()["edited"] is True
 
     assert modes.restore_builtin(modes.MODE_FRIEND) is True
     restored = modes.get_mode(modes.MODE_FRIEND)
     assert restored is not None and "not serving a client" in restored.character
+    assert restored.edited is False
+
+    # A mode of the user's own is not "edited": there is no original under it.
+    modes.save_mode(slug="pirate", name="Pirate", character="Arr.")
+    own = modes.get_mode("pirate")
+    assert own is not None and own.built_in is False and own.edited is False
 
 
 def test_a_stored_pointer_to_a_vanished_mode_degrades_to_the_default() -> None:
@@ -263,3 +274,49 @@ def test_override_is_never_written_to_config(monkeypatch: pytest.MonkeyPatch) ->
 def test_override_naming_an_unknown_mode_raises() -> None:
     with pytest.raises(modes.ModeError):
         modes.set_section_override("no-such-mode")
+
+
+# ---------------------------------------------------------------------------
+# The real round trip through jarvis.toml
+# ---------------------------------------------------------------------------
+#
+# Every test above stubs ``_configured_slug`` — which is exactly how a broken
+# reader shipped: it imported an accessor the config layer does not have,
+# swallowed the ImportError, and returned the default forever. The switch was
+# written to disk on every click and never read back; the check mark on the
+# modes screen never moved. This test goes through the actual file.
+
+
+def test_the_stored_choice_is_read_back_from_the_real_config(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core import config_writer
+
+    monkeypatch.undo()  # drop the stubs from ``_isolate``; the file is the point
+    monkeypatch.setattr(core_config, "DATA_DIR", tmp_path)
+    target = tmp_path / "jarvis.toml"
+    target.write_text('[persona]\nactive_mode = "coach"\n', encoding="utf-8")
+    monkeypatch.setenv("JARVIS_CONFIG", str(target))
+    core_config.clear_config_cache()
+
+    assert modes._configured_slug() == "coach"
+    assert modes.active_slug() == "coach"
+
+    # A write through the real writer is visible on the very next read. Only
+    # the target path is redirected; the writer itself is the real one.
+    monkeypatch.setattr(
+        config_writer,
+        "set_active_mode",
+        functools.partial(config_writer.set_active_mode, path=target),
+    )
+    modes.set_active("friend")
+    assert modes._configured_slug() == "friend"
+    assert modes.chosen_slug() == "friend"
+    assert modes.active_slug() == "friend"
+
+    # A stored slug that no longer names a mode degrades to the default — the
+    # config could have come from another machine.
+    target.write_text('[persona]\nactive_mode = "pirate"\n', encoding="utf-8")
+    core_config.clear_config_cache()
+    assert modes._configured_slug() == "pirate"
+    assert modes.active_slug() == modes.DEFAULT_MODE

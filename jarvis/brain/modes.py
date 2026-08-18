@@ -145,6 +145,10 @@ class Mode:
     voice: str = ""
     verbosity: str = VERBOSITY_NORMAL
     proactivity: str = PROACTIVITY_NORMAL
+    #: True when a built-in has been overlaid by the user's own file. Only then
+    #: does "restore the original" do anything, so a UI can offer it exactly
+    #: when it means something and label the card as edited.
+    edited: bool = False
 
     def to_payload(self) -> dict[str, object]:
         """JSON-ready shape shared by the REST routes and the CLI."""
@@ -155,6 +159,7 @@ class Mode:
             "description": self.description,
             "character": self.character,
             "built_in": self.built_in,
+            "edited": self.edited,
             "voice": self.voice,
             "verbosity": self.verbosity,
             "proactivity": self.proactivity,
@@ -312,7 +317,8 @@ def list_modes() -> tuple[Mode, ...]:
 
     merged: dict[str, Mode] = dict(builtins)
     for slug, mode in overrides.items():
-        merged[slug] = replace(mode, built_in=slug in builtins)
+        is_builtin = slug in builtins
+        merged[slug] = replace(mode, built_in=is_builtin, edited=is_builtin)
 
     ordered = [merged[s] for s in BUILTIN_SLUGS if s in merged]
     ordered.extend(
@@ -350,12 +356,24 @@ def has_user_copy(slug: str) -> bool:
 
 
 def _configured_slug() -> str:
-    """The user's sticky choice from ``[persona] active_mode``."""
-    try:
-        from jarvis.core.config import get_config
+    """The user's sticky choice from ``[persona] active_mode``.
 
-        raw = getattr(getattr(get_config(), "persona", None), "active_mode", "")
-    except Exception:  # noqa: BLE001 - config unavailable mid-reload
+    Read through ``load_config()`` — the one accessor the config layer has —
+    which is cached on the file's identity and invalidated by ``config_writer``
+    on every write, so a switch is visible on the very next read without a
+    restart. The first version imported a ``get_config`` that never existed and
+    swallowed the ``ImportError`` in a blanket ``except``: every read came back
+    as the default, the check mark on the modes screen never moved, and the
+    assistant never ran the mode the user had picked. Only failures of the READ
+    itself are tolerated here (a half-written file mid-reload); a broken import
+    is a bug and must surface as one.
+    """
+    from jarvis.core.config import load_config
+
+    try:
+        raw = getattr(getattr(load_config(), "persona", None), "active_mode", "")
+    except (OSError, ValueError) as exc:  # a config that cannot be parsed right now
+        log.warning("Could not read [persona] active_mode (%s) — using %s.", exc, DEFAULT_MODE)
         return DEFAULT_MODE
     slug = (raw or "").strip().lower()
     return slug or DEFAULT_MODE
