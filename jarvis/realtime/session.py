@@ -3222,6 +3222,8 @@ class RealtimeVoiceSession:
         try:
             ms = int(raw) if raw is not None else _TURN_PAUSE_DEFAULT_MS
         except (TypeError, ValueError):
+            # A non-numeric slider value is a config typo, not a fault: the
+            # default keeps the call usable, and the clamp below bounds it.
             ms = _TURN_PAUSE_DEFAULT_MS
         return max(_TURN_PAUSE_MIN_MS, min(_TURN_PAUSE_MAX_MS, ms))
 
