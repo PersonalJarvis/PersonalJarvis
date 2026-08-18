@@ -94,6 +94,13 @@ from jarvis.voice.instant_ack import (
     pick_progress_text,
     plan_instant_ack,
 )
+from jarvis.voice.parked_results import (
+    WAIT_QUERY_PROGRESS,
+    WAIT_QUERY_RESULT,
+    ParkedResult,
+    classify_wait_query,
+    requested_result,
+)
 
 log = logging.getLogger(__name__)
 
@@ -746,9 +753,31 @@ _DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF = _handoff_variant(
 )
 # Delivering a result whose turn already closed must never race the live turn:
 # the session waits until it is at rest, then speaks the result as an explicit
-# follow-up. The bound only decides how long a result may wait for that silence.
-_LATE_DELEGATE_DELIVERY_TIMEOUT_S = 30.0
+# follow-up. There is NO time bound on that wait (ADR-0034): a result the user
+# asked for leaves the queue only delivered, cancelled, superseded, or — at
+# session end — re-routed to the detached completion channel. The 30 s bound
+# that stood here until 2026-08-18 dropped the answer whenever the user simply
+# kept talking. The poll interval only sets how quickly a rest is noticed;
+# the "still parked" log line keeps a long wait visible (AP-30).
 _LATE_DELEGATE_POLL_S = 0.15
+_LATE_DELEGATE_STILL_PARKED_LOG_S = 60.0
+# A provider-requested ``jarvis_action`` that is still pending when the user
+# opens a NEW turn is answered on the wire with this interim payload, so a
+# transport that waits for the function response (Gemini Live: blocking calls
+# are the default and NON_BLOCKING is unsupported on Vertex and on the 3.1
+# Live model) can answer the new turn. The real result travels the late-result
+# path (a developer text turn at rest), never a late tool result.
+_PENDING_TOOL_CALL_INTERIM_RESULT: dict[str, Any] = {
+    "success": False,
+    "status": "in_progress",
+    "error": (
+        "Still executing. The Jarvis orchestrator is running this request in "
+        "the background and has no result yet. Do not announce, promise, or "
+        "invent an outcome and do not call the function again for it; answer "
+        "the user's NEW request now. The trusted result will be injected as a "
+        "separate message as soon as it is ready."
+    ),
+}
 # Let tasks that are only unwinding a readback verifier observe ``_ended``
 # before process-scope retention. Real action work remains untouched after
 # this tiny teardown-only grace and is transferred below.
@@ -977,6 +1006,7 @@ def _delegate_result_prompt(
     success: bool,
     late: bool = False,
     already_said: str = "",
+    request_text: str = "",
 ) -> str:
     """Wrap one trusted Brain result for tool-free native voice rendering.
 
@@ -1006,15 +1036,23 @@ def _delegate_result_prompt(
         if dot > _DELEGATE_RESULT_MAX_CHARS // 2:
             cut = cut[: dot + 1]
         text = cut + " [result shortened]"
-    framing = (
-        (
+    framing = ""
+    if late:
+        framing = (
             "This is the outcome of the user's earlier request, which finished "
             "only now. Open with one short phrase that ties it back to that "
             "earlier request, then state the result. "
         )
-        if late
-        else ""
-    )
+        request = " ".join(str(request_text or "").split())
+        if request:
+            # ADR-0034: the conversation may have moved on several turns; the
+            # tie-back must name WHAT is being answered, in the user's words.
+            if len(request) > 160:
+                request = request[:157].rstrip() + "..."
+            framing += (
+                f'The earlier request was: "{request}" — refer to its topic '
+                "in that opening phrase. "
+            )
     spoken = str(already_said or "").strip()
     if spoken:
         # Instant acknowledgment (2026-08-17): the user already heard an
@@ -1367,6 +1405,11 @@ class _DelegateTurnState:
     user_text: str = ""
     result_payload: dict[str, Any] = field(default_factory=dict)
     pending_tool_calls: list[tuple[str, str]] = field(default_factory=list)
+    # ADR-0034: the provider's function call(s) for this order were answered
+    # on the wire with the interim "still executing" payload because the user
+    # opened a new turn while the order ran. The real result then travels the
+    # late-result path (a developer text turn at rest), never a tool result.
+    interim_tool_reply_sent: bool = False
     seen_tool_call_ids: set[str] = field(default_factory=set)
     dispatch_started: bool = False
     bridge_delivery_started: bool = False
@@ -1421,14 +1464,11 @@ class _ExternalUpdateState:
     detail: str | None = None
 
 
-@dataclass(slots=True)
-class _LateDelegateResult:
-    """One executed action whose trusted result outlived its realtime turn."""
-
-    text: str
-    success: bool
-    language: str
-    delivery_id: str
+#: One executed action whose trusted result outlived its realtime turn. Since
+#: ADR-0034 this is the engine-neutral ``ParkedResult`` (``request_text`` names
+#: the order it answers, ``queued_at`` how long it has waited); the alias keeps
+#: the session's own vocabulary and its tests readable.
+_LateDelegateResult = ParkedResult
 
 
 _TOOL_ROLE_DIRECTIVE = (
@@ -1927,6 +1967,7 @@ class RealtimeVoiceSession:
         self._tool_bridge = tool_bridge
         self._delegate_tasks: set[asyncio.Task[None]] = set()
         self._delegate_tasks_by_turn: dict[str, set[asyncio.Task[None]]] = {}
+        self._delegate_states_by_turn: dict[str, _DelegateTurnState] = {}
         # BUG-051: the dead-air bridge is deliberately NOT a tracked delegate
         # task — it must never hold a turn open, defer a VAD edge, or refuse
         # an announcement on behalf of work that is merely a sleeping timer.
@@ -3851,6 +3892,29 @@ class RealtimeVoiceSession:
                             # by the ordinary path below, now that the order
                             # it replaces is gone.
                         turn_plan = self._plan_turn(self._last_user_text)
+                        # ADR-0034: the user opened a NEW turn while an
+                        # earlier order's provider function call is still
+                        # unanswered on the wire. A transport that waits for
+                        # that answer would answer nothing new — free it now;
+                        # the order keeps running and its result is parked.
+                        await self._unblock_pending_provider_calls()
+                        # ADR-0034: "how far are you?" / "what came out of
+                        # it?" spoken into a wait or after a parked result is
+                        # owned by the orchestrator BEFORE the planner can
+                        # read it as an order of its own ("what did you find"
+                        # is search-shaped): a grounded progress line, or the
+                        # parked result itself. Anything else stays native.
+                        wait_query_claimed = bool(
+                            (
+                                self._has_pending_delegate_from_earlier_turn()
+                                or self._late_delegate_results
+                            )
+                            and not self._response_requested_for_turn
+                            and not self._user_is_speaking()
+                            and not self._answers_open_delegate_question()
+                            and not self._brain_awaits_voice_confirm()
+                            and await self._answer_wait_query(self._last_user_text)
+                        )
                         if (
                             turn_plan.requires_orchestrator
                             and not self._active_provider_supports_direct_tools()
@@ -3907,6 +3971,7 @@ class RealtimeVoiceSession:
                         if (
                             self._last_user_text
                             and deterministic_delegate_available
+                            and not wait_query_claimed
                             and (
                                 self._delegate_enabled
                                 or screen_context_turn
@@ -3920,6 +3985,10 @@ class RealtimeVoiceSession:
                                 or self._brain_awaits_voice_confirm()
                                 or self._answers_open_delegate_question()
                             )
+                        if wait_query_claimed:
+                            # The orchestrator answered this turn; no
+                            # dispatch, no grounding, no provider response.
+                            self._delegate_required_for_turn = False
                         refresh_tools = getattr(
                             self._tool_bridge, "refresh_from_source", None
                         )
@@ -7858,22 +7927,40 @@ class RealtimeVoiceSession:
         self._output_drop_count = 0
 
     def _track_delegate_task(
-        self, turn_id: str, task: asyncio.Task[None]
+        self,
+        turn_id: str,
+        task: asyncio.Task[None],
+        state: _DelegateTurnState | None = None,
     ) -> None:
         self._delegate_tasks.add(task)
         turn_tasks = self._delegate_tasks_by_turn.setdefault(turn_id, set())
         turn_tasks.add(task)
+        if state is not None:
+            # ``_delegate_turns`` is popped when the TURN completes, while the
+            # order keeps running; everything that must still reach a running
+            # order's state after that (ADR-0034: the interim wire answer, the
+            # per-delivery rest gate, the executing-order texts) reads it here.
+            self._delegate_states_by_turn[turn_id] = state
 
         def _discard(done: asyncio.Task[None]) -> None:
             self._delegate_tasks.discard(done)
             tracked = self._delegate_tasks_by_turn.get(turn_id)
             if tracked is None:
+                self._delegate_states_by_turn.pop(turn_id, None)
                 return
             tracked.discard(done)
             if not tracked:
                 self._delegate_tasks_by_turn.pop(turn_id, None)
+                self._delegate_states_by_turn.pop(turn_id, None)
 
         task.add_done_callback(_discard)
+
+    def _running_delegate_state(self, turn_id: str) -> _DelegateTurnState | None:
+        """The delegate state of ``turn_id`` while its order runs — open turn or not."""
+        state = self._delegate_turns.get(turn_id)
+        if state is None:
+            state = self._delegate_states_by_turn.get(turn_id)
+        return state
 
     def _retain_detached_delegate_task(
         self,
@@ -8065,6 +8152,70 @@ class RealtimeVoiceSession:
             for turn_id, tasks in self._delegate_tasks_by_turn.items()
         )
 
+    def _unblock_pending_tool_calls_enabled(self) -> bool:
+        voice_cfg = getattr(self._config, "voice", None)
+        return bool(
+            getattr(voice_cfg, "realtime_unblock_pending_tool_calls", True)
+        )
+
+    async def _unblock_pending_provider_calls(self) -> int:
+        """Answer an EARLIER turn's still-pending function calls with the interim payload.
+
+        ADR-0034 §2.1. Function calls are blocking by default on the Live API
+        (and ``NON_BLOCKING`` is unsupported on Vertex and on the 3.1 Live
+        model), so a ``jarvis_action`` the provider requested for a slow order
+        held the whole transport: the user spoke a new turn into that wait and
+        the model could not answer it. When the user opens a new turn, every
+        earlier order whose calls are still unanswered gets the closed
+        interim payload — "still executing, do not invent an outcome, answer
+        the new request" — on the wire, and its eventual result is delivered
+        as a parked follow-up (``_queue_late_delegate_result``), never as a
+        late tool result. Fast orders that finish inside their own turn are
+        untouched: their result still answers the call directly.
+
+        Returns the number of calls answered. Never raises: a torn wire is
+        logged and the order keeps running.
+        """
+        if not self._unblock_pending_tool_calls_enabled():
+            return 0
+        if self._session is None or not self._session_takes_tool_results():
+            return 0
+        answered = 0
+        for turn_id in tuple(self._delegate_tasks_by_turn):
+            if turn_id == self._turn_id or not self._turn_has_pending_delegate(turn_id):
+                continue
+            state = self._running_delegate_state(turn_id)
+            if state is None or not state.pending_tool_calls or state.result_complete:
+                continue
+            calls = tuple(state.pending_tool_calls)
+            for call_id, wire_name in calls:
+                try:
+                    await self._session.send_tool_result(
+                        call_id, wire_name, dict(_PENDING_TOOL_CALL_INTERIM_RESULT)
+                    )
+                except Exception:  # noqa: BLE001 — the order keeps running either way
+                    log.warning(
+                        "realtime[%s] could not answer pending function call %s "
+                        "with the interim payload",
+                        self.session_id,
+                        call_id,
+                        exc_info=True,
+                    )
+                    continue
+                answered += 1
+            state.pending_tool_calls.clear()
+            state.interim_tool_reply_sent = True
+            log.info(
+                "realtime[%s] user opened a new turn while an order still runs "
+                "— answered %d pending function call(s) with the interim "
+                "payload; the result will follow as a parked follow-up "
+                "(request: %s)",
+                self.session_id,
+                len(calls),
+                safe_preview(state.user_text, max_chars=80),
+            )
+        return answered
+
     async def _check_readback_fidelity(
         self,
         rendering: str,
@@ -8203,7 +8354,7 @@ class RealtimeVoiceSession:
         for turn_id, tasks in self._delegate_tasks_by_turn.items():
             if turn_id == self._turn_id or all(task.done() for task in tasks):
                 continue
-            state = self._delegate_turns.get(turn_id)
+            state = self._running_delegate_state(turn_id)
             if state is None or state.result_complete:
                 continue
             order = str(state.user_text or "").strip()
@@ -8307,11 +8458,15 @@ class RealtimeVoiceSession:
                 success=turn_state.result_success,
                 language=str(turn_state.language or self._language),
                 delivery_id=turn_state.delivery_id,
+                request_text=str(turn_state.user_text or ""),
+                queued_at=time.monotonic(),
             )
         )
         log.info(
-            "realtime[%s] action result outlived its turn — queued as a follow-up",
+            "realtime[%s] action result outlived its turn — parked as a "
+            "follow-up (request: %s)",
             self.session_id,
+            safe_preview(str(turn_state.user_text or ""), max_chars=80),
         )
         self._schedule_late_delegate_flush()
 
@@ -8347,32 +8502,76 @@ class RealtimeVoiceSession:
             # A discarded generation is still streaming from the provider;
             # a follow-up injected now would land inside it (BUG-143).
             or self._stale_generation_drop_active()
-            or self._delegate_tasks
+            # ADR-0034: rest is judged per DELIVERY, not per session. A
+            # background order that is still computing (another turn's
+            # delegate, no result yet) is no reason to hold a ready result;
+            # only a delivery in flight — a trusted reply handed to the
+            # provider whose readback has not landed — must not be raced.
+            or self._delegate_delivery_in_flight()
             or self._pending_tool_events
             or self._response_requested_for_turn
         )
 
+    def _delegate_delivery_in_flight(self) -> bool:
+        """A trusted delegate reply is between injection and its readback.
+
+        Distinct from "a delegate task exists": the task keeps running while
+        the tool model still computes (harmless to a follow-up) and lingers in
+        the readback verifier after delivery (that phase already stands down
+        turn holds). What a follow-up must never race is the window from
+        ``delivery_started`` to ``delivery_completed`` — the provider is about
+        to render, or rendering, a result (BUG-143 double delivery class).
+        """
+        for turn_id, tasks in self._delegate_tasks_by_turn.items():
+            if not any(not task.done() for task in tasks):
+                continue
+            state = self._running_delegate_state(turn_id)
+            if state is None:
+                # An untracked delegate task: nothing proves its result is not
+                # mid-delivery, so keep the conservative pre-ADR-0034 answer.
+                return True
+            if state.delivery_started and not state.delivery_completed:
+                return True
+        return False
+
     async def _flush_late_delegate_results(self) -> None:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + _LATE_DELEGATE_DELIVERY_TIMEOUT_S
+        """Speak every parked result as soon as the session is at rest.
+
+        No deadline (ADR-0034): the loop polls until the queue is empty or the
+        session ends; ``end()`` re-routes whatever is still parked to the
+        detached completion channel, so nothing is lost silently. A result
+        that waits long is logged (bounded, once per minute per item) so a
+        call that never rests is visible in the log rather than mysterious.
+        """
+        logged_wait: dict[str, float] = {}
         while self._late_delegate_results and not self._ended:
             if self._session_is_at_rest():
                 pending = self._late_delegate_results[0]
                 if not await self._speak_late_delegate_result(pending):
+                    # A torn-down wire; the session is ending or rebuilding.
+                    # Leave the debt in the queue: the next flush (or ``end()``)
+                    # owns it.
                     break
-                self._late_delegate_results.pop(0)
+                if pending in self._late_delegate_results:
+                    self._late_delegate_results.remove(pending)
                 continue
-            if loop.time() >= deadline:
-                break
+            oldest = self._late_delegate_results[0]
+            waited = time.monotonic() - float(oldest.queued_at or time.monotonic())
+            marker = oldest.delivery_id
+            if (
+                waited >= _LATE_DELEGATE_STILL_PARKED_LOG_S
+                and waited - logged_wait.get(marker, 0.0)
+                >= _LATE_DELEGATE_STILL_PARKED_LOG_S
+            ):
+                logged_wait[marker] = waited
+                log.info(
+                    "realtime[%s] parked action result still waiting for a "
+                    "quiet moment after %.0f s (request: %s)",
+                    self.session_id,
+                    waited,
+                    safe_preview(oldest.request_text, max_chars=80),
+                )
             await asyncio.sleep(_LATE_DELEGATE_POLL_S)
-        for lost in self._late_delegate_results:
-            # The action itself ran; only its spoken confirmation was lost.
-            log.warning(
-                "realtime[%s] executed action result could not be spoken: %s",
-                self.session_id,
-                safe_preview(lost.text, max_chars=200),
-            )
-        self._late_delegate_results.clear()
 
     async def _speak_late_delegate_result(
         self, pending: _LateDelegateResult
@@ -8400,6 +8599,7 @@ class RealtimeVoiceSession:
                     language=pending.language,
                     success=pending.success,
                     late=True,
+                    request_text=pending.request_text,
                 )
             )
         except Exception:  # noqa: BLE001 — a torn-down wire must not lose the log
@@ -8429,8 +8629,15 @@ class RealtimeVoiceSession:
         TTS and drops the provider's freestyle response for this turn. The
         late-result flush still delivers the real answer once the session is
         at rest — both drop flags are cleared by that injection path.
+
+        ADR-0034: the line is grounded in the tool the running order is
+        actually executing when one is known (``ActionProposed`` →
+        ``progress_pool``: "still searching", "still on the screen"); the
+        closed bridge pool is the fallback, never a stock line for a known
+        activity. A handover (a background agent took over) says nothing —
+        the spawn reply already stated it — so the generic pool speaks then.
         """
-        status_text = _pick_delegate_bridge_text(self._language)
+        status_text = self._grounded_pending_status_text()
         self._response_requested_for_turn = True
         self._drop_provider_output_until_user_turn = True
         # Recording the line as this turn's output keeps the exported
@@ -8443,6 +8650,79 @@ class RealtimeVoiceSession:
             self.session_id,
         )
         await self._send_json(self._surface_speech_message(status_text))
+
+    def _grounded_pending_status_text(self) -> str:
+        """One progress line for a running order: grounded when a tool is known.
+
+        SEARCH / READ / SCREEN speak their own honest line; an unknown tool
+        (OTHER) and a handover fall back to the session's closed status pool
+        — the same lines BUG-070 pinned, so a probe answered before any tool
+        was proposed sounds exactly as before.
+        """
+        activity = classify_tool_activity(self._running_tool_name)
+        if activity not in (ToolActivity.OTHER, ToolActivity.HANDOVER):
+            grounded = pick_progress_text(activity, self._language)
+            if grounded:
+                return grounded
+        return _pick_delegate_bridge_text(self._language)
+
+    async def _answer_wait_query(self, text: str) -> bool:
+        """Answer "how far are you?" / "what came out of it?" deterministically.
+
+        ADR-0034. Two closed vocabularies (``classify_wait_query``), one rule:
+        the orchestrator owns the turn whenever the only correct answer is
+        known in advance (BUG-070 lesson).
+
+        * A RESULT request while a parked result is ready: the provider's
+          freestyle answer for this turn is dropped and the late-result flush
+          is nudged — it speaks the parked result the moment this probe turn
+          closes, in the live voice, tied back to the request. No canned line
+          in front of it: the user asked for the result, and a "still working"
+          line before a ready result would be a lie.
+        * A PROGRESS question, or a RESULT request while the order still
+          runs: one grounded progress line (``_speak_pending_action_status``).
+
+        Returns ``True`` when the turn was claimed. Anything the vocabulary
+        does not recognise stays with the provider.
+        """
+        kind = classify_wait_query(text)
+        if not kind:
+            return False
+        running = self._has_pending_delegate_from_earlier_turn()
+        if kind == WAIT_QUERY_RESULT and self._late_delegate_results:
+            wanted = requested_result(self._late_delegate_results, text)
+            if wanted is not None:
+                self._late_delegate_results.remove(wanted)
+                self._late_delegate_results.insert(0, wanted)
+                log.info(
+                    "realtime[%s] user asked for a parked result (waited "
+                    "%.0f s) — delivering it now",
+                    self.session_id,
+                    wanted.waited_s(),
+                )
+                if bool(
+                    getattr(self._session, "creates_responses_automatically", False)
+                ):
+                    # This transport is already answering the probe on its
+                    # own VAD; that freestyle answer is dropped and the flush
+                    # speaks the parked result the moment the probe turn
+                    # closes — injecting now would race the generation.
+                    self._response_requested_for_turn = True
+                    self._drop_provider_output_until_user_turn = True
+                    self._schedule_late_delegate_flush()
+                    return True
+                # No response was requested for this turn and none will be:
+                # the parked result IS this turn's response.
+                self._late_delegate_results.remove(wanted)
+                if await self._speak_late_delegate_result(wanted):
+                    return True
+                self._late_delegate_results.insert(0, wanted)
+                self._schedule_late_delegate_flush()
+                return True
+        if kind in (WAIT_QUERY_PROGRESS, WAIT_QUERY_RESULT) and running:
+            await self._speak_pending_action_status()
+            return True
+        return False
 
     async def _cancel_running_delegates(self, *, reason: str) -> int:
         """Abandon every still-running delegated action. Returns the count.
@@ -8480,7 +8760,7 @@ class RealtimeVoiceSession:
         if not pending and not dropped:
             return 0
         for turn_id in turn_ids:
-            state = self._delegate_turns.get(turn_id)
+            state = self._running_delegate_state(turn_id)
             if state is None:
                 continue
             # Latch the delivery so _queue_late_delegate_result refuses this
@@ -8490,6 +8770,34 @@ class RealtimeVoiceSession:
                 self._delegate_delivery_status[state.delivery_id] = (
                     "cancelled_by_user"
                 )
+            # ADR-0034: a provider function call still open on the wire would
+            # keep a blocking transport waiting for an answer that now never
+            # comes. Close it honestly so the model can take the next turn.
+            if state.pending_tool_calls and self._session is not None and (
+                self._session_takes_tool_results()
+            ):
+                for call_id, wire_name in tuple(state.pending_tool_calls):
+                    try:
+                        await self._session.send_tool_result(
+                            call_id,
+                            wire_name,
+                            {
+                                "success": False,
+                                "error": (
+                                    "Cancelled by the user. Do not retry it "
+                                    "and do not describe an outcome."
+                                ),
+                            },
+                        )
+                    except Exception:  # noqa: BLE001 — the cancel itself stands
+                        log.debug(
+                            "realtime[%s] cancelled function call %s could not "
+                            "be answered on the wire",
+                            self.session_id,
+                            call_id,
+                            exc_info=True,
+                        )
+                state.pending_tool_calls.clear()
         for task in pending:
             await self._cancel_and_reap(task)
         log.info(
@@ -8806,7 +9114,7 @@ class RealtimeVoiceSession:
             self._run_deterministic_delegate(turn_id, turn_state),
             name=f"rt-deterministic-delegate-{self.session_id}",
         )
-        self._track_delegate_task(turn_id, task)
+        self._track_delegate_task(turn_id, task, turn_state)
         previous_bridge = self._delegate_bridge_task
         if previous_bridge is not None and not previous_bridge.done():
             previous_bridge.cancel()
@@ -9877,7 +10185,7 @@ class RealtimeVoiceSession:
             self._run_delegate(turn_id, turn_state),
             name=f"rt-delegate-{self.session_id}",
         )
-        self._track_delegate_task(turn_id, task)
+        self._track_delegate_task(turn_id, task, turn_state)
 
     async def _run_delegate(
         self,

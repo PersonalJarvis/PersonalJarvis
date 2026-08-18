@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 import time
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 from uuid import uuid4
@@ -77,7 +77,10 @@ class ParkedResult:
 
     text: str
     language: str
-    request_text: str
+    #: The user's own words for the order this answers. Empty only for a
+    #: legacy caller that never knew the request; the re-anchoring prefix then
+    #: falls back to its topic-less form.
+    request_text: str = ""
     success: bool = True
     request_turn_id: str = ""
     delivery_id: str = ""
@@ -173,22 +176,28 @@ class ParkedResultLedger:
         return self.cancel_all()
 
     def retrieve_for(self, query: str) -> ParkedResult | None:
-        """The parked result the user is asking for, if the query names one.
+        """The parked result the user is asking for (see :func:`requested_result`)."""
+        return requested_result(self._items, query)
 
-        With exactly one parked result any result request means it. With
-        several, the query has to share a content word with the request text
-        of one of them; otherwise the oldest is returned — the user asked for
-        "the result", and the oldest debt is the most likely one.
-        """
-        if not self._items:
-            return None
-        if len(self._items) == 1:
-            return self._items[0]
-        query_words = _content_words(query)
-        for item in self._items:
-            if query_words & _content_words(item.request_text):
-                return item
-        return self._items[0]
+
+def requested_result(items: Sequence[ParkedResult], query: str) -> ParkedResult | None:
+    """The parked result a user's result request refers to, if any.
+
+    With exactly one parked result any result request means it. With several,
+    the query has to share a content word with the request text of one of
+    them; otherwise the oldest is returned — the user asked for "the result",
+    and the oldest debt is the most likely one. Shared by the ledger and by
+    engines that keep their own list.
+    """
+    if not items:
+        return None
+    if len(items) == 1:
+        return items[0]
+    query_words = _content_words(query)
+    for item in items:
+        if query_words & _content_words(item.request_text):
+            return item
+    return items[0]
 
 
 # ---------------------------------------------------------------------------
@@ -428,5 +437,6 @@ __all__ = [
     "anchor_pool",
     "classify_wait_query",
     "reanchor",
+    "requested_result",
     "topic_of",
 ]

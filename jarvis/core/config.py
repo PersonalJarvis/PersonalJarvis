@@ -2657,6 +2657,24 @@ class VoiceConfig(BaseModel):
     # opt-in. Read once per session; unknown values fail closed to the compact
     # delegate mode.
     realtime_tool_mode: str = "delegate"
+    # ADR-0034 (2026-08-18). When the user opens a NEW turn while an earlier
+    # order's provider function call (jarvis_action) is still unanswered on
+    # the wire, the session answers that call at once with a closed "still
+    # executing" payload so a transport with blocking function calls (Gemini
+    # Live; NON_BLOCKING is unsupported on Vertex and on the 3.1 Live model)
+    # can answer the new turn; the order keeps running and its result is
+    # spoken later as a parked follow-up. Fast orders that finish inside their
+    # own turn are untouched. False = pre-2026-08-18 behaviour (the transport
+    # waits for the result). Read per event by the realtime session.
+    realtime_unblock_pending_tool_calls: bool = True
+    # ADR-0034 (2026-08-18). Classic pipeline: a heavy turn (one the
+    # deterministic planner routes to the orchestrator / tool model) runs in
+    # the background and the microphone stays open — the user keeps talking,
+    # ordinary utterances are answered meanwhile, and the heavy answer is
+    # spoken at the next quiet turn boundary, tied back to the request. False
+    # = the pre-2026-08-18 inline wait (speech during the wait cancels and
+    # recombines). Read per turn by the pipeline.
+    background_heavy_turns: bool = True
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
     # budget — every continuation resets the timer. Bumped from 8 s to 15 s
