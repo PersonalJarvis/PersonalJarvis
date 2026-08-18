@@ -116,3 +116,89 @@ async def test_event_reaches_the_ui_as_a_ws_envelope(
 
     assert envelope["event_name"] == "AgenticIdeCodingModeChanged"
     assert envelope["payload"]["enabled"] is True
+
+
+# --------------------------------------------------- the persona follows the mode
+#
+# Coding mode also swaps the assistant's CHARACTER (the ``coding`` mode) through
+# an in-memory section override on the persona layer. That override must agree
+# with ``coding_mode_active`` after EVERY transition, not only after the toggle:
+# left behind by a closed or switched-away workspace it kept the assistant in
+# coding character for the rest of the process, and — because the override
+# outranks the user's choice — made the modes screen look as if switching modes
+# did nothing at all.
+
+
+def _persona_override() -> str | None:
+    from jarvis.brain import modes
+
+    return modes.section_override()
+
+
+@pytest.fixture(autouse=True)
+def _clear_persona_override():
+    from jarvis.brain import modes
+
+    modes.set_section_override(None)
+    yield
+    modes.set_section_override(None)
+
+
+async def test_the_persona_override_tracks_the_toggle(
+    wired: Registry, tmp_path: Path
+) -> None:
+    await wired.start(str(tmp_path), [{"agent": "claude"}])
+    assert _persona_override() is None
+    wired.set_focus_mode(True)
+    assert _persona_override() == "coding"
+    wired.set_focus_mode(False)
+    assert _persona_override() is None
+
+
+async def test_closing_the_last_workspace_drops_the_persona_override(
+    wired: Registry, tmp_path: Path
+) -> None:
+    """The exact bug: coding character stuck on after the workspace was closed."""
+    await wired.start(str(tmp_path), [{"agent": "claude"}])
+    wired.set_focus_mode(True)
+    await wired.end()
+    assert coding_mode_active() is False
+    assert _persona_override() is None
+
+
+async def test_clearing_the_front_drops_the_persona_override(
+    wired: Registry, tmp_path: Path
+) -> None:
+    """The wizard for another workspace takes the front away — and the mode."""
+    await wired.start(str(tmp_path), [{"agent": "claude"}])
+    wired.set_focus_mode(True)
+    await wired.activate(None)
+    assert coding_mode_active() is False
+    assert _persona_override() is None
+
+
+async def test_switching_workspaces_moves_the_persona_override_with_the_flag(
+    wired: Registry, tmp_path: Path
+) -> None:
+    """The flag is per workspace, so the persona follows whichever is in front."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    first = await wired.start(str(tmp_path / "a"), [{"agent": "claude"}])
+    wired.set_focus_mode(True)
+    second = await wired.start(str(tmp_path / "b"), [{"agent": "claude"}])
+    # A freshly opened workspace is at the front with the mode OFF.
+    assert wired.session is second
+    assert coding_mode_active() is False
+    assert _persona_override() is None
+
+    await wired.activate(first.id)
+    assert coding_mode_active() is True
+    assert _persona_override() == "coding"
+
+    # Closing the front workspace hands the front to the survivor, whose flag
+    # is off — the override must not linger from the one that just closed.
+    await wired.end(first.id)
+    assert wired.session is second
+    assert coding_mode_active() is False
+    assert _persona_override() is None
+

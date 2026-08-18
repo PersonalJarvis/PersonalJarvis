@@ -111,5 +111,19 @@ def test_the_response_reports_the_mode_actually_in_force(client: TestClient) -> 
         assert body["chosen"] == "friend"
         assert body["active"] == modes.MODE_CODING
         assert body["section_override"] == modes.MODE_CODING
+        # And a plain read afterwards still tells the two apart: the switch was
+        # STORED (chosen) even though something else is in force (active). A
+        # payload that only carried ``active`` left the modes screen unable to
+        # confirm a click had done anything at all.
+        listing = client.get("/api/modes").json()
+        assert listing["chosen"] == "friend"
+        assert listing["active"] == modes.MODE_CODING
     finally:
         modes.set_section_override(None)
+
+
+def test_chosen_equals_active_when_nothing_overrides(client: TestClient) -> None:
+    client.put("/api/modes/active", json={"slug": "coach"})
+    body = client.get("/api/modes").json()
+    assert body["chosen"] == body["active"] == "coach"
+    assert body["section_override"] == ""

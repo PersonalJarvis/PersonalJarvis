@@ -73,6 +73,11 @@ def _payload() -> dict[str, object]:
     return {
         "modes": [m.to_payload() for m in modes.list_modes()],
         "active": active,
+        # The user's own choice, which is what a switch on this screen writes.
+        # Equal to ``active`` except while a section override is in force —
+        # and then it is the only way the UI can confirm the switch was
+        # stored rather than silently swallowed.
+        "chosen": modes.chosen_slug(),
         # What the section override is doing, if anything. The UI needs to be
         # able to say "coding mode is on because you are in the Agentic IDE"
         # rather than showing a switch the user did not touch and cannot
@@ -109,7 +114,9 @@ async def set_active(body: ActiveModeBody) -> dict[str, object]:
         mode = modes.set_active(body.slug)
     except modes.ModeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"ok": True, "chosen": mode.slug, "restart_required": False, **_payload()}
+    # ``chosen`` after the payload on purpose: this handler KNOWS what was just
+    # written, and must not be second-guessed by a config read that could lag.
+    return {"ok": True, **_payload(), "chosen": mode.slug, "restart_required": False}
 
 
 @router.post("", summary="Create or replace a mode")

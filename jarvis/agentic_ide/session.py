@@ -1897,6 +1897,10 @@ class Registry:
         """Bring ``session`` to the front. Caller holds the lock."""
         self._active = session.id
         session.last_active_at = time.time()
+        # A different workspace at the front can mean a different answer to
+        # "is coding mode on" — the flag is per workspace — so the persona
+        # follows the front, not only the toggle.
+        self._sync_coding_character()
 
     async def _open_locked(
         self,
@@ -2217,6 +2221,9 @@ class Registry:
         async with self._lock:
             if workspace_id is None:
                 self._active = None
+                # No workspace on screen is no coding mode, whatever the flags
+                # on the workspaces behind the wizard say.
+                self._sync_coding_character()
                 return None
             session = self._sessions.get(workspace_id)
             if session is None:
@@ -2425,6 +2432,12 @@ class Registry:
             self._active = survivor.id if survivor else None
             if survivor is not None:
                 self._focus_locked(survivor)
+            else:
+                # The last workspace is gone; the coding character must go
+                # with it. This is the second life of the bug this override was
+                # built against — coding mode stuck on for the whole session
+                # after the workspace it belonged to had been closed.
+                self._sync_coding_character()
         # Deliberately NOT re-written here. The restore point is refreshed by
         # activity — opening a workspace, adding a pane, connecting one — and
         # closing is not activity. Rewriting on close made the offer shrink one
@@ -2449,21 +2462,30 @@ class Registry:
         if session is None:
             if enabled:
                 raise SessionError("No Agentic-IDE session is running — open one first.")
-            self._sync_coding_character(False)
+            self._sync_coding_character()
             return False
         session.focus_mode = bool(enabled)
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
-        self._sync_coding_character(session.focus_mode)
+        self._sync_coding_character()
         return session.focus_mode
 
-    @staticmethod
-    def _sync_coding_character(enabled: bool) -> None:
-        """Point the persona layer at the ``coding`` mode while focus mode is on.
+    def _sync_coding_character(self) -> None:
+        """Point the persona layer at the ``coding`` mode exactly while coding
+        mode is in effect — and at nothing the moment it is not.
+
+        Derived from the registry's own state (the workspace at the front AND
+        its focus flag, the same two halves ``coding_mode_active`` reads) rather
+        than passed in by the caller, so no transition can leave the persona
+        saying "coding" while the predicate says "no workspace". Called from
+        every place that state changes: the toggle, a workspace coming to the
+        front, the front being cleared, and the last workspace closing.
 
         Best-effort by design: the workspace context block is the part users
         depend on, so a missing or renamed ``coding`` mode costs the tone and
         nothing else.
         """
+        session = self.session
+        enabled = session is not None and bool(session.focus_mode)
         try:
             from jarvis.brain import modes
 

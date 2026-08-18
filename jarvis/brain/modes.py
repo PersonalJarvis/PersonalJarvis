@@ -361,6 +361,21 @@ def _configured_slug() -> str:
     return slug or DEFAULT_MODE
 
 
+def chosen_slug() -> str:
+    """The user's own, sticky choice — what ``[persona] active_mode`` names.
+
+    Distinct from :func:`active_slug` on purpose: while a section override is
+    in force the two differ, and a UI that can only show the one in force has no
+    way to confirm that a switch was stored ("you picked Friend; Coding is on
+    until you leave the IDE"). Falls back to the default when the stored slug
+    names a mode that no longer exists, for the same reason ``active_slug`` does.
+    """
+    candidate = _configured_slug()
+    if get_mode(candidate) is not None:
+        return candidate
+    return DEFAULT_MODE
+
+
 def active_slug() -> str:
     """The slug in force for this turn — section override first, then config.
 
@@ -695,6 +710,7 @@ __all__ = [
     "active_prompt_block",
     "active_slug",
     "active_voice",
+    "chosen_slug",
     "delete_mode",
     "get_mode",
     "has_user_copy",
