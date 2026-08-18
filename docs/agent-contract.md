@@ -173,6 +173,50 @@ MCP), and credential STORAGE itself. Every one must:
   fallback (`config._ensure_keyring_backend`); a save/connect must never 500
   on a host without a Secret Service.
 
+### Provider & mode parity — every key, every engine, every surface (BINDING)
+
+The maintainer's current setup — one realtime transport, one brain family,
+one voice mode, one OS — is a sample of ONE, never the design target. Every
+feature, and every analysis, plan, estimate, or ADR that precedes it, is
+designed for the FULL matrix from the first sentence (maintainer directive
+2026-08-18):
+
+- **Every provider family and every key the app accepts** — all Brain /
+  Tool-Model providers (cloud AND local Ollama/llama.cpp), every realtime
+  transport (`openai-realtime`, `gemini-live`, `vertex-live`, the tool-less
+  handoff transports), every STT / TTS / Vision / Wake provider. The
+  enumeration is the CODE — `jarvis/core/config.py` (credential families,
+  provider ids) and `jarvis/realtime/factory.py` — never this file and never
+  the dev box's `jarvis.toml`.
+- **Every mode and surface** — the realtime engine AND the classic pipeline
+  (`[voice].mode`), text chat (desktop app, headless launcher, browser UI),
+  channels (Telegram / Discord / webhook / SMS), the CLI.
+- **Every OS** — see the next subsection.
+
+Rules:
+
+1. **Design once, capability-gated (AP-21).** A transport- or
+   provider-specific mechanism (a native async function call, a streaming
+   flag, a voice pin, a schema subset) is ONE capability the adapter
+   declares. Every other provider gets the same user-visible behaviour
+   through the generic path or an emulation, or degrades honestly with a
+   stated reason. "Works on vertex-live" or "works in realtime mode" is one
+   cell of the matrix, not done.
+2. **Name the matrix before building.** An assessment, plan, ADR, or PR
+   that touches a provider- or mode-facing path states which cells it
+   covers natively, which it emulates, and which degrade — and why. The
+   maintainer's cell is never the implicit reference; an analysis that
+   reasons only from the dev box's current provider is incomplete and is
+   redone.
+3. **Test the families, not the favourite.** A change to a provider-facing
+   contract lands with `tests/contract/` coverage or fakes for each family
+   it touches; a change to turn-taking, acknowledgments, interim speech, or
+   result delivery lands with tests for BOTH voice engines and the chat
+   surface.
+4. **Read the enumerations from the code**, never from what is currently
+   configured: `git show`/grep the provider tables before scoping, and list
+   every entry, including the ones the dev box has no key for.
+
 ### OS feature parity — macOS and Linux are first-class (BINDING)
 
 Every feature ships working on **all three OSes in the SAME change**, never
@@ -185,8 +229,8 @@ gate + honest degradation + a tracked entry in
 [`docs/os-parity.md`](os-parity.md).
 
 **Definition of done** for any change touching config, credentials, a
-provider/integration, or OS-specific code — verify the FOUR non-maintainer
-paths (test or honest manual trace):
+provider/integration, a voice engine, a chat/channel surface, or OS-specific
+code — verify the FIVE non-maintainer paths (test or honest manual trace):
 
 1. **Fresh install, ONE arbitrary key** reaches a working path (chat + voice
    + Jarvis-Agent + the touched feature), entirely in-app.
@@ -195,6 +239,12 @@ paths (test or honest manual trace):
 3. **macOS** — works there, or degrades honestly + `docs/os-parity.md` entry.
 4. **Cross-family fallback** — a dead/absent configured provider crosses to
    whatever the user actually has, or degrades honestly.
+5. **Provider & mode parity** — the feature behaves the same, or degrades
+   honestly per declared capability, on EVERY provider family the touched
+   surface accepts (all realtime transports, all brain families incl. local,
+   all STT/TTS/Vision/Wake) and in EVERY mode and surface it is reachable
+   from (realtime engine, classic pipeline, chat, channels, CLI) — with the
+   covered / emulated / degraded cells named in the change.
 
 "It works on my machine" is the *defect* — the maintainer's box is <0.1 % of
 the install base. Doctrine: [`CLOUD.md`](../CLOUD.md) +

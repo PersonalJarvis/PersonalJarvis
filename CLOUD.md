@@ -53,6 +53,21 @@ Concretely, Rule #1 means:
 
 ---
 
+## Rule #2 — Everything we build must work with every provider, every API key, and every mode. (NON-NEGOTIABLE, added 2026-08-18)
+
+**Every feature, and every analysis or plan that precedes it, targets the FULL provider × mode × OS matrix from the first sentence — never the maintainer's current setup.**
+
+Rule #1 says "every OS". Rule #2 is its sibling for everything else the user can plug in:
+
+1. **Every provider family and every key the app accepts** — all Brain / Tool-Model providers (cloud AND local Ollama/llama.cpp), every realtime transport (`openai-realtime`, `gemini-live`, `vertex-live`, the tool-less handoff transports), every STT / TTS / Vision / Wake provider. The list is the code (`jarvis/core/config.py`, `jarvis/realtime/factory.py`) — never the dev box's `jarvis.toml`.
+2. **Every mode and surface** — the realtime engine AND the classic pipeline, text chat (desktop, headless launcher, browser UI), channels (Telegram / Discord / webhook / SMS), the CLI.
+3. **A provider-specific mechanism is ONE declared capability**, never the design. Every other provider gets the same user-visible behaviour through the generic path or an emulation, or degrades honestly with a stated reason (capability-gated, AP-21).
+4. **"Works on vertex-live" / "works in realtime mode" is one cell, not done.** Plans, ADRs, and PRs name the cells they cover natively, emulate, and degrade — and an analysis that reasons only from the maintainer's provider is incomplete and is redone.
+
+The maintainer's `vertex-live` + Vertex tool model + realtime mode is a sample of one. Full text: `docs/agent-contract.md` §3 "Provider & mode parity".
+
+---
+
 ## The rest of the doctrine (summary — full text in `docs/PHILOSOPHY.md`)
 
 - **All five provider classes (Brain, STT, TTS, Vision, Wake) have a fully cloud-reachable default path** — no required local GPU, model, microphone, speaker, or OS API.

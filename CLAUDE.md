@@ -33,7 +33,19 @@ Assume an arbitrary downloader, never the maintainer: ANY single key works
 OS incl. headless `python:3.11-slim` (base stays torch-free; GPU deps in
 `[local-voice]`); credentials recoverable IN-APP (keyring → ENV → file).
 macOS/Linux ship in the SAME change behind one capability probe or degrade
-honestly (+ `docs/os-parity.md`). Done = the four non-maintainer paths (§3).
+honestly (+ `docs/os-parity.md`). Done = the five non-maintainer paths (§3).
+**Provider & mode parity (BINDING):** every feature — and every analysis,
+plan, or estimate BEFORE it — targets the FULL matrix from the first
+sentence: every provider family and key (all Brain/Tool-Model providers incl.
+local Ollama/llama.cpp, every realtime transport `openai-realtime` /
+`gemini-live` / `vertex-live` / tool-less handoff, every STT/TTS/Vision/Wake
+— enumerated by `jarvis/core/config.py` + `jarvis/realtime/factory.py`,
+NEVER by the dev box's `jarvis.toml`) × every mode and surface (realtime
+engine AND classic pipeline, text chat, browser/headless, channels, CLI) ×
+every OS. A transport-specific trick is ONE declared capability; every other
+transport gets the generic path, an emulation, or honest degradation with a
+stated reason. "Works on vertex-live" / "works in realtime mode" is one cell,
+not done; plans and PRs name the cells they cover, emulate, and degrade.
 Device triage: version lag → setup divergence → OS gap.
 Ollama/llama.cpp defaults, recommendations, and examples must be verified
 against the official live catalog when changed and use a current,
