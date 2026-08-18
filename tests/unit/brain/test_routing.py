@@ -2670,17 +2670,134 @@ def test_system_prompt_omits_profile_directive_when_tool_absent() -> None:
 
 
 def test_system_prompt_contains_no_invent_tools_rule() -> None:
-    """The system prompt must contain the hard 'do not invent tools' rule
-    in both DE and EN regardless of whether the capability registry is
-    deployed (the fallback block also carries the rule)."""
+    """The system prompt must carry the hard anti-invention rule in DE and EN.
+
+    Wording changed with PR-05 (2026-08-18): the rule is now scoped to tool
+    NAMES and to CLAIMS, because the old "never an action that is not in the
+    list above" sat under a list that did not contain the tools it named.
+    """
     manager, _executor = _manager_with_spawn()
     prompt = manager._build_system_prompt()
-    assert "Erfinde keine Tools" in prompt, (
-        "System prompt must contain DE 'Erfinde keine Tools' rule"
+    assert "erfinde niemals einen Werkzeugnamen" in prompt, (
+        "System prompt must contain the DE 'do not invent a tool name' rule"
     )
-    assert "Do not invent tools" in prompt, (
-        "System prompt must contain EN 'Do not invent tools' rule"
+    assert "never invent a tool name" in prompt, (
+        "System prompt must contain the EN 'do not invent a tool name' rule"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR-05 / PR-06: the tool block must tell the truth, and the routing rules
+# must actually ship.
+# ---------------------------------------------------------------------------
+
+
+class _NamedFakeTool:
+    """Minimal Tool stand-in with an arbitrary name."""
+
+    schema: dict[str, Any] = {}
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _manager_with_named_tools(*names: str) -> BrainManager:
+    return BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={n: _NamedFakeTool(n) for n in names},
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+
+
+def test_system_prompt_lists_every_attached_tool_name() -> None:
+    """PR-05: the tool block is rendered from the LIVE surface.
+
+    The static capability seed knows none of these four, yet all four are
+    genuinely attached — the old block declared its 19-entry seed the
+    "vollständige Liste — keine anderen existieren" and thereby denied the
+    model tools it was holding.
+    """
+    manager = _manager_with_named_tools(
+        "search_web", "gmail", "update_profile", "set_config_value", "cli_gh"
+    )
+    prompt = manager._build_system_prompt()
+    for name in ("search_web", "gmail", "update_profile", "set_config_value", "cli_gh"):
+        assert name in prompt, f"attached tool {name!r} missing from the system prompt"
+
+
+def test_system_prompt_tool_block_names_are_callable_names() -> None:
+    """PR-05 (b): capability ids are not tool names.
+
+    ``tool.run-shell`` is what the registry render emitted; ``run_shell`` is
+    what the loop can resolve. The block must carry the callable spelling.
+    """
+    manager = _manager_with_named_tools("run_shell", "spawn_worker")
+    prompt = manager._build_system_prompt()
+    assert "run_shell" in prompt
+    assert "tool.run-shell" not in prompt
+    assert "REGISTRIERTE WERKZEUGE" not in prompt
+
+
+def test_system_prompt_tool_block_counts_the_tools_it_lists() -> None:
+    """The completeness claim must be backed by the number it states."""
+    names = tuple(f"tool_{i}" for i in range(7))
+    manager = _manager_with_named_tools(*names)
+    prompt = manager._build_system_prompt()
+    assert "vollständige Liste der 7 Namen" in prompt
+
+
+def test_system_prompt_tool_block_hides_local_action_tools() -> None:
+    """Local-action tools are hidden from the router schema on purpose.
+
+    Naming them would advertise tool names no provider request carries, so
+    the block filters them back out of ``_live_tool_names()``.
+    """
+    manager = _manager_with_named_tools("run_shell")
+    manager._local_action_tools = {"open_app": _NamedFakeTool("open_app")}
+    prompt = manager._build_system_prompt()
+    assert "run_shell" in prompt
+    assert "open_app" not in prompt
+
+
+def test_system_prompt_tool_block_omitted_without_tools() -> None:
+    """No tools attached → no completeness claim at all (the lie in reverse)."""
+    manager = BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={},
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+    assert manager._render_live_tool_block() == ""
+
+
+def test_system_prompt_always_contains_tool_routing_rules() -> None:
+    """PR-06: the search_web-versus-cli_* rules used to be the ``else`` branch
+    of a capability render that is always truthy (the factory seeds the
+    registry on every brain build), so they never shipped. They are
+    unconditional now — including with a fully populated registry.
+    """
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    seed_registry(get_registry())
+    manager, _executor = _manager_with_spawn()
+    prompt = manager._build_system_prompt()
+    assert "TOOL-SELECTION-REGELN (strikt)" in prompt
+    assert "NICHT cli_supabase" in prompt
+    assert "'über X' = Search, 'mit X tun' = Action" in prompt
+
+
+def test_delegated_voice_budget_survives_a_multi_step_task() -> None:
+    """GT-11: 6 rounds / 20 s guillotined any task past about five steps.
+
+    The bounds stay ceilings — this pins that they are large enough for a
+    genuinely progressing turn and small enough to still end a runaway one.
+    """
+    from jarvis.brain.manager import _DELEGATE_DEADLINE_S, _DELEGATE_MAX_TURNS
+
+    assert _DELEGATE_MAX_TURNS >= 12
+    assert 30.0 <= _DELEGATE_DEADLINE_S <= 60.0
 
 
 @pytest.mark.parametrize(

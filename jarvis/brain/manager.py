@@ -422,13 +422,31 @@ _mirror_tier_defaults("gemini", "vertex")
 
 
 # Hard loop bounds for DELEGATED realtime voice turns (prefer_tool_model).
-# A voice turn must stay conversational: 6 rounds cover plan → 2-3 tools →
-# answer, and 20 s wall clock is the worst acceptable wait before the loop
-# forces one final tool-less answer round (see ToolUseLoop.deadline_s).
-# Live incident 2026-07-14: an unbounded delegate ran 14 rounds / 66 s.
 # Classic chat turns keep the dispatcher defaults (15 rounds, no deadline).
-_DELEGATE_MAX_TURNS: int = 6
-_DELEGATE_DEADLINE_S: float = 20.0
+#
+# These are CEILINGS for a runaway turn, not a target for a working one. The
+# 2026-07-14 incident (an unbounded delegate at 14 rounds / 66 s) was answered
+# with 6 rounds / 20 s, and that cut the churn — but it also guillotined every
+# honest multi-step task at about five steps, which the user then heard as
+# "so far I got to …" (GT-11). Round count and wall clock are not the same
+# risk: a round only ever happens because the model asked for another tool, so
+# 12 rounds cost nothing on a turn that finishes in three. The wall clock is
+# the real latency, and 45 s is what a genuinely progressing ~8-round turn
+# needs at Flash speed with reasoning off (≈2 s model + ≈3 s tool per round).
+#
+# Both paths still end the turn gracefully rather than hard-breaking:
+# ToolUseLoop forces ONE final tool-less synthesis round over the evidence
+# already gathered (_BUDGET_FINAL_DIRECTIVE / _DEADLINE_FINAL_DIRECTIVE).
+#
+# KNOWN COST of the flat 45 s, and the follow-up it asks for: a turn that is
+# CHURNING (re-issuing near-identical lookups) now burns 45 s before it is cut
+# off, where it used to burn 20. The correct shape is a deadline that starts
+# short and is EXTENDED by each successful tool call — progress buys time,
+# churn does not — but ``deadline_s`` is a single float fixed at ToolUseLoop
+# construction, so that fix lives in jarvis/brain/tool_use_loop.py (+ the
+# dispatcher pass-through), not here.
+_DELEGATE_MAX_TURNS: int = 12
+_DELEGATE_DEADLINE_S: float = 45.0
 # Delegated rounds ask the provider to skip internal "thinking" entirely.
 # Live 2026-07-17 (FlightRecorder p50 15-18 s, worst 33 s): the hoisted Tool
 # Model (Gemini Flash) ran every one of its 3-6 sequential rounds with the
@@ -2058,6 +2076,58 @@ _SELF_CONTROL_DIRECTIVE = (
     "call it and confirm success only AFTER it returns, using the values the "
     "tool actually reports."
 )
+
+# Intent → tool class → concrete tool. Keeps the model from firing
+# ``cli_supabase`` at "recherchiere zu Supabase" instead of ``search_web``.
+#
+# PR-06 (2026-08-18): this text used to be the ``else`` branch of the
+# capability render in ``_build_system_prompt`` — and that branch is
+# unreachable, because ``jarvis/brain/factory.py`` seeds the CapabilityRegistry
+# on EVERY brain build, so the render is always truthy. The one block that
+# teaches search_web-versus-cli_* therefore never shipped. It is appended
+# unconditionally now, and the live tool list follows it.
+#
+# Module-level and static so the delegated prompt prefix stays byte-stable
+# across turns (provider prompt-cache entry).
+_TOOL_ROUTING_RULES = (
+    "TOOL-SELECTION-REGELN (strikt):\n"
+    "1) RECHERCHIEREN/ANALYSIEREN/ERKLÄREN/VERGLEICHEN/ZUSAMMENFASSEN "
+    "(Info *über* ein Thema, nicht Aktion darauf):\n"
+    "   → NUTZE: search_web (Primary). Tiefe Multi-Source-Recherche MIT "
+    "Bericht: spawn_worker.\n"
+    "   → NIEMALS: cli_* Tools, MCP-Action-Tools.\n"
+    "   → Bsp: 'recherchiere zu Supabase' → search_web('Supabase'), NICHT cli_supabase.\n"
+    "2) AKTION auf verbundenem System (öffne, starte, deploye, migrate, liste MEINE X):\n"
+    "   → NUTZE: cli_* / MCP-Tools. Bildschirm/App bedienen: computer_use.\n"
+    "   → Bsp: 'liste meine Supabase-Projekte' → cli_supabase 'supabase projects list'.\n"
+    "3) CODE SCHREIBEN/REFACTOREN/DEBUGGEN (echter Brocken):\n"
+    "   → NUTZE: spawn_worker mit der User-Utterance.\n"
+    "4) Unklar? → search_web (Read-only, kein Schaden) oder Rückfrage an User.\n"
+    "Der Unterschied zwischen (1) und (2) liegt am Intent, nicht am Thema: "
+    "'über X' = Search, 'mit X tun' = Action."
+)
+
+# Closes the tool list: the anti-invention rule. Deliberately scoped to TOOL
+# NAMES and to CLAIMS, not to "actions not in the list above" as before — the
+# old wording sat under a list that did not contain the tools it named, so it
+# read as an order to refuse work the surface actually covered (PR-05).
+_TOOL_LIST_RULE = (
+    "STRENGE REGEL: Rufe ausschließlich Werkzeuge aus dieser Liste auf und "
+    "erfinde niemals einen Werkzeugnamen. Passt für die gewünschte Aktion "
+    "wirklich keines, sag ehrlich: "
+    "'Das kann ich noch nicht — mir fehlt das passende Werkzeug.' "
+    "Und behaupte NIEMALS, etwas getan zu haben, das du nicht in diesem Turn "
+    "wirklich aufgerufen hast und dessen Ergebnis du gesehen hast.\n"
+    "Call ONLY tools from the list above and never invent a tool name. If "
+    "nothing fits, say honestly: \"I can't do that yet — I don't have a "
+    "registered tool for it.\" And NEVER claim to have done something you did "
+    "not actually call in this turn."
+)
+
+# Soft wrap width for the comma-separated tool-name list. Purely cosmetic —
+# a single 1.5k-character line reads as noise to a human debugging a prompt
+# dump, and the token cost is identical either way.
+_TOOL_LIST_WRAP_CHARS = 88
 
 
 def normalize_reply_language(value: object) -> str:
@@ -3852,67 +3922,31 @@ class BrainManager:
         # and "claimed it, did nothing" is forbidden in every turn.
         parts.append(_SELF_CONTROL_STANDING)
 
-        # Tool selection rules — prevents the LLM from wildly firing
-        # ``cli_supabase`` for "recherchiere zu Supabase" instead of using
-        # ``search_web``. Intent → tool class → concrete tool.
-        # Agent-C (capability-coupling): render registered capabilities
-        # dynamically from the CapabilityRegistry when available.  Fall back
-        # to the hardcoded block so the system degrades gracefully when
-        # jarvis/core/capabilities.py has not been deployed yet (Agent A).
-        lang = "de"  # system-prompt language is always DE (user preference)
-        capability_block: str = ""
-        try:
-            from jarvis.core.capabilities import get_registry  # type: ignore[import]
-            cap_reg = get_registry()
-            rendered = cap_reg.render_for_prompt(lang)
-            if rendered:
-                capability_block = (
-                    "REGISTRIERTE WERKZEUGE (vollständige Liste — keine anderen existieren):\n"
-                    + rendered
-                    + "\n\n"
-                    "STRENGE REGEL: Du darfst NIEMALS behaupten, eine Aktion auszuführen, "
-                    "die nicht in der obigen Liste steht. "
-                    "Wenn der User danach fragt, antworte: "
-                    "'Das kann ich noch nicht — mir fehlt das passende Werkzeug.' "
-                    "Erfinde keine Tools.\n"
-                    "You must NEVER claim to perform an action that is not in the list above. "
-                    "If the user asks for one, reply: "
-                    "'I can\\'t do that yet — I don\\'t have a registered tool for it.' "
-                    "Do not invent tools."
-                )
-        except Exception:  # noqa: BLE001 — module not yet deployed, use fallback
-            pass
+        # Tool selection rules — unconditional (PR-06). They used to hang off
+        # the ``else`` of the capability render below, which never runs: the
+        # factory seeds the CapabilityRegistry on every brain build, so the
+        # render was always truthy and the routing rules never reached a single
+        # prompt. See _TOOL_ROUTING_RULES for the full rationale.
+        parts.append(_TOOL_ROUTING_RULES)
 
-        if capability_block:
-            parts.append(capability_block)
-        else:
-            tool_routing = (
-                "TOOL-SELECTION-REGELN (strikt):\n"
-                "1) RECHERCHIEREN/ANALYSIEREN/ERKLÄREN/VERGLEICHEN/ZUSAMMENFASSEN "
-                "(Info *über* ein Thema, nicht Aktion darauf):\n"
-                "   → NUTZE: search_web (Primary). Tiefe Multi-Source-Recherche MIT "
-                "Bericht: spawn_worker.\n"
-                "   → NIEMALS: cli_* Tools, MCP-Action-Tools.\n"
-                "   → Bsp: 'recherchiere zu Supabase' → search_web('Supabase'), NICHT cli_supabase.\n"
-                "2) AKTION auf verbundenem System (öffne, starte, deploye, migrate, liste MEINE X):\n"
-                "   → NUTZE: cli_* / MCP-Tools. Bildschirm/App bedienen: computer_use.\n"
-                "   → Bsp: 'liste meine Supabase-Projekte' → cli_supabase 'supabase projects list'.\n"
-                "3) CODE SCHREIBEN/REFACTOREN/DEBUGGEN (echter Brocken):\n"
-                "   → NUTZE: spawn_worker mit der User-Utterance.\n"
-                "4) Unklar? → search_web (Read-only, kein Schaden) oder Rückfrage an User.\n"
-                "Der Unterschied zwischen (1) und (2) liegt am Intent, nicht am Thema: "
-                "'über X' = Search, 'mit X tun' = Action.\n\n"
-                "STRENGE REGEL: Du darfst NIEMALS behaupten, eine Aktion auszuführen, "
-                "die nicht in der obigen Liste steht. "
-                "Wenn der User danach fragt, antworte: "
-                "'Das kann ich noch nicht — mir fehlt das passende Werkzeug.' "
-                "Erfinde keine Tools.\n"
-                "You must NEVER claim to perform an action that is not in the list above. "
-                "If the user asks for one, reply: "
-                "'I can\\'t do that yet — I don\\'t have a registered tool for it.' "
-                "Do not invent tools."
-            )
-            parts.append(tool_routing)
+        # The honest tool list (PR-05). This used to render the
+        # CapabilityRegistry under the header "REGISTRIERTE WERKZEUGE
+        # (vollständige Liste — keine anderen existieren)", and that header was
+        # false twice over:
+        #   (a) The registry holds 19 static seed entries plus whatever MCP /
+        #       plugin code happened to register. search_web, gmail,
+        #       update_profile, set_config_value and every cli_* / registry
+        #       command tool are missing from it although they ARE attached —
+        #       so the prompt denied the model tools it was holding and pushed
+        #       it toward the dictated "mir fehlt das passende Werkzeug".
+        #   (b) Registry ids ("tool.run-shell") are not callable tool names
+        #       ("run_shell"). ToolUseLoop._resolve_tool carries a comment
+        #       about exactly this drift.
+        # The live surface is the only honest source, and it is the same one
+        # ``_check_unsupported_intent`` already trusts.
+        tool_list_block = self._render_live_tool_block()
+        if tool_list_block:
+            parts.append(tool_list_block)
 
         # B5 Agent C: per-turn wiki context suffix.  Set by generate() via
         # maybe_inject() just before the first provider call, consumed here,
@@ -4584,6 +4618,64 @@ class BrainManager:
         names = set(getattr(self, "_tools", None) or {})
         names.update(getattr(self, "_local_action_tools", None) or {})
         return tuple(sorted(names))
+
+    def _render_live_tool_block(self) -> str:
+        """Render the attached tool surface for the system prompt (PR-05).
+
+        NAMES ONLY, on purpose. Every attached tool already reaches the model
+        as a complete function definition — name, description, JSON schema —
+        in the provider request itself, and the CONNECTED CLIS / AVAILABLE
+        SKILLS sections describe their own entries a second time. Repeating
+        the descriptions here would cost roughly 7k characters per turn to
+        say what the model has been told twice already, on a prompt the
+        router-block cut (8117ad73) had just brought down to ~57k. The block's
+        job is not to introduce the tools; it is to state, truthfully, WHICH
+        names exist — the exact claim the old capability render got wrong.
+
+        Sorted, so the rendered text only changes when the surface changes
+        and the cached system prefix survives an ordinary turn.
+
+        Renders the ATTACHED surface (``self._tools``), not the turn's gated
+        subset: the per-turn gates (screenshot / visualize / inspect-pointer)
+        drop tools on most turns, so following them would rewrite the system
+        prefix nearly every turn and cost the provider prompt cache far more
+        than the precision is worth. Hence "aktuell angeschlossen", never
+        "in diesem Turn aufrufbar", in the header below.
+
+        Returns ``""`` when nothing is attached (tests that bypass
+        ``__init__``). A completeness claim over an empty surface would be the
+        same lie the other way round.
+        """
+        # ``_live_tool_names`` is the honest-refusal source and deliberately
+        # includes ``_local_action_tools``. Those are hidden from the router
+        # schema on purpose (see ``_run_local_action_fast_path``) and run
+        # BEFORE the model gets the turn, so naming them here would hand it
+        # five tool names no provider request carries.
+        hidden = set(getattr(self, "_local_action_tools", None) or {})
+        names = [n for n in self._live_tool_names() if n not in hidden]
+        if not names:
+            return ""
+
+        lines: list[str] = []
+        current = ""
+        for name in names:
+            candidate = f"{current}, {name}" if current else name
+            if current and len(candidate) > _TOOL_LIST_WRAP_CHARS:
+                lines.append(f"{current},")
+                current = name
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+
+        return (
+            f"DEINE WERKZEUGE — vollständige Liste der {len(names)} Namen, die "
+            "aktuell an dich angeschlossen sind. Beschreibung und Parameter "
+            "jedes Werkzeugs stehen in deinen Tool-Definitionen, nicht hier:\n"
+            + "\n".join(lines)
+            + "\n\n"
+            + _TOOL_LIST_RULE
+        )
 
     def _check_unsupported_intent(self, user_text: str) -> str | None:
         """Agent-C capability gate: return a deterministic refusal when the
@@ -10928,12 +11020,15 @@ class BrainManager:
             # Set here — after dead/cooldown skips — so it always names the
             # provider that genuinely runs this attempt, including a fallback win.
             self._active_turn_identity = (prov_name, model)
-            # Delegated realtime voice turns get hard loop bounds: a voice
-            # user is gone long before round 14 (live 2026-07-14: an
-            # unbounded delegate ran 14 rounds / 66 s on "what is in my
-            # wiki"). On deadline the loop forces ONE final tool-less round,
-            # so the user still hears a grounded answer. Classic turns call
-            # with the unchanged signature (kwargs only on delegation).
+            # Delegated realtime voice turns get hard loop bounds so an
+            # unbounded delegate can never run away (live 2026-07-14: 14
+            # rounds / 66 s on "what is in my wiki"). They are ceilings, not
+            # targets — see _DELEGATE_MAX_TURNS for why the round budget and
+            # the wall clock carry different numbers. On either bound the loop
+            # forces ONE final tool-less round over the evidence already
+            # gathered, so the user still hears a grounded answer. Classic
+            # turns call with the unchanged signature (kwargs only on
+            # delegation).
             _disp_kwargs: dict[str, Any] = (
                 {
                     "max_turns": _DELEGATE_MAX_TURNS,
