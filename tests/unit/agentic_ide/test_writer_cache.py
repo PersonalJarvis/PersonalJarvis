@@ -19,17 +19,29 @@ def _cfg(choice: str) -> SimpleNamespace:
     return SimpleNamespace(agentic_ide=SimpleNamespace(prompt_writer=choice))
 
 
+@pytest.fixture(autouse=True)
+def _only_the_subscription_qualifies(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about the CACHE, not the order: the API-side rungs that
+    ``auto`` now tries first are unset, so the subscription probe is the one
+    resolution whose repeats and misses are counted."""
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
+    monkeypatch.setattr(writer, "_quality", lambda cfg: None)
+
+
 def test_a_success_is_reused_within_the_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
     loads: list[int] = []
     monkeypatch.setattr(
         writer, "_load_config", lambda: loads.append(1) or _cfg("auto")
     )
-    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: "sub-brain")
+    monkeypatch.setattr(
+        writer, "_subscription", lambda cfg, timeout: SimpleNamespace(name="claude-cli")
+    )
 
     first = writer.resolve_writer(cli_timeout_s=90.0)
     second = writer.resolve_writer(cli_timeout_s=90.0)
 
-    assert first == second == ("sub-brain", "subscription:auto")
+    assert first == second
+    assert first[1] == "subscription:claude-cli"
     assert len(loads) == 1
 
 
@@ -73,10 +85,9 @@ def test_a_rescue_resolution_invalidates_the_cache(
     )
     monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: "sub-brain")
     monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
-    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
 
     writer.resolve_writer()
-    writer.resolve_rescue_writer(exclude=("subscription:auto",))
+    writer.resolve_rescue_writer(exclude=("api",))
     writer.resolve_writer()
 
     # Three real resolutions: the second resolve_writer re-asked.

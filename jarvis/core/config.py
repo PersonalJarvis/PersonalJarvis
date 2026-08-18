@@ -3534,8 +3534,9 @@ class AgenticIdeConfig(BaseModel):
     prompt_writer: str = Field(
         default="auto",
         description=(
-            "Who writes Agentic IDE task briefs: 'auto' (a connected coding "
-            "subscription if there is one, else the API-billed quality tier), "
+            "Who writes Agentic IDE task briefs: 'auto' (the writer that answers "
+            "soonest — your Tool Model if one is pinned, else the API-billed "
+            "quality tier, else a connected coding subscription), 'tool_model', "
             "'subscription', 'api', or a specific brain provider id."
         ),
     )

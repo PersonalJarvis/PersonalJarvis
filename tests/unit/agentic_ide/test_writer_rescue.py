@@ -35,7 +35,9 @@ def test_a_dead_api_tier_crosses_to_the_tool_model(monkeypatch: pytest.MonkeyPat
 
 
 def test_the_rung_that_died_is_never_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Re-probing the same tier spends the same dead credential twice."""
+    """Re-probing the same tier spends the same dead credential twice — and the
+    rescue crosses in the ``auto`` order, so a dead Tool Model is followed by
+    the API tier (no cold start), the coding CLI last."""
     monkeypatch.setattr(writer, "_load_config", lambda: _cfg())
     monkeypatch.setattr(writer, "_tool_model", lambda cfg: "tool-brain")
     monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: "sub-brain")
@@ -43,8 +45,34 @@ def test_the_rung_that_died_is_never_retried(monkeypatch: pytest.MonkeyPatch) ->
 
     brain, source = writer.resolve_rescue_writer(exclude=("tool_model:grok",))
 
-    assert brain == "sub-brain"
-    assert source.startswith("subscription")
+    assert brain == "api-brain"
+    assert source == "api"
+
+
+def test_the_subscription_is_the_last_rescue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both API-side rungs dead: only now is a coding CLI's cold start worth
+    paying — the user is still waiting, and a rescue that starts on the slowest
+    writer while a faster one qualifies is the same delay wearing a new name."""
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg())
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: "tool-brain")
+    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: SimpleNamespace(name="codex"))
+    monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
+
+    brain, source = writer.resolve_rescue_writer(exclude=("tool_model:grok", "api"))
+
+    assert getattr(brain, "name", "") == "codex"
+    assert source == "subscription:codex"
+
+
+def test_rescue_and_first_choice_share_one_order() -> None:
+    """The drift guard: "who writes" and "who rescues" answer the same question
+    from ONE tuple, so a rung can never be first choice in one and forgotten in
+    the other."""
+    import inspect
+
+    assert writer._AUTO_ORDER == ("tool_model", "api", "subscription")  # noqa: SLF001
+    for function in (writer._fastest_writer, writer.resolve_rescue_writer):  # noqa: SLF001
+        assert "_AUTO_ORDER" in inspect.getsource(function)
 
 
 def test_a_named_source_is_compared_by_its_rung(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,6 +135,7 @@ def test_the_cli_timeout_reaches_the_subscription_probe(
     seen: list[float | None] = []
     monkeypatch.setattr(writer, "_load_config", lambda: _cfg())
     monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
+    monkeypatch.setattr(writer, "_quality", lambda cfg: None)
     monkeypatch.setattr(
         writer, "_subscription", lambda cfg, timeout: seen.append(timeout) or "sub-brain"
     )

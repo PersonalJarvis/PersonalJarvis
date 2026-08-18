@@ -17,26 +17,78 @@ def _cfg(choice: str) -> SimpleNamespace:
     return SimpleNamespace(agentic_ide=SimpleNamespace(prompt_writer=choice))
 
 
-def test_auto_prefers_a_connected_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_prefers_the_pinned_tool_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The live 2026-08-18 16:10 delay: ``auto`` handed a spoken instruction to
+    the subscription CLI, which spent 18.9 s — nearly all of it its own process
+    start — while the user's Tool Model would have written the same brief in
+    1-3 s. Under ``auto`` the writer that answers soonest goes first, and a
+    slower rung is not even probed while a faster one qualifies."""
     monkeypatch.setattr(writer, "_load_config", lambda: _cfg("auto"))
-    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: "sub-brain")
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: SimpleNamespace(name="vertex"))
     monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
+    monkeypatch.setattr(
+        writer,
+        "_subscription",
+        lambda cfg, timeout: pytest.fail("probed a coding CLI while a faster writer qualified"),
+    )
 
     brain, source = writer.resolve_writer()
 
-    assert brain == "sub-brain"
-    assert source.startswith("subscription")
+    assert getattr(brain, "name", "") == "vertex"
+    assert source == "tool_model:vertex"
 
 
-def test_auto_falls_through_to_the_api_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_prefers_the_api_tier_over_a_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No Tool Model pinned: a direct API call has no cold start to pay, so it
+    writes before any coding CLI is asked."""
     monkeypatch.setattr(writer, "_load_config", lambda: _cfg("auto"))
-    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: None)
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
     monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
+    monkeypatch.setattr(
+        writer,
+        "_subscription",
+        lambda cfg, timeout: pytest.fail("probed a coding CLI while a faster writer qualified"),
+    )
 
     brain, source = writer.resolve_writer()
 
     assert brain == "api-brain"
     assert source == "api"
+
+
+def test_auto_reaches_the_subscription_when_nothing_api_side_qualifies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The downloader whose ONLY credential is a coding CLI still gets a
+    written brief — the subscription is last, not gone."""
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg("auto"))
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
+    monkeypatch.setattr(writer, "_quality", lambda cfg: None)
+    monkeypatch.setattr(
+        writer, "_subscription", lambda cfg, timeout: SimpleNamespace(name="claude-cli")
+    )
+
+    brain, source = writer.resolve_writer()
+
+    assert getattr(brain, "name", "") == "claude-cli"
+    assert source == "subscription:claude-cli"
+
+
+def test_an_unset_tool_model_is_the_ordinary_auto_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under ``auto`` a missing Tool Model is not a broken pin: the next rung
+    answers, and the log stays free of a "pinned to the Tool Model" complaint
+    that would send the user to a setting they never touched."""
+    seen: list[str] = []
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg("auto"))
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
+    monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
+    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: None)
+    monkeypatch.setattr(writer.logger, "info", lambda msg, *a, **k: seen.append(str(msg)))
+
+    brain, _source = writer.resolve_writer()
+
+    assert brain == "api-brain"
+    assert not [line for line in seen if "pinned to the Tool Model" in line]
 
 
 def test_api_pin_never_reaches_a_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,6 +145,7 @@ def test_the_timeout_reaches_the_subscription_resolver(
     still willing to wait for."""
     seen: list[float | None] = []
     monkeypatch.setattr(writer, "_load_config", lambda: _cfg("auto"))
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
     monkeypatch.setattr(
         writer, "_subscription", lambda cfg, timeout: seen.append(timeout) or "sub"
     )
@@ -114,22 +167,21 @@ def test_resolution_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     assert writer.resolve_writer() == (None, "")
 
 
-def test_a_failing_subscription_resolver_still_reaches_the_api_tier(
+def test_a_raising_subscription_probe_degrades_instead_of_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A broken CLI probe must not cost the user their working API path."""
+    """A broken CLI probe is the last rung's problem alone: it must neither
+    reach the caller nor be mistaken for a writer."""
 
     def _boom(cfg: object, timeout: object) -> object:
         raise RuntimeError("cli probe exploded")
 
     monkeypatch.setattr(writer, "_load_config", lambda: _cfg("auto"))
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: None)
+    monkeypatch.setattr(writer, "_quality", lambda cfg: None)
     monkeypatch.setattr(writer, "_subscription", _boom)
-    monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
 
-    brain, source = writer.resolve_writer()
-
-    assert brain == "api-brain"
-    assert source == "api"
+    assert writer.resolve_writer() == (None, "")
 
 
 def test_both_call_sites_use_this_module() -> None:

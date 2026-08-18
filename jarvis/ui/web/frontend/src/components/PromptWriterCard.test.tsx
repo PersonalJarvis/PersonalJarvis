@@ -26,7 +26,7 @@ const mockSave = vi.mocked(savePromptWriter);
 const STATE = {
   prompt_writer: "auto",
   options: [
-    { id: "auto", label: "Automatic (a connected subscription, else the API model)", connected: true },
+    { id: "auto", label: "Automatic (your Tool Model, else the API model, else a connected subscription)", connected: true },
     { id: "tool_model", label: "Tool Model (Google Gemini - gemini-3.6-flash)", connected: true },
     { id: "subscription", label: "Any connected coding CLI (never an API key)", connected: true },
     { id: "api", label: "API model (billed per token)", connected: true },

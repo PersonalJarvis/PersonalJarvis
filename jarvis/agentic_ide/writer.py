@@ -17,8 +17,23 @@ The order, and why each rung is where it is:
    tab, for work the assistant does on its own behalf. It resolves through
    ``resolve_tool_model_brain`` and nowhere else: a Tool Model pin that quietly
    landed on a coding CLI would make the setting meaningless.
-3. **``auto`` prefers a connected subscription**, because it is work the user
-   has already paid for, then crosses to the API tier if none answers.
+3. **``auto`` prefers the writer that answers soonest**: the pinned Tool
+   Model first, then the API-billed quality tier, then a connected coding
+   subscription. A brief written for a SPOKEN instruction sits on the voice
+   turn's critical path — the user is standing there, waiting for the text to
+   land in the pane — and a subscription CLI pays a cold process start before
+   it thinks at all. Measured live 2026-08-18 16:10: the CLI wrote a 1248-char
+   brief in 18.9 s, nearly all of it the spawn (an EMPTY answer from the same
+   CLI took 17-19 s in the same minute, against 5-6 s an hour earlier — the
+   start-up cost triples under load), while the Tool Model on the same box
+   wrote the same brief in 5 s warm. Until 2026-08-18 ``auto`` put the subscription
+   first because it is work the user has already paid for; it now writes under
+   ``auto`` only when nothing API-side qualifies — an install whose ONLY
+   credential is a coding CLI still gets its brief — and a user who wants the
+   plan spent on purpose pins ``subscription``. The Tool Model rung leads
+   because it is, by the Tool Model tab's own words, the model that "routes
+   spoken commands and starts background agents": a spoken instruction to a
+   pane is exactly that work.
 4. **Nothing qualifies → ``(None, "")``**, and the caller says so.
 
 The distinction users actually make here is "an API key I pay per token for"
@@ -173,27 +188,54 @@ def _resolve_writer_uncached(*, cli_timeout_s: float | None) -> tuple[Any | None
     if choice == "tool_model":
         return _tool_model_writer(config)
 
+    if choice == "auto":
+        return _fastest_writer(config, cli_timeout_s)
+
     subscription = _try_subscription(config, cli_timeout_s)
     if subscription is not None:
         name = getattr(subscription, "name", None) or choice
         return subscription, f"subscription:{name}"
 
-    if choice != "auto":
-        # An explicit pin that cannot be honoured degrades openly rather than
-        # quietly billing a key the user did not choose.
-        logger.info(
-            "Agentic IDE writer pinned to '{}' but it is unreachable — using the "
-            "deterministic prompt rather than silently billing another provider",
-            choice,
-        )
-        return None, ""
+    # An explicit pin that cannot be honoured degrades openly rather than
+    # quietly billing a key the user did not choose.
+    logger.info(
+        "Agentic IDE writer pinned to '{}' but it is unreachable — using the "
+        "deterministic prompt rather than silently billing another provider",
+        choice,
+    )
+    return None, ""
 
+
+# The ``auto`` order — and the order a dead call crosses over in. ONE tuple for
+# both on purpose: "who writes" and "who rescues" must never drift apart, and
+# both answer the same question the same way — which reachable writer delivers
+# the brief soonest without a demotion in quality. Direct API calls (the Tool
+# Model and the quality tier) have no process to cold-start; the subscription
+# CLI pays 5-19 s of spawn per brief (measured 2026-08-18, see the module
+# docstring) and therefore goes last in BOTH orders — the writer of last resort
+# under ``auto``, and the last rescue after a failed one.
+_AUTO_ORDER = ("tool_model", "api", "subscription")
+
+
+def _writer_for_rung(rung: str, config: Any, cli_timeout_s: float | None) -> tuple[Any | None, str]:
+    """One rung of :data:`_AUTO_ORDER` resolved, or ``(None, "")``."""
+    if rung == "tool_model":
+        return _tool_model_writer(config, pinned=False)
+    if rung == "subscription":
+        brain = _try_subscription(config, cli_timeout_s)
+        if brain is None:
+            return None, ""
+        return brain, f"subscription:{getattr(brain, 'name', None) or 'subscription'}"
     return _api_writer(config)
 
 
-# The rungs a dead call may cross to, best first. Deliberately the same three
-# the pins name, so "who writes" and "who rescues" can never drift apart.
-_RESCUE_ORDER = ("tool_model", "subscription", "api")
+def _fastest_writer(config: Any, cli_timeout_s: float | None) -> tuple[Any | None, str]:
+    """The ``auto`` answer: the first rung of :data:`_AUTO_ORDER` that qualifies."""
+    for rung in _AUTO_ORDER:
+        brain, source = _writer_for_rung(rung, config, cli_timeout_s)
+        if brain is not None:
+            return brain, source
+    return None, ""
 
 
 def resolve_rescue_writer(
@@ -221,16 +263,10 @@ def resolve_rescue_writer(
         logger.info("Agentic IDE rescue writer could not be resolved", exc_info=True)
         return None, ""
 
-    for rung in _RESCUE_ORDER:
+    for rung in _AUTO_ORDER:
         if rung in tried:
             continue
-        if rung == "tool_model":
-            brain, source = _tool_model_writer(config)
-        elif rung == "subscription":
-            brain = _try_subscription(config, cli_timeout_s)
-            source = f"subscription:{getattr(brain, 'name', None) or 'subscription'}"
-        else:
-            brain, source = _api_writer(config)
+        brain, source = _writer_for_rung(rung, config, cli_timeout_s)
         if brain is not None:
             logger.info("Agentic IDE brief falls across to {} after a failed writer", source)
             return brain, source
@@ -256,7 +292,7 @@ def _api_writer(config: Any) -> tuple[Any | None, str]:
     return (brain, "api") if brain is not None else (None, "")
 
 
-def _tool_model_writer(config: Any) -> tuple[Any | None, str]:
+def _tool_model_writer(config: Any, *, pinned: bool = True) -> tuple[Any | None, str]:
     """The user's configured Tool Model, or ``(None, "")``.
 
     Does NOT fall through to the quality tier when the Tool Model is unset or
@@ -265,6 +301,10 @@ def _tool_model_writer(config: Any) -> tuple[Any | None, str]:
     written by a coding CLI would be no better off if it silently landed on a
     third model instead. The caller degrades to its deterministic prompt and
     reports that honestly.
+
+    ``pinned=False`` is the ``auto`` order asking: there an unset Tool Model is
+    the ordinary case and the next rung answers, so it earns no log line that
+    reads like a broken pin.
     """
     try:
         brain = _tool_model(config)
@@ -272,11 +312,12 @@ def _tool_model_writer(config: Any) -> tuple[Any | None, str]:
         logger.info("Agentic IDE tool-model writer unavailable", exc_info=True)
         return None, ""
     if brain is None:
-        logger.info(
-            "Agentic IDE writer pinned to the Tool Model, but no usable Tool "
-            "Model is configured — using the deterministic prompt rather than "
-            "silently writing with another model"
-        )
+        if pinned:
+            logger.info(
+                "Agentic IDE writer pinned to the Tool Model, but no usable Tool "
+                "Model is configured — using the deterministic prompt rather than "
+                "silently writing with another model"
+            )
         return None, ""
     name = getattr(brain, "name", None) or "tool model"
     return brain, f"tool_model:{name}"
