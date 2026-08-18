@@ -997,6 +997,58 @@ async def _await_cancellable_chat_turn(
 
 
 # ---------------------------------------------------------------------------
+# WebView profile — where the embedded browser keeps its site data
+# ---------------------------------------------------------------------------
+
+#: The embedded browser's profile directory, relative to the data directory.
+WEBVIEW_PROFILE_DIRNAME = "webview"
+
+
+def webview_storage_dir(
+    *,
+    data_dir: Path | None = None,
+    fallback_dir: Path | None = None,
+) -> Path | None:
+    """The directory the embedded browser persists its site data in, or None.
+
+    pywebview starts in ``private_mode`` by default: the WebView2 profile lives
+    in a fresh ``%TEMP%\tmpXXXX`` folder that nobody deletes, and everything the
+    frontend keeps in ``localStorage`` — the chosen wallpaper, the deck/classic
+    surface, pane sizes, favourites, the theme cache the boot script paints the
+    first frame from — dies with the process (forensic 2026-08-18: light chrome
+    on the dark bundled artwork after every restart, because the light pick was
+    gone while the theme itself survived on the backend). The profile therefore
+    lives in a fixed directory next to the other per-checkout state, and the
+    same call persists it on every backend pywebview has (Edge, WebKitGTK, Qt,
+    Cocoa) — see ``docs/os-parity.md``.
+
+    Per checkout on purpose (``DATA_DIR``, like the single-instance lock): two
+    checkouts running side by side must not fight over one browser profile. A
+    read-only checkout falls back to the per-user data directory, exactly like
+    the credential store does; if neither can be created the caller keeps
+    pywebview's private mode — a wallpaper that does not survive a restart is
+    not worth failing the boot over.
+    """
+    candidates: list[Path] = [
+        (data_dir if data_dir is not None else DATA_DIR) / WEBVIEW_PROFILE_DIRNAME
+    ]
+    if fallback_dir is not None:
+        candidates.append(fallback_dir / WEBVIEW_PROFILE_DIRNAME)
+    else:
+        from jarvis.core.paths import user_data_dir
+
+        candidates.append(user_data_dir() / WEBVIEW_PROFILE_DIRNAME)
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            if os.access(candidate, os.W_OK):
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Single-Instance-Lock
 # ---------------------------------------------------------------------------
 
@@ -4849,12 +4901,28 @@ class DesktopApp:
         # crash the app or tear down the backend thread that is already serving
         # the UI: degrade to the browser-UI fallback. No-op on Windows/macOS
         # where the native backend starts normally.
+        # The browser profile is persistent (see webview_storage_dir): the
+        # frontend's localStorage — wallpaper, surface, pane sizes, theme cache
+        # — must survive a restart, and pywebview's default private mode throws
+        # it away with the process. Only when no directory can be written does
+        # the shell fall back to that private mode, and says so.
+        storage_dir = webview_storage_dir()
+        if storage_dir is None:
+            from loguru import logger as _profile_logger
+
+            _profile_logger.warning(
+                "No writable directory for the WebView profile — the browser "
+                "runs in private mode and the interface forgets its wallpaper "
+                "and layout on every restart."
+            )
         try:
             webview.start(
                 func=self._inject_token,
                 args=(self._window,),
                 gui=gui,
                 debug=debug,
+                private_mode=storage_dir is None,
+                storage_path=str(storage_dir) if storage_dir is not None else None,
             )
         except webview.WebViewException as exc:
             # Not swallowed: the exception is handed to the degrade path, which
