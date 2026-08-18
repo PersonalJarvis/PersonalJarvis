@@ -1,7 +1,7 @@
 import pytest
 
 import jarvis.realtime.scrub_gate as scrub_gate_module
-from jarvis.brain.output_filter import ScrubResult
+from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult
 from jarvis.core.protocols import AudioChunk
 from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.speech.hangup import END_CALL_SIGNAL
@@ -202,15 +202,12 @@ async def test_split_filler_opener_can_complete_a_substantive_reply():
     "fragment",
     [
         pytest.param("**", id="markdown"),
-        pytest.param("https://example.com", id="source-url"),
         pytest.param("As an AI.", id="self-reference"),
-        pytest.param("I'm noting that down.", id="background-narration"),
         pytest.param(
             "If I understand correctly, yes.",
             id="echo-paraphrase",
         ),
         pytest.param("Great question.", id="filler-opener"),
-        pytest.param("MCP", id="engineering-jargon"),
         pytest.param("Sir,", id="honorific"),
         pytest.param("\N{EM DASH}", id="dash"),
     ],
@@ -221,7 +218,14 @@ async def test_harmless_scrub_fragment_never_becomes_generic_error(
     gate = ScrubHoldGate(language="en")
     buffered = _chunk(8)
 
-    assert await gate.feed_transcript(fragment) == fragment
+    # This test is its name: a harmless fragment must never be spoken as a
+    # failure. It is deliberately NOT an equality check. A fragment may be
+    # legitimately rewritten — a URL becomes a spoken placeholder — and
+    # pinning bytes here once held for exactly the wrong reason: the fragment
+    # scrubbed away to nothing, the residue guard produced the error phrase,
+    # and the gate's raw-delta rescue handed the original back.
+    display = await gate.feed_transcript(fragment)
+    assert FALLBACK_PHRASES["en"] not in display
     assert gate.hard_leak_pending() is False
     assert await gate.push_audio(buffered) == []
 
@@ -246,6 +250,51 @@ async def test_other_non_blocking_scrub_actions_do_not_raise_generic_error(
     gate = ScrubHoldGate(language="en")
 
     assert await gate.feed_transcript(fragment) == expected_display
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_a_url_becomes_a_spoken_placeholder_and_the_audio_keeps_flowing():
+    """A URL is rewritten, not deleted, and that ends the matter.
+
+    It used to be removed outright, which stranded the preposition in front
+    of it ("Die Doku steht auf und erklaert alles.") and, for a fragment that
+    was nothing BUT a URL, emptied the text so the residue guard spoke the
+    error phrase. The substitution is a completed, safe rewrite, so there is
+    nothing left for the gate to hold back — unlike a fragment that still
+    looks like a partial leak.
+    """
+    gate = ScrubHoldGate(language="en")
+
+    display = await gate.feed_transcript("https://example.com")
+
+    assert FALLBACK_PHRASES["en"] not in display
+    assert "example.com" not in display
+    assert display.strip() != ""
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        pytest.param("I'm noting that down.", id="background-narration"),
+        pytest.param("MCP", id="engineering-jargon"),
+    ],
+)
+async def test_ordinary_wording_reaches_the_display_untouched(fragment: str):
+    """These two used to be scrubbed, and that was the bug.
+
+    A confirmation the user asked for ("I'm noting that down.") was stripped
+    to nothing and spoken back as an error, and "MCP" was excised from its
+    sentence as engineering jargon although it is ordinary user vocabulary
+    now. Both reach the display verbatim today, which is why they no longer
+    belong among the harmless-SCRUB fragments above — nothing scrubs them.
+    Pinned here so the old behaviour cannot creep back unnoticed.
+    """
+    gate = ScrubHoldGate(language="en")
+
+    assert await gate.feed_transcript(fragment) == fragment
     assert gate.hard_leak_pending() is False
 
 
