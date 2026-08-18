@@ -42,7 +42,7 @@ export function DeckOrb({
   readouts?: OrbReadouts;
   className?: string;
   /**
-   * The click-shaped wake word: pressing the orb (the mask in it) does what
+   * The click-shaped wake word: pressing the orb does what
    * saying the wake phrase does — starts the conversation, or ends the one
    * that runs. Without it the orb is display only.
    */
@@ -217,11 +217,11 @@ export function DeckOrb({
 }
 
 /**
- * The orb and the mask inside it — the part of the centre a press lands on.
+ * The orb — the part of the centre a press lands on.
  *
- * Back to front: a soft gold glow wider than the sphere; the weather itself;
- * a bronze tint that darkens the weather toward the core so the gold sits at
- * the rim; the dark core with the glowing eyes.
+ * Back to front: a soft gold glow wider than the sphere (`.deck-orb-glow`,
+ * keyed on the voice state), then the artwork itself with the mascot in its
+ * core (`JarvisOrb`).
  */
 function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: number }) {
   const glow = Math.round(orbSize * 1.35);
