@@ -19,6 +19,14 @@ ONLY when one of these holds:
 2. The turn is a short, clear YES to a delegation offer the model made right
    after the gate blocked the previous turn (the model is told to offer
    instead of spawn; the user's confirmation then unlocks exactly one spawn).
+3. The EFFORT test (``effort_warrants_delegation``) reads the turn as a
+   request for a multi-step artefact — a build/write/refactor brief, or
+   research whose deliverable is a file. Added on the maintainer mandate
+   2026-08-18 ("the goal is that he just DOES things without being told"),
+   because rules 1 and 2 meant Jarvis could never start work on its own
+   judgement: "Bau mir eine Website mit Flask und einer Startseite" produced
+   an offer, never a website. Available in the ``balanced`` and ``permissive``
+   force-spawn modes, OFF in ``strict`` — see ``jarvis.core.config``.
 
 Everything else is blocked and fed back to the model as a tool error telling
 it to answer inline. The deterministic force-spawn path
@@ -36,6 +44,12 @@ from __future__ import annotations
 import logging
 import re
 import time
+
+from jarvis.core.config import (
+    DEFAULT_FORCE_SPAWN_MODE,
+    FORCE_SPAWN_MODE_STRICT,
+    normalize_force_spawn_mode,
+)
 
 log = logging.getLogger(__name__)
 
@@ -255,6 +269,329 @@ def addressed_pane_blocks_spawn(user_text: str) -> bool:
         return False
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# The EFFORT route (maintainer mandate 2026-08-18)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# The vocabulary route above asks "did the user name the vehicle?". This one
+# asks "is the WORK itself plainly a multi-step artefact?" — a build / write /
+# refactor brief, or research whose deliverable is a file. A question, a
+# lookup, a chat turn and anything cheap stay inline, as before.
+#
+# The direction of error is NOT symmetric here, and the whole test is built
+# around that asymmetry: an unrequested background agent is expensive,
+# surprising and hard to stop (forensic 2026-05-01 — the model hallucinated a
+# spawn on the chit-chat turn "es geht ab" and Jarvis then claimed to have
+# started tests it never started), while a missed delegation costs one inline
+# answer plus the offer the model is told to make. So every stage is
+# conjunctive and EVERY doubt resolves to "no spawn":
+#
+#   1. REQUEST SHAPE   the turn must be an order or a request TO Jarvis — not
+#                      a report of finished work, not an information question.
+#   2. NOT CHEAP       an explicit small-scope word ("kurz", "quick", "nur",
+#                      "einfach") vetoes outright.
+#   3. NOT CONVERSATION the manager's existing stand-down detectors
+#                      (instructional / opinion / coaching) veto; reused rather
+#                      than re-decided, so the effort route cannot drift away
+#                      from the force-spawn path.
+#   4. DELIVERABLE     a build verb + an artefact noun, a named file, or a
+#                      code-work verb + a code object.
+#   5. SCOPE           at least one SUBSTANCE signal (two or more named
+#                      components, an explicit multi-step marker, or a research
+#                      verb next to the deliverable) AND two signals in total.
+#
+# Where the "unsure" line sits: stage 5. One signal is not enough. "Bau mir
+# eine Website" names one component and stops — the model answers inline and
+# may offer. "Bau mir eine Website mit Flask und einer Startseite" carries two
+# components, a specification and a coordination: three signals, so it goes.
+#
+# All matching is pure regex over the user's own words (AP-11 safe, no LLM in
+# the gate, provider-agnostic) plus the manager's existing detectors.
+
+#: A brief this long is multi-step on its own — but only ever as ONE modifier
+#: signal, never on its own (a long chat turn is still a chat turn).
+_HEAVY_MIN_WORDS = 12
+
+#: First-person past tense: the user is REPORTING work, not ordering it.
+#: ``_BUILD_VERB_RE`` deliberately matches "wrote" / "geschrieben" / "saved"
+#: for the artifact classifier, so without this an "I already wrote the report
+#: and the summary" turn would read as a build brief.
+_REPORTED_WORK_RE: re.Pattern[str] = re.compile(
+    r"\b(?:ich|wir|i|we)\s+(?:hab|habe|haben|hatte|hatten|"  # i18n-allow: spoken input
+    r"have|had|already)\b"
+    r"|\b(?:schon|bereits|already)\s+"  # i18n-allow: spoken input
+    r"(?:gebaut|geschrieben|erstellt|built|written|created)\b",  # i18n-allow: spoken input
+    re.IGNORECASE,
+)
+
+#: An interrogative opener makes the turn a question about the world. Answered
+#: inline, whatever artefact nouns it happens to contain ("Wie baue ich eine
+#: Website mit Flask und einer Startseite?" is a how-to, not a brief).
+_INFO_QUESTION_RE: re.Pattern[str] = re.compile(
+    r"^\s*(?:und\s+|aber\s+|okay,?\s+|ok,?\s+|also,?\s+)?"  # i18n-allow: spoken input
+    r"(?:was|wie|warum|wieso|weshalb|wann|wo|wer|wem|wen|welch\w*"  # i18n-allow: DE interrogatives
+    r"|what|how|why|when|where|who|whom|which"
+    r"|qu[eé]|c[oó]mo|cu[aá]ndo|d[oó]nde|qui[eé]n)\b",  # i18n-allow: ES interrogatives
+    re.IGNORECASE,
+)
+
+#: A polite request frame. A turn ending in "?" is a question UNLESS it is
+#: framed as a request ("Kannst du mir … bauen?"), which is how people ask for
+#: work out loud in German and English alike.
+_REQUEST_FRAME_RE: re.Pattern[str] = re.compile(
+    r"\b(?:kannst|k[oö]nntest|w[uü]rdest|bitte"  # i18n-allow: DE request frame
+    r"|ich\s+(?:m[oö]chte|will|brauche|br[aä]uchte|h[aä]tte)"  # i18n-allow: DE request frame
+    r"|can\s+you|could\s+you|would\s+you|please"
+    r"|i\s+(?:want|need)|i'?d\s+like)\b",
+    re.IGNORECASE,
+)
+
+#: An explicit small-scope word. Vetoes the effort route outright — the user
+#: said the job is small, and a background agent for a small job is exactly
+#: the surprise this gate exists to prevent. Deliberately generous (the common
+#: German fillers "nur" and "einfach" are in here): over-vetoing costs an
+#: inline answer, under-vetoing costs an unwanted mission.
+_CHEAP_SCOPE_RE: re.Pattern[str] = re.compile(
+    r"\b(?:kurz\w*|klein\w*|schnell\w*|einfach\w*|nur|winzig\w*"  # i18n-allow: DE scope words
+    r"|mal\s+eben|eben\s+mal|einzeiler|minimal\w*|trivial\w*"  # i18n-allow: DE scope words
+    r"|quick\w*|simple|simply|just|short|briefly|tiny"
+    r"|one[-\s]?liner|single\s+line)\b",
+    re.IGNORECASE,
+)
+
+#: Code work is the second deliverable shape next to a document: a refactor or
+#: a migration produces a diff, which is exactly what the Worker->Critic
+#: pipeline grades. Disjoint from ``_BUILD_VERB_RE`` on purpose — that one
+#: stays untouched so the artifact classifier keeps its current behaviour.
+_CODE_WORK_VERB_RE: re.Pattern[str] = re.compile(
+    r"\b(?:refactor\w*|refaktor\w*|migrat\w*|migrier\w*|portier\w*"  # i18n-allow: DE code verbs
+    r"|implementier\w*|implement\w*|rewrite|rewrit\w*|umschreib\w*"  # i18n-allow: DE code verbs
+    r"|umbau\w*|modularisier\w*|entkoppel\w*|umstrukturier\w*"  # i18n-allow: DE code verbs
+    r"|restructur\w*|clean\s+up)",
+    re.IGNORECASE,
+)
+
+#: The object a code-work verb acts on.
+_CODE_OBJECT_RE: re.Pattern[str] = re.compile(
+    r"\b(?:code|codebase|repo|repository|modul\w*|module|modules"  # i18n-allow: DE code nouns
+    r"|funktion\w*|function|functions|klasse|klassen|class|classes"  # i18n-allow: DE code nouns
+    r"|projekt\w*|project|api|apis|endpoint\w*|pipeline"  # i18n-allow: DE code nouns
+    r"|service|services|paket\w*|package|packages|test|tests)\b",  # i18n-allow: DE code nouns
+    re.IGNORECASE,
+)
+
+#: Named parts of a deliverable. Counting DISTINCT ones is the strongest
+#: substance signal there is: a brief that names two or more parts describes a
+#: job with parts, which is what a background agent is for.
+_COMPONENT_NOUN_RE: re.Pattern[str] = re.compile(
+    r"\b(?:startseite\w*|start\s?page|homepage|landing\s?page"  # i18n-allow: DE component nouns
+    r"|login|anmeldung|registrierung|sign\s?up|signup"  # i18n-allow: DE component nouns
+    r"|datenbank\w*|database|endpoint\w*|route|routen|routes"  # i18n-allow: DE component nouns
+    r"|formular\w*|kontaktformular\w*|navigation|men[uü]|menu"  # i18n-allow: DE component nouns
+    r"|footer|header|impressum|unterseite\w*|seiten"  # i18n-allow: DE component nouns
+    r"|deployment|readme|dokumentation|documentation"  # i18n-allow: DE component nouns
+    r"|struktur\w*|architektur\w*|backend|frontend"  # i18n-allow: DE component nouns
+    r"|diagramm\w*|chart|charts|tabelle\w*)\b",  # i18n-allow: DE component nouns
+    re.IGNORECASE,
+)
+
+#: An explicit multi-step / from-scratch marker.
+_MULTI_STEP_RE: re.Pattern[str] = re.compile(
+    r"\bschritt\s+f[uü]r\s+schritt\b|\bstep\s+by\s+step\b"  # i18n-allow: DE multi-step marker
+    r"|\bdanach\b|\banschlie[sß]end\w*|\bzuerst\b"  # i18n-allow: DE multi-step marker
+    r"|\bvon\s+grund\s+auf\b|\bmehrere\b|\bmehreren\b"  # i18n-allow: DE multi-step marker
+    r"|\bkomplett\w*|\bvollst[aä]ndig\w*"  # i18n-allow: DE multi-step marker
+    r"|\bthen\b|\bafterwards?\b|\bend[-\s]?to[-\s]?end\b"
+    r"|\bfrom\s+scratch\b|\bseveral\b|\bmultiple\b",
+    re.IGNORECASE,
+)
+
+#: A research / analysis verb. Next to a file deliverable this is the
+#: "research-with-a-deliverable" shape: the answer is not spoken, it is
+#: written down, and that is a mission the critic can grade via git diff.
+_RESEARCH_VERB_RE: re.Pattern[str] = re.compile(
+    r"\b(?:recherchier\w*|analysier\w*|untersuch\w*|vergleich\w*"  # i18n-allow: DE research verbs
+    r"|evaluier\w*|bewert\w*|research\w*|analyz\w*|analys\w*"  # i18n-allow: DE research verbs
+    r"|investigat\w*|compar\w*|evaluat\w*|assess\w*|benchmark\w*)",
+    re.IGNORECASE,
+)
+
+#: "… with Flask", "… using Postgres" — a named constraint on the artefact.
+_SPEC_PREPOSITION_RE: re.Pattern[str] = re.compile(
+    r"\b(?:mit|mittels|auf\s+basis\s+von"  # i18n-allow: DE prepositions
+    r"|with|using|based\s+on|via)\s+\w",
+    re.IGNORECASE,
+)
+
+#: Coordination — the brief lists more than one thing.
+_COORDINATION_RE: re.Pattern[str] = re.compile(
+    r"\b(?:und|sowie|au[sß]erdem|zus[aä]tzlich"  # i18n-allow: DE coordination
+    r"|and|plus|additionally)\b|,",
+    re.IGNORECASE,
+)
+
+
+def _artifact_regexes() -> tuple[re.Pattern[str], ...] | None:
+    """The manager's build-verb / artefact-noun / named-file patterns.
+
+    Imported lazily for the same reason as ``_is_decline_or_feature_talk``:
+    this stays a leaf module. Sharing the manager's ONE set of patterns is the
+    point — the effort route and the force-spawn path must agree on what "an
+    artefact" is. On any import fault the effort route is simply unavailable
+    (``None``), which fails CLOSED: no spawn.
+    """
+    try:
+        from jarvis.brain.manager import (  # noqa: PLC0415
+            _BUILD_VERB_RE,
+            _DOC_NOUN_RE,
+            _NAMED_FILE_RE,
+        )
+    except Exception:  # noqa: BLE001 — gate must never crash a tool turn
+        return None
+    return (_BUILD_VERB_RE, _DOC_NOUN_RE, _NAMED_FILE_RE)
+
+
+def _conversational_standdown(text: str) -> bool:
+    """True when an existing detector already calls this turn conversation.
+
+    Reuses the manager's battle-tested stand-downs instead of forming a second
+    opinion: an instructional "how do I …", an opinion/advice question, and
+    conversational coaching. An import fault answers True — the effort route
+    then simply does not fire, which is the safe side.
+
+    ``_looks_like_pc_control`` is deliberately NOT in this set. Its pattern
+    matches the bare verb "schreib", which is also a build verb, so it fires on
+    "schreib mir einen Bericht über X" — the single most common shape of a
+    write-a-deliverable brief. The codebase already resolves that collision the
+    other way round (``_should_force_spawn``: the pc-control stand-down applies
+    only ``and not self._research_wants_artifact(t)`` — an artefact build wins
+    over a screen mention), and on the deterministic path that stand-down has
+    already run before the effort test is reached.
+    """
+    try:
+        from jarvis.brain.manager import (  # noqa: PLC0415
+            _is_conversational_coaching,
+            _is_instructional_question,
+            _is_opinion_advice_question,
+        )
+    except Exception:  # noqa: BLE001 — gate must never crash a tool turn
+        return True
+    return bool(
+        _is_instructional_question(text)
+        or _is_opinion_advice_question(text)
+        or _is_conversational_coaching(text)
+    )
+
+
+def effort_warrants_delegation(user_text: str) -> bool:
+    """True when the turn is plainly a multi-step artefact brief.
+
+    The second route to a permitted spawn, next to the delegation vocabulary.
+    See the block comment above for the five stages and for where the "unsure"
+    line sits (stage 5: one scope signal is not enough).
+
+    Pure and side-effect free — the offer window is untouched here, so the
+    caller keeps the one place that arms and disarms it. Callers:
+    ``llm_spawn_allowed`` (LLM-chosen spawns) and
+    ``BrainManager._should_force_spawn`` (the deterministic path), both only in
+    the ``balanced`` / ``permissive`` force-spawn modes.
+    """
+    text = (user_text or "").strip()
+    if not text:
+        return False
+    # 1. request shape
+    if _REPORTED_WORK_RE.search(text):
+        return False
+    if _INFO_QUESTION_RE.search(text):
+        return False
+    if text.endswith("?") and not _REQUEST_FRAME_RE.search(text):
+        return False
+    # 2. explicit small scope
+    if _CHEAP_SCOPE_RE.search(text):
+        return False
+    # 3. the existing conversational stand-downs
+    if _conversational_standdown(text):
+        return False
+    # 4. a deliverable
+    patterns = _artifact_regexes()
+    if patterns is None:
+        return False
+    build_verb_re, doc_noun_re, named_file_re = patterns
+    # A build verb takes either the manager's artefact nouns or a named part of
+    # one ("eine Dokumentation", "eine Datenbank") — the manager's list is a
+    # closed set tuned for its own classifier and is left untouched. Widening
+    # here is safe because stage 5 below, not this stage, is what actually
+    # decides: "Baue mir ein Login" reaches stage 5 with one named part and
+    # stops there.
+    has_deliverable = bool(
+        named_file_re.search(text)
+        or (
+            build_verb_re.search(text)
+            and (doc_noun_re.search(text) or _COMPONENT_NOUN_RE.search(text))
+        )
+        or (_CODE_WORK_VERB_RE.search(text) and _CODE_OBJECT_RE.search(text))
+    )
+    if not has_deliverable:
+        return False
+    # 5. scope — one SUBSTANCE signal is mandatory, two signals in total.
+    named_parts = {
+        match.group(0).lower()
+        for pattern in (doc_noun_re, _COMPONENT_NOUN_RE, _CODE_OBJECT_RE)
+        for match in pattern.finditer(text)
+    }
+    substance = 0
+    if len(named_parts) >= 2:
+        substance += 1
+    if _MULTI_STEP_RE.search(text):
+        substance += 1
+    if _RESEARCH_VERB_RE.search(text):
+        substance += 1
+    if not substance:
+        return False
+    signals = substance
+    if _SPEC_PREPOSITION_RE.search(text):
+        signals += 1
+    if _COORDINATION_RE.search(text):
+        signals += 1
+    if len(text.split()) >= _HEAVY_MIN_WORDS:
+        signals += 1
+    if signals < 2:
+        return False
+    log.info(
+        "spawn gate: effort route — multi-step artefact brief (%d signals) in "
+        "%r",
+        signals,
+        text[:80],
+    )
+    return True
+
+
+def active_force_spawn_mode() -> str:
+    """The live ``brain.routing.force_spawn_mode``.
+
+    Read from the running ``BrainManager`` (the ONE accessor,
+    ``BrainManager.force_spawn_mode``) so a mid-session config change is seen
+    without re-reading ``jarvis.toml`` on every tool call. Without a registered
+    manager there is no user configuration to honour, so the SHIPPED default
+    answers — the effort test itself is the conservative layer here, not this
+    lookup.
+    """
+    try:
+        from jarvis.core import runtime_refs  # noqa: PLC0415
+
+        manager = runtime_refs.get_brain_manager()
+    except Exception:  # noqa: BLE001 — gate must never crash a tool turn
+        return DEFAULT_FORCE_SPAWN_MODE
+    if manager is None:
+        return DEFAULT_FORCE_SPAWN_MODE
+    return normalize_force_spawn_mode(getattr(manager, "force_spawn_mode", ""))
+
+
+def effort_route_enabled() -> bool:
+    """True when the active mode grants the effort route (not ``strict``)."""
+    return active_force_spawn_mode() != FORCE_SPAWN_MODE_STRICT
+
+
 def llm_spawn_allowed(user_text: str) -> bool:
     """Gate an LLM-chosen spawn tool call against the user's ACTUAL turn.
 
@@ -263,6 +600,13 @@ def llm_spawn_allowed(user_text: str) -> bool:
     ``user_text`` must be the verbatim user turn (``ctx.user_utterance`` /
     the realtime transcript), never the model's paraphrase — a paraphrase can
     smuggle in delegation vocabulary the user never spoke.
+
+    An EMPTY turn fails CLOSED, unlike the desktop gate next door
+    (``cu_gate.llm_computer_use_allowed`` fails open). The asymmetry is
+    deliberate: without the user's words there is nothing to judge, and the
+    2026-05-01 forensic is exactly a spawn nobody asked for being reported as
+    started work. A blocked spawn costs an inline answer; an invented one costs
+    a background agent and a false claim.
     """
     text = (user_text or "").strip()
     if not text:
@@ -284,6 +628,15 @@ def llm_spawn_allowed(user_text: str) -> bool:
         )
         return False
     if _marker_spans(text):
+        OFFER_WINDOW.disarm()
+        return True
+    # The effort route (2026-08-18). Placed AFTER every guard above and after
+    # the vocabulary route, so it can only ever widen what an already-clean
+    # turn may do — a decline, feature talk, or an addressed workspace terminal
+    # still wins. Two independent judgements have to agree before anything
+    # starts: the model chose to call the spawn tool, and this deterministic
+    # test reads the turn as a multi-step artefact brief.
+    if effort_route_enabled() and effort_warrants_delegation(text):
         OFFER_WINDOW.disarm()
         return True
     if OFFER_WINDOW.consume_confirm(text):
@@ -352,7 +705,10 @@ __all__ = [
     "SPAWN_BLOCKED_MODEL_FEEDBACK",
     "SPAWN_VEHICLE_TOOL_NAMES",
     "DelegationOfferWindow",
+    "active_force_spawn_mode",
     "addressed_pane_blocks_spawn",
+    "effort_route_enabled",
+    "effort_warrants_delegation",
     "llm_spawn_allowed",
     "names_spawn_vehicle",
     "spawn_blocked_feedback",

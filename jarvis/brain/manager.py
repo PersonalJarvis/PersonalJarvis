@@ -45,8 +45,15 @@ from uuid import UUID, uuid4
 # classifier (provider_test.classify_provider_error) so the live fallback chain and
 # the API-Keys badge can never disagree on "out of credits / over budget" (AP-22).
 from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
+from jarvis.brain.spawn_gate import effort_warrants_delegation
 from jarvis.core.bus import EventBus
-from jarvis.core.config import BrainTierConfig, JarvisConfig
+from jarvis.core.config import (
+    FORCE_SPAWN_MODE_BALANCED,
+    FORCE_SPAWN_MODE_PERMISSIVE,
+    BrainTierConfig,
+    JarvisConfig,
+    normalize_force_spawn_mode,
+)
 from jarvis.core.events import (
     ActionExecuted,
     AnnouncementRequested,
@@ -3350,6 +3357,21 @@ class BrainManager:
     def reply_language(self) -> str:
         """The active reply-language pin: ``auto`` | ``de`` | ``en`` | ``es``."""
         return self._reply_language
+
+    @property
+    def force_spawn_mode(self) -> str:
+        """The live ``brain.routing.force_spawn_mode``: strict/balanced/permissive.
+
+        The ONE live accessor for the setting. ``_should_force_spawn`` reads it
+        here, and ``jarvis.brain.spawn_gate.active_force_spawn_mode`` reads it
+        through the runtime reference to this manager — so the deterministic
+        path and the LLM gate can never end up in different modes on the same
+        turn. Unknown values normalise to the shipped default, never to a mode
+        the user did not ask for.
+        """
+        return normalize_force_spawn_mode(
+            getattr(self._config.brain.routing, "force_spawn_mode", "")
+        )
 
     @property
     def conversation_language(self) -> str:
@@ -7496,10 +7518,13 @@ class BrainManager:
              opinion/advice question; conversational coaching
              (``_is_conversational_coaching``); pointer; navigation; smalltalk;
              open-app; installed skill; connected-CLI capability; PC control.
-          5. Strict mode (default): explicit-only — the explicit trigger
-             already returned True in step 3, so everything else → False
-             (maintainer mandate 2026-07-21). Permissive mode: action verb /
-             external marker → True.
+          5. The force-spawn mode decides what is left (``force_spawn_mode``):
+             ``balanced`` (default) and ``permissive`` first run the EFFORT
+             test — a multi-step artefact brief → True (mandate 2026-08-18).
+             ``strict`` skips it and stays explicit-only, so everything the
+             trigger in step 3 did not catch → False (mandate 2026-07-21).
+             ``permissive`` additionally keeps the legacy heuristic: action
+             verb / external marker → True.
           6. Otherwise → False.
         """
         # A drag-dropped mission recap is a CONVERSATION about a FINISHED job,
@@ -7754,16 +7779,46 @@ class BrainManager:
             and not self._research_wants_artifact(t)
         ):
             return False
-        # User-Mandate 2026-05-14: strict-mode is the default. The router
-        # used to spawn on every spawn_verb hit ("schreib", "mach",
-        # "zeig", "lies", ...), which fired heavy workers for everyday
-        # utterances. In strict mode we only spawn when the user
-        # explicitly names a heavy-work trigger ("Jarvis-Agent", "Sub-Agent",
-        # "spawn", "deep dive", "gründliche Recherche", ...). The legacy
-        # verb/marker heuristic stays available via
-        # `brain.routing.force_spawn_mode = "permissive"`.
-        mode = (self._config.brain.routing.force_spawn_mode or "strict").lower()
-        if mode == "strict":
+        # User-Mandate 2026-05-14: the permissive router used to spawn on every
+        # spawn_verb hit ("schreib", "mach", "zeig", "lies", ...), which fired
+        # heavy workers for everyday utterances, so strict became the default:
+        # spawn only when the user explicitly names a heavy-work trigger
+        # ("Jarvis-Agent", "Sub-Agent", "spawn", "deep dive", "gründliche
+        # Recherche", ...). Since 2026-08-18 the default is `balanced` — strict
+        # plus the effort route below — and the legacy verb/marker heuristic
+        # stays available via `brain.routing.force_spawn_mode = "permissive"`.
+        mode = self.force_spawn_mode
+        if mode in (FORCE_SPAWN_MODE_BALANCED, FORCE_SPAWN_MODE_PERMISSIVE):
+            # The EFFORT route (maintainer mandate 2026-08-18: "the goal is that
+            # he just DOES things without being told. Right now he doesn't even
+            # do the things you DO tell him."). Explicit-only left Jarvis unable
+            # to start work on its own judgement — "Bau mir eine Website mit
+            # Flask und einer Startseite" reached this line and became talk.
+            #
+            # This is the retired build-a-deliverable gate coming back NARROWER,
+            # not the retired gate coming back. That one fired on
+            # ``_research_wants_artifact`` alone — a build verb plus an artefact
+            # noun — so a bare "erstell ein Skript" dispatched a mission. The
+            # effort test demands the same deliverable PLUS a request shape,
+            # PLUS no cheap-scope word, PLUS the conversational stand-downs,
+            # PLUS a substance signal and two scope signals in total. It is
+            # deliberately reused from ``spawn_gate`` rather than restated here,
+            # so the deterministic path and the LLM gate judge effort with ONE
+            # test (the same reason ``addressed_pane_blocks_spawn`` delegates to
+            # ``intent.owns_turn``).
+            #
+            # Every stand-down above still wins: this runs last, after the
+            # smalltalk / Whisper-FP / instructional / opinion / coaching /
+            # pointer / skill / capability / pc-control guards.
+            if effort_warrants_delegation(t):
+                log.info(
+                    "force-spawn: %s mode — the turn is a multi-step artefact "
+                    "brief, delegating without a delegation keyword: %r",
+                    mode,
+                    t[:80],
+                )
+                return True
+        if mode != FORCE_SPAWN_MODE_PERMISSIVE:
             # Maintainer mandate 2026-07-21 (voice session 07:46): a background
             # agent starts ONLY on an explicit request — the user names the
             # vehicle or a delegation/depth trigger (``force_spawn_phrases``;
@@ -7782,10 +7837,13 @@ class BrainManager:
             #     background agent (``jarvis.brain.spawn_gate``), and the
             #     user's confirming yes unlocks exactly one spawn.
             # The legacy verb/marker heuristic stays available via
-            # ``force_spawn_mode = "permissive"``.
+            # ``force_spawn_mode = "permissive"``. In ``balanced`` the effort
+            # route above already had its say, so reaching here means the turn
+            # is neither an explicit request nor a multi-step artefact brief.
             log.info(
-                "force-spawn skipped: strict mode is explicit-only — no "
-                "delegation trigger in %r",
+                "force-spawn skipped: %s mode needs an explicit delegation "
+                "trigger — none in %r",
+                mode,
                 t[:80],
             )
             return False

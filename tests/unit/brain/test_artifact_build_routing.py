@@ -37,9 +37,13 @@ class _Inert:
         raise AssertionError("no exec in a classification test")
 
 
-def _manager() -> BrainManager:
+def _manager(mode: str = "strict") -> BrainManager:
+    # "strict" is what this file pins: explicit-only, the 2026-07-21 mandate.
+    # It stopped being the shipped default on 2026-08-18 (that is "balanced"
+    # now) but it is unchanged and still selectable, so every assertion below
+    # keeps its meaning — see test_spawn_effort_route.py for balanced mode.
     config = JarvisConfig()
-    config.brain.routing.force_spawn_mode = "strict"  # production default
+    config.brain.routing.force_spawn_mode = mode
     return BrainManager(
         config=config,
         bus=EventBus(),
@@ -116,6 +120,28 @@ def test_non_build_requests_do_not_force_spawn(utterance: str) -> None:
     assert _manager()._should_force_spawn(utterance) is False, (
         f"{utterance!r} is not a build-a-deliverable mission and must not spawn"
     )
+
+
+def test_balanced_mode_takes_the_long_brief_but_not_the_one_liners() -> None:
+    """The 2026-08-18 effort route, measured against this file's own corpus.
+
+    ``FAILING`` is the live 2026-06-21 utterance: four sentences, an HTML file,
+    a visualization and a trip to prepare — a multi-step brief, and in balanced
+    mode it delegates again. The short build commands above stay inline in
+    EVERY mode: one artefact noun and nothing else is where the effort test
+    draws its unsure line.
+    """
+    balanced = _manager("balanced")
+    assert balanced._should_force_spawn(FAILING) is True
+    for utterance in _BUILD_DELIVERABLE:
+        assert balanced._should_force_spawn(utterance) is False, (
+            f"one-line build command {utterance!r} must stay inline even in "
+            "balanced mode"
+        )
+    for utterance in _NOT_A_BUILD_MISSION:
+        assert balanced._should_force_spawn(utterance) is False, (
+            f"{utterance!r} is not a mission in any mode"
+        )
 
 
 def test_artifact_discriminator_recognises_html_file() -> None:

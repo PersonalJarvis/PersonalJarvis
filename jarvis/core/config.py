@@ -711,6 +711,43 @@ class BrainPlausibilityConfig(BaseModel):
     stale_wake_seconds: float = 30.0
 
 
+#: The three force-spawn modes, widest-first in what they let through.
+#:
+#: ``permissive``  legacy heuristic — any action verb / external-system marker
+#:                 dispatches a worker. Historically over-eager (a knowledge
+#:                 question like "Was ist ein Verbrenner-Motor?" spawned one).
+#: ``balanced``    the shipped default since 2026-08-18: an explicit delegation
+#:                 request, OR a turn that the deterministic EFFORT test reads
+#:                 as a plainly multi-step artefact brief
+#:                 (``jarvis.brain.spawn_gate.effort_warrants_delegation``).
+#: ``strict``      explicit-only (mandate 2026-07-21): the user must name the
+#:                 vehicle or a delegation/depth trigger, or confirm an offer.
+#:
+#: Kept here, next to the field, so the manager's force-spawn branch and the
+#: LLM spawn gate read ONE definition instead of two drifting string literals.
+FORCE_SPAWN_MODE_STRICT = "strict"
+FORCE_SPAWN_MODE_BALANCED = "balanced"
+FORCE_SPAWN_MODE_PERMISSIVE = "permissive"
+FORCE_SPAWN_MODES: tuple[str, ...] = (
+    FORCE_SPAWN_MODE_STRICT,
+    FORCE_SPAWN_MODE_BALANCED,
+    FORCE_SPAWN_MODE_PERMISSIVE,
+)
+DEFAULT_FORCE_SPAWN_MODE = FORCE_SPAWN_MODE_BALANCED
+
+
+def normalize_force_spawn_mode(value: object) -> str:
+    """Return a known force-spawn mode for ``value``.
+
+    Empty, unknown or non-string values resolve to
+    :data:`DEFAULT_FORCE_SPAWN_MODE` — a typo in ``jarvis.toml`` must not brick
+    routing, and the two live readers (``BrainManager.force_spawn_mode`` and
+    ``jarvis.brain.spawn_gate``) must never disagree about what a value means.
+    """
+    mode = str(value or "").strip().lower()
+    return mode if mode in FORCE_SPAWN_MODES else DEFAULT_FORCE_SPAWN_MODE
+
+
 class BrainRoutingConfig(BaseModel):
     """Heuristic rules for the deterministic force-spawn classification.
 
@@ -800,16 +837,37 @@ class BrainRoutingConfig(BaseModel):
         "vollstaendige analyse", "vollständige analyse",
     ])
 
-    # Force-Spawn-Mode: "strict" honours only `force_spawn_phrases`,
-    # "permissive" falls back to the legacy spawn_verbs + external markers
-    # heuristic. Default is "strict" per user mandate 2026-05-14; since the
-    # 2026-07-21 mandate strict is EXPLICIT-ONLY — a background agent starts
-    # only when the user names the vehicle or a delegation/depth trigger from
-    # `force_spawn_phrases`. The former implicit strict-mode spawns (generic
-    # sub-agent work, heavy-research artifacts, build-a-deliverable) are
-    # retired; non-explicit heavy tasks are answered inline or OFFERED as a
-    # delegation the user confirms (jarvis/brain/spawn_gate.py).
-    force_spawn_mode: str = "strict"
+    # Force-Spawn-Mode — see FORCE_SPAWN_MODES above for the three values.
+    #
+    # "strict" honours only `force_spawn_phrases`; since the 2026-07-21 mandate
+    # it is EXPLICIT-ONLY — a background agent starts only when the user names
+    # the vehicle or a delegation/depth trigger. That mandate fixed unwanted
+    # spawns and created the opposite failure the maintainer reported on
+    # 2026-08-18: "the goal is that he just DOES things without being told.
+    # Right now he doesn't even do the things you DO tell him." A plain "build
+    # me a website with Flask and a start page" produced talk, never work.
+    #
+    # "balanced" (default since 2026-08-18) adds ONE second route: the
+    # deterministic effort test in `jarvis.brain.spawn_gate`
+    # (`effort_warrants_delegation`). It permits a spawn when the turn is a
+    # request for a multi-step artefact — a build/write/refactor brief, or
+    # research whose deliverable is a file — and refuses questions, lookups,
+    # chat and anything cheap. The test is conjunctive and every doubt resolves
+    # to "no spawn", because an unrequested background agent is expensive and
+    # surprising while a missed delegation costs one inline answer plus an
+    # offer the user can accept.
+    #
+    # "permissive" keeps the legacy spawn_verbs + external-marker heuristic.
+    #
+    # A user who wants the 2026-07-21 behaviour back sets "strict" — nothing in
+    # that mode changed. Read by `BrainManager.force_spawn_mode` (the ONE live
+    # accessor), consumed by `_should_force_spawn` and by the LLM spawn gate.
+    force_spawn_mode: str = DEFAULT_FORCE_SPAWN_MODE
+
+    @field_validator("force_spawn_mode", mode="before")
+    @classmethod
+    def _normalize_force_spawn_mode(cls, v: object) -> str:
+        return normalize_force_spawn_mode(v)
 
     # Intelligent router (2026-06-21 user mandate "Jarvis must choose wisely among
     # ALL tools, like Claude Code"). When the ACTIVE talker cannot emit tool_calls
