@@ -209,6 +209,13 @@ export interface DeckState {
   wordsLast: number;
   /** How many utterances were finalised. */
   utterances: number;
+  /**
+   * The most recent final transcript, verbatim, until the brain answered it.
+   * A later final that carries it whole — a live snapshot that grew, or a
+   * buffered fragment the pipeline merged — replaces its words instead of
+   * adding to them.
+   */
+  heardText: string;
 }
 
 /** Hard caps — a long session must not grow any list unbounded. */
@@ -266,6 +273,7 @@ export function emptyDeckState(): DeckState {
     wordsSession: 0,
     wordsLast: 0,
     utterances: 0,
+    heardText: "",
   };
 }
 
@@ -328,6 +336,32 @@ export function countWords(text: string): number {
   const trimmed = text.trim();
   if (!trimmed) return 0;
   return trimmed.split(/\s+/).length;
+}
+
+/**
+ * The words of a final transcript, from either event that carries one.
+ *
+ * The classic pipeline publishes `TranscriptFinal` (and, right after it, a
+ * `TranscriptionUpdate` flagged final with the same words). The live session
+ * (Gemini / OpenAI realtime) publishes ONLY the latter — as a snapshot of the
+ * whole utterance so far, flagged final per provider chunk. Reading just the
+ * first left the live session's user with no line in the log and no words in
+ * the counter (2026-08-18). Null for anything else, partials included.
+ */
+function finalTranscript(name: string, p: Record<string, unknown>): string | null {
+  if (name === "TranscriptFinal") return str(obj(p.transcript).text);
+  if (name === "TranscriptionUpdate" && p.is_final === true) return str(p.text);
+  return null;
+}
+
+/**
+ * True when `text` carries `earlier` whole: a live snapshot that grew ("Mir"
+ * → "Mir geht es gut"), or the completion buffer's merge of a fragment with
+ * the utterance that finished it. Such a final REPLACES the earlier one; it
+ * is not a second thing the person said.
+ */
+function extendsHeard(text: string, earlier: string): boolean {
+  return earlier.length > 0 && text !== earlier && (text.startsWith(earlier) || text.endsWith(earlier));
 }
 
 // Terminal output arrives as raw PTY data: ANSI colour, cursor moves, CR-only
@@ -397,6 +431,8 @@ function reduceCards(
       };
       return {
         ...state,
+        // Answered: the next final transcript is a new utterance, however it starts.
+        heardText: "",
         usage: {
           ...state.usage,
           turns: state.usage.turns + 1,
@@ -574,15 +610,26 @@ function reduceCards(
     }
 
     // ---- words: the live counter's ground truth ---------------------------
-    case "TranscriptFinal": {
-      const transcript = obj(p.transcript);
-      const words = countWords(str(transcript.text));
-      if (words === 0) return state;
+    case "TranscriptFinal":
+    case "TranscriptionUpdate": {
+      const text = (finalTranscript(name, p) ?? "").trim();
+      const words = countWords(text);
+      // The same words on the second channel are not a second utterance.
+      if (words === 0 || text === state.heardText) return state;
+      if (extendsHeard(text, state.heardText)) {
+        return {
+          ...state,
+          wordsSession: state.wordsSession - state.wordsLast + words,
+          wordsLast: words,
+          heardText: text,
+        };
+      }
       return {
         ...state,
         wordsSession: state.wordsSession + words,
         wordsLast: words,
         utterances: state.utterances + 1,
+        heardText: text,
       };
     }
 
@@ -719,18 +766,27 @@ function reduceJournal(
     }
 
     // ---- hear ---------------------------------------------------------------
-    case "TranscriptFinal": {
-      const text = clip(str(obj(p.transcript).text));
+    case "TranscriptFinal":
+    case "TranscriptionUpdate": {
+      const raw = finalTranscript(name, p);
+      if (raw === null) return state;
+      const text = clip(raw);
       if (!text) return state;
-      return withJournal(
-        state,
-        appendLine(journal, {
-          ts: tsMs,
-          kind: "hear",
-          labelKey: p.continues_previous === true ? "deck.log_hear_more" : undefined,
-          text,
-        }),
-      );
+      // The classic pipeline says every transcript twice (TranscriptFinal,
+      // then the same words as a final TranscriptionUpdate): one line.
+      if (name === "TranscriptionUpdate" && recentlySaid(journal, "hear", text)) return state;
+      const labelKey = p.continues_previous === true ? "deck.log_hear_more" : undefined;
+      // A final that carries the previous line whole — the live session's
+      // growing snapshot, the completion buffer's merge — rewrites that line
+      // in place: the sentence, at the moment it began. Only the LAST line:
+      // anything logged in between means the earlier words were answered.
+      const last = journal.length - 1;
+      if (last >= 0 && journal[last].kind === "hear" && extendsHeard(text, journal[last].text ?? "")) {
+        const next = [...journal];
+        next[last] = { ...journal[last], text, ...(labelKey ? { labelKey } : {}) };
+        return withJournal(state, next);
+      }
+      return withJournal(state, appendLine(journal, { ts: tsMs, kind: "hear", labelKey, text }));
     }
 
     // ---- think --------------------------------------------------------------
@@ -1015,6 +1071,23 @@ function reduceTurn(
         return withTurn(state, { ...turn, phase: "think", anchorTs: tsMs, words, voice: true, lastEventTs: tsMs });
       }
       return withTurn(state, openTurn(state, tsMs, { phase: "think", anchorTs: tsMs, words, voice: true }));
+    }
+
+    case "TranscriptionUpdate": {
+      // The live session's transcript (see `finalTranscript`): a snapshot that
+      // contains the one before it, so the count is the larger, not a sum —
+      // which also swallows the classic pipeline's repeat of TranscriptFinal.
+      // The phase is left alone: TranscriptFinal, or the brain, moves it.
+      const text = finalTranscript(name, p);
+      if (text === null) return state;
+      const words = countWords(text);
+      if (words === 0) return state;
+      if (turn.phase !== "idle") {
+        return words > turn.words ? withTurn(state, { ...turn, words, lastEventTs: tsMs }) : state;
+      }
+      // Heard with no turn open (the live session's VoiceTurnStarted did not
+      // reach us): a person began a turn — open it as its hear phase.
+      return withTurn(state, openTurn(state, tsMs, { phase: "hear", words, voice: true }));
     }
 
     case "MessageSent": {

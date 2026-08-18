@@ -153,6 +153,36 @@ describe("reduceDeck", () => {
     expect(s.wordsLast).toBe(1);
     expect(s.utterances).toBe(2);
   });
+
+  it("counts the live session's transcript once, however many snapshots it arrives in", () => {
+    // Realtime (Gemini/OpenAI) never publishes TranscriptFinal: the whole
+    // utterance so far comes as TranscriptionUpdate, final per provider chunk.
+    let s = fold([
+      ["TranscriptionUpdate", { text: "Mir", is_final: false }],
+      ["TranscriptionUpdate", { text: "Mir", is_final: true }],
+      ["TranscriptionUpdate", { text: "Mir geht", is_final: true }],
+      ["TranscriptionUpdate", { text: "Mir geht es gut", is_final: true }],
+    ]);
+    expect(s.wordsSession).toBe(4);
+    expect(s.wordsLast).toBe(4);
+    expect(s.utterances).toBe(1);
+    // Answered — the next turn starts with the same word and is still new.
+    s = fold([
+      ["BrainTurnCompleted", { tokens_in: 1, tokens_out: 1 }],
+      ["TranscriptionUpdate", { text: "Mir ist kalt", is_final: true }],
+    ], s);
+    expect(s.wordsSession).toBe(7);
+    expect(s.utterances).toBe(2);
+  });
+
+  it("does not count the classic pipeline's repeat of a final transcript twice", () => {
+    const s = fold([
+      ["TranscriptFinal", { transcript: { text: "wie spät ist es" } }],
+      ["TranscriptionUpdate", { text: "wie spät ist es", is_final: true }],
+    ]);
+    expect(s.wordsSession).toBe(4);
+    expect(s.utterances).toBe(1);
+  });
 });
 
 describe("countWords", () => {
@@ -222,6 +252,40 @@ describe("the session log", () => {
       ["MessageSent", { role: "assistant", text: "Something else." }],
     ]);
     expect(s.journal.map((l) => l.text)).toEqual(["Erledigt.", "Something else."]);
+  });
+
+  it("writes what the live session heard — one line per utterance, rewritten as the snapshot grows", () => {
+    let s = fold([
+      ["VoiceTurnStarted", { turn_id: "t1" }],
+      ["TranscriptionUpdate", { text: "Mir", is_final: false }],
+      ["TranscriptionUpdate", { text: "Mir", is_final: true }],
+    ]);
+    const began = s.journal[0].ts;
+    s = fold([
+      ["TranscriptionUpdate", { text: "Mir geht", is_final: true }],
+      ["TranscriptionUpdate", { text: "Mir geht es gut", is_final: true }],
+    ], s);
+    expect(s.journal.map((l) => [l.kind, l.text])).toEqual([["hear", "Mir geht es gut"]]);
+    // The line keeps the moment the words began.
+    expect(s.journal[0].ts).toBe(began);
+    // Answered, then heard again: a second line, even when it starts alike.
+    s = fold([
+      ["SpeechSpoken", { text: "Schön zu hören.", spoken_kind: "reply" }],
+      ["TranscriptionUpdate", { text: "Mir geht es gut, und dir?", is_final: true }],
+    ], s);
+    expect(s.journal.map((l) => [l.kind, l.text])).toEqual([
+      ["hear", "Mir geht es gut"],
+      ["say", "Schön zu hören."],
+      ["hear", "Mir geht es gut, und dir?"],
+    ]);
+  });
+
+  it("writes the classic pipeline's transcript once, not once per event", () => {
+    const s = fold([
+      ["TranscriptFinal", { transcript: { text: "wie spät ist es" } }],
+      ["TranscriptionUpdate", { text: "wie spät ist es", is_final: true }],
+    ]);
+    expect(s.journal.map((l) => [l.kind, l.text])).toEqual([["hear", "wie spät ist es"]]);
   });
 
   it("logs a typed message once, not once per channel, and never the voice transcript again", () => {
@@ -423,6 +487,21 @@ describe("the turn", () => {
     expect(s.turn.phase).toBe("act");
     s = fold([["CUControlEnded", { reason: "finished" }]], s);
     expect(s.turn.phase).toBe("think");
+  });
+
+  it("counts the words of a live-session turn from its transcript snapshots", () => {
+    let s = fold([
+      ["VoiceTurnStarted", { turn_id: "t1" }],
+      ["TranscriptionUpdate", { text: "wie", is_final: true }],
+      ["TranscriptionUpdate", { text: "wie spät ist es", is_final: true }],
+    ]);
+    expect(s.turn.phase).toBe("hear");
+    expect(s.turn.words).toBe(4);
+    expect(s.turn.index).toBe(1);
+    // A transcript with no turn open opens one — a person spoke.
+    s = fold([["TranscriptionUpdate", { text: "hallo", is_final: true }]]);
+    expect(s.turn.phase).toBe("hear");
+    expect(s.turn.words).toBe(1);
   });
 
   it("fills missing marks from the end-of-turn snapshot and closes on a realtime completion", () => {
