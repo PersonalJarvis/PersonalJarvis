@@ -298,6 +298,76 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I couldn't start the background helper: {reason}",
         "es": "No pude iniciar el ayudante en segundo plano: {reason}",
     },
+    # The mission was accepted but NOTHING will ever pick it up: the spoken ack
+    # already promised an answer, and the mission would sit PENDING until the
+    # next app start's recovery sweep quietly marks it crash-recovered (AU-11).
+    # Rides ``JarvisAgentBackgroundCompleted.error``, i.e. the pipeline speaks it
+    # AFTER "Das hat nicht geklappt. " / "That didn't work. " — so this is the
+    # second half of a sentence and must stay under the readback's 80-char cap.
+    # One fact plus the one thing the user can act on, nothing else.
+    "spawn_no_runner": {
+        "de": "Ich kann die Aufgabe gerade nicht starten. Starte mich bitte neu.",  # i18n-allow
+        "en": "I can't start the task right now. Please restart me.",
+        "es": "No puedo iniciar la tarea ahora. Reiníciame, por favor.",
+    },
+    # Scheduled-routine failures (jarvis/workflows). A broken routine used to
+    # vanish into a log line, which is the maintainer's exact complaint: "you
+    # tell him something and nothing happens" (AU-12 / AU-13). ``{name}`` is the
+    # routine's own user-given name — never an id, never a run id.
+    "workflow_trigger_failed": {
+        "de": "Die Routine {name} konnte nicht starten. "  # i18n-allow
+              "Ich versuche es zum nächsten geplanten Zeitpunkt wieder.",  # i18n-allow
+        "en": "The routine {name} could not start. "
+              "I'll try again at the next scheduled time.",
+        "es": "La rutina {name} no pudo iniciarse. "
+              "Lo intentaré en el próximo momento programado.",
+    },
+    # The scheduler's own poll loop threw — EVERY scheduled routine is stalled,
+    # not just one, so this names no routine. It retries by itself, hence the
+    # honest "I'll keep trying" instead of an action the user cannot take.
+    "workflow_scheduler_stalled": {
+        "de": "Deine geplanten Routinen laufen gerade nicht. "  # i18n-allow
+              "Ich versuche es weiter.",  # i18n-allow
+        "en": "Your scheduled routines aren't running right now. "
+              "I'll keep trying.",
+        "es": "Tus rutinas programadas no se están ejecutando ahora. "
+              "Seguiré intentándolo.",
+    },
+    # A routine stopped mid-way. ``{step}`` is the author's own step label or the
+    # plain ordinal below — NEVER ``step_display_label``'s engineering fallback
+    # ("Tool: spawn_worker", "Shell: git status"), which would leak mechanics
+    # into speech. ``{reason}`` passed ``extract_speakable_reason``, so it is a
+    # human sentence and never an exception class name or a bare ``exit N``.
+    "workflow_step_failed": {
+        "de": "Die Routine {name} ist bei {step} hängen geblieben, "  # i18n-allow
+              "also habe ich sie angehalten.",  # i18n-allow
+        "en": "The routine {name} got stuck at {step}, so I stopped it.",
+        "es": "La rutina {name} se atascó en {step}, así que la detuve.",
+    },
+    # The reason trails in its own sentence rather than after a colon: it is
+    # forwarded text and may well end in a full stop of its own.
+    "workflow_step_failed_reason": {
+        "de": "Die Routine {name} ist bei {step} hängen geblieben, "  # i18n-allow
+              "also habe ich sie angehalten. Der Grund: {reason}",  # i18n-allow
+        "en": "The routine {name} got stuck at {step}, so I stopped it. "
+              "The reason: {reason}",
+        "es": "La rutina {name} se atascó en {step}, así que la detuve. "
+              "El motivo: {reason}",
+    },
+    "workflow_step_ordinal": {
+        "de": "Schritt {n}",  # i18n-allow
+        "en": "step {n}",
+        "es": "el paso {n}",
+    },
+    # Fills the ``{name}`` slot when a routine row carries no name. Worded to
+    # stay grammatical inside the sentences above ("Die Routine ohne Namen
+    # konnte nicht starten."). Vague on purpose — the id it replaces would not
+    # be vague, it would be meaningless out loud.
+    "workflow_unnamed": {
+        "de": "ohne Namen",  # i18n-allow
+        "en": "without a name",
+        "es": "sin nombre",
+    },
     # Deterministic wiki-write fast path (spec A1-A3). The saving line is a
     # PROGRESS ack — it must never claim the write already happened; the
     # saved/failed lines are the post-write truth (confirm-after-write).
@@ -552,6 +622,32 @@ def resolve_phrase_language(reply_language: str | None, user_text: str) -> str:
     if reply_language in _SUPPORTED:
         return str(reply_language)
     return resolve_turn_language("unknown", user_text, default=_DEFAULT)
+
+
+def resolve_ambient_language() -> str:
+    """Output language for a phrase with NO turn text behind it.
+
+    Scheduled routines, cron triggers and other unattended background work have
+    no user utterance to detect a language from, so the ONE resolver is fed the
+    only honest inputs there are: the explicit ``brain.reply_language`` pin, and
+    otherwise ``DEFAULT_LOCALE``. This layer never guesses beyond that
+    (CLAUDE.md §1 — one resolver decides, no layer re-derives). Mirrors
+    ``jarvis/cu/indicator/controller.py::_resolve_hint_language``, which needs
+    the same answer for the same reason.
+    """
+    from jarvis.core.turn_language import (  # noqa: PLC0415
+        DEFAULT_LOCALE,
+        resolve_output_language,
+    )
+
+    pin = ""
+    try:
+        from jarvis.core.config import load_config  # noqa: PLC0415
+
+        pin = str(getattr(load_config().brain, "reply_language", "") or "")
+    except Exception:  # noqa: BLE001 — config trouble must not silence a report
+        pin = ""
+    return resolve_output_language(pin, "", "", default=DEFAULT_LOCALE)
 
 
 def action_phrase(key: str, lang: str, **fmt: object) -> str:
@@ -869,5 +965,6 @@ __all__ = [
     "cu_failure_readback",
     "cu_success_readback",
     "extract_speakable_reason",
+    "resolve_ambient_language",
     "resolve_phrase_language",
 ]

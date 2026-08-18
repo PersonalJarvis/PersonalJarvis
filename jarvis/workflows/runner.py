@@ -35,6 +35,11 @@ from jarvis.core.events import (
     WorkflowStepStarted,
 )
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.voice.action_phrases import (
+    action_phrase,
+    extract_speakable_reason,
+    resolve_ambient_language,
+)
 
 from .schema import (
     WorkflowDef,
@@ -48,6 +53,48 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _PREVIEW_MAX = 240
+#: Longest a failure reason may be when it is SPOKEN. Long enough for a real
+#: sentence, short enough that a stack-shaped error does not become a monologue.
+_SPOKEN_REASON_MAX = 160
+#: How long a background thing that keeps failing stays quiet after it has said
+#: so once. One hour: a permanently broken routine becomes an hourly reminder,
+#: never a per-run metronome.
+FAILURE_REANNOUNCE_S = 3600.0
+
+
+class FailureAnnouncer:
+    """Suppression rule for "this ran in the background and broke" reports.
+
+    Two failures pull in opposite directions: a routine that breaks ONCE must
+    be said out loud, and a routine that breaks every 60 seconds must not be
+    said out loud every 60 seconds. The rule that satisfies both:
+
+    * the first failure of a key speaks immediately;
+    * while the same key keeps failing it stays silent for ``cooldown_s``,
+      then speaks again;
+    * a success calls :meth:`clear`, so the next NEW failure after a recovery
+      speaks at once instead of waiting the cooldown out.
+
+    Lives here and is imported by the scheduler so the two layers cannot drift
+    into two different rules — a failing cron routine passes through both.
+    """
+
+    def __init__(self, cooldown_s: float = FAILURE_REANNOUNCE_S) -> None:
+        self._cooldown_s = cooldown_s
+        self._last_spoken: dict[str, float] = {}
+
+    def should_speak(self, key: str) -> bool:
+        """True when this failure may be announced. Records the moment it is."""
+        now = time.monotonic()
+        previous = self._last_spoken.get(key)
+        if previous is not None and (now - previous) < self._cooldown_s:
+            return False
+        self._last_spoken[key] = now
+        return True
+
+    def clear(self, key: str) -> None:
+        """Forget ``key`` — it just succeeded, so its next failure is news."""
+        self._last_spoken.pop(key, None)
 
 
 # ----------------------------------------------------------------------
@@ -136,6 +183,8 @@ class WorkflowRunner:
         self._harness = harness_manager
         self._tools = tool_registry
         self._executor = tool_executor
+        #: Keyed by workflow id — see :class:`FailureAnnouncer`.
+        self._failures = FailureAnnouncer()
 
     # ------------------------------------------------------------------
     # Runtime dependency swap (the BrainManager is only built after the
@@ -209,6 +258,13 @@ class WorkflowRunner:
         step_outputs: dict[str, str] = {}
         success = True
         error_msg: str | None = None
+        # Kept for the spoken failure report below. ``failed_reason`` is the
+        # exception's own MESSAGE, never the ``ClassName: message`` form the
+        # store and the events carry — an exception class name means nothing to
+        # the person listening.
+        failed_step_index = 0
+        failed_step_label = ""
+        failed_reason = ""
 
         for idx, step in enumerate(wf.steps, start=1):
             label = step_display_label(step)
@@ -244,6 +300,13 @@ class WorkflowRunner:
                 )
                 success = False
                 error_msg = error_text
+                failed_step_index = idx
+                # The AUTHOR's own label only. ``step_display_label``'s fallback
+                # is engineering shorthand ("Tool: spawn_worker", "Shell: git
+                # status") — fine in a UI timeline, never in a spoken sentence;
+                # the plain ordinal stands in for it.
+                failed_step_label = getattr(step, "label", "") or ""
+                failed_reason = str(exc).strip()
                 log.warning("Workflow %s step %d failed: %s",
                             wf.name, idx, error_text)
                 break
@@ -276,6 +339,64 @@ class WorkflowRunner:
                 success=success,
                 duration_ms=duration_ms,
                 error=error_msg,
+                source_layer="workflows.runner",
+            )
+        )
+
+        # A broken chain used to end HERE: the ``break`` above skipped the
+        # trailing speak step, so the run that had the most to report was the
+        # one that said nothing (AU-13). The chain still stops — it just says
+        # why first.
+        if success:
+            self._failures.clear(str(wf.id))
+        else:
+            await self._announce_failure(
+                wf, failed_step_index, failed_step_label, failed_reason,
+            )
+
+    async def _announce_failure(
+        self,
+        wf: WorkflowDef,
+        step_index: int,
+        step_label: str,
+        reason: str,
+    ) -> None:
+        """Say, in plain language, that a routine stopped and what stopped it.
+
+        Reuses the announcement path every other background result travels
+        (``AnnouncementRequested(kind="subagent")``, as in
+        ``jarvis/tasks/runner.py:225``): it survives the voice hangup gate and
+        is mirrored to browser tabs, so it reaches the user on a headless
+        runtime too. Rate-limited per workflow — see :class:`FailureAnnouncer`.
+        """
+        if not self._failures.should_speak(str(wf.id)):
+            log.info(
+                "Workflow %s failed again within the announce cooldown — "
+                "reported once already, staying quiet",
+                wf.name,
+            )
+            return
+        lang = resolve_ambient_language()
+        where = step_label or action_phrase(
+            "workflow_step_ordinal", lang, n=step_index,
+        )
+        # The gate that keeps opaque tokens out of speech — a bare "exit 1", a
+        # numeric blob or internal diagnostics degrade to the reasonless line.
+        speakable = extract_speakable_reason(reason)
+        if speakable:
+            text = action_phrase(
+                "workflow_step_failed_reason", lang,
+                name=wf.name, step=where, reason=speakable[:_SPOKEN_REASON_MAX],
+            )
+        else:
+            text = action_phrase(
+                "workflow_step_failed", lang, name=wf.name, step=where,
+            )
+        await self._bus.publish(
+            AnnouncementRequested(
+                text=text,
+                language=lang,
+                kind="subagent",
                 source_layer="workflows.runner",
             )
         )

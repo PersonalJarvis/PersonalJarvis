@@ -43,8 +43,22 @@ from jarvis.core.events import JarvisAgentAnnouncement, JarvisAgentBackgroundCom
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.stream_evidence import strip_spawn_meta
+from jarvis.voice.action_phrases import action_phrase, resolve_ambient_language
 
 log = logging.getLogger(__name__)
+
+
+def _readback_lang(turn_language: str | None) -> str:
+    """de/en/es for a failure readback this tool renders itself.
+
+    The turn's resolved output language wins (stamped by the tool-use loop via
+    ``resolve_output_language`` — see ``execute``). Only when the turn carries
+    none does this fall back to the ambient answer (reply-language pin →
+    default locale); this layer never re-derives a language from the utterance
+    (CLAUDE.md §1).
+    """
+    lang = (turn_language or "").strip().lower()
+    return lang or resolve_ambient_language()
 
 
 # Resolved at execute-time, not at __init__-time. Required because the
@@ -678,6 +692,11 @@ class SpawnWorkerTool:
                 self._background_dispatch(
                     mission_prompt, utterance, manager, kontrollierer,
                     mission_language=mission_language,
+                    # Full de/en/es turn language (NOT the de/en-capped
+                    # mission_language): a failure readback the background task
+                    # renders itself must be in the same language the pipeline
+                    # will wrap it in.
+                    readback_language=ack_language,
                 ),
                 # NOTE: prefix "jarvis-agent-" is a live matching key, not a
                 # cosmetic label — jarvis/brain/manager.py
@@ -720,6 +739,7 @@ class SpawnWorkerTool:
         kontrollierer: Any | None,
         *,
         mission_language: str = "de",
+        readback_language: str | None = None,
     ) -> None:
         """Laeuft im Background. Dispatched + executes eine Mission.
 
@@ -746,7 +766,12 @@ class SpawnWorkerTool:
         gets no voice feedback (BUG-016). When no Kontrollierer is
         available the dispatch still happens — the next app start's
         recovery sweep will mark it as crash-recovered, which is at
-        least visible in the UI instead of silently lost.
+        least visible in the UI instead of silently lost. That UI trace
+        is NOT enough on its own: the user has already heard a spoken
+        promise, so the missing runner is published as a failed
+        completion (AU-11) — the same event a finished mission uses,
+        so the voice layer says it out loud instead of a log line
+        nobody reads.
 
         Exceptions werden geloggt und als ``success=False`` publisht — nichts
         propagiert nach aussen, weil der Task fire-and-forget ist und ein
@@ -766,6 +791,15 @@ class SpawnWorkerTool:
                     "(recovery will mark it crash_recovered)",
                     mission_id,
                 )
+                # The user was promised an answer seconds ago. Publishing the
+                # SAME completion event a finished mission uses is what turns
+                # that dead end into a spoken sentence; the pipeline wraps
+                # ``error`` in its localized "that didn't work" line.
+                await self._publish_dispatch_failure(
+                    utterance, action_phrase(
+                        "spawn_no_runner", _readback_lang(readback_language),
+                    ),
+                )
                 return
             # Run the mission. This blocks until APPROVED / FAILED;
             # the Voice-Listener will then publish JarvisAgentBackgroundCompleted.
@@ -775,24 +809,9 @@ class SpawnWorkerTool:
             raise  # Propagieren, damit Loop sauber aufraeumt.
         except BaseException as exc:  # noqa: BLE001
             log.exception("Background Jarvis-Agent dispatch crashed")
-            try:
-                await self._bus.publish(
-                    JarvisAgentBackgroundCompleted(
-                        success=False,
-                        utterance=utterance,
-                        summary="",
-                        error=f"{type(exc).__name__}: {exc}",
-                        duration_s=0.0,
-                    )
-                )
-            except Exception:  # noqa: BLE001
-                # If even the fail-event publish crashed (dead bus,
-                # shutdown race), at least leave a trace — otherwise the
-                # whole failure disappears with no record in either the
-                # log or the voice path.
-                log.exception(
-                    "JarvisAgentBackgroundCompleted bus-publish crashed"
-                )
+            await self._publish_dispatch_failure(
+                utterance, f"{type(exc).__name__}: {exc}",
+            )
         finally:
             # Release the liveness gate on EVERY terminal state — success,
             # kontrollierer-None early return, failure, or shutdown cancel.
@@ -800,3 +819,28 @@ class SpawnWorkerTool:
             # is not falsely suppressed as "already running" (#3). Floor at 0
             # defends against any unpaired decrement.
             self._active_dispatches = max(0, self._active_dispatches - 1)
+
+    async def _publish_dispatch_failure(self, utterance: str, error: str) -> None:
+        """Tell the user a promised background task will not deliver.
+
+        The ONE exit for every dead end in ``_background_dispatch`` — the crash
+        path and the no-Kontrollierer path alike — so neither can regress into a
+        bare log line again (AU-11). ``error`` rides the completion event the
+        Voice-Listener already publishes for a finished mission, so the readback
+        goes through the established path instead of a second mechanism.
+        """
+        try:
+            await self._bus.publish(
+                JarvisAgentBackgroundCompleted(
+                    success=False,
+                    utterance=utterance,
+                    summary="",
+                    error=error,
+                    duration_s=0.0,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            # If even the fail-event publish crashed (dead bus, shutdown race),
+            # at least leave a trace — otherwise the whole failure disappears
+            # with no record in either the log or the voice path.
+            log.exception("JarvisAgentBackgroundCompleted bus-publish crashed")

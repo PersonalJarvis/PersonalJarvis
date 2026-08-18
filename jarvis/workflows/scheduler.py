@@ -27,7 +27,10 @@ except Exception:  # pragma: no cover
     _HAVE_CRONITER = False
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import WorkflowScheduled
+from jarvis.core.events import AnnouncementRequested, WorkflowScheduled
+from jarvis.voice.action_phrases import action_phrase, resolve_ambient_language
+
+from .runner import FailureAnnouncer
 
 if TYPE_CHECKING:
     from .runner import WorkflowRunner
@@ -35,6 +38,10 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+
+#: :class:`FailureAnnouncer` key for the poll loop itself, as opposed to one
+#: workflow. Not a workflow id, and no id can collide with it.
+_LOOP_KEY = "*scheduler-loop*"
 
 
 class WorkflowScheduler:
@@ -51,6 +58,8 @@ class WorkflowScheduler:
         self._bus = bus
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        #: Keyed by workflow id, plus ``_LOOP_KEY`` for the loop itself.
+        self._failures = FailureAnnouncer()
 
     # ------------------------------------------------------------------
 
@@ -83,6 +92,13 @@ class WorkflowScheduler:
             except Exception as exc:  # noqa: BLE001
                 log.exception("WorkflowScheduler tick crashed: %s", exc)
                 wait_s = 30.0
+                # A crashed tick means NO scheduled routine fires — every one
+                # of them silently stops happening. The loop retries by itself,
+                # but the user has to learn that their routines are down from
+                # something other than a log file (AU-12).
+                await self._announce(_LOOP_KEY, "workflow_scheduler_stalled")
+            else:
+                self._failures.clear(_LOOP_KEY)
 
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=wait_s)
@@ -156,11 +172,54 @@ class WorkflowScheduler:
                 await self._runner.trigger(wid, trigger_reason="cron")
             except Exception as exc:  # noqa: BLE001
                 log.warning("Cron trigger for %s failed: %s", wid, exc)
+                # The routine was due and did not even start. Only the log knew
+                # (AU-12); now the user does. The next fire time is already
+                # stored above, so "I'll try again" is honest.
+                await self._announce(
+                    wid, "workflow_trigger_failed",
+                    name=_name_for(rows, wid),
+                )
+            else:
+                self._failures.clear(wid)
 
         if upcoming_min_ns is None:
             return 60.0
         delta_s = max(1.0, (upcoming_min_ns - time.time_ns()) / 1e9)
         return min(delta_s, 60.0)
+
+    # ------------------------------------------------------------------
+
+    async def _announce(self, key: str, phrase_key: str, **fmt: object) -> None:
+        """Tell the user a scheduled routine did not happen.
+
+        Same path as every other background result
+        (``AnnouncementRequested(kind="subagent")``, as in
+        ``jarvis/tasks/runner.py:225``) — it survives the voice hangup gate and
+        reaches browser tabs, so a headless runtime still reports. Rate-limited
+        per ``key`` by :class:`~jarvis.workflows.runner.FailureAnnouncer`: a
+        routine that fails every minute is said once, not sixty times an hour.
+        """
+        if not self._failures.should_speak(key):
+            log.info(
+                "Scheduler failure %s repeated within the announce cooldown — "
+                "reported once already, staying quiet", key,
+            )
+            return
+        lang = resolve_ambient_language()
+        try:
+            await self._bus.publish(
+                AnnouncementRequested(
+                    text=action_phrase(phrase_key, lang, **fmt),
+                    language=lang,
+                    kind="subagent",
+                    source_layer="workflows.scheduler",
+                )
+            )
+        except Exception:  # noqa: BLE001
+            # A dead bus must not turn one failed routine into a claim that the
+            # whole scheduler is down (this runs inside _tick, whose caller
+            # announces exactly that). Leave a trace and carry on.
+            log.exception("Scheduler failure announcement could not be published")
 
 
 # ----------------------------------------------------------------------
@@ -185,3 +244,19 @@ def _cron_expr_for(rows: list[dict[str, Any]], wid: str) -> str:
         if r["id"] == wid:
             return r.get("cron_expression") or ""
     return ""
+
+
+def _name_for(rows: list[dict[str, Any]], wid: str) -> str:
+    """The routine's own user-given name for a SPOKEN report.
+
+    Never the id — an id read aloud tells the user nothing about which of their
+    routines broke. A nameless row degrades to the localized generic noun rather
+    than leaking the id as a substitute.
+    """
+    for r in rows:
+        if r["id"] == wid:
+            name = str(r.get("name") or "").strip()
+            if name:
+                return name
+            break
+    return action_phrase("workflow_unnamed", resolve_ambient_language())
