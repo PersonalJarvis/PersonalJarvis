@@ -12,10 +12,12 @@ import { cachedTheme, type Theme } from "@/hooks/useTheme";
  * dark chrome and read as a mistake. Each mode keeps its own pick instead,
  * and toggling the theme brings that mode's picture back with it.
  *
- * The bundled artwork stays the default and the fallback: an empty selection
- * means "the one that ships with the app", so a fresh profile, a cleared
- * browser storage, and a checkout without the generated library all land on
- * the same known-good picture rather than on a blank shell.
+ * The bundled artwork stays the default and the fallback — one picture PER
+ * MODE (useDesktopWallpaper): an empty selection means "the one that ships
+ * with the app for this mode", so a fresh profile, a cleared browser storage,
+ * and a checkout without the generated library all land on a known-good
+ * picture authored for the mode on screen rather than on a blank shell — or,
+ * as it was until 2026-08-18, on the night scene under light chrome.
  *
  * The choice lives in localStorage rather than on the server. It is a per-
  * screen cosmetic preference with no backend meaning, and localStorage is the

@@ -165,7 +165,7 @@ describe("WallpaperView", () => {
     renderView();
 
     await screen.findByAltText("Flooded Observatory");
-    // The bundled original rides along as a fourth tile, served from the app
+    // The two bundled originals ride along as extra tiles, served from the app
     // bundle rather than from /api/wallpapers.
     const sources = requestedSources().filter((src) => src.includes("/api/"));
 
@@ -174,15 +174,19 @@ describe("WallpaperView", () => {
     expect(sources.some((src) => src.endsWith("/full"))).toBe(false);
   });
 
-  it("pins the original to the very first tile", async () => {
+  it("pins the originals to the very first tiles — night, then day", async () => {
     renderView();
 
     await screen.findByAltText("Flooded Observatory");
     const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
 
-    expect(tiles).toHaveLength(4);
+    expect(tiles).toHaveLength(5);
     expect(tiles[0].getAttribute("alt")).toBe("The Original");
+    expect(tiles[1].getAttribute("alt")).toBe("The Original, by day");
     expect(tiles[0].getAttribute("src")).not.toContain("/api/");
+    expect(tiles[1].getAttribute("src")).not.toContain("/api/");
+    // Two different pictures, not the same one twice.
+    expect(tiles[1].getAttribute("src")).not.toBe(tiles[0].getAttribute("src"));
   });
 
   it("keeps the original first when sorting by style", async () => {
@@ -215,6 +219,48 @@ describe("WallpaperView", () => {
       expect(useWallpaperStore.getState().selections.dark).toBeNull();
     });
     expect(window.localStorage.getItem("jarvis.wallpaper.v1")).toBeNull();
+    expect(isDark()).toBe(true);
+  });
+
+  it("marks the daylight original as in use only in light mode", async () => {
+    renderView();
+
+    // Painted dark: the night original is in use, the daylight one is not.
+    fireEvent.click(await screen.findByAltText("The Original, by day"));
+    expect(await screen.findByRole("button", { name: "Use this wallpaper" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /In use/ })).toBeNull();
+  });
+
+  it("adopting the daylight original switches to light and clears the light slot", async () => {
+    renderView();
+    act(() => useWallpaperStore.getState().select("01-cinematic-photoreal-02", "light"));
+
+    fireEvent.click(await screen.findByAltText("The Original, by day"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+
+    await waitFor(() => expect(isDark()).toBe(false));
+    expect(useWallpaperStore.getState().selections.light).toBeNull();
+    // The dark pick is untouched — every mode keeps its own.
+    expect(useWallpaperStore.getState().selections.dark).toBeNull();
+    // The open preview now says so: the daylight original is the one in use.
+    expect(await screen.findByRole("button", { name: /In use/ })).toBeTruthy();
+  });
+
+  it("the Default button returns to the default of the mode on screen", async () => {
+    renderView();
+    // Painted dark, with a pick in BOTH modes.
+    act(() => {
+      useWallpaperStore.getState().select("03-anime-neon-01", "dark");
+      useWallpaperStore.getState().select("01-cinematic-photoreal-02", "light");
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Default" }));
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selections.dark).toBeNull();
+    });
+    // Light mode's pick survives, and the app did not change mode.
+    expect(useWallpaperStore.getState().selections.light).toBe("01-cinematic-photoreal-02");
     expect(isDark()).toBe(true);
   });
 
@@ -268,7 +314,7 @@ describe("WallpaperView", () => {
     await waitFor(() => expect(isDark()).toBe(true));
   });
 
-  it("returns to dark along with the bundled default", async () => {
+  it("returns to the daylight default and stays light after a light pick", async () => {
     renderView();
 
     fireEvent.click(await screen.findByAltText("Morning Atrium"));
@@ -277,8 +323,13 @@ describe("WallpaperView", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Default/ }));
 
-    await waitFor(() => expect(isDark()).toBe(true));
-    expect(useWallpaperStore.getState().selections.dark).toBeNull();
+    // The default of the mode on screen: light mode keeps its chrome and shows
+    // the picture bundled for it — it does NOT flip the whole app to dark, and
+    // it never puts the night scene under light chrome.
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selections.light).toBeNull();
+    });
+    expect(isDark()).toBe(false);
   });
 
   it("returns to the bundled default", async () => {
@@ -300,8 +351,13 @@ describe("WallpaperView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "All styles" }));
     fireEvent.click(screen.getByRole("button", { name: /Light/ }));
-    await waitFor(() => expect(requestedSources()).toHaveLength(1));
+    await waitFor(() =>
+      expect(requestedSources().filter((src) => src.includes("/api/"))).toHaveLength(1),
+    );
     expect(screen.getByAltText("Morning Atrium")).toBeTruthy();
+    // The daylight original is a light wallpaper like any other.
+    expect(screen.getByAltText("The Original, by day")).toBeTruthy();
+    expect(screen.queryByAltText("The Original")).toBeNull();
   });
 
   it("keeps the same shuffled order across renders", async () => {
@@ -458,14 +514,15 @@ describe("WallpaperView", () => {
     fireEvent.change(input, { target: { files: [file] } });
   }
 
-  it("lists an uploaded picture right after the original", async () => {
+  it("lists an uploaded picture right after the originals", async () => {
     renderView(CATALOG, [OWN]);
 
     await screen.findByAltText("Kitchen Window");
     const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
 
-    expect(tiles.slice(0, 2).map((tile) => tile.getAttribute("alt"))).toEqual([
+    expect(tiles.slice(0, 3).map((tile) => tile.getAttribute("alt"))).toEqual([
       "The Original",
+      "The Original, by day",
       "Kitchen Window",
     ]);
   });

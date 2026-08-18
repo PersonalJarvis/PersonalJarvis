@@ -2,7 +2,8 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  DEFAULT_WALLPAPER_URL,
+  DEFAULT_WALLPAPER_URLS,
+  defaultWallpaperUrl,
   useDesktopWallpaper,
 } from "@/hooks/useDesktopWallpaper";
 import { useWallpaperStore } from "@/store/wallpaper";
@@ -50,13 +51,29 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  document.documentElement.classList.remove("dark");
 });
 
 describe("useDesktopWallpaper", () => {
-  it("starts on the bundled wallpaper", () => {
+  it("starts on the bundled wallpaper of the mode on screen", () => {
     render(<Probe />);
 
-    expect(screen.getByTestId("url").textContent).toBe(DEFAULT_WALLPAPER_URL);
+    expect(screen.getByTestId("url").textContent).toBe(defaultWallpaperUrl("light"));
+    expect(pending).toHaveLength(0);
+  });
+
+  it("paints the night original in dark mode and the daylight one in light", async () => {
+    document.documentElement.classList.add("dark");
+    render(<Probe />);
+    expect(screen.getByTestId("url").textContent).toBe(DEFAULT_WALLPAPER_URLS.dark);
+
+    // Light chrome never lands on the night scene: with no light pick stored,
+    // the light mode shows the picture bundled FOR light.
+    act(() => document.documentElement.classList.remove("dark"));
+    await waitFor(() =>
+      expect(screen.getByTestId("url").textContent).toBe(DEFAULT_WALLPAPER_URLS.light),
+    );
+    expect(DEFAULT_WALLPAPER_URLS.light).not.toBe(DEFAULT_WALLPAPER_URLS.dark);
     expect(pending).toHaveLength(0);
   });
 
@@ -66,7 +83,7 @@ describe("useDesktopWallpaper", () => {
 
     // Requested, but not yet painted — the shell must not go blank meanwhile.
     expect(pending[0]?.src).toBe("/api/wallpapers/03-anime-neon-01/full");
-    expect(screen.getByTestId("url").textContent).toBe(DEFAULT_WALLPAPER_URL);
+    expect(screen.getByTestId("url").textContent).toBe(defaultWallpaperUrl("light"));
 
     act(() => pending[0]?.onload?.(new Event("load") as never));
 
@@ -77,7 +94,7 @@ describe("useDesktopWallpaper", () => {
     );
   });
 
-  it("falls back to the bundled wallpaper when the library is missing", async () => {
+  it("falls back to the mode's bundled wallpaper when the library is missing", async () => {
     useWallpaperStore.setState({
       selections: { light: "03-anime-neon-01", dark: null },
     });
@@ -86,7 +103,7 @@ describe("useDesktopWallpaper", () => {
     act(() => pending[0]?.onerror?.(new Event("error") as never));
 
     await waitFor(() =>
-      expect(screen.getByTestId("url").textContent).toBe(DEFAULT_WALLPAPER_URL),
+      expect(screen.getByTestId("url").textContent).toBe(defaultWallpaperUrl("light")),
     );
   });
 });

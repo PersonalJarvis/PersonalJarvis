@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ViewHeader } from "@/views/ChatsView";
 import {
+  DEFAULT_WALLPAPER_ENTRIES,
   fullUrlFor,
   thumbUrlFor,
   useWallpaperCatalog,
@@ -69,6 +70,12 @@ function originRank(item: WallpaperEntry): number {
   if (item.isDefault) return 0;
   if (item.isUpload) return 1;
   return 2;
+}
+
+/** The bundled originals in the order they ship: the night scene, then day. */
+function bundledRank(item: WallpaperEntry): number {
+  const index = DEFAULT_WALLPAPER_ENTRIES.findIndex((entry) => entry.id === item.id);
+  return index === -1 ? DEFAULT_WALLPAPER_ENTRIES.length : index;
 }
 
 /** The segmented filter/ordering controls share one look. */
@@ -488,8 +495,9 @@ function WallpaperPreview({
  * size, and adopt it as the app's ground.
  *
  * Adopting one also switches light/dark to match the artwork — see
- * `useApplyWallpaper`. The bundled default is always one click away again, so
- * trying a wallpaper is meant to feel as reversible as it actually is.
+ * `useApplyWallpaper`. The bundled default of the mode you are in is always
+ * one click away again, so trying a wallpaper is meant to feel as reversible
+ * as it actually is.
  */
 export function WallpaperView() {
   const { data, isLoading } = useWallpaperCatalog();
@@ -518,13 +526,15 @@ export function WallpaperView() {
     [uploads],
   );
 
-  // The owner's own pictures sit between the bundled original and the generated
-  // library — brought here on purpose, so they are found without scrolling.
+  // The owner's own pictures sit between the bundled originals and the
+  // generated library — brought here on purpose, so they are found without
+  // scrolling.
   const items = useMemo(() => {
     const catalog = data?.items ?? [];
     if (!ownEntries.length) return catalog;
-    const [bundled, ...rest] = catalog;
-    return bundled ? [bundled, ...ownEntries, ...rest] : [...ownEntries, ...catalog];
+    const bundled = catalog.filter((item) => item.isDefault);
+    const rest = catalog.filter((item) => !item.isDefault);
+    return [...bundled, ...ownEntries, ...rest];
   }, [data?.items, ownEntries]);
 
   // This view is the one place that knows which mode every picture was
@@ -576,11 +586,15 @@ export function WallpaperView() {
     // tile that jumps away the instant its heart is clicked loses the place
     // the reader was looking at. The Favorites filter is where they gather.
     return filtered.sort((left, right) => {
-      // The bundled original outranks every ordering and every shuffle: it is
-      // the first wallpaper this app ever had, and it stays the first tile.
-      // The owner's own pictures come next, ahead of the generated five hundred.
+      // The bundled originals outrank every ordering and every shuffle: the
+      // night scene is the first wallpaper this app ever had and stays the
+      // first tile, its daylight twin sits right beside it. The owner's own
+      // pictures come next, ahead of the generated five hundred.
       const byOrigin = originRank(left) - originRank(right);
       if (byOrigin !== 0) return byOrigin;
+      if (left.isDefault && right.isDefault) {
+        return bundledRank(left) - bundledRank(right);
+      }
       if (ordering === "style") {
         const byStyle = left.style.localeCompare(right.style);
         if (byStyle !== 0) return byStyle;
@@ -591,9 +605,12 @@ export function WallpaperView() {
   }, [favoriteIds, favoritesOnly, items, ordering, style, theme]);
 
   // "No choice stored" and "the original is chosen" are the same state, so the
-  // pinned tile carries the check mark on a fresh profile.
+  // pinned tile carries the check mark on a fresh profile — the one authored
+  // for the mode on screen, since each mode has an original of its own.
   const isApplied = (item: WallpaperEntry) =>
-    item.isDefault ? selectedId === null : item.id === selectedId;
+    item.isDefault
+      ? item.theme === activeTheme && selectedId === null
+      : item.id === selectedId;
 
   const previewIndex = previewId
     ? visible.findIndex((item) => item.id === previewId)
