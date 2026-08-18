@@ -180,8 +180,9 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis skills catalog-install <name> --source-url --title --raw-url --yes --dry-run` — Install a skill from the catalog (lands as a draft).
 - `jarvis skills catalog-search <query>` — Search the installable skill catalog.
 - `jarvis skills commit --draft --yes --dry-run` — Commit a generated draft to disk (still state=draft until enabled).
+- `jarvis skills create <intent> --name --trigger --schedule --language --yes --dry-run` — Author AND write a new skill in one step (the voice path's `create-skill`).
 - `jarvis skills disable <name> --yes --dry-run` — Deactivate a skill.
-- `jarvis skills draft <intent> --name-hint --category --yes --dry-run` — Generate a skill draft from an intent (AI author; lands as state=draft).
+- `jarvis skills draft <intent> --name-hint --category --trigger --schedule --language --yes --dry-run` — Generate a skill draft from an intent WITHOUT writing it (review, then `commit`).
 - `jarvis skills enable <name> --yes --dry-run` — Activate a skill.
 - `jarvis skills import <source> --yes --dry-run` — Install a skill from a local folder or a SKILL.md link.
 - `jarvis skills list` — List all discovered skills.
