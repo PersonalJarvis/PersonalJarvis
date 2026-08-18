@@ -1,6 +1,5 @@
 import { useMemo, type ReactNode } from "react";
 import { useEventStore, type VoiceState } from "@/store/events";
-import { ChatInput } from "@/components/ChatInput";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { DeckDock } from "@/components/deck/DeckDock";
@@ -28,13 +27,14 @@ import { useT } from "@/i18n";
  * The mission deck — the front page.
  *
  * One stage that shows everything the assistant is and does, without a
- * single navigation step, and the one place you talk to it in the middle.
+ * single navigation step. You talk to it by voice; the typed composer lives
+ * on the classic chat surface, not here (maintainer decision 2026-08-18).
  * The layout follows the maintainer's sketch of 2026-08-17:
  *
  *   ┌ voice bars · live word counter ───────────────── name · brain · switch ┐
  *   │ dock │ flow / runs        ORB        computer-use / api stats           │
  *   │      │ ide grid   terminals · wiki   app-shot / outputs                 │
- *   └──────┴──────────────── talk: speak or type ─────────────────────────────┘
+ *   └──────┴─────────────────────────────────────────────────────────────────┘
  *
  * Every card is a window onto a section and reads that section's own data;
  * clicking its eyebrow jumps there. The dock on the left is the ONLY place
@@ -168,11 +168,6 @@ export function MissionDeckView({
             <OutputsCard className="max-h-[48%] shrink-0" />
           </div>
         </div>
-      </div>
-
-      {/* The real composer — same component the classic view uses. */}
-      <div className="border-t border-border px-6 py-3">
-        <ChatInput />
       </div>
     </div>
   );
