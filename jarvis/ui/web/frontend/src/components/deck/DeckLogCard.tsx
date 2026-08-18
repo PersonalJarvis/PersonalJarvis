@@ -26,18 +26,21 @@ import { useT } from "@/i18n";
 /** How many lines the terminal paints — the store keeps more, the eye needs fewer. */
 const SHOWN_LINES = 60;
 
+// Every signal colour is a PAIR — a dark tint on black, its deep twin on paper
+// (CLOUD.md "Frontend theming"): a 400-tint alone reads on the dark stage
+// and disappears on the light one.
 const TAG_TONE: Record<JournalKind, string> = {
   boot: "text-muted-foreground",
   wake: "text-primary",
-  hear: "text-sky-400",
+  hear: "text-sky-700 dark:text-sky-400",
   think: "text-primary",
   done: "text-primary",
-  tool: "text-emerald-400",
-  say: "text-amber-300",
-  worker: "text-emerald-400",
-  control: "text-violet-400",
-  look: "text-violet-400",
-  memory: "text-sky-400",
+  tool: "text-emerald-700 dark:text-emerald-400",
+  say: "text-amber-700 dark:text-amber-300",
+  worker: "text-emerald-700 dark:text-emerald-400",
+  control: "text-violet-700 dark:text-violet-400",
+  look: "text-violet-700 dark:text-violet-400",
+  memory: "text-sky-700 dark:text-sky-400",
   error: "text-destructive",
   note: "text-muted-foreground",
 };

@@ -147,7 +147,7 @@ export function TurnCard({ className }: { className?: string }) {
                 .join(" · ")}
             </span>
             {turn.cacheHit && (
-              <span className="shrink-0 uppercase tracking-wider text-emerald-400">{t("deck.api_cache_hit")}</span>
+              <span className="shrink-0 uppercase tracking-wider text-emerald-700 dark:text-emerald-400">{t("deck.api_cache_hit")}</span>
             )}
           </div>
         </div>

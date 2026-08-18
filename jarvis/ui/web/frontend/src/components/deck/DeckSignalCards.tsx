@@ -89,7 +89,16 @@ export function CaptureCard({ className }: { className?: string }) {
       className={className}
       bodyClassName="p-0"
     >
-      <div className="relative h-full min-h-[5rem] overflow-hidden bg-black/20">
+      {/* A picture gets a letterbox in the theme's own scrim (a screenshot on
+          a dark plate reads as a screen); the ledger and the empty line sit
+          on the wallpaper like every other readout — a plain dark slab under
+          "no capture" was a hole in the light stage. */}
+      <div
+        className={cn(
+          "relative h-full min-h-[5rem] overflow-hidden",
+          showing && "bg-[rgb(var(--scrim-rgb)/0.2)]",
+        )}
+      >
         {showing && src ? (
           <>
             <img
@@ -234,7 +243,7 @@ export function ApiStatsCard({ className }: { className?: string }) {
               </ul>
             )}
             {usage.lastCacheHit && (
-              <span className="font-mono text-[9px] uppercase tracking-wider text-emerald-400">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                 {t("deck.api_cache_hit")}
               </span>
             )}

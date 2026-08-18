@@ -31,7 +31,7 @@ import { useT } from "@/i18n";
 function outcomeTone(outcome: string): string {
   const o = outcome.toLowerCase();
   if (o.includes("error") || o.includes("fail")) return "bg-destructive";
-  if (o.includes("ok") || o.includes("success") || o.includes("done")) return "bg-emerald-400";
+  if (o.includes("ok") || o.includes("success") || o.includes("done")) return "bg-emerald-600 dark:bg-emerald-400";
   if (o.includes("running") || o.includes("open") || o.includes("live")) return "bg-primary animate-pulse";
   return "bg-muted-foreground";
 }
@@ -90,7 +90,7 @@ export function RunsCard({ className }: { className?: string }) {
 
 const OUTPUT_TONE: Record<string, string> = {
   running: "bg-primary animate-pulse",
-  success: "bg-emerald-400",
+  success: "bg-emerald-600 dark:bg-emerald-400",
   error: "bg-destructive",
   cancelled: "bg-muted-foreground",
   unknown: "bg-muted-foreground",
@@ -165,11 +165,13 @@ export function OutputsCard({ className }: { className?: string }) {
  */
 type CrewState = "working" | "waiting" | "asking" | "starting" | "failed" | "exited" | "idle";
 
+// Signal colours come in pairs — a dark tint on black, its deep twin on paper
+// (CLOUD.md "Frontend theming").
 const CREW_TONE: Record<CrewState, string> = {
   working: "text-primary",
-  starting: "text-amber-400",
-  waiting: "text-sky-400",
-  asking: "text-amber-400",
+  starting: "text-amber-700 dark:text-amber-400",
+  waiting: "text-sky-700 dark:text-sky-400",
+  asking: "text-amber-700 dark:text-amber-400",
   failed: "text-destructive",
   exited: "text-muted-foreground",
   idle: "text-muted-foreground",
@@ -348,7 +350,7 @@ function CrewColumn({
                       : r.state === "failed"
                         ? "bg-destructive"
                         : r.state === "waiting" || r.state === "asking"
-                          ? "bg-sky-400"
+                          ? "bg-sky-600 dark:bg-sky-400"
                           : "bg-muted-foreground/50",
                   )}
                   aria-hidden
@@ -389,7 +391,7 @@ function CrewColumn({
 // ----------------------------------------------------------------------
 
 const LINE_TONE: Record<string, string> = {
-  cmd: "text-emerald-400",
+  cmd: "text-emerald-700 dark:text-emerald-400",
   cli: "text-primary",
   out: "text-foreground/90",
   err: "text-destructive",
