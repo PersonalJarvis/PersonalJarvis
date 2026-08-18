@@ -331,6 +331,59 @@ async def test_open_injects_active_providers_model_and_voice():
 
 
 @pytest.mark.asyncio
+async def test_open_reports_the_model_the_socket_really_opened_with():
+    """No pin on the card → the id the provider connected (its default), not
+    an empty string. An empty _active_model made every Live turn unpriceable
+    and the deck's API card listed the provider name as the model
+    (2026-08-18)."""
+    from types import SimpleNamespace
+
+    class DefaultModelSession(FakeSession):
+        model = "gemini-live-9.9-flash-native-audio"
+
+    class DefaultModelProvider(FakeProvider):
+        default_model = "gemini-live-9.9-flash-native-audio"
+
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = DefaultModelSession(self._events)
+            return self.session
+
+    class ProviderOnlyDefault(FakeProvider):
+        # Adapter whose session object carries no ``model`` attribute.
+        default_model = "provider-default-live"
+
+    async def _open(provider, pinned: str) -> tuple[str, str]:
+        messages = []
+        sess = RealtimeVoiceSession(
+            session_id="s-default-model",
+            send_binary=lambda b: asyncio.sleep(0),
+            send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+            provider=provider,
+            config=_cfg(providers={"fake": SimpleNamespace(model=pinned, voice="")}),
+            bus=None,
+        )
+        await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
+        await asyncio.sleep(0.02)
+        await sess.end(reason="test")
+        ready = next(message for message in messages if message["type"] == "audio_ready")
+        return sess._active_model, ready["model"]
+
+    # The session object knows best; a provider whose session carries no
+    # ``model`` still contributes its default.
+    assert await _open(DefaultModelProvider([]), "") == (
+        "gemini-live-9.9-flash-native-audio",
+        "gemini-live-9.9-flash-native-audio",
+    )
+    assert await _open(ProviderOnlyDefault([]), "") == (
+        "provider-default-live",
+        "provider-default-live",
+    )
+    # A pinned model on the card still wins over the provider's default.
+    assert await _open(DefaultModelProvider([]), "pinned-live") == ("pinned-live", "pinned-live")
+
+
+@pytest.mark.asyncio
 async def test_browser_webrtc_offer_reaches_provider_and_answer_returns_in_ready():
     class AnswerProvider(FakeProvider):
         requires_webrtc_offer = True

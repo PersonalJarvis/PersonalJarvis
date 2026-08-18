@@ -11409,7 +11409,16 @@ class BrainManager:
                 tokens_out_total = int(agg.usage.get("output_tokens", 0)) if agg.usage else 0
                 cost_usd_total = 0.0
                 try:
-                    from jarvis.brain.cost import calculate_cost_usd
+                    from jarvis.brain.cost import (
+                        calculate_cost_usd,
+                        ensure_pricing_for,
+                    )
+                    # A model the static table has never heard of is priced
+                    # from the provider feed — ONE refresh per model per
+                    # process (capped at 3 s), so a new generation stops
+                    # shipping as "$0.00" until someone edits the table.
+                    if tokens_in_total > 0 or tokens_out_total > 0:
+                        await ensure_pricing_for(model)
                     cost_usd_total = calculate_cost_usd(model, tokens_in_total, tokens_out_total)
                     if cost_usd_total == 0.0 and tokens_in_total > 0:
                         # An unknown model prices as $0.00 and every surface
@@ -11417,9 +11426,10 @@ class BrainManager:
                         # 1.87M deepseek tokens went unbilled for a month
                         # (2026-07-28 cost audit). Say it once per turn.
                         log.warning(
-                            "No pricing entry for model %r — %d in / %d out "
-                            "tokens recorded as $0.00; add it to "
-                            "jarvis/brain/cost.py PRICING_USD_PER_MTOK",
+                            "No pricing for model %r (static table and "
+                            "provider feed) — %d in / %d out tokens recorded "
+                            "as $0.00; add it to jarvis/brain/cost.py "
+                            "PRICING_USD_PER_MTOK",
                             model, tokens_in_total, tokens_out_total,
                         )
                 except Exception:  # noqa: BLE001

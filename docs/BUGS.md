@@ -9767,3 +9767,72 @@ and `float()` raised — logged as a WARNING on every probe. A provider that was
 not instantiated has no handshake this session could wait for, so its
 declaration cannot stretch the budget; the probe now skips a descriptor
 quietly. **Tests.** `tests/unit/realtime/test_factory_handshake_budget.py`.
+
+## BUG-142: the deck's "API this session" card shows 272k tokens as $0 — every model id of the live install was missing from the hand-maintained price table, and the table was the only source (HIGH, FIXED 2026-08-18)
+
+**Symptom.** After 14 turns the card read `272.2k` tokens, `$0` cost, and a
+per-model list of `vertex-live 10× $0` and `gemini-3.7-flash 4× $0`. The log
+carried `No pricing entry for model 'gemini-3.7-flash' — 18117 in / 167 out
+tokens recorded as $0.00` on every delegated turn.
+
+**Root.** Three things, all shipping "$0" honestly and uselessly.
+(1) `jarvis/brain/cost.py::calculate_cost_usd` priced ONLY from
+`PRICING_USD_PER_MTOK`, a static dict last extended in the 2026-07-28 audit —
+`gemini-3.7-flash` (the tool/CU model on the Vertex card) was not in it, and
+neither was `gemini-live-2.5-flash-native-audio` (`VertexLiveProvider.
+default_model`). Same class as the 1.87M deepseek tokens that went unbilled
+in July: the table can never know the next generation, and every unknown
+model reads as free. (2) `RealtimeVoiceSession` set `_active_model` to the
+card's pin — an EMPTY string when the card pins nothing — so `_publish_live_
+usage` priced `""` and `BrainTurnCompleted` carried no model; the deck keyed
+the row on the provider name, hence "vertex-live". (3) The Realtime session
+objects never told the orchestrator which id they had actually connected.
+Along the way the table's own rows for `gemini-2.5-flash` ($0.075/$0.30, a
+2025 preview rate) and `gemini-3.6-flash` ($1.50/$7.50) had drifted from the
+vendor's price page ($0.30/$2.50 and $0.75/$3.75).
+
+**Fix.** `resolve_rates` in `jarvis/brain/cost.py` now has three sources:
+the static table; the provider feed that `jarvis/brain/model_catalog.py`
+already downloads (OpenRouter publishes `pricing.prompt/completion` for every
+model it routes — the catalog now carries it as `ModelInfo.pricing` and
+round-trips it through `model_catalog_cache.json`); and $0 with a warning. A
+`vendor/model` id (an aggregator id) is priced from the feed FIRST, because
+that is what the aggregator bills; an origin id trusts the hand-verified table
+and falls back to the feed's entry of the same model name
+(`gemini-3.7-flash` → `google/gemini-3.7-flash`, `.`/`-` insensitive,
+`:batch`/`:free` variants never shadow the plain model). `ensure_pricing_for`
+— awaited by the manager's post-call hook and by `_publish_live_usage` —
+refreshes the feed ONCE per unknown model per process (3 s cap, never under
+the airgapped profile, never for a feed younger than 10 min), so a new
+generation is priced from its first turn. The catalog is a process-wide
+singleton now (`shared_catalog()`), because `_save_cache` writes the whole
+file from memory and a second instance would have overwritten the first
+one's refresh. The Realtime session objects expose `model` (the id the
+socket really opened with), and `_active_model` is pin → session.model →
+`provider.default_model`. Table rows added/corrected against
+ai.google.dev/gemini-api/docs/pricing and the OpenRouter feed on 2026-08-18.
+
+**Class.** A hand-maintained lookup table as the ONLY source for a value the
+world keeps adding to. It is right on the day it is written and wrong on the
+day the next model ships — and "unknown → 0" is the worst possible default
+for money, because $0 looks like a fact, not like a gap. The fix is not a
+bigger table; it is a live source with the table as offline fallback, plus a
+turn that pauses once to learn a price rather than shipping a wrong number.
+Second shape, again (BUG-139): a value derived in one place (the model the
+socket opened) that another place re-derived from a weaker signal (the
+card's pin) — and the weaker one was empty.
+
+**Verification.** `resolve_rates("gemini-3.7-flash") == (0.75, 3.75)`;
+`resolve_rates("gemini-live-2.5-flash-native-audio") == (0.5, 2.0)` plus
+audio rates; a live OpenRouter feed pull confirms `google/gemini-3.7-flash`
+at 0.375/1.875. Needs an app restart to take effect on the deck.
+
+**Tests.** `tests/unit/brain/test_cost_feed_pricing.py` (feed resolution,
+vendor-first precedence, variant suffixes, dot/dash spellings, mtime reload,
+one-refresh-per-model, airgapped, timeout, never raises);
+`tests/unit/brain/test_model_catalog.py` (pricing parse + cache round-trip);
+`tests/unit/realtime/test_session.py::test_open_reports_the_model_the_socket_
+really_opened_with`; `test_live_usage_metering.py` (Vertex Live default
+priced); `test_gemini_live.py` / `test_openai_realtime.py` (`session.model`).
+The root `tests/conftest.py` redirects the feed to `tmp_path` per test so no
+suite reaches the network or the developer's real cache file.

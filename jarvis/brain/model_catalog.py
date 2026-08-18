@@ -164,6 +164,14 @@ class ModelInfo:
     # supported_parameters`` ⇒ tool-calling.
     input_modalities: tuple[str, ...] | None = None
     supported_parameters: tuple[str, ...] | None = None
+    # (input, output) in USD per 1M tokens, straight from the provider's own
+    # feed (OpenRouter publishes ``pricing.prompt`` / ``pricing.completion``
+    # per token). ``None`` when the endpoint has no price data. This is what
+    # lets cost tracking price a model the static table in
+    # ``jarvis/brain/cost.py`` has never heard of — the table used to be the
+    # only source, and every new model generation shipped as "$0.00" until
+    # someone noticed (2026-07-28 and 2026-08-18 audits).
+    pricing: tuple[float, float] | None = None
 
 
 def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
@@ -835,9 +843,31 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
                 output_modalities=_output_modalities(m),
                 input_modalities=_input_modalities(m),
                 supported_parameters=_supported_parameters(m),
+                pricing=_pricing(m),
             )
         )
     return out
+
+
+def _pricing(entry: dict) -> tuple[float, float] | None:
+    """Pull ``pricing.prompt`` / ``pricing.completion`` as USD per 1M tokens.
+
+    OpenRouter quotes both as decimal strings per TOKEN (``"0.000000375"``);
+    direct provider endpoints carry no ``pricing`` block at all → ``None``.
+    A negative value is OpenRouter's marker for "variable" (``openrouter/auto``
+    routes to whatever answers) — no honest single price exists, so ``None``.
+    """
+    pricing = entry.get("pricing")
+    if not isinstance(pricing, dict):
+        return None
+    try:
+        prompt = float(pricing.get("prompt"))
+        completion = float(pricing.get("completion"))
+    except (TypeError, ValueError):
+        return None
+    if prompt < 0 or completion < 0:
+        return None
+    return (prompt * 1_000_000, completion * 1_000_000)
 
 
 def gemini_entry_serves_generate_content(entry: dict) -> bool:
@@ -1416,6 +1446,25 @@ def sort_models(provider: str, models: list[ModelInfo]) -> list[ModelInfo]:
 # ----------------------------------------------------------------------
 
 
+_shared_catalog: ModelCatalog | None = None
+
+
+def shared_catalog() -> ModelCatalog:
+    """The ONE process-wide :class:`ModelCatalog`.
+
+    Every reader and writer of ``model_catalog_cache.json`` must go through
+    the same instance: ``_save_cache`` writes the whole file from memory, so
+    a second instance that refreshed one provider would be overwritten by the
+    first one's older in-memory copy on its next save. The web layer stashes
+    this same object on ``app.state`` (provider_routes) and cost tracking's
+    feed refresh (``jarvis.brain.cost.ensure_pricing_for``) uses it too.
+    """
+    global _shared_catalog
+    if _shared_catalog is None:
+        _shared_catalog = ModelCatalog()
+    return _shared_catalog
+
+
 class ModelCatalog:
     """Live model lists per provider with a TTL cache and honest fallbacks."""
 
@@ -1464,6 +1513,11 @@ class ModelCatalog:
                             if isinstance(m.get("supported_parameters"), list)
                             else None
                         ),
+                        pricing=(
+                            (float(m["pricing"][0]), float(m["pricing"][1]))
+                            if isinstance(m.get("pricing"), list) and len(m["pricing"]) == 2
+                            else None
+                        ),
                     )
                     for m in entry.get("models", [])
                 ]
@@ -1496,6 +1550,7 @@ class ModelCatalog:
                             if m.supported_parameters is not None
                             else {}
                         ),
+                        **({"pricing": list(m.pricing)} if m.pricing is not None else {}),
                     }
                     for m in models
                 ],

@@ -560,6 +560,8 @@ async def test_open_session_falls_back_to_adapter_default(
     session = await provider.open_session(RealtimeSessionConfig(model=""))
 
     assert holder["client"].realtime.connect_calls == ["gpt-realtime"]
+    # The id the socket really opened with is what usage is priced against.
+    assert session.model == "gpt-realtime"
     await session.close()
 
 

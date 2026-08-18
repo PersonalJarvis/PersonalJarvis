@@ -220,11 +220,16 @@ class _GeminiLiveSession:
         session_id: str,
         instructions: str = "",
         language: str = "",
+        model: str = "",
     ) -> None:
         self._session = session
         self._connection_cm = connection_cm
         self._client = client
         self.session_id = session_id
+        # The id the Live socket was opened with — the orchestrator meters
+        # (and prices) usage against it, so it must be the REAL one, not the
+        # card's possibly-empty pin.
+        self.model = str(model or "")
         self._closed = False
         # Latest usage_metadata snapshot of the CURRENT generation. Emitted
         # once per generation boundary (tool call, turn end, barge-in) so the
@@ -895,8 +900,9 @@ class GeminiLiveProvider:
             ),
             **_compression_kwargs(types),
         )
+        connect_model = str(getattr(cfg, "model", "") or self.default_model)
         connection_cm = client.aio.live.connect(
-            model=str(getattr(cfg, "model", "") or self.default_model),
+            model=connect_model,
             config=live_config,
         )
         try:
@@ -920,6 +926,7 @@ class GeminiLiveProvider:
             # re-delivered (see update_session).
             instructions=str(getattr(cfg, "instructions", "") or ""),
             language=str(getattr(cfg, "language", "") or ""),
+            model=connect_model,
         )
 
 

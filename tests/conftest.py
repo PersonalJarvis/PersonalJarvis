@@ -116,6 +116,40 @@ def _agentic_ide_history_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _pricing_feed_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep cost tracking's provider-feed refresh off the network and off the
+    developer's real ``data/model_catalog_cache.json``.
+
+    ``jarvis.brain.cost.ensure_pricing_for`` prices a model the static table
+    does not know by refreshing the OpenRouter feed ONCE per process — a real
+    HTTP round-trip that would also rewrite the real cache file. Every suite
+    that runs a brain turn with a made-up model id ("fake-model") would trigger
+    it. So each test gets its own feed file, stamped as fetched just now: the
+    refresh sees a fresh feed that simply does not list the model and stays
+    home. Suites that exercise the refresh itself (test_cost_feed_pricing)
+    override the path and the catalog again on top of this.
+    """
+    import json
+    import time
+
+    from jarvis.brain import cost
+
+    root = tmp_path_factory.mktemp("pricing-feed")
+    path = root / "model_catalog_cache.json"
+    path.write_text(
+        json.dumps({"openrouter": {"fetched_at": time.time(), "models": []}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cost, "_feed_path_override", path)
+    monkeypatch.setattr(cost, "_feed_loaded", None)
+    monkeypatch.setattr(cost, "_feed_fetched_at", 0.0)
+    monkeypatch.setattr(cost, "_feed_rates", {})
+    monkeypatch.setattr(cost, "_feed_by_name", {})
+    monkeypatch.setattr(cost, "_refresh_attempted", set())
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()

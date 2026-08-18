@@ -234,6 +234,28 @@ class TestParseModelsResponse:
         payload = {"data": [{"id": "gpt-5.5"}]}
         assert parse_models_response("openai", payload)[0].output_modalities is None
 
+    def test_openrouter_pricing_is_carried_as_usd_per_mtok(self) -> None:
+        # OpenRouter quotes USD per TOKEN as decimal strings; the catalog keeps
+        # USD per 1M tokens so cost tracking can price a model the static
+        # table never listed (2026-08-18: gemini-3.7-flash shipped as $0.00).
+        payload = {
+            "data": [
+                {
+                    "id": "google/gemini-3.7-flash",
+                    "pricing": {"prompt": "0.000000375", "completion": "0.000001875"},
+                },
+                {"id": "openrouter/auto", "pricing": {"prompt": "-1", "completion": "-1"}},
+                {"id": "vendor/no-price"},
+                {"id": "vendor/garbage", "pricing": {"prompt": "n/a", "completion": None}},
+            ]
+        }
+        by_id = {m.id: m for m in parse_models_response("openrouter", payload)}
+        assert by_id["google/gemini-3.7-flash"].pricing == pytest.approx((0.375, 1.875))
+        # "-1" is OpenRouter's "variable" marker — no honest single price.
+        assert by_id["openrouter/auto"].pricing is None
+        assert by_id["vendor/no-price"].pricing is None
+        assert by_id["vendor/garbage"].pricing is None
+
     def test_empty_payload_yields_empty_list(self) -> None:
         assert parse_models_response("openai", {}) == []
         assert parse_models_response("gemini", {}) == []
@@ -494,6 +516,26 @@ class TestCache:
         ts, models = reloaded._cache["gemini"]
         assert models[0].id == "gemini-3-flash"
         assert models[0].label == "Gemini 3 Flash"
+
+    def test_pricing_survives_the_cache_round_trip(self, tmp_path: Path) -> None:
+        # The cost layer reads prices back from THIS file — a cache hit must
+        # not silently drop them (else every restart is a "$0.00" restart).
+        cache_path = tmp_path / "model_catalog_cache.json"
+        cat = ModelCatalog(cache_path=cache_path)
+        cat._cache["openrouter"] = (
+            time.time(),
+            [
+                ModelInfo(id="google/gemini-3.7-flash", label="G", pricing=(0.375, 1.875)),
+                ModelInfo(id="vendor/free", label="F"),
+            ],
+        )
+        cat._save_cache()
+        raw = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert raw["openrouter"]["models"][0]["pricing"] == [0.375, 1.875]
+        assert "pricing" not in raw["openrouter"]["models"][1]
+        _ts, models = ModelCatalog(cache_path=cache_path)._cache["openrouter"]
+        assert models[0].pricing == (0.375, 1.875)
+        assert models[1].pricing is None
 
     def test_corrupt_cache_is_discarded(self, tmp_path: Path) -> None:
         cache_path = tmp_path / "model_catalog_cache.json"

@@ -2828,7 +2828,15 @@ class RealtimeVoiceSession:
             self._active_requires_public_fact_grounding = bool(
                 getattr(provider, "requires_public_fact_grounding", False)
             )
-            self._active_model = model
+            # The id the socket was REALLY opened with: the card's pin, else
+            # what the provider connected (its default). An empty string here
+            # made every Live turn unpriceable and the deck's API card list the
+            # provider name in the model column (2026-08-18).
+            self._active_model = (
+                model
+                or str(getattr(session, "model", "") or "")
+                or str(getattr(provider, "default_model", "") or "")
+            )
             # Captured at accept so every per-turn instruction rebuild keeps
             # the profile the accepted provider asked for.
             self._compact_instructions = bool(
@@ -6636,11 +6644,13 @@ class RealtimeVoiceSession:
             return
         try:
             from jarvis.brain.cost import (
-                PRICING_USD_PER_MTOK,
                 calculate_realtime_cost_usd,
+                ensure_pricing_for,
+                resolve_rates,
             )
             from jarvis.core.events import BrainTurnCompleted
 
+            await ensure_pricing_for(self._active_model)
             text_in = usage.get("input_text", 0)
             audio_in = usage.get("input_audio", 0)
             text_out = usage.get("output_text", 0)
@@ -6658,7 +6668,7 @@ class RealtimeVoiceSession:
                 audio_in,
                 audio_out,
             )
-            rates = PRICING_USD_PER_MTOK.get(self._active_model)
+            rates = resolve_rates(self._active_model)
             if cached_in > 0 and rates is not None:
                 cost += cached_in * rates[0] * 0.1 / 1_000_000
             await self._bus.publish(

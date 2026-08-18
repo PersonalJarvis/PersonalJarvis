@@ -239,6 +239,29 @@ async def test_publish_live_usage_prices_audio_and_resets() -> None:
 
 
 @pytest.mark.asyncio
+async def test_publish_live_usage_prices_the_vertex_live_default_model() -> None:
+    # VertexLiveProvider.default_model was unpriced on 2026-08-18: ten Live
+    # turns of the maintainer's session showed as "$0". Same audio rates as
+    # the AI Studio id of the model.
+    from jarvis.plugins.realtime.gemini_live import VertexLiveProvider
+
+    session = _bare_session(
+        {
+            "input_total": 1_000_000,
+            "output_total": 1_000_000,
+            "input_audio": 1_000_000,
+            "output_audio": 1_000_000,
+        },
+        VertexLiveProvider.default_model,
+    )
+    session._provider = SimpleNamespace(name="vertex-live")
+    await session._publish_live_usage()
+    (event,) = session._bus.published
+    assert event.model == "gemini-live-2.5-flash-native-audio"
+    assert event.cost_usd == pytest.approx(15.0)
+
+
+@pytest.mark.asyncio
 async def test_publish_live_usage_without_usage_is_silent() -> None:
     session = _bare_session({}, "gemini-3.1-flash-live-preview")
     await session._publish_live_usage()

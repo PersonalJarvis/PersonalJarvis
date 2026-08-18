@@ -1951,9 +1951,11 @@ def _get_model_catalog(request: Request):
     """
     cat = getattr(request.app.state, "model_catalog", None)
     if cat is None:
-        from jarvis.brain.model_catalog import ModelCatalog
+        from jarvis.brain.model_catalog import shared_catalog
 
-        cat = ModelCatalog()
+        # The process-wide instance — cost tracking's feed refresh writes the
+        # same cache file through it, so both must share one memory copy.
+        cat = shared_catalog()
         try:
             request.app.state.model_catalog = cat
         except Exception as exc:  # noqa: BLE001 — detached app.state is not an error

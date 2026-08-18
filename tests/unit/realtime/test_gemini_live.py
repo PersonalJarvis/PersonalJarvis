@@ -680,6 +680,9 @@ async def test_open_session_uses_current_default_model(
     assert holder["client"].aio.live.connect_calls[0][0] == (
         "gemini-3.1-flash-live-preview"
     )
+    # The session tells the orchestrator which id it REALLY opened — usage is
+    # metered and priced against it, so an empty pin must not leak through.
+    assert session.model == "gemini-3.1-flash-live-preview"
     await session.close()
 
 

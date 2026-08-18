@@ -1,11 +1,31 @@
-"""Cost pricing table for brain providers (USD per 1M tokens).
+"""Cost pricing for brain providers (USD per 1M tokens).
 
-As of 2026-04. Sources:
+Three sources, in this order (see :func:`resolve_rates`):
+
+1. ``PRICING_USD_PER_MTOK`` — the static table below, hand-verified against
+   the vendors' own price pages. Authoritative for models called through
+   their ORIGIN API (Anthropic, Google/Vertex, OpenAI, xAI, DeepSeek …).
+2. The provider feed cached by ``jarvis/brain/model_catalog.py``
+   (``data/model_catalog_cache.json``). OpenRouter's ``/api/v1/models``
+   publishes a price for every model it routes, so a ``vendor/model`` id is
+   priced from the feed FIRST (that is what OpenRouter actually bills), and
+   an origin id the table has never heard of falls back to the feed entry
+   with the same model name (``gemini-3.7-flash`` → ``google/gemini-3.7-flash``)
+   — an honest approximation instead of $0.00.
+3. Nothing → 0.0, and the caller logs it.
+
+The static table alone shipped every new model generation as "free" until
+someone noticed (1.87M deepseek tokens in 2026-07, gemini-3.7-flash in
+2026-08). :func:`ensure_pricing_for` closes that gap at runtime: an unknown
+model triggers ONE feed refresh per process before it is priced.
+
+Static table as of 2026-08-18. Sources:
 
 - Anthropic — https://www.anthropic.com/pricing
   (Claude Opus 4.x: $15 in / $75 out, Sonnet 4.x: $3 / $15, Haiku 4.5: $0.80 / $4)
 - Google — https://ai.google.dev/pricing
-  (Gemini 2.5 Pro: $1.25 / $10, Gemini 2.5 Flash: $0.075 / $0.30)
+  (Gemini 2.5 Pro: $1.25 / $10, Gemini 2.5 Flash: $0.30 / $2.50,
+   Gemini 3.6/3.7 Flash: $0.75 / $3.75)
 - OpenAI — https://openai.com/api/pricing
   (GPT-4o: $2.50 / $10, GPT-4o-mini: $0.15 / $0.60)
 - xAI / Grok — https://console.x.ai/pricing
@@ -14,18 +34,23 @@ As of 2026-04. Sources:
 - DeepSeek — https://platform.deepseek.com/api-docs/pricing
   (deepseek-chat: $0.27 / $1.10, deepseek-reasoner: $0.55 / $2.19)
 
-If a model is missing here, ``calculate_cost_usd`` returns 0.0 — no crash,
-but also no cost tracking. Logging at the call site is mandatory so that
-missing entries become visible rather than silently turning into a
-"free" banner.
+If a model is missing here AND in the feed, ``calculate_cost_usd`` returns
+0.0 — no crash, but also no cost tracking. Logging at the call site is
+mandatory so that missing entries become visible rather than silently
+turning into a "free" banner.
 
 Aliases are NOT mapped here — callers must pass the canonical model name
 (e.g. ``claude-opus-4-7-20251022`` instead of ``opus``). PROVIDER_ALIASES
 in ``manager.py`` is for provider names, not model IDs.
 """
+
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import time
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +77,10 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "gemini-3-flash-preview": (0.10, 0.40),
     "gemini-3.1-flash-lite": (0.05, 0.20),
     "gemini-2.5-pro": (1.25, 10.0),
-    "gemini-2.5-flash": (0.075, 0.30),
-    "gemini-2.5-flash-lite": (0.075, 0.30),
+    # 2.5 Flash GA rates (raised from the preview's $0.075/$0.30 in 2025);
+    # re-verified against the OpenRouter feed 2026-08-18.
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
     "gemini-3.1-flash-tts-preview": (0.075, 0.30),  # TTS, same rate
     # 2026-07-28 cost audit: the 3.5/3.6 flash generation is ~20x pricier
     # than 2.5-flash; these entries were missing, so the live install
@@ -61,10 +88,20 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # /api/v1/models pricing feed on 2026-07-28).
     "gemini-3.5-flash": (1.50, 9.0),
     "gemini-3.5-flash-lite": (0.30, 2.50),
-    "gemini-3.6-flash": (1.50, 7.50),
-    # Live API model — TEXT rates; audio rates live in
+    # 3.6 / 3.7 Flash: $0.75 / $3.75 per ai.google.dev/gemini-api/docs/pricing
+    # (2026-08-18; promotional rate "through Dec 31, 2026"). 3.7 was missing
+    # here on 2026-08-18 and the live install showed a whole session as $0.
+    "gemini-3.6-flash": (0.75, 3.75),
+    "gemini-3.7-flash": (0.75, 3.75),
+    # Live API models — TEXT rates; audio rates live in
     # REALTIME_AUDIO_PRICING_USD_PER_MTOK below.
     "gemini-3.1-flash-live-preview": (0.75, 4.50),
+    # 2.5 Flash native-audio Live: $0.50 / $2.00 text (ai.google.dev pricing,
+    # 2026-08-18). ``gemini-live-2.5-flash-native-audio`` is the Vertex id of
+    # the same model — VertexLiveProvider.default_model — and Vertex bills
+    # the same per-token rates.
+    "gemini-2.5-flash-native-audio-preview-12-2025": (0.50, 2.0),
+    "gemini-live-2.5-flash-native-audio": (0.50, 2.0),
     # ── OpenAI (Frontier: GPT-5.5 + 5.5-pro, released 2026-04-23) ──
     "gpt-5.5": (5.0, 30.0),
     "gpt-5.5-pro": (30.0, 180.0),  # corrected 2026-07-28 (OpenRouter feed)
@@ -98,7 +135,11 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "anthropic/claude-sonnet-4.6": (3.0, 15.0),
     "google/gemini-3.5-flash": (1.50, 9.0),
     "google/gemini-3.5-flash-lite": (0.30, 2.50),
-    "google/gemini-3.6-flash": (1.50, 7.50),
+    # Feed values 2026-08-18 (OpenRouter lists 3.7 at half of Google's own
+    # list price). These rows are the OFFLINE fallback only — a vendor/model
+    # id is priced from the live feed first (resolve_rates).
+    "google/gemini-3.6-flash": (0.75, 3.75),
+    "google/gemini-3.7-flash": (0.375, 1.875),
     # 2026-07-28 audit: 1.87M tokens in 30 days ran on deepseek-v4-flash
     # while it was absent here — the single biggest remaining $0 hole.
     "deepseek/deepseek-v4-flash": (0.14, 0.28),
@@ -128,12 +169,170 @@ def calculate_cost_usd(
     """
     if not model or tokens_in <= 0 and tokens_out <= 0:
         return 0.0
-    rates = PRICING_USD_PER_MTOK.get(model)
+    rates = resolve_rates(model)
     if rates is None:
         log.debug("Cost pricing missing for model %r — returning 0.0", model)
         return 0.0
     in_rate, out_rate = rates
     return (max(0, tokens_in) * in_rate + max(0, tokens_out) * out_rate) / 1_000_000
+
+
+# ----------------------------------------------------------------------
+# Rate resolution: static table + the cached provider feed
+# ----------------------------------------------------------------------
+
+# Feed cache: model id -> (in, out) USD per 1M tokens, plus a "same model
+# name, any vendor" index for origin ids. Reloaded whenever the catalog cache
+# file changes on disk (mtime), so a picker refresh or ensure_pricing_for()
+# is picked up by the next turn without a restart.
+_feed_rates: dict[str, tuple[float, float]] = {}
+_feed_by_name: dict[str, tuple[float, float]] = {}
+_feed_loaded: tuple[Path, float] | None = None  # (path, mtime) of what is loaded
+_feed_fetched_at: float = 0.0
+# Test hook: where the feed cache lives (default: <DATA_DIR>/model_catalog_cache.json).
+_feed_path_override: Path | None = None
+# Models that already triggered a feed refresh this process — one network
+# round-trip per unknown model, never one per turn.
+_refresh_attempted: set[str] = set()
+# A feed younger than this is not re-fetched for a model it does not list —
+# the model is simply not on OpenRouter (local weights, a Live-API id …).
+_FEED_MIN_REFRESH_AGE_S = 600.0
+
+
+def _catalog_cache_path() -> Path:
+    if _feed_path_override is not None:
+        return _feed_path_override
+    from jarvis.core import config as cfg  # lazy — keeps import light
+
+    return Path(cfg.DATA_DIR) / "model_catalog_cache.json"
+
+
+def _norm(model_id: str) -> str:
+    """``claude-sonnet-4-6`` and ``claude-sonnet-4.6`` name the same model."""
+    return model_id.strip().casefold().replace(".", "-")
+
+
+def _load_feed() -> None:
+    """(Re)load feed prices from the catalog cache when the file changed."""
+    global _feed_loaded, _feed_fetched_at
+    path = _catalog_cache_path()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        if _feed_loaded is not None:
+            _feed_rates.clear()
+            _feed_by_name.clear()
+            _feed_loaded = None
+            _feed_fetched_at = 0.0
+        return
+    if _feed_loaded == (path, mtime):
+        return
+    rates: dict[str, tuple[float, float]] = {}
+    fetched_at = 0.0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for entry in data.values():
+            if not isinstance(entry, dict):
+                continue
+            fetched_at = max(fetched_at, float(entry.get("fetched_at", 0.0) or 0.0))
+            for m in entry.get("models", []) or []:
+                if not isinstance(m, dict):
+                    continue
+                pricing = m.get("pricing")
+                model_id = str(m.get("id", "") or "")
+                if not model_id or not isinstance(pricing, list) or len(pricing) != 2:
+                    continue
+                rates[model_id] = (float(pricing[0]), float(pricing[1]))
+    except (OSError, ValueError, TypeError) as exc:
+        log.debug("Feed pricing unavailable from %s: %s", path, exc)
+        rates = {}
+    by_name: dict[str, tuple[float, float]] = {}
+    # Sorted → deterministic when two vendors publish the same model name;
+    # ``:free`` / ``:batch`` / ``:nitro`` variants are NOT the plain model.
+    for model_id in sorted(rates):
+        _vendor, sep, name = model_id.partition("/")
+        if not sep or ":" in name:
+            continue
+        by_name.setdefault(_norm(name), rates[model_id])
+    _feed_rates.clear()
+    _feed_rates.update(rates)
+    _feed_by_name.clear()
+    _feed_by_name.update(by_name)
+    _feed_loaded = (path, mtime)
+    _feed_fetched_at = fetched_at
+
+
+def feed_rates(model: str) -> tuple[float, float] | None:
+    """(in, out) USD per 1M tokens from the cached provider feed, or ``None``.
+
+    Exact id first; an id without a vendor prefix matches the feed entry of
+    the same model name under any vendor (``.``/``-`` insensitive).
+    """
+    if not model:
+        return None
+    _load_feed()
+    exact = _feed_rates.get(model)
+    if exact is not None:
+        return exact
+    if "/" in model:
+        return None
+    return _feed_by_name.get(_norm(model))
+
+
+def resolve_rates(model: str | None) -> tuple[float, float] | None:
+    """The (in, out) USD-per-1M-token rates for ``model``, or ``None``.
+
+    A ``vendor/model`` id is an aggregator id → the aggregator's feed is what
+    it bills, so the feed wins over the static row (the row is the offline
+    fallback). An origin id trusts the hand-verified table first and falls
+    back to the feed's entry for the same model name.
+    """
+    if not model:
+        return None
+    if "/" in model:
+        return feed_rates(model) or PRICING_USD_PER_MTOK.get(model)
+    return PRICING_USD_PER_MTOK.get(model) or feed_rates(model)
+
+
+async def ensure_pricing_for(model: str | None, *, timeout_s: float = 3.0) -> bool:
+    """Make ``model`` priceable if the provider feed can do it; True when priced.
+
+    Cheap when the model is already known. Otherwise ONE catalog refresh per
+    unknown model per process, capped at ``timeout_s`` — a turn is delayed by
+    at most that once, never per turn. Never raises. Skipped for a feed
+    fetched within the last 10 minutes (the model is not on the feed at all)
+    and under the airgapped privacy profile (no outbound call).
+    """
+    if not model:
+        return False
+    if resolve_rates(model) is not None:
+        return True
+    if model in _refresh_attempted:
+        return False
+    _refresh_attempted.add(model)
+    try:
+        from jarvis.core import config as cfg  # lazy
+
+        profile = getattr(getattr(cfg, "profile", None), "name", "default")
+        if profile == "airgapped":
+            return False
+        _load_feed()
+        if _feed_fetched_at and time.time() - _feed_fetched_at < _FEED_MIN_REFRESH_AGE_S:
+            return False
+        from jarvis.brain import model_catalog as mc  # lazy (httpx)
+
+        # The process-wide instance shares its memory copy with the picker
+        # routes; a redirected feed (tests) gets its own instance on that path.
+        catalog = (
+            mc.shared_catalog()
+            if _feed_path_override is None
+            else mc.ModelCatalog(cache_path=_feed_path_override)
+        )
+        await asyncio.wait_for(catalog.list_models("openrouter", force_refresh=True), timeout_s)
+    except Exception as exc:  # noqa: BLE001 — pricing never breaks a turn
+        log.debug("Feed pricing refresh for %r skipped: %s", model, exc)
+        return False
+    return resolve_rates(model) is not None
 
 
 # Realtime/Live API audio token rates (USD per 1M AUDIO tokens).
@@ -145,6 +344,10 @@ def calculate_cost_usd(
 #   gpt-realtime-2.1-mini $10 in / $20 out
 REALTIME_AUDIO_PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "gemini-3.1-flash-live-preview": (3.0, 12.0),
+    # 2.5 Flash native audio (AI Studio id + Vertex id): $3.00 in / $12.00
+    # out per ai.google.dev/gemini-api/docs/pricing, 2026-08-18.
+    "gemini-2.5-flash-native-audio-preview-12-2025": (3.0, 12.0),
+    "gemini-live-2.5-flash-native-audio": (3.0, 12.0),
     "gpt-realtime-2.1": (32.0, 64.0),
     "gpt-realtime-2.1-mini": (10.0, 20.0),
 }
@@ -182,4 +385,7 @@ __all__ = [
     "REALTIME_AUDIO_PRICING_USD_PER_MTOK",
     "calculate_cost_usd",
     "calculate_realtime_cost_usd",
+    "ensure_pricing_for",
+    "feed_rates",
+    "resolve_rates",
 ]

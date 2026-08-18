@@ -385,6 +385,9 @@ class _OpenAIRealtimeSession:
         # Model the transport was opened with — required to rebuild the
         # connection in place when the server goes deaf (BUG-064 escalation).
         self._connect_model = str(connect_model or "")
+        # The same id, exposed for the orchestrator's usage metering: what
+        # this socket really bills, even when the card pinned nothing.
+        self.model = self._connect_model
         # Bounded call transcript for context restoration (BUG-088). Seeded
         # from the open-time config and kept current by the orchestrator via
         # set_history_snapshot after every completed turn, so a BUG-064
