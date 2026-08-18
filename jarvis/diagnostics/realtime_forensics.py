@@ -129,6 +129,20 @@ def evaluate_postmortem(pm: Mapping[str, Any]) -> list[RealtimeFinding]:
             )
         )
 
+    stale_generations = _count(pm, "stale_generations_dropped")
+    if stale_generations:
+        # The guard worked (nothing was heard twice), but the provider still
+        # answered a second boundary for one request - the tokens were spent
+        # and the trigger is worth a look (BUG-143).
+        add(
+            RealtimeFinding(
+                "info",
+                "stale-generation-dropped",
+                f"{stale_generations} unprompted provider generation(s) after a "
+                "delivered readback were discarded before playback",
+            )
+        )
+
     detached_deliveries = _count(pm, "delegate_deliveries_detached")
     if detached_deliveries:
         add(

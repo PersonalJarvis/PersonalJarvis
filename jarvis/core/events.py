@@ -1748,6 +1748,10 @@ class RealtimeSessionPostmortem(Event):
     delegate_delivery_duplicates_suppressed: int = 0
     #: In-flight delegates transferred from socket to process lifetime.
     delegate_deliveries_detached: int = 0
+    #: Provider generations discarded whole: they began right after a rendered
+    #: readback with no new user input — the server answered a second boundary
+    #: for the same request (BUG-143). Zero in a healthy call.
+    stale_generations_dropped: int = 0
     #: Opening responses cut at the cap because no user question existed yet.
     opening_responses_bounded: int = 0
     #: Self-dialogue verdicts that forced a transport replacement (BUG-124).

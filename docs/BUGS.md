@@ -9836,3 +9836,108 @@ really_opened_with`; `test_live_usage_metering.py` (Vertex Live default
 priced); `test_gemini_live.py` / `test_openai_realtime.py` (`session.model`).
 The root `tests/conftest.py` redirects the feed to `tmp_path` per test so no
 suite reaches the network or the developer's real cache file.
+
+## BUG-143: the same delegate reply is spoken twice — "Ich habe work geöffnet: T eins." then "…: T1." — the server-VAD transport answers a second boundary for one request and the session plays it as a phantom turn (HIGH, FIXED 2026-08-18)
+
+**Symptom.** Realtime voice session `7b20e182` (2026-08-18 14:24, Vertex Live,
+delegate tool mode). Turn 4 ("open a new workspace … a terminal") was answered
+"Ich habe work geöffnet: T eins." — and 16 ms after that turn's boundary the
+provider spoke "Ich habe work geöffnet: T1." again. Turn 6 repeated the
+whole 144-character terminal status verbatim. The recorder wrote turns 5 and
+7 with EMPTY user text and their own `AudioOutFirst`/`realtime_usage` events
+(69 and 208 output tokens): two separate provider generations, not a
+transcript artifact and not the surface TTS. Same shape at 15:58 (session
+`805bbee2`): a phantom turn re-rendered a delivered confirmation prompt and
+tripped the surface-fallback stale-readback guard, which then SPOKE its
+clarify line ("Das hatte ich gerade schon beantwortet …") to a user who had
+said nothing.
+
+**Reconstruction (recorder + flight recorder + desktop log).**
+
+1. In both doubled turns the user kept talking after Gemini's VAD had closed
+   the input turn (`holding the dispatch — the microphone still carries the
+   user's voice`; `provider committed a boundary while the user is still
+   audibly speaking`). The session correctly merged the tail into ONE turn,
+   ran the action once, and injected the trusted result once
+   (`_delegate_result_prompt` via `send_text`).
+2. On the server that one turn carried TWO turn-ending inputs: the injected
+   text (which closes the open audio activity — the behaviour the 2026-08-13
+   11:20 forensic in `deliver_announcement` recorded when an injected result
+   "closed the sentence"), and the
+   server's own silence detection closing that activity again moments later.
+   Gemini answers each boundary with its own generation, serially. Every
+   generation after the injected result re-renders that result, because the
+   rendering order is the newest instruction in context — hence "T eins" and
+   then "T1", two independent renderings of the same brain reply.
+3. `_run_deterministic_delegate` → `_await_provider_response_boundary`
+   injects immediately when `_drop_provider_output_until_new_response` is set
+   ("the competing native response was already retired") — but on this
+   transport `interrupt()` is a no-op (Gemini has no response cancel), so
+   nothing was retired server-side. The injection races the VAD end.
+4. `_ensure_turn_started` opens a turn for ANY provider output with no open
+   turn. Nothing said "a generation that begins right after a rendered
+   readback with no new user input is stale", so the second rendering was
+   played and recorded as a user-less turn. Turns 0 and 3 of the same call
+   did not double: their results were injected 2.5–5 s after the last voiced
+   frame, by which time the server had already answered the trailing speech
+   (natively, withheld). Only a result injected within ~1 s of the tail races
+   it.
+
+**Fix (`jarvis/realtime/session.py`, stale-generation guard).** When a turn
+closes on a provider `turn_complete` after the provider rendered a text
+Jarvis injected — a delegate result (`delivery_started`, provider audio was
+heard, no surface fallback, no scrub cancel) or an out-of-band readback
+(`_external_update`) — `_arm_stale_generation_guard` stamps the moment
+(automatic-response transports only: a manual-response transport generates
+nothing Jarvis did not ask for; capability, never a provider name, AP-21).
+Every audio/transcript event is judged once at the top of the pump
+(`_judge_stale_generation_event`): if the guard is armed, no turn is open, no
+deliberate injection is pending, the microphone carried no voice since the
+readback ended, no server speech edge was confirmed, and the 2.5 s window has
+not run out, the generation is marked as being discarded and
+`_output_withhold_reason` keeps every event of it out of the gate, the
+surface, the recorder and the turn record until its own boundary. A tool
+call from that generation (Gemini can answer the second boundary with a
+`jarvis_action` or `end_call` instead of speech) is refused with an honest
+result so the model can close the generation — never executed, never a turn;
+a `handoff_requested` from it is ignored. The boundary is consumed
+unconditionally: the guard only ever arms as a turn closes, so any turn open
+at that moment was opened by a real transcript DURING the drop and keeps
+waiting for its own answer instead of being closed as "empty" and re-routed
+through the Brain chain. The discarded transcript is logged (bounded) and the
+guard stands down. Any fresh evidence disarms it for good — a new input
+transcript (`_disarm_stale_generation_guard` at the input-observed site),
+local voice (`_last_voiced_input_monotonic`), an open turn,
+`_external_update`, the window, a transport rebuild — and the drop itself is
+bounded (`_STALE_GENERATION_DROP_MAX_S`, 20 s): a transport that loses the
+one terminal frame releases the withhold with a warning instead of leaving
+the call deaf. `_session_is_at_rest` and `deliver_announcement` treat a
+discarded generation as "still busy" so no follow-up is injected into it. New
+counter `stale_generations_dropped` on `RealtimeSessionPostmortem` (+ an info
+finding in `realtime_forensics.py`).
+
+**Not changed, on purpose.** The injection is still immediate: waiting for
+the server's boundary would add the whole native generation (2–7 s live) of
+dead air on every action turn, against the <2 s instant-ack target. The guard
+is the deterministic net; the second generation still costs its tokens (the
+counter makes that visible). The per-turn steering delta (`gemini_live.py`
+`_flush_steering`, 37b4eca3) is a second text input on the same channel and
+a candidate for the same double-boundary; the guard covers whichever input
+triggers the extra generation.
+
+**Class rule.** On a duplex transport that generates on its own VAD, "one
+Jarvis turn" and "one server turn" are different units, and any text the
+session injects is a turn-ending input of its own. After the session has
+rendered what it asked for, a provider generation that arrives with no user
+evidence behind it answers nothing — it must be refused as a unit, at the
+pump, before any branch can open a turn for it. Play/record decisions belong
+to the session, never to "the provider spoke, so someone must have asked".
+
+**Guards.** `tests/unit/realtime/test_stale_generation_after_readback.py`
+(the live failure: one rendering, one turn, no phantom; a stale generation's
+`end_call` refused, not executed; a follow-up transcript landing mid-drop
+keeps its own turn; and everything that must keep playing — after a new
+transcript, after local microphone voice, after the window, a late result
+Jarvis injected itself; the capability gate; every disarm reason; the drop
+ceiling). `tests/unit/diagnostics/test_realtime_forensics.py` carries the
+new finding.

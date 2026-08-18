@@ -250,6 +250,30 @@ _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
 # under one second after a tool result.
 _DELEGATE_READBACK_WAIT_S = 2.5
 _DELEGATE_READBACK_POLL_S = 0.1
+# Stale-generation guard after a delivered readback (live forensic 2026-08-18
+# 14:25, session 7b20e182, turns 4/5 and 6/7 — BUG-143). On a transport that
+# creates responses on its own VAD, ONE Jarvis turn can carry TWO turn-ending
+# inputs on the server: the trusted result text Jarvis injects, and the end
+# of the user's trailing speech (the words after the provider's first
+# boundary, which the delegate already consumed). Text input closes the open
+# audio turn early; the server's own silence detection then closes it AGAIN
+# moments later. Both closings are answered — serially — and every answer
+# after the injected result re-renders that same result, so the user heard
+# "Ich habe work geöffnet: T eins." and then "Ich habe work geöffnet: T1."
+# The session cannot cancel that second generation (Gemini has no response
+# cancel), but it can refuse to play it: a generation that begins right after
+# a provider-rendered delegate readback, with NO new user input in between,
+# answers nothing the user asked. The window bounds the guard so a genuine
+# later answer is never at risk; local microphone voice, a new transcript, or
+# any deliberate injection disarms it immediately.
+_STALE_GENERATION_WINDOW_S = 2.5
+# A discarded generation is released by its own boundary. Every awaited state
+# in this file carries a bound (the turn stall watchdog, the late-result
+# flush), and this one is no exception: a transport that loses that single
+# terminal frame while the socket stays open must not leave the session deaf
+# for the rest of the call. Same order as _TURN_STALL_TIMEOUT_S.
+_STALE_GENERATION_DROP_MAX_S = 20.0
+_STALE_GENERATION_TRANSCRIPT_MAX_CHARS = 400
 # Mid-reply audio-flow diagnostics: an audible hole inside one spoken answer
 # has three distinct producers (scrub gate waiting for a late transcript, the
 # provider sending no audio, or silence embedded in the provider's own PCM).
@@ -2089,6 +2113,19 @@ class RealtimeVoiceSession:
         # plain turn re-rendering one of them is a stale ghost repeat, not a
         # fresh answer (live forensic 2026-07-21 11:32).
         self._stale_readback_refs: list[str] = []
+        # Stale-generation guard (BUG-143, see _STALE_GENERATION_WINDOW_S).
+        # ``armed_at`` is the monotonic moment a provider-rendered delegate
+        # readback turn closed; a generation that begins while it is armed —
+        # no open turn, no new user input — is discarded WHOLE (``dropping``
+        # stays set until that generation's own boundary), never played and
+        # never opened as a turn. ``transcript`` keeps what was discarded for
+        # the log line, bounded, so a live call can be checked afterwards.
+        self._stale_generation_guard_armed_at = 0.0
+        self._stale_generation_guard_reply = ""
+        self._stale_generation_dropping = False
+        self._stale_generation_dropping_since = 0.0
+        self._stale_generation_transcript: list[str] = []
+        self._stale_generations_dropped = 0
         self._hangup_reason = ""
         self._turn_final_text = ""
         self._end_after_turn = False
@@ -3298,6 +3335,7 @@ class RealtimeVoiceSession:
             or self._turn_id
             or self._turn_has_activity()
             or self._output_active
+            or self._stale_generation_drop_active()
             or self._delegate_tasks
             or self._pending_tool_events
             or self._response_requested_for_turn
@@ -3494,6 +3532,18 @@ class RealtimeVoiceSession:
                     # stall watchdog keeps refreshing on its own while the gate
                     # holds PCM — the settle backstop would then never fire.
                     self._interruption_deferred_at = time.monotonic()
+                if event.type in {
+                    "audio_delta",
+                    "output_transcript_delta",
+                    "tool_call",
+                    "handoff_requested",
+                }:
+                    # BUG-143: a generation that begins right after a delivered
+                    # readback, with no new user input, is discarded whole —
+                    # decided once, here, before any branch can open a turn
+                    # for it, hand a frame of it to the gate, or run an action
+                    # it asks for.
+                    self._judge_stale_generation_event(event)
                 if event.type == "input_transcript":
                     transcript = _dictionary_corrected(str(event.text or "").strip())
                     transcription_failed = bool(event.error)
@@ -3630,8 +3680,11 @@ class RealtimeVoiceSession:
                         self._input_turn_observed = True
                         self._user_speech_active = False
                         # The user audibly opened this turn — a fallback-era
-                        # suppression of stale provider output ends here.
+                        # suppression of stale provider output ends here, and
+                        # so does the post-readback stale-generation guard:
+                        # whatever the provider says next was asked for.
                         self._drop_provider_output_until_user_turn = False
+                        self._disarm_stale_generation_guard()
                         if (
                             self._external_update is not None
                             and self._output_samples_sent == 0
@@ -4139,6 +4192,14 @@ class RealtimeVoiceSession:
                                         -_ANSWERED_INPUT_ID_MAX:
                                     ]
                                 )
+                elif event.type == "handoff_requested" and (
+                    self._stale_generation_drop_active()
+                ):
+                    log.warning(
+                        "realtime[%s] ignoring a provider handoff from a "
+                        "discarded stale generation — no action was dispatched",
+                        self.session_id,
+                    )
                 elif event.type == "handoff_requested":
                     # Client-managed handoffs are a provider control boundary,
                     # never a public response boundary and never a direct tool
@@ -4515,6 +4576,20 @@ class RealtimeVoiceSession:
                 elif event.type == "speech_started":
                     await self._begin_user_speech_turn()
                     await self._barge_in(interrupt_provider=True)
+                elif event.type == "tool_call" and self._stale_generation_drop_active():
+                    # An action (or a hang-up) requested by a generation the
+                    # session already ruled stale: nobody asked for it. Answer
+                    # the call with an honest refusal so the model can close
+                    # its generation — an unanswered function call keeps it
+                    # open with no boundary ever coming — and never open a
+                    # turn or execute anything for it (BUG-143).
+                    log.warning(
+                        "realtime[%s] refusing tool call %r from a discarded "
+                        "stale generation — the action was not executed",
+                        self.session_id,
+                        str(getattr(event, "tool_name", "") or ""),
+                    )
+                    await self._reject_stale_generation_tool_call(event)
                 elif event.type == "tool_call":
                     if str(getattr(event, "tool_name", "") or "") == "end_call":
                         await self._ensure_turn_started()
@@ -4540,6 +4615,21 @@ class RealtimeVoiceSession:
                         await self._ensure_turn_started()
                         await self._handle_tool_call(event)
                 elif event.type == "turn_complete":
+                    if self._stale_generation_drop_active():
+                        # The discarded generation reached its own boundary.
+                        # It belongs to that generation alone: the guard only
+                        # ever arms as a turn closes, so any turn open NOW was
+                        # opened by a real transcript DURING the drop and is
+                        # still waiting for its own answer — closing it here
+                        # would route the user's fresh request through the
+                        # empty-turn recovery and mute the provider's real
+                        # answer as delegate-owned. Consume the boundary.
+                        self._finish_stale_generation_drop()
+                        self._gate.drain()
+                        # Same courtesy as a real boundary: a queued late
+                        # result may deliver now that the wire is quiet.
+                        self._schedule_late_delegate_flush()
+                        continue
                     if self._output_language_retry_pending:
                         if not self._output_language_retry_requested:
                             await self._request_output_language_retry()
@@ -4821,6 +4911,35 @@ class RealtimeVoiceSession:
                     for chunk in final_chunks:
                         await self._emit_audio(chunk)
                     self._gate.drain()
+                    rendered_delegate_reply = bool(
+                        delegate_state is not None
+                        and delegate_state.delivery_started
+                        and not delegate_state.surface_fallback_spoken
+                        and not self._scrub_cancelled_for_turn
+                        and self._output_samples_sent > 0
+                    )
+                    rendered_injected_readback = bool(
+                        self._external_update is not None
+                        and self._output_samples_sent > 0
+                    )
+                    if rendered_delegate_reply or rendered_injected_readback:
+                        # The provider just rendered a text Jarvis injected (a
+                        # delegate result, a late result, an announcement) and
+                        # this boundary closes that turn. On a server-VAD
+                        # transport a SECOND generation can follow within
+                        # milliseconds — the answer to the user's trailing
+                        # speech, which re-renders the same text (BUG-143).
+                        # Arm the guard before the turn resets so that
+                        # generation is discarded instead of opening a phantom
+                        # turn and speaking the reply twice.
+                        self._arm_stale_generation_guard(
+                            str(delegate_state.last_reply or "")
+                            if rendered_delegate_reply and delegate_state is not None
+                            else str(
+                                getattr(self._external_update, "source_text", "")
+                                or ""
+                            )
+                        )
                     await self._complete_surface_turn()
                     if self._end_after_turn:
                         # end_call was acknowledged; the model has now spoken
@@ -5278,6 +5397,12 @@ class RealtimeVoiceSession:
         self._reset_output_state(reason="transport rebuild")
         self._drop_provider_output_until_new_response = False
         self._drop_provider_output_until_user_turn = False
+        # The discarded generation died with its transport; the fresh session
+        # owes the user nothing from before, and must not stay deaf to it.
+        self._stale_generation_dropping = False
+        self._stale_generation_dropping_since = 0.0
+        self._stale_generation_transcript.clear()
+        self._disarm_stale_generation_guard()
         # Input-item ids are scoped to the DEAD transport. A fresh provider
         # session may restart its numbering, and a collision here silently
         # swallows the next real utterance at the duplicate-item guard — the
@@ -7451,6 +7576,173 @@ class RealtimeVoiceSession:
                 return ref
         return None
 
+    # --- Stale-generation guard (BUG-143) --------------------------------
+
+    def _arm_stale_generation_guard(self, reply: str) -> None:
+        """Arm the guard as a provider-rendered delegate readback turn closes.
+
+        Only a transport that creates responses on its own server VAD can
+        answer a second boundary for the same request; a manual-response
+        transport generates nothing Jarvis did not ask for, so the guard
+        stays inert there (capability, never a provider name — AP-21).
+        """
+        if not bool(
+            getattr(self._session, "creates_responses_automatically", False)
+        ):
+            return
+        self._stale_generation_guard_armed_at = time.monotonic()
+        self._stale_generation_guard_reply = str(reply or "")
+
+    def _disarm_stale_generation_guard(self) -> None:
+        self._stale_generation_guard_armed_at = 0.0
+        self._stale_generation_guard_reply = ""
+
+    def _stale_generation_guard_reason(self) -> str:
+        """Why a generation beginning NOW would be discarded, or ``""``.
+
+        Every ``""`` below is fresh evidence that whatever the provider is
+        about to say was asked for: a turn is open (a transcript or a
+        deliberate injection opened it), the microphone carried the user's
+        voice after the readback ended, a server speech edge was confirmed,
+        or the bounded window simply ran out. Each of them disarms the guard
+        for good — it never survives into a later turn.
+        """
+        armed_at = self._stale_generation_guard_armed_at
+        if not armed_at:
+            return ""
+        if (
+            self._turn_id
+            or self._external_update is not None
+            or self._user_speech_active
+            or self._last_voiced_input_monotonic > armed_at
+            or time.monotonic() - armed_at > _STALE_GENERATION_WINDOW_S
+        ):
+            self._disarm_stale_generation_guard()
+            return ""
+        return (
+            "a provider generation started after a delivered readback with no "
+            "new user input"
+        )
+
+    def _stale_generation_drop_active(self) -> bool:
+        """Whether a discarded generation is still being withheld.
+
+        Bounded: past ``_STALE_GENERATION_DROP_MAX_S`` without the boundary
+        that normally ends it, the drop is released with a warning — an
+        unbounded withhold would keep every later reply, announcement and
+        late result inaudible for the rest of the call.
+        """
+        if not self._stale_generation_dropping:
+            return False
+        held_for = time.monotonic() - self._stale_generation_dropping_since
+        if held_for > _STALE_GENERATION_DROP_MAX_S:
+            log.warning(
+                "realtime[%s] the discarded stale generation sent no boundary "
+                "for %.0fs; releasing the withhold so the call stays audible",
+                self.session_id,
+                held_for,
+            )
+            self._finish_stale_generation_drop()
+            return False
+        return True
+
+    def _judge_stale_generation_event(self, event: Any) -> None:
+        """Classify one provider output event against the armed guard.
+
+        Called for every audio/transcript/tool event BEFORE its branch, so a
+        generation that starts under the armed guard is marked as being
+        discarded — and ``_output_withhold_reason`` plus the tool-call and
+        handoff branches then keep every event of it out of the gate, the
+        surface, the executor and the turn record until its own boundary
+        arrives.
+        """
+        text = str(getattr(event, "text", "") or "") if (
+            event.type == "output_transcript_delta"
+        ) else ""
+        if self._stale_generation_drop_active():
+            if text:
+                self._append_stale_generation_transcript(text)
+            return
+        if not self._stale_generation_guard_armed_at:
+            return
+        reason = self._stale_generation_guard_reason()
+        if not reason:
+            return
+        self._stale_generation_dropping = True
+        self._stale_generation_dropping_since = time.monotonic()
+        self._stale_generations_dropped += 1
+        self._stale_generation_transcript.clear()
+        if text:
+            self._append_stale_generation_transcript(text)
+        log.warning(
+            "realtime[%s] discarding a provider generation that started %.2fs "
+            "after the delivered readback with no new user input — the "
+            "provider answered a second boundary for the same request "
+            "(delivered reply: %s)",
+            self.session_id,
+            time.monotonic() - self._stale_generation_guard_armed_at,
+            safe_preview(self._stale_generation_guard_reply, max_chars=120),
+        )
+
+    def _append_stale_generation_transcript(self, text: str) -> None:
+        kept = "".join(self._stale_generation_transcript)
+        if len(kept) >= _STALE_GENERATION_TRANSCRIPT_MAX_CHARS:
+            return
+        self._stale_generation_transcript.append(
+            text[: _STALE_GENERATION_TRANSCRIPT_MAX_CHARS - len(kept)]
+        )
+
+    def _finish_stale_generation_drop(self) -> None:
+        """The discarded generation reached its boundary: log and stand down."""
+        discarded = "".join(self._stale_generation_transcript).strip()
+        heard = _normalize_for_repeat_match(discarded)
+        delivered = _normalize_for_repeat_match(self._stale_generation_guard_reply)
+        matched = bool(
+            heard
+            and delivered
+            and (heard.startswith(delivered) or delivered.startswith(heard))
+        )
+        log.info(
+            "realtime[%s] discarded stale provider generation ended "
+            "(%s the delivered reply): %s",
+            self.session_id,
+            "re-rendered" if matched else "did not match",
+            safe_preview(discarded, max_chars=160) or "<no transcript>",
+        )
+        self._stale_generation_dropping = False
+        self._stale_generation_dropping_since = 0.0
+        self._stale_generation_transcript.clear()
+        self._disarm_stale_generation_guard()
+
+    async def _reject_stale_generation_tool_call(self, event: Any) -> None:
+        """Answer a stale generation's function call without executing it.
+
+        The refusal text is for the model, never for the user: the rendering
+        it provokes is still part of the discarded generation and stays
+        withheld, and its boundary is what ends the drop.
+        """
+        if self._session is None or not self._session_takes_tool_results():
+            return
+        try:
+            await self._session.send_tool_result(
+                str(getattr(event, "call_id", "") or ""),
+                str(getattr(event, "tool_name", "") or ""),
+                {
+                    "success": False,
+                    "error": (
+                        "This request was already answered; the action was "
+                        "not executed. Wait for the user's next request."
+                    ),
+                },
+            )
+        except Exception:  # noqa: BLE001 — the drop ceiling still bounds this
+            log.warning(
+                "realtime[%s] could not answer a stale generation's tool call; "
+                "the drop ceiling will release the withhold",
+                self.session_id,
+                exc_info=True,
+            )
+
     def _session_takes_tool_results(self) -> bool:
         """Whether this transport can carry a tool result back to the model.
 
@@ -7480,6 +7772,11 @@ class RealtimeVoiceSession:
         """
         if self._drop_provider_output_until_new_response:
             return "awaiting a new response after a barge-in or delegation"
+        if self._stale_generation_drop_active():
+            return (
+                "discarding a stale provider generation that started after a "
+                "delivered readback"
+            )
         if self._drop_provider_output_until_user_turn:
             return "awaiting the user's next turn after a surface fallback"
         if self._must_withhold_delegate_output():
@@ -7992,6 +8289,9 @@ class RealtimeVoiceSession:
             or self._turn_id
             or self._turn_has_activity()
             or self._output_active
+            # A discarded generation is still streaming from the provider;
+            # a follow-up injected now would land inside it (BUG-143).
+            or self._stale_generation_drop_active()
             or self._delegate_tasks
             or self._pending_tool_events
             or self._response_requested_for_turn
@@ -10092,6 +10392,7 @@ class RealtimeVoiceSession:
                 self._delegate_delivery_duplicates_suppressed
             ),
             delegate_deliveries_detached=self._delegate_deliveries_detached,
+            stale_generations_dropped=self._stale_generations_dropped,
             opening_responses_bounded=diag.get("opening_responses_bounded", 0),
             self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),
             handoff_action_turns=self._handoff_action_turns,
