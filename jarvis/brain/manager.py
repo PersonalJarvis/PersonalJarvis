@@ -9136,7 +9136,12 @@ class BrainManager:
         conversation_id: str | None,
         allow_voice_confirm: bool,
     ) -> tuple[str, str]:
-        surface = "voice" if allow_voice_confirm else (source_layer or "chat")
+        # The layer that NAMES itself wins. allow_voice_confirm used to decide
+        # this, which was fine only while voice was the sole surface passing
+        # it — desktop chat passes it too since 6e6287b9, so keying on the flag
+        # would drop both into one bucket and let a pending look proposal from
+        # one surface answer for the other.
+        surface = source_layer or ("voice" if allow_voice_confirm else "chat")
         return (surface, conversation_id or "default")
 
     def _has_pending_screen_confirm(
