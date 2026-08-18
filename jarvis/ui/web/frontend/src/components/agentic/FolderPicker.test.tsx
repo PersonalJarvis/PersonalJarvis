@@ -14,7 +14,10 @@ vi.mock("@/lib/agenticIdeApi", () => ({
 import {
   FolderPicker,
   extractDropPayload,
+  isAbsolutePath,
   joinPath,
+  normalizeTypedPath,
+  resolveTypedPath,
   separatorOf,
   splitTypedPath,
 } from "./FolderPicker";
@@ -400,12 +403,51 @@ describe("typing a path", () => {
     await waitFor(() => expect(input.value).toBe("/home/ruben/webshop/"));
   });
 
+  it("reads what was typed the way a shell would", () => {
+    // The field says "like cd" — so people type the cd. It is not part of the
+    // path, and neither are the quotes around a path pasted from a terminal.
+    expect(normalizeTypedPath("cd haral\\.personal-jarvis")).toBe(
+      "haral\\.personal-jarvis",
+    );
+    expect(normalizeTypedPath("CD /d D:\\work")).toBe("D:\\work");
+    expect(normalizeTypedPath('cd "C:\\My Projects\\shop"')).toBe(
+      "C:\\My Projects\\shop",
+    );
+    expect(normalizeTypedPath("  notes ")).toBe("notes");
+    expect(normalizeTypedPath("cd")).toBe("");
+    // A folder that happens to start with "cd" is left alone.
+    expect(normalizeTypedPath("cdrom")).toBe("cdrom");
+  });
+
+  it("knows which paths name their own root", () => {
+    expect(isAbsolutePath("/srv/deploy")).toBe(true);
+    expect(isAbsolutePath("C:\\work")).toBe(true);
+    expect(isAbsolutePath("c:/work")).toBe(true);
+    expect(isAbsolutePath("\\\\server\\share")).toBe(true);
+    expect(isAbsolutePath("~/code")).toBe(true);
+    expect(isAbsolutePath("haral\\.personal-jarvis")).toBe(false);
+    expect(isAbsolutePath("notes")).toBe(false);
+  });
+
+  it("resolves a relative path against the folder on screen, like cd", () => {
+    // The report: "cd haral\.personal-jarvis" typed while looking at C:\Users
+    // used to be taken verbatim and reached the review step as the workspace.
+    expect(resolveTypedPath("cd haral\\.personal-jarvis", "C:\\Users")).toBe(
+      "C:\\Users\\haral\\.personal-jarvis",
+    );
+    expect(resolveTypedPath("notes", "/home/ruben")).toBe("/home/ruben/notes");
+    expect(resolveTypedPath("/srv/deploy", "/home/ruben")).toBe("/srv/deploy");
+    // Nothing on screen yet: the text goes through as typed.
+    expect(resolveTypedPath("projects/shop", null)).toBe("projects/shop");
+    expect(resolveTypedPath("cd", "/home/ruben")).toBe("");
+  });
+
   it("treats a bare name as relative to the folder on screen", async () => {
-    vi.mocked(api.fetchFolders).mockResolvedValue({
+    vi.mocked(api.fetchFolders).mockImplementation(async (target) => ({
       ...LISTING,
-      path: "/home/ruben",
+      path: target ?? "/home/ruben",
       parent: "/home",
-    });
+    }));
     const onSelect = vi.fn();
     render(<FolderPicker selected={null} onSelect={onSelect} />);
     await screen.findByText("webshop");
@@ -427,5 +469,31 @@ describe("typing a path", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith("/srv/deploy"));
+  });
+
+  it("does not choose a typed path that is not a folder", async () => {
+    // Before: the text was selected first and listed second, so a typo — or a
+    // whole "cd …" command — became the workspace with an error beside it.
+    vi.mocked(api.fetchFolders).mockImplementation(async (target) =>
+      target === "/home/ruben/nope"
+        ? {
+            path: "/home/ruben/nope",
+            parent: "/home/ruben",
+            entries: [],
+            error: "Not a folder: /home/ruben/nope",
+            device_name: "Rubens MacBook",
+          }
+        : { ...LISTING, path: "/home/ruben", parent: "/home" },
+    );
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    const input = screen.getByTestId("folder-path-input");
+    fireEvent.change(input, { target: { value: "nope" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText(/Not a folder/)).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

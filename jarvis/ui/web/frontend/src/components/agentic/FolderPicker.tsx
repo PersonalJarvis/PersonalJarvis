@@ -258,11 +258,32 @@ export function FolderPicker({
     void load(item.path);
   };
 
+  /**
+   * A typed path is checked before it is chosen. The old order — select first,
+   * then list — let "cd haral\.personal-jarvis" (not a folder anywhere) reach
+   * the review step as the workspace, with the error shown next to it. Now the
+   * folder is listed first; only when it really is one does it become the
+   * selection, and otherwise the message stays and the previous choice stands.
+   */
   const usePath = (raw: string) => {
     const value = raw.trim();
     if (!value) return;
-    onSelect(value);
-    void load(value);
+    setLoading(true);
+    setError(null);
+    fetchFolders(value)
+      .then((res) => {
+        if (res.device_name) setDeviceName(res.device_name);
+        if (res.error) {
+          setError(res.error);
+          return;
+        }
+        setPath(res.path);
+        setParent(res.parent);
+        setEntries(res.entries);
+        onSelect(res.path ?? value);
+      })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoading(false));
   };
 
   const pickRecent = (recent: RecentWorkspace) => {
@@ -645,6 +666,41 @@ export function joinPath(base: string, name: string): string {
 }
 
 /**
+ * What was typed, read the way a shell would read it.
+ *
+ * The field says "like cd", so people type `cd projects` — the command word is
+ * not part of the path and is dropped (with cmd's `/d`), and so are quotes
+ * around a path pasted from a terminal.
+ */
+export function normalizeTypedPath(raw: string): string {
+  let value = raw.trim();
+  value = value.replace(/^cd(?:\s+\/d)?(?:\s+|$)/i, "").trim();
+  const quoted = value.match(/^(["'])(.*)\1$/);
+  if (quoted) value = quoted[2].trim();
+  return value;
+}
+
+/** A path that names its own root: `/…`, `~…`, `C:\…`, or a UNC `\\server`. */
+export function isAbsolutePath(value: string): boolean {
+  return /^(?:[a-zA-Z]:[\\/]|[\\/]|~)/.test(value);
+}
+
+/**
+ * The folder a typed path means, given the folder on screen.
+ *
+ * Anything that does not name its own root is relative to what the list shows
+ * — `haral\.personal-jarvis` typed while looking at `C:\Users` is
+ * `C:\Users\haral\.personal-jarvis`, exactly as `cd` would read it.
+ * Without a folder on screen (the start view) the text is passed on as typed.
+ */
+export function resolveTypedPath(raw: string, base: string | null): string {
+  const typed = normalizeTypedPath(raw);
+  if (!typed) return "";
+  if (isAbsolutePath(typed) || !base) return typed;
+  return joinPath(base, typed);
+}
+
+/**
  * A path field that completes as you type, the way `cd` does in a terminal.
  *
  * Typing a bare name completes against the folder currently on screen, so
@@ -669,10 +725,15 @@ function PathInput({
   const [active, setActive] = useState(-1);
   const [open, setOpen] = useState(false);
 
-  const { dir, leaf } = splitTypedPath(value);
+  const { dir, leaf } = splitTypedPath(normalizeTypedPath(value));
   // An empty `dir` means a bare name was typed: complete inside the folder the
-  // list is showing, which is what makes `cd projects` work.
-  const lookupDir = dir || base || "";
+  // list is showing, which is what makes `cd projects` work; a relative folder
+  // part completes inside that folder below the one on screen.
+  const lookupDir = dir
+    ? isAbsolutePath(dir) || !base
+      ? dir
+      : joinPath(base, dir)
+    : base || "";
 
   useEffect(() => {
     if (!value.trim() && !base) {
@@ -712,11 +773,10 @@ function PathInput({
   const submit = () => {
     if (active >= 0 && options[active]) {
       onUse(options[active].path);
-    } else if (value.trim()) {
-      // A bare name is relative to what is on screen, exactly as typed.
-      const typed = value.trim();
-      const absolute = dir || !base ? typed : joinPath(base, typed);
-      onUse(absolute);
+    } else {
+      // A relative path is relative to what is on screen, the way cd reads it.
+      const absolute = resolveTypedPath(value, base);
+      if (absolute) onUse(absolute);
     }
     setOpen(false);
   };

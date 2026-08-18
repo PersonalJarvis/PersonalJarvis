@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+import os
 import re
 import time
 from dataclasses import asdict
@@ -1262,7 +1263,10 @@ async def get_folders(path: str | None = None, include_hidden: bool = False) -> 
         )
 
     found, error = await asyncio.to_thread(list_dir, path, include_hidden=include_hidden)
-    resolved = Path(path).expanduser()  # noqa: ASYNC240 - no filesystem call
+    # Lexical only (no filesystem call): `~` becomes the home folder and a typed
+    # `..` folds away, so the path handed back — and chosen as the workspace —
+    # is the folder itself, not the route someone took to it.
+    resolved = Path(os.path.normpath(Path(path).expanduser()))  # noqa: ASYNC240
     parent = str(resolved.parent) if resolved.parent != resolved else None
     return FoldersResponse(
         path=str(resolved),
