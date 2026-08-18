@@ -4331,11 +4331,11 @@
   "deck": {
     "sections": "Sektionen",
     "running": "Läuft gerade",
-    "running_empty": "Nichts läuft. Sag dein Wake-Word oder tippe unten.",
+    "running_empty": "Nichts läuft. Sag dein Wake-Word.",
     "thinking_now": "Denkt gerade",
     "thinking_starting": "Startet…",
-    "idle_headline": "Bereit. Sag dein Wake-Word oder tippe einfach los.",
-    "warming": "Startet gerade. Tippen geht schon, sprechen gleich.",
+    "idle_headline": "Bereit. Sag dein Wake-Word.",
+    "warming": "Startet gerade. Sprechen geht gleich.",
     "mood_ready": "bereit",
     "mood_busy": "arbeitet",
     "mood_listening": "hört zu",
@@ -4375,6 +4375,19 @@
     "words_live": "Wörter · live",
     "words_session": "Wörter · Sitzung",
     "words_today": "{0} heute",
-    "mood_speaking": "spricht"
+    "mood_speaking": "spricht",
+    "wiki_expand": "Karte vergrößern",
+    "wiki_collapse": "Karte verkleinern",
+    "close": "Schließen",
+    "wiki_expanded_note": "Karte ist vergrößert",
+    "wiki_pages": "Seiten",
+    "wiki_links": "Links",
+    "wiki_recent": "Gerade geändert",
+    "lamp_link": "Link",
+    "lamp_voice": "Stimme",
+    "lamp_brain": "Hirn",
+    "lamp_cu": "Steuerung",
+    "orb_steps": "Schritte",
+    "orb_words": "Wörter"
   }
 }

@@ -1,16 +1,17 @@
 import { useMemo, type ReactNode } from "react";
 import { useEventStore, type VoiceState } from "@/store/events";
+import { useDeckStore } from "@/store/deck";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { DeckDock } from "@/components/deck/DeckDock";
 import { DeckOrb } from "@/components/deck/DeckOrb";
+import { HudLamp } from "@/components/deck/HudFrame";
 import {
   FlowCard,
   IdeGridCard,
   OutputsCard,
   RunsCard,
   TerminalsCard,
-  WikiCard,
 } from "@/components/deck/DeckActivityCards";
 import {
   ApiStatsCard,
@@ -18,6 +19,7 @@ import {
   ComputerUseCard,
   LiveCounter,
 } from "@/components/deck/DeckSignalCards";
+import { WikiCard } from "@/components/deck/DeckWiki";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
@@ -29,21 +31,23 @@ import { useT } from "@/i18n";
  * One stage that shows everything the assistant is and does, without a
  * single navigation step. You talk to it by voice; the typed composer lives
  * on the classic chat surface, not here (maintainer decision 2026-08-18).
- * The layout follows the maintainer's sketch of 2026-08-17:
+ * The layout follows the maintainer's sketch of 2026-08-17 (photographed
+ * rotated; read upright):
  *
- *   ┌ voice bars · live word counter ───────────────── name · brain · switch ┐
- *   │ dock │ flow / runs        ORB        computer-use / api stats           │
- *   │      │ ide grid   terminals · wiki   app-shot / outputs                 │
- *   └──────┴─────────────────────────────────────────────────────────────────┘
+ *   ┌ voice bars · lamps · live counter ─────────── name · brain · switch ┐
+ *   │ dock │ [right now]   [computer use][api]     [ WIKI — 3D, tall    ] │
+ *   │      │               (      ORB      )       [                    ] │
+ *   │      │ [outputs][run]   [app shot]           [terminals] [ide grid] │
+ *   └──────┴───────────────────────────────────────────────────────────────┘
  *
  * Every card is a window onto a section and reads that section's own data;
- * clicking its eyebrow jumps there. The dock on the left is the ONLY place
- * the sections are listed — the sidebar steps aside while the deck is up
- * (App.tsx), so nothing appears twice.
+ * its title jumps there. The dock on the left is the ONLY place the sections
+ * are listed — the sidebar steps aside while the deck is up (App.tsx).
  *
- * Nothing on this screen is invented. A number the store cannot source is
- * not shown, because a deck whose figures are decorative teaches the person
- * reading it to stop.
+ * The frames differ on purpose (HudFrame.tsx): brackets for pictures and the
+ * map, chamfers for readouts, rails for streams — a deck of instruments, not
+ * a grid of identical boxes. Nothing on this screen is invented: a number the
+ * store cannot source is not shown.
  */
 export function MissionDeckView({
   headerAccessory,
@@ -56,11 +60,14 @@ export function MissionDeckView({
   const brainProvider = useEventStore((s) => s.brainProvider);
   const brainModel = useEventStore((s) => s.brainModel);
   const connected = useEventStore((s) => s.connected);
+  const voiceReady = useEventStore((s) => s.voiceReady);
   const voiceState = useEventStore((s) => s.voiceState);
   const chatThinking = useEventStore((s) => s.chatThinking);
   const thinkingSteps = useEventStore((s) => s.thinkingSteps);
   const messages = useEventStore((s) => s.messages);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const cuActive = useDeckStore((s) => s.cu.active);
+  const wordsSession = useDeckStore((s) => s.wordsSession);
   const { warming } = useVoiceReadiness();
 
   const running = useMemo(
@@ -93,8 +100,9 @@ export function MissionDeckView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header strip: voice bars + live counter left, identity + brain right. */}
-      <header className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-border/70 px-4 py-2">
+      {/* Status bar: voice bars, lamps and the live counter left; identity,
+          brain and the surface switch right. A thin bracket rule underneath. */}
+      <header className="relative flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2">
         <div className="flex items-center gap-3">
           <VoiceWaveform
             levelRef={voiceInputLevelRef}
@@ -102,12 +110,25 @@ export function MissionDeckView({
             count={14}
             className="h-6"
           />
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
+          <span
+            className={cn(
+              "font-mono text-[10px] uppercase tracking-[0.18em]",
+              mood === "fail" ? "text-destructive" : "text-primary",
+            )}
+          >
             {t(`deck.mood_${mood}`)}
           </span>
         </div>
 
-        <LiveCounter className="ml-2" />
+        {/* Lamp row: the things that have to be true for a voice turn. */}
+        <div className="flex items-center gap-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+          <Lamp on={connected} label={t("deck.lamp_link")} />
+          <Lamp on={voiceReady} label={t("deck.lamp_voice")} />
+          <Lamp on={Boolean(brainProvider)} label={t("deck.lamp_brain")} />
+          <Lamp on={cuActive} label={t("deck.lamp_cu")} />
+        </div>
+
+        <LiveCounter />
 
         <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1">
           <span className="font-display text-sm font-bold uppercase tracking-[0.18em]">
@@ -126,49 +147,78 @@ export function MissionDeckView({
           />
           {headerAccessory}
         </div>
+
+        <svg
+          className="pointer-events-none absolute inset-x-3 bottom-0 h-2 w-[calc(100%-1.5rem)]"
+          preserveAspectRatio="none"
+          viewBox="0 0 100 8"
+          aria-hidden
+        >
+          <path
+            d="M 0 0 V 8 M 0 7.5 H 100 M 100 0 V 8"
+            fill="none"
+            stroke="hsl(var(--primary))"
+            strokeWidth={1}
+            opacity={0.5}
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
       </header>
 
-      {/* Stage: dock on the left edge, cards around the orb. */}
+      {/* Stage */}
       <div className="flex min-h-0 flex-1">
-        <DeckDock className="border-r border-border/60" />
+        <DeckDock />
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(200px,3fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.85fr)] lg:overflow-hidden">
-          {/* Row 1 — left: flow over runs */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden">
+          {/* LEFT top: what is happening right now */}
+          <FlowCard steps={thinkingSteps} className="min-h-0" />
+
+          {/* CENTRE top: computer use + api on a strip, the orb underneath */}
           <div className="flex min-h-0 flex-col gap-3">
-            <FlowCard steps={thinkingSteps} className="min-h-0 flex-1" />
-            <RunsCard className="max-h-[38%] shrink-0" />
+            <div className="grid shrink-0 grid-cols-2 gap-3" style={{ height: "36%" }}>
+              <ComputerUseCard className="min-h-0" />
+              <ApiStatsCard className="min-h-0" />
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-2 text-center">
+              <DeckOrb
+                steps={running}
+                busy={busy}
+                size={236}
+                readouts={{
+                  nw: t(`deck.mood_${mood}`),
+                  ne: `${running.length} ${t("deck.orb_steps")}`,
+                  sw: brainProvider || "—",
+                  se: `${wordsSession} ${t("deck.orb_words")}`,
+                }}
+              />
+              <p className="max-w-[44ch] text-pretty text-sm leading-relaxed text-foreground">
+                {headline}
+              </p>
+            </div>
           </div>
 
-          {/* Row 1 — centre: the orb and the headline */}
-          <div className="flex min-h-0 flex-col items-center justify-center gap-3 px-2 text-center">
-            <DeckOrb steps={running} busy={busy} size={250} />
-            <p className="max-w-[46ch] text-pretty text-sm leading-relaxed text-foreground">
-              {headline}
-            </p>
+          {/* RIGHT top: the wiki, in space, tall */}
+          <WikiCard className="min-h-0" />
+
+          {/* LEFT bottom: outputs and runs */}
+          <div className="grid min-h-[8rem] grid-cols-2 gap-3">
+            <OutputsCard className="min-h-0" />
+            <RunsCard className="min-h-0" />
           </div>
 
-          {/* Row 1 — right: computer use over api stats */}
-          <div className="flex min-h-0 flex-col gap-3">
-            <ComputerUseCard className="min-h-0 flex-1" />
-            <ApiStatsCard className="shrink-0" />
+          {/* CENTRE bottom: the last capture, centred and not too wide */}
+          <div className="flex min-h-[8rem] items-stretch justify-center">
+            <AppShotCard className="w-full max-w-[28rem]" />
           </div>
 
-          {/* Row 2 — left: the coding workspace, shrunk */}
-          <IdeGridCard className="min-h-[9rem]" />
-
-          {/* Row 2 — centre: terminals and the wiki side by side */}
-          <div className="grid min-h-[9rem] grid-cols-1 gap-3 sm:grid-cols-[3fr_2fr]">
+          {/* RIGHT bottom: terminals and the coding workspace */}
+          <div className="grid min-h-[8rem] grid-cols-2 gap-3">
             <TerminalsCard className="min-h-0" />
-            <WikiCard className="min-h-0" />
-          </div>
-
-          {/* Row 2 — right: the last capture over the outputs */}
-          <div className="flex min-h-[9rem] flex-col gap-3">
-            <AppShotCard className="min-h-0 flex-1" />
-            <OutputsCard className="max-h-[48%] shrink-0" />
+            <IdeGridCard className="min-h-0" />
           </div>
         </div>
       </div>
+
     </div>
   );
 }
@@ -191,6 +241,15 @@ function waveformPhase(state: VoiceState, connected: boolean): WaveformPhase {
     default:
       return "idle";
   }
+}
+
+function Lamp({ on, label }: { on: boolean; label: string }) {
+  return (
+    <span className="flex items-center gap-1">
+      <HudLamp on={on} />
+      <span className={on ? "text-foreground/80" : undefined}>{label}</span>
+    </span>
+  );
 }
 
 function HeaderStat({
@@ -250,7 +309,8 @@ export function SurfaceSwitch({
         onChange(next);
       }}
       title={label}
-      className="flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+      className="flex items-center gap-1.5 border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+      style={{ clipPath: "polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px)" }}
     >
       {label}
     </button>

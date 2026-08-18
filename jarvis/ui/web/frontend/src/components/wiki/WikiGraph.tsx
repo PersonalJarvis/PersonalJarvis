@@ -67,7 +67,7 @@ async function fetchGraph(): Promise<WikiGraphPayload> {
   return res.json();
 }
 
-function escapeTooltipText(value: string): string {
+export function escapeTooltipText(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -76,7 +76,7 @@ function escapeTooltipText(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function nodeDetails(node: RenderNode, t: (key: string) => string): string {
+export function nodeDetails(node: RenderNode, t: (key: string) => string): string {
   const backlinks = node.backlinkCount ?? 0;
   const suffix = t(
     backlinks === 1 ? "wiki_graph.backlink_one" : "wiki_graph.backlink_many",
@@ -88,7 +88,7 @@ function nodeDetails(node: RenderNode, t: (key: string) => string): string {
     .replace("{3}", suffix);
 }
 
-function edgeDetails(
+export function edgeDetails(
   edge: RenderEdge,
   titles: ReadonlyMap<string, string>,
 ): string {

@@ -5,7 +5,6 @@ import {
   FolderOpen,
   Gauge,
   MessagesSquare,
-  Notebook,
   Terminal,
 } from "lucide-react";
 import { useEventStore } from "@/store/events";
@@ -13,7 +12,6 @@ import { useDeckStore } from "@/store/deck";
 import { useRuns } from "@/hooks/useRuns";
 import { useOutputsList, type OutputSummary } from "@/hooks/useOutputs";
 import { fetchIdeState, fetchTerminalActivity, type IdeState, type ActivityResponse } from "@/lib/agenticIdeApi";
-import { fetchWikiGraph, fetchWikiTree } from "@/lib/wikiApi";
 import { useCommandActivityStore } from "@/store/commandActivity";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import type { RunListItem } from "@/components/runs/types";
@@ -51,6 +49,7 @@ export function FlowCard({ steps, className }: { steps: ThinkingStep[]; classNam
       title={t("deck.card_flow")}
       meta={active > 0 ? active : undefined}
       live={active > 0}
+      variant="rail"
       onOpen={() => setActiveSection("run_inspector")}
       openLabel={t("deck.open_section")}
       className={className}
@@ -138,6 +137,7 @@ export function RunsCard({ className }: { className?: string }) {
       title={t("deck.card_runs")}
       meta={runs.data ? runs.data.length : undefined}
       live={live}
+      variant="chamfer"
       onOpen={() => setActiveSection("run_inspector")}
       openLabel={t("deck.open_section")}
       className={className}
@@ -192,6 +192,7 @@ export function OutputsCard({ className }: { className?: string }) {
       title={t("deck.card_outputs")}
       meta={running > 0 ? running : outputs.data ? outputs.data.length : undefined}
       live={running > 0}
+      variant="chamfer"
       onOpen={() => setActiveSection("outputs")}
       openLabel={t("deck.open_section")}
       className={className}
@@ -290,6 +291,7 @@ export function IdeGridCard({ className }: { className?: string }) {
             : undefined
       }
       live={working > 0}
+      variant="bracket"
       onOpen={() => setActiveSection("agentic-ide")}
       openLabel={t("deck.open_section")}
       className={className}
@@ -373,6 +375,7 @@ export function TerminalsCard({ className }: { className?: string }) {
       title={t("deck.card_terminals")}
       meta={running > 0 ? running : undefined}
       live={running > 0}
+      variant="rail"
       onOpen={() => setActiveSection("clis")}
       openLabel={t("deck.open_section")}
       className={className}
@@ -388,123 +391,6 @@ export function TerminalsCard({ className }: { className?: string }) {
             </div>
           ))}
           <div ref={endRef} />
-        </div>
-      )}
-    </DeckCard>
-  );
-}
-
-// ----------------------------------------------------------------------
-// Wiki — the memory, as a small constellation
-// ----------------------------------------------------------------------
-
-/**
- * A miniature of the wiki graph: real nodes and edges from `/api/wiki/graph`,
- * laid out on a deterministic spiral (no physics — the full graph view has
- * that; here it would cost a worker for a thumbnail). Pages that changed
- * this session glow. Capped so it stays a constellation, not a hairball.
- */
-const WIKI_NODE_CAP = 90;
-
-export function WikiCard({ className }: { className?: string }) {
-  const t = useT();
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const changes = useDeckStore((s) => s.wikiChanges);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  const tree = useQuery({ queryKey: ["deck", "wiki-tree"], queryFn: fetchWikiTree, refetchInterval: 60_000, retry: false });
-  const graph = useQuery({ queryKey: ["deck", "wiki-graph"], queryFn: fetchWikiGraph, refetchInterval: 60_000, retry: false });
-
-  const pages = tree.data?.stats?.total_pages;
-  const links = tree.data?.stats?.total_links;
-  const changedSlugs = useMemo(() => new Set(changes.map((c) => c.slug)), [changes]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const nodes = graph.data?.nodes ?? [];
-    const edges = graph.data?.edges ?? [];
-    if (!canvas || nodes.length === 0) return;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width < 10 || rect.height < 10) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = Math.round(rect.width * dpr);
-    canvas.height = Math.round(rect.height * dpr);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, rect.width, rect.height);
-
-    const cs = getComputedStyle(document.documentElement);
-    const primary = `hsl(${cs.getPropertyValue("--primary").trim()})`;
-    const muted = `hsl(${cs.getPropertyValue("--muted-foreground").trim()})`;
-
-    // Most-linked pages first, so the cap keeps the hubs.
-    const degree = new Map<string, number>();
-    for (const e of edges) {
-      degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
-      degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
-    }
-    const kept = [...nodes]
-      .sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
-      .slice(0, WIKI_NODE_CAP);
-    const cx = rect.width / 2, cy = rect.height / 2;
-    const maxR = Math.min(cx, cy) - 6;
-    const pos = new Map<string, [number, number]>();
-    kept.forEach((n, i) => {
-      // Fermat spiral: hubs at the centre, leaves at the rim, evenly spread.
-      const r = maxR * Math.sqrt((i + 0.5) / kept.length);
-      const a = i * 2.39996; // golden angle
-      pos.set(n.id, [cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-    });
-
-    ctx.lineWidth = 0.6;
-    ctx.strokeStyle = muted;
-    ctx.globalAlpha = 0.28;
-    for (const e of edges) {
-      const a = pos.get(e.source), b = pos.get(e.target);
-      if (!a || !b) continue;
-      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    for (const n of kept) {
-      const p = pos.get(n.id);
-      if (!p) continue;
-      const hot = changedSlugs.has(n.id);
-      const d = degree.get(n.id) ?? 0;
-      ctx.beginPath();
-      ctx.arc(p[0], p[1], hot ? 3 : Math.min(2.6, 1 + d * 0.15), 0, Math.PI * 2);
-      ctx.fillStyle = hot ? primary : muted;
-      ctx.globalAlpha = hot ? 1 : 0.7;
-      ctx.fill();
-      if (hot) {
-        ctx.beginPath(); ctx.arc(p[0], p[1], 6, 0, Math.PI * 2);
-        ctx.strokeStyle = primary; ctx.globalAlpha = 0.45; ctx.lineWidth = 1; ctx.stroke();
-      }
-    }
-    ctx.globalAlpha = 1;
-  }, [graph.data, changedSlugs]);
-
-  return (
-    <DeckCard
-      icon={Notebook}
-      title={t("deck.card_wiki")}
-      meta={typeof pages === "number" ? `${pages}${typeof links === "number" ? ` · ${links}` : ""}` : undefined}
-      live={changes.length > 0}
-      onOpen={() => setActiveSection("memory")}
-      openLabel={t("deck.open_section")}
-      className={className}
-      bodyClassName="p-0"
-    >
-      {graph.isError || (graph.data && graph.data.ok === false) ? (
-        <p className="px-2.5 py-2 text-[11px] text-muted-foreground">{t("deck.unavailable")}</p>
-      ) : (
-        <div className="relative h-full min-h-[5rem] w-full">
-          <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden />
-          {changes.length > 0 && (
-            <div className="absolute bottom-1 left-2 right-2 truncate font-mono text-[9px] text-primary">
-              {changes.slice(0, 3).map((c) => c.slug).join(" · ")}
-            </div>
-          )}
         </div>
       )}
     </DeckCard>

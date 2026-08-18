@@ -4331,11 +4331,11 @@
   "deck": {
     "sections": "Secciones",
     "running": "En marcha",
-    "running_empty": "Nada en marcha. Di tu palabra de activación o escribe abajo.",
+    "running_empty": "Nada en marcha. Di tu palabra de activación.",
     "thinking_now": "Pensando",
     "thinking_starting": "Empezando…",
-    "idle_headline": "Listo. Di tu palabra de activación o simplemente escribe.",
-    "warming": "Arrancando. Ya puedes escribir; hablar funcionará enseguida.",
+    "idle_headline": "Listo. Di tu palabra de activación.",
+    "warming": "Arrancando. Hablar funcionará enseguida.",
     "mood_ready": "listo",
     "mood_busy": "trabajando",
     "mood_listening": "escuchando",
@@ -4375,6 +4375,19 @@
     "words_live": "palabras · en vivo",
     "words_session": "palabras · sesión",
     "words_today": "{0} hoy",
-    "mood_speaking": "hablando"
+    "mood_speaking": "hablando",
+    "wiki_expand": "Ampliar mapa",
+    "wiki_collapse": "Reducir mapa",
+    "close": "Cerrar",
+    "wiki_expanded_note": "El mapa está ampliado",
+    "wiki_pages": "páginas",
+    "wiki_links": "enlaces",
+    "wiki_recent": "Recién cambiado",
+    "lamp_link": "enlace",
+    "lamp_voice": "voz",
+    "lamp_brain": "cerebro",
+    "lamp_cu": "control",
+    "orb_steps": "pasos",
+    "orb_words": "palabras"
   }
 }

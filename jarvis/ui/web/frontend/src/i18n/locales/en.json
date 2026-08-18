@@ -4331,11 +4331,11 @@
   "deck": {
     "sections": "Sections",
     "running": "Running now",
-    "running_empty": "Nothing running. Say your wake word or type below.",
+    "running_empty": "Nothing running. Say your wake word.",
     "thinking_now": "Thinking",
     "thinking_starting": "Starting…",
-    "idle_headline": "Ready. Say your wake word, or just type.",
-    "warming": "Starting up. You can already type — speaking works in a moment.",
+    "idle_headline": "Ready. Say your wake word.",
+    "warming": "Starting up. Speaking works in a moment.",
     "mood_ready": "ready",
     "mood_busy": "working",
     "mood_listening": "listening",
@@ -4375,6 +4375,19 @@
     "words_live": "words · live",
     "words_session": "words · session",
     "words_today": "{0} today",
-    "mood_speaking": "speaking"
+    "mood_speaking": "speaking",
+    "wiki_expand": "Expand map",
+    "wiki_collapse": "Shrink map",
+    "close": "Close",
+    "wiki_expanded_note": "Map is expanded",
+    "wiki_pages": "pages",
+    "wiki_links": "links",
+    "wiki_recent": "Just changed",
+    "lamp_link": "link",
+    "lamp_voice": "voice",
+    "lamp_brain": "brain",
+    "lamp_cu": "control",
+    "orb_steps": "steps",
+    "orb_words": "words"
   }
 }

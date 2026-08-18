@@ -4,6 +4,7 @@ import { useEventStore } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import { countWords } from "@/lib/deckState";
 import { DeckCard } from "@/components/deck/DeckCard";
+import { HudGauge, HudLamp } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -36,6 +37,7 @@ export function ComputerUseCard({ className }: { className?: string }) {
       title={t("deck.card_cu")}
       meta={cu.active ? `#${cu.stepIdx}` : cu.frames > 0 ? t("deck.cu_done") : undefined}
       live={cu.active}
+      variant="bracket"
       onOpen={() => setActiveSection("run_inspector")}
       openLabel={t("deck.open_section")}
       className={className}
@@ -66,20 +68,30 @@ export function ComputerUseCard({ className }: { className?: string }) {
         </div>
 
         {/* Phase strip: observe → plan → act → verify. */}
-        <div className="flex items-center gap-1 border-t border-border/60 px-2 py-1">
-          {CU_PHASES.map((ph) => (
-            <span
-              key={ph}
-              className={cn(
-                "flex-1 truncate text-center font-mono text-[8px] uppercase tracking-wider",
-                cu.active && cu.phase === ph
-                  ? "text-primary"
-                  : "text-muted-foreground/70",
-              )}
-            >
-              {ph}
-            </span>
-          ))}
+        <div className="flex items-stretch gap-px border-t border-border/60 px-2 py-1">
+          {CU_PHASES.map((ph, i) => {
+            const on = cu.active && cu.phase === ph;
+            const passed = cu.active && (CU_PHASES as readonly string[]).indexOf(cu.phase) > i;
+            return (
+              <span
+                key={ph}
+                className={cn(
+                  "flex flex-1 flex-col items-center gap-0.5 font-mono text-[8px] uppercase tracking-wider",
+                  on ? "text-primary" : "text-muted-foreground/70",
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-1 w-full",
+                    on ? "bg-primary shadow-[0_0_6px_hsl(var(--primary)/0.7)]" : passed ? "bg-primary/40" : "bg-border",
+                  )}
+                  style={{ clipPath: "polygon(0 0, calc(100% - 3px) 0, 100% 100%, 3px 100%)" }}
+                  aria-hidden
+                />
+                <span className="truncate">{ph}</span>
+              </span>
+            );
+          })}
         </div>
         {(cu.lastActionKind || cu.windowTitle) && (
           <div className="flex items-center gap-2 border-t border-border/60 px-2 py-1 font-mono text-[10px]">
@@ -146,6 +158,7 @@ export function AppShotCard({ className }: { className?: string }) {
       title={t("deck.card_shot")}
       meta={fresh && capture ? `${capture.width}×${capture.height}` : undefined}
       live={Boolean(fresh)}
+      variant="bracket"
       className={className}
       bodyClassName="p-0"
     >
@@ -199,15 +212,24 @@ export function ApiStatsCard({ className }: { className?: string }) {
   const usage = useDeckStore((s) => s.usage);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const models = useMemo(
-    () => Object.entries(usage.byModel).sort((a, b) => b[1].costUsd - a[1].costUsd || b[1].turns - a[1].turns).slice(0, 4),
+    () => Object.entries(usage.byModel).sort((a, b) => b[1].costUsd - a[1].costUsd || b[1].turns - a[1].turns).slice(0, 3),
     [usage.byModel],
   );
+  const total = usage.tokensIn + usage.tokensOut;
+  // Gauge scales are honest and self-referential: the token gauge shows the
+  // OUTPUT share of everything sent and received (a real ratio), the cost
+  // gauge shows this session against one US dollar — a fixed, stated scale,
+  // not a budget the app pretends to know.
+  const outShare = total > 0 ? usage.tokensOut / total : 0;
+  const costOfDollar = Math.min(1, usage.costUsd / 1);
 
   return (
     <DeckCard
       icon={Coins}
       title={t("deck.card_api")}
       meta={usage.turns > 0 ? `${usage.turns} ${t("deck.turns")}` : undefined}
+      live={usage.lastTurnTs !== null && Date.now() - usage.lastTurnTs < 15_000}
+      variant="chamfer"
       onOpen={() => setActiveSection("apikeys")}
       openLabel={t("deck.open_section")}
       className={className}
@@ -215,30 +237,32 @@ export function ApiStatsCard({ className }: { className?: string }) {
       {usage.turns === 0 ? (
         <p className="text-[11px] text-muted-foreground">{t("deck.api_empty")}</p>
       ) : (
-        <div className="flex h-full flex-col gap-2">
-          <div className="grid grid-cols-3 gap-2">
-            <Stat label={t("deck.api_in")} value={fmtTokens(usage.tokensIn)} />
-            <Stat label={t("deck.api_out")} value={fmtTokens(usage.tokensOut)} />
-            <Stat label={t("deck.api_cost")} value={fmtUsd(usage.costUsd)} hot />
+        <div className="flex h-full min-h-0 items-center gap-3">
+          <HudGauge value={outShare} size={62} label={t("deck.api_out")} readout={fmtTokens(total)} />
+          <HudGauge value={costOfDollar} size={62} label={t("deck.api_cost")} readout={fmtUsd(usage.costUsd)} />
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <div className="grid grid-cols-2 gap-x-3">
+              <Stat label={t("deck.api_in")} value={fmtTokens(usage.tokensIn)} />
+              <Stat label={t("deck.api_out")} value={fmtTokens(usage.tokensOut)} />
+            </div>
+            {models.length > 0 && (
+              <ul className="space-y-0.5 border-t border-border/60 pt-1">
+                {models.map(([name, m]) => (
+                  <li key={name} className="flex items-center gap-2 font-mono text-[9.5px]">
+                    <HudLamp on={name === usage.lastModel} />
+                    <span className="min-w-0 flex-1 truncate text-foreground">{name}</span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">{m.turns}×</span>
+                    <span className="shrink-0 tabular-nums text-primary">{fmtUsd(m.costUsd)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {usage.lastCacheHit && (
+              <span className="font-mono text-[9px] uppercase tracking-wider text-emerald-400">
+                {t("deck.api_cache_hit")}
+              </span>
+            )}
           </div>
-          {models.length > 0 && (
-            <ul className="space-y-0.5 border-t border-border/60 pt-1.5">
-              {models.map(([name, m]) => (
-                <li key={name} className="flex items-center gap-2 font-mono text-[10px]">
-                  <span className="min-w-0 flex-1 truncate text-foreground">{name}</span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {m.turns}× · {fmtTokens(m.tokensIn + m.tokensOut)}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-primary">{fmtUsd(m.costUsd)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {usage.lastCacheHit && (
-            <span className="font-mono text-[9px] uppercase tracking-wider text-emerald-400">
-              {t("deck.api_cache_hit")}
-            </span>
-          )}
         </div>
       )}
     </DeckCard>
@@ -297,7 +321,11 @@ export function LiveCounter({ className }: { className?: string }) {
   const listening = voiceState === "listening";
 
   return (
-    <div className={cn("flex items-baseline gap-3", className)}>
+    <div
+      className={cn("relative flex items-baseline gap-2.5 border border-border/70 px-3 py-1", className)}
+      style={{ clipPath: "polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px)" }}
+    >
+      <HudLamp on={listening} className="self-center" />
       <span
         className={cn(
           "font-mono text-2xl font-semibold tabular-nums leading-none transition-colors",
