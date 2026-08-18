@@ -16,7 +16,9 @@ import pytest
 from jarvis.skills.authoring_request import (
     AUTHORING_SKILL_NAME,
     is_skill_authoring_request,
+    is_skill_lifecycle_request,
     resolve_skill_authoring_request,
+    skill_meta_kind,
 )
 from jarvis.skills.match_eval import BAND_FIRE, BAND_NONE, SOURCE_TRIGGER
 
@@ -72,6 +74,13 @@ LIVE_UTTERANCE = (
         "make me a new skill for the evening",
         "set up a skill for my monday review",
         "crea un skill que lea mi correo",  # i18n-allow: test input
+        # the product's synonyms for "a skill" — one word away from the live bug
+        "erstell mir eine morgenroutine für 6 uhr",  # i18n-allow: test input
+        "leg eine abendroutine an, die spotify leise dreht",  # i18n-allow: test input
+        "bau mir eine automatisierung die jeden montag slack zusammenfasst",  # i18n-allow: test input
+        "erstell mir einen workflow der abends die tickets zusammenfasst",  # i18n-allow: test input
+        "create a routine that reads my calendar",
+        "crea una rutina que lea mi correo",  # i18n-allow: test input
     ],
 )
 def test_authoring_requests_are_detected(utterance: str) -> None:
@@ -106,11 +115,65 @@ def test_authoring_requests_are_detected(utterance: str) -> None:
         "erstell mir eine mail an das team",  # i18n-allow: test input
         "spiel musik auf youtube music",  # i18n-allow: test input
         "schreib eine mail an das team",  # i18n-allow: test input
+        # a routine RUN or a routine mentioned, not created
+        "starte die morgenroutine",  # i18n-allow: test input
+        "was steht heute in meiner routine",  # i18n-allow: test input
+        "erinnere mich an meine routine",  # i18n-allow: test input
         "",
     ],
 )
 def test_non_authoring_requests_are_ignored(utterance: str) -> None:
     assert is_skill_authoring_request(utterance) is False
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle — switch off / on, delete, list, show a SKILL
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "deaktiviere den skill morgenroutine",  # i18n-allow: test input
+        "aktiviere den skill morgenroutine",  # i18n-allow: test input
+        "lösch den skill abendroutine",  # i18n-allow: test input
+        "schalt den spotify skill aus",  # i18n-allow: test input
+        "zeig mir meine skills",  # i18n-allow: test input
+        "disable the youtube music skill",
+        "remove the skill I created yesterday",
+        "desactiva el skill de spotify",  # i18n-allow: test input
+    ],
+)
+def test_lifecycle_requests_are_detected(utterance: str) -> None:
+    assert is_skill_lifecycle_request(utterance) is True
+    assert skill_meta_kind(utterance) == "lifecycle"
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "schalt das licht aus",  # i18n-allow: test input — no skill word: the smart-home connector's turn
+        "mach die musik aus",  # i18n-allow: test input
+        "welche skills habe ich",  # i18n-allow: test input — a question, answered not acted on
+        "nutz den skill morning-routine bitte",  # i18n-allow: test input — a use, not a lifecycle
+        "starte die morgenroutine",  # i18n-allow: test input
+    ],
+)
+def test_non_lifecycle_requests_are_ignored(utterance: str) -> None:
+    assert is_skill_lifecycle_request(utterance) is False
+
+
+def test_creation_outranks_lifecycle_in_one_sentence() -> None:
+    assert skill_meta_kind("erstell einen neuen skill und lösch den alten skill") == "authoring"  # i18n-allow: test input
+
+
+def test_lifecycle_resolves_to_nobody_even_with_skill_creator_active() -> None:
+    registry = _FakeRegistry(["plugin-youtube_music", AUTHORING_SKILL_NAME])
+    resolution = resolve_skill_authoring_request("deaktiviere den youtube music skill", registry)  # i18n-allow: test input
+    assert resolution is not None
+    assert resolution.kind == "lifecycle"
+    assert resolution.skill is None
+    assert resolution.decision.top is None
 
 
 # ---------------------------------------------------------------------------

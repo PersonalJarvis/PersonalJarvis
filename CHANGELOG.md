@@ -114,6 +114,16 @@ versioning per [SemVer](https://semver.org/).
   - The UI's skill-creator dialog and `jarvis skills draft` see the same live
     tool inventory now, so their drafts name real connectors too; `draft` gained
     `--trigger`, `--schedule`, `--language`.
+- **Skills by voice, the rest of the lifecycle:** "welche Skills habe ich",
+  "aktiviere den Skill Morgenroutine", "deaktiviere den Spotify-Skill", "lösch <!-- i18n-allow: quoted voice requests -->
+  den Skill Abendroutine" are first-class app commands now (`skills-list` over
+  a new lean `GET /api/skills/brief`, `skill-enable`, `skill-disable`,
+  `skill-delete` — the last one asks first). Enabling the draft the assistant
+  just wrote is one sentence away, and it happens only when you ask.
+- **The assistant knows its own CLI.** The `cli_jarvisctl` tool now carries the
+  complete `jarvisctl` command tree with argument hints, parity-tested against
+  the real CLI — no more turns spent reading `--help` before a `skills`,
+  `workflows`, `modes`, `tasks`, `wiki` or `board` command.
 - **Two plain wallpapers: black and white.** The Wallpaper section now opens
   with four pictures that ship inside the app — the night original, its
   daylight twin, pure black and pure white — under two chips, "Original" and
@@ -137,6 +147,10 @@ versioning per [SemVer](https://semver.org/).
   keeps force-spawn and the evidence gate out of such a turn. The
   `skill-creator` builtin's own card is a short "call create-skill once" now;
   Anthropic's long guide moved to `references/anthropic-skill-creator.md`.
+  The same rule now covers every word the product uses for "a skill" —
+  routine ("Morgenroutine"), automation, workflow, Ablauf — and lifecycle
+  requests: "deaktiviere den YouTube-Music-Skill" no longer RUNS the music
+  skill.
 
 - The key-format hint no longer calls an `AIza` key a "Google AI Studio key".
   The same shape is issued for Google Cloud, so the label is endpoint-neutral

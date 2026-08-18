@@ -1157,6 +1157,39 @@ that service adds a caller, not a place to forget.
 
 Direct gated action, never a spawn, never in a worker tool set (AP-5/AP-14).
 
+#### Same day, generalised — the class, not the instance
+
+The first cut protected only the literal word "skill" and only creation. The
+maintainer's objection ("why not automatically — this applies to many other
+things") is right, and the two failure classes are:
+
+1. *A brand mentioned inside a request ABOUT an internal artifact captures the
+   turn.* The resolver now covers every noun this product uses for "a skill"
+   in speech — routine (incl. compounds: "Morgenroutine"), automation /
+   "Automatisierung", workflow, "Ablauf", "Fähigkeit", ES "rutina" /
+   "automatización" / "flujo" — and a second kind, **lifecycle**: "deaktiviere
+   / lösch / zeig / disable / delete / list … den Skill X" lets nobody
+   capture (veto `skill_lifecycle_request`), so the brand skill named inside
+   never RUNS instead of being switched off.
+2. *The brain has no first-class tool and burns rounds on `--help`.* Two
+   closures: (a) the skill lifecycle is in the Command Registry —
+   `skills-list` (new lean `GET /api/skills/brief`), `skill-enable`,
+   `skill-disable`, `skill-delete` (dangerous, echo-confirmed) — flat
+   `app-command` tools the model sees by name; (b) the `cli_jarvisctl` tool's
+   description carries the WHOLE command tree
+   (`jarvis/cli_ctl/command_index.py`, static, parity-tested against the live
+   Typer app) with argument hints, so workflows, modes, tasks, wiki, board,
+   contacts, missions … are all one direct call away — the general fix for the
+   `--help`-round class, not a per-feature patch.
+
+Regression guards for the generalisation: `tests/unit/skills/test_authoring_request.py`
+(routine / automation / workflow positives, lifecycle kind, hard negatives such
+as "schalt das Licht aus" and "starte die Morgenroutine"),
+`tests/unit/brain/test_skill_authoring_turn.py` (disable request not captured;
+automation request → skill-creator), `tests/unit/commands/test_registry_parity.py`
+(new entries exist in OpenAPI), `tests/unit/cli_ctl/test_command_index_parity.py`,
+`tests/unit/clis/test_tool.py` (jarvisctl description carries the index).
+
 ### Regression guards
 
 - `tests/unit/skills/test_authoring_request.py` (the live transcript, hits and

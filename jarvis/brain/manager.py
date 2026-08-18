@@ -4980,10 +4980,11 @@ class BrainManager:
         # A skill AUTHORING request names calendar / mail / music only as the
         # content of the skill to be written; the capability that serves the
         # turn is the create-skill tool, not those domains' connectors.
-        if getattr(self, "_skill_authoring_turn", False):
+        if getattr(self, "_skill_meta_turn", ""):
             log.info(
-                "Evidence gate stood down: skill authoring request — the "
-                "create-skill tool is the capability"
+                "Evidence gate stood down: skill %s request — the skill tools "
+                "are the capability",
+                self._skill_meta_turn,
             )
             return EvidenceVerdict(kind="pass")
 
@@ -5171,12 +5172,15 @@ class BrainManager:
     _skill_turn_content_fallback: str = ""
     _skill_turn_source_fallback: str = "match"
     _skill_injected_inline_fallback: bool = False
-    # Skill AUTHORING turn (2026-08-18): the user asked to create a NEW skill
-    # (``jarvis.skills.authoring_request``). Set by ``_match_skill_for_turn``
-    # on every probe; while True the force-spawn guard and the evidence gate
-    # stand down — the create-skill router tool is the capability that owns
-    # such a turn, whether or not the skill-creator builtin captured it.
-    _skill_authoring_turn: bool = False
+    # Skill META turn (2026-08-18): the user talks ABOUT a skill — asks for a
+    # new one ("authoring": skill / routine / automation / workflow …) or wants
+    # one switched off, deleted, listed ("lifecycle"). Set by
+    # ``_match_skill_for_turn`` on every probe (``""`` otherwise); while set,
+    # the force-spawn guard and the evidence gate stand down and no domain
+    # skill may capture — the create-skill router tool / the skill
+    # app-commands are the capability that owns such a turn, whether or not
+    # the skill-creator builtin captured it. See jarvis/skills/authoring_request.py.
+    _skill_meta_turn: str = ""
     # AD-S6: warn exactly once per manager lifetime when the AVAILABLE
     # SKILLS section cannot be rendered (RC2 used to be silent).
     _skills_omit_warned: bool = False
@@ -5354,7 +5358,7 @@ class BrainManager:
         self._skill_relevance = None
         self._skill_match_band = "none"
         self._skill_match_class = ""
-        self._skill_authoring_turn = False
+        self._skill_meta_turn = ""
         try:
             from jarvis.skills import guards, match_eval, match_log
             from jarvis.skills.autofire_policy import classify, may_capture
@@ -5362,12 +5366,12 @@ class BrainManager:
 
             ctx = try_get_skill_context()
             if ctx is None:
-                # No registry to look anything up in — but an authoring request
-                # is still recognisable from the words alone, and the flag is
-                # what keeps the create-skill tool in charge of the turn.
-                from jarvis.skills.authoring_request import is_skill_authoring_request
+                # No registry to look anything up in — but a request ABOUT
+                # skills is still recognisable from the words alone, and the
+                # flag is what keeps the skill tools in charge of the turn.
+                from jarvis.skills.authoring_request import skill_meta_kind
 
-                self._skill_authoring_turn = is_skill_authoring_request(user_text)
+                self._skill_meta_turn = skill_meta_kind(user_text) or ""
                 return None
 
             # Channel 0 (2026-08-12): the user NAMED a skill ("nutz den Skill
@@ -5419,8 +5423,22 @@ class BrainManager:
 
             authoring = resolve_skill_authoring_request(user_text, ctx.registry)
             if authoring is not None:
-                self._skill_authoring_turn = True
+                self._skill_meta_turn = authoring.kind
                 authoring_skill = authoring.skill
+                if authoring.kind == "lifecycle":
+                    # "deaktiviere / lösch / zeig … den Skill X": the brand
+                    # skill named inside must not run; the skill app-commands
+                    # (skill-enable / skill-disable / skill-delete /
+                    # skills-list) own the turn.
+                    log.info(
+                        "skill lifecycle request — no domain skill may capture "
+                        "this turn; the skill app-commands own it"
+                    )
+                    self._record_skill_decision(
+                        user_text, authoring.decision, lang=lang,
+                        vetoed_by=guards.VETO_LIFECYCLE_REQUEST,
+                    )
+                    return None
                 if authoring_skill is None:
                     log.info(
                         "skill authoring request — no domain skill may capture "
@@ -8220,8 +8238,11 @@ class BrainManager:
         # tool (one bounded LLM call, lands as a draft) — never a background
         # mission, even when the skill-creator builtin is disabled and no skill
         # captured the turn above.
-        if getattr(self, "_skill_authoring_turn", False):
-            log.info("force-spawn skipped: skill authoring request — create-skill owns it")
+        if getattr(self, "_skill_meta_turn", ""):
+            log.info(
+                "force-spawn skipped: skill %s request — the skill tools own it",
+                self._skill_meta_turn,
+            )
             return False
         # A connected CLI's capability already covers this intent → prefer its
         # cli_<name> tool, never a Computer-Use spawn (the CLI does it headless,

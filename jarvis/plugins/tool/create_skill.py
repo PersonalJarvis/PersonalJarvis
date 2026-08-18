@@ -237,7 +237,9 @@ class CreateSkillTool:
                 f"Skill '{authored.name}' is written and waiting as a DRAFT in the "
                 "Skills view. Tell the user in one or two sentences what it does "
                 "and when it fires, and that they activate it there — until "
-                "then it does not run. Do not read the instructions aloud."
+                "then it does not run. Only if the user explicitly asked for it "
+                "to be switched on right away, call skill-enable with this exact "
+                "name now; never enable unasked. Do not read the instructions aloud."
             ),
         }
         _LOG.info(

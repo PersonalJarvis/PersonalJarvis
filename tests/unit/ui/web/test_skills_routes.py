@@ -399,3 +399,26 @@ def test_list_appends_unordered_skills_by_name(skills_root: Path) -> None:
     names = [s["name"] for s in client.get("/api/skills").json()["skills"]]
     assert names[0] == "gamma"
     assert names[1:] == ["alpha", "beta"]  # unordered remainder, sorted by name
+
+
+# ----------------------------------------------------------------------
+# brief listing — what the brain reads for "which skills do I have"
+# ----------------------------------------------------------------------
+
+
+def test_brief_listing_carries_state_and_starts_only(skills_root: Path) -> None:
+    """``skills-list`` (app-command) reads this: lean enough for the 8 000-char
+    tool-result cap, and "brief" must never be read as a skill name."""
+    _make_skill(skills_root, "alpha")
+    _make_skill(skills_root, "beta", state="draft")
+    client, _reg = _client(skills_root)
+    res = client.get("/api/skills/brief")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["total"] == 2
+    by_name = {s["name"]: s for s in body["skills"]}
+    assert by_name["alpha"]["state"] == "validated"
+    assert by_name["beta"]["state"] == "draft"
+    assert set(by_name["alpha"]) == {"name", "state", "is_builtin", "description", "starts"}
+    # /{name} still resolves real names, and "brief" is not one of them.
+    assert client.get("/api/skills/alpha").status_code == 200

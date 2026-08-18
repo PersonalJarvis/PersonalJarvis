@@ -10276,6 +10276,23 @@ the prompt, `author()` never commits a skeleton),
 `tests/unit/cli_ctl/test_commands_wave23.py`,
 `tests/fixtures/skill_routing/golden.yaml` (forensic positive).
 
+**Generalised the same day** (maintainer: "why not automatically — this
+applies to many other things"). The class, not the instance: (1) the meta
+resolver covers every spoken synonym of "a skill" (routine, Morgenroutine,
+Automatisierung, workflow, Ablauf; ES rutina/automatización/flujo) and a
+second kind, *lifecycle* — "deaktiviere / lösch / zeig den Skill X" lets no <!-- i18n-allow: quoted voice requests -->
+brand skill capture, so "deaktiviere den YouTube-Music-Skill" no longer plays
+music; (2) the skill lifecycle is in the Command Registry (`skills-list` over
+the new lean `GET /api/skills/brief`, `skill-enable`, `skill-disable`,
+`skill-delete`) — first-class tools instead of CLI discovery; (3) the
+`cli_jarvisctl` tool description carries the whole command tree
+(`jarvis/cli_ctl/command_index.py`, parity-tested against the live Typer
+app), which closes the "`--help` rounds" class for every CLI group, not just
+skills. Guards: `tests/unit/cli_ctl/test_command_index_parity.py`,
+`tests/unit/clis/test_tool.py`, `tests/unit/commands/test_registry_parity.py`,
+the lifecycle cases in `tests/unit/skills/test_authoring_request.py` and
+`tests/unit/brain/test_skill_authoring_turn.py`.
+
 ## BUG-148: a Vertex Live readback is spoken twice, and three grounded answers in a row are never heard — the stale-generation guard was stamped before the speaker drained, and Vertex Live had no realtime-scoped emergency voice (HIGH, FIXED 2026-08-18)
 
 **Symptom.** Realtime voice session `28cf8436` (2026-08-18 18:39, Vertex Live,

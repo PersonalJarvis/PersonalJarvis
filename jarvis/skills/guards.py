@@ -61,6 +61,9 @@ VETO_PLUGIN_NOT_CONNECTED = "plugin_not_connected"
 # via :mod:`jarvis.skills.authoring_request` when the ``skill-creator`` builtin
 # is not available to take the turn itself.
 VETO_AUTHORING_REQUEST = "authoring_request"
+# The user asked to switch off / on, delete, list or show a SKILL by name — a
+# lifecycle request; the brand skill named inside must not run.
+VETO_LIFECYCLE_REQUEST = "skill_lifecycle_request"
 
 VETO_REASONS: frozenset[str] = frozenset({
     VETO_DEFINITIONAL,
@@ -77,6 +80,7 @@ VETO_REASONS: frozenset[str] = frozenset({
     VETO_SHADOW_MODE,
     VETO_PLUGIN_NOT_CONNECTED,
     VETO_AUTHORING_REQUEST,
+    VETO_LIFECYCLE_REQUEST,
 })
 
 #: Guard identifiers, in the order the ladder evaluates them. Exposed so the
@@ -359,6 +363,7 @@ __all__ = [
     "VETO_DRAFT_STATE",
     "VETO_EXPLICIT_HEAVY",
     "VETO_KILL_SWITCH",
+    "VETO_LIFECYCLE_REQUEST",
     "VETO_LOCAL_ACTION",
     "VETO_NO_FRONTMATTER",
     "VETO_REASONS",

@@ -104,9 +104,21 @@ class CliTool:
     def _build_description(spec: CliSpec) -> str:
         lines = [f"{spec.display_name} — {spec.description}"]
         if spec.tool_schema_examples:
-            lines.append("Beispiele:")
+            lines.append("Examples:")
             for ex in spec.tool_schema_examples:
                 lines.append(f"  - {ex}")
+        # Jarvis's own CLI ships its whole command tree in the description, so
+        # the model calls `jarvisctl skills enable X` directly instead of
+        # discovering it through `--help` rounds (2026-08-18: three such rounds
+        # ate a 45 s tool budget). Static data, parity-tested against the live
+        # Typer app — never an import of the CLI on the brain build path.
+        if spec.binary_name == "jarvisctl":
+            try:
+                from jarvis.cli_ctl.command_index import render_command_index
+
+                lines.append(render_command_index())
+            except Exception:  # noqa: BLE001 — a missing index costs help rounds, not the tool
+                log.debug("jarvisctl command index unavailable", exc_info=True)
         return "\n".join(lines)
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:

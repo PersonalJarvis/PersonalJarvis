@@ -16,7 +16,7 @@ Commands marked **requires confirmation** never run on a bare voice request — 
 Switch the ACTIVE main brain (LLM) provider, e.g. from openai to claude-api. Reversible; validated against the provider catalog and stored credentials.
 
 - **Endpoint:** `POST /api/brain/switch`
-- **Arguments:** `provider` (one of: claude-api, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: claude-api, gemini, grok, local-openai, nvidia, ollama, openai, openrouter, vertex; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the brain provider to claude"
@@ -26,7 +26,7 @@ Switch the ACTIVE main brain (LLM) provider, e.g. from openai to claude-api. Rev
 Switch the active text-to-speech provider (live, no restart).
 
 - **Endpoint:** `POST /api/tts/switch`
-- **Arguments:** `provider` (one of: cartesia, elevenlabs, gemini-flash-tts, grok-voice, inworld, openrouter-tts, piper-local; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: cartesia, elevenlabs, gemini-flash-tts, grok-voice, inworld, openrouter-tts, piper-local, vertex-tts; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the voice to elevenlabs"
@@ -36,7 +36,7 @@ Switch the active text-to-speech provider (live, no restart).
 Switch the speech-to-text provider. Takes effect on the next voice-pipeline start (restart required).
 
 - **Endpoint:** `POST /api/stt/switch`
-- **Arguments:** `provider` (one of: faster-whisper, groq-api, nemotron-local, openai-api, openrouter-stt; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: faster-whisper, gemini-api, groq-api, nemotron-local, openai-api, openrouter-stt, vertex-stt; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch speech recognition to deepgram"
@@ -46,7 +46,7 @@ Switch the speech-to-text provider. Takes effect on the next voice-pipeline star
 Switch which realtime voice engine (speech-to-speech) is active, including subscription- and API-backed providers. Experimental transports require explicit acknowledgement.
 
 - **Endpoint:** `POST /api/realtime/switch`
-- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-realtime; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
+- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-realtime, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
@@ -66,7 +66,7 @@ Select the Ollama brain and speech model for the managed local realtime server, 
 Switch the dedicated Computer-Use planner provider (screen control), decoupled from the main brain.
 
 - **Endpoint:** `POST /api/computer-use/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter, vertex; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the computer use provider to gemini"
@@ -76,7 +76,7 @@ Switch the dedicated Computer-Use planner provider (screen control), decoupled f
 Switch the provider used for new missions (e.g. codex to openai). The next mission uses the new provider.
 
 - **Endpoint:** `POST /api/jarvis-agent/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter, vertex; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "switch the agent provider to openai"
@@ -96,7 +96,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"
@@ -330,6 +330,46 @@ Cancel a running or scheduled task by id.
 - **Requires confirmation:** yes
 - **Desktop UI section:** `tasks`
 - **Voice example (EN):** "cancel the task"
+
+## `skills-list` — List installed skills
+
+List the installed skills with their state (active, draft, disabled) and what starts each one. Use this when the user asks which skills they have or which are drafts / switched off.
+
+- **Endpoint:** `GET /api/skills/brief`
+- **Arguments:** none
+- **Requires confirmation:** no
+- **Desktop UI section:** `skills`
+- **Voice example (EN):** "which skills do i have"
+
+## `skill-enable` — Enable a skill
+
+Switch an installed skill ON by name — this is how a draft the assistant just wrote (create-skill) or a disabled skill starts firing on its trigger phrase and schedule. Use the exact skill name; list the skills first when unsure.
+
+- **Endpoint:** `POST /api/skills/{name}/enable`
+- **Arguments:** `name` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `skills`
+- **Voice example (EN):** "enable the skill"
+
+## `skill-disable` — Disable a skill
+
+Switch an installed skill OFF by name — it stops firing on its trigger phrase and schedule but stays installed. Use the exact skill name; list the skills first when unsure.
+
+- **Endpoint:** `POST /api/skills/{name}/disable`
+- **Arguments:** `name` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `skills`
+- **Voice example (EN):** "disable the skill"
+
+## `skill-delete` — Delete a skill
+
+Delete an installed user skill by name — removes its folder for good (built-in skills cannot be deleted; disable them instead).
+
+- **Endpoint:** `DELETE /api/skills/{name}`
+- **Arguments:** `name` (string; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `skills`
+- **Voice example (EN):** "delete the skill"
 
 ## `agentic-ide-status` — Agentic IDE status
 

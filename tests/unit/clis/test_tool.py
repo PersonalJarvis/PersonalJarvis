@@ -245,3 +245,22 @@ async def test_stdin_is_devnull_so_reading_stdin_gets_eof(tmp_path: Path) -> Non
     result = await tool.execute({"command": cmd, "timeout_s": 5}, _ctx())
     assert result.success is True
     assert "STDIN_EOF" in result.output["stdout"]
+
+
+def test_jarvisctl_tool_description_carries_the_command_index(tmp_path: Path) -> None:
+    """The brain's own-CLI tool shows the whole command tree, so a spoken
+    request lands on `jarvisctl skills enable X` directly instead of costing
+    three `--help` rounds (voice session 2026-08-18 17:51). Every other CLI
+    keeps its catalog description + examples only."""
+    from jarvis.clis.catalog import load_catalog
+
+    spec = load_catalog()["jarvisctl"]
+    tool = CliTool(spec, auth=CliAuthManager(), usage_log=UsageLog(db_path=tmp_path / "u.db"))
+    assert "Command index" in tool.description
+    assert "skills: list, show <name>" in tool.description
+    assert "enable <name>" in tool.description
+    assert "do not spend rounds on --help" in tool.description
+    assert len(tool.description) < 4000, len(tool.description)
+
+    other, _ = _make_tool(tmp_path)
+    assert "Command index" not in other.description

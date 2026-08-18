@@ -71,8 +71,14 @@ The user wants a NEW skill. Write it for them — do not interview them.
 3. If the result says no model could write it, say so plainly and offer to try
    again in a moment. Do not fall back to a worker and do not paste the request
    into a file yourself.
-4. If the user asks to change an EXISTING skill, tell them that editing lives in
-   the Skills view (this card only creates); name the skill they mean.
+4. The new skill is a draft. Only when the user explicitly asked for it to be
+   switched on right away ("und aktiviere ihn gleich"), call `skill-enable`
+   with the name the result returned — never enable unasked. Switching a skill
+   off, on, or deleting one is `skill-disable` / `skill-enable` /
+   `skill-delete`; the list is `skills-list`.
+5. If the user asks to change an EXISTING skill's content, tell them that
+   editing lives in the Skills view (this card only creates); name the skill
+   they mean.
 
 ## Answer format
 

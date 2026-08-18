@@ -10,8 +10,10 @@ instructions were injected, the model burned the tool budget on
 The fix is a deterministic channel ahead of the trigger channel
 (``jarvis.skills.authoring_request``): an authoring request resolves to the
 ``skill-creator`` builtin when it is active, and to NO skill otherwise —
-never to a connector named inside the request. Force-spawn and the evidence
-gate stand down on such a turn; the ``create-skill`` router tool owns it.
+never to a connector named inside the request. The same channel recognises
+LIFECYCLE requests ("deaktiviere den YouTube-Music-Skill") and lets nobody
+capture those either. Force-spawn and the evidence gate stand down on such a
+turn; the ``create-skill`` router tool / the skill app-commands own it.
 """
 from __future__ import annotations
 
@@ -122,7 +124,7 @@ def test_control_music_command_is_captured_by_the_music_skill(tmp_path: Path) ->
     matched = m._match_skill_for_turn("spiel country roads auf youtube music")  # i18n-allow: test input
     assert matched is not None
     assert matched.name == "plugin-youtube_music"
-    assert m._skill_authoring_turn is False
+    assert m._skill_meta_turn == ""
 
 
 # ----------------------------------------------------------------------
@@ -136,7 +138,7 @@ def test_live_utterance_resolves_to_skill_creator_not_youtube_music(tmp_path: Pa
     matched = m._match_skill_for_turn(LIVE_UTTERANCE)
     assert matched is not None
     assert matched.name == "skill-creator"
-    assert m._skill_authoring_turn is True
+    assert m._skill_meta_turn == "authoring"
 
 
 def test_live_utterance_captures_nobody_when_skill_creator_is_disabled(tmp_path: Path) -> None:
@@ -145,13 +147,13 @@ def test_live_utterance_captures_nobody_when_skill_creator_is_disabled(tmp_path:
     _context(tmp_path, with_creator=False)
     m = _make_manager()
     assert m._match_skill_for_turn(LIVE_UTTERANCE) is None
-    assert m._skill_authoring_turn is True
+    assert m._skill_meta_turn == "authoring"
 
 
 def test_authoring_turn_is_flagged_even_without_a_skill_context() -> None:
     m = _make_manager()
     assert m._match_skill_for_turn(LIVE_UTTERANCE) is None
-    assert m._skill_authoring_turn is True
+    assert m._skill_meta_turn == "authoring"
 
 
 # ----------------------------------------------------------------------
@@ -177,6 +179,34 @@ def test_flag_resets_on_the_next_probe(tmp_path: Path) -> None:
     _context(tmp_path, with_creator=True)
     m = _make_manager()
     m._match_skill_for_turn(LIVE_UTTERANCE)
-    assert m._skill_authoring_turn is True
+    assert m._skill_meta_turn == "authoring"
     m._match_skill_for_turn("spiel country roads auf youtube music")  # i18n-allow: test input
-    assert m._skill_authoring_turn is False
+    assert m._skill_meta_turn == ""
+
+
+# ----------------------------------------------------------------------
+# Lifecycle requests: the brand skill named inside must not RUN
+# ----------------------------------------------------------------------
+
+
+def test_disable_request_is_not_captured_by_the_named_brand_skill(tmp_path: Path) -> None:
+    """"deaktiviere den YouTube-Music-Skill" mentions the brand — the music
+    skill must not run; skill-disable (app-command) owns the turn."""
+    _context(tmp_path, with_creator=True)
+    m = _make_manager()
+    assert m._match_skill_for_turn("deaktiviere den youtube music skill") is None  # i18n-allow: test input
+    assert m._skill_meta_turn == "lifecycle"
+    assert m._should_force_spawn("deaktiviere den youtube music skill") is False  # i18n-allow: test input
+
+
+def test_a_routine_or_automation_request_is_authoring_too(tmp_path: Path) -> None:
+    """One synonym away from the live bug: "build me an automation that plays
+    YouTube Music on Mondays" must not hand the turn to the music skill."""
+    _context(tmp_path, with_creator=True)
+    m = _make_manager()
+    matched = m._match_skill_for_turn(
+        "bau mir eine automatisierung die montags um 9 ein lied auf youtube music spielt"  # i18n-allow: test input
+    )
+    assert matched is not None
+    assert matched.name == "skill-creator"
+    assert m._skill_meta_turn == "authoring"

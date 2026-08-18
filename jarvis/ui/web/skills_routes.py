@@ -338,6 +338,44 @@ async def list_skills(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/brief")
+async def list_skills_brief(request: Request) -> dict[str, Any]:
+    """The lean listing the brain reads by voice ("which skills do I have").
+
+    ``GET /api/skills`` serialises triggers, resources, origin receipts and
+    portable metadata for every skill — tens of kilobytes for an ordinary
+    install, which the tool-result cap slices mid-JSON. This one carries name,
+    state, a one-line description and what starts the skill; nothing else.
+    Declared BEFORE ``/{name}`` so "brief" is never read as a skill name.
+    """
+    from jarvis.skills import prefs
+
+    reg = _require_registry(request)
+    skills: list[Skill] = _sort_by_order(reg.list(), prefs.load_order())
+    out: list[dict[str, Any]] = []
+    for s in skills:
+        fm = s.frontmatter
+        starts: list[str] = []
+        for t in fm.triggers if fm else ():
+            if t.type == "voice" and t.pattern:
+                starts.append(f"say: {t.pattern[:60]}")
+            elif t.type == "schedule" and t.cron:
+                starts.append(f"cron: {t.cron}")
+            elif t.type == "hotkey" and t.combo:
+                starts.append(f"hotkey: {t.combo}")
+        description = " ".join((fm.description if fm else "").split())
+        out.append(
+            {
+                "name": s.name,
+                "state": s.state.value,
+                "is_builtin": _is_builtin(s.name),
+                "description": description[:140],
+                "starts": starts,
+            }
+        )
+    return {"skills": out, "total": len(out)}
+
+
 @router.post("")
 async def create_skill(body: SkillCreateBody, request: Request) -> dict[str, Any]:
     """Creates a new user skill and returns the full detail representation.
