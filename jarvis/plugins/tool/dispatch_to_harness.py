@@ -144,7 +144,16 @@ class DispatchToHarnessTool:
         cost_usd = 0.0
         duration_ms = 0
         timeout_s = max(0.001, float(task.timeout_s))
-        deadline = time.monotonic() + timeout_s
+        # The budget bounds the WORK, not the queue. A harness that serialises
+        # on a shared resource — the computer-use one holds a single desktop
+        # lock — emits nothing until it owns that resource, so a clock started
+        # here would charge a queued mission for its predecessor's run and kill
+        # it before it ever began. The first chunk is the signal that the work
+        # actually started; until then the wait gets its own equal allowance,
+        # which mirrors what the harness grants its own queue and is exactly
+        # enough to outlast a full-length predecessor without hanging.
+        deadline = time.monotonic() + 2 * timeout_s
+        work_started = False
         started_ns = time.time_ns()
 
         try:
@@ -157,6 +166,9 @@ class DispatchToHarnessTool:
                     result = await asyncio.wait_for(anext(stream), timeout=remaining_s)
                 except StopAsyncIteration:
                     break
+                if not work_started:
+                    work_started = True
+                    deadline = time.monotonic() + timeout_s
                 if result.stdout:
                     stdout_buf.append(result.stdout)
                 if result.stderr:
@@ -223,7 +235,10 @@ class DispatchToHarnessTool:
         buffers: dict[str, dict[str, Any]] = {n: {"stdout": [], "stderr": [], "exit": -1}
                                               for n in names}
         timeout_s = max(0.001, float(task.timeout_s))
-        deadline = time.monotonic() + timeout_s
+        # Same queue allowance as the single path above: the clock on the work
+        # starts at the first chunk, not at dispatch.
+        deadline = time.monotonic() + 2 * timeout_s
+        work_started = False
 
         try:
             stream = self._manager.dispatch_parallel(names, task, aggregation=aggregation)
@@ -238,6 +253,9 @@ class DispatchToHarnessTool:
                     )
                 except StopAsyncIteration:
                     break
+                if not work_started:
+                    work_started = True
+                    deadline = time.monotonic() + timeout_s
                 buf = buffers.setdefault(name, {"stdout": [], "stderr": [], "exit": -1})
                 if result.stdout:
                     buf["stdout"].append(result.stdout)
