@@ -23,8 +23,10 @@ Architecture:
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import base64
+import json
 import logging
 import re
 import time
@@ -1479,13 +1481,14 @@ def _extract_leaked_spawn_call(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _looks_like_tool_use_leak(text: str) -> bool:
-    """True if ``text`` looks like a provider leaked a tool_use block as TEXT.
+def _may_be_tool_use_leak(text: str) -> bool:
+    """Cheap shape test: could ``text`` still turn out to be a leaked tool_use?
 
-    A natural voice reply never starts with ``[`` or ``{`` — structured JSON at
-    the very start (optionally inside a ```json fence) means the provider emitted
-    a function call as *content* instead of invoking it. Cheap enough to run on
-    the growing streamed buffer so the raw JSON is never handed to TTS.
+    Structured JSON at the very start (optionally inside a ```json fence) is the
+    only cue available while a stream is still growing. It is a SUSPICION, never
+    a verdict — a perfectly good answer may open with a markdown link
+    (``[Doku](…)``) or a JSON example. Use it only to WITHHOLD a chunk until the
+    buffer is complete; :func:`_looks_like_tool_use_leak` then decides for real.
     """
     if not text:
         return False
@@ -1496,6 +1499,55 @@ def _looks_like_tool_use_leak(text: str) -> bool:
             s = s[4:]
         s = s.lstrip()
     return s.startswith("[") or s.startswith("{")
+
+
+def _is_whole_structured_document(text: str) -> bool:
+    """True when ``text`` is ONE structured document and nothing else.
+
+    ``[Doku](https://…) beschreibt das genau.`` opens with ``[`` but carries
+    prose after the bracket — that is speech. ``{"exit_code": 0, …}`` and its
+    Python-repr twin ``{'exit_code': 0, …}`` are blobs with no prose at all and
+    must never reach TTS. Parsing decides; the first character does not.
+    """
+    s = text.strip()
+    if s.startswith("```") and s.endswith("```") and len(s) > 6:
+        s = s[3:-3].strip()
+        if s[:4].lower() == "json":
+            s = s[4:].strip()
+    if not (s.startswith("[") or s.startswith("{")):
+        return False
+    try:
+        json.loads(s)
+        return True
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # A Python repr is not JSON but is just as unspeakable. Literals only —
+    # ``literal_eval`` never executes anything. Bounded so a long prose answer
+    # that merely opens with a bracket cannot cost real parse time.
+    if len(s) > 20_000:
+        return False
+    try:
+        ast.literal_eval(s)
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        return False
+    return True
+
+
+def _looks_like_tool_use_leak(text: str) -> bool:
+    """True if ``text`` IS a provider's tool_use block emitted as TEXT.
+
+    The authoritative verdict, for a COMPLETE buffer. The old test — "the text
+    starts with ``[`` or ``{``" — was a suspicion promoted to a verdict: an
+    answer opening with a markdown link or a JSON example was classed as a leak
+    and, on the streaming path, silently dropped in full. So the shape test only
+    gates the real check now: either the strict recovery parser finds an actual
+    tool call, or the whole text is a structured document with no prose in it.
+    """
+    if not _may_be_tool_use_leak(text):
+        return False
+    if extract_leaked_tool_calls(text):
+        return True
+    return _is_whole_structured_document(text)
 
 
 _CLI_TOOL_PREFIX = "cli_"
@@ -1574,6 +1626,111 @@ def _evidence_answer_is_unverified(
     if required_tool in (executed or set()):
         return False
     return bool((response_text or "").strip())
+
+
+# A concrete particular — something the answer could only have if it had the
+# data in front of it: a clock time, a calendar date, any figure, a named
+# weekday or month, an address or link, a list of items, or a bare statement
+# that there are none. Explanations and general knowledge carry none of these.
+# Deliberately broad on the "specific" side: over-detecting costs one honest
+# fallback, under-detecting speaks a confabulation.
+_CONCRETE_DATUM_RE = re.compile(
+    r"\d"                                    # any figure at all
+    r"|\bhttps?://|\bwww\.|@[\w.-]+\.\w{2,}"  # a link or an address
+    r"|^\s*[-*•]\s+.+$"                      # a bullet item
+    r"|\b(?:"
+    # Named days and months. DE / EN / ES — the answer surface is localized.
+    r"montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonnabend|"  # i18n-allow
+    r"sonntag|"  # i18n-allow
+    r"januar|februar|m[äa]rz|dezember|oktober|"  # i18n-allow: DE months that differ from EN
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"january|february|march|april|may|june|july|august|september|october|"
+    r"november|december|"
+    r"lunes|martes|mi[ée]rcoles|jueves|viernes|s[áa]bado|domingo|"
+    r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|"
+    r"octubre|noviembre|diciembre"
+    r")\b"
+    # "you have none" is as much a claim about the data as naming an item. The
+    # subject is required — a bare "kein"/"no" belongs to ordinary prose
+    # ("not by a spark plug") and must not count.
+    r"|\b(?:du\s+hast|es\s+(?:gibt|sind|ist))(?:\s+\w+){0,3}\s+"  # i18n-allow: DE existence claim
+    r"(?:keine?|nichts)\b"  # i18n-allow: DE existence claim
+    r"|\b(?:you\s+have|there\s+(?:is|are))(?:\s+\w+){0,3}\s+"
+    r"(?:no|none|nothing)\b"
+    r"|\b(?:tienes|hay)(?:\s+\w+){0,3}\s+(?:ning[úu]n\w*|nada)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# The answer attributes the fact to what was already said in this conversation.
+# Repeating something the user themselves stated is not a fabrication, and no
+# tool could have grounded it — the honest fallback would be the wrong answer.
+_CONVERSATION_ATTRIBUTION_RE = re.compile(
+    r"\b(?:"
+    r"du\s+hattest\s+\w*\s?gesagt|du\s+sagtest|hattest\s+du\s+gesagt|"  # i18n-allow
+    r"wie\s+(?:du\s+)?(?:gesagt|erw[äa]hnt|besprochen)|"  # i18n-allow: DE history reference
+    r"vorhin\s+(?:gesagt|erw[äa]hnt)|laut\s+deiner\s+angabe|"  # i18n-allow: DE history reference
+    r"you\s+(?:said|told\s+me|mentioned)|as\s+you\s+(?:said|mentioned)|"
+    r"earlier\s+you\s+(?:said|mentioned)|from\s+what\s+you\s+told\s+me|"
+    r"(?:me\s+)?dijiste|seg[úu]n\s+me\s+dijiste|como\s+mencionaste"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+# A claim about the mandated tool ITSELF — that it ran, refused, failed, or
+# returned something. The 2026-06-17 confabulation was exactly this shape ("the
+# gcloud tool blocked execution because it classified the request as an
+# explanatory question"): no figure, no date, and entirely invented. Nothing the
+# user said can excuse it, so it is never exempted by attribution.
+_TOOL_NOUN_RE = re.compile(
+    r"\b(?:tool|werkzeug|befehl|kommando|cli|api|abfrage|query|command|"  # i18n-allow: DE tool noun
+    r"skript|script|herramienta|comando|consulta)\w*",
+    re.IGNORECASE,
+)
+_EXECUTION_VERB_RE = re.compile(
+    r"\b(?:blockier\w*|verweiger\w*|abgelehnt|fehlgeschlagen|"  # i18n-allow: DE execution verb
+    r"zur[üu]ckgegeben|ausgef[üu]hrt|gelaufen|geliefert|aufgerufen|"  # i18n-allow
+    r"gestartet|"  # i18n-allow
+    r"block\w*|refus\w*|denied|deny|return\w*|fail\w*|ran|run|executed|"
+    r"invoked|called|"
+    r"bloque\w*|rechaz\w*|devolv\w*|fall\w*|ejecut\w*|llam\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _answer_claims_tool_behaviour(response_text: str) -> bool:
+    """True when the answer says what the mandated tool did — it did nothing."""
+    text = response_text or ""
+    return bool(_TOOL_NOUN_RE.search(text) and _EXECUTION_VERB_RE.search(text))
+
+
+def _answer_claims_unverified_data(response_text: str) -> bool:
+    """True when the answer reports a PARTICULAR the mandated tool never supplied.
+
+    The evidence backstop used to replace *every* answer of a turn whose
+    mandated tool did not run. That deleted correct answers: the model explains
+    how something works, or repeats what the user said two turns ago, and the
+    user hears "Ich konnte das gerade nicht abrufen" instead — the guard
+    fabricating a failure to prevent a fabrication.
+
+    So the backstop now needs an actual claim, of one of two kinds: a statement
+    about what the mandated tool did (:func:`_answer_claims_tool_behaviour`), or
+    a concrete particular (:data:`_CONCRETE_DATUM_RE`) that is not attributed to
+    the conversation itself. An answer made of explanation alone claims nothing
+    and stays.
+
+    Pure regex, no LLM (AP-11). This judges DATA claims only — a false *action*
+    claim ("I checked your calendar") carries no particular and is caught by
+    :func:`replace_unbacked_action_claim` right after this guard.
+    """
+    text = (response_text or "").strip()
+    if not text:
+        return False
+    if _answer_claims_tool_behaviour(text):
+        return True
+    if not _CONCRETE_DATUM_RE.search(text):
+        return False
+    return not _CONVERSATION_ATTRIBUTION_RE.search(text)
 
 
 _EVIDENCE_UNFULFILLED_PHRASES: dict[str, str] = {
@@ -1750,6 +1907,11 @@ def _unfulfilled_replacement(
     user to repeat a missing/broken field (e.g. the '@'-less email) is the
     desired behavior, not a fake claim — only a flat confirmation with no
     question is corrected.
+
+    A READ mandate leaves an answer that CLAIMS NOTHING intact: an explanation,
+    or a fact the user themselves supplied earlier, is not a confabulation and
+    must not be traded for "I couldn't retrieve that" (see
+    :func:`_answer_claims_unverified_data`).
     """
     if not _evidence_answer_is_unverified(
         required_tool, executed, response_text, suppressed=suppressed
@@ -1759,6 +1921,8 @@ def _unfulfilled_replacement(
         if "?" in (response_text or ""):
             return None  # honest clarifying question — keep it
         return _action_unfulfilled_answer(required_tool, lang=lang)
+    if not _answer_claims_unverified_data(response_text):
+        return None  # nothing was claimed — nothing to correct
     return _evidence_unfulfilled_answer(lang=lang, domain=domain)
 
 
@@ -11408,6 +11572,19 @@ class BrainManager:
             )
             return agg.text
 
+        # ONE output-language resolution for every honesty phrase this turn
+        # (CLAUDE.md §1: one resolver decides the turn for ALL layers). The two
+        # guards below used to resolve separately with DIFFERENT defaults
+        # ("de" here, DEFAULT_LOCALE there), so an undetectable turn could speak
+        # a German evidence fallback followed by an English honesty phrase in the
+        # same breath. All locales are equal — the shared DEFAULT_LOCALE decides.
+        honesty_lang = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+        )
+
         # Evidence-gate enforcement (live repro 2026-06-17, session 296abc82):
         # the gate MANDATED a tool this turn, but neither the normal tool loop
         # nor the leaked-tool recovery above actually ran it — so the model's
@@ -11423,9 +11600,7 @@ class BrainManager:
                 response_text=response_text,
                 suppressed=self._last_turn_suppressed,
                 is_write=self._evidence_required_is_write,
-                lang=resolve_output_language(
-                    self._reply_language, "unknown", user_text, default="de"
-                ),
+                lang=honesty_lang,
                 domain=self._evidence_required_domain,
             )
             if _replacement is not None:
@@ -11442,12 +11617,7 @@ class BrainManager:
         honest_response = replace_unbacked_action_claim(
             response_text,
             executed_tools=execution_evidence,
-            language=resolve_output_language(
-                self._reply_language,
-                "unknown",
-                user_text,
-                default=DEFAULT_LOCALE,
-            ),
+            language=honesty_lang,
         )
         if honest_response != response_text:
             log.warning(
@@ -11754,6 +11924,8 @@ class BrainManager:
 
         task = asyncio.create_task(_producer(), name="brain-stream-producer")
         accumulated = ""
+        holding = False
+        held = ""
         leaked = False
         yielded = False
         evidence_buffered = False
@@ -11769,17 +11941,39 @@ class BrainManager:
                 # scrub to silence and the action would be lost). generate()
                 # recovers + executes the leaked tool and returns a speakable
                 # result, which we yield once the stream ends.
-                if not leaked and _looks_like_tool_use_leak(accumulated):
-                    leaked = True
-                if leaked:
-                    continue
-                if getattr(self, "_evidence_required_tool", ""):
+                #
+                # A growing buffer cannot tell a leak from an answer that merely
+                # OPENS with a bracket — "[Doku](…)", a JSON example. So the
+                # shape test only HOLDS the chunks; the verdict is taken once,
+                # after the sentinel, on the finished buffer. Held prose is
+                # released there instead of being dropped for the rest of the
+                # turn, which is what used to swallow such answers whole.
+                if not holding and _may_be_tool_use_leak(accumulated):
+                    holding = True
+                evidence_now = bool(getattr(self, "_evidence_required_tool", ""))
+                if evidence_now:
                     evidence_buffered = True
+                if holding:
+                    held += chunk
+                    continue
+                if evidence_now:
                     continue
                 if action_buffered:
                     continue
                 yield chunk
                 yielded = True
+            if holding:
+                leaked = _looks_like_tool_use_leak(accumulated)
+                if (
+                    not leaked
+                    and not evidence_buffered
+                    and not action_buffered
+                    and held.strip()
+                ):
+                    # Never a tool call — ordinary speech that happened to open
+                    # with "[" or "{". The user gets the whole answer.
+                    yield held
+                    yielded = True
             # Surface generate()'s authoritative final text whenever NOTHING was
             # streamed to TTS — either because a leaked tool_use JSON was
             # withheld, OR because the brain produced a STRUCTURED / suppress
