@@ -1,186 +1,128 @@
 import { useEffect, useMemo, useState } from "react";
-import { Camera, Coins, MousePointer2 } from "lucide-react";
+import { Camera, Coins } from "lucide-react";
 import { useEventStore } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
-import { countWords } from "@/lib/deckState";
+import { countWords, type CaptureState } from "@/lib/deckState";
 import { DeckCard } from "@/components/deck/DeckCard";
 import { HudGauge, HudLamp } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 /**
- * The deck's signal cards — the pictures and the numbers.
+ * The deck's signal cards — the picture and the numbers.
  *
- * Both picture cards read the images through the deck routes added for them
- * (`/api/deck/frame`, `/api/deck/cu-frame/{sha}`) and nothing else. The
- * numbers are the ones the bus actually publishes: `BrainTurnCompleted`
- * carries tokens and cost, `TranscriptFinal` the words. No estimate anywhere.
+ * The capture card reads its image through the deck route added for it
+ * (`/api/deck/frame`) and nothing else. The numbers are the ones the bus
+ * actually publishes: `BrainTurnCompleted` carries tokens and cost,
+ * `TranscriptFinal` the words. No estimate anywhere.
  */
 
 // ----------------------------------------------------------------------
-// Computer Use — what the assistant is doing on the screen
-// ----------------------------------------------------------------------
-
-const CU_PHASES = ["observe", "uia", "plan", "think", "act", "verify"] as const;
-
-export function ComputerUseCard({ className }: { className?: string }) {
-  const t = useT();
-  const cu = useDeckStore((s) => s.cu);
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const src = cu.lastFrameSha ? `/api/deck/cu-frame/${cu.lastFrameSha}` : null;
-  const [broken, setBroken] = useState(false);
-  useEffect(() => setBroken(false), [src]);
-
-  return (
-    <DeckCard
-      icon={MousePointer2}
-      title={t("deck.card_cu")}
-      meta={cu.active ? `#${cu.stepIdx}` : cu.frames > 0 ? t("deck.cu_done") : undefined}
-      live={cu.active}
-      variant="bracket"
-      onOpen={() => setActiveSection("run_inspector")}
-      openLabel={t("deck.open_section")}
-      className={className}
-      bodyClassName="p-0"
-    >
-      <div className="relative flex h-full min-h-[6rem] flex-col">
-        {/* The frame the harness last looked at. Object-contain: the whole
-            screen matters, not a crop of it. */}
-        <div className="relative min-h-0 flex-1 overflow-hidden bg-black/20">
-          {src && !broken ? (
-            <img
-              src={src}
-              alt=""
-              onError={() => setBroken(true)}
-              className={cn("h-full w-full object-contain", !cu.active && "opacity-70")}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center px-3 text-center text-[11px] text-muted-foreground">
-              {cu.active ? t("deck.cu_waiting_frame") : t("deck.cu_idle")}
-            </div>
-          )}
-          {cu.active && (
-            <span className="absolute left-2 top-2 flex items-center gap-1 rounded-sm bg-background/80 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-primary">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" aria-hidden />
-              live
-            </span>
-          )}
-        </div>
-
-        {/* Phase strip: observe → plan → act → verify. */}
-        <div className="flex items-stretch gap-px border-t border-border/60 px-2 py-1">
-          {CU_PHASES.map((ph, i) => {
-            const on = cu.active && cu.phase === ph;
-            const passed = cu.active && (CU_PHASES as readonly string[]).indexOf(cu.phase) > i;
-            return (
-              <span
-                key={ph}
-                className={cn(
-                  "flex flex-1 flex-col items-center gap-0.5 font-mono text-[8px] uppercase tracking-wider",
-                  on ? "text-primary" : "text-muted-foreground/70",
-                )}
-              >
-                <span
-                  className={cn(
-                    "h-1 w-full",
-                    on ? "bg-primary shadow-[0_0_6px_hsl(var(--primary)/0.7)]" : passed ? "bg-primary/40" : "bg-border",
-                  )}
-                  style={{ clipPath: "polygon(0 0, calc(100% - 3px) 0, 100% 100%, 3px 100%)" }}
-                  aria-hidden
-                />
-                <span className="truncate">{ph}</span>
-              </span>
-            );
-          })}
-        </div>
-        {(cu.lastActionKind || cu.windowTitle) && (
-          <div className="flex items-center gap-2 border-t border-border/60 px-2 py-1 font-mono text-[10px]">
-            {cu.lastActionKind && (
-              <span
-                className={cn(
-                  "shrink-0 rounded-sm px-1 py-px uppercase",
-                  cu.lastActionOk === false
-                    ? "bg-destructive text-white"
-                    : "bg-primary text-primary-foreground",
-                )}
-              >
-                {cu.lastActionKind}
-              </span>
-            )}
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">
-              {cu.lastTargetHint || cu.windowTitle}
-            </span>
-          </div>
-        )}
-      </div>
-    </DeckCard>
-  );
-}
-
-// ----------------------------------------------------------------------
-// App-Shot — the picture Screen Context just took
+// Capture — the picture Screen Context just took, briefly, then the ledger
 // ----------------------------------------------------------------------
 
 /**
- * Shows the last one-shot capture for as long as the backend keeps it — the
- * mirror has a TTL, and when the image 404s the card goes quiet again. The
- * URL carries the sequence so a NEW capture is a new request; the browser
- * would otherwise happily show the previous picture from memory.
+ * How long a new capture stays on the front page before it fades. Long
+ * enough to see what was looked at, short enough that a picture of the
+ * screen never sits there as furniture (maintainer complaint 2026-08-18: the
+ * shot used to stay until the next one replaced it). The backend keeps the
+ * bytes for its own budget (`deck_preview_s`); this is only how long the
+ * deck SHOWS them.
  */
-export function AppShotCard({ className }: { className?: string }) {
+export const CAPTURE_AFTERGLOW_MS = 20_000;
+
+/**
+ * The receipt event and the mirrored bytes are two different messages, and a
+ * fetch that lands between them gets a 404. The service now mirrors first,
+ * but a picture must not depend on that ordering forever: retry briefly.
+ */
+const FRAME_RETRIES = 3;
+const FRAME_RETRY_MS = 400;
+
+function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+export function CaptureCard({ className }: { className?: string }) {
   const t = useT();
   const capture = useDeckStore((s) => s.capture);
-  const [gone, setGone] = useState(false);
-  const src = capture ? `/api/deck/frame?s=${capture.seq}` : null;
+  const captures = useDeckStore((s) => s.captures);
 
+  // The afterglow: a fresh capture is shown, a rail drains, then it is gone.
+  // `remaining` is only ever read while a picture is up, so the interval runs
+  // only then.
+  const [remaining, setRemaining] = useState(0);
+  const [attempt, setAttempt] = useState(0);
+  const [gone, setGone] = useState(false);
   useEffect(() => {
-    setGone(false);
     if (!capture) return;
-    // Re-check well within the default 120 s budget so an expired preview
-    // does not linger as a stale <img>.
-    const id = window.setInterval(async () => {
-      try {
-        const res = await fetch("/api/deck/frame/meta", { cache: "no-store" });
-        const meta = (await res.json()) as { available?: boolean };
-        if (!meta.available) setGone(true);
-      } catch {
-        /* the deck must not care */
-      }
-    }, 15_000);
+    setGone(false);
+    setAttempt(0);
+    setRemaining(CAPTURE_AFTERGLOW_MS);
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      const left = CAPTURE_AFTERGLOW_MS - (Date.now() - started);
+      setRemaining(Math.max(0, left));
+      if (left <= 0) window.clearInterval(id);
+    }, 250);
     return () => window.clearInterval(id);
   }, [capture]);
 
-  const fresh = capture && !gone;
+  const showing = Boolean(capture) && !gone && remaining > 0;
+  const src = capture ? `/api/deck/frame?s=${capture.seq}&r=${attempt}` : null;
+
+  const onError = () => {
+    if (attempt < FRAME_RETRIES) {
+      window.setTimeout(() => setAttempt((n) => n + 1), FRAME_RETRY_MS);
+    } else {
+      setGone(true);
+    }
+  };
 
   return (
     <DeckCard
       icon={Camera}
       title={t("deck.card_shot")}
-      meta={fresh && capture ? `${capture.width}×${capture.height}` : undefined}
-      live={Boolean(fresh)}
+      meta={showing && capture ? `${capture.width}×${capture.height}` : captures.length > 0 ? captures.length : undefined}
+      live={showing}
       variant="bracket"
       className={className}
       bodyClassName="p-0"
     >
       <div className="relative h-full min-h-[5rem] overflow-hidden bg-black/20">
-        {fresh && src ? (
+        {showing && src ? (
           <>
             <img
               key={src}
               src={src}
               alt=""
-              onError={() => setGone(true)}
+              onError={onError}
               className="h-full w-full object-contain"
             />
-            <div className="absolute bottom-0 left-0 right-0 flex items-center gap-2 bg-background/75 px-2 py-0.5 font-mono text-[9px] text-muted-foreground">
-              <span className="min-w-0 flex-1 truncate">{capture?.targetLabel || capture?.targetKind}</span>
-              {capture && capture.redactions > 0 && (
-                <span className="shrink-0 text-primary">
-                  {t("deck.shot_redacted").replace("{0}", String(capture.redactions))}
+            <div className="absolute bottom-0 left-0 right-0 flex flex-col bg-background/75">
+              <div className="flex items-center gap-2 px-2 py-0.5 font-mono text-[9px] text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate">{capture?.targetLabel || capture?.targetKind}</span>
+                {capture && capture.redactions > 0 && (
+                  <span className="shrink-0 text-primary">
+                    {t("deck.shot_redacted").replace("{0}", String(capture.redactions))}
+                  </span>
+                )}
+                <span className="shrink-0 tabular-nums">
+                  {t("deck.shot_fades").replace("{0}", `${Math.ceil(remaining / 1000)} s`)}
                 </span>
-              )}
+              </div>
+              {/* The draining rail: the picture's remaining time, visible. */}
+              <div className="h-px w-full bg-border/60">
+                <div
+                  className="h-px bg-primary transition-[width] duration-200 ease-linear"
+                  style={{ width: `${(remaining / CAPTURE_AFTERGLOW_MS) * 100}%` }}
+                  aria-hidden
+                />
+              </div>
             </div>
           </>
+        ) : captures.length > 0 ? (
+          <CaptureLedger captures={captures} t={t} />
         ) : (
           <div className="flex h-full items-center justify-center px-3 text-center text-[11px] text-muted-foreground">
             {t("deck.shot_empty")}
@@ -188,6 +130,40 @@ export function AppShotCard({ className }: { className?: string }) {
         )}
       </div>
     </DeckCard>
+  );
+}
+
+/**
+ * What was looked at this session — time, target, size, what was redacted.
+ * Words only, never pixels: the mirror holds one frame and no history, and
+ * the ledger keeps that promise (the labels are the service's own scrubbed
+ * ones, the same the receipt event carries).
+ */
+function CaptureLedger({ captures, t }: { captures: CaptureState[]; t: (key: string) => string }) {
+  return (
+    <div className="flex h-full flex-col px-2.5 py-1.5">
+      <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
+        {t("deck.shot_earlier")}
+      </span>
+      <ul className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+        {captures.map((c) => (
+          <li key={c.seq} className="flex items-center gap-2 font-mono text-[10px]">
+            <span className="shrink-0 tabular-nums text-muted-foreground">{fmtClock(c.ts)}</span>
+            <span className="min-w-0 flex-1 truncate text-foreground">{c.targetLabel || c.targetKind || "—"}</span>
+            {c.width > 0 && c.height > 0 && (
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {c.width}×{c.height}
+              </span>
+            )}
+            {c.redactions > 0 && (
+              <span className="shrink-0 text-primary">
+                {t("deck.shot_redacted").replace("{0}", String(c.redactions))}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

@@ -871,6 +871,33 @@ async def test_the_capture_is_announced_before_the_shutter() -> None:
     ]
 
 
+async def test_the_deck_mirror_is_filled_before_the_receipt_goes_out() -> None:
+    """The deck fetches the picture the moment it hears the receipt.
+
+    The bus awaits the WebSocket send inside ``publish``, so a mirror filled
+    AFTER the receipt let the front page ask for a frame that was not there
+    yet — or get the previous capture under the new receipt's number.
+    """
+    from jarvis.screen_context.last_frame import LastFrameMirror
+
+    mirror = LastFrameMirror(ttl_s=120)
+    seen_at_receipt: list[int | None] = []
+
+    class PeekingBus(RecordingBus):
+        async def publish(self, event) -> None:
+            await super().publish(event)
+            if type(event).__name__ == "ScreenCaptureCompleted":
+                held = mirror.get()
+                seen_at_receipt.append(None if held is None else held.seq)
+
+    service = make_service(bus=PeekingBus(), last_frame_mirror=mirror)
+
+    outcome = await service.capture_for_turn("look at this", locale="en")
+
+    assert outcome.status == "captured"
+    assert seen_at_receipt == [1], "the picture must be held when the receipt is published"
+
+
 async def test_capture_events_keep_the_turn_trace_id() -> None:
     from uuid import uuid4
 

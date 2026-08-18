@@ -7,18 +7,14 @@ import { DeckDock } from "@/components/deck/DeckDock";
 import { DeckOrb } from "@/components/deck/DeckOrb";
 import { HudLamp } from "@/components/deck/HudFrame";
 import {
-  FlowCard,
   IdeGridCard,
   OutputsCard,
   RunsCard,
   TerminalsCard,
 } from "@/components/deck/DeckActivityCards";
-import {
-  ApiStatsCard,
-  AppShotCard,
-  ComputerUseCard,
-  LiveCounter,
-} from "@/components/deck/DeckSignalCards";
+import { ApiStatsCard, CaptureCard, LiveCounter } from "@/components/deck/DeckSignalCards";
+import { LogCard } from "@/components/deck/DeckLogCard";
+import { TurnCard } from "@/components/deck/DeckTurnCard";
 import { WikiCard } from "@/components/deck/DeckWiki";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { writeDeckMode } from "@/lib/deckMode";
@@ -35,10 +31,19 @@ import { useT } from "@/i18n";
  * rotated; read upright):
  *
  *   ┌ voice bars · lamps · live counter ─────────── name · brain · switch ┐
- *   │ dock │ [right now]   [computer use][api]     [ WIKI — 3D, tall    ] │
- *   │      │               (      ORB      )       [                    ] │
- *   │      │ [outputs][run]   [app shot]           [terminals] [ide grid] │
+ *   │ dock │ [log — the     [response][api]        [ WIKI — 3D, tall    ] │
+ *   │      │  terminal]     (      ORB      )       [                    ] │
+ *   │      │ [outputs][run]   [capture]            [terminals] [ide grid] │
  *   └──────┴───────────────────────────────────────────────────────────────┘
+ *
+ * Two of the sketch's cards were re-thought on 2026-08-18 (maintainer): the
+ * "right now" trace doubled the run inspector, which the small RUNS card
+ * already opens, so the tall left slot is now the LOG — a terminal of what
+ * the assistant heard, thought, did and said, with timings, that is never
+ * blank; and the live Computer-Use screen mirror gave way to the RESPONSE
+ * instrument — the turn's phases and how long each stage took. Computer Use
+ * still shows: as the "control" lamp, as the response card's act phase, and
+ * as lines in the log.
  *
  * Every card is a window onto a section and reads that section's own data;
  * its title jumps there. The dock on the left is the ONLY place the sections
@@ -68,13 +73,21 @@ export function MissionDeckView({
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const cuActive = useDeckStore((s) => s.cu.active);
   const wordsSession = useDeckStore((s) => s.wordsSession);
+  const turnPhase = useDeckStore((s) => s.turn.phase);
   const { warming } = useVoiceReadiness();
 
   const running = useMemo(
     () => thinkingSteps.filter((s) => s.status === "active"),
     [thinkingSteps],
   );
-  const busy = chatThinking || running.length > 0 || voiceState === "thinking";
+  // The deck's own turn counts too: the text chat's thinking flag never arms
+  // for a voice turn, and the orb must sweep for those as well.
+  const busy =
+    chatThinking ||
+    running.length > 0 ||
+    voiceState === "thinking" ||
+    turnPhase === "think" ||
+    turnPhase === "act";
 
   const mood: DeckMood = !connected
     ? "offline"
@@ -170,13 +183,13 @@ export function MissionDeckView({
         <DeckDock />
 
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden">
-          {/* LEFT top: what is happening right now */}
-          <FlowCard steps={thinkingSteps} className="min-h-0" />
+          {/* LEFT top: the log — the terminal of the session */}
+          <LogCard className="min-h-0" />
 
-          {/* CENTRE top: computer use + api on a strip, the orb underneath */}
+          {/* CENTRE top: the response instrument + api on a strip, the orb underneath */}
           <div className="flex min-h-0 flex-col gap-3">
             <div className="grid shrink-0 grid-cols-2 gap-3" style={{ height: "36%" }}>
-              <ComputerUseCard className="min-h-0" />
+              <TurnCard className="min-h-0" />
               <ApiStatsCard className="min-h-0" />
             </div>
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-2 text-center">
@@ -206,9 +219,9 @@ export function MissionDeckView({
             <RunsCard className="min-h-0" />
           </div>
 
-          {/* CENTRE bottom: the last capture, centred and not too wide */}
+          {/* CENTRE bottom: the last capture (briefly), then the ledger; centred and not too wide */}
           <div className="flex min-h-[8rem] items-stretch justify-center">
-            <AppShotCard className="w-full max-w-[28rem]" />
+            <CaptureCard className="w-full max-w-[28rem]" />
           </div>
 
           {/* RIGHT bottom: terminals and the coding workspace */}

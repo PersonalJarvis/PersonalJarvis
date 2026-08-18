@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity,
   FolderOpen,
   Gauge,
   MessagesSquare,
@@ -13,7 +12,6 @@ import { useRuns } from "@/hooks/useRuns";
 import { useOutputsList, type OutputSummary } from "@/hooks/useOutputs";
 import { fetchIdeState, fetchTerminalActivity, type IdeState, type ActivityResponse } from "@/lib/agenticIdeApi";
 import { useCommandActivityStore } from "@/store/commandActivity";
-import type { ThinkingStep } from "@/lib/thinkingSteps";
 import type { RunListItem } from "@/components/runs/types";
 import { DeckCard } from "@/components/deck/DeckCard";
 import { cn } from "@/lib/utils";
@@ -24,88 +22,6 @@ import { useT } from "@/i18n";
  * the data that section already has. Every figure is real; a card that has
  * nothing to show says so in one line rather than inventing a placeholder.
  */
-
-// ----------------------------------------------------------------------
-// Ablauf — what the assistant is doing right now (the reasoning trace)
-// ----------------------------------------------------------------------
-
-const STEP_BADGE: Record<string, string> = {
-  brain: "bg-primary text-primary-foreground",
-  tool: "bg-sky-400 text-black",
-  computer: "bg-violet-400 text-black",
-  worker: "bg-emerald-400 text-black",
-  note: "bg-muted text-muted-foreground",
-};
-
-export function FlowCard({ steps, className }: { steps: ThinkingStep[]; className?: string }) {
-  const t = useT();
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const active = steps.filter((s) => s.status === "active").length;
-  const shown = [...steps].reverse();
-
-  return (
-    <DeckCard
-      icon={Activity}
-      title={t("deck.card_flow")}
-      meta={active > 0 ? active : undefined}
-      live={active > 0}
-      variant="rail"
-      onOpen={() => setActiveSection("run_inspector")}
-      openLabel={t("deck.open_section")}
-      className={className}
-      bodyClassName="overflow-y-auto"
-    >
-      {shown.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">{t("deck.running_empty")}</p>
-      ) : (
-        <ul className="space-y-1">
-          {shown.slice(0, 14).map((step) => (
-            <li
-              key={step.id}
-              className={cn(
-                "border-l px-2 py-0.5",
-                step.status === "active"
-                  ? "border-primary"
-                  : step.status === "error"
-                    ? "border-destructive"
-                    : "border-border",
-              )}
-            >
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={cn(
-                    "shrink-0 px-1 py-px font-mono text-[9px] uppercase tracking-wider",
-                    STEP_BADGE[step.kind] ?? STEP_BADGE.note,
-                  )}
-                >
-                  {step.kind}
-                </span>
-                <span
-                  className={cn(
-                    "flex-1 truncate text-[11px]",
-                    step.status === "active" ? "text-foreground" : "text-muted-foreground",
-                  )}
-                >
-                  {t(step.labelKey)}
-                </span>
-                {step.durationMs !== undefined && (
-                  <span className="shrink-0 font-mono text-[9px] tabular-nums text-muted-foreground">
-                    {(step.durationMs / 1000).toFixed(1)}s
-                  </span>
-                )}
-              </div>
-              {step.detail && (
-                <div className="truncate pl-1 font-mono text-[10px] text-muted-foreground">
-                  {step.detail}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </DeckCard>
-  );
-}
 
 // ----------------------------------------------------------------------
 // Runs — the run inspector's list, newest first

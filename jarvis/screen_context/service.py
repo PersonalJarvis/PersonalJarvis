@@ -617,8 +617,13 @@ class ScreenContextService:
                         "image was discarded. Ask again to use the new settings."
                     ),
                 )
-            await self._publish_completed(context, trace_id=event_trace_id)
+            # Mirror BEFORE the receipt goes out: the deck fetches the picture
+            # the moment ``ScreenCaptureCompleted`` reaches it, and the bus
+            # awaits that WebSocket send — mirroring afterwards let the deck
+            # find no frame (or the previous one) for the capture it was just
+            # told about.
             self._mirror_for_deck(context, trace_id=event_trace_id)
+            await self._publish_completed(context, trace_id=event_trace_id)
             log.info("screen_context: %s", context.describe())
             return CaptureOutcome(
                 status="captured",
