@@ -28,6 +28,7 @@ from jarvis.brain.cu_gate import (
 from jarvis.brain.spawn_gate import (
     SPAWN_VEHICLE_TOOL_NAMES,
     llm_spawn_allowed,
+    names_spawn_vehicle,
     spawn_blocked_feedback,
 )
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
@@ -132,13 +133,54 @@ _RESEARCH_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-_META_DEBUG_KEYWORDS = re.compile(
+# Meta/debug conversation: the user is talking ABOUT the assistant's own
+# machinery (its provider, its transcript, the phrase it just spoke) instead of
+# giving it a task. Two tiers on purpose. The earlier single tier listed bare
+# everyday words — "fehler", "log", "bug", "provider", "brain", "phrase" — so a  # i18n-allow
+# perfectly ordinary work turn ("Zeig mir den Fehler im Log und starte den  # i18n-allow
+# Dienst neu") was classified as meta-conversation and answered with a canned
+# question instead of being carried out.
+#
+# STRONG markers name assistant machinery with no everyday reading; they stand
+# on their own and keep the guard's original case ("Warum hat der
+# Provider-Fallback gegriffen?") intact.
+_META_DEBUG_STRONG_RE = re.compile(
     r"\b("
-    r"api\s*key|provider|brain|text[-\s]*to[-\s]*speech|tts|"
-    r"transkript|transcript|log|bug|debug|fehler|fallback|"  # i18n-allow: German input-matching data (meta/debug-intent classifier)
-    r"standardantwort|standardphrase|phrase|jarvis\s+sagt|"
-    r"verstehst\s+du\s+was\s+ich\s+meine"
+    r"api\s*key|"
+    r"provider[-\s]*fallback|fallback[-\s]*provider|"
+    r"text[-\s]*to[-\s]*speech|tts|"
+    r"standardantwort|standardphrase|"  # i18n-allow: input-matching data
+    r"jarvis\s+sagt|"  # i18n-allow: input-matching data
+    r"verstehst\s+du\s+was\s+ich\s+meine"  # i18n-allow: input-matching data
     r")\b",
+    re.IGNORECASE,
+)
+
+# WEAK markers are everyday words. They mean meta-conversation ONLY when the
+# turn also points at the assistant itself ("dein Log", "warum sagst du das").
+_META_DEBUG_WEAK_RE = re.compile(
+    r"\b("
+    r"provider|brain|transkript|transcript|log|bug|debug|"  # i18n-allow: input data
+    r"fehler|fallback|phrase"  # i18n-allow: input-matching data
+    r")\b",
+    re.IGNORECASE,
+)
+
+# The turn points AT the assistant: a possessive about its output, its name, or
+# a second-person "you said" construction. Deliberately NOT a bare "du"/"you" —
+# every second request to an assistant contains one ("Kannst du das Log holen"),
+# which is exactly how an everyday word became a meta verdict.
+_ASSISTANT_SELF_REFERENCE_RE = re.compile(
+    r"(?:"
+    r"\bdein\w*\b"  # i18n-allow: input-matching data
+    r"|\bjarvis\b"
+    r"|\byour\b|\byours\b"
+    r"|\bdu\s+(?:sagst|sagtest|antwortest|meinst)\b"  # i18n-allow: input data
+    r"|\b(?:sagst|sagtest|antwortest|meinst)\s+du\b"  # i18n-allow: input data
+    r"|\b(?:hast|hattest)\s+du\b.{0,40}?\bgesagt\b"  # i18n-allow: input data
+    r"|\byou\s+(?:said|say|keep\s+saying|answered|replied)\b"
+    r"|\btu\s+respuesta\b"
+    r")",
     re.IGNORECASE,
 )
 
@@ -152,6 +194,54 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
     r"|what\s+(?:is|does|are)\s+"
     r"|why\s+"
     r")",
+    re.IGNORECASE,
+)
+
+# Clause break inside one spoken turn: punctuation or a coordinating particle.
+_CLAUSE_BREAK_RE = re.compile(
+    r"[,;:.!?]+"
+    r"|\b(?:und|aber|dann|jetzt|also)\b"  # i18n-allow: input-matching data
+    r"|\b(?:and|but|then|now)\b"
+    r"|\b(?:y|pero|luego|ahora)\b",  # i18n-allow: input-matching data
+    re.IGNORECASE,
+)
+
+# Bare 2nd-person imperative stems (DE/EN/ES). German infinitives are NOT
+# listed and cannot match: "oeffnen"/"machen" have no word boundary after  # i18n-allow
+# imperative stem, so only the real command form ("oeffne", "mach") hits.
+_IMPERATIVE_VERB_RE = re.compile(
+    r"\b("
+    r"mach|mache|oeffne|öffne|starte|beende|"  # i18n-allow: input-matching data
+    r"schliess|schließ|schliesse|schließe|"  # i18n-allow: input-matching data
+    r"stopp|stoppe|pausier|pausiere|spiel|spiele|"  # i18n-allow: input data
+    r"zeig|zeige|lies|schick|schicke|"  # i18n-allow: input-matching data
+    r"schreib|schreibe|loesch|lösch|loesche|lösche|"  # i18n-allow: input data
+    r"installier|installiere|kopier|kopiere|"  # i18n-allow: input-matching data
+    r"klick|klicke|tipp|tippe|drueck|drück|"  # i18n-allow: input-matching data
+    r"wechsle|wechsel|setz|setze|stell|stelle|"  # i18n-allow: input data
+    r"leg|lege|hol|hole|nimm|geh|fahr|fahre|"  # i18n-allow: input-matching data
+    r"aktivier|aktiviere|deaktivier|deaktiviere|"  # i18n-allow: input data
+    r"open|close|restart|reboot|run|launch|play|send|install|uninstall|delete|"
+    r"remove|click|type|switch|show|list|turn|stop|start|"
+    r"abre|cierra|inicia|reinicia|ejecuta|envia|envía|"  # i18n-allow: input data
+    r"borra|instala|pon|haz|muestra|reproduce"  # i18n-allow: input data
+    r")\b",
+    re.IGNORECASE,
+)
+
+# German 1st-person indicative shares its form with the imperative ("starte"),
+# so "…und wie starte ICH das neu?" would otherwise read as a command. A  # i18n-allow
+# imperative never carries an explicit subject pronoun.
+_INDICATIVE_SUBJECT_RE = re.compile(
+    r"\s*(?:ich|man|wir|i|we|you|yo|uno)\b",  # i18n-allow: input data
+    re.IGNORECASE,
+)
+
+# English puts the subject in FRONT of the verb ("…and how do I restart it?"),
+# and an infinitive marker reads the same way ("to open"). Either kills the
+# imperative reading just as an explicit German subject does.
+_INDICATIVE_SUBJECT_BEFORE_RE = re.compile(
+    r"\b(?:i|you|we|they|to|ich|man|wir|zu|que)\s+$",  # i18n-allow: input data
     re.IGNORECASE,
 )
 
@@ -195,6 +285,26 @@ _SIDE_EFFECT_TOOL_NAMES = {
 }
 
 
+# Possessive markers (DE/EN/ES). "Analysier MEINE Cloud-Kosten" asks about the
+# user's OWN resources — the one thing action tools exist for — and is never
+# literature research. Restricted to true possessives on purpose: "mir"/"ich"
+# would swallow the guard's own baseline case ("Vergleiche MIR mal, was ICH bei
+# Google Cloud verbraucht habe"), and "mein\w*" would match the verb "meinst".
+_POSSESSIVE_OWN_DATA_RE = re.compile(
+    r"\b("
+    r"mein(?:e|es|er|em|en)?|unser(?:e|es|er|em|en)?|"  # i18n-allow: input data
+    r"my|mine|our|ours|"
+    r"mi|mis|nuestr[oa]s?"  # i18n-allow: input-matching data
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_own_data_request(utterance: str) -> bool:
+    """True when the utterance claims the data as the user's own."""
+    return bool(_POSSESSIVE_OWN_DATA_RE.search(utterance or ""))
+
+
 def _is_research_intent(utterance: str, intent_level: str | None = None) -> bool:
     """Heuristic: does the utterance text indicate a pure research intent?
 
@@ -209,8 +319,21 @@ def _is_research_intent(utterance: str, intent_level: str | None = None) -> bool
 
 
 def _is_meta_debug_intent(utterance: str) -> bool:
-    """User is talking about Jarvis/provider behaviour, not about a task."""
-    return bool(_META_DEBUG_KEYWORDS.search(utterance or ""))
+    """User is talking about Jarvis/provider behaviour, not about a task.
+
+    A strong marker decides on its own; an everyday word only counts when the
+    turn also points at the assistant. Without that second condition "Zeig mir
+    den Fehler im Log und starte den Dienst neu" read as a complaint  # i18n-allow
+    about the assistant, and the turn ended on the canned acknowledgement
+    instead of doing the work.
+    """
+    text = utterance or ""
+    if _META_DEBUG_STRONG_RE.search(text):
+        return True
+    return bool(
+        _META_DEBUG_WEAK_RE.search(text)
+        and _ASSISTANT_SELF_REFERENCE_RE.search(text)
+    )
 
 
 # Spoken fallback phrases, localized. Live bug 2026-06-10 23:13
@@ -267,9 +390,42 @@ def _meta_debug_ack_phrase(user_utterance: str, reply_language: str = "auto") ->
     return _localized_phrase(_META_DEBUG_ACK_PHRASES, user_utterance, reply_language)
 
 
+def _has_trailing_imperative(utterance: str) -> bool:
+    """True when a command follows the question inside the SAME turn.
+
+    Only the part after the FIRST clause break is searched. In "How do I open
+    Spotify?" the verb belongs to the question itself and must not defuse the
+    guard. In "Warum ist Spotify nicht offen, mach es auf" the order  # i18n-allow
+    sits behind the comma, and it is what the user actually wants done.
+    """
+    parts = _CLAUSE_BREAK_RE.split(utterance or "", maxsplit=1)
+    if len(parts) < 2:
+        return False
+    tail = parts[1]
+    for match in _IMPERATIVE_VERB_RE.finditer(tail):
+        if _INDICATIVE_SUBJECT_RE.match(tail, match.end()):
+            continue
+        if _INDICATIVE_SUBJECT_BEFORE_RE.search(tail[:match.start()]):
+            continue
+        return True
+    return False
+
+
 def _is_instructional_question(utterance: str) -> bool:
-    """User is asking for an explanation or how-to, not for execution."""
-    return bool(_INSTRUCTIONAL_QUESTION_RE.search(utterance or ""))
+    """User is asking for an explanation or how-to, not for execution.
+
+    The question opener alone is not enough. "Warum ist Spotify nicht  # i18n-allow
+    offen, mach es auf" opens with a question word and still ends in an  # i18n-allow
+    order; blocking every side-effect tool on the opener meant that order
+    could never run — the user said something and nothing happened. The
+    guard therefore stands down as soon as a command follows the question
+    in the same turn. A pure how-to carries no such command and stays
+    blocked ("Wie kann ich bei Windows reinzoomen?").  # i18n-allow
+    """
+    text = utterance or ""
+    if not _INSTRUCTIONAL_QUESTION_RE.search(text):
+        return False
+    return not _has_trailing_imperative(text)
 
 
 def _is_self_identification(utterance: str) -> bool:
@@ -316,10 +472,19 @@ def _should_block_action_as_research(
     outcome is the unverified-answer fallback (trace 5edf0245). The override is
     scoped to the mandated tool only, so other action tools stay blocked under
     a research intent.
+
+    A possessive is the second stand-down. The guard's premise is that the user
+    wants information *about* a topic, not a query against their own system —
+    "Analysier meine Cloud-Kosten" is the exact opposite, and blocking every
+    cli_*/MCP tool there left the request unanswerable unless the evidence gate
+    happened to mandate that one tool. A request that names the data as the
+    user's own is an action on their own resources, not literature research.
     """
     if tool is None or not _is_action_tool(tool):
         return False
     if tool_name and tool_name == evidence_required_tool:
+        return False
+    if _is_own_data_request(user_utterance):
         return False
     return _is_research_intent(user_utterance, intent_level)
 
@@ -778,6 +943,9 @@ class ToolUseLoop:
 
             # Execute tools
             suppress_output: str | None = None
+            # Held back until the whole round is done: a canned line may only
+            # end the turn when nothing else in it produced a result.
+            meta_debug_ack: str | None = None
             unknown_tool_requested = False
             for tc in agg.tool_calls:
                 tool_name = tc.get("name", "")
@@ -869,7 +1037,20 @@ class ToolUseLoop:
                     )
                     tool_result_payload = {"error": f"Tool '{tool_name}' not available"}
                     unknown_tool_requested = True
-                elif tool_name == "spawn_worker" and _is_meta_debug_intent(user_utterance):
+                elif (
+                    tool_name == "spawn_worker"
+                    and _is_meta_debug_intent(user_utterance)
+                    # A turn that names the vehicle out loud ("spawn an agent
+                    # that finds out why the fallback fired") is a delegation
+                    # request, not meta-conversation. The explicit-delegation
+                    # gate below stays the authority on whether it may run;
+                    # this guard only stops the model from delegating a
+                    # conversation the user wanted answered. ``names_spawn_
+                    # vehicle`` is the pure form of that test — calling
+                    # ``llm_spawn_allowed`` here would consume the offer window
+                    # a second time in the same turn.
+                    and not names_spawn_vehicle(user_utterance)
+                ):
                     log.info(
                         "tool_use_loop: spawn_worker blocked for a meta/debug utterance"
                     )
@@ -892,7 +1073,12 @@ class ToolUseLoop:
                     # with a neutral acknowledgement so the user always hears
                     # *something*, and let the LLM weigh in next turn instead
                     # of stalling this one.
-                    suppress_output = _meta_debug_ack_phrase(
+                    #
+                    # Only ever a LAST resort: parked here and applied after
+                    # the round (see below), because it ends the turn — and it
+                    # used to do so even when another call in the same round
+                    # had already succeeded, throwing that work away.
+                    meta_debug_ack = _meta_debug_ack_phrase(
                         user_utterance, reply_language
                     )
                     tool_result_payload = {
@@ -1157,6 +1343,19 @@ class ToolUseLoop:
                             content="(Tool screenshot — describe or use it as needed.)",
                             images=tuple(_img_blocks),
                         ))
+
+            # The meta/debug acknowledgement ends the turn on a canned line, so
+            # it may only speak when this turn produced nothing else. A round
+            # that ran run_shell successfully AND requested a spawn used to end
+            # on "Verstanden. Was genau hätte anders sein sollen?", the  # i18n-allow
+            # shell result was discarded, and the user heard nothing of the work
+            # that DID happen. Same rule as the missing-tool fallback below.
+            if (
+                meta_debug_ack is not None
+                and suppress_output is None
+                and not final_agg.executed_tool_names
+            ):
+                suppress_output = meta_debug_ack
 
             # A missing tool is a full-turn refusal only when nothing else ran.
             # In a multi-call round, one stale/model-invented name must never
