@@ -170,6 +170,12 @@ _SKILL_TURN_STATE: ContextVar[_SkillTurnState | None] = ContextVar(
 _CU_CONTEXT_MAX_MESSAGES = 8
 _CU_CONTEXT_MAX_MESSAGE_CHARS = 240
 
+# Plugin-paired skill capture (2026-08-18): whether a catalog plugin holds a
+# usable credential is a keyring read, remembered per plugin for this long so
+# the turn path pays for it once per window, not once per matched turn.
+_PAIRED_CONNECTION_TTL_S = 15.0
+_PAIRED_CONNECTION_CACHE: dict[str, tuple[float, bool]] = {}
+
 #: Hard bound on the per-turn vision capture (Wave-3 latency fix). ``vision.
 #: current()`` can stall (mss BitBlt hang, paused-state miss, slow disk); without
 #: a cap it blocks the whole brain turn on the hot path. On timeout the turn
@@ -5420,6 +5426,22 @@ class BrainManager:
                     vetoed_by=guards.VETO_BLOCK_TIER, skill=skill,
                 )
                 return None
+            if self._paired_plugin_disconnected(skill):
+                # Two connectors can serve one domain (Spotify and YouTube
+                # Music both answer "spiel Musik"). A paired skill whose plugin
+                # holds no usable credential must not capture the turn: it
+                # would steer the model at a tool that can only answer "not
+                # connected" while the connected sibling sits in the surface.
+                log.info(
+                    "skill %s matched but its plugin is not connected — turn "
+                    "not captured, routing stays with the live tool surface",
+                    getattr(skill, "name", "?"),
+                )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang,
+                    vetoed_by=guards.VETO_PLUGIN_NOT_CONNECTED, skill=skill,
+                )
+                return None
 
             self._skill_match_band = decision.band
             self._skill_match_class = classify(skill)
@@ -5611,6 +5633,54 @@ class BrainManager:
             return fm.risk_policy.default_tier == "block"
         except Exception:  # noqa: BLE001
             return False
+
+    @staticmethod
+    def _paired_plugin_disconnected(skill: Any, *, store: Any | None = None) -> bool:
+        """True when ``skill`` is paired to a CATALOG plugin whose credential is
+        absent or flagged for re-auth.
+
+        Only catalog plugins are judged — every one of them authenticates, so
+        "no token" really means "not connected". A community skill naming an
+        unknown ``plugin_id`` is left alone: nothing here may veto a skill on
+        a guess. Any store or catalog fault answers False for the same reason
+        (a fault must never decide a turn). ``store`` is injectable for tests
+        (a fake with ``load``); the default is the real TokenStore.
+
+        The keyring read is synchronous and this sits on the turn path, so the
+        answer is remembered per plugin for a short while: one read per
+        plugin per :data:`_PAIRED_CONNECTION_TTL_S`, not one per matched turn.
+        A connect made inside that window merely routes without the skill's
+        guidance for a few seconds — the tool itself is callable at once."""
+        fm = getattr(skill, "frontmatter", None)
+        plugin_id = str(getattr(fm, "plugin_id", "") or "").strip()
+        if not plugin_id:
+            return False
+        now = time.monotonic()
+        if store is None:
+            cached = _PAIRED_CONNECTION_CACHE.get(plugin_id)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+        try:
+            from jarvis.marketplace.catalog_data import load_catalog
+
+            if load_catalog().by_id(plugin_id) is None:
+                return False
+            if store is None:
+                from jarvis.marketplace.token_store import TokenStore
+
+                store = TokenStore()
+                remember = True
+            else:
+                remember = False
+            tokens = store.load(plugin_id)
+        except Exception:  # noqa: BLE001 — a store fault must not decide a turn
+            return False
+        disconnected = tokens is None or (
+            not getattr(tokens, "access", None) or bool(getattr(tokens, "needs_reauth", False))
+        )
+        if remember:
+            _PAIRED_CONNECTION_CACHE[plugin_id] = (now + _PAIRED_CONNECTION_TTL_S, disconnected)
+        return disconnected
 
     def _render_skill_turn_hint(self) -> str | None:
         """Steering hint appended to the turn context on a skill-matched turn."""

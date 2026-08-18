@@ -1925,6 +1925,12 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # plugin. risk_tier "monitor" (starting music is audible and
             # instantly undone). Never a spawn (AP-5/AP-14).
             "spotify",
+            # YouTube Music Marketplace plugin (2026-08-18): native REST tool
+            # over the official YouTube Data API v3 plus the OS media session.
+            # Google publishes no YouTube Music API and no MCP server, so it
+            # must be router-visible directly. risk_tier "monitor". Never a
+            # spawn (AP-5/AP-14).
+            "youtube_music",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,

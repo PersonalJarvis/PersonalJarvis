@@ -2500,7 +2500,7 @@ export function PkceConnectDialog({
                     )}
                     .{" "}
                     {fam.family === "google" &&
-                      "One client covers Gmail, Drive and Calendar."}
+                      "One client covers Gmail, Drive, Calendar and YouTube Music."}
                   </p>
                   {redirectUri && (
                     <div className="rounded-md border border-border bg-background/40 px-2.5 py-2">

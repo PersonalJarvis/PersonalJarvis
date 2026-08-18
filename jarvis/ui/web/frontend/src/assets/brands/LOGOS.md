@@ -90,6 +90,7 @@ we could not obtain. Record it below with `own work` as the legal basis.
 | telegram | gilbarbara/logos `telegram.svg` | CC0 | 2026-07-25 |
 | todoist | gilbarbara/logos `todoist-icon.svg` | CC0 | 2026-07-25 |
 | vercel | svgl `vercel_dark.svg` (the light variant, for dark backgrounds) | MIT | 2026-07-25 |
+| youtube_music | svgl `youtube_music.svg` | MIT | 2026-08-18 |
 
 ### Deliberately not bundled
 

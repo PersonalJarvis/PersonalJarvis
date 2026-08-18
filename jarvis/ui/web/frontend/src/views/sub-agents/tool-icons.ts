@@ -159,6 +159,15 @@ export function getToolAppearance(
         iconColor: "text-blue-300",
       };
     }
+    if (matches(args, "youtube_music") || matches(args, "youtube music")) {
+      return {
+        Icon: Music,
+        label: "YouTube Music",
+        bg: "bg-red-950",
+        ring: "ring-red-500",
+        iconColor: "text-red-400",
+      };
+    }
     if (matches(args, "youtube")) {
       return {
         Icon: Youtube,

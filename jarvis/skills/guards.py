@@ -51,6 +51,10 @@ VETO_AUTO_FIRE_NEVER = "auto_fire_never"
 VETO_BAND_BELOW_FLOOR = "band_below_floor"
 VETO_KILL_SWITCH = "kill_switch"
 VETO_SHADOW_MODE = "shadow_mode"
+# A plugin-paired skill whose marketplace plugin holds no usable credential.
+# Applied by the brain's capture path (it needs the token store), never by the
+# pure guard ladder, so the offline routing eval stays credential-free.
+VETO_PLUGIN_NOT_CONNECTED = "plugin_not_connected"
 
 VETO_REASONS: frozenset[str] = frozenset({
     VETO_DEFINITIONAL,
@@ -65,6 +69,7 @@ VETO_REASONS: frozenset[str] = frozenset({
     VETO_BAND_BELOW_FLOOR,
     VETO_KILL_SWITCH,
     VETO_SHADOW_MODE,
+    VETO_PLUGIN_NOT_CONNECTED,
 })
 
 #: Guard identifiers, in the order the ladder evaluates them. Exposed so the

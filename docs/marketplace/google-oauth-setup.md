@@ -1,4 +1,4 @@
-# OAuth app setup for the Asana, Gmail, Drive and Calendar plugins
+# OAuth app setup for the Asana, Gmail, Drive, Calendar and YouTube Music plugins
 
 These marketplace plugins use browser-login OAuth against an app **you** register
 once. This is the providers' security model — no one can do it for you, and there
@@ -17,19 +17,22 @@ still set it as an env var / credential-manager secret or edit
 | Gmail | one Google Cloud "Desktop" OAuth client | `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` |
 | Google Drive | **the same** Google client (shared) | `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` |
 | Google Calendar | **the same** Google client (shared) | `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` |
+| YouTube Music | **the same** Google client (shared) — see [`youtube-music-setup.md`](youtube-music-setup.md) | `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` |
 | Asana | an Asana OAuth app | `REPLACE_WITH_JARVIS_ASANA_CLIENT_ID` |
 
 ---
 
-## Part A — Google (covers Gmail, Drive AND Calendar with one client)
+## Part A — Google (covers Gmail, Drive, Calendar AND YouTube Music with one client)
 
 1. Go to <https://console.cloud.google.com> and create (or select) a project.
-2. **APIs & Services → Library** → enable **Gmail API**, **Google Drive API**
-   and **Google Calendar API** (enable only the ones whose plugins you want).
+2. **APIs & Services → Library** → enable **Gmail API**, **Google Drive API**,
+   **Google Calendar API** and **YouTube Data API v3** (enable only the ones
+   whose plugins you want).
 3. **APIs & Services → OAuth consent screen** → User type **External** → Create.
    Fill app name, your support email, and developer contact email → Save.
 4. **Scopes** → add the ones you need: `.../auth/gmail.readonly`,
-   `.../auth/gmail.send`, `.../auth/drive.file`, `.../auth/calendar`.
+   `.../auth/gmail.send`, `.../auth/drive.file`, `.../auth/calendar`,
+   `.../auth/youtube` (YouTube Music).
    (Drive's `drive.file` is non-sensitive; the Gmail scopes are
    sensitive/restricted; the full `calendar` scope is sensitive — it lets Jarvis
    read events across ALL your calendars, not just the primary one, so a lesson
@@ -56,9 +59,9 @@ still set it as an env var / credential-manager secret or edit
 
    Or store it permanently in the credential manager (service
    `personal-jarvis`), keys `google_oauth_client_id` /
-   `google_oauth_client_secret`. One client covers **Gmail, Drive AND Calendar**
-   (the shared Google family). Then restart Jarvis and **connect the plugin** in
-   the Plugins view.
+   `google_oauth_client_secret`. One client covers **Gmail, Drive, Calendar AND
+   YouTube Music** (the shared Google family). Then restart Jarvis and
+   **connect the plugin** in the Plugins view.
 
    (Editing `data/plugin_catalog.json` directly still works as a fallback, but
    the secret takes precedence and is the durable option.)

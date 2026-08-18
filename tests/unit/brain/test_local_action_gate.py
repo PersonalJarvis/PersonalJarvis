@@ -1003,6 +1003,9 @@ class TestBrowserSearchFastPath:
         "reserviere einen Tisch im Restaurant heute Abend",
         "book a table at a restaurant tonight",
         "bestell mir ein Ticket für den Zug nach München",
+        # 2026-08-18: YouTube Music is a connector, not generic worker work.
+        "spiel Radiohead auf YouTube Music ab",
+        "play my running playlist on yt music",
     ],
 )
 def test_booking_transactions_require_external_integration(text: str) -> None:

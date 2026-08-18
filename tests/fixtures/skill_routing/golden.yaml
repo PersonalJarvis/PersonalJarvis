@@ -462,6 +462,63 @@ skills:
         min_band: narrow
         source: authored
 
+  # Two connectors, one domain (2026-08-18). Spotify keeps the generic
+  # "musik"/"music" trigger; YouTube Music triggers on its brand only and
+  # otherwise routes by relevance + the brain's connection-state veto. The
+  # positives below are the DISCRIMINATIVE phrasings each side owns; anything
+  # both could mean is deliberately not scored (it would be arbitrary).
+  plugin-spotify:
+    positives:
+      - text: "spiel mir was von radiohead"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "pausier mal kurz"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "what song is this"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "mach den naechsten song"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist spotify eigentlich fuer ein dienst"
+        reason: definitional question about the product, not a request to act
+
+  plugin-youtube_music:
+    positives:
+      - text: "play my liked songs"
+        channel: relevance
+        lang: en
+        min_band: fire
+        source: authored
+      - text: "zeig mir meine likes"
+        channel: relevance
+        lang: de
+        min_band: fire
+        source: authored
+      - text: "add this to my chill playlist"
+        channel: relevance
+        lang: en
+        min_band: fire
+        source: authored
+      - text: "like diesen song"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist youtube music eigentlich"
+        reason: definitional question about the product, not a request to act
+
   skill-creator:
     positives:
       # Upgraded relevance→trigger 2026-08-12: the new authoring trigger

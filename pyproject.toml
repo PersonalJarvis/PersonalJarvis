@@ -328,6 +328,15 @@ desktop = [
     # Windows Core Audio session control. comtypes is pycaw's COM backend.
     "pycaw>=20240210; sys_platform == 'win32'",
     "comtypes>=1.2; sys_platform == 'win32'",
+    # OS media session (jarvis/platform/media_session.py): read "now playing"
+    # and steer play/pause/next of the browser or the YouTube Music app through
+    # WinRT GlobalSystemMediaTransportControlsSessionManager. PyWinRT ships one
+    # wheel per namespace; the four below are exactly what the module touches.
+    # Absent, the module degrades to media keys (control only, no reading).
+    "winrt-runtime>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Foundation.Collections>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Media.Control>=3.2; sys_platform == 'win32'",
     "pystray>=0.19",
     "pywebview>=5.3",
     # macOS uses pynput for global hotkeys. Linux keeps pyautogui/no-op fallbacks:
@@ -646,6 +655,17 @@ google_drive = "jarvis.plugins.tool.drive_rest:DriveRestTool"
 # so it is audited without prompting. Never a spawn (AP-5/AP-14). Entry-point
 # name matches the catalog native_tool + token-store key "spotify".
 spotify = "jarvis.plugins.tool.spotify_rest:SpotifyRestTool"
+# YouTube Music (marketplace plugin, 2026-08-18) — search/play/like/playlists
+# over the official YouTube Data API v3 (Google publishes NO YouTube Music API;
+# the community "APIs" are reverse-engineered private clients outside YouTube's
+# terms, so they stay out) plus the OS media session for pause/skip/now-playing
+# (jarvis/platform/media_session.py). Playing opens a music.youtube.com deep
+# link in the user's browser — their own account and Premium — because YouTube
+# has no remote-playback API. Router-tier, risk_tier "monitor" (audible,
+# instantly reversible; every write is undoable in the app). Never a spawn
+# (AP-5/AP-14). Entry-point name matches the catalog native_tool + token-store
+# key "youtube_music".
+youtube_music = "jarvis.plugins.tool.youtube_music_rest:YouTubeMusicRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"

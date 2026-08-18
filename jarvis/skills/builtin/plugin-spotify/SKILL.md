@@ -5,7 +5,7 @@ description: Play and control the user's music on Spotify.
 when_to_use: Use when the user wants music — start a song, artist, album or playlist, pause, skip, go back, change the volume, queue something up, or ask what is playing right now.
 category: media
 plugin_id: spotify
-intent_verbs: [spiel, spiele, abspielen, pausier, pausiere, stopp, stoppe, überspring, überspringe, skip, weiter, zurück, lauter, leiser, play, pause, resume, next, previous, queue, turn, pon, reproduce, pausa, salta, siguiente, sube, baja]  # i18n-allow: spoken-input vocabulary, de/en/es
+intent_verbs: [spiel, spiele, abspielen, pausier, pausiere, stopp, stoppe, überspring, überspringe, skip, weiter, zurück, play, pause, resume, next, previous, queue, turn, pon, reproduce, pausa, salta, siguiente]  # i18n-allow: spoken-input vocabulary, de/en/es — bare volume verbs (lauter/leiser/sube/baja) stay out: a volume word alone is the system's volume (local-action gate); "Musik leiser" still fires via the trigger
 intent_objects: [spotify, musik, music, música, lied, song, canción, track, titel, album, álbum, playlist, wiedergabeliste, lista, künstler, artist, artista, band, radio, lautstärke, volume, volumen]  # i18n-allow: spoken-input vocabulary, de/en/es
 triggers:
   - type: voice

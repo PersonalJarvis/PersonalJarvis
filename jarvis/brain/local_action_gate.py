@@ -653,7 +653,7 @@ _EXTERNAL_INTEGRATION_NOUN_RE = re.compile(
     # Calendar
     r"kalender|calendar|termine?|appointments?|"
     # Music
-    r"spotify|"
+    r"spotify|youtube\s*music|yt\s*music|"
     # Social
     r"tweets?|twitter|instagram|facebook|linkedin|tiktok|"
     # Real-world commerce / transport

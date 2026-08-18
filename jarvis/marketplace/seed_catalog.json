@@ -565,6 +565,36 @@
       },
       "native_tool": "spotify",
       "post_install_hint_md": "Setup: see docs/marketplace/spotify-oauth-setup.md. Spotify has no shared client — every install registers its own app, which takes about five minutes and needs no client secret. Register the redirect URI **exactly** as `http://127.0.0.1:3125/callback`; Spotify rejects `localhost`.\n\nControlling playback (play, pause, skip, volume) requires Spotify **Premium** — Spotify's own rule, not ours. Reading what is playing works on a free account. Spotify offers no revoke endpoint, so disconnecting here removes the local credential; remove the app itself under Account → Apps."
+    },
+    {
+      "id": "youtube_music",
+      "display_name": "YouTube Music",
+      "description": "Play songs, albums and your playlists, pause, skip, like — and hear what is playing",
+      "category": "Media & Creativity",
+      "logo_slug": "youtubemusic",
+      "logo_color": "FF0000",
+      "featured": true,
+      "longevity": "provider_limited",
+      "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "oauth_client_family": "google",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "revocation_url": "https://oauth2.googleapis.com/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID",
+        "callback_port": 3123,
+        "callback_path": "",
+        "scopes": [
+          "https://www.googleapis.com/auth/youtube"
+        ],
+        "scope_separator": "space",
+        "user_scopes_only": false,
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "native_tool": "youtube_music",
+      "post_install_hint_md": "Setup: see docs/marketplace/youtube-music-setup.md — it shares the Google OAuth client with Gmail, Drive and Calendar; only **enable the YouTube Data API v3** in that Cloud project and add the `youtube` scope. Google publishes no YouTube Music API, so this talks to the official YouTube Data API v3 (search, your playlists, likes) and plays by opening YouTube Music in your browser — your own account and Premium. Pause, skip and \"what is playing\" go through the system's media session (Windows out of the box; Linux needs `playerctl`, macOS `nowplaying-cli`). Google allows **100 searches a day** per project — enough for one household, not for a party. Volume is not controllable here."
     }
   ]
 }

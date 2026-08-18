@@ -201,6 +201,12 @@ ROUTER_TOOLS = frozenset({
     # voice, which is the entire point of a music plugin. risk_tier "monitor":
     # starting music is audible and instantly undone. Never a spawn (AP-5/AP-14).
     "spotify",
+    # YouTube Music Marketplace plugin (2026-08-18): native REST tool over the
+    # official YouTube Data API v3 plus the OS media session — Google publishes
+    # no YouTube Music API and no MCP server, so it must be router-visible
+    # directly; otherwise a connected YouTube Music is not callable by voice.
+    # risk_tier "monitor": audible and instantly undone. Never a spawn (AP-5/AP-14).
+    "youtube_music",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker

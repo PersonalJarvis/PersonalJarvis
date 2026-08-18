@@ -11,6 +11,34 @@ versioning per [SemVer](https://semver.org/).
 
 ### Added
 
+- **YouTube Music as a marketplace plugin — music by voice, on the account you
+  already pay for.** "Play Radiohead", "play my running playlist", "play my
+  liked songs", "pause", "skip", "what song is this", "like this", "add this to
+  my chill playlist", "create a playlist called Late night". Google publishes
+  no YouTube Music API, so the plugin rides the official **YouTube Data API v3**
+  (search, your playlists, likes) through the **same Google OAuth client** as
+  Gmail, Drive and Calendar — one Cloud project, one more API to enable — and
+  never a reverse-engineered private client.
+  - **Playback happens in YouTube Music, not in Jarvis** — the same model as
+    the Spotify plugin. Playing opens a `music.youtube.com` deep link in the
+    browser (a song opens as its own radio, an album or playlist as its list;
+    both verified live), so Premium, recommendations and history stay in the
+    user's own account. Jarvis pauses whatever played before, then watches the
+    system's media session and says whether playback actually started —
+    including the honest "press play once" when the browser withholds autoplay.
+  - **Pause, resume, next, previous and "what is playing" come from the OS media
+    session** — new cross-platform seam `jarvis/platform/media_session.py`, the
+    same channel the keyboard's media keys use. Windows reads and steers through
+    WinRT (`winrt-*` in the `[desktop]` extra; measured live, including the
+    case of two Chrome tabs sharing one app id, where a paused YouTube video used
+    to hijack "pause the music"), Linux through `playerctl`, macOS through
+    `nowplaying-cli`; without the tool the answer names the install command
+    instead of a fake success (`docs/os-parity.md` P-33).
+  - **Honest limits, said out loud.** Google allows 100 searches a day per
+    project (each "play <name>" is one; repeats are cached, own playlists cost
+    none); volume and "queue next" do not exist in YouTube's API and the skill
+    says so instead of guessing. Setup: `docs/marketplace/youtube-music-setup.md`.
+
 - **Google Cloud Vertex AI as a provider family of its own, on every tier.**
   Vertex serves the same Gemini models as Google AI Studio, but bills a Cloud
   project — and until now it was reachable only by accident: an express-mode key

@@ -87,7 +87,11 @@ _SYSTEM_SYNONYMS: tuple[frozenset[str], ...] = (
         "repo", "repos", "repository", "repositories", "pull request",
         "pull requests", "issue", "issues", "github", "gitlab",
     }),
-    frozenset({"spotify", "musik", "music"}),
+    # One domain, two systems: "musik" must find a lone Spotify OR a lone
+    # YouTube Music (the tool name carries "music", the brand terms do not).
+    frozenset({
+        "spotify", "musik", "music", "youtube music", "youtube_music", "yt music", "ytmusic",
+    }),
     frozenset({"twitter", "x", "tweet", "tweets"}),
     frozenset({
         "pizza", "lieferando", "doordash", "uber eats", "ubereats", "wolt",

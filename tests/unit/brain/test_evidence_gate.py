@@ -320,3 +320,14 @@ def test_live_surface_covers_matching_rule():
     # Nothing attached, or nothing related, is not coverage.
     assert not live_surface_covers(["calendar"], [])
     assert not live_surface_covers(["calendar"], ["spawn_worker", "search_web"])
+
+
+def test_live_surface_music_terms_cover_a_lone_youtube_music_tool():
+    # 2026-08-18: two music systems, one domain. "Musik" / the brand terms must
+    # find whichever of Spotify and YouTube Music is connected, so a request
+    # is never refused with the tool sitting in the surface.
+    assert live_surface_covers(["musik"], ["youtube_music"])
+    assert live_surface_covers(["yt music"], ["youtube_music"])
+    assert live_surface_covers(["youtube music"], ["youtube_music"])
+    assert live_surface_covers(["musik"], ["spotify"])
+    assert not live_surface_covers(["musik"], ["spawn_worker", "search_web"])

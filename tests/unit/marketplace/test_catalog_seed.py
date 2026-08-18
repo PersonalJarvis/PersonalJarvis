@@ -315,3 +315,28 @@ def test_gmail_pkce_loopback_full_mail_scope() -> None:
     assert spec.auth.callback_path == ""
     assert spec.auth.offline_access is True
     assert spec.native_tool == "gmail"
+
+
+def test_youtube_music_joins_the_google_client_family_as_native_tool() -> None:
+    # 2026-08-18: Google publishes no YouTube Music API, so the plugin rides the
+    # official YouTube Data API v3 through the SHARED Google OAuth client (one
+    # Cloud project covers Gmail, Drive, Calendar and YouTube Music) — a native
+    # tool, no MCP server, and its own loopback port so a connect never collides
+    # with a sibling Google plugin's listener.
+    spec = _seed().by_id("youtube_music")
+    assert spec is not None
+    assert spec.display_name == "YouTube Music"
+    assert spec.oauth_client_family == "google"
+    assert spec.auth.mode == "oauth_pkce_loopback"
+    assert spec.auth.scopes == ["https://www.googleapis.com/auth/youtube"]
+    assert spec.auth.client_id == "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID"
+    assert spec.auth.offline_access is True
+    assert spec.native_tool == "youtube_music"
+    assert spec.mcp_server is None
+    assert spec.longevity == "provider_limited"
+    ports = [
+        p.auth.callback_port
+        for p in _seed().plugins
+        if getattr(p.auth, "callback_port", 0)
+    ]
+    assert ports.count(spec.auth.callback_port) == 1
