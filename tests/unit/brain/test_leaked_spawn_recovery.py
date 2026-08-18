@@ -46,10 +46,16 @@ def test_extract_detects_leaked_spawn_variants() -> None:
         '```json\n[{"type":"tool_use","name":"spawn_worker",'
         '"input":{"action":"y"}}]\n```'
     ) == {"action": "y"}
-    # Quoted/example JSON inside prose is not an executable provider envelope.
+    # Embedded in prose (audit GT-13). The model announced the action AND
+    # emitted the call; dropping it is the maintainer's "nothing happens".
     assert _extract_leaked_spawn_call(
         'Klar! {"type":"tool_use","name":"spawn_worker",'
         '"input":{"target":"z"}} erledige ich.'
+    ) == {"target": "z"}
+    # A QUOTED sample in an answer about tool calls is still never executed.
+    assert _extract_leaked_spawn_call(
+        'Ein Block sieht zum Beispiel so aus: {"type":"tool_use",'
+        '"name":"spawn_worker","input":{"target":"z"}}'
     ) is None
 
 

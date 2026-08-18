@@ -240,6 +240,49 @@ async def test_text_leaked_read_call_rejoins_normal_tool_loop(
     assert any(message.role == "tool" for message in brain.requests[1].messages)
 
 
+class _AnnouncedThenLeakedBrain:
+    """The model says what it is about to do, then leaks the call as text."""
+
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(
+                content=(
+                    "Ich sehe nach. "  # i18n-allow: simulated German model reply
+                    '{"type":"tool_use","name":"gmail","input":{"item_id":"m1"}}'
+                )
+            )
+            yield BrainDelta(finish_reason="stop")
+            return
+        yield BrainDelta(content="The connected service returned a grounded result.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_announced_then_leaked_call_runs_and_never_speaks_the_json() -> None:
+    """Audit GT-13: prose in front of the envelope no longer drops the action."""
+    brain = _AnnouncedThenLeakedBrain()
+    executor = _ExecStructuredRead()
+    loop = ToolUseLoop(
+        brain,
+        {"gmail": _NamedReadTool("gmail")},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="Read the latest connected item.")
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0][1] == {"item_id": "m1"}
+    assert result.text == "The connected service returned a grounded result."
+    # The announcement round is dropped whole — the raw envelope must never
+    # reach the answer, and neither half of that round is spoken twice.
+    assert "tool_use" not in result.text
+    assert "Ich sehe nach" not in result.text
+
+
 class _StructuredThenLeakedGmailBrain:
     """Exact incident shape: list call, leaked detail call, final answer."""
 
