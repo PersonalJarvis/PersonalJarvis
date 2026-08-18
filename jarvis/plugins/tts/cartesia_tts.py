@@ -47,29 +47,6 @@ DEFAULT_VOICE_ID = DEFAULT_VOICE_ID_EN
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow (DE letters are part of the sentence-boundary match set)
 
-# DEPRECATED — no longer used by this plugin. This sniff picked the VOICE from
-# bare function words, so English prose containing "die"/"das"/"der"/"ist" was
-# spoken by the German voice: "the die is cast" came out with German phonetics,
-# i.e. the right words rendered unintelligible. Language is resolved ONCE per
-# turn by the pipeline (``resolve_output_language``) and arrives as
-# ``language_code``; a plugin must not re-derive it, and cannot call the
-# resolver anyway (no ``jarvis.*`` import inside plugins, CLAUDE.md §5).
-#
-# Kept only because ``jarvis.plugins.tts.inworld_tts`` still imports it and
-# carries the identical defect; delete both together once that plugin takes its
-# language from the caller too.
-_DE_HINTS = re.compile(r"[äöüÄÖÜß]|\b(ich|nicht|und|der|die|das|ist|mit|für|werde|machen|gerne|bitte)\b", re.IGNORECASE)  # i18n-allow (DE word list a language-detection classifier must match)
-_ES_HINTS = re.compile(r"[ñáéíóúÑÁÉÍÓÚ¿¡]|\b(que|para|con|por|esto|esta|hola|gracias|señor|cómo)\b", re.IGNORECASE)
-
-
-def _detect_lang_from_text(text: str) -> str | None:
-    """Return 'de', 'es' or None. DEPRECATED — see the note above."""
-    if _DE_HINTS.search(text):
-        return "de"
-    if _ES_HINTS.search(text):
-        return "es"
-    return None
-
 
 class _CartesiaFatalError(RuntimeError):
     """401/403/429 — triggers cooldown + fallback switch."""

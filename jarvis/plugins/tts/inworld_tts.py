@@ -27,7 +27,6 @@ from typing import Any
 from jarvis.core import config as cfg
 from jarvis.core.protocols import AudioChunk
 from jarvis.core.turn_language import DEFAULT_LOCALE
-from jarvis.plugins.tts.cartesia_tts import _detect_lang_from_text
 from jarvis.plugins.tts.gemini_flash_tts import SAPI5_SAMPLE_RATE, _sapi5_synthesize
 
 INWORLD_TTS_SAMPLE_RATE = 24_000
@@ -132,9 +131,17 @@ class InworldTTS:
     def _resolve_voice(
         self, text: str, voice_override: str | None, language_code: str | None
     ) -> str:
-        """Pick the voice best matching the segment language (Cartesia parity):
-        explicit override → caller language_code → text heuristic → default
-        locale (never a hardcoded English voice on German text)."""
+        """Pick the voice for the segment (Cartesia parity): explicit override →
+        caller language_code → configured default locale.
+
+        Deliberately NOT a text heuristic. Sniffing the words picked German for
+        any English sentence containing "die", "das" or "der" — "the die is
+        cast" came out in a German voice, right words and wrong phonetics. The
+        turn's language is already decided by the one resolver
+        (jarvis/core/turn_language.py); a plugin may not import jarvis to ask
+        it, so the caller must pass the code and a missing one degrades
+        honestly to the configured default instead of guessing.
+        """
         if voice_override:
             return voice_override
         hint = (language_code or "").lower().strip()
@@ -142,9 +149,13 @@ class InworldTTS:
             short = hint.split("-", 1)[0]
             if short in self._voice_by_lang:
                 return self._voice_by_lang[short]
-        detected = _detect_lang_from_text(text)
-        if detected and detected in self._voice_by_lang:
-            return self._voice_by_lang[detected]
+        elif text.strip():
+            logging.getLogger("jarvis.tts.inworld").warning(
+                "No language_code passed for %r — falling back to the "
+                "configured default voice (%s). The caller must pass this "
+                "turn's resolved output language.",
+                text[:60], self._default_locale,
+            )
         return self._voice_by_lang.get(self._default_locale, self._voice_by_lang["en"])
 
     def _resolve_api_key(self) -> str:
