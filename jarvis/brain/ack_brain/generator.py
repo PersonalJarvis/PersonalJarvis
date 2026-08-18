@@ -368,6 +368,14 @@ class AckGenerator:
         # legitimate Flash-Brain output, not the unwanted brain-side
         # filler that the regular scrub mode removes.
         scrub_result = scrub_for_voice(text, language=language, ack_mode=True)
+        if scrub_result.fallback_used:
+            # The scrub threw the whole ack away and substituted the generic
+            # error phrase. An ack that announces a failure BEFORE the answer
+            # even exists is a lie, and the phrase survives the alnum check
+            # below — so reject it here and stay silent.
+            _emit_counter("ack_scrubbed_empty_total", provider=provider_label)
+            await self._breaker.record_success()
+            return None
         scrubbed = scrub_result.cleaned
         alnum_count = sum(1 for c in scrubbed if c.isalnum())
         if alnum_count < 3:
@@ -418,7 +426,11 @@ class AckGenerator:
         detected = _detect_language(text)
         if detected != "unknown" and detected != language:
             return None
-        scrubbed = scrub_for_voice(text, language=language, ack_mode=True).cleaned
+        scrub_result = scrub_for_voice(text, language=language, ack_mode=True)
+        if scrub_result.fallback_used:
+            # Same verdict as ``run()``: the generic error phrase is not an ack.
+            return None
+        scrubbed = scrub_result.cleaned
         if sum(1 for c in scrubbed if c.isalnum()) < 3:
             return None
         if has_deferred_action_claim(scrubbed):

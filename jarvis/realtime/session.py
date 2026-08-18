@@ -42,6 +42,7 @@ from jarvis.brain.provider_test import (
     UNREACHABLE,
     classify_provider_error,
 )
+from jarvis.brain.scrub_verdict import is_harmless_scrub_residue
 from jarvis.brain.turn_planner import (
     TurnPath,
     TurnPlan,
@@ -5260,7 +5261,19 @@ class RealtimeVoiceSession:
         if not raw:
             return ""
         language = str(getattr(delegate_state, "language", "") or self._language)
-        return scrub_for_voice(raw, language=language).cleaned.strip()
+        scrubbed = scrub_for_voice(raw, language=language)
+        if is_harmless_scrub_residue(scrubbed):
+            # Filler-only reply: the post-scrub residue guard emptied it and
+            # handed back the generic error phrase. The delegate did not fail,
+            # so returning "" keeps the surface quiet instead of announcing an
+            # incident that never happened.
+            log.info(
+                "Trusted delegate reply carried no substance (%s) — dropping "
+                "it instead of speaking the error phrase",
+                scrubbed.actions,
+            )
+            return ""
+        return scrubbed.cleaned.strip()
 
     def _advance_echo_horizon(self, duration_s: float) -> None:
         """Date the echo guard's activity forward to the estimated drain.
@@ -6725,10 +6738,14 @@ class RealtimeVoiceSession:
         for candidate in candidates:
             if not isinstance(candidate, str) or not candidate.strip():
                 continue
-            cleaned = scrub_for_voice(
-                candidate,
-                language=self._language,
-            ).cleaned.strip()
+            scrubbed = scrub_for_voice(candidate, language=self._language)
+            if is_harmless_scrub_residue(scrubbed):
+                # Filler-only candidate. The residue guard turned it into the
+                # generic error phrase — speaking that for a tool call that
+                # SUCCEEDED would invent a failure. Skip to the next candidate
+                # and, failing that, to the localized action phrase below.
+                continue
+            cleaned = scrubbed.cleaned.strip()
             if cleaned:
                 return cleaned, succeeded
         phrase_key = "cu_done" if succeeded else "action_failed_generic"

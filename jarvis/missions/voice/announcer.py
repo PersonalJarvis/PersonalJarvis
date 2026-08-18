@@ -35,6 +35,7 @@ import logging
 from typing import TYPE_CHECKING, Literal
 
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.brain.scrub_verdict import is_harmless_scrub_residue
 from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
 from jarvis.missions.voice.readback import (
@@ -172,6 +173,18 @@ class MissionAnnouncer:
                     "MissionAnnouncer pre-scrub [%s]: %s (fallback=%s)",
                     lang, scrubbed.actions, scrubbed.fallback_used,
                 )
+            if is_harmless_scrub_residue(scrubbed):
+                # Filler-only announcement. The residue guard turned it into
+                # the generic error phrase; publishing that would announce a
+                # mission failure that never happened.
+                logger.info(
+                    "MissionAnnouncer: announcement carried no substance "
+                    "(%s) — staying silent instead of publishing the error "
+                    "phrase: %r",
+                    scrubbed.actions,
+                    text[:80],
+                )
+                return
             text = scrubbed.cleaned
             if not text.strip():
                 logger.info("MissionAnnouncer: text leer nach pre-scrub — skip")

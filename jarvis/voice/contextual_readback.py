@@ -461,11 +461,17 @@ class ReadbackComposer:
         if trimmed in self._recent:
             return None
         try:
-            scrubbed = scrub_for_voice(
-                trimmed, language=language, ack_mode=True
-            ).cleaned.strip()
+            result = scrub_for_voice(trimmed, language=language, ack_mode=True)
         except Exception:  # noqa: BLE001 — a scrubber bug must not mute us
             return None
+        if result.fallback_used:
+            # The scrub threw the whole candidate away and substituted the
+            # generic error phrase. Emitting that would make the readback
+            # announce a failure that never happened — and no downstream guard
+            # could tell it apart from a genuine one. Reject the candidate; the
+            # caller falls back to the deterministic canned line.
+            return None
+        scrubbed = result.cleaned.strip()
         if sum(1 for c in scrubbed if c.isalnum()) < 3:
             return None
         return scrubbed

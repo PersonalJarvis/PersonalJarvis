@@ -33,6 +33,7 @@ from typing import Any
 from uuid import uuid4
 
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.brain.scrub_verdict import is_harmless_scrub_residue
 from jarvis.browser_voice.audio import (
     STT_SAMPLE_RATE,
     TTS_SAMPLE_RATE,
@@ -206,7 +207,20 @@ class BrowserVoiceSession:
             await self._send_json({"type": "transcript", "text": text, "is_final": True})
 
             response = await self._think(text)
-            spoken = scrub_for_voice(response, language=self._lang_short()).cleaned
+            scrubbed = scrub_for_voice(response, language=self._lang_short())
+            if is_harmless_scrub_residue(scrubbed):
+                # The whole reply was filler / an honorific, so the residue
+                # guard emptied it and returned the generic error phrase.
+                # Nothing failed — say nothing rather than claim an error.
+                log.info(
+                    "browser_voice[%s] reply carried no substance (%s) — "
+                    "staying silent instead of speaking the error phrase: %r",
+                    self.session_id,
+                    scrubbed.actions,
+                    response[:80],
+                )
+                return
+            spoken = scrubbed.cleaned
             if not spoken.strip():
                 return
             self._tts_task = asyncio.create_task(self._speak(spoken))

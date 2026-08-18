@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.brain.scrub_verdict import is_harmless_scrub_residue
 from jarvis.voice.contextual_readback import render_readback
 
 from ..event_bus import MissionBus
@@ -133,6 +134,17 @@ class MissionVoiceListener:
                 "MissionVoiceListener filter [%s]: %s (fallback=%s)",
                 lang, scrubbed.actions, scrubbed.fallback_used,
             )
+        if is_harmless_scrub_residue(scrubbed):
+            # Filler-only readback. The residue guard replaced it with the
+            # generic error phrase; speaking that would report a mission
+            # failure that never happened.
+            logger.info(
+                "MissionVoiceListener: readback carried no substance (%s) — "
+                "staying silent instead of speaking the error phrase: %r",
+                scrubbed.actions,
+                text[:80],
+            )
+            return
         if not scrubbed.cleaned.strip():
             logger.info("MissionVoiceListener: text empty after filter — skip")
             return

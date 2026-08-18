@@ -535,11 +535,15 @@ class SpawnAnnouncementComposer:
         if detected != "unknown" and detected != lang:
             return None
         try:
-            scrubbed = scrub_for_voice(
-                trimmed, language=lang, ack_mode=True
-            ).cleaned.strip()
+            result = scrub_for_voice(trimmed, language=lang, ack_mode=True)
         except Exception:  # noqa: BLE001 — a scrubber bug must not mute the spawn
             return None
+        if result.fallback_used:
+            # The scrub replaced the whole announcement with the generic error
+            # phrase. Announcing a failure at the moment a spawn STARTS is a
+            # lie; drop the candidate and let the generic pool speak instead.
+            return None
+        scrubbed = result.cleaned.strip()
         if sum(1 for c in scrubbed if c.isalnum()) < 3:
             return None
         return scrubbed

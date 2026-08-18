@@ -49,6 +49,7 @@ from jarvis.audio.player import AudioPlayer
 from jarvis.audio.vad import SileroEndpointer
 from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
 from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
+from jarvis.brain.scrub_verdict import is_harmless_scrub_residue
 from jarvis.brain.turn_planner import plan_turn
 from jarvis.core.events import (
     CU_PROGRESS_EVENTS,
@@ -4650,6 +4651,18 @@ class SpeechPipeline:
                 "🧹 Announcement-Filter [%s]: %s (fallback=%s)",
                 ann_lang, scrubbed.actions, scrubbed.fallback_used,
             )
+        if is_harmless_scrub_residue(scrubbed):
+            # The whole announcement was filler/honorific/markdown, so the
+            # residue guard emptied it and handed back the generic error
+            # phrase. Nothing failed — speaking it would report an incident
+            # that never happened. Stay silent, but say so in the log.
+            log.info(
+                "Announcement carried no substance (%s) — staying silent "
+                "instead of speaking the error phrase: %r",
+                scrubbed.actions,
+                (event.text or "")[:80],
+            )
+            return
         if not scrubbed.cleaned.strip():
             log.info("Announcement nach Filter leer — schweige.")
             return
@@ -5325,6 +5338,20 @@ class SpeechPipeline:
                 "🧹 Background-Filter: %s (fallback=%s)",
                 scrubbed.actions, scrubbed.fallback_used,
             )
+        if is_harmless_scrub_residue(scrubbed):
+            # Filler-only readback: the residue guard replaced it with the
+            # generic error phrase. The mission SUCCEEDED here as often as
+            # not, so speaking that phrase would invent a failure. Silence is
+            # the honest outcome; the bus event still carries the result.
+            log.info(
+                "Jarvis-Agent background finished (success=%s) — the readback "
+                "carried no substance (%s), staying silent instead of "
+                "speaking the error phrase: %r",
+                event.success,
+                scrubbed.actions,
+                text[:80],
+            )
+            return
         cleaned = scrubbed.cleaned.strip()
         if not cleaned:
             log.info(
@@ -8751,6 +8778,18 @@ class SpeechPipeline:
                     or self._output_language(None, text)
                 )
                 scrubbed = scrub_for_voice(text, language=language)
+                if is_harmless_scrub_residue(scrubbed):
+                    # Filler-only surface text. The residue guard turned it
+                    # into the generic error phrase; re-rendering that would
+                    # announce a failure the user does not have.
+                    log.info(
+                        "Realtime surface fallback carried no substance (%s) "
+                        "— dropping it instead of speaking the error phrase: "
+                        "%r",
+                        scrubbed.actions,
+                        text[:80],
+                    )
+                    return
                 cleaned = scrubbed.cleaned.strip()
                 if cleaned and getattr(self, "_muted", False):
                     # Voice muted at delivery time (orb double-double-click):
@@ -13291,6 +13330,22 @@ class SpeechPipeline:
                 "🧹 Output-Filter [%s]: %s (fallback=%s)",
                 lang, scrubbed.actions, scrubbed.fallback_used,
             )
+        if is_harmless_scrub_residue(scrubbed):
+            # The whole turn was filler ("Tolle Frage!"), an honorific or a
+            # self-reference, so the residue guard emptied it and returned the
+            # generic error phrase. Nothing failed — the brain simply said
+            # nothing of substance, and claiming an error would be a lie. Stay
+            # silent (the pre-filters above already treat a substance-free turn
+            # that way) and log what was dropped.
+            log.info(
+                "Output filter [%s]: the turn carried no substance (%s) — "
+                "staying silent instead of speaking the error phrase: %r",
+                lang,
+                scrubbed.actions,
+                response[:80],
+            )
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            return True
         response = scrubbed.cleaned
         if not response.strip():
             log.info("Output-Filter hinterlaesst leeren Text — schweige.")
