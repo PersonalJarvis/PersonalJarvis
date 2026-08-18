@@ -29,7 +29,7 @@ import {
 } from "react";
 import ForceGraph3D from "react-force-graph-3d";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-3d";
-import type { Object3D } from "three";
+import type { Object3D, Scene } from "three";
 import SpriteText from "three-spritetext";
 
 import {
@@ -44,17 +44,31 @@ import {
   CENTRING_STRENGTH,
   createCentringForce,
   createLivelinessForce,
+  createOrbitalForce,
+  createShellForce,
   type LivelyNode,
 } from "@/lib/graphForces";
 import { carryOverPositions, pinPivotAtOrigin } from "@/lib/graphContinuity";
+import {
+  hopsFromHub,
+  occupiedShells,
+  seatAllOnShells,
+  shellRadius,
+  snapToShell,
+} from "@/lib/orbitalLayout";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
+import { useThemeValue } from "@/hooks/useTheme";
+import { buildSunObject, sunPalette, syncSystemDecor } from "@/components/wiki/wikiSystem";
 
 /** The hub is nailed here; the camera looks here. Never a live, moving node. */
 const PINNED_ORIGIN: Vec3 = { x: 0, y: 0, z: 0 };
 
 /** Sphere radius in graph units for a node whose size score is 1.0. */
 const NODE_REL_SIZE = 3;
+
+/** The sun is larger than any planet so the eye lands on it first. */
+const SUN_SIZE_SCORE = 3.4;
 
 /**
  * Above this many nodes, only hubs and the selection get a text sprite.
@@ -77,7 +91,7 @@ const HUB_BACKLINKS = 2;
 const AMBIENT_PARTICLE_LINKS = 90;
 
 /** Colours for the focus state. Everything not near the pointer recedes. */
-const LINK_REST = "rgba(106, 169, 255, 0.5)";
+const LINK_REST = "rgba(106, 169, 255, 0.42)";
 const LINK_FOCUS = "#9ecbff";
 const LINK_FADED = "rgba(106, 169, 255, 0.06)";
 const NODE_FADED = "#2c3340";
@@ -120,6 +134,9 @@ export function WikiGraph3D({
   const graphRef = useRef<ForceGraphMethods<RenderNode, RenderEdge> | undefined>(
     undefined,
   );
+  const theme = useThemeValue();
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
 
   // Read through a ref for the same reason the flat map does: swapping the
   // accessor functions makes the library re-ingest its whole accessor set, and
@@ -196,6 +213,24 @@ export function WikiGraph3D({
   pivotSlugRef.current = pivotSlug;
   /** The live pivot node object (set below, once the data is known). */
   const pivotNodeRef = useRef<Partial<Vec3> | null>(null);
+
+  const hops = useMemo(() => {
+    if (!pivotSlug) return new Map<string, number>();
+    return hopsFromHub(
+      graphData.nodes.map((node) => node.id),
+      graphData.links,
+      pivotSlug,
+    );
+  }, [graphData, pivotSlug]);
+  const hopsRef = useRef(hops);
+  hopsRef.current = hops;
+  const shells = useMemo(
+    () => (pivotSlug ? occupiedShells(hops, pivotSlug) : []),
+    [hops, pivotSlug],
+  );
+  const shellsRef = useRef(shells);
+  shellsRef.current = shells;
+  const decorKeyRef = useRef("");
   const reducedMotion = useMemo(
     () =>
       typeof window.matchMedia === "function" &&
@@ -219,26 +254,57 @@ export function WikiGraph3D({
     if (!ref) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const anyRef = ref as any;
+    const solar = Boolean(pivotSlugRef.current);
     const charge = anyRef.d3Force?.("charge");
     if (charge && typeof charge.strength === "function") {
-      charge.strength(-420);
-      // Same reach as the flat map's. A larger radius keeps pushing a node
-      // that is already outside the cluster, which is how a single unlinked
-      // page ends up a long way from everything and drags the camera with it.
-      if (typeof charge.distanceMax === "function") charge.distanceMax(220);
+      // Softer when the sun is holding the system: a hard charge shoves
+      // planets off their shell and the map collapses back into a hairball.
+      charge.strength(solar ? -160 : -420);
+      if (typeof charge.distanceMax === "function") {
+        charge.distanceMax(solar ? 140 : 220);
+      }
     }
     const link = anyRef.d3Force?.("link");
     if (link && typeof link.distance === "function") {
-      link.distance(85);
-      // Slacker than the flat map's 0.85: in three dimensions a stiff link
-      // pulls the cluster back into the ball the repulsion just opened. A hub
-      // with fifty children would otherwise drag them all into its own pixel.
-      if (typeof link.strength === "function") link.strength(0.16);
+      if (solar) {
+        // Spokes from the sun are slack — they name a relationship, they do
+        // not haul the planet onto a rail. Planet-to-planet links stay tighter
+        // so moons keep their host.
+        link.distance((edge: RenderEdge) =>
+          endpointId(edge.source) === pivotSlugRef.current ||
+          endpointId(edge.target) === pivotSlugRef.current
+            ? 96
+            : 58,
+        );
+        if (typeof link.strength === "function") {
+          link.strength((edge: RenderEdge) =>
+            endpointId(edge.source) === pivotSlugRef.current ||
+            endpointId(edge.target) === pivotSlugRef.current
+              ? 0.04
+              : 0.2,
+          );
+        }
+      } else {
+        link.distance(85);
+        if (typeof link.strength === "function") link.strength(0.16);
+      }
     }
     // Bounds the world. Without it a single unlinked page drifts until it is
     // out of everyone's reach, and `zoomToFit` — which frames every node —
     // renders the entire vault as a marble in an empty room.
     anyRef.d3Force?.("centreGravity", createCentringForce(CENTRING_STRENGTH));
+    if (solar) {
+      anyRef.d3Force?.(
+        "shell",
+        createShellForce({
+          radiusOf: (node) => {
+            if (node.id === pivotSlugRef.current) return null;
+            const hop = hopsRef.current.get(String(node.id ?? ""));
+            return shellRadius(hop ?? Number.POSITIVE_INFINITY);
+          },
+        }),
+      );
+    }
     // Every page but the pivot keeps moving on its own — a bob and a small
     // loop, each with its own rhythm — so the map is not a rigid body turning
     // (maintainer, 2026-08-18). The pivot is read through a ref at tick time,
@@ -250,16 +316,28 @@ export function WikiGraph3D({
         createLivelinessForce({
           now: () => performance.now(),
           isPinned: (node: LivelyNode) => node.id === pivotSlugRef.current,
-          // The network breathes from the pivot page, wherever the layout
-          // has it this tick; from the origin when the vault has no pivot.
           centre: () => {
             const pivot = pivotNodeRef.current;
             return pivot && Number.isFinite(pivot.x)
               ? { x: pivot.x ?? 0, y: pivot.y ?? 0, z: pivot.z ?? 0 }
               : { x: 0, y: 0, z: 0 };
           },
+          // Quieter on the solar map: the Kepler turn already gives life,
+          // and a tall wave reads as noise around a sun.
+          amplitude: solar ? 4.2 : undefined,
+          breath: solar ? 0.022 : undefined,
+          wobble: solar ? 2.1 : undefined,
         }),
       );
+      if (solar) {
+        anyRef.d3Force?.(
+          "orbit",
+          createOrbitalForce({
+            now: () => performance.now(),
+            isPinned: (node: LivelyNode) => node.id === pivotSlugRef.current,
+          }),
+        );
+      }
     }
     forcesConfiguredRef.current = true;
   }, [reducedMotion]);
@@ -318,6 +396,7 @@ export function WikiGraph3D({
   );
 
   const nodeVal = useCallback((node: NodeObject<RenderNode>): number => {
+    if (node.id === pivotSlugRef.current) return SUN_SIZE_SCORE ** 3;
     const score = nodeSizeScore(
       (node as RenderNode).backlinkCount ?? 0,
       node.id === highlightRef.current,
@@ -330,6 +409,9 @@ export function WikiGraph3D({
 
   const nodeColor = useCallback(
     (node: NodeObject<RenderNode>) => {
+      if (node.id === pivotSlugRef.current) {
+        return `#${sunPalette(themeRef.current).core.toString(16).padStart(6, "0")}`;
+      }
       const own = (node as RenderNode).colour ?? NODE_COLOUR.entity ?? "#8b95a7";
       return isNearHover(String(node.id ?? "")) ? own : NODE_FADED;
     },
@@ -337,7 +419,11 @@ export function WikiGraph3D({
   );
 
   const nodeThreeObject = useCallback(
-    (node: NodeObject<RenderNode>): SpriteText | null => {
+    (node: NodeObject<RenderNode>): Object3D | SpriteText | null => {
+      if (node.id === pivotSlugRef.current) {
+        const title = (node as RenderNode).title || String(node.id ?? "");
+        return buildSunObject(title, themeRef.current, NODE_REL_SIZE * SUN_SIZE_SCORE);
+      }
       const rendered = node as RenderNode;
       const isActive = node.id === highlightRef.current;
       const backlinks = rendered.backlinkCount ?? 0;
@@ -361,20 +447,45 @@ export function WikiGraph3D({
     [labelEverything],
   );
 
+  const extendNodeObject = useCallback(
+    (node: NodeObject<RenderNode>): boolean => node.id !== pivotSlugRef.current,
+    [],
+  );
+
+  const spokeFromSun = useCallback(
+    (link: RenderEdge): boolean => {
+      const hub = pivotSlugRef.current;
+      if (!hub) return false;
+      return endpointId(link.source) === hub || endpointId(link.target) === hub;
+    },
+    [],
+  );
+
   const linkColor = useCallback(
     (link: RenderEdge) => {
       if (hoverId !== null) {
         if (!touchesHover(link)) return LINK_FADED;
         return link.broken ? BROKEN_EDGE_COLOUR : LINK_FOCUS;
       }
-      return link.broken ? BROKEN_EDGE_COLOUR : LINK_REST;
+      if (link.broken) return BROKEN_EDGE_COLOUR;
+      // Spokes from the sun read as light, not cables — the railroad the
+      // last cut accidentally drew.
+      if (spokeFromSun(link)) {
+        return themeRef.current === "dark"
+          ? "rgba(255, 214, 10, 0.16)"
+          : "rgba(168, 107, 0, 0.22)";
+      }
+      return LINK_REST;
     },
-    [hoverId, touchesHover],
+    [hoverId, spokeFromSun, touchesHover],
   );
 
   const linkWidth = useCallback(
-    (link: RenderEdge) => (touchesHover(link) ? 1.4 : 0.4),
-    [touchesHover],
+    (link: RenderEdge) => {
+      if (touchesHover(link)) return 1.4;
+      return spokeFromSun(link) ? 0.18 : 0.38;
+    },
+    [spokeFromSun, touchesHover],
   );
 
   // Light travelling from source to target: direction you can read at a
@@ -383,9 +494,10 @@ export function WikiGraph3D({
   const linkParticles = useCallback(
     (link: RenderEdge) => {
       if (hoverId !== null) return touchesHover(link) ? 4 : 0;
+      if (spokeFromSun(link) && !link.broken) return 1;
       return ambientParticleLinks.has(link) ? 2 : 0;
     },
-    [ambientParticleLinks, hoverId, touchesHover],
+    [ambientParticleLinks, hoverId, spokeFromSun, touchesHover],
   );
 
   const handleNodeHover = useCallback((node: NodeObject<RenderNode> | null) => {
@@ -396,8 +508,8 @@ export function WikiGraph3D({
   // claiming a destination would be the wrong story; the rose colour carries
   // it instead — the same signal the flat map's dashes carry.
   const linkArrowLength = useCallback(
-    (link: RenderEdge) => (link.broken ? 0 : 3.5),
-    [],
+    (link: RenderEdge) => (link.broken || spokeFromSun(link) ? 0 : 3.5),
+    [spokeFromSun],
   );
 
   const linkArrowColor = useCallback(
@@ -412,8 +524,11 @@ export function WikiGraph3D({
   // next to the pages it links to. Same objects the simulation integrates,
   // mutated once per generation, before the renderer sees them.
   const previousNodesRef = useRef<RenderNode[]>([]);
+  const seededSystemRef = useRef(false);
   const data = useMemo(() => {
     const previous = previousNodesRef.current;
+    const firstGeneration = previous.length === 0;
+    const previousIds = new Set(previous.map((node) => node.id));
     if (previous !== graphData.nodes) {
       const pivot = previous.find((n) => n.id === pivotSlug);
       carryOverPositions(previous, graphData.nodes, graphData.links, pivot ?? {});
@@ -423,8 +538,25 @@ export function WikiGraph3D({
     // page sits at the origin and stays there. The rest of the cloud is
     // translated with it so the layout they already have is not torn up.
     pinPivotAtOrigin(graphData.nodes, pivotSlug);
+    if (pivotSlug && graphData.nodes.length > 0) {
+      if (firstGeneration || !seededSystemRef.current) {
+        // Build the sky once. A 2D circle-seed (the flat map's first paint)
+        // is overwritten so the 3D view is a system, not a disc.
+        seatAllOnShells(graphData.nodes, graphData.links, pivotSlug);
+        pinPivotAtOrigin(graphData.nodes, pivotSlug);
+        seededSystemRef.current = true;
+      } else {
+        for (const node of graphData.nodes) {
+          if (node.id === pivotSlug || previousIds.has(node.id)) continue;
+          snapToShell(
+            node,
+            hops.get(node.id) ?? Number.POSITIVE_INFINITY,
+          );
+        }
+      }
+    }
     return graphData;
-  }, [graphData, pivotSlug]);
+  }, [graphData, hops, pivotSlug]);
 
   const holdHub = useCallback((node: NodeObject<RenderNode>): void => {
     if (node.id !== pivotSlugRef.current) return;
@@ -465,7 +597,7 @@ export function WikiGraph3D({
       nodeThreeObject={
         nodeThreeObject as unknown as (node: NodeObject<RenderNode>) => Object3D
       }
-      nodeThreeObjectExtend
+      nodeThreeObjectExtend={extendNodeObject}
       linkLabel={linkLabel}
       linkColor={linkColor}
       linkOpacity={0.6}
@@ -476,7 +608,13 @@ export function WikiGraph3D({
       linkDirectionalParticles={linkParticles}
       linkDirectionalParticleSpeed={0.006}
       linkDirectionalParticleWidth={1.3}
-      linkDirectionalParticleColor={() => PARTICLE_COLOUR}
+      linkDirectionalParticleColor={(link: RenderEdge) =>
+        spokeFromSun(link)
+          ? themeRef.current === "dark"
+            ? "#ffe680"
+            : "#a86b00"
+          : PARTICLE_COLOUR
+      }
       onNodeClick={handleNodeClick}
       onNodeHover={handleNodeHover}
       onNodeDrag={holdHub}
@@ -498,7 +636,17 @@ export function WikiGraph3D({
       d3VelocityDecay={0.6}
       d3AlphaDecay={0.04}
       warmupTicks={40}
-      onEngineTick={configureForces}
+      onEngineTick={() => {
+        configureForces();
+        if (!pivotSlugRef.current) return;
+        const graph = graphRef.current as unknown as { scene?: () => Scene };
+        const scene = graph.scene?.();
+        if (!scene) return;
+        const key = `${themeRef.current}:${shellsRef.current.join(",")}`;
+        if (decorKeyRef.current === key) return;
+        syncSystemDecor(scene, themeRef.current, shellsRef.current);
+        decorKeyRef.current = key;
+      }}
       onEngineStop={reframe}
     />
       <div

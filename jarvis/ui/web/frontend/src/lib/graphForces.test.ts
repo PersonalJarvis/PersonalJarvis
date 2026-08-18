@@ -10,6 +10,9 @@ import {
   LIVELINESS_BREATH,
   LIVELINESS_WOBBLE,
   createLivelinessForce,
+  createOrbitalForce,
+  createShellForce,
+  orbitPeriodMs,
   rhythmSeed,
   type LivelyNode,
 } from "@/lib/graphForces";
@@ -133,3 +136,84 @@ describe("createLivelinessForce", () => {
     expect(rhythmSeed(undefined)).toBeLessThanOrEqual(1);
   });
 });
+
+describe("createShellForce", () => {
+  it("pulls a page that drifted inward back out, and leaves the sun alone", () => {
+    const nodes: LivelyNode[] = [
+      { id: "me", x: 0, y: 0, z: 0, vx: 0, vz: 0 },
+      { id: "spotify", x: 20, y: 0, z: 0, vx: 0, vz: 0 },
+    ];
+    const force = createShellForce({
+      radiusOf: (n) => (n.id === "me" ? null : 80),
+      strength: 0.5,
+    });
+    force.initialize(nodes);
+    force(1);
+    expect(nodes[0].vx).toBe(0);
+    expect(nodes[1].vx).toBeGreaterThan(0);
+  });
+});
+
+describe("createOrbitalForce", () => {
+  it("never moves the sun", () => {
+    const nodes: LivelyNode[] = [
+      { id: "me", x: 0, y: 0, z: 0 },
+      { id: "spotify", x: 72, y: 0, z: 0 },
+    ];
+    let t = 0;
+    const force = createOrbitalForce({
+      now: () => t,
+      isPinned: (n) => n.id === "me",
+    });
+    force.initialize(nodes);
+    t = 4_000;
+    force(0);
+    expect(nodes[0]).toMatchObject({ x: 0, y: 0, z: 0 });
+  });
+
+  it("turns a page a quarter of its own period, and turns an inner page further", () => {
+    const inner: LivelyNode = { id: "close", x: 72, y: 0, z: 0 };
+    const outer: LivelyNode = { id: "far", x: 216, y: 0, z: 0 };
+    let t = 0;
+    const force = createOrbitalForce({
+      now: () => t,
+      isPinned: () => false,
+      direction: 1,
+    });
+    force.initialize([inner, outer]);
+    const quarter = orbitPeriodMs(72) / 4;
+    // The force caps a single step, so walk there in 80 ms bites.
+    for (let step = 80; step <= quarter; step += 80) {
+      t = step;
+      force(0);
+    }
+    const innerAngle = Math.atan2(inner.z ?? 0, inner.x ?? 0);
+    const outerAngle = Math.atan2(outer.z ?? 0, outer.x ?? 0);
+    expect(innerAngle).toBeGreaterThan(1.2);
+    expect(innerAngle).toBeLessThan(2.0);
+    expect(Math.abs(innerAngle)).toBeGreaterThan(Math.abs(outerAngle) + 0.4);
+    expect(Math.hypot(inner.x ?? 0, inner.z ?? 0)).toBeCloseTo(72, 5);
+  });
+
+  it("rotates a liveliness offset with the page so the two stay composed", () => {
+    const node: LivelyNode = {
+      id: "spotify",
+      x: 72,
+      y: 0,
+      z: 0,
+      __lively: { x: 4, y: 1, z: 0 },
+    };
+    let t = 0;
+    const force = createOrbitalForce({
+      now: () => t,
+      isPinned: () => false,
+    });
+    force.initialize([node]);
+    t = 80;
+    force(0);
+    const posAngle = Math.atan2(node.z ?? 0, node.x ?? 0);
+    const liveAngle = Math.atan2(node.__lively!.z, node.__lively!.x);
+    expect(liveAngle).toBeCloseTo(posAngle, 5);
+  });
+});
+

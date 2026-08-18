@@ -255,3 +255,150 @@ export function createLivelinessForce(options: LivelinessOptions): LivelinessFor
 
   return force;
 }
+
+// ----------------------------------------------------------------------
+// Shell + Kepler — the solar-system layer on top of the layout
+// ----------------------------------------------------------------------
+
+export interface ShellNode extends SimNode {
+  id?: string | number;
+}
+
+export interface ShellForce {
+  (alpha: number): void;
+  initialize: (nodes: ShellNode[]) => void;
+}
+
+export interface ShellForceOptions {
+  /** Preferred horizontal radius. `null` skips the node (the sun). */
+  radiusOf: (node: ShellNode) => number | null;
+  /** Pull per unit of radial error. Soft — a belt, not a rail. */
+  strength?: number;
+}
+
+/**
+ * Floor so the pull still holds after d3's alpha has gone cold. The engine
+ * keeps ticking for the liveliness / orbit, and without a rest strength the
+ * pages would slowly walk off their band.
+ */
+const SHELL_ALPHA_FLOOR = 0.18;
+
+/** Soft enough that the wave and the wobble still read; strong enough to hold a belt. */
+export const SHELL_STRENGTH = 0.07;
+
+/**
+ * Ease each page toward its shell radius in the horizontal plane.
+ *
+ * Only the distance from the sun is constrained. Angle, height and the
+ * liveliness offset are left alone — that is what keeps this from becoming
+ * a set of railroad tracks.
+ */
+export function createShellForce(options: ShellForceOptions): ShellForce {
+  const strength = options.strength ?? SHELL_STRENGTH;
+  let nodes: ShellNode[] = [];
+
+  const force = ((alpha: number): void => {
+    const k = strength * Math.max(alpha, SHELL_ALPHA_FLOOR);
+    if (k === 0) return;
+    for (const node of nodes) {
+      const target = options.radiusOf(node);
+      if (target === null) continue;
+      const x = node.x ?? 0;
+      const z = node.z ?? 0;
+      const reach = Math.hypot(x, z);
+      if (reach < 1e-6) continue;
+      const pull = ((reach - target) / reach) * k;
+      node.vx = (node.vx ?? 0) - x * pull;
+      node.vz = (node.vz ?? 0) - z * pull;
+    }
+  }) as ShellForce;
+
+  force.initialize = (next: ShellNode[]): void => {
+    nodes = next ?? [];
+  };
+
+  return force;
+}
+
+export interface OrbitalForce {
+  (alpha: number): void;
+  initialize: (nodes: LivelyNode[]) => void;
+}
+
+export interface OrbitalForceOptions {
+  now: () => number;
+  isPinned: (node: LivelyNode) => boolean;
+  /** Sign of the turn in the XZ plane. +1 is +atan2. */
+  direction?: number;
+}
+
+/**
+ * Period at the reference radius. Inner pages go faster (Kepler: T ∝ r^1.5),
+ * so a neighbour of the sun laps the kuiper belt instead of the whole sky
+ * turning as one rigid body — the thing that made the last cut feel cheap.
+ */
+export const ORBIT_REFERENCE_RADIUS = 72;
+export const ORBIT_REFERENCE_PERIOD_MS = 36_000;
+
+/** Opposite the camera's clockwise turn, so the planets actually sweep past. */
+export const PLANET_ORBIT_DIRECTION = 1;
+
+/** Cap a stalled frame so a tab-switch does not jump a page a quarter-turn. */
+const ORBIT_MAX_STEP_MS = 100;
+
+export function orbitPeriodMs(radius: number): number {
+  const r = Math.max(radius, 1);
+  return ORBIT_REFERENCE_PERIOD_MS * (r / ORBIT_REFERENCE_RADIUS) ** 1.5;
+}
+
+/**
+ * Walk each page around the sun at its own speed.
+ *
+ * Applied as a rotation of the current position (and of the liveliness
+ * offset, so the two stay composed). The hub is left alone.
+ */
+export function createOrbitalForce(options: OrbitalForceOptions): OrbitalForce {
+  const direction = options.direction ?? PLANET_ORBIT_DIRECTION;
+  let nodes: LivelyNode[] = [];
+  let last = options.now();
+
+  const force = ((_alpha: number): void => {
+    const now = options.now();
+    const elapsed = Math.min(Math.max(now - last, 0), ORBIT_MAX_STEP_MS);
+    last = now;
+    if (elapsed === 0) return;
+
+    for (const node of nodes) {
+      if (options.isPinned(node)) continue;
+      const x = node.x ?? 0;
+      const z = node.z ?? 0;
+      const reach = Math.hypot(x, z);
+      if (reach < 1e-6) continue;
+
+      const angle = direction * (elapsed / orbitPeriodMs(reach)) * Math.PI * 2;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      node.x = x * cos - z * sin;
+      node.z = x * sin + z * cos;
+
+      const vx = node.vx ?? 0;
+      const vz = node.vz ?? 0;
+      node.vx = vx * cos - vz * sin;
+      node.vz = vx * sin + vz * cos;
+
+      const lively = node.__lively;
+      if (lively) {
+        const lx = lively.x;
+        const lz = lively.z;
+        lively.x = lx * cos - lz * sin;
+        lively.z = lx * sin + lz * cos;
+      }
+    }
+  }) as OrbitalForce;
+
+  force.initialize = (next: LivelyNode[]): void => {
+    nodes = next ?? [];
+  };
+
+  return force;
+}

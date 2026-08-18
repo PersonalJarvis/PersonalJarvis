@@ -58,7 +58,39 @@ describe("WikiGraph3D hub pin", () => {
     expect(nodes[0]).toMatchObject({
       x: 0, y: 0, z: 0, fx: 0, fy: 0, fz: 0,
     });
-    expect(nodes[1]).toMatchObject({ x: 100, y: 0, z: 0 });
+    // The neighbour is seated on a shell, not left where the pin translated it.
+    expect(Math.hypot(nodes[1].x ?? 0, nodes[1].z ?? 0)).toBeGreaterThan(50);
+    expect(nodes[1].fx).toBeUndefined();
+  });
+
+  it("seats a neighbour of the sun closer in than an isolated page", () => {
+    const nodes = [
+      node("me", { x: 0, y: 0, z: 0 }),
+      node("spotify", { x: 1, y: 0, z: 0 }),
+      node("lost", { x: 2, y: 0, z: 0 }),
+    ];
+    const links = [
+      { source: "me", target: "spotify", context: "plays", broken: false },
+    ];
+
+    render(
+      <WikiGraph3D
+        graphData={{ nodes, links }}
+        width={400}
+        height={300}
+        pivotSlug="me"
+        onNodeClick={vi.fn()}
+        resetSignal={0}
+        nodeLabel={() => ""}
+        linkLabel={() => ""}
+      />,
+    );
+
+    const inner = Math.hypot(nodes[1].x ?? 0, nodes[1].z ?? 0);
+    const outer = Math.hypot(nodes[2].x ?? 0, nodes[2].z ?? 0);
+    expect(inner).toBeGreaterThan(50);
+    expect(inner).toBeLessThan(110);
+    expect(outer).toBeGreaterThan(inner + 80);
   });
 
   it("leaves every page free when the vault has no hub", () => {
