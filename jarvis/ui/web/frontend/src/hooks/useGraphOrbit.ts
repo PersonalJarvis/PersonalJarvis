@@ -9,10 +9,16 @@
  * The motion is ONE thing: a steady clockwise turn around a fixed pivot, seen
  * from a raised camera so the turn reads as a rotation about a point rather
  * than nodes sliding sideways (maintainer decision 2026-08-18: "always
- * rotates around a fixed point, clockwise"). No rise and fall on top — a
- * bobbing camera made the pivot itself look like it was drifting. It is
- * still ambient, not animation: a full turn takes well over a minute, and
- * you can read a label while it moves.
+ * rotates around a fixed point, clockwise"), with a slow nod on top. It is
+ * ambient, not animation: a full turn takes about a minute, and you can read
+ * a label while it moves.
+ *
+ * And it is CONTINUOUS. Nothing in here ever sets the camera somewhere else
+ * in one go once it is running: a re-frame (new data, a settled layout, the
+ * Center button, a resize) only moves the target, and every frame the loop
+ * eases distance and centre a little toward it. The first cut tweened the
+ * camera on every re-frame and parked the drift around the tween — five
+ * lurches after each data change, and a step in height on every resume.
  *
  * Three things stop it, and all three matter:
  *  - The user touching the map. Nothing is more irritating than a view that
@@ -27,6 +33,8 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 
 import {
+  approach,
+  approachPoint,
   framingAround,
   framingFor,
   orbitDistance,
@@ -77,6 +85,17 @@ const SWING_MS = 61_000;
 /** How long after the user's last touch the drift picks back up. */
 const RESUME_AFTER_MS = 3_500;
 
+/**
+ * How quickly the camera glides to a new framing. Re-framing used to be a
+ * 700 ms tween with the drift parked around it, and it happened five times
+ * after every data change; each one was a visible lurch (maintainer,
+ * 2026-08-18: "it teleports, it snaps"). Now a re-frame only sets a TARGET
+ * distance and centre, and the drift loop eases toward them every frame with
+ * these time constants — the turn never stops, the height never jumps.
+ */
+const DISTANCE_TAU_MS = 1_600;
+const CENTRE_TAU_MS = 900;
+
 /** Share of the frame the network fills once framed. */
 const FILL = 0.94;
 
@@ -110,6 +129,8 @@ export function useGraphOrbit({
     azimuth: 0,
     elevation: BASE_ELEVATION,
   });
+  /** Where a re-frame wants the camera; the loop glides there. */
+  const targetRef = useRef<{ centre: Vec3; distance: number } | null>(null);
   const pausedUntilRef = useRef(0);
   const resyncRef = useRef(false);
   // Read once per mount rather than per frame; the array identity changes on
@@ -123,8 +144,12 @@ export function useGraphOrbit({
   /** The height the swing oscillates around — ours, or the user's after a drag. */
   const baseElevationRef = useRef(BASE_ELEVATION);
 
-  /** Point the camera at the middle of the network, far enough back to see it. */
-  const frame = useCallback((transitionMs = 700): void => {
+  /**
+   * Decide where the camera should stand: the middle of the network and how
+   * far back. Only the FIRST framing places the camera; every later one just
+   * moves the target, and the drift loop glides there.
+   */
+  const frame = useCallback((): void => {
     const graph = graphRef.current;
     if (!graph) return;
     const framing = pivotRef.current
@@ -139,29 +164,14 @@ export function useGraphOrbit({
       camera?.aspect ?? 1,
       FILL,
     );
-    centreRef.current = framing.centre;
-    // Keep whatever angle the camera is already at — re-framing is about how
-    // far back you stand, not about turning the map back to the front.
-    const current = camera?.position
-      ? orbitFrom(framing.centre, camera.position)
-      : null;
-    baseElevationRef.current = BASE_ELEVATION;
-    orbitRef.current = {
-      distance,
-      azimuth: current?.azimuth ?? 0,
-      elevation: BASE_ELEVATION,
-    };
-    graph.cameraPosition(
-      orbitPoint(framing.centre, orbitRef.current),
-      framing.centre,
-      transitionMs,
-    );
-    // Our own move must not be mistaken for the user's, but the transition
-    // does need to finish before the drift starts nudging the camera again.
-    pausedUntilRef.current = Math.max(
-      pausedUntilRef.current,
-      performance.now() + transitionMs + 60,
-    );
+    targetRef.current = { centre: framing.centre, distance };
+
+    if (orbitRef.current.distance === 0) {
+      // Nothing on screen yet: stand there at once, and start the turn.
+      centreRef.current = framing.centre;
+      orbitRef.current = { distance, azimuth: 0, elevation: BASE_ELEVATION };
+      graph.cameraPosition(orbitPoint(framing.centre, orbitRef.current), framing.centre, 0);
+    }
   }, [graphRef]);
 
   useEffect(() => {
@@ -218,35 +228,41 @@ export function useGraphOrbit({
       const graph = graphRef.current;
       if (!graph || orbitRef.current.distance === 0) return;
 
+      const swing = Math.sin(swingPhaseRef.current) * ELEVATION_SWING;
       if (resyncRef.current) {
         // Carry on from wherever the user left the camera — their angle,
         // their height, how far out they zoomed — instead of yanking it back
         // to our own. The pivot stays ours: the turn continues around the
-        // same point, just from where they parked the view.
+        // same point, just from where they parked the view. Their zoom
+        // becomes the new target too, so the glide does not creep back.
         const camera = graph.camera();
         if (camera?.position) {
           const seen = orbitFrom(centreRef.current, camera.position);
           if (seen.distance > 0) {
             orbitRef.current = seen;
-            baseElevationRef.current = seen.elevation;
+            // Take the swing back out so the resting height is theirs and the
+            // swing continues from where it is — no step on resume.
+            baseElevationRef.current = clampElevation(seen.elevation - swing);
+            if (targetRef.current) targetRef.current = { ...targetRef.current, distance: seen.distance };
           }
         }
         resyncRef.current = false;
       }
 
-      // The pivot node keeps moving while the layout settles (and again after
-      // new data); following it each frame is what makes the turn stay
-      // centred on the page rather than on where it was when we framed.
+      // Where the turn is centred: the pivot page, read live because the
+      // layout keeps moving it (settling, new data), else the framed middle.
+      // Eased, never set — a re-frame or a settling pivot glides the view.
       const pivotNode = pivotRef.current;
-      if (pivotNode && Number.isFinite(pivotNode.x)) {
-        centreRef.current = {
-          x: pivotNode.x ?? 0,
-          y: pivotNode.y ?? 0,
-          z: pivotNode.z ?? 0,
-        };
-      }
+      const wanted: Vec3 =
+        pivotNode && Number.isFinite(pivotNode.x)
+          ? { x: pivotNode.x ?? 0, y: pivotNode.y ?? 0, z: pivotNode.z ?? 0 }
+          : (targetRef.current?.centre ?? centreRef.current);
+      centreRef.current = approachPoint(centreRef.current, wanted, elapsed, CENTRE_TAU_MS);
 
       const orbit = orbitRef.current;
+      if (targetRef.current) {
+        orbit.distance = approach(orbit.distance, targetRef.current.distance, elapsed, DISTANCE_TAU_MS);
+      }
       orbit.azimuth = stepAzimuth(orbit.azimuth, elapsed, REVOLUTION_MS);
       swingPhaseRef.current += (elapsed / SWING_MS) * Math.PI * 2;
       orbit.elevation = clampElevation(

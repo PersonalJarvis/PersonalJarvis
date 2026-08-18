@@ -78,7 +78,7 @@ export function createCentringForce(strength: number): CentringForce {
 export const CENTRING_STRENGTH = 0.04;
 
 // ----------------------------------------------------------------------
-// Liveliness — every page but the pivot keeps moving on its own
+// Liveliness — every page but the pivot keeps moving, together
 // ----------------------------------------------------------------------
 
 /**
@@ -102,20 +102,60 @@ export interface LivelinessOptions {
   now: () => number;
   /** True for the node that must not move — the pivot the map turns around. */
   isPinned: (node: LivelyNode) => boolean;
-  /** Peak vertical displacement, graph units. */
+  /**
+   * Where the network breathes from — the pivot's position when there is
+   * one, else the origin. Read every tick, so a moving pivot is followed.
+   */
+  centre?: () => Vec3Like;
+  /** Peak height of the wave, graph units. */
   amplitude?: number;
-  /** Radius of the small horizontal loop each node adds to its bob. */
-  sway?: number;
-  /** Shortest and longest full bob, milliseconds — each node gets its own. */
-  periodMs?: [number, number];
+  /** One full wave cycle at a fixed point, milliseconds. */
+  wavePeriodMs?: number;
+  /** Distance between two crests, graph units. */
+  wavelength?: number;
+  /** Peak in-and-out of the breathing, as a share of the distance from centre. */
+  breath?: number;
+  /** One full breath, milliseconds. */
+  breathPeriodMs?: number;
+  /** Peak of each page's own small drift, graph units. */
+  wobble?: number;
 }
 
-/** Bob height, in graph units. Link distance is 85, a node radius 3–8. */
-export const LIVELINESS_AMPLITUDE = 9;
-/** Radius of the sideways loop. */
-export const LIVELINESS_SWAY = 3;
-/** One full bob takes between these — brisk, and never the same for two pages. */
-export const LIVELINESS_PERIOD_MS: [number, number] = [2_600, 4_600];
+interface Vec3Like {
+  x?: number;
+  y?: number;
+  z?: number;
+}
+
+/**
+ * The motion, on top of whatever the layout does.
+ *
+ * Three layers, all slow sinusoids, so nothing ever jumps:
+ *  - a WAVE rolls through the network: every page bobs up and down, and
+ *    its phase depends on where it stands, so neighbours move almost
+ *    together and a crest travels across the map — a thing to follow with
+ *    the eye rather than noise to be annoyed by;
+ *  - the whole network BREATHES: pages ease a little away from the pivot
+ *    and back, together;
+ *  - each page adds a small WOBBLE of its own, so no two move exactly alike.
+ *
+ * The first cut gave every page an independent rhythm; the maintainer read
+ * that as random and jerky (2026-08-18). Coherence is what makes it calm.
+ *
+ * It is applied as a DELTA: the force remembers the offset it applied last
+ * tick and swaps it for this tick's, so it composes with the layout at any
+ * alpha — while the pages are still flying apart after new data, and once
+ * they have settled and alpha has gone to zero (this force ignores alpha on
+ * purpose; the layout's forces fade out, the life must not). The pivot is
+ * left exactly where the layout puts it, so the point the map turns around
+ * stays a point.
+ */
+export const LIVELINESS_AMPLITUDE = 10;
+export const LIVELINESS_WAVE_PERIOD_MS = 5_200;
+export const LIVELINESS_WAVELENGTH = 240;
+export const LIVELINESS_BREATH = 0.035;
+export const LIVELINESS_BREATH_PERIOD_MS = 9_000;
+export const LIVELINESS_WOBBLE = 1.6;
 
 /** A small, stable hash of a node id — the same page always gets the same rhythm. */
 export function rhythmSeed(id: string | number | undefined): number {
@@ -128,45 +168,79 @@ export function rhythmSeed(id: string | number | undefined): number {
   return (h >>> 0) / 4294967295; // 0..1
 }
 
+/** The wave travels along this direction in the horizontal plane. */
+const WAVE_DIR = { x: Math.cos(0.6), z: Math.sin(0.6) };
+
 /**
- * The motion, on top of whatever the layout does.
- *
- * The maintainer's ask (2026-08-18): the pages must not turn as one rigid
- * body around the pivot — every page but the pivot should move on its own,
- * up and down, quickly enough not to be boring. So each node gets a bob in
- * `y` and a small loop in `x`/`z`, with a period and a phase of its own,
- * derived from its id so a page keeps its rhythm across re-renders and two
- * neighbours never move in step.
- *
- * It is applied as a DELTA: the force remembers the offset it applied last
- * tick and swaps it for this tick's, so it composes with the layout at any
- * alpha — while the pages are still flying apart after new data, and once
- * they have settled and alpha has gone to zero (this force ignores alpha on
- * purpose; the layout's forces fade out, the life must not). The pivot is
- * left exactly where the layout puts it, so the point the map turns around
- * stays a point.
+ * The offset the force wants for one node at time `t`, given the node's
+ * layout position `base` (its position minus the current offset). Pure, so
+ * the shape of the motion is testable on its own.
  */
+export function livelyOffset(
+  base: Vec3Like,
+  seed: number,
+  t: number,
+  centre: Vec3Like,
+  options: Required<Pick<LivelinessOptions, "amplitude" | "wavePeriodMs" | "wavelength" | "breath" | "breathPeriodMs" | "wobble">>,
+): { x: number; y: number; z: number } {
+  const bx = base.x ?? 0;
+  const by = base.y ?? 0;
+  const bz = base.z ?? 0;
+  const cx = centre.x ?? 0;
+  const cy = centre.y ?? 0;
+  const cz = centre.z ?? 0;
+
+  // The wave: phase from position along the travel direction, plus a small
+  // personal offset so the crest is not a ruler-straight line.
+  const along = (bx - cx) * WAVE_DIR.x + (bz - cz) * WAVE_DIR.z;
+  const wavePhase =
+    (t / options.wavePeriodMs) * Math.PI * 2 -
+    (along / options.wavelength) * Math.PI * 2 +
+    (seed - 0.5) * 0.9;
+  const wave = Math.sin(wavePhase) * options.amplitude;
+
+  // The breath: radial, shared by all, scaled by how far out the page sits.
+  const dx = bx - cx;
+  const dy = by - cy;
+  const dz = bz - cz;
+  const breathScale = Math.sin((t / options.breathPeriodMs) * Math.PI * 2) * options.breath;
+
+  // The wobble: a slow personal loop, its period from the seed (7–11 s).
+  const wobblePeriod = 7_000 + seed * 4_000;
+  const wobbleAngle = (t / wobblePeriod) * Math.PI * 2 + seed * Math.PI * 2;
+
+  return {
+    x: dx * breathScale + Math.cos(wobbleAngle) * options.wobble,
+    y: wave + dy * breathScale,
+    z: dz * breathScale + Math.sin(wobbleAngle) * options.wobble,
+  };
+}
+
 export function createLivelinessForce(options: LivelinessOptions): LivelinessForce {
-  const amplitude = options.amplitude ?? LIVELINESS_AMPLITUDE;
-  const sway = options.sway ?? LIVELINESS_SWAY;
-  const [minPeriod, maxPeriod] = options.periodMs ?? LIVELINESS_PERIOD_MS;
+  const shape = {
+    amplitude: options.amplitude ?? LIVELINESS_AMPLITUDE,
+    wavePeriodMs: options.wavePeriodMs ?? LIVELINESS_WAVE_PERIOD_MS,
+    wavelength: options.wavelength ?? LIVELINESS_WAVELENGTH,
+    breath: options.breath ?? LIVELINESS_BREATH,
+    breathPeriodMs: options.breathPeriodMs ?? LIVELINESS_BREATH_PERIOD_MS,
+    wobble: options.wobble ?? LIVELINESS_WOBBLE,
+  };
+  const centreOf = options.centre ?? (() => ({ x: 0, y: 0, z: 0 }));
   let nodes: LivelyNode[] = [];
 
   const force = ((_alpha: number): void => {
     const t = options.now();
+    const centre = centreOf();
     for (const node of nodes) {
       const previous = node.__lively ?? { x: 0, y: 0, z: 0 };
       let next = { x: 0, y: 0, z: 0 };
       if (!options.isPinned(node)) {
-        const seed = rhythmSeed(node.id);
-        const period = minPeriod + (maxPeriod - minPeriod) * seed;
-        const phase = seed * Math.PI * 2;
-        const angle = (t / period) * Math.PI * 2 + phase;
-        next = {
-          x: Math.cos(angle * 0.5) * sway,
-          y: Math.sin(angle) * amplitude,
-          z: Math.sin(angle * 0.5) * sway,
+        const base = {
+          x: (node.x ?? 0) - previous.x,
+          y: (node.y ?? 0) - previous.y,
+          z: (node.z ?? 0) - previous.z,
         };
+        next = livelyOffset(base, rhythmSeed(node.id), t, centre, shape);
       }
       node.x = (node.x ?? 0) + (next.x - previous.x);
       node.y = (node.y ?? 0) + (next.y - previous.y);

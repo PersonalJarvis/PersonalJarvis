@@ -46,6 +46,7 @@ import {
   createLivelinessForce,
   type LivelyNode,
 } from "@/lib/graphForces";
+import { carryOverPositions } from "@/lib/graphContinuity";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
 
@@ -190,6 +191,8 @@ export function WikiGraph3D({
   }, [graphData]);
   const pivotSlugRef = useRef(pivotSlug);
   pivotSlugRef.current = pivotSlug;
+  /** The live pivot node object (set below, once the data is known). */
+  const pivotNodeRef = useRef<Partial<Vec3> | null>(null);
   const reducedMotion = useMemo(
     () =>
       typeof window.matchMedia === "function" &&
@@ -244,6 +247,14 @@ export function WikiGraph3D({
         createLivelinessForce({
           now: () => performance.now(),
           isPinned: (node: LivelyNode) => node.id === pivotSlugRef.current,
+          // The network breathes from the pivot page, wherever the layout
+          // has it this tick; from the origin when the vault has no pivot.
+          centre: () => {
+            const pivot = pivotNodeRef.current;
+            return pivot && Number.isFinite(pivot.x)
+              ? { x: pivot.x ?? 0, y: pivot.y ?? 0, z: pivot.z ?? 0 }
+              : { x: 0, y: 0, z: 0 };
+          },
         }),
       );
     }
@@ -263,6 +274,7 @@ export function WikiGraph3D({
     () => (pivotSlug ? (graphData.nodes.find((n) => n.id === pivotSlug) ?? null) : null),
     [graphData.nodes, pivotSlug],
   );
+  pivotNodeRef.current = pivotNode as Partial<Vec3> | null;
 
   useGraphOrbit({
     graphRef: graphRef as RefObject<GraphCameraApi | undefined>,
@@ -389,7 +401,22 @@ export function WikiGraph3D({
     [],
   );
 
-  const data = useMemo(() => graphData, [graphData]);
+  // New data must not explode the map. The renderer seeds every node that
+  // arrives without a position from scratch, so before a new generation
+  // reaches it, pages that were on the map keep the place (and the
+  // liveliness offset) their previous object had, and a NEW page is seated
+  // next to the pages it links to. Same objects the simulation integrates,
+  // mutated once per generation, before the renderer sees them.
+  const previousNodesRef = useRef<RenderNode[]>([]);
+  const data = useMemo(() => {
+    const previous = previousNodesRef.current;
+    if (previous !== graphData.nodes) {
+      const pivot = previous.find((n) => n.id === pivotSlugRef.current);
+      carryOverPositions(previous, graphData.nodes, graphData.links, pivot ?? {});
+      previousNodesRef.current = graphData.nodes;
+    }
+    return graphData;
+  }, [graphData]);
 
   return (
     // The renderer paints into its own canvas; this wrapper is what the camera

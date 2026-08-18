@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   framingAround,
   ORBIT_DIRECTION,
+  approach,
   framingFor,
   orbitDistance,
   orbitFrom,
@@ -211,5 +212,36 @@ describe("the ambient drift", () => {
       const eye = orbitPoint(centre, { distance: 120, azimuth, elevation: 1.0 });
       expect(Math.hypot(eye.x - centre.x, eye.y - centre.y, eye.z - centre.z)).toBeCloseTo(120, 6);
     }
+  });
+});
+
+describe("approach", () => {
+  it("closes the same share of the gap per unit of time, whatever the frame rate", () => {
+    // Sixty small steps and one big step of the same total time land in the
+    // same place — the easing does not depend on how often it is called.
+    let fine = 0;
+    for (let i = 0; i < 60; i++) fine = approach(fine, 100, 1000 / 60, 800);
+    const coarse = approach(0, 100, 1000, 800);
+    expect(fine).toBeCloseTo(coarse, 6);
+    // …and after one time constant about 63 % of the way.
+    expect(approach(0, 100, 800, 800)).toBeCloseTo(63.2, 0);
+  });
+
+  it("never overshoots and never jumps", () => {
+    let value = 0;
+    let previous = 0;
+    for (let i = 0; i < 200; i++) {
+      value = approach(value, 100, 16, 800);
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(100);
+      // One 60 fps step closes at most ~2 % of the gap.
+      expect(value - previous).toBeLessThan(2.1);
+      previous = value;
+    }
+  });
+
+  it("snaps only when there is nothing to ease from", () => {
+    expect(approach(Number.NaN, 5, 16, 800)).toBe(5);
+    expect(approach(3, 5, 0, 800)).toBe(3);
   });
 });

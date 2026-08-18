@@ -257,3 +257,27 @@ function normalise(v: Vec3): Vec3 {
   const length = Math.sqrt(dot(v, v)) || 1;
   return { x: v.x / length, y: v.y / length, z: v.z / length };
 }
+
+/**
+ * Move `current` toward `target` the way a damped thing does: the same share
+ * of the remaining gap per unit of time, whatever the frame rate. `tauMs` is
+ * the time constant — after one tau, 63 % of the gap is closed; after three,
+ * 95 %. This is what lets a re-frame change where the camera should stand
+ * without the camera ever jumping there: the drift loop eases toward the new
+ * value every frame, and the motion stays continuous.
+ */
+export function approach(current: number, target: number, elapsedMs: number, tauMs: number): number {
+  if (!Number.isFinite(current)) return target;
+  if (tauMs <= 0 || elapsedMs <= 0) return current;
+  const share = 1 - Math.exp(-elapsedMs / tauMs);
+  return current + (target - current) * share;
+}
+
+/** `approach`, for a point. */
+export function approachPoint(current: Vec3, target: Vec3, elapsedMs: number, tauMs: number): Vec3 {
+  return {
+    x: approach(current.x, target.x, elapsedMs, tauMs),
+    y: approach(current.y, target.y, elapsedMs, tauMs),
+    z: approach(current.z, target.z, elapsedMs, tauMs),
+  };
+}
