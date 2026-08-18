@@ -24,6 +24,11 @@ tests/unit/plugins/tool/test_spawn_worker_ack.py
 jarvis/voice/instant_ack.py
 tests/unit/voice/test_instant_ack.py
 
+# --- Parked results (ADR-0034, 2026-08-18): the closed de/en/es wait-query
+#     vocabulary, the re-anchoring pools, and the fixtures that pin them ---
+jarvis/voice/parked_results.py
+tests/unit/voice/test_parked_results.py
+
 # --- Smalltalk-head/action-tail guard: the verbatim German voice utterances
 #     (the live Bill-Gates turn) ARE the regression fixtures under test ---
 tests/unit/brain/test_smalltalk_action_tail.py
