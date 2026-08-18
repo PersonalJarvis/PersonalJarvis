@@ -2552,9 +2552,17 @@ async def test_local_public_fact_uses_exactly_one_supervisor_search(
     assert len(brain.run_task_calls) == 1
     assert brain.run_task_calls[0]["allowed_tools"] == ()
     assert brain.calls == []
-    assert len(provider.session.text_inputs) == 1
-    assert "Ada Lovelace was born" in provider.session.text_inputs[0]
-    assert "according to the source" in provider.session.text_inputs[0]
+    # Exactly ONE result is spoken. An instant-ack line ("Quick online
+    # search, one moment.") may land before it on a slow runner — that is the
+    # ack racing the fake result, not a second search — so count results, not
+    # text inputs, and require the result to be the last thing injected.
+    results = [t for t in provider.session.text_inputs if "<trusted_action_result>" in t]
+    assert len(results) == 1
+    assert provider.session.text_inputs[-1] is results[0]
+    assert "Ada Lovelace was born" in results[0]
+    assert "according to the source" in results[0]
+    for line in provider.session.text_inputs[:-1]:
+        assert "still working on it" in line, line
 
 
 @pytest.mark.asyncio
