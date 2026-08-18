@@ -47,7 +47,8 @@ def test_handoff_variant_keeps_the_load_bearing_rules() -> None:
 def test_capability_limited_provider_gets_the_handoff_directive() -> None:
     limited = SimpleNamespace(supports_direct_tools=False)
     directive = _bare_session(limited)._tool_directive()
-    assert directive == session_mod._DELEGATE_ROLE_DIRECTIVE_HANDOFF
+    assert directive.startswith(session_mod._DELEGATE_ROLE_DIRECTIVE_HANDOFF)
+    assert "jarvis_action" not in directive
 
     directive = _bare_session(limited)._tool_directive(delegate_discouraged=True)
     assert directive.startswith(session_mod._DELEGATE_ROLE_DIRECTIVE_HANDOFF)
@@ -58,7 +59,7 @@ def test_capability_limited_provider_gets_the_handoff_directive() -> None:
 def test_direct_tool_provider_keeps_the_function_directive() -> None:
     capable = SimpleNamespace(supports_direct_tools=True)
     directive = _bare_session(capable)._tool_directive()
-    assert directive == session_mod._DELEGATE_ROLE_DIRECTIVE
+    assert directive.startswith(session_mod._DELEGATE_ROLE_DIRECTIVE)
     assert "jarvis_action" in directive
 
 
@@ -68,4 +69,5 @@ def test_open_probes_the_candidate_provider_not_the_last_active_one() -> None:
     candidate_limited = SimpleNamespace(supports_direct_tools=False)
     session = _bare_session(active_capable)
     directive = session._tool_directive(provider=candidate_limited)
-    assert directive == session_mod._DELEGATE_ROLE_DIRECTIVE_HANDOFF
+    assert directive.startswith(session_mod._DELEGATE_ROLE_DIRECTIVE_HANDOFF)
+    assert "jarvis_action" not in directive

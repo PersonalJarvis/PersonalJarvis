@@ -159,6 +159,18 @@ _TURN_STALL_POLL_S = 0.5
 # cutting it on a pause is exactly the bug this timing fixes.
 _UNBACKED_CLAIM_SETTLE_S = 0.35
 _UNBACKED_CLAIM_SETTLE_POLL_S = 0.05
+# An ``interrupted`` edge is a VAD boundary, never proof that the user spoke:
+# Gemini's server VAD reports a cough, a closing door and a real barge-in with
+# the same flag. WORDS are the proof, and they arrive moments later as the
+# final input transcript that already splits the turn. This is the bounded
+# escape hatch for the edge that no words ever confirm: while the provider
+# keeps producing, the edge demonstrably cut nothing and the answer runs on;
+# once the provider has been silent this long the generation really did end
+# there, and the interruption is committed exactly as it always was — late
+# enough that room noise no longer truncates a live answer. It is also the
+# hard cap on the extra overlap a genuine barge-in can cost.
+_INTERRUPTION_CONFIRM_WINDOW_S = 1.0
+_INTERRUPTION_SETTLE_POLL_S = 0.1
 # Withheld provider output used to leave no trace anywhere (AP-30): a turn could
 # be dropped in full and the log looked like a healthy call. Report it, bounded.
 _OUTPUT_DROP_LOG_INTERVAL_S = 2.0
@@ -609,6 +621,27 @@ _DELEGATE_PENDING_DIRECTIVE = (
     "failed, was saved, or was entered, and never promise to do it yourself. "
     "If the user asks about it, say only that you are still working on it. The "
     "trusted result will be injected as soon as it is ready."
+)
+# ONE role, ONE turn-scoped line. The role is the model's standing job and
+# never moves inside a call; the mode line is the only thing a turn may change,
+# and it says so itself. Shipping role+mode as one text per turn is what made
+# the role look unstable (RT-08): the steering channel is APPEND-only, so the
+# model ended up holding three full 3.6k role texts side by side, each with a
+# different order glued to its end — "CALL jarvis_action for EVERY turn that
+# needs the user's world", "answer directly now, call no function", "do not
+# answer at all" — and nothing ever retracted the previous one. On borderline
+# turns it then followed whichever it liked. This prefix is the retraction.
+_TURN_MODE_PREFIX = (
+    "TURN MODE — applies to the current turn only and replaces the turn mode "
+    "of every earlier turn. Your standing role is unchanged by it. "
+)
+# The turn the planner found unremarkable. It is a real sentence and never an
+# empty string on purpose: an empty directive retracts nothing, so the "do not
+# answer at all" line of a previous turn would simply keep standing.
+_DELEGATE_TURN_NORMAL_DIRECTIVE = (
+    "Nothing about this turn changes how you work. Follow your standing role: "
+    "delegate what needs the user's own world, and answer general world "
+    "knowledge yourself, right away."
 )
 
 
@@ -1883,6 +1916,13 @@ class RealtimeVoiceSession:
         self._late_delegate_flush_task: asyncio.Task[None] | None = None
         self._user_speech_active = False
         self._deferred_provider_speech_start = False
+        # An ``interrupted`` edge awaiting the user's words (RT-09). Non-zero
+        # while a deferral is live, and refreshed by every accepted provider
+        # event, so the settle task measures provider SILENCE since the edge
+        # rather than wall time since it.
+        self._interruption_deferred_at = 0.0
+        self._interruption_settle_task: asyncio.Task[None] | None = None
+        self._unconfirmed_interruptions = 0
         self._external_update: _ExternalUpdateState | None = None
         # from_brain returns None when no public supervisor gateway is ready.
         # Say so, or a tool-less session is indistinguishable from a healthy one.
@@ -3439,6 +3479,13 @@ class RealtimeVoiceSession:
                 self._note_turn_activity()
                 if not await self._accept_provider_response_event(event):
                     continue
+                if self._interruption_deferred_at:
+                    # Accepted provider traffic proves a deferred ``interrupted``
+                    # edge cut nothing: the response is still being produced.
+                    # Measured HERE and not from ``_turn_activity_at``, which the
+                    # stall watchdog keeps refreshing on its own while the gate
+                    # holds PCM — the settle backstop would then never fire.
+                    self._interruption_deferred_at = time.monotonic()
                 if event.type == "input_transcript":
                     transcript = _dictionary_corrected(str(event.text or "").strip())
                     transcription_failed = bool(event.error)
@@ -3805,15 +3852,21 @@ class RealtimeVoiceSession:
                         tools_changed = bool(
                             callable(refresh_tools) and refresh_tools()
                         )
-                        turn_tool_directive = self._tool_directive(
-                            delegate_required=self._delegate_required_for_turn,
-                            action_pending=(
+                        turn_mode_kwargs = {
+                            "delegate_required": self._delegate_required_for_turn,
+                            "action_pending": (
                                 self._has_pending_delegate_from_earlier_turn()
                             ),
-                            delegate_discouraged=(
+                            "delegate_discouraged": (
                                 not turn_plan.requires_orchestrator
                                 and not ambiguous_action_default
                             ),
+                        }
+                        turn_tool_directive = self._tool_directive(
+                            **turn_mode_kwargs
+                        )
+                        turn_mode_directive = self._turn_mode_directive(
+                            **turn_mode_kwargs
                         )
                         update_kwargs: dict[str, Any] = {
                             "instructions": _session_instructions(
@@ -3840,12 +3893,16 @@ class RealtimeVoiceSession:
                                 ),
                             ),
                             "language": new_language,
-                            # For append-only transports: the turn-scoped
-                            # directive travels separately so the adapter can
-                            # supersede the previous one whole instead of
-                            # leaving contradictory "this current turn" texts
-                            # standing in the thread.
-                            "turn_directive": turn_tool_directive,
+                            # For append-only transports: ONLY the turn-scoped
+                            # mode line, never the standing role. The role is
+                            # delivered once with this connection's fixed
+                            # instructions and does not move for the rest of
+                            # the call; sending it again per turn is what left
+                            # three contradictory full role texts standing in
+                            # the thread with nothing retracted (RT-08). The
+                            # mode line names itself as replacing the previous
+                            # one, and an unchanged mode dedups to nothing.
+                            "turn_directive": turn_mode_directive,
                             # Re-asserted every turn on the adapter's working
                             # channel: the one-speaker rule delivered once at
                             # open demonstrably fades on ChatGPT-Live while
@@ -4417,12 +4474,39 @@ class RealtimeVoiceSession:
                             self.session_id,
                             event.type,
                         )
+                    # No settle task here: this window is owned by the delegate,
+                    # whose own budget and readback watchdog decide when it is
+                    # over. A silence timer would abandon exactly the turn this
+                    # branch exists to protect.
                     self._deferred_provider_speech_start = True
-                elif event.type in {"speech_started", "interrupted"}:
+                elif event.type == "interrupted":
+                    # The SAME ambiguity, now while a reply is actually being
+                    # spoken. Acting on the edge alone cancelled the answer and
+                    # armed the withhold that discards the rest of the response,
+                    # so one cough cost the user half a statement — worse than
+                    # none, because half a statement still gets believed. Words
+                    # are the proof of a barge-in and they arrive moments later
+                    # as the final input transcript, which already splits the
+                    # turn and cuts the reply. Until then the answer runs on,
+                    # and the settle task below commits the edge unchanged if
+                    # the provider falls silent without ever being confirmed.
+                    #
+                    # ``speech_started`` is deliberately NOT deferred here: the
+                    # transports that emit it (OpenAI) mean it literally, and
+                    # their barge-in must stay instant.
+                    if not self._deferred_provider_speech_start:
+                        self._unconfirmed_interruptions += 1
+                        log.info(
+                            "realtime[%s] deferred an unconfirmed provider "
+                            "interruption; waiting for the user's own words "
+                            "before cutting the reply",
+                            self.session_id,
+                        )
+                    self._deferred_provider_speech_start = True
+                    self._arm_interruption_settle()
+                elif event.type == "speech_started":
                     await self._begin_user_speech_turn()
-                    await self._barge_in(
-                        interrupt_provider=event.type == "speech_started"
-                    )
+                    await self._barge_in(interrupt_provider=True)
                 elif event.type == "tool_call":
                     if str(getattr(event, "tool_name", "") or "") == "end_call":
                         await self._ensure_turn_started()
@@ -5804,6 +5888,89 @@ class RealtimeVoiceSession:
         )
         return True
 
+    def _cancel_interruption_settle(self) -> None:
+        self._interruption_deferred_at = 0.0
+        task = self._interruption_settle_task
+        self._interruption_settle_task = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
+    def _arm_interruption_settle(self) -> None:
+        """Bound one deferred ``interrupted`` edge (RT-09).
+
+        Deferring is free while the answer keeps arriving — the edge cut
+        nothing and the reply runs on. It is not free when the generation
+        really did end there: the gate's held PCM makes the 20 s stall
+        watchdog excuse the silence forever, so the turn would wait for a
+        boundary that is never coming. This task closes exactly that gap by
+        committing the interruption unchanged once the provider has been
+        silent for ``_INTERRUPTION_CONFIRM_WINDOW_S``. Re-armed per deferral
+        and cancelled with the turn (AP-19).
+        """
+        self._interruption_deferred_at = time.monotonic()
+        task = self._interruption_settle_task
+        if task is not None and not task.done():
+            return
+        turn_id = self._turn_id
+        self._interruption_settle_task = asyncio.create_task(
+            self._commit_interruption_after_silence(turn_id),
+            name=f"rt-interrupt-settle-{self.session_id}",
+        )
+
+    async def _commit_interruption_after_silence(self, turn_id: str) -> None:
+        """Cut the reply a deferred edge spared once the provider goes quiet."""
+        try:
+            while True:
+                await asyncio.sleep(_INTERRUPTION_SETTLE_POLL_S)
+                if (
+                    self._ended
+                    or self._failed.is_set()
+                    or self._session is None
+                    or self._turn_id != turn_id
+                    or not self._deferred_provider_speech_start
+                    or not self._interruption_deferred_at
+                ):
+                    return
+                if (
+                    self._turn_has_pending_delegate(turn_id)
+                    or self._pending_delegate_needs_endpoint_protection()
+                    or self._delegate_readback_awaits_first_audio()
+                ):
+                    # A delegated action took the turn over after the edge. Its
+                    # own budget and readback watchdog own the silence from
+                    # here; committing into it would close a turn whose trusted
+                    # reply is recorded but not yet spoken — the 2026-07-16
+                    # forensic the delegate-window branch above exists for.
+                    return
+                if time.monotonic() - self._interruption_deferred_at < (
+                    _INTERRUPTION_CONFIRM_WINDOW_S
+                ):
+                    # The provider is still producing, so the edge demonstrably
+                    # cut nothing. Real barge-in words confirm themselves on the
+                    # input path long before this.
+                    continue
+                log.info(
+                    "realtime[%s] committing a deferred provider interruption: "
+                    "no user words confirmed it and the provider has been "
+                    "silent for %.1fs",
+                    self.session_id,
+                    _INTERRUPTION_CONFIRM_WINDOW_S,
+                )
+                self._deferred_provider_speech_start = False
+                self._interruption_deferred_at = 0.0
+                await self._begin_user_speech_turn()
+                await self._barge_in(interrupt_provider=False)
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a backstop must never end the call
+            log.warning(
+                "realtime[%s] interruption settle failed for turn %s",
+                self.session_id,
+                turn_id,
+                exc_info=True,
+            )
+
     def _cancel_promise_confirm(self) -> None:
         task = self._promise_confirm_task
         self._promise_confirm_task = None
@@ -7094,6 +7261,7 @@ class RealtimeVoiceSession:
         self._delegate_required_for_turn = False
         self._handoff_action_seen_for_turn = False
         self._deferred_provider_speech_start = False
+        self._cancel_interruption_settle()
         self._scrub_cancelled_for_turn = False
         self._output_language_retry_attempted_for_turn = False
         self._output_language_retry_pending = False
@@ -7107,6 +7275,51 @@ class RealtimeVoiceSession:
             return (*self._tool_bridge.declarations, _END_CALL_DECLARATION)
         return (_END_CALL_DECLARATION,)
 
+    def _role_directive(self, *, provider: Any = None) -> str:
+        """The model's standing job. Session-constant, never turn-scoped.
+
+        Capability, not provider name (AP-21): a transport that cannot receive
+        tool declarations must never be promised a callable function — the
+        model can only "comply" by speaking the call.
+        """
+        target = provider if provider is not None else self._provider
+        if not bool(getattr(target, "supports_direct_tools", True)):
+            return _DELEGATE_ROLE_DIRECTIVE_HANDOFF
+        return _DELEGATE_ROLE_DIRECTIVE
+
+    def _turn_mode_directive(
+        self,
+        *,
+        delegate_required: bool = False,
+        action_pending: bool = False,
+        delegate_discouraged: bool = False,
+        provider: Any = None,
+    ) -> str:
+        """The ONE turn-scoped line, prefixed so it retracts the previous one.
+
+        This is the only part of the tool directive a turn may move, and the
+        only part that travels per turn. While delegation is on it is never
+        empty: on an append-only steering channel an empty directive retracts
+        nothing, so the previous turn's "do not answer at all" would keep
+        standing over the model (RT-08).
+        """
+        if not self._delegate_enabled:
+            return ""
+        if delegate_required:
+            body = _DELEGATE_REQUIRED_DIRECTIVE
+        elif action_pending:
+            body = _DELEGATE_PENDING_DIRECTIVE
+        elif delegate_discouraged:
+            target = provider if provider is not None else self._provider
+            body = (
+                _DELEGATE_DISCOURAGED_DIRECTIVE
+                if bool(getattr(target, "supports_direct_tools", True))
+                else _DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF
+            )
+        else:
+            body = _DELEGATE_TURN_NORMAL_DIRECTIVE
+        return f"{_TURN_MODE_PREFIX}{body}"
+
     def _tool_directive(
         self,
         *,
@@ -7115,24 +7328,22 @@ class RealtimeVoiceSession:
         delegate_discouraged: bool = False,
         provider: Any = None,
     ) -> str:
+        """Role plus this turn's mode line, for the full instruction block.
+
+        Wholesale-replace transports (OpenAI) receive the whole block every
+        turn, which is correct for them: they have no standing thread that an
+        older text could contradict. A delta transport receives the role once
+        at connect and only ``_turn_mode_directive`` per turn.
+        """
         if self._delegate_enabled:
-            # Capability, not provider name (AP-21): a transport that cannot
-            # receive tool declarations must never be promised a callable
-            # function — the model can only "comply" by speaking the call.
-            target = provider if provider is not None else self._provider
-            if not bool(getattr(target, "supports_direct_tools", True)):
-                role = _DELEGATE_ROLE_DIRECTIVE_HANDOFF
-                discouraged = _DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF
-            else:
-                role = _DELEGATE_ROLE_DIRECTIVE
-                discouraged = _DELEGATE_DISCOURAGED_DIRECTIVE
-            if delegate_required:
-                return f"{role}\n\n{_DELEGATE_REQUIRED_DIRECTIVE}"
-            if action_pending:
-                return f"{role}\n\n{_DELEGATE_PENDING_DIRECTIVE}"
-            if delegate_discouraged:
-                return f"{role}\n\n{discouraged}"
-            return role
+            role = self._role_directive(provider=provider)
+            mode = self._turn_mode_directive(
+                delegate_required=delegate_required,
+                action_pending=action_pending,
+                delegate_discouraged=delegate_discouraged,
+                provider=provider,
+            )
+            return f"{role}\n\n{mode}" if mode else role
         if self._tool_bridge is not None:
             return _TOOL_ROLE_DIRECTIVE
         return ""
@@ -9951,6 +10162,7 @@ class RealtimeVoiceSession:
             pump.cancel()
         self._loop_lag.stop()
         self._cancel_turn_stall_watchdog()
+        self._cancel_interruption_settle()
         self._cancel_tool_transcript_wait()
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()
