@@ -197,3 +197,44 @@ async def test_prefetch_activity_block_no_tool_or_executor():
     m._tools = {"awareness-recall": object()}
     m._tool_executor = None
     assert await m._prefetch_activity_block("awareness-recall", "x") == ""
+
+
+@pytest.mark.parametrize(
+    ("pin", "expected_fragment"),
+    [
+        pytest.param("es", "calendario", id="spanish-pin"),
+        pytest.param("de", "Kalenderzugriff", id="german-pin"),  # i18n-allow
+        pytest.param("en", "calendar access", id="english-pin"),
+    ],
+)
+def test_run_evidence_gate_refusal_follows_the_reply_language_pin(
+    monkeypatch, pin: str, expected_fragment: str,
+):
+    """The refusal speaks the turn's language, not the utterance's.
+
+    The gate used to sniff the utterance for its own refusal language and knew
+    only German and English, so a Spanish user asking in English was told in
+    English that there is no calendar access — the pin was ignored and there
+    was no Spanish table to reach (OF-15). The utterance below is English on
+    purpose: only the pin can produce the Spanish and German answers.
+    """
+    import jarvis.clis.shared as shared
+    import jarvis.core.capabilities as cap_mod
+
+    m = _bare_manager()
+    m._reply_language = pin
+    m._config = SimpleNamespace(
+        brain=SimpleNamespace(
+            evidence_domains=SimpleNamespace(
+                enabled=True,
+                domains={"calendar": ["calendar", "meetings"]},
+            )
+        )
+    )
+    monkeypatch.setattr(shared, "get_active_registry", lambda: None)
+    monkeypatch.setattr(cap_mod, "get_registry", lambda: cap_mod.CapabilityRegistry())
+
+    verdict = m._run_evidence_gate("What meetings do I have today?")
+
+    assert verdict.kind == "honest_refusal"
+    assert expected_fragment in verdict.refusal_text

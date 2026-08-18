@@ -5018,6 +5018,16 @@ class BrainManager:
                 # earlier snapshot is the stale picture that made the gate
                 # refuse a domain it could actually serve.
                 live_tool_names=self._live_tool_names(),
+                # The gate used to pick its refusal language by sniffing the
+                # utterance, which ignored the user's pin and knew only two
+                # languages — a Spanish user was told in English that there is
+                # no calendar access (OF-15). Resolved here with the same
+                # arguments the honesty phrase later uses, so one turn cannot
+                # speak two languages.
+                language=resolve_output_language(
+                    getattr(self, "_reply_language", ""), "unknown", user_text,
+                    default=DEFAULT_LOCALE,
+                ),
             )
         except Exception:  # noqa: BLE001
             log.debug("evidence gate degraded to PASS", exc_info=True)
