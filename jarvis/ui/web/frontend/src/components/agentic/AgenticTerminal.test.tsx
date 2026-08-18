@@ -1392,9 +1392,9 @@ describe("pane refit", () => {
    * the left" was describing. It was working exactly as written.
    *
    * The width a coding CLI wants did not stop mattering; it stopped being
-   * enforced HERE. The launcher warns from twenty terminals up and opens as
-   * many as the user confirms, and a pane too narrow to be useful is now a pane
-   * they can see is too narrow.
+   * enforced HERE. The launcher says from ten terminals up how narrow the panes
+   * will come out and opens as many as the user asks for, and a pane too narrow
+   * to be useful is a pane they can see is too narrow.
    */
   it("fits the tile it is shown in, down to the width its agent can draw in", () => {
     const view = render(pane(false));
@@ -1417,39 +1417,34 @@ describe("pane refit", () => {
   });
 
   /*
-   * Below that width the pane keeps its agent's columns instead.
+   * …and to a width its agent cannot draw a tidy frame in, too.
    *
-   * This is the half of the rule that was missing until 2026-08-13, and the bug
-   * it cost: opening five more terminals re-fits every pane already open, and
-   * at thirteen columns a coding CLI's own repaint erases more of its screen
-   * than it rewrites. Panes that had been working for an hour came back blank.
-   *
-   * The tile is still measured honestly and nothing is drawn past its edge —
-   * there is simply no terminal in it to be wrong about. See PaneTooNarrowCard.
+   * A pane used to HOLD its columns below 60 and show a card instead of its
+   * terminal (2026-08-13, against a repaint bug measured at ~13 columns). That
+   * card then covered every pane of an ordinary six-pane workspace at 56 columns
+   * and had to be clicked away six times, so the maintainer retired it
+   * (2026-08-18): the terminal is shown at the tile's width, whatever it is.
    */
-  it("holds its agent's columns when the tile stops being drawable", () => {
+  it("follows the tile down to a width its agent cannot draw a frame in", () => {
     const view = render(pane(false));
     settle();
     terminalHarness.fit.mockClear();
     terminalHarness.send.mockClear();
-    terminalHarness.resize.mockClear();
 
     // The crowded-grid measurement (~17 columns per cell, thirteen panes).
     terminalHarness.size = { cols: 17, rows: 6 };
     view.rerender(pane(true));
     settle();
 
-    // Never fitted to the tile — fit() is what would have handed the agent 17.
-    expect(terminalHarness.fit).not.toHaveBeenCalled();
-    // The width the pane opened at, kept. Height still follows the tile: a
-    // resize on that axis repaints in place and breaks nothing.
-    expect(terminalHarness.resize).toHaveBeenCalledWith(80, 6);
+    expect(terminalHarness.fit).toHaveBeenCalled();
     expect(terminalHarness.send).toHaveBeenCalledWith({
       t: "r",
-      cols: 80,
+      cols: 17,
       rows: 6,
     });
-    expect(screen.getByTestId("pane-too-narrow-Dana")).toBeTruthy();
+    // No card, no notice — nothing between the reader and the terminal.
+    expect(screen.queryByTestId("pane-too-narrow-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
   });
 
   it("gives xterm and the agent the same number, always", () => {
@@ -1457,15 +1452,11 @@ describe("pane refit", () => {
     // width its xterm does not have re-wraps every one of them, and the TUI's
     // cursor moves then land on rows that hold something else — a five-pane
     // grid came back as panes full of shredded one-word fragments (2026-08-10).
-    // Held columns are no exception: the pane pins xterm to exactly the number
-    // it sends, which is why the terminal underneath a card is still correct.
     for (const size of [
       { cols: 17, rows: 6 },
       { cols: 33, rows: 40 },
       { cols: 90, rows: 30 },
     ]) {
-      // Every pane in this loop OPENS with room, so the width it holds when a
-      // narrow tile arrives is the same 80 in each case.
       terminalHarness.size = { cols: 80, rows: 24 };
       const view = render(pane(false));
       settle();
@@ -1476,18 +1467,13 @@ describe("pane refit", () => {
       view.rerender(pane(true));
       settle();
 
-      // 80 is the width this pane opened at and therefore the one it holds.
-      const shown = size.cols >= 60 ? size.cols : 80;
+      // fit() sizes xterm to the tile, so the agent hearing the tile's own
+      // measurement IS the two agreeing.
       expect(terminalHarness.send).toHaveBeenCalledWith({
         t: "r",
-        cols: shown,
+        cols: size.cols,
         rows: size.rows,
       });
-      // fit() sizes xterm to the tile, so the agent hearing the tile's own
-      // measurement IS the two agreeing; a held width says so explicitly.
-      if (shown !== size.cols) {
-        expect(terminalHarness.resize).toHaveBeenCalledWith(shown, size.rows);
-      }
       view.unmount();
     }
   });
@@ -1525,12 +1511,11 @@ describe("pane refit", () => {
     const term =
       terminalHarness.instances[terminalHarness.instances.length - 1];
     expect(term?.options.fontSize).toBe(13);
-    // The pane holds its agent's columns here rather than following the tile
-    // (see "holds its agent's columns" above) — but it does it without touching
-    // a single point of the reader's text size, which is what this pins.
+    // The pane takes the tile's 40 columns without touching a single point of
+    // the reader's text size, which is what this pins.
     expect(terminalHarness.send).toHaveBeenCalledWith({
       t: "r",
-      cols: 80,
+      cols: 40,
       rows: 20,
     });
   });
@@ -1701,8 +1686,6 @@ describe("pane refit while the agent is drawing", () => {
     terminalHarness.fit.mockClear();
     terminalHarness.send.mockClear();
 
-    // A width the agent can still draw in, so this measures the parse gate and
-    // nothing else — a narrow tile takes the held-columns path instead.
     terminalHarness.size = { cols: 64, rows: 12 };
     askForARefit();
     finishDrawing();
@@ -1742,109 +1725,41 @@ describe("pane refit while the agent is drawing", () => {
   });
 
   /*
-   * A pane too narrow for its agent stops being a terminal and says what it is.
-   *
-   * The rule that a pane is exactly as wide as its tile is not in question
-   * here — none of this draws a column past a tile edge. What it closes is the
-   * gap the rule left open: a coding CLI below its usable width does not draw a
-   * small tidy frame, it lays its interface out one and two characters wide and
-   * then repaints over rows that no longer hold what it drew. The pane comes
-   * back blank (reported 2026-08-13), and telling the user about it — which is
-   * all this used to do — left the wreckage on screen.
+   * A narrow pane is a terminal like any other — nothing is put over it and
+   * nothing is said about it. The card that hid the terminal below 60 columns
+   * ("Show it anyway") and the notice row before it were both retired by the
+   * maintainer (2026-08-18): at 56 columns an ordinary six-pane workspace had
+   * every pane covered. What the panes will measure is said ONCE, in the wizard,
+   * before anything opens.
    */
-  it("shows what the agent is doing when the tile is too narrow to draw in", () => {
-    terminalHarness.size = { cols: 22, rows: 30 };
-    render(
-      <AgenticTerminal
-        name="Dana"
-        displayName="Claude Code"
-        appearance="dark"
-        fontSize={13}
-        activity="working"
-        recap="Rewriting the prompt composer"
-        onToggleMaximize={() => undefined}
-      />,
-    );
-    act(() => {
-      vi.advanceTimersByTime(600);
-      // A pane still opening its socket reports "starting" whatever the backend
-      // says about the agent — the same rule the header's pill follows.
-      terminalHarness.handlers.current?.onReady?.({
-        resumed: false,
-        reattached: false,
-        lastPrompt: null,
-      } as never);
-    });
-
-    const card = screen.getByTestId("pane-too-narrow-Dana");
-    expect(card.dataset.cols).toBe("22");
-    // The state in a word, the recap, and the arithmetic behind the decision.
-    expect(card.textContent).toContain("working");
-    expect(card.textContent).toContain("Rewriting the prompt composer");
-    expect(card.textContent).toContain("22 columns");
-    // One sentence, not two: the header notice says the same thing and would be
-    // on screen at the same time.
-    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
-  });
-
-  it("hands the pane back at its tile's width when the reader insists", () => {
-    // A reader who wants to watch a 22-column terminal is not somebody this
-    // should argue with. "Show it anyway" restores exactly the behaviour a
-    // narrow pane had before the card existed — the tile's own width, handed to
-    // the agent, plus the notice saying what that costs.
+  it("shows the terminal at the tile's width, however narrow, and says nothing", () => {
     terminalHarness.size = { cols: 22, rows: 30 };
     render(pane());
     act(() => {
       vi.advanceTimersByTime(600);
     });
-    terminalHarness.send.mockClear();
-
-    act(() => {
-      screen.getByTestId("pane-too-narrow-anyway-Dana").click();
-    });
 
     expect(screen.queryByTestId("pane-too-narrow-Dana")).toBeNull();
-    expect(screen.getByTestId("pane-width-notice-Dana").dataset.cols).toBe("22");
+    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
     expect(terminalHarness.send).toHaveBeenCalledWith({
       t: "r",
       cols: 22,
       rows: 30,
     });
 
-    // Narrower still, and still the reader's call.
+    // Narrower still: still the tile's own width, still no argument.
+    terminalHarness.send.mockClear();
     terminalHarness.size = { cols: 14, rows: 30 };
     act(() => {
       window.dispatchEvent(new Event("resize"));
       vi.advanceTimersByTime(600);
     });
     expect(screen.queryByTestId("pane-too-narrow-Dana")).toBeNull();
-  });
-
-  it("takes the card back once a widened pane is crowded a second time", () => {
-    terminalHarness.size = { cols: 22, rows: 30 };
-    render(pane());
-    act(() => {
-      vi.advanceTimersByTime(600);
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 14,
+      rows: 30,
     });
-    act(() => {
-      screen.getByTestId("pane-too-narrow-anyway-Dana").click();
-    });
-
-    // Given room…
-    terminalHarness.size = { cols: 120, rows: 30 };
-    act(() => {
-      window.dispatchEvent(new Event("resize"));
-      vi.advanceTimersByTime(600);
-    });
-    // …and crowded again. "Show it anyway" answered a question about the pane
-    // as it was then, not a standing waiver for the rest of its life.
-    terminalHarness.size = { cols: 22, rows: 30 };
-    act(() => {
-      window.dispatchEvent(new Event("resize"));
-      vi.advanceTimersByTime(600);
-    });
-
-    expect(screen.getByTestId("pane-too-narrow-Dana")).toBeTruthy();
   });
 
   it("stays quiet on a pane with room to work", () => {
@@ -1858,13 +1773,12 @@ describe("pane refit while the agent is drawing", () => {
     expect(screen.queryByTestId("pane-too-narrow-Dana")).toBeNull();
   });
 
-  it("gives the terminal back once the pane is given room", () => {
+  it("takes the room the moment the pane is given it", () => {
     terminalHarness.size = { cols: 22, rows: 30 };
     render(pane());
     act(() => {
       vi.advanceTimersByTime(600);
     });
-    expect(screen.getByTestId("pane-too-narrow-Dana")).toBeTruthy();
     terminalHarness.send.mockClear();
 
     terminalHarness.size = { cols: 120, rows: 30 };
@@ -1873,10 +1787,6 @@ describe("pane refit while the agent is drawing", () => {
       vi.advanceTimersByTime(600);
     });
 
-    expect(screen.queryByTestId("pane-too-narrow-Dana")).toBeNull();
-    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
-    // And the agent is told about the room, which is what makes the terminal
-    // underneath the card correct the moment it is uncovered.
     expect(terminalHarness.send).toHaveBeenCalledWith({
       t: "r",
       cols: 120,

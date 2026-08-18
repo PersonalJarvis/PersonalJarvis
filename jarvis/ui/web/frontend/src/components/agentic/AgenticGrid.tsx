@@ -2980,13 +2980,6 @@ export function AgenticGrid({
                   generatedAt: recaps[term.name]?.generated_at,
                 }}
                 recapActions={recapActionsFor(term.name)}
-                // The backend's reading of what this agent is doing. Only a
-                // pane that has had to give up its terminal for a card reads
-                // them — see PaneTooNarrowCard — but they are cheap and already
-                // in the state this component polls.
-                activity={term.activity}
-                activitySince={term.activity_since}
-                worked={term.worked}
                 // Only the panes that are NOT on the default login carry a
                 // badge. Labelling every pane "Default Claude Code login" would
                     // be noise for the many; labelling the odd one out is the whole

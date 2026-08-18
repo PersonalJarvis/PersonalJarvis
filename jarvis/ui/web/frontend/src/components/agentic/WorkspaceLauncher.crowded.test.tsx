@@ -7,7 +7,7 @@ import {
 } from "./WorkspaceLauncher";
 
 /**
- * A crowded workspace is WARNED about, never refused.
+ * A crowded workspace is TOLD about, never refused and never questioned.
  *
  * The maintainer's rule for this screen (2026-08-11): how many terminals are
  * worth watching at once is the user's call, and the app has no idea how big
@@ -15,9 +15,13 @@ import {
  * on a video wall. So nothing here caps the count, reshapes it, or opens fewer
  * panes than were asked for.
  *
- * What it does do is make sure the decision was deliberate, and the tests below
- * pin both halves of that: the warning BLOCKS until it is answered, and
- * answering it opens exactly the workspace that was asked for.
+ * It used to make the user CONFIRM as well — an "Open it anyway" that blocked
+ * the next step from twenty terminals, and from six on an ordinary window once
+ * the measured sentence joined in. The maintainer retired the question
+ * (2026-08-18): a wizard that makes people click past a warning to open the
+ * workspace they just chose is nagging. The tests below pin what is left: a
+ * sentence from ten terminals up (or when the panes measure narrow), no
+ * button, and a next step that is never held back by it.
  */
 
 vi.mock("@/i18n", () => ({
@@ -106,50 +110,42 @@ const nextStep = () =>
     "workspace_launcher.wizard.continue_agents",
   ) as HTMLElement & { closest: (s: string) => HTMLButtonElement | null };
 
-describe("a crowded workspace has to be confirmed", () => {
+describe("a crowded workspace is told about, not confirmed", () => {
   it("says nothing at all below the threshold", () => {
-    // A question asked every time is a question nobody reads. Six terminals is
+    // A sentence shown every time is a sentence nobody reads. Six terminals is
     // an ordinary workspace and must open without a word.
     openLayoutStep(6);
     expect(screen.queryByTestId("workspace-crowded-warning")).toBeNull();
     expect(nextStep().closest("button")?.disabled).toBe(false);
   });
 
-  it("blocks the wizard until the warning is answered", () => {
+  it("says so from ten terminals up, and lets the wizard carry on", () => {
+    expect(CROWDED_TERMINAL_COUNT).toBe(10);
     openLayoutStep(CROWDED_TERMINAL_COUNT);
-    expect(screen.getByTestId("workspace-crowded-warning")).toBeTruthy();
-    // A warning that can be walked past without being read is decoration.
-    expect(nextStep().closest("button")?.disabled).toBe(true);
-  });
-
-  it("lets the user overrule it and carry on", () => {
-    // The whole point: the count is never refused. Thirty terminals is a thing
-    // somebody may want, and this is them saying so.
-    openLayoutStep(30);
-    fireEvent.click(screen.getByTestId("workspace-crowded-accept"));
-    expect(nextStep().closest("button")?.disabled).toBe(false);
-    // The warning stays visible as a statement of what was agreed to, with the
-    // button gone — it has been answered and cannot be answered twice.
-    expect(screen.getByTestId("workspace-crowded-warning")).toBeTruthy();
+    const note = screen.getByTestId("workspace-crowded-warning");
+    expect(note.textContent).toContain("workspace_launcher.crowded.warning");
+    // Nothing to click and nothing to answer: the next step is open.
     expect(screen.queryByTestId("workspace-crowded-accept")).toBeNull();
+    expect(nextStep().closest("button")?.disabled).toBe(false);
   });
 
   it("opens exactly the count that was asked for", () => {
-    // Nothing about the acknowledgement changes the workspace: it opens with
-    // the panes the user planned, all of them.
+    // Thirty terminals is a thing somebody may want. Nothing about the note
+    // changes the workspace: it opens with the panes the user planned, all of
+    // them, and no confirmation stands in the way.
     const onStart = vi.fn();
-    const planned = Array.from({ length: 24 }, (_, i) => ({
+    const planned = Array.from({ length: 30 }, (_, i) => ({
       name: `T${i + 1}`,
       agent: "claude",
       account: undefined,
     }));
     render(
-      <WorkspaceLauncher {...props(24, { onStart, planned })} />,
+      <WorkspaceLauncher {...props(30, { onStart, planned })} />,
     );
     fireEvent.click(
       screen.getByText("workspace_launcher.wizard.continue_layout"),
     );
-    fireEvent.click(screen.getByTestId("workspace-crowded-accept"));
+    expect(screen.getByTestId("workspace-crowded-warning")).toBeTruthy();
     for (const step of [
       "workspace_launcher.wizard.continue_agents",
       "workspace_launcher.wizard.choose_view",
@@ -163,36 +159,32 @@ describe("a crowded workspace has to be confirmed", () => {
 });
 
 /**
- * …and a workspace the WINDOW cannot carry has to be confirmed too.
+ * …and a workspace the WINDOW makes narrow is told about too — in numbers.
  *
- * The fixed count of twenty is blind to both halves of the thing it guesses at.
- * Twelve terminals on a 1 740 px stage at text size 20 land at thirteen columns
- * each — a width no coding CLI can draw a frame in — and opened in complete
- * silence, because twelve is not twenty (reported 2026-08-13). The same twelve
- * on a video wall are fine and were never worth a word.
- *
- * So the measurement asks the second question. It blocks in exactly the same
- * way, for the same reason, and is overruled by the same button: the count is
- * still never refused.
+ * The fixed count is blind to both halves of the thing it guesses at. Twelve
+ * terminals on a 1 740 px stage at text size 20 land at thirteen columns each
+ * and opened in complete silence, because twelve is not twenty (reported
+ * 2026-08-13). The same twelve on a video wall are fine and were never worth a
+ * word. So the measurement says the specific sentence — how wide, how many fit
+ * — and, like the count, it never blocks.
  */
-describe("a workspace this window cannot draw has to be confirmed", () => {
+describe("a workspace this window makes narrow is told about in numbers", () => {
   const REPORTED_WINDOW_PX = 1740;
 
-  it("stops a count that would leave every pane undrawable", () => {
+  it("says how narrow the panes come out, and carries on", () => {
     advance.px = 12;
     openLayoutStep(12, { workspaceWidthPx: REPORTED_WINDOW_PX });
 
-    const warning = screen.getByTestId("workspace-crowded-warning");
+    const note = screen.getByTestId("workspace-crowded-warning");
     // The measured sentence, not the general one about "most displays".
-    expect(warning.textContent).toContain(
-      "workspace_launcher.crowded.measured",
-    );
-    expect(nextStep().closest("button")?.disabled).toBe(true);
+    expect(note.textContent).toContain("workspace_launcher.crowded.measured");
+    expect(screen.queryByTestId("workspace-crowded-accept")).toBeNull();
+    expect(nextStep().closest("button")?.disabled).toBe(false);
   });
 
   it("says nothing when the same panes have room", () => {
     // A wall display, or simply a smaller text size. Nothing is wrong here and
-    // a warning would be noise.
+    // a sentence would be noise.
     advance.px = 6;
     openLayoutStep(4, { workspaceWidthPx: REPORTED_WINDOW_PX });
 
@@ -204,16 +196,8 @@ describe("a workspace this window cannot draw has to be confirmed", () => {
     // No canvas to measure with. "We could not measure" must never render as a
     // warning, or the wizard shouts at everyone once.
     advance.px = null;
-    openLayoutStep(12, { workspaceWidthPx: REPORTED_WINDOW_PX });
+    openLayoutStep(8, { workspaceWidthPx: REPORTED_WINDOW_PX });
 
     expect(screen.queryByTestId("workspace-crowded-warning")).toBeNull();
-  });
-
-  it("is overruled by the same button, and opens the count asked for", () => {
-    advance.px = 12;
-    openLayoutStep(12, { workspaceWidthPx: REPORTED_WINDOW_PX });
-
-    fireEvent.click(screen.getByTestId("workspace-crowded-accept"));
-    expect(nextStep().closest("button")?.disabled).toBe(false);
   });
 });

@@ -10128,3 +10128,58 @@ failed: No OpenRouter API key") and the TTS default at a provider without a
 key. (d) The paste's 3 s arrival check did not see the text on T2 — one
 sample, cause unknown (slow render under load vs. a placeholder shape the
 detector does not know).
+
+## BUG-146: every pane of an ordinary six-terminal workspace is covered by "56 columns — Claude Code needs about 60 · Open it · Show it anyway", and the wizard demands "Open it anyway" from six terminals up — two guards built against a 13-column repaint bug fired at widths that work fine (HIGH, FIXED 2026-08-18)
+
+**Symptom.** Six Claude Code panes in a 3×2 grid on a 1 920 px window at
+text size 13: each measured 56 columns and each showed the card instead of
+its terminal, so the user clicked "Show it anyway" six times to see agents
+that were running perfectly well. In the wizard, choosing six terminals put
+up a red "too narrow for an agent to draw in, so they open as status cards"
+warning and blocked the next step behind "Open it anyway". Reported by the
+maintainer as being patronised: "users get nagged far too early".
+
+**Root.** `WORKABLE_COLS = 60` was written as the width below which "both
+installed CLIs stop laying out a usable frame" (2026-08-09) and then used as a
+GATE in three places: `PaneTooNarrowCard` in `AgenticTerminal.tsx` hid the
+terminal and held its columns below it (built 2026-08-13 against a real bug —
+at ~13 columns a coding CLI's relative repaint wipes its own rows and panes
+come back blank); `WorkspaceLauncher.tsx` treated a measured per-pane width
+below it as "crowded" and blocked with the same button that
+`CROWDED_TERMINAL_COUNT = 20` used; `WorkspaceShape.tsx` said the panes would
+open as status cards. The threshold was three to four times higher than the
+width the bug was measured at, so the guards fired on every ordinary
+multi-column layout, and each of them made the user CONFIRM something they
+had just chosen.
+
+**Fix.** The pane no longer argues about its width: `PaneTooNarrowCard`, the
+column hold (`heldColsRef` / `narrowOverride`) and the older `PaneWidthNotice`
+row are gone, and the terminal is exactly as wide as its tile, always shown
+(only the absurd `MIN_REAL_COLS = 10` is still refused). The wizard SAYS
+instead of asking: `CROWDED_TERMINAL_COUNT` is 10 and `WORKABLE_COLS` is 40,
+both are ADVICE — one muted sentence with the count, the measured columns
+and how many fit comfortably at the reader's text size — with no button and
+no held-back step (`crowded.accept` / `crowded.accepted` removed from all
+three locales; wording rewritten in en/de/es). The `activity` /
+`activitySince` / `worked` pane props existed only for the card and are gone
+with it.
+
+**Trade-off, stated.** The 2026-08-13 blank-pane failure at ~13 columns is
+no longer prevented by the pane; it is only ANNOUNCED by the wizard
+beforehand. Reaching it takes an extreme layout (≈ 24+ panes at text size 13
+on a 1 920 px window, or 12+ at size 20); the maintainer's rule is that this
+is the user's call, and a pane they can maximize beats a card they must click
+away.
+
+**Class.** A guard tuned far above the failure it guards against becomes the
+failure: every "confirm anyway" the user meets on an ordinary path is a bug
+report waiting to happen. Thresholds that gate must be measured at the point
+things actually break, and even then a warning that only informs is usually
+right where a warning that blocks is wrong.
+
+**Regression tests.** `AgenticTerminal.test.tsx` ("follows the tile down to
+a width its agent cannot draw a frame in", "shows the terminal at the tile's
+width, however narrow, and says nothing"); `WorkspaceLauncher.crowded.test.tsx`
+("says so from ten terminals up, and lets the wizard carry on", "opens
+exactly the count that was asked for" with 30 panes and no confirmation);
+`layout.test.ts` (the constants' arithmetic).

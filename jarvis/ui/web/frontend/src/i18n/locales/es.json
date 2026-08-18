@@ -3865,10 +3865,8 @@
       }
     },
     "crowded": {
-        "warning": "{0} terminales en paralelo serán demasiado pequeños para leerlos en la mayoría de las pantallas, y el espacio de trabajo puede volverse lento. Ábrelo de todos modos si tu pantalla tiene sitio.",
-        "measured": "{0} terminales tendrían unas {1} columnas cada uno en esta ventana — demasiado estrechos para que un agente dibuje en ellos, así que se abren como tarjetas de estado en lugar de terminales. En esta ventana caben {2} en paralelo con tu tamaño de texto.",
-        "accept": "Abrir de todos modos",
-        "accepted": "Se abrirán {0} terminales de todos modos."
+        "warning": "{0} terminales son muchos para una sola pantalla: a cada uno le queda poco sitio. En una pantalla grande no hay problema; en un portátil, con menos se sigue mejor. Siempre puedes maximizar un panel para leerlo.",
+        "measured": "{0} terminales salen a unas {1} columnas cada uno en esta ventana: estrecho para la salida de un agente. En esta ventana caben {2} en paralelo con comodidad con tu tamaño de texto. Maximiza un panel cuando quieras leerlo a tamaño completo."
       },
     "resume": {
       "eyebrow": "Espacio de trabajo anterior",

@@ -85,23 +85,25 @@
 export const COMFORTABLE_PANE_WIDTH_PX = 380;
 
 /**
- * The width below which a coding CLI stops drawing a frame anyone can read.
+ * Below this many columns a pane is narrow for an agent's output — ADVICE the
+ * wizard gives before anything opens, and nothing else.
  *
- * 60 is where both installed CLIs were measured to stop laying out a usable
- * frame (2026-08-09, thirteen panes). Below it a TUI does not shrink tidily —
- * it reserves its gutter out of what little there is, lays the remainder out
- * one and two characters wide, and then repaints over rows that no longer hold
- * what it drew, which is how panes that had been working for an hour came back
- * BLANK (reported 2026-08-13).
+ * It used to be 60 and used to be enforced: below it a pane held its agent's
+ * columns and hid the terminal behind a card ("Show it anyway"). That covered
+ * every pane of an ordinary six-pane workspace at 56 columns and had to be
+ * clicked away six times, so the maintainer retired the card (2026-08-18) and
+ * with it the idea that this number is a floor. Panes are exactly as wide as
+ * their tile and always shown (see ./AgenticTerminal); the only thing left to
+ * do with the number is to SAY it, once, in the wizard's readout and its
+ * crowding note — and 40 is where that sentence starts being worth reading:
+ * a coding CLI at 40 columns wraps hard but works, and the wizard's own
+ * "how many across" figure (`workableColumnCount`) is measured against it.
  *
- * It lives in this leaf module because THREE places have to agree on it and one
- * of them must not import a terminal: the pane holds its agent's columns here
- * (`MIN_REAL_COLS` and `PaneTooNarrowCard` in ./AgenticTerminal), and the wizard
- * says so before anything opens (./WorkspaceShape). A wizard that quoted a
- * different number from the one the panes act on would be advice about a
- * different app.
+ * Kept in this leaf module because the wizard's two surfaces (./WorkspaceShape,
+ * ./WorkspaceLauncher) must quote the same number, and neither may import a
+ * terminal to learn it.
  */
-export const WORKABLE_COLS = 60;
+export const WORKABLE_COLS = 40;
 
 /**
  * The pane chrome between a tile's edge and the terminal grid inside it, in px.
@@ -167,25 +169,23 @@ export function workableColumnCount(
 }
 
 /**
- * The count from which opening a workspace has to be confirmed out loud.
+ * The count from which the wizard SAYS a workspace is a lot for one screen.
  *
- * NOT a limit, and deliberately not derived from the window either. The
- * maintainer's rule for this screen (2026-08-11) is that the number of
- * terminals is the user's call — thirty side by side is a thing somebody may
- * want, and on a wall display it is even readable. What the app does not know
- * is how big that display is, so it may not decide FOR them.
+ * NOT a limit, not a question, and deliberately not derived from the window
+ * either. The maintainer's rule for this screen (2026-08-11) is that the number
+ * of terminals is the user's call — thirty side by side is a thing somebody
+ * may want, and on a wall display it is even readable. What the app does not
+ * know is how big that display is, so it may not decide FOR them.
  *
- * What it can do is make sure the decision was made. Twenty is where a
- * workspace stops being roomy on any ordinary screen, so from here the wizard
- * says so and waits for a yes. Below it nothing is asked, because a question
- * asked every time is a question nobody reads.
- *
- * Distinct from `COMFORTABLE_PANE_WIDTH_PX` on purpose: that one is measured
- * against the window and phrased as advice, this one is a fixed count and
- * blocks until it is acknowledged. A user on a laptop meets the advice long
- * before this, and a user on a video wall meets only this.
+ * It used to be twenty and used to BLOCK, with an "Open it anyway" button; the
+ * measured sentence beside it (see `WORKABLE_COLS`) blocked from six terminals
+ * on an ordinary window. Both were retired on 2026-08-18: a wizard that makes
+ * people click past a warning to open the workspace they just chose is
+ * nagging, not helping. From ten the wizard now says how much room each pane
+ * gets and moves on. Below it nothing is said, because a sentence shown every
+ * time is a sentence nobody reads.
  */
-export const CROWDED_TERMINAL_COUNT = 20;
+export const CROWDED_TERMINAL_COUNT = 10;
 
 /**
  * Horizontal padding of the rendered grid — 4 px on each side.

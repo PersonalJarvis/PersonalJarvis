@@ -615,10 +615,11 @@ function StagePane({
  * ## Why it counts COLUMNS and not only pixels
  *
  * "About 145 px each" is true and says nothing. A pixel width means one thing
- * at 8 px text and the opposite at 20, and the number that decides whether a
- * coding CLI can draw at all is its column count — below {@link WORKABLE_COLS}
- * a pane holds its agent's columns and shows a card instead of a terminal (see
- * `PaneTooNarrowCard` in ./AgenticTerminal).
+ * at 8 px text and the opposite at 20, and the number that says how much room
+ * an agent's output really gets is the column count — below
+ * {@link WORKABLE_COLS} the readout says so, and that sentence is the whole
+ * consequence: the panes open as terminals at that width regardless (the card
+ * that used to hide them was retired on 2026-08-18).
  *
  * That is exactly what went unsaid on 2026-08-13: twelve terminals opened on a
  * 1 920 px window at text size 20 with no warning at all, because the only
@@ -660,11 +661,11 @@ function Readout({
   if (paneWidth === 0) {
     condition = "All on one screen.";
   } else if (perPane > 0 && perPane < WORKABLE_COLS) {
-    // The one case worth spelling out: these panes will not be terminals.
+    // The one case worth spelling out, as advice: these panes come out narrow.
     condition =
-      `All on one screen, about ${perPane} columns each — too narrow for an ` +
-      `agent to draw in, so they open as status cards. This window fits ` +
-      `${affordable} across at text size ${fontSize}.`;
+      `All on one screen, about ${perPane} columns each — narrow for an ` +
+      `agent's output. This window fits ${affordable} across comfortably at ` +
+      `text size ${fontSize}; maximize a pane to read it full size.`;
   } else if (perPane > 0) {
     condition = `All on one screen, about ${perPane} columns each.`;
   } else if (comfortable) {

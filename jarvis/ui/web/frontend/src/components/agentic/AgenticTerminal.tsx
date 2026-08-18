@@ -70,7 +70,6 @@ import {
 import { SplitBelowIcon, SplitRightIcon } from "./splitIcons";
 // A leaf module with no DOM and no terminal in it, which is the point: the
 // wizard quotes this same number before any pane exists — see ./layout.
-import { WORKABLE_COLS } from "./layout";
 import { cn } from "@/lib/utils";
 import {
   MINIMUM_CONTRAST_RATIO,
@@ -94,10 +93,10 @@ import {
   type SplitAgentChoice,
 } from "./AgentPicker";
 import { describeExit, explainExit } from "./paneExit";
-import { PaneActivityPill, paneActivityLabel } from "./PaneActivityPill";
+import { PaneActivityPill } from "./PaneActivityPill";
 import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
-import type { PaneActivity, RecapReason, RecapSource } from "@/lib/agenticIdeApi";
+import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
 import {
@@ -309,26 +308,27 @@ const MIN_REAL_COLS = 10;
 const MIN_REAL_ROWS = 4;
 
 /*
- * The width below which a coding CLI stops drawing a frame anyone can read
- * ({@link WORKABLE_COLS}) now lives in ./layout, because the wizard has to
- * quote the same number before anything opens and must not import a terminal
- * to do it. What it MEANS here has changed twice, and both are worth keeping:
+ * A pane never argues about its own width any more.
  *
- * * It began as a floor the backend enforced, which kept agents alive by
- *   drawing every narrow pane wider than the window showing it. The maintainer
- *   read that as terminals shoved behind one another (2026-08-11) and it was
- *   removed, along with two other attempts on the same day — shrinking the text
- *   until 60 fitted made the size controls look dead, and widening a pane on
- *   hover shuffled the workspace under the cursor.
- * * It then became a NOTICE and nothing else, on the rule that survived all
- *   three: a pane is exactly as wide as its tile. That rule still stands for
- *   every pane that HAS a terminal in it.
+ * The number a coding CLI is comfortable at (`WORKABLE_COLS` in ./layout) is
+ * quoted ONLY by the wizard, as advice before anything opens. In here it has
+ * been four things, and every one of them was reported as a bug by the person
+ * looking at the screen:
  *
- * What the notice could not fix is that the wreckage stayed on screen. Below
- * this width a coding CLI repaints over rows that no longer hold what it drew,
- * and panes that had been working for an hour came back blank (2026-08-13). So
- * a pane below it now holds its agent's columns and shows a card instead — see
- * `PaneTooNarrowCard`, which is where the whole argument is written down.
+ * * a floor the backend enforced, which drew narrow panes wider than their
+ *   window — read as terminals shoved behind one another (2026-08-11);
+ * * an auto-shrink of the text until the floor fitted — the size controls
+ *   looked dead (2026-08-11);
+ * * a notice row saying "N columns — needs about 60" on every narrow pane;
+ * * a card that HID the terminal below 60 columns and offered "Show it anyway"
+ *   (2026-08-13, against a repaint bug measured at ~13 columns) — which then
+ *   covered every pane of an ordinary six-pane workspace at 56 columns and had
+ *   to be clicked away six times (2026-08-18).
+ *
+ * The maintainer's rule now is the simplest one: the terminal is exactly as
+ * wide as its tile, always, and it is always SHOWN. How many panes fit a
+ * screen is the user's call; the wizard says what they will get, and the pane
+ * gets out of the way. Only the absurd (`MIN_REAL_COLS`) is still refused.
  */
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
@@ -411,20 +411,6 @@ interface AgenticTerminalProps {
   recapMeta?: PaneRecapMeta;
   /** Rewriting, resetting and re-summarizing it. Absent = read-only card. */
   recapActions?: PaneRecapActions;
-  /*
-   * Is this agent still working, and since when — the backend's own reading of
-   * the pane's screen (`jarvis/agentic_ide/activity.py`).
-   *
-   * Only read by `PaneTooNarrowCard`, which is the one place in this component
-   * that has to SAY the state rather than badge it: a pane whose terminal is
-   * held back has nothing else on it to look at. Optional throughout, so every
-   * standalone use of this component keeps working without them.
-   */
-  activity?: PaneActivity;
-  /** When the pane entered that state (epoch seconds); 0 when unknown. */
-  activitySince?: number;
-  /** Has anything ever been asked of this pane? Separates "done" from "idle". */
-  worked?: boolean;
   /**
    * Which subscription this pane runs on ("Work seat"), when that is worth
    * saying. Undefined for everyone with a single login — the header must not
@@ -528,9 +514,6 @@ export function AgenticTerminal({
   recapDetail,
   recapMeta,
   recapActions,
-  activity = "",
-  activitySince = 0,
-  worked = false,
   accountLabel,
   promptCount = 0,
   appearance,
@@ -598,48 +581,6 @@ export function AgenticTerminal({
    * Reconnects therefore stay quiet: the replayed screen is already there.
    */
   const [painted, setPainted] = useState(false);
-  /*
-   * How many columns this pane last fitted to, or null before it has measured.
-   *
-   * Mirrored into state for one reader — the width notice below. It changes
-   * when the workspace is re-laid out, never per chunk of output, and React
-   * bails out on an unchanged value, so a pane that keeps measuring the same
-   * tile re-renders nothing.
-   */
-  const [paneCols, setPaneCols] = useState<number | null>(null);
-  /*
-   * Has the reader waved the width notice away for this pane?
-   *
-   * A notice that cannot be dismissed becomes furniture, and this one would be
-   * on every pane of a crowded workspace at once — a row of identical warnings
-   * about a trade the user may well have made on purpose. One click retires it.
-   *
-   * Reset below once the pane has room again, so a workspace that is widened
-   * and later crowded a second time is told a second time rather than staying
-   * quiet about a screen that has started shredding again.
-   */
-  const [widthNoticeDismissed, setWidthNoticeDismissed] = useState(false);
-  /*
-   * Has the reader asked to see the terminal anyway, at whatever width there is?
-   *
-   * The way out of the card below (see `PaneTooNarrowCard`). It restores exactly
-   * the behaviour a narrow pane had before the card existed — the tile's own
-   * width, handed to the agent, plus the notice saying so — for this one pane.
-   *
-   * Reset alongside `widthNoticeDismissed` once the pane has room again: the
-   * override answers "show me this pane as it is now", not "never hold this
-   * pane's columns again for the rest of its life".
-   */
-  const [narrowOverride, setNarrowOverride] = useState(false);
-  /*
-   * Is this pane's tile too narrow for its agent to draw in RIGHT NOW?
-   *
-   * Written by the fit (`applyResize`), which is the only thing that measures.
-   * Distinct from `paneCols < WORKABLE_COLS` on purpose: that comparison is what
-   * the fit decides FROM, and this is what it decided — including the case where
-   * a pane has been measured but the override is holding the terminal open.
-   */
-  const [tooNarrow, setTooNarrow] = useState(false);
   // A parked chat pane may have a large asynchronous xterm write to parse when
   // it takes the stage again. Keep its terminal surface out of the paint until
   // that write and the final viewport restoration have both landed; otherwise xterm
@@ -732,22 +673,6 @@ export function AgenticTerminal({
   // Read by the connect effect's resize scheduler, which is built once and
   // therefore cannot see the prop change.
   const layoutBusyRef = useRef(layoutBusy);
-  /*
-   * The last width this pane could honestly give its agent, in COLUMNS.
-   *
-   * The whole mechanism behind {@link PaneTooNarrowCard}. While a tile is too
-   * narrow to draw in, the pane keeps its terminal at this width instead of
-   * following the tile down — so the agent goes on formatting for a screen it
-   * can lay out, and the card is shown over the top rather than the wreckage.
-   *
-   * A ref because the fit reads it, and the fit is built once per terminal and
-   * cannot see state. Seeded with WORKABLE_COLS so a pane that OPENS into a
-   * narrow tile — the crowded workspace, which is the whole reported case — has
-   * a workable width to hold from its very first measurement.
-   */
-  const heldColsRef = useRef(WORKABLE_COLS);
-  // Read by the fit, which is built once per terminal — see `heldColsRef`.
-  const narrowOverrideRef = useRef(narrowOverride);
   onStatusRef.current = onStatus;
   onAttachErrorRef.current = onAttachError;
   fontSizeRef.current = fontSize;
@@ -755,7 +680,6 @@ export function AgenticTerminal({
   activeRef.current = active;
   focusedRef.current = focused;
   layoutBusyRef.current = layoutBusy;
-  narrowOverrideRef.current = narrowOverride;
 
   useEffect(() => {
     const region = terminalRegionRef.current;
@@ -1420,47 +1344,21 @@ export function AgenticTerminal({
         cols: Math.max(proposed.cols, MIN_REAL_COLS),
         rows: Math.max(proposed.rows, MIN_REAL_ROWS),
       };
-      // What the TILE measures — read by the width notice and by the card, which
-      // are the two things in this component with an opinion about whether that
-      // number is enough (see WORKABLE_COLS). Recorded whatever happens below: a
-      // fit that changes nothing still measured the tile.
-      setPaneCols(measured.cols);
       /*
-       * The decision this pane's card exists for.
+       * The tile's own measurement is the size, full stop.
        *
-       * Everything above is unchanged: the tile is measured honestly and the
-       * floors only refuse the absurd. What changes is what happens when the
-       * honest answer is a width the agent cannot draw in.
-       *
-       * Following the tile down there was the bug reported on 2026-08-13 and
-       * measured once before on 2026-08-09: opening five more terminals re-fits
-       * every pane already open (`append_pane` gives each new one a full-height
-       * column), and at thirteen columns a coding CLI does not merely look
-       * cramped — it repaints by erasing the rows it last drew, its own line
-       * count no longer matches the screen, and the repaint wipes more than it
-       * rewrites. Panes that had been working for an hour came back BLANK, and
-       * no later output brought them back.
-       *
-       * So below the workable width the columns are HELD instead. The agent goes
-       * on formatting for the last width it could lay out in, its screen is
-       * never wrecked, and the pane shows a card saying what it is doing rather
-       * than a rectangle of shredded fragments. Nothing is drawn past the tile's
-       * edge, because nothing is drawn in the tile at all — which is what
-       * separates this from the clipping design rejected on 2026-08-11.
-       *
-       * ROWS still follow the tile. Height is not the axis that breaks a TUI —
-       * a resize on that axis repaints in place — and honouring it keeps xterm
-       * and the PTY in agreement, which is the rule this whole file is built on.
+       * Both axes follow the tile. A pane used to HOLD its columns below a
+       * "workable" width and show a card instead of its terminal (2026-08-13,
+       * against a coding CLI whose relative repaint wipes its own rows when it
+       * is squeezed to ~13 columns). That card covered every pane of an
+       * ordinary six-pane workspace at 56 columns and had to be clicked away on
+       * each one, so the maintainer retired it (2026-08-18): the terminal is
+       * shown at whatever width the tile has, the wizard says beforehand how
+       * narrow that will be, and how many panes to open stays the user's call.
        */
-      const narrow = measured.cols < WORKABLE_COLS && !narrowOverrideRef.current;
-      setTooNarrow(narrow);
-      // Only a width the agent could really draw in is worth holding on to.
-      // Recorded even while the override is on: the reader chose to watch a
-      // narrow pane, they did not choose what it should fall back to.
-      if (measured.cols >= WORKABLE_COLS) heldColsRef.current = measured.cols;
-      const size = narrow ? { cols: heldColsRef.current, rows: measured.rows } : measured;
+      const size = measured;
       try {
-        if (!narrow && size.cols === proposed.cols && size.rows === proposed.rows) {
+        if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
         } else if (term.cols !== size.cols || term.rows !== size.rows) {
           term.resize(size.cols, size.rows);
@@ -2009,17 +1907,6 @@ export function AgenticTerminal({
     term.clearTextureAtlas?.();
   }, [appearance, terminalEpoch]);
 
-  // A pane that has been given room again forgets that its narrowness was
-  // acknowledged — see `widthNoticeDismissed` and `narrowOverride`. Both answer
-  // a question about the pane as it is NOW; a workspace that is widened and
-  // later crowded a second time is told a second time.
-  useEffect(() => {
-    if (paneCols !== null && paneCols >= WORKABLE_COLS) {
-      setWidthNoticeDismissed(false);
-      setNarrowOverride(false);
-    }
-  }, [paneCols]);
-
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
@@ -2261,28 +2148,6 @@ export function AgenticTerminal({
         onRestart={onRestart}
       />
       {/*
-        And the other reason a pane can be unreadable: it is simply too narrow
-        for the agent inside it. Second, because a pane that has stopped or
-        cannot be reached has a more specific answer and only one row to say it
-        in. See PaneWidthNotice.
-
-        Only while the terminal is actually being SHOWN at that width — which
-        now means only after the reader waved the card away (`narrowOverride`).
-        With the card up the same sentence would be on screen twice.
-      */}
-      {visibleStatus !== "exited" &&
-        visibleStatus !== "error" &&
-        !tooNarrow &&
-        !widthNoticeDismissed && (
-          <PaneWidthNotice
-            name={name}
-            displayName={displayName}
-            cols={paneCols}
-            light={appearance === "light"}
-            onDismiss={() => setWidthNoticeDismissed(true)}
-          />
-        )}
-      {/*
         Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
         host's border-box but does not subtract padding on that host, so putting
         the inset there made it report one row more than the pane could show.
@@ -2313,51 +2178,8 @@ export function AgenticTerminal({
            * edge, which is the thing that read as terminals standing on one
            * another.
            */
-          className={cn(
-            "agentic-terminal-host h-full min-h-0 w-full overflow-hidden",
-            // Out of sight while the card is up, but still LAID OUT — the fit
-            // measures this element, and a pane that stopped being measurable
-            // could never find out that its tile had grown back. Opacity rather
-            // than `visibility`, which the replay curtain writes imperatively
-            // on this same element and would fight over.
-            tooNarrow && "opacity-0",
-          )}
+          className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
         />
-        {/*
-          The pane, when there is no room to be a terminal. Ahead of the receipt
-          and the starting spinner in the DOM so both still land on TOP of it —
-          proof that a prompt arrived is exactly as load-bearing on a pane that
-          is showing a card as on one that is showing its agent. See
-          PaneTooNarrowCard.
-        */}
-        {tooNarrow && (
-          <PaneTooNarrowCard
-            name={name}
-            displayName={displayName}
-            cols={paneCols}
-            status={visibleStatus}
-            activity={activity}
-            activitySince={activitySince}
-            worked={worked}
-            recap={recap}
-            appearance={appearance}
-            maximized={maximized}
-            onOpen={onToggleMaximize}
-            onShowAnyway={() => {
-              // The ref BEFORE the state, and not only for tidiness: the fit
-              // below runs in this same tick and reads the ref, which the next
-              // render would otherwise be the first to update. Setting only the
-              // state here left the pane deciding "still too narrow" one last
-              // time and the card never lifting.
-              narrowOverrideRef.current = true;
-              setNarrowOverride(true);
-              // Take the tile's real width immediately rather than waiting for
-              // the next layout change — the reader asked to see this pane NOW,
-              // and nothing else is going to measure it.
-              resizeRef.current?.();
-            }}
-          />
-        )}
         <PaneConversationDialog
           terminal={name}
           open={historyOpen}
@@ -2396,9 +2218,7 @@ export function AgenticTerminal({
             onDismiss={() => setDismissedAt(receipt.at)}
           />
         )}
-        {/* Not on a pane showing the card — that card already says "starting",
-            in the same vocabulary, and two spinners on one tile is noise. */}
-        {!painted && !tooNarrow && visibleStatus === "connecting" && (
+        {!painted && visibleStatus === "connecting" && (
           <div
             data-testid={`agentic-pane-starting-${name}`}
             className="pointer-events-none absolute inset-0 flex items-center justify-center"
@@ -3316,266 +3136,6 @@ function PaneStatusNotice({
           Restart
         </button>
       )}
-    </div>
-  );
-}
-
-/**
- * What a pane shows when its tile is too narrow for the agent to draw in.
- *
- * ## The failure this replaces
- *
- * Opening more terminals re-fits every pane already open — the backend gives
- * each new one a full-height column (`layout_tree.append_pane`), so seven panes
- * become twelve and each one loses half its width. Below roughly
- * {@link WORKABLE_COLS} a coding CLI does not degrade into a small tidy
- * interface. It repaints by erasing the rows it last drew, and once its own
- * line count stops matching the screen the repaint erases more than it rewrites:
- * panes that had been working for an hour came back BLANK and nothing later
- * brought them back (reported 2026-08-13 with two screenshots; the same pair of
- * symptoms — one pane printing one character per line, the rest silently stuck
- * — was measured on 2026-08-09 at thirteen panes).
- *
- * It is not a Claude Code bug to route around. Every full-screen TUI that
- * repaints relatively has the same failure, which is why this is keyed on the
- * measured width alone and names no product: Codex and any CLI added next year
- * are covered with no code here and none there.
- *
- * ## Why a card instead of the four things tried before
- *
- * The rule this must not break is the maintainer's (2026-08-11): a terminal is
- * exactly as wide as its tile, and every character in that tile is visible.
- * Clipping broke it, auto-shrinking the font silently overrode the toolbar,
- * widening on hover shuffled the workspace under the cursor, and simply telling
- * the user (`PaneWidthNotice`) left the wreckage on screen.
- *
- * A card breaks none of it, because there is no terminal in the tile to be
- * wrong about. The agent keeps the last width it could lay out in (see
- * `heldColsRef`), so it is not squeezed, not repainted into a corner, and not
- * wrecked — it is simply not SHOWN until there is room. Maximize the pane or
- * close a few and the terminal comes back exactly as it was, mid-sentence.
- *
- * ## What it says
- *
- * The state, in a word, at a size that reads from across a wall of twelve
- * panes — the header's own pill is eight pixels and fades out at rest. Then the
- * pane's recap if it has one, then the arithmetic, then the two ways out. The
- * second of those, "Show it anyway", restores precisely the old behaviour for
- * this one pane: a reader who wants to watch a 40-column terminal is not
- * somebody this should argue with.
- */
-function PaneTooNarrowCard({
-  name,
-  displayName,
-  cols,
-  status,
-  activity,
-  activitySince,
-  worked,
-  recap,
-  appearance,
-  maximized,
-  onOpen,
-  onShowAnyway,
-}: {
-  name: string;
-  displayName: string;
-  cols: number | null;
-  status: PaneStatus;
-  activity: PaneActivity;
-  activitySince: number;
-  worked: boolean;
-  recap?: string;
-  appearance: TerminalAppearance;
-  maximized: boolean;
-  onOpen?: () => void;
-  onShowAnyway: () => void;
-}) {
-  const chrome = PANE_CHROME[appearance];
-  const brand = PANE_BRAND[appearance];
-  const state = paneActivityLabel(status, activity, worked);
-  return (
-    <div
-      data-testid={`pane-too-narrow-${name}`}
-      data-cols={cols ?? ""}
-      data-activity={activity || status}
-      role="status"
-      aria-live="polite"
-      /*
-       * Opaque, and covering the whole terminal region. The terminal underneath
-       * is still mounted, still parsing its agent's output and still being
-       * measured — it is only out of sight (see the `opacity-0` on its host) —
-       * so anything translucent here would show the very fragments this exists
-       * to keep off the screen.
-       */
-      className="absolute inset-0 flex flex-col items-start gap-1.5 overflow-hidden px-2 py-2 text-left"
-      // The terminal's OWN ground, from the same per-appearance table the pane
-      // is drawn with — never a hardcoded colour, and never one mode's.
-      style={{ background: themeFor(appearance).background }}
-    >
-      <div className="flex w-full min-w-0 items-center gap-1.5">
-        <PaneActivityPill
-          status={status}
-          activity={activity}
-          since={activitySince}
-          worked={worked}
-        />
-        <span
-          className="min-w-0 flex-1 truncate font-display text-[13px] font-medium"
-          style={{ color: brand.ink }}
-        >
-          {state}
-        </span>
-      </div>
-      {/*
-        The sentence the header already carries — repeated here because the
-        header truncates it to a single narrow line and this is the only surface
-        in the pane with room to let it wrap.
-      */}
-      {recap && (
-        <p
-          className="line-clamp-4 w-full text-[11px] leading-snug"
-          style={{ color: brand.inkMuted }}
-          title={recap}
-        >
-          {recap}
-        </p>
-      )}
-      <div className="flex-1" />
-      <p className="w-full text-[10px] leading-tight" style={{ color: brand.inkFaint }}>
-        {cols === null
-          ? `Too narrow for ${displayName} to draw in.`
-          : `${cols} columns — ${displayName} needs about ${WORKABLE_COLS}.`}
-      </p>
-      <div className="flex w-full flex-wrap items-center gap-1">
-        {/*
-          Not rendered on a pane that is already maximized: there is no bigger
-          it can be, and a button that cannot change anything is worse than no
-          button on a surface this small.
-        */}
-        {onOpen && !maximized && (
-          <button
-            type="button"
-            data-testid={`pane-too-narrow-open-${name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpen();
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors duration-150",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
-            )}
-            style={{ background: brand.accent, color: brand.onAccent }}
-          >
-            Open it
-          </button>
-        )}
-        <button
-          type="button"
-          data-testid={`pane-too-narrow-anyway-${name}`}
-          title={`Draw ${name} at whatever width it has`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onShowAnyway();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          className={cn(
-            "rounded px-1.5 py-0.5 text-[10px] transition-colors duration-150 hover:bg-foreground/10",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
-          )}
-          style={{ color: brand.inkFaint, boxShadow: `inset 0 0 0 1px ${chrome.border}` }}
-        >
-          Show it anyway
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Say that this pane is too narrow for its agent, rather than letting the agent
- * prove it in one-character columns.
- *
- * The gap this closes is between what is TRUE and what is VISIBLE. Everything
- * about a narrow pane is already working exactly as designed — the tile is
- * measured honestly, the agent is told that measurement, and it draws the best
- * frame it can into it (see WORKABLE_COLS for the three attempts to do
- * something else and why none of them survived). But a coding CLI below its
- * usable width does not produce a small, tidy interface. It reserves its gutter
- * out of what little there is and lays the rest out one and two characters
- * wide, and the result is indistinguishable from this app rendering the
- * terminal wrong — which is what it was reported as (2026-08-11), twice, by
- * someone reading a workspace that was doing precisely what it was told.
- *
- * So the pane answers the question the screen raises: it states its own width
- * against the number the agent needs, and nothing more. Every way out —
- * maximizing the pane, a smaller text size, fewer panes across — belongs to
- * controls the header and toolbar already carry. The notice once offered a
- * "Widen" button of its own; the maintainer removed it (2026-08-11), so this
- * row informs and never acts.
- *
- * Deliberately NOT an error tone. Nothing has failed, and nothing needs
- * restarting; the workspace is simply asking more of the window than it has.
- */
-function PaneWidthNotice({
-  name,
-  displayName,
-  cols,
-  light,
-  onDismiss,
-}: {
-  name: string;
-  displayName: string;
-  cols: number | null;
-  light: boolean;
-  onDismiss: () => void;
-}) {
-  // Nothing measured yet, or a tile that gives its agent room to work.
-  if (cols === null || cols >= WORKABLE_COLS) return null;
-  const tone = NOTICE_TONE.warning[light ? "light" : "dark"];
-  const message =
-    `${cols} columns — ${displayName} needs about ${WORKABLE_COLS} to draw ` +
-    `its interface. Below that it wraps into fragments.`;
-  return (
-    <div
-      data-testid={`pane-width-notice-${name}`}
-      data-tone="warning"
-      data-cols={cols}
-      role="status"
-      aria-live="polite"
-      // The same shape as the status notice above it — a rule down the left
-      // edge, no fill, no icon. A second, louder box in a pane header would
-      // cost more of the terminal than the sentence is worth.
-      className="flex shrink-0 items-center gap-2 border-l-2 px-2 py-1 text-[11px] leading-tight"
-      style={{ borderColor: tone.border, color: tone.text }}
-    >
-      <span className="min-w-0 flex-1 truncate" title={message}>
-        {message}
-      </span>
-      {/*
-        Retire it. A crowded workspace shows this on every pane at once, and
-        the trade may well be one the user made on purpose — a warning they
-        cannot switch off would be the next thing reported.
-      */}
-      <button
-        type="button"
-        aria-label={`Stop telling me that ${name} is narrow`}
-        title="I know — leave it"
-        data-testid={`pane-width-dismiss-${name}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onDismiss();
-        }}
-        onMouseDown={(e) => e.stopPropagation()}
-        className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded",
-          "transition-colors duration-150 hover:bg-foreground/10",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
-        )}
-      >
-        <X className="h-3 w-3" aria-hidden="true" />
-      </button>
     </div>
   );
 }

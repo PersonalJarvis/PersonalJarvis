@@ -9,10 +9,9 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  Check,
+  Info,
   LayoutGrid,
   Loader2,
   MessagesSquare,
@@ -158,16 +157,6 @@ export function WorkspaceLauncher({
   const t = useT();
   const [step, setStep] = useState<LauncherStep>(0);
   /*
-   * Has the user said yes to a crowded workspace?
-   *
-   * The count itself is never refused — see CROWDED_TERMINAL_COUNT. This is
-   * only the acknowledgement that the warning was read, and it is dropped
-   * again the moment the count returns below the threshold, so a user who
-   * stepped up to 24, agreed, and then came back down to 6 is not carrying a
-   * silent yes into a workspace that no longer needs one.
-   */
-  const [crowdAccepted, setCrowdAccepted] = useState(false);
-  /*
    * How narrow these panes really come out, on THIS window at THIS text size.
    *
    * The measured half of the question, and the reason the fixed count below is
@@ -191,20 +180,17 @@ export function WorkspaceLauncher({
   const perPane = paneColumnsAt(columns, workspaceWidthPx, cell ?? 0);
   const fitsAcross = workableColumnCount(workspaceWidthPx, cell ?? 0);
   const tooNarrow = perPane > 0 && perPane < WORKABLE_COLS;
-  // Either question is enough to stop and ask. They catch different mistakes:
-  // the count is about the machine and the attention a wall of agents costs,
-  // the measurement is about whether these panes can be terminals at all.
+  // Either is worth a sentence, and neither is worth a question. They catch
+  // different things: the count is about the attention a wall of agents costs,
+  // the measurement is about how much room each pane really gets. Both are
+  // ADVICE — the maintainer's rule (2026-08-18) is that the number of
+  // terminals is the user's call and the wizard never makes them confirm it.
   const crowded = count >= CROWDED_TERMINAL_COUNT || tooNarrow;
-  useEffect(() => {
-    if (!crowded && crowdAccepted) setCrowdAccepted(false);
-  }, [crowded, crowdAccepted]);
-  const countSettled = count > 0 && (!crowded || crowdAccepted);
+  const countSettled = count > 0;
 
   const planReady =
     planned.length > 0 &&
     planned.every((pane) => pane.name.trim() && pane.agent);
-  // The acknowledgement gates the START, not just the step — the launcher can
-  // also be fired with the keyboard shortcut from anywhere in the wizard.
   const ready = Boolean(folder) && planReady && countSettled;
 
   const canLeaveCurrent =
@@ -379,8 +365,6 @@ export function WorkspaceLauncher({
                       count={count}
                       perPane={tooNarrow ? perPane : 0}
                       fitsAcross={fitsAcross}
-                      accepted={crowdAccepted}
-                      onAccept={() => setCrowdAccepted(true)}
                     />
                   )}
                 </div>
@@ -464,92 +448,51 @@ export function WorkspaceLauncher({
 }
 
 /**
- * The yes a crowded workspace has to be given before it opens.
+ * A word about a crowded workspace — said, never asked.
  *
- * It does NOT refuse the count, and that is the point. How many agents are
- * worth watching at once is the user's call — thirty terminals on a video wall
- * is a reasonable thing to want, and this app has no way of knowing how big the
- * display in front of it is. So the one thing it can honestly do is make sure
- * the decision was made deliberately: the warning names the consequence, and
- * the button is the user overruling it.
+ * How many agents are worth watching at once is the user's call: thirty
+ * terminals on a video wall is a reasonable thing to want, and this app has no
+ * way of knowing how big the display in front of it is. So the count is never
+ * refused and never has to be confirmed. It used to be — a blocking "Open it
+ * anyway" from twenty terminals up, and from six on an ordinary window once
+ * the measured sentence joined in — and the maintainer retired the question
+ * (2026-08-18): a wizard that makes people click past a warning to open the
+ * workspace they just chose is nagging, not helping.
  *
- * Shown from {@link CROWDED_TERMINAL_COUNT} up, and it BLOCKS — the wizard's
- * next step stays out of reach until this is answered. A warning that can be
- * walked past without being read is decoration, and the count it is warning
- * about is the one thing in this wizard that cannot be undone from inside the
- * workspace without closing panes one at a time.
- *
- * ## The measured sentence
- *
- * `perPane` turns the general warning into a specific one. When the window has
- * actually been measured and these panes come out below the width an agent can
- * draw in, the warning says the number and what follows from it — the panes
- * open as status cards, not terminals — instead of guessing at "most displays".
- * That is the case twelve terminals hit on 2026-08-13 and walked straight past,
- * because twelve is not twenty.
- *
- * 0 means there is nothing measured to say, and the general sentence stands.
+ * What survives is the sentence, from {@link CROWDED_TERMINAL_COUNT} up or when
+ * the panes measure narrower than an agent is comfortable in: it says how many,
+ * how wide, and how many this window fits at the reader's text size, so the
+ * count is chosen with its consequence in view. `perPane` is 0 when the width
+ * is not the problem and the general sentence stands.
  */
 function CrowdedWarning({
   count,
   perPane,
   fitsAcross,
-  accepted,
-  onAccept,
 }: {
   count: number;
   /** Columns each pane comes out at, or 0 when that is not the problem. */
   perPane: number;
   /** How many panes this window fits at a workable width. */
   fitsAcross: number;
-  accepted: boolean;
-  onAccept: () => void;
 }) {
   const t = useT();
   return (
     <div
       data-testid="workspace-crowded-warning"
-      role="group"
-      className={cn(
-        "mt-3 flex items-start gap-3 rounded-control border px-3 py-2.5 transition-colors",
-        accepted
-          ? "border-border/70 bg-muted/30"
-          : "border-destructive/50 bg-destructive/[0.07]",
-      )}
+      role="note"
+      className="mt-3 flex items-start gap-3 rounded-control border border-border/70 bg-muted/30 px-3 py-2.5"
     >
-      {accepted ? (
-        <Check className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-      ) : (
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-      )}
-      <div className="min-w-0 flex-1">
-        <p
-          className={cn(
-            "text-xs leading-relaxed",
-            accepted ? "text-muted-foreground" : "text-foreground",
-          )}
-        >
-          {(accepted
-            ? t("workspace_launcher.crowded.accepted")
-            : perPane > 0
-              ? t("workspace_launcher.crowded.measured")
-              : t("workspace_launcher.crowded.warning")
-          )
-            .replace("{0}", String(count))
-            .replace("{1}", String(perPane))
-            .replace("{2}", String(fitsAcross))}
-        </p>
-        {!accepted && (
-          <Button
-            variant="subtle"
-            onClick={onAccept}
-            className="mt-2"
-            data-testid="workspace-crowded-accept"
-          >
-            {t("workspace_launcher.crowded.accept")}
-          </Button>
-        )}
-      </div>
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+        {(perPane > 0
+          ? t("workspace_launcher.crowded.measured")
+          : t("workspace_launcher.crowded.warning")
+        )
+          .replace("{0}", String(count))
+          .replace("{1}", String(perPane))
+          .replace("{2}", String(fitsAcross))}
+      </p>
     </div>
   );
 }
