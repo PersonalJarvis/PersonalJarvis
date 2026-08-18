@@ -10276,7 +10276,7 @@ the prompt, `author()` never commits a skeleton),
 `tests/unit/cli_ctl/test_commands_wave23.py`,
 `tests/fixtures/skill_routing/golden.yaml` (forensic positive).
 
-## BUG-147: a Vertex Live readback is spoken twice, and three grounded answers in a row are never heard — the stale-generation guard was stamped before the speaker drained, and Vertex Live had no realtime-scoped emergency voice (HIGH, FIXED 2026-08-18)
+## BUG-148: a Vertex Live readback is spoken twice, and three grounded answers in a row are never heard — the stale-generation guard was stamped before the speaker drained, and Vertex Live had no realtime-scoped emergency voice (HIGH, FIXED 2026-08-18)
 
 **Symptom.** Realtime voice session `28cf8436` (2026-08-18 18:39, Vertex Live,
 delegate tool mode, desktop). Turn 0 ("what music would you recommend") was
