@@ -230,16 +230,16 @@ async def test_language_code_de_picks_de_voice(patched_secret) -> None:
     assert captured["voice"]["id"] == "DE-VOICE-UUID"
 
 
-@pytest.mark.asyncio
-async def test_text_heuristic_picks_de_when_caller_says_auto(patched_secret) -> None:
-    """When the caller passes nothing or 'auto', the text-detect heuristic
-    routes German-looking text to the DE voice."""
-    tts = CartesiaTTS(
+def _lang_voice_tts() -> CartesiaTTS:
+    return CartesiaTTS(
         voice_id="GENERIC",
         voice_id_de="DE-VOICE-UUID",
         voice_id_en="EN-VOICE-UUID",
         voice_id_es="ES-VOICE-UUID",
     )
+
+
+def _capturing_client(tts: CartesiaTTS) -> dict[str, Any]:
     captured: dict[str, Any] = {}
 
     async def fake_post(url: str, json: dict[str, Any]) -> _Resp:
@@ -249,33 +249,79 @@ async def test_text_heuristic_picks_de_when_caller_says_auto(patched_secret) -> 
     mock_client = AsyncMock()
     mock_client.post = fake_post  # type: ignore[assignment]
     tts._client = mock_client
-
-    [_ async for _ in tts.synthesize("Ich bin Jarvis und freue mich für Sie.")]  # i18n-allow: German text synthesized to prove the German voice/locale is picked
-
-    assert captured["voice"]["id"] == "DE-VOICE-UUID"
+    return captured
 
 
 @pytest.mark.asyncio
-async def test_text_heuristic_picks_es_for_spanish_text(patched_secret) -> None:
+@pytest.mark.parametrize(
+    ("language_code", "expected"),
+    [
+        ("de-DE", "DE-VOICE-UUID"),
+        ("en-US", "EN-VOICE-UUID"),
+        ("es-ES", "ES-VOICE-UUID"),
+    ],
+)
+async def test_caller_language_alone_picks_the_voice(
+    patched_secret, language_code: str, expected: str
+) -> None:
+    """The turn's resolved output language decides the voice — for every locale.
+
+    The pipeline resolves the language ONCE per turn
+    (``resolve_output_language``) and passes it as ``language_code``. This
+    plugin must simply obey it; it has nothing to re-derive.
+    """
+    tts = _lang_voice_tts()
+    captured = _capturing_client(tts)
+
+    # Same words in every case, so only ``language_code`` can move the voice.
+    [_ async for _ in tts.synthesize("Jarvis.", language_code=language_code)]
+
+    assert captured["voice"]["id"] == expected
+
+
+@pytest.mark.asyncio
+async def test_english_text_with_german_lookalike_words_keeps_the_en_voice(
+    patched_secret,
+) -> None:
+    """Regression: the voice must never be sniffed out of the words.
+
+    The old heuristic matched the bare tokens "die"/"das"/"der"/"ist", so the
+    English idiom "the die is cast" was routed to the GERMAN voice and spoken
+    with German phonetics — the right words, rendered unintelligible.
+    """
+    tts = _lang_voice_tts()
+    captured = _capturing_client(tts)
+
+    [_ async for _ in tts.synthesize(
+        "The die is cast, and so the das ist question is moot.",
+        language_code="en-US",
+    )]
+
+    assert captured["voice"]["id"] == "EN-VOICE-UUID"
+
+
+@pytest.mark.asyncio
+async def test_no_language_code_falls_back_to_the_configured_locale(
+    patched_secret,
+) -> None:
+    """A caller that omits the language gets the configured default, not a sniff.
+
+    ``language="de"`` configures the default locale, so German-looking text and
+    English-looking text must BOTH land on the DE voice — proof that nothing is
+    being read out of the transcript any more.
+    """
     tts = CartesiaTTS(
         voice_id="GENERIC",
         voice_id_de="DE-VOICE-UUID",
         voice_id_en="EN-VOICE-UUID",
         voice_id_es="ES-VOICE-UUID",
+        language="de",
     )
-    captured: dict[str, Any] = {}
-
-    async def fake_post(url: str, json: dict[str, Any]) -> _Resp:
-        captured.update(json)
-        return _Resp(200, content=b"\x00\x01" * 100)
-
-    mock_client = AsyncMock()
-    mock_client.post = fake_post  # type: ignore[assignment]
-    tts._client = mock_client
+    captured = _capturing_client(tts)
 
     [_ async for _ in tts.synthesize("Hola, ¿cómo está? Gracias por su atención.")]
 
-    assert captured["voice"]["id"] == "ES-VOICE-UUID"
+    assert captured["voice"]["id"] == "DE-VOICE-UUID"
 
 
 @pytest.mark.asyncio

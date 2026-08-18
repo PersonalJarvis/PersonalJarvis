@@ -11,7 +11,8 @@ Failure-mode coverage (spec §6):
 - F3 Empty / whitespace
 - F4 Over-long output (truncate at first [.!?])
 - F5 Blacklist-stripped to < 3 alnum chars
-- F6 Language mismatch (top-100 word heuristic)
+- F6 Language mismatch (validated against the turn's resolved
+       output language via ``jarvis.core.turn_language``)
 - F8 Circuit breaker open
 - F10 Self-answer (post-filter for answer-shaped output) — spec
        update 2026-05-13
@@ -32,6 +33,10 @@ from jarvis.brain.ack_brain.circuit_breaker import CircuitBreaker
 from jarvis.brain.ack_brain.persona_prompt import get_persona_prompt
 from jarvis.brain.action_honesty import has_deferred_action_claim
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.core.turn_language import (
+    detect_text_language,
+    validate_output_language,
+)
 
 if TYPE_CHECKING:
     from jarvis.brain.ack_brain.config import AckBrainConfig
@@ -59,56 +64,21 @@ def _augment_with_preferences(
     return f"{base_prompt}\n\n{extra}" if extra else base_prompt
 
 
-# ----------------------------------------------------------------------
-# Cheap top-100-word language heuristic
-# ----------------------------------------------------------------------
-# Tokens that appear in the v2.1 persona-prompt examples + common
-# function words. Kept small (~70 each) — frozenset overlap is O(n)
-# in token count, dominated by re.findall.
-
-_TOP_DE: frozenset[str] = frozenset({
-    "der", "die", "das", "und", "ich", "ist", "nicht", "ein", "eine", "zu",  # i18n-allow: German output-language-detection vocabulary, matched against generated ack text
-    "den", "mit", "sich", "auf", "für", "von", "im", "dem", "ja", "kurz",  # i18n-allow: same German language-detection vocabulary
-    "mache", "danke", "hallo", "klar", "okay", "gut", "lass", "mich", "kann",  # i18n-allow: same German language-detection vocabulary
-    "gleich", "schaue", "suche", "prüfe", "starte", "wechsle", "öffne",  # i18n-allow: same German language-detection vocabulary
-    "hole", "schaut", "ändere", "recherchiere", "guten", "tag", "abend",  # i18n-allow: same German language-detection vocabulary
-    "morgen", "schön", "bitte", "leider", "noch", "schon", "aber",  # i18n-allow: same German language-detection vocabulary
-    "oder", "auch", "nur", "weil", "wenn", "dann", "doch", "wie", "was",  # i18n-allow: same German language-detection vocabulary
-    "wer", "wo", "wann", "warum", "diese", "dieser", "dieses", "habe",
-    "hast", "hat", "haben", "wird", "werden", "wollen", "kannst", "konnte",  # i18n-allow: same German language-detection vocabulary
-    "sollst", "soll", "muss", "müssen", "Chef",  # i18n-allow: same German language-detection vocabulary
-})
-
-_TOP_EN: frozenset[str] = frozenset({
-    "the", "and", "you", "that", "for", "with", "this", "let", "me", "on",
-    "check", "sure", "got", "ok", "fine", "good", "morning", "afternoon",
-    "evening", "yes", "no", "search", "fetch", "look", "up", "launch",
-    "change", "switch", "open", "thanks", "hi", "hello", "hey", "please",
-    "still", "now", "but", "or", "also", "only", "because", "if", "then",
-    "how", "what", "who", "where", "when", "why", "have", "has", "had",
-    "will", "would", "could", "should", "must", "can", "be", "is", "are",
-    "was", "were", "am", "do", "does", "did", "going", "want", "need",
-    "it", "to", "of", "in", "a", "an",
-})
-
 _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
 
-
-def _detect_language(text: str) -> str:
-    """Cheap heuristic: pick the language whose top-100 set has more overlap.
-
-    Returns "de", "en", or "unknown" (both counts zero — e.g. pure
-    proper-noun output). The generator treats "unknown" as a non-mismatch
-    so single-word names like ``"Spotify."`` don't get false-rejected.
-    """
-    tokens = {t.lower() for t in _TOKEN_RE.findall(text)}
-    if not tokens:
-        return "unknown"
-    de = len(tokens & _TOP_DE)
-    en = len(tokens & _TOP_EN)
-    if de == 0 and en == 0:
-        return "unknown"
-    return "de" if de >= en else "en"
+# Back-compat re-export. This module used to own a private de/en-only
+# top-100-word heuristic (``_TOP_DE`` / ``_TOP_EN``), which is exactly the
+# per-layer language re-derivation CLAUDE.md §1 forbids: it scored the German
+# ack "Moment, in Ordnung." as English (the bare token "in" was in the English
+# set) and dropped it, and it classified every Spanish ack containing "no" as
+# English and dropped that too — the user simply heard nothing. The tables are
+# gone; ``jarvis.core.turn_language`` is the single authority, and it covers
+# de/en/es equally.
+#
+# Kept under the old name because ``jarvis.voice.contextual_readback`` still
+# imports it from here (see that module's ``_validate``); that caller should
+# move to ``validate_output_language`` — see the note on ``_postprocess``.
+_detect_language = detect_text_language
 
 
 # ----------------------------------------------------------------------
@@ -300,7 +270,7 @@ class AckGenerator:
             f) any other Exception         → None
             g) empty / whitespace          → None
             h) word count > 25             → truncate at first [.!?]
-            i) language mismatch heuristic → None
+            i) output-language mismatch      → None
             j) scrub_for_voice → < 3 alnum chars → None
             k) F10 self-answer post-filter → None
             l) ack_emitted_total++, latency histogram, return scrubbed
@@ -354,9 +324,14 @@ class AckGenerator:
             text = _truncate_at_first_sentence(text)
             _emit_counter("ack_truncated_total")
 
-        # (i) cheap language sanity check
-        detected = _detect_language(text)
-        if detected != "unknown" and detected != language:
+        # (i) output-language sanity check. ``language`` is ALREADY this turn's
+        # resolved output language (``resolve_output_language``, resolved once
+        # by the pipeline) — this layer must never re-derive it (CLAUDE.md §1).
+        # ``validate_output_language`` blocks only on a high-confidence
+        # mismatch; short, ambiguous, or name-only acks come back
+        # ``indeterminate`` and PASS. Dropping user-facing output on a language
+        # guess is the bug: silence is worse than a slightly odd ack.
+        if validate_output_language(text, resolved_language=language).should_block:
             _emit_counter("ack_lang_mismatch_total", provider=provider_label)
             await self._breaker.record_success()  # provider was healthy
             return None
@@ -423,8 +398,10 @@ class AckGenerator:
             return None
         if _word_count(text) > 25:
             text = _truncate_at_first_sentence(text)
-        detected = _detect_language(text)
-        if detected != "unknown" and detected != language:
+        # Same single-resolver rule as ``run()`` step (i): validate against the
+        # already-resolved ``language``, never a local detector, and let
+        # anything indeterminate through rather than dropping the sentence.
+        if validate_output_language(text, resolved_language=language).should_block:
             return None
         scrub_result = scrub_for_voice(text, language=language, ack_mode=True)
         if scrub_result.fallback_used:

@@ -47,15 +47,23 @@ DEFAULT_VOICE_ID = DEFAULT_VOICE_ID_EN
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow (DE letters are part of the sentence-boundary match set)
 
-# Text-detection heuristic: when the caller does not pass a language_code,
-# we look at the transcript to pick the right voice. Cheap, no LLM call,
-# no library dependency. False positives fall back to the generic voice.
+# DEPRECATED — no longer used by this plugin. This sniff picked the VOICE from
+# bare function words, so English prose containing "die"/"das"/"der"/"ist" was
+# spoken by the German voice: "the die is cast" came out with German phonetics,
+# i.e. the right words rendered unintelligible. Language is resolved ONCE per
+# turn by the pipeline (``resolve_output_language``) and arrives as
+# ``language_code``; a plugin must not re-derive it, and cannot call the
+# resolver anyway (no ``jarvis.*`` import inside plugins, CLAUDE.md §5).
+#
+# Kept only because ``jarvis.plugins.tts.inworld_tts`` still imports it and
+# carries the identical defect; delete both together once that plugin takes its
+# language from the caller too.
 _DE_HINTS = re.compile(r"[äöüÄÖÜß]|\b(ich|nicht|und|der|die|das|ist|mit|für|werde|machen|gerne|bitte)\b", re.IGNORECASE)  # i18n-allow (DE word list a language-detection classifier must match)
 _ES_HINTS = re.compile(r"[ñáéíóúÑÁÉÍÓÚ¿¡]|\b(que|para|con|por|esto|esta|hola|gracias|señor|cómo)\b", re.IGNORECASE)
 
 
 def _detect_lang_from_text(text: str) -> str | None:
-    """Return 'de', 'es' or None (unknown — caller falls back to default)."""
+    """Return 'de', 'es' or None. DEPRECATED — see the note above."""
     if _DE_HINTS.search(text):
         return "de"
     if _ES_HINTS.search(text):
@@ -122,17 +130,25 @@ class CartesiaTTS:
     def _resolve_voice(
         self, text: str, voice_override: str | None, language_code: str | None
     ) -> str:
-        """Pick the voice UUID that best matches the language of this segment.
+        """Pick the voice UUID for this segment from the CALLER's language.
 
         Priority:
           1. Explicit ``voice`` override from the caller (Pipeline can pass
              a per-utterance voice).
-          2. ``language_code`` from the caller (matches the Pipeline's
-             ``voice_auto_switch`` per-utterance detection or the user's
-             reply-language pin).
-          3. Text-detection heuristic on the transcript (cheap, regex-based,
-             handles the case where the caller passes 'auto' or nothing).
-          4. The generic ``voice_id`` fallback.
+          2. ``language_code`` from the caller — REQUIRED in practice. It is
+             the turn's single resolved output language (the pipeline resolves
+             it once via ``resolve_output_language`` and pins every layer to
+             it), so this plugin has nothing left to decide.
+          3. The configured ``[tts.cartesia].language``, else the doctrine
+             default locale — never a hardcoded English voice on German text
+             (British-accent symptom, forensic 2026-06-23).
+
+        There is deliberately no text sniff. Guessing the voice from the words
+        picked the German voice for any English sentence containing "die",
+        "das", "der" or "ist" — "the die is cast" was spoken with German
+        phonetics, which is unintelligible rather than merely wrong. A caller
+        that omits the code gets the configured default and a warning, so the
+        gap is visible instead of silently mis-voiced.
         """
         if voice_override:
             return voice_override
@@ -141,13 +157,13 @@ class CartesiaTTS:
             short = hint.split("-", 1)[0]
             if short in self._voice_by_lang:
                 return self._voice_by_lang[short]
-        # Caller did not pin a language — sniff the text.
-        detected = _detect_lang_from_text(text)
-        if detected and detected in self._voice_by_lang:
-            return self._voice_by_lang[detected]
-        # No language could be resolved — follow the configured default_locale,
-        # never a hardcoded English voice on German text (British-accent
-        # symptom). default_locale is "en" only when configured/auto.
+        elif text.strip():
+            logging.getLogger("jarvis.tts.cartesia").warning(
+                "No language_code passed for %r — falling back to the "
+                "configured default voice (%s). The caller must pass this "
+                "turn's resolved output language.",
+                text[:60], self._default_locale,
+            )
         return self._voice_by_lang.get(self._default_locale, self._voice_id)
 
     def _resolve_api_key(self) -> str:

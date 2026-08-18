@@ -58,12 +58,15 @@ from typing import TYPE_CHECKING
 from jarvis.brain.ack_brain.generator import (
     _TOKEN_RE,
     _augment_with_preferences,
-    _detect_language,
     _emit_counter,
 )
 from jarvis.brain.assistant_name import agent_brand_from_name
 from jarvis.brain.output_filter import scrub_for_voice
-from jarvis.core.turn_language import DEFAULT_LOCALE
+from jarvis.core.turn_language import (
+    DEFAULT_LOCALE,
+    detect_text_language,
+    validate_output_language,
+)
 
 if TYPE_CHECKING:
     from jarvis.brain.ack_brain.circuit_breaker import CircuitBreaker
@@ -376,7 +379,7 @@ def _resolve_language(explicit: str | None, utterance: str) -> str:
             return "es"
         if low.startswith("de"):
             return "de"
-    detected = _detect_language(utterance or "")
+    detected = detect_text_language(utterance or "")
     return detected if detected in ("de", "en", "es") else DEFAULT_LOCALE
 
 
@@ -531,8 +534,12 @@ class SpawnAnnouncementComposer:
             return None
         if _COMPLETION_CLAIM_RE.search(trimmed):
             return None
-        detected = _detect_language(trimmed)
-        if detected != "unknown" and detected != lang:
+        # ``lang`` is already this turn's resolved output language — validate
+        # against it through the single resolver, never a local detector
+        # (CLAUDE.md §1). Only a high-confidence mismatch rejects; an
+        # indeterminate verdict keeps the announcement, since staying silent on
+        # a language guess is worse than an odd-sounding one.
+        if validate_output_language(trimmed, resolved_language=lang).should_block:
             return None
         try:
             result = scrub_for_voice(trimmed, language=lang, ack_mode=True)

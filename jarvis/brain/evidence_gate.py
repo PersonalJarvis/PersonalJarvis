@@ -22,6 +22,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from jarvis.core.capabilities import _normalize
+from jarvis.core.turn_language import (
+    DEFAULT_LOCALE,
+    detect_text_language,
+    normalize_language_tag,
+)
 
 log = logging.getLogger(__name__)
 
@@ -195,20 +200,50 @@ _REFUSAL_EN: dict[str, str] = {
 }
 _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 
+# Spoken Spanish voice replies (TTS-safe, deterministic). All locales are
+# equal (CLAUDE.md §1): a Spanish-speaking user gets the refusal in Spanish,
+# not the English table because no Spanish one existed.
+_REFUSAL_ES: dict[str, str] = {
+    "calendar": "Ahora mismo no tengo acceso a tu calendario.",  # i18n-allow
+    "email": "Ahora mismo no tengo acceso a tu correo.",  # i18n-allow
+    "tasks": "Ahora mismo no tengo acceso a tus tareas.",  # i18n-allow
+    "repos": "Ahora mismo no tengo acceso a tus repositorios.",  # i18n-allow
+    "deployments": "Ahora mismo no tengo acceso a tus despliegues.",  # i18n-allow
+    "cloud": "Ahora mismo no tengo acceso a tu facturación en la nube.",  # i18n-allow
+    "activity": "Ahora mismo no puedo acceder a tu historial de actividad.",  # i18n-allow
+}
+_REFUSAL_ES_FALLBACK = "Ahora mismo no tengo acceso a esos datos."  # i18n-allow
 
-def _detect_lang(text: str) -> str:
-    """Cheap DE/EN heuristic for the refusal language (mirrors the existing
-    heuristic in ``BrainManager._check_unsupported_intent``)."""
-    if re.search(r"[äöüÄÖÜß]", text):  # i18n-allow: umlaut character class, language-detection matching data
-        return "de"
-    if re.search(
-        r"\b(was|wie|welche|welcher|steht|stehen|heute|morgen|hab|habe|"
-        r"meine|meinem|bitte|gibt)\b",
-        text,
-        re.I,
-    ):
-        return "de"
-    return "en"
+#: One table per supported locale, so adding a language is a table, not a
+#: branch. Keys must stay in step with ``jarvis.core.turn_language``'s pins.
+_REFUSALS: dict[str, tuple[dict[str, str], str]] = {
+    "de": (_REFUSAL_DE, _REFUSAL_DE_FALLBACK),
+    "en": (_REFUSAL_EN, _REFUSAL_EN_FALLBACK),
+    "es": (_REFUSAL_ES, _REFUSAL_ES_FALLBACK),
+}
+
+
+def _refusal_language(resolved: object, text: str) -> str:
+    """Which language the deterministic refusal is spoken in.
+
+    The turn's ALREADY-resolved output language wins outright — this module
+    must never re-derive it (CLAUDE.md §1: one resolver,
+    ``resolve_output_language``, decides for all layers). It used to sniff the
+    utterance with a private de/en-only heuristic, so an explicit
+    ``brain.reply_language`` pin was ignored: a Spanish-pinned user asking in
+    English heard an English refusal, and there was no Spanish table to reach
+    at all.
+
+    The text fallback exists only for callers not yet passing ``language``. It
+    is the canonical detector rather than a local one, and an undecidable text
+    lands on the shared ``DEFAULT_LOCALE`` instead of a hardcoded per-layer
+    default.
+    """
+    code = normalize_language_tag(resolved)
+    if code in _REFUSALS:
+        return code
+    detected = detect_text_language(text)
+    return detected if detected in _REFUSALS else DEFAULT_LOCALE
 
 
 def check_evidence_domain(
@@ -220,6 +255,7 @@ def check_evidence_domain(
     domain_tool_map: Mapping[str, str],
     refusal_hint_fn: Callable[[str, str], str] | None = None,
     live_tool_names: Sequence[str] = (),
+    language: object = "",
 ) -> EvidenceVerdict:
     """Classify one utterance against the evidence-required domains.
 
@@ -228,6 +264,13 @@ def check_evidence_domain(
     matching tool on the live surface beats an empty registry (see
     :func:`live_surface_covers`). Defaulting to ``()`` keeps every existing
     caller on the registry-only behaviour.
+
+    ``language`` is THIS turn's resolved output language (de/en/es), produced
+    by ``jarvis.core.turn_language.resolve_output_language`` and passed down by
+    the caller. The honest refusal is user-facing speech, so it must be spoken
+    in the same language as every other layer of the turn. Callers that omit it
+    fall back to detecting the utterance (see :func:`_refusal_language`), which
+    silently ignores an explicit ``brain.reply_language`` pin — pass it.
     """
     if not enabled:
         return _PASS
@@ -296,12 +339,9 @@ def check_evidence_domain(
         )
         return _PASS
 
-    lang = _detect_lang(t)
-    base = (
-        _REFUSAL_DE.get(matched_domain, _REFUSAL_DE_FALLBACK)
-        if lang == "de"
-        else _REFUSAL_EN.get(matched_domain, _REFUSAL_EN_FALLBACK)
-    )
+    lang = _refusal_language(language, t)
+    table, table_fallback = _REFUSALS[lang]
+    base = table.get(matched_domain, table_fallback)
     hint = ""
     if refusal_hint_fn is not None:
         try:
