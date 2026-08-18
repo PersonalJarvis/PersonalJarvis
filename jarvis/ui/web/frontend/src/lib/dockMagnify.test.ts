@@ -5,7 +5,6 @@ import {
   dockSlotAt,
   layoutDock,
   magnifyScale,
-  maxAnchorLift,
 } from "@/lib/dockMagnify";
 
 describe("magnifyScale", () => {
@@ -32,24 +31,34 @@ describe("layoutDock", () => {
     const { items, extent } = layoutDock(4, 32, 8, null);
     expect(items.map((i) => i.scale)).toEqual([1, 1, 1, 1]);
     expect(items.map((i) => i.center)).toEqual([24, 64, 104, 144]);
+    expect(items.map((i) => i.size)).toEqual([32, 32, 32, 32]);
     expect(extent).toBe(4 * 40 + 8);
   });
 
-  it("magnifies the icon under the pointer and pushes the rest outward", () => {
+  it("magnifies the icon under the pointer, its neighbours less — and moves nothing", () => {
     const rest = layoutDock(5, 32, 8, null);
     // Pointer exactly on the centre of the third icon.
     const { items, extent } = layoutDock(5, 32, 8, rest.items[2].center);
 
     expect(items[2].scale).toBeCloseTo(DOCK_MAX_SCALE, 6);
+    expect(items[2].size).toBeCloseTo(32 * DOCK_MAX_SCALE, 6);
     expect(items[1].scale).toBeGreaterThan(1);
+    expect(items[1].scale).toBeLessThan(items[2].scale);
     expect(items[3].scale).toBeCloseTo(items[1].scale, 9);
-    // The row grew — nothing overlaps because everything after the big icon
-    // moved by exactly the extra room it needs.
-    expect(extent).toBeGreaterThan(rest.extent);
-    for (let i = 1; i < items.length; i++) {
-      const prevEnd = items[i - 1].center + items[i - 1].size / 2;
-      const thisStart = items[i].center - items[i].size / 2;
-      expect(thisStart).toBeGreaterThanOrEqual(prevEnd + 8 - 1e-9);
+
+    // The column is rigid: every centre is its rest centre, the extent is the
+    // rest extent. Only sizes changed.
+    expect(items.map((i) => i.center)).toEqual(rest.items.map((i) => i.center));
+    expect(extent).toBe(rest.extent);
+  });
+
+  it("grows each icon around its own centre, so a hovered icon stays where it was", () => {
+    const rest = layoutDock(9, 30, 8, null);
+    for (let k = 0; k < 9; k++) {
+      const { items } = layoutDock(9, 30, 8, rest.items[k].center);
+      expect(items[k].center).toBe(rest.items[k].center);
+      expect(items[k].center - items[k].size / 2).toBeLessThan(rest.items[k].center - 15);
+      expect(items[k].center + items[k].size / 2).toBeGreaterThan(rest.items[k].center + 15);
     }
   });
 
@@ -59,51 +68,14 @@ describe("layoutDock", () => {
     expect(items[11].scale).toBe(1);
     expect(items[11].size).toBe(32);
   });
-});
 
-describe("layoutDock — pointer anchoring", () => {
-  it("does not lift the row without headroom (top-anchored, as before)", () => {
-    const rest = layoutDock(9, 30, 8, null);
-    const { items, shift } = layoutDock(9, 30, 8, rest.items[4].center);
-    expect(shift).toBe(0);
-    // Everything after the hill has been pushed DOWN — the icon under the
-    // pointer is no longer centred on it.
-    expect(items[4].center).toBeGreaterThan(rest.items[4].center + 10);
-  });
-
-  it("keeps the icon under the pointer under the pointer when it may lift", () => {
-    const rest = layoutDock(9, 30, 8, null);
-    const p = rest.items[4].center;
-    const { items, shift } = layoutDock(9, 30, 8, p, undefined, undefined, 40);
-    expect(shift).toBeLessThan(0);
-    expect(items[4].center).toBeCloseTo(p, 6);
-    // Still no overlap: neighbours moved by exactly the room they need.
-    for (let i = 1; i < items.length; i++) {
-      const prevEnd = items[i - 1].center + items[i - 1].size / 2;
-      const thisStart = items[i].center - items[i].size / 2;
-      expect(thisStart).toBeGreaterThanOrEqual(prevEnd + 8 - 1e-9);
-    }
-  });
-
-  it("pins the material point, not just the centre — the icon's edges stay put too", () => {
-    const rest = layoutDock(9, 30, 8, null);
-    const top = rest.items[4].center - 15;
-    const { items } = layoutDock(9, 30, 8, top, undefined, undefined, 40);
-    expect(items[4].center - items[4].size / 2).toBeCloseTo(top, 6);
-  });
-
-  it("never lifts more than the headroom allows", () => {
-    const rest = layoutDock(9, 30, 8, null);
-    const { shift, items } = layoutDock(9, 30, 8, rest.items[6].center, undefined, undefined, 5);
-    expect(shift).toBeGreaterThanOrEqual(-5);
-    expect(items[0].center - items[0].size / 2).toBeGreaterThanOrEqual(8 - 5 - 1e-9);
-  });
-
-  it("a pointer past the end pins that end, so the last icon grows towards it", () => {
-    const rest = layoutDock(5, 30, 8, null);
-    const bottom = rest.items[4].center + 15;
-    const { items } = layoutDock(5, 30, 8, bottom + 30, undefined, undefined, 40);
-    expect(items[4].center + items[4].size / 2).toBeCloseTo(bottom, 6);
+  it("keeps the peak overlap of neighbouring boxes to a few px", () => {
+    // Boxes may touch at the peak (only the hovered one paints a surface), but
+    // a hill so steep that neighbours swallow each other would read as a mess.
+    const rest = layoutDock(7, 30, 8, null);
+    const { items } = layoutDock(7, 30, 8, rest.items[3].center);
+    const overlap = items[3].size / 2 + items[2].size / 2 - (items[3].center - items[2].center);
+    expect(overlap).toBeLessThan(6);
   });
 });
 
@@ -120,17 +92,5 @@ describe("dockSlotAt", () => {
     expect(dockSlotAt(8 + 5 * 38 + 4, 5, 30, 8)).toBe(-1);
     expect(dockSlotAt(Number.NaN, 5, 30, 8)).toBe(-1);
     expect(dockSlotAt(10, 0, 30, 8)).toBe(-1);
-  });
-});
-
-describe("maxAnchorLift", () => {
-  it("is the headroom the anchoring actually needs — no sample lifts further", () => {
-    const need = maxAnchorLift(30, 8);
-    expect(need).toBeGreaterThan(0);
-    const rest = layoutDock(15, 30, 8, null);
-    for (let p = rest.items[6].center - 19; p <= rest.items[8].center + 19; p += 1) {
-      const { shift } = layoutDock(15, 30, 8, p, undefined, undefined, 1000);
-      expect(-shift).toBeLessThanOrEqual(need + 1e-9);
-    }
   });
 });

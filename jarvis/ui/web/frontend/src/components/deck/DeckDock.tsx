@@ -17,7 +17,6 @@ import {
   DOCK_RADIUS_UNITS,
   dockSlotAt,
   layoutDock,
-  maxAnchorLift,
   type DockLayout,
 } from "@/lib/dockMagnify";
 import { playDockTick } from "@/lib/sound";
@@ -40,22 +39,26 @@ import { useT } from "@/i18n";
  * a plugin that needs a reconnect lights Plugins.
  *
  * How the motion is built — the same recipe as the well-known Framer Motion
- * docks, tuned to how the desktop docks actually behave:
+ * docks, with one deliberate difference:
  *
+ * - The column is RIGID. No icon ever leaves its place: the hill is a hill of
+ *   sizes only, each icon growing around its own rest centre, neighbours a
+ *   little, the hovered one most. The desktop docks push neighbours apart to
+ *   make room; the maintainer found that shuffle distracting, so it is gone.
+ *   Boxes may overlap by a few px at the peak — only the hovered box paints a
+ *   surface, and it is drawn on top, so nothing shows.
  * - Nothing about the pointer goes through React state. The pointer writes a
  *   motion value; the whole layout is ONE derived motion value; every icon
  *   binds its box to that. Re-rendering twenty-odd buttons on every mouse
  *   event, and then letting a CSS transition chase the result, is what made
  *   the first version stutter and trail the mouse.
- * - The hill follows the pointer instantly, like the real thing; only its
- *   HEIGHT is sprung. Enter the rail and the hill rises in place under the
- *   pointer; leave it and it settles back where it was — no pop on entry,
- *   no jump on exit, and no lag while inside.
- * - Geometry (the hill, the push-apart, the anchoring that keeps the icon
- *   under the pointer under the pointer) is pure math in `lib/dockMagnify.ts`.
- * - Exactly one label: the hovered icon's, sliding along the rail with it and
- *   fading in and out. Three labels at once, popping in and out on a size
- *   threshold, read as noise.
+ * - The hill follows the pointer instantly; only its HEIGHT is sprung. Enter
+ *   the rail and the hill rises in place under the pointer; leave it and it
+ *   settles back where it was — no pop on entry, no jump on exit, no lag.
+ * - Geometry is pure math in `lib/dockMagnify.ts`.
+ * - Exactly one label: the hovered icon's, gliding from icon to icon at a
+ *   fixed distance from the rail, fading in and out. Three labels at once,
+ *   popping in and out on a size threshold, read as noise.
  * - A soft detent tick each time the pointer crosses onto another icon, and a
  *   firmer one on the pick — the ratchet of a picker wheel, quiet.
  *
@@ -66,18 +69,20 @@ const GAP = 8; // px — between icon boxes at rest
 const ICON = 16; // px — glyph at rest; scales with the box
 const RAIL_WIDTH = 64; // px — Tailwind w-16, the column the icons centre in
 /**
- * Space above the first icon at rest. Also the headroom the anchoring lifts
- * the row into while magnified — computed from the geometry so a change to
- * the hill can never quietly leave the anchoring clipped.
+ * Space above the first and below the last icon at rest. Also what a
+ * magnified end icon grows into — half its extra size, well under 12 px.
  */
-const PAD_TOP = Math.max(12, maxAnchorLift(BASE, GAP));
+const PAD_TOP = 12;
 const PAD_BOTTOM = 12;
 /** The rest geometry, for tests that need to aim a pointer at an icon. */
 export const DECK_DOCK_GEOMETRY = { BASE, GAP, PAD_TOP } as const;
 /** Enter/leave: quick, a hair under critical damping so it never wobbles. */
 const HILL_SPRING = { stiffness: 600, damping: 45, mass: 1 };
-/** How far the label sits from the icon's edge. */
-const LABEL_GAP = 12;
+/**
+ * Where the label's left edge sits: a fixed distance beyond the fully grown
+ * icon, so it does not creep sideways while the icon grows under it.
+ */
+const LABEL_LEFT = RAIL_WIDTH / 2 + (BASE * DOCK_MAX_SCALE) / 2 + 12;
 /**
  * The label glides from icon to icon instead of hopping — critically damped,
  * so it settles in ~40 ms and never overshoots the icon it names.
@@ -140,35 +145,28 @@ export function DeckDock({ className }: { className?: string }) {
         amount > 0.002 ? y : null,
         1 + (DOCK_MAX_SCALE - 1) * amount,
         DOCK_RADIUS_UNITS,
-        PAD_TOP,
       ),
       hovered: h,
     };
   });
-  const blockHeight = useTransform(frame, (f) => PAD_TOP + f.layout.extent + PAD_BOTTOM);
+  // Rest geometry — positions never move, so this is a plain number.
+  const rest = useMemo(() => layoutDock(items.length, BASE, GAP, null), [items.length]);
+  const blockHeight = PAD_TOP + rest.extent + PAD_BOTTOM;
 
   // --- the one label ------------------------------------------------------
   // The last position is kept so the label fades out where it was rather than
-  // jumping to a default the instant the pointer leaves.
-  const lastLabelPos = useRef({
-    top: PAD_TOP + GAP + BASE / 2,
-    left: RAIL_WIDTH / 2 + BASE / 2 + LABEL_GAP,
-  });
+  // jumping to a default the instant the pointer leaves. Derived from `frame`
+  // (rather than from the hovered index alone) so a scroll under a still
+  // pointer, which re-aims the hill, moves the label along.
+  const lastLabelTop = useRef(PAD_TOP + GAP + BASE / 2);
   const labelTopRaw = useTransform(frame, (f) => {
-    if (f.hovered < 0) return lastLabelPos.current.top;
-    const it = f.layout.items[f.hovered];
-    const top = PAD_TOP + it.center - (scrollerRef.current?.scrollTop ?? 0);
-    lastLabelPos.current.top = top;
+    if (f.hovered < 0) return lastLabelTop.current;
+    const top = PAD_TOP + f.layout.items[f.hovered].center - (scrollerRef.current?.scrollTop ?? 0);
+    lastLabelTop.current = top;
     return top;
   });
   const labelTopSmooth = useSpring(labelTopRaw, LABEL_SPRING);
   const labelTop = reduced ? labelTopRaw : labelTopSmooth;
-  const labelLeft = useTransform(frame, (f) => {
-    if (f.hovered < 0) return lastLabelPos.current.left;
-    const left = RAIL_WIDTH / 2 + f.layout.items[f.hovered].size / 2 + LABEL_GAP;
-    lastLabelPos.current.left = left;
-    return left;
-  });
 
   const setHoveredSlot = useCallback(
     (slot: number, tick: boolean) => {
@@ -180,15 +178,14 @@ export function DeckDock({ className }: { className?: string }) {
       if (prev < 0 && slot >= 0) {
         // A fresh label appears AT its icon; only a label that is already on
         // screen glides. Without this it would fly in from wherever the last
-        // one faded out. Derived values update on the next frame, so the rest
-        // centre is used — the glide closes the last few px itself.
+        // one faded out.
         labelTopSmooth.jump(
-          PAD_TOP + GAP + slot * (BASE + GAP) + BASE / 2 - (scrollerRef.current?.scrollTop ?? 0),
+          PAD_TOP + rest.items[slot].center - (scrollerRef.current?.scrollTop ?? 0),
         );
       }
       if (tick && slot >= 0) playDockTick("hover");
     },
-    [hoveredMV, labelTopSmooth],
+    [hoveredMV, labelTopSmooth, rest],
   );
 
   const track = useCallback(
@@ -245,13 +242,13 @@ export function DeckDock({ className }: { className?: string }) {
         onScroll={onScroll}
         className="deck-dock-scroller relative h-full w-full overflow-y-auto overflow-x-hidden"
       >
-        {/* Height follows the magnified extent so the row never clips. */}
-        <motion.div className="relative w-full" style={{ height: blockHeight }}>
+        <div className="relative w-full" style={{ height: blockHeight }}>
           {items.map((item, i) => (
             <DockIcon
               key={item.id}
               item={item}
               index={i}
+              restCenter={rest.items[i].center}
               frame={frame}
               label={resolveNavLabel(t, item)}
               active={activeSection === item.id || !!item.matchIds?.includes(activeSection)}
@@ -274,7 +271,7 @@ export function DeckDock({ className }: { className?: string }) {
               }}
             />
           ))}
-        </motion.div>
+        </div>
       </div>
 
       {/* The label rides beside the hovered icon, outside the scroller so the
@@ -290,7 +287,7 @@ export function DeckDock({ className }: { className?: string }) {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -4 }}
             transition={reduced ? { duration: 0 } : { duration: 0.12, ease: "easeOut" }}
-            style={{ top: labelTop, left: labelLeft, y: "-50%" }}
+            style={{ top: labelTop, left: LABEL_LEFT, y: "-50%" }}
             className="pointer-events-none absolute whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground shadow-md backdrop-blur"
           >
             {resolveNavLabel(t, hoveredItem)}
@@ -307,6 +304,7 @@ export function DeckDock({ className }: { className?: string }) {
 function DockIcon({
   item,
   index,
+  restCenter,
   frame,
   label,
   active,
@@ -320,6 +318,8 @@ function DockIcon({
 }: {
   item: NavItem;
   index: number;
+  /** The icon's fixed centre along the rail, px from the row's start. */
+  restCenter: number;
   frame: MotionValue<DockFrame>;
   label: string;
   active: boolean;
@@ -334,26 +334,21 @@ function DockIcon({
   onBlur: () => void;
 }) {
   // Each icon binds its box to the shared layout — written straight to the
-  // element by the motion runtime, never through a React render.
-  const top = useTransform(frame, (f) => {
-    const it = f.layout.items[index];
-    return PAD_TOP + it.center - it.size / 2;
-  });
+  // element by the motion runtime, never through a React render. The centre
+  // is fixed; the box grows around it, so `top` moves up exactly as `size`
+  // grows.
+  const top = useTransform(frame, (f) => PAD_TOP + restCenter - f.layout.items[index].size / 2);
   const size = useTransform(frame, (f) => f.layout.items[index].size);
   const glyph = useTransform(frame, (f) => ICON * f.layout.items[index].scale);
-  const ruleTop = useTransform(frame, (f) => {
-    const it = f.layout.items[index];
-    return PAD_TOP + it.center - it.size / 2 - GAP / 2 - 0.5;
-  });
   const Icon = item.icon;
 
   return (
     <>
       {groupBreak && (
-        <motion.span
+        <span
           aria-hidden
           className="absolute left-4 right-4 h-px bg-border"
-          style={{ top: ruleTop }}
+          style={{ top: PAD_TOP + restCenter - BASE / 2 - GAP / 2 - 0.5 }}
         />
       )}
       <motion.button
@@ -367,6 +362,9 @@ function DockIcon({
         className={cn(
           "absolute left-1/2 flex items-center justify-center rounded-xl border transition-colors duration-150",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+          // On top while hovered: at the peak its box overlaps the neighbours'
+          // (transparent) boxes by a few px, and it must win that overlap.
+          hovered && "z-10",
           active
             ? "border-primary/50 bg-primary/15 text-primary"
             : hovered
