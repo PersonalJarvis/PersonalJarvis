@@ -48,7 +48,7 @@ from jarvis.audio.effects import bind_shared_audio_player
 from jarvis.audio.player import AudioPlayer
 from jarvis.audio.vad import SileroEndpointer
 from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
-from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
 from jarvis.brain.turn_planner import plan_turn
 from jarvis.core.events import (
     CU_PROGRESS_EVENTS,
@@ -1415,7 +1415,132 @@ _DRAIN_HOLDS_FLOOR: frozenset[TurnTakingState] = frozenset({
 # Matched whitespace/newline DIREKT NACH einem Satzendezeichen — also den
 # Uebergang von Satz n nach Satz n+1. Final-Flush am Stream-Ende uebernimmt
 # das letzte Fragment ohne folgendes Whitespace.
-_STREAM_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|(?<=[.!?…])\n+")
+#
+# OF-12: a period plus whitespace is only a CANDIDATE boundary, never a
+# boundary by itself. Ordinals ("Am 1. Januar", "El 31. de enero"), spaced
+# abbreviations ("z. B.", "e. g.", "p. m.") and titles ("Dr. Meier",
+# "Sr. Lopez") all carry a mid-sentence period, and splitting there made TTS
+# speak "Am eins." as its own utterance. Every candidate is therefore
+# validated by ``_is_stream_sentence_break`` below.
+#
+# The match deliberately does NOT require a following character. Waiting for
+# the first character of the next sentence would hold sentence 1 hostage to
+# the brain's next token — and a tool-use turn streams "Ich schaue nach. " and
+# then goes quiet for seconds, which is exactly when the user must hear
+# something. Every rule that can decide from the text BEFORE the gap decides
+# immediately; the following character only refines a candidate when it
+# already happens to be in the buffer.
+_STREAM_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+# Tokens whose trailing period is practically NEVER a sentence end. One shared
+# set for every locale: the turn language is a hint, not a guarantee, and
+# assistant prose mixes locales freely (a German answer quoting an English
+# product name). Deliberately NOT listed are abbreviations that usually DO
+# close a sentence ("etc.", "usw.") — for those the split is correct and must
+# stay. Single-letter tokens need no entry: they are rejected as a class,
+# which covers "z. B.", "u. a.", "d. h.", "e. g.", "i. e.", "a. m.", "p. m."
+# and initials like "J. R. R.".
+_STREAM_ABBREVIATIONS: frozenset[str] = frozenset({
+    # Titles / forms of address (de/en/es) — always followed by a name.
+    "dr", "prof", "dipl", "ing", "hr", "fr", "st", "sankt",
+    "mr", "mrs", "ms", "jr",
+    "sr", "sra", "srta", "ud", "uds",
+    # Reference markers — always followed by a number or a caption.
+    "nr", "num", "núm", "abb", "fig", "tab", "vol", "pág",
+    # Qualifier / connector abbreviations — always mid-sentence.
+    "bzw", "bspw", "ggf", "evtl", "inkl", "exkl", "zzgl", "vgl", "sog",
+    "ca", "approx", "aprox", "mind", "max", "min", "mio", "mrd", "ej", "vs",
+})
+
+# Punctuation a new sentence may OPEN with; skipped when looking for the first
+# real character behind a candidate boundary.
+_STREAM_SENTENCE_OPENERS = "\"'“”„‚‘’«»‹›(<[{¿¡-–—*_#"
+
+# A one- or two-digit run before the period is an ordinal ("Am 1. Januar",
+# "El 31. de enero"), not a sentence end. A year ("2026.") is four digits and
+# keeps its boundary.
+_STREAM_ORDINAL_TAIL_RE = re.compile(r"(?<!\d)\d{1,2}\.$")
+# The plain-letter token right before the period, if any.
+_STREAM_ABBREV_TAIL_RE = re.compile(r"([^\W\d_]+)\.$")
+
+
+def _stream_opens_sentence(rest: str) -> bool:
+    """True when ``rest`` starts with something that can OPEN a sentence.
+
+    A lowercase letter means the period belonged to an abbreviation or a
+    decimal, never to a sentence end. Scripts without case distinction (CJK,
+    Arabic) are accepted, otherwise those locales would never split at all.
+
+    ``rest`` is empty while the next token is still in flight. That is NOT a
+    rejection: the boundary keeps the behaviour it had before this refinement
+    existed, so a pausing brain can never sit on a finished sentence.
+    """
+    for ch in rest:
+        if ch.isspace() or ch in _STREAM_SENTENCE_OPENERS:
+            continue
+        return ch.isdigit() or (ch.isalpha() and not ch.islower())
+    return True
+
+
+def _is_stream_sentence_break(buffer: str, gap_start: int, gap_end: int) -> bool:
+    """Decide whether the whitespace gap ``[gap_start:gap_end)`` ends a sentence.
+
+    ``gap_start - 1`` is the terminator character matched by
+    ``_STREAM_SENTENCE_END``. Only the period is ambiguous — "!", "?" and "…"
+    have no abbreviation shape and always close a sentence.
+    """
+    if buffer[gap_start - 1] != ".":
+        return True
+    head = buffer[:gap_start]
+    if _STREAM_ORDINAL_TAIL_RE.search(head):
+        return False
+    match = _STREAM_ABBREV_TAIL_RE.search(head)
+    if match is not None:
+        word = match.group(1)
+        if len(word) == 1 or word.casefold() in _STREAM_ABBREVIATIONS:
+            return False
+    return _stream_opens_sentence(buffer[gap_end:])
+
+
+def _is_whole_text_fallback(original: str, scrubbed: ScrubResult) -> bool:
+    """True when the scrub replaced the WHOLE input with the generic phrase.
+
+    ``scrub_for_voice`` is a whole-TURN filter: when one of its guards fires
+    (stack trace, raw repr, shell command, post-scrub residue) it throws the
+    input away and returns the canned error phrase for ALL of it. Per sentence
+    that verdict is wrong, so the streaming path has to recognise it (OF-11).
+
+    ``fallback_used`` is the documented signal; the phrase-table comparison is
+    a second, independent check so this stays correct if a future guard
+    forgets the flag. An answer that genuinely SAYS the phrase (in markdown,
+    say) must never be mistaken for one — so the phrase only counts when the
+    original did not carry it in the first place.
+    """
+    if scrubbed.fallback_used:
+        return True
+    if not scrubbed.actions:
+        return False
+    cleaned = scrubbed.cleaned.strip()
+    if not cleaned or cleaned not in set(FALLBACK_PHRASES.values()):
+        return False
+    return cleaned not in original
+
+
+def _next_stream_sentence_break(buffer: str) -> int | None:
+    """Cut index just past the next real sentence boundary in ``buffer``.
+
+    The caller slices ``buffer[:cut]`` as the finished sentence and keeps
+    ``buffer[cut:]`` as the rest. ``None`` = no boundary in the buffer yet.
+    """
+    pos = 0
+    while True:
+        match = _STREAM_SENTENCE_END.search(buffer, pos)
+        if match is None:
+            return None
+        if _is_stream_sentence_break(buffer, match.start(), match.end()):
+            return match.end()
+        pos = match.end()
+
 
 # Wake-Only-Filter: reine Wake-Word-Utterances ohne Follow-Up werden NICHT
 # ans Brain geschickt. Sonst halluziniert das LLM ein "Ja?" / "Sir?" /
@@ -13962,6 +14087,11 @@ class SpeechPipeline:
         full_text_parts: list[str] = []
         sentence_buffer = ""
         spoken_anything = False
+        # OF-11: sentences the output filter threw away (whole-text fallback or
+        # empty after scrub). Every entry is logged when it happens; the list
+        # exists so the END of the turn can tell "filtered a clause out of a
+        # healthy answer" from "filtered the entire answer away".
+        dropped_sentences: list[str] = []
         # Turn-level mirror of ``spoken_anything`` that survives this coroutine
         # being cancelled by the stall guard — the caller's ``except
         # TimeoutError`` reads it to decide whether a canned fallback phrase
@@ -14062,17 +14192,9 @@ class SpeechPipeline:
                 finally:
                     sentence_channels.task_done()
 
-        async def _enqueue_sentence(sentence: str) -> None:
+        async def _speak_sentence(cleaned: str) -> None:
+            """Hand one ALREADY-SCRUBBED sentence to synthesis + playback."""
             nonlocal spoken_anything
-            scrubbed = scrub_for_voice(sentence, language=lang)
-            if scrubbed.actions:
-                log.info(
-                    "🧹 Output-Filter [stream:%s]: %s (fallback=%s)",
-                    lang, scrubbed.actions, scrubbed.fallback_used,
-                )
-            cleaned = scrubbed.cleaned.strip()
-            if not cleaned:
-                return
             if not spoken_anything:
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                 spoken_anything = True
@@ -14085,6 +14207,44 @@ class SpeechPipeline:
             )
             # Blocks once ``lookahead`` channels are outstanding — back-pressure.
             await sentence_channels.put((channel, cleaned))
+
+        async def _enqueue_sentence(sentence: str) -> None:
+            """Scrub one streamed sentence and queue what survives.
+
+            OF-11: ``scrub_for_voice`` judges a WHOLE TURN. Applied per
+            sentence its all-or-nothing verdicts (stack trace, raw repr, shell
+            command, post-scrub residue) would splice the canned error phrase
+            into the middle of an otherwise healthy answer — one short
+            sentence losing its only noun was enough. So a sentence-level
+            fallback is dropped here and the phrase is re-raised ONCE for the
+            completed turn, and only if nothing at all reached TTS.
+            """
+            scrubbed = scrub_for_voice(sentence, language=lang)
+            if scrubbed.actions:
+                log.info(
+                    "🧹 Output-Filter [stream:%s]: %s (fallback=%s)",
+                    lang, scrubbed.actions, scrubbed.fallback_used,
+                )
+            if _is_whole_text_fallback(sentence, scrubbed):
+                dropped_sentences.append(sentence)
+                log.warning(
+                    "🧹 Output-Filter [stream:%s]: sentence DROPPED — whole-text "
+                    "fallback fired on a single sentence, actions=%s, text=%r",
+                    lang, scrubbed.actions, sentence[:120],
+                )
+                return
+            cleaned = scrubbed.cleaned.strip()
+            if not cleaned:
+                # Never swallow output silently (CLAUDE.md §7): the answer
+                # loses a clause here, so the drop has to be visible.
+                dropped_sentences.append(sentence)
+                log.warning(
+                    "🧹 Output-Filter [stream:%s]: sentence DROPPED — empty after "
+                    "scrub, actions=%s, text=%r",
+                    lang, scrubbed.actions, sentence[:120],
+                )
+                return
+            await _speak_sentence(cleaned)
 
         async def _produce() -> None:
             nonlocal sentence_buffer, paraphrase_stripped, brain_first_token_marked
@@ -14150,11 +14310,11 @@ class SpeechPipeline:
                         paraphrase_stripped = True
 
                     while True:
-                        m = _STREAM_SENTENCE_END.search(sentence_buffer)
-                        if m is None:
+                        cut = _next_stream_sentence_break(sentence_buffer)
+                        if cut is None:
                             break
-                        sentence = sentence_buffer[:m.end()].strip()
-                        sentence_buffer = sentence_buffer[m.end():]
+                        sentence = sentence_buffer[:cut].strip()
+                        sentence_buffer = sentence_buffer[cut:]
                         if sentence:
                             await _enqueue_sentence(sentence)
 
@@ -14165,6 +14325,22 @@ class SpeechPipeline:
                 tail = sentence_buffer.strip()
                 if tail:
                     await _enqueue_sentence(tail)
+
+                # OF-11, whole-turn half: the per-sentence drops above kept the
+                # canned phrase out of a healthy answer. If they left the turn
+                # completely silent, the whole-text verdict was right after all
+                # — say the phrase exactly ONCE, or the user hears nothing.
+                if dropped_sentences and not spoken_anything:
+                    log.warning(
+                        "🧹 Output-Filter [stream:%s]: whole turn filtered away "
+                        "(%d sentence(s)) — speaking the fallback phrase once",
+                        lang, len(dropped_sentences),
+                    )
+                    await _speak_sentence(
+                        FALLBACK_PHRASES.get(
+                            _phrase_lang(lang), FALLBACK_PHRASES["de"]
+                        )
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
