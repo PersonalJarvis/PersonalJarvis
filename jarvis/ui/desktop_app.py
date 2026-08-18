@@ -2045,12 +2045,26 @@ class DesktopApp:
                     # recap (ui.web.ws.mission_inject) from force-spawn — a recap
                     # is discussed inline, never re-dispatched (doom-loop fix
                     # 2026-06-16). Other callers default to None (normal routing).
+                    # allow_voice_confirm=True is load-bearing here (audit
+                    # GT-12): a chat user IS present, but there is no approval
+                    # modal anywhere outside the mission deck, so without this
+                    # an ask-tier tool (send this mail, run this command) went
+                    # to the executor with no channel at all and came back
+                    # refused. With it, chat gets the same two-turn flow voice
+                    # has — the turn ENDS with the confirmation question as its
+                    # reply, and the user's next message ("ja"/"nein") resolves
+                    # it. The phrasing layer is channel-agnostic by design
+                    # (jarvis/voice/tool_confirmation.py); nothing here speaks.
+                    chat_kwargs: dict[str, Any] = {
+                        "trace_id": evt.trace_id,
+                        "source_layer": evt.source_layer,
+                        "conversation_id": thread_id,
+                        "allow_voice_confirm": True,
+                    }
                     reply = await _await_cancellable_chat_turn(
                         generate(
                             evt.text,
-                            trace_id=evt.trace_id,
-                            source_layer=evt.source_layer,
-                            conversation_id=thread_id,
+                            **_supported_call_kwargs(generate, chat_kwargs),
                         ),
                         loop,
                     )

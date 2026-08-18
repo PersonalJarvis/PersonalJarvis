@@ -235,7 +235,7 @@ async def test_armed_mission_call_executes_without_human() -> None:
     assert tool.approved_by == "mission-grant:m-e2e"
 
 
-async def test_unarmed_mission_call_still_denies_on_timeout() -> None:
+async def test_unarmed_mission_call_times_out_without_running() -> None:
     bus = EventBus()
     executor = ToolExecutor(
         bus,
@@ -253,7 +253,12 @@ async def test_unarmed_mission_call_still_denies_on_timeout() -> None:
     )
 
     assert result.success is False
-    assert "approval-denied" in (result.error or "")
+    # A mission call keeps its human channel (the deck's approval panel), so it
+    # WAITS — and an unanswered wait is a timeout, not a refusal. Reporting it
+    # as "approval-denied (timeout)" is what made the broker file every silence
+    # as a maintainer veto (audit GT-12).
+    assert (result.error or "").startswith("approval-timeout")
+    assert not (result.error or "").startswith("approval-denied")
     assert tool.calls == 0
 
 

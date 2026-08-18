@@ -11,15 +11,18 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .approval import ApprovalWorkflow
+    from .approval_surface import ApprovalSurface, resolve_approval_surface
     from .risk_tier import ActionBlocked, RiskTierEvaluator, TierDecision
     from .tool_executor import ToolExecutor
 
 __all__ = [
     "ActionBlocked",
+    "ApprovalSurface",
     "ApprovalWorkflow",
     "RiskTierEvaluator",
     "TierDecision",
     "ToolExecutor",
+    "resolve_approval_surface",
 ]
 
 
@@ -28,6 +31,13 @@ def __getattr__(name: str) -> Any:
         from .approval import ApprovalWorkflow
 
         return ApprovalWorkflow
+    if name in {"ApprovalSurface", "resolve_approval_surface"}:
+        from .approval_surface import ApprovalSurface, resolve_approval_surface
+
+        return {
+            "ApprovalSurface": ApprovalSurface,
+            "resolve_approval_surface": resolve_approval_surface,
+        }[name]
     if name in {"ActionBlocked", "RiskTierEvaluator", "TierDecision"}:
         from .risk_tier import ActionBlocked, RiskTierEvaluator, TierDecision
 

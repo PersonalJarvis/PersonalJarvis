@@ -7,7 +7,13 @@ Sequence:
 4. User clicks Approve → UI sends `ActionApproved` via a channel →
    ChannelAdapter re-publishes onto the bus → `wait()`'s future is resolved
 5. User clicks Deny → analogous `ActionDenied`
-6. Timeout → default = deny (`ActionDenied(reason="timeout")`)
+6. Timeout → nothing runs (`ActionDenied(reason="timeout")`), and the caller
+   is told it was a TIMEOUT, not a refusal
+
+Step 2 only happens on a surface where an answer can actually arrive. Whether
+this workflow is waited on at all, peeked at once, or skipped for a two-turn
+spoken confirmation is decided by `jarvis.safety.approval_surface` — an
+unattended runner must never block here for a decision nobody is there to make.
 
 The integration into a channel UI (WebSocket + desktop app) runs over
 the same event bus. The UI only needs to publish `ActionApproved`/`ActionDenied`
@@ -21,6 +27,12 @@ from uuid import UUID
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import ActionApproved, ActionDenied
+
+#: ``who_or_reason`` returned when the wait ran out before anyone decided.
+#: A named constant because the caller MUST be able to tell "nobody answered"
+#: apart from "somebody said no" — the two are different outcomes and used to
+#: be reported with the same word (audit GT-12).
+TIMEOUT_REASON = "timeout"
 
 
 class ApprovalTicket:
@@ -42,9 +54,29 @@ class ApprovalTicket:
         try:
             return await asyncio.wait_for(self._future, timeout=timeout_s)
         except TimeoutError:
-            return (False, "timeout")
+            return (False, TIMEOUT_REASON)
         finally:
             self.close()
+
+    def peek(self) -> tuple[bool, str] | None:
+        """The decision if one has ALREADY been made, else ``None``. Never waits.
+
+        An unattended caller uses this instead of :meth:`wait`: the
+        pre-authorization bridges (``TaskAutoApprover``,
+        ``MissionToolAutoApprover``) answer synchronously while the executor
+        awaits its ``ActionApprovalRequired`` publish, so by the time that
+        publish returns their verdict is already in the future. Everything
+        else would be a wait for a human who is not there, which is why the
+        unattended path must never call ``wait()``.
+
+        Leaves the ticket open — the caller decides whether the outcome is a
+        decision to act on or a dead end to close.
+        """
+        if not self._future.done() or self._future.cancelled():
+            return None
+        if self._future.exception() is not None:
+            return None
+        return self._future.result()
 
     def close(self) -> None:
         """Remove an unresolved ticket so cancellation cannot leak state."""

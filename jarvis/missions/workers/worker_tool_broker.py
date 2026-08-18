@@ -26,6 +26,7 @@ from uuid import uuid4
 from jarvis.core import runtime_refs
 from jarvis.core.protocols import SupervisorToolDescriptor, SupervisorToolRequest
 from jarvis.core.redact import safe_preview
+from jarvis.safety.approval_surface import INTERACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -388,6 +389,13 @@ class _BrokerScope:
                     worker_id=self.worker_id,
                     config_snapshot={
                         "voice_confirm": False,
+                        # A mission worker is unattended, but its approvals
+                        # are NOT unanswerable: the mission deck's tool-approval
+                        # panel renders this exact call and a human can grant it
+                        # while we wait (ADR-0031 + MissionToolApprovalCoordinator).
+                        # Declared explicitly so the channel does not hinge on a
+                        # mission_id being stamped further downstream.
+                        "approval_surface": INTERACTIVE,
                         "worker_broker": True,
                     },
                     cancel_token=self._cancel_token,

@@ -21,7 +21,11 @@ from jarvis.core.events import ActionApprovalRequired, ActionExecuted
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.safety.approval import ApprovalWorkflow
 from jarvis.safety.risk_tier import RiskTierEvaluator
-from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL, ToolExecutor
+from jarvis.safety.tool_executor import (
+    APPROVAL_UNAVAILABLE_PREFIX,
+    VOICE_CONFIRM_SENTINEL,
+    ToolExecutor,
+)
 
 
 class _AskTool:
@@ -254,14 +258,22 @@ async def test_cancel_pending_drops_the_action() -> None:
 
 
 @pytest.mark.asyncio
-async def test_without_voice_confirm_ask_tier_still_blocks_on_approval() -> None:
-    """Regression guard: the non-conversational path is unchanged."""
+async def test_without_a_channel_ask_tier_fails_fast_instead_of_waiting() -> None:
+    """A surface with no approval channel must not wait for one (GT-12).
+
+    This used to assert the opposite — that a bare ``execute`` blocks in
+    ``ApprovalWorkflow.wait()``. On a CLI, REST, or workflow call there is
+    nobody behind that wait, so it bought 60 seconds of silence and then
+    reported a refusal nobody made. Detailed coverage lives in
+    ``test_tool_executor_unattended.py``.
+    """
     executor, approval, _bus = _executor()
     tool = _AskTool()
-    result = await executor.execute(tool, args={})  # no voice_confirm
-    assert approval.wait_calls == 1
-    assert tool.calls == 1
-    assert result.success is True
+    result = await executor.execute(tool, args={})  # no surface declared
+    assert approval.wait_calls == 0
+    assert tool.calls == 0
+    assert result.success is False
+    assert (result.error or "").startswith(APPROVAL_UNAVAILABLE_PREFIX)
 
 
 @pytest.mark.asyncio

@@ -19,8 +19,17 @@ from jarvis.core.bus import EventBus
 from jarvis.core.config import BrainPlausibilityConfig, SafetyConfig
 from jarvis.core.protocols import ExecutionContext, ToolResult, Transcript
 from jarvis.safety.approval import ApprovalWorkflow
+from jarvis.safety.approval_surface import INTERACTIVE
 from jarvis.safety.risk_tier import RiskTierEvaluator
 from jarvis.safety.tool_executor import ToolExecutor
+
+#: These tests measure WHETHER a confirmation was requested, by counting
+#: ``ApprovalWorkflow.wait()`` calls. That only counts anything on a surface
+#: where waiting is the right move — an unattended caller now fails fast
+#: instead of waiting for nobody (GT-12), which would make every assertion
+#: here trivially zero. Declaring the channel keeps the subject the
+#: plausibility hook, not the approval channel.
+_ATTENDED: dict[str, Any] = {"approval_surface": INTERACTIVE}
 
 
 class _FakeTool:
@@ -79,7 +88,7 @@ async def test_no_context_fn_runs_like_before() -> None:
     """Without a registered ``plausibility_context_fn`` no guard kicks in."""
     executor, approval = _executor_with_plausibility(context_fn=None)
     tool = _FakeTool()
-    result = await executor.execute(tool, args={})
+    result = await executor.execute(tool, args={}, config_snapshot=_ATTENDED)
     # ``ask`` tier triggers approval anyway -> 1 call via the tier workflow.
     assert approval.wait_calls == 1
     assert result.success is True
@@ -94,7 +103,7 @@ async def test_low_confidence_monitor_does_not_force_approval() -> None:
         context_fn=lambda: (transcript, 5.0),
     )
     tool = _MonitorTool()
-    result = await executor.execute(tool, args={})
+    result = await executor.execute(tool, args={}, config_snapshot=_ATTENDED)
     # ``monitor`` tier doesn't trigger approval by itself, and plausibility
     # at monitor doesn't require anything either -> 0 approval calls.
     assert approval.wait_calls == 0
@@ -110,7 +119,7 @@ async def test_low_confidence_ask_with_normal_tier_workflow() -> None:
         context_fn=lambda: (transcript, 5.0),
     )
     tool = _FakeTool()  # ask tier
-    result = await executor.execute(tool, args={})
+    result = await executor.execute(tool, args={}, config_snapshot=_ATTENDED)
     assert approval.wait_calls == 1
     assert result.success is True
 
@@ -145,7 +154,7 @@ async def test_whitelist_downgrade_skips_plausibility() -> None:
         safety=safety,
     )
     tool = _MonitorTool()
-    result = await executor.execute(tool, args={"target": "foo"})
+    result = await executor.execute(tool, args={"target": "foo"}, config_snapshot=_ATTENDED)
     # Whitelist downgraded ``monitor_tool`` to ``safe`` -> no approval.
     assert approval.wait_calls == 0
     # Context fn must NOT be called, because of the whitelist skip.
@@ -161,7 +170,7 @@ async def test_high_confidence_recent_wake_no_extra_confirmation() -> None:
         context_fn=lambda: (transcript, 2.0),
     )
     tool = _MonitorTool()
-    result = await executor.execute(tool, args={})
+    result = await executor.execute(tool, args={}, config_snapshot=_ATTENDED)
     # ``monitor`` + plausibility=ok -> no approval.
     assert approval.wait_calls == 0
     assert result.success is True
@@ -175,7 +184,7 @@ async def test_context_fn_exception_is_swallowed() -> None:
 
     executor, approval = _executor_with_plausibility(context_fn=broken_fn)
     tool = _MonitorTool()
-    result = await executor.execute(tool, args={})
+    result = await executor.execute(tool, args={}, config_snapshot=_ATTENDED)
     # Despite the crash: the tool runs, no approval.
     assert approval.wait_calls == 0
     assert result.success is True

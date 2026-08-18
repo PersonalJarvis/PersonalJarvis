@@ -33,7 +33,12 @@ from jarvis.core.protocols import (
 )
 from jarvis.core.redact import safe_preview
 
-from .approval import ApprovalWorkflow
+from .approval import TIMEOUT_REASON, ApprovalWorkflow
+from .approval_surface import (
+    CONVERSATIONAL,
+    UNATTENDED,
+    resolve_approval_surface,
+)
 from .risk_tier import ActionBlocked, RiskTierEvaluator
 
 if TYPE_CHECKING:
@@ -52,6 +57,23 @@ log = logging.getLogger(__name__)
 # the action and returns this sentinel so the brain SPEAKS a confirmation question
 # and ends the turn. The next "ja" re-runs the action via ``execute_confirmed``.
 VOICE_CONFIRM_SENTINEL = "__voice_confirm_required__"
+
+
+# The three ways an approval-gated call can end WITHOUT running. They carry
+# distinct ``ToolResult.error`` prefixes on purpose: until the GT-12 fix a
+# 60-second timeout came back as ``approval-denied (timeout)``, so every
+# consumer that classifies on ``startswith("approval-denied")`` — the mission
+# ``WorkerToolBroker`` does exactly that — recorded "the user refused" for a
+# decision nobody was ever asked to make. A refusal, a silence, and an absent
+# human are three different facts and must read as three different facts.
+APPROVAL_DENIED_PREFIX = "approval-denied"
+APPROVAL_TIMEOUT_PREFIX = "approval-timeout"
+APPROVAL_UNAVAILABLE_PREFIX = "approval-unavailable"
+
+#: ``ToolResult.output["outcome"]`` for the unattended dead end, and the
+#: ``ActionDenied.reason`` published alongside it. The word says what happened:
+#: approval was impossible, not withheld.
+APPROVAL_UNAVAILABLE_OUTCOME = "approval_unavailable"
 
 
 # ``plausibility_context_fn`` returns (Transcript | None, wake_age_s | None).
@@ -164,6 +186,61 @@ class ToolExecutor:
         except Exception:  # noqa: BLE001
             log.debug("publish_guard_denied failed", exc_info=True)
 
+    async def _approval_unavailable(
+        self,
+        tool: Tool,
+        tid: UUID,
+        risk_tier: str,
+        config_snapshot: dict[str, Any] | None,
+    ) -> ToolResult:
+        """The honest dead end: this action needed a human and had none.
+
+        Publishes ``ActionDenied`` so the refusal is visible in the timeline
+        (same reasoning as :meth:`publish_guard_denied` — a call that silently
+        vanishes is worse than one that failed), but says in the reason WHY it
+        did not run. The returned error carries its own prefix so no consumer
+        can mistake it for a user's "no", and the output carries a
+        plain-language sentence a person can actually read in a run log.
+        """
+        reason = f"{APPROVAL_UNAVAILABLE_OUTCOME}: no approval channel on this surface"
+        await self._bus.publish(ActionDenied(
+            trace_id=tid,
+            tool_name=tool.name,
+            reason=reason,
+        ))
+        log.info(
+            "approval-unavailable: %s (tier=%s) needed a confirmation and this "
+            "surface has nobody to give it — failing fast",
+            tool.name, risk_tier,
+        )
+        output: dict[str, Any] = {
+            "outcome": APPROVAL_UNAVAILABLE_OUTCOME,
+            "tool_name": tool.name,
+            "trace_id": str(tid),
+            "risk_tier": risk_tier,
+        }
+        # Plain-language sentence in the turn's ALREADY-RESOLVED output
+        # language (Runtime Output Language doctrine: this layer reads the
+        # resolved value, it never re-derives one). Phrasing lives in the one
+        # channel-agnostic table, next to the confirmation question it belongs
+        # to. Lazy import — ``jarvis.voice`` couples to ``jarvis.core.self_mod``
+        # via its package __init__, so importing at module load would create an
+        # order-dependent cycle (same pattern as the tool-use loop).
+        try:
+            from jarvis.voice.tool_confirmation import format_approval_unavailable
+
+            output["message"] = format_approval_unavailable(
+                tool.name,
+                language=str((config_snapshot or {}).get("output_language") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 — phrasing must not decide safety
+            log.debug("approval-unavailable phrasing failed: %s", exc)
+        return ToolResult(
+            success=False,
+            output=output,
+            error=f"{APPROVAL_UNAVAILABLE_PREFIX} ({reason})",
+        )
+
     async def execute(
         self,
         tool: Tool,
@@ -235,9 +312,17 @@ class ToolExecutor:
                         tool.name, exc,
                     )
         needs_confirm = tier_confirm or plaus_confirm
-        voice_confirm = bool((config_snapshot or {}).get("voice_confirm"))
+        # WHO can answer this gate — declared by the calling layer, never by
+        # the model (see ``approval_surface``). It changes only how the
+        # approval is obtained, never whether one is needed: ``needs_confirm``
+        # above is the untouched tier decision.
+        surface = resolve_approval_surface(config_snapshot)
+        voice_confirm = surface == CONVERSATIONAL
         approval_ticket = None
         if needs_confirm and not voice_confirm:
+            # An unattended call arms too: the pre-authorization bridges answer
+            # synchronously on the ActionApprovalRequired publish below, and
+            # ADR-0031 relies on the ticket existing before that publish.
             approval_ticket = self._approval.arm(tid)
 
         # 3.5 Proposed event (the UI can use this as a live indicator). The
@@ -261,6 +346,14 @@ class ToolExecutor:
                 if plaus is not None and plaus.require_confirmation
                 else "risk_tier"
             )
+            # An unattended call expires immediately: it will not be waited on,
+            # so advertising a 60-second window would invite a UI to offer a
+            # decision that can no longer reach anybody.
+            window_ns = (
+                0
+                if surface == UNATTENDED
+                else int(self._default_timeout_s * 1_000_000_000)
+            )
             await self._bus.publish(
                 ActionApprovalRequired(
                     trace_id=tid,
@@ -268,8 +361,7 @@ class ToolExecutor:
                     risk_tier=decision.tier,
                     reason=reason,
                     args_preview=safe_preview(args),
-                    expires_at_ns=time.time_ns()
-                    + int(self._default_timeout_s * 1_000_000_000),
+                    expires_at_ns=time.time_ns() + window_ns,
                     mission_id=_optional_string(
                         (config_snapshot or {}).get("mission_id")
                     ),
@@ -318,24 +410,50 @@ class ToolExecutor:
                     output=sentinel_output,
                     error=VOICE_CONFIRM_SENTINEL,
                 )
-            try:
-                approved, who_or_reason = await self._approval.wait(
-                    tid, self._default_timeout_s
+            if surface == UNATTENDED:
+                # Nobody is there to ask. The pre-authorization bridges have
+                # already had their say — they answer inline while the
+                # ActionApprovalRequired publish above is awaited — so a ticket
+                # that is still undecided will stay undecided forever. Waiting
+                # the full timeout would buy a minute of silence and then
+                # report a refusal nobody made (audit GT-12).
+                decided = (
+                    approval_ticket.peek() if approval_ticket is not None else None
                 )
-            finally:
+                if decided is None:
+                    if approval_ticket is not None:
+                        approval_ticket.close()
+                    return await self._approval_unavailable(
+                        tool, tid, decision.tier, config_snapshot,
+                    )
+                approved, who_or_reason = decided
                 if approval_ticket is not None:
                     approval_ticket.close()
+            else:
+                try:
+                    approved, who_or_reason = await self._approval.wait(
+                        tid, self._default_timeout_s
+                    )
+                finally:
+                    if approval_ticket is not None:
+                        approval_ticket.close()
             if not approved:
                 await self._bus.publish(ActionDenied(
                     trace_id=tid,
                     tool_name=tool.name,
                     reason=who_or_reason,
                 ))
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=f"approval-denied ({who_or_reason})",
-                )
+                # A silence is not a "no". Keep the two apart so the caller,
+                # the mission broker, and the run log can each say which
+                # actually happened.
+                if who_or_reason == TIMEOUT_REASON:
+                    error = (
+                        f"{APPROVAL_TIMEOUT_PREFIX} (nobody decided within "
+                        f"{self._default_timeout_s:.0f}s)"
+                    )
+                else:
+                    error = f"{APPROVAL_DENIED_PREFIX} ({who_or_reason})"
+                return ToolResult(success=False, output=None, error=error)
             approved_by = who_or_reason  # "user" or "auto"
 
         if cancel_token is not None and cancel_token.is_cancelled():

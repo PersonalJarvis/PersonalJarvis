@@ -157,6 +157,18 @@ _OUTCOME: dict[str, dict[str, str]] = {
         "en": "Please just say yes or no.",
         "es": "Di simplemente sí o no, por favor.",
     },
+    # Nobody could be asked at all — an unattended run (a scheduled workflow,
+    # a cron job, a one-shot CLI call) reached a consequential tool. Says why
+    # nothing happened without claiming a refusal that never took place
+    # (audit GT-12). Read from a run log far more often than spoken.
+    "unavailable": {
+        "de": "Dafür brauche ich deine Freigabe, und hier kann sie niemand geben. "
+              "Ich habe es nicht gemacht.",
+        "en": "That needs your approval, and nobody here can give it. "
+              "So I did not do it.",
+        "es": "Eso necesita tu aprobación y aquí nadie puede darla. "
+              "Así que no lo hice.",
+    },
 }
 
 
@@ -188,3 +200,22 @@ def format_confirm_outcome(
         if cleaned:
             phrase = f"{phrase} {cleaned}"
     return phrase
+
+
+def format_approval_unavailable(
+    tool_name: str, *, language: str = DEFAULT_LOCALE
+) -> str:
+    """Render why a consequential action did not run when NOBODY could approve.
+
+    Used by ``ToolExecutor`` on an unattended surface (a scheduled workflow, a
+    cron run, a one-shot CLI call), where the two-turn confirmation above has
+    no second turn to happen in. Deliberately a sibling of
+    ``format_confirm_outcome`` over the same table: "the user said no",
+    "nobody answered in time", and "there was nobody to ask" are three
+    different facts, and the wording keeps them apart.
+
+    ``tool_name`` is accepted for future tool-specific wording and is NOT
+    interpolated today — a raw internal identifier ("gmail_rest") explains
+    nothing to a person and has no place in a spoken line.
+    """
+    return format_confirm_outcome("unavailable", tool_name, language=language)
