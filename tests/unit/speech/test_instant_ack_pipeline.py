@@ -444,3 +444,50 @@ async def test_progress_line_yields_to_a_router_ack_that_just_spoke(monkeypatch)
     pipeline._last_preamble_spoken = ("Checking the weather for you.", time.monotonic())
     await _settle(0.35)
     assert len(_instant_acks(seen)) == 1, "the progress line spoke over a fresh interim line"
+
+
+@pytest.mark.asyncio
+async def test_progress_line_is_owed_after_the_turns_own_delayed_ack(monkeypatch) -> None:
+    """Short work speaks its ack only after the grace; the ONE progress line
+    is owed PROGRESS_AFTER_S after THAT ack — the turn's own line must never
+    count as "another interim line just spoke" and silence it (the 2026-08-18
+    regression: no progress line ever followed a grace-delayed ack)."""
+    from jarvis.speech import pipeline as pipeline_module
+
+    monkeypatch.setattr(instant_ack_module, "SHORT_GRACE_S", 0.2)
+    monkeypatch.setattr(pipeline_module, "PROGRESS_AFTER_S", 0.2)
+    bus = EventBus()
+    seen: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda e: seen.append(e))
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+
+    async def _wait_for(count: int, timeout_s: float = 3.0) -> list[str]:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            texts = [a.text for a in _instant_acks(seen)]
+            if len(texts) >= count:
+                return texts
+            await asyncio.sleep(0.02)
+        return [a.text for a in _instant_acks(seen)]
+
+    pipeline._arm_instant_ack("What's in my notes about Albel?", "en")
+    texts = await _wait_for(1)
+    assert len(texts) == 1, texts
+    assert texts[0] in instant_ack_module.instant_ack_pool(
+        instant_ack_module.WorkClass.PERSONAL, "en"
+    )
+    for _ in range(100):  # the stamp lands before the line plays
+        if getattr(pipeline, "_instant_ack_spoken_at", None) is not None:
+            break
+        await asyncio.sleep(0.01)
+    ack_spoken_at = pipeline._instant_ack_spoken_at  # type: ignore[attr-defined]
+    assert ack_spoken_at is not None
+    # The arm-relative deadline has long passed; the progress line still
+    # comes — PROGRESS_AFTER_S after the ack — never silenced by it.
+    texts = await _wait_for(2)
+    assert len(texts) == 2, texts
+    assert time.monotonic() - ack_spoken_at >= 0.19, "the progress line raced the ack"
+    assert texts[1] in instant_ack_module.progress_pool(instant_ack_module.ToolActivity.OTHER, "en")
+    assert player.plays == 2

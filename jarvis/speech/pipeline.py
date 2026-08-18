@@ -4724,7 +4724,7 @@ class SpeechPipeline:
             if is_instant_ack:
                 # Not counted against the cap either: one instant line must
                 # never eat the budget of a later owed progress line.
-                self._note_instant_ack_spoken(spoken_text)
+                self._note_instant_ack_spoken(spoken_text, now_monotonic)
             else:
                 spoken_times.append(now_monotonic)
         if await self._deliver_announcement_via_realtime(
@@ -5063,10 +5063,30 @@ class SpeechPipeline:
         have covered it). At most one per turn.
         """
         try:
+            armed_at = time.monotonic()
             await asyncio.sleep(PROGRESS_AFTER_S)
+            # The line is owed PROGRESS_AFTER_S after the turn's OWN instant
+            # ack — which speaks well after arm for short work (grace window
+            # + composer budget) — not after arm, and asyncio may wake a hair
+            # early: wait out the remainder instead of dropping the line
+            # (before 2026-08-18 the "spoke recently" gate below saw the
+            # turn's own ack and silenced every progress line).
+            ack_task = getattr(self, "_instant_ack_task", None)
+            if ack_task is not None and not ack_task.done():
+                # Short work's ack is still inside its grace / composer
+                # budget: the progress line follows it, never races it.
+                await asyncio.wait({ack_task})
+            while self._instant_ack_still_wanted(seq):
+                own_at = getattr(self, "_instant_ack_spoken_at", None)
+                if own_at is None or own_at < armed_at:
+                    break  # no ack of THIS turn spoke (a stale stamp is an older turn's)
+                remaining = PROGRESS_AFTER_S - (time.monotonic() - own_at)
+                if remaining <= 0.0:
+                    break
+                await asyncio.sleep(remaining)
             if not self._instant_ack_still_wanted(seq):
                 return
-            if self._interim_line_spoke_recently(PROGRESS_AFTER_S):
+            if self._other_interim_line_spoke_recently(PROGRESS_AFTER_S):
                 return
             activity = classify_tool_activity(getattr(self, "_turn_tool_activity", ""))
             if activity is ToolActivity.HANDOVER:
@@ -5098,6 +5118,16 @@ class SpeechPipeline:
         last = getattr(self, "_last_preamble_spoken", None)
         return bool(last is not None and (time.monotonic() - last[1]) < within_s)
 
+    def _other_interim_line_spoke_recently(self, within_s: float) -> bool:
+        """An interim line OTHER than this turn's own instant ack just spoke
+        (grounded router ack, heartbeat) — the wait is covered."""
+        last = getattr(self, "_last_preamble_spoken", None)
+        if last is None:
+            return False
+        if last[1] == getattr(self, "_instant_ack_spoken_at", None):
+            return False
+        return (time.monotonic() - last[1]) < within_s
+
     def _instant_ack_still_wanted(self, seq: int) -> bool:
         """The line is only coherent while THIS turn is still thinking."""
         if int(getattr(self, "_instant_ack_turn_seq", 0)) != seq:
@@ -5106,9 +5136,13 @@ class SpeechPipeline:
             return False
         return not bool(getattr(self, "_brain_first_frame_played", False))
 
-    def _note_instant_ack_spoken(self, text: str) -> None:
-        """Record the moment an instant ack actually went to the speaker."""
-        self._instant_ack_spoken_at = time.monotonic()
+    def _note_instant_ack_spoken(self, text: str, at: float | None = None) -> None:
+        """Record the moment an instant ack actually went to the speaker.
+
+        ``at`` is the same monotonic stamp stored in ``_last_preamble_spoken``
+        so the progress line can tell the turn's own ack from other emitters.
+        """
+        self._instant_ack_spoken_at = time.monotonic() if at is None else at
         self._instant_ack_spoken_text = text
         note_spoken(text)
 

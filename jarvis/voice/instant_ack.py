@@ -56,10 +56,12 @@ _SUPPORTED_LANGUAGES = ("de", "en", "es")
 _DEFAULT_LANGUAGE = "en"
 
 #: Grace window for SHORT work: speak only if the turn is still running
-#: afterwards. 1.2 s covers the local fast paths (local-action gate, wiki
-#: ingest, navigation) and a single-round Tool Model answer on a warm
-#: provider; anything slower deserves the line.
-SHORT_GRACE_S = 1.2
+#: afterwards. 3 s covers the local fast paths (local-action gate, wiki
+#: ingest, navigation) AND a single-round Tool Model answer on a warm
+#: provider — a turn that answers inside it stays chatter-free; anything
+#: slower deserves the line, spoken well before the wait turns annoying
+#: (maintainer 2026-08-18: 1.2 s acked turns whose answer was seconds away).
+SHORT_GRACE_S = 3.0
 #: LONG work (web research, screen control, missions) never finishes inside
 #: the ack itself — speak immediately.
 IMMEDIATE_DELAY_S = 0.0
@@ -1294,8 +1296,9 @@ def contextual_ack_prompt(*, language_name: str, utterance: str) -> str:
         f"has no result yet. Say ONE short sentence in {language_name}, at most "
         "ten words, that tells the user what you are doing for exactly this "
         "request — name its concrete subject with the user's own words (the "
-        "app, the person, the file, the setting, the terminal), for example the "
-        "shape 'I'm opening <thing>.' or 'I'm sending that to <thing>.'. "
+        "app, the person, the file, the setting, the terminal, the topic), for "
+        "example the shape 'I'm opening <thing>.', 'I'm sending that to "
+        "<thing>.', 'I'm looking up <thing>.' or 'I'm checking your <thing>.'. "
         "Present tense only. No result, no success, no promise about the "
         "outcome, no question, no new facts, no numbers, no words the user did "
         "not use except 'I'm', 'now', 'for you'. Then stop. "

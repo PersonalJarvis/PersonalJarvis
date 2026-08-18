@@ -32,8 +32,8 @@ One shared core, `jarvis/voice/instant_ack.py`, used by both voice engines.
 1. **Trigger = the committed plan, at dispatch.** `plan_instant_ack(plan_turn(text))`
    maps the deterministic planner reasons to a work class with an expected
    duration: RESEARCH / SCREEN / MISSION and connected personal lookups speak
-   **immediately**; ACTION and local personal lookups wait a **1.2 s grace**
-   and speak only if the turn is still processing. Plain conversation, voice
+   **immediately**; ACTION and local personal lookups wait a **3 s grace**
+   (1.2 s until 2026-08-18) and speak only if the turn is still processing. Plain conversation, voice
    control and vague orchestrator turns get nothing.
 2. **State only what Jarvis is doing.** Closed de/en/es pools per class
    (no-repeat memory, `{agent}` = wake-word brand). The ACTION pool is empty
@@ -72,19 +72,31 @@ One shared core, `jarvis/voice/instant_ack.py`, used by both voice engines.
    (`MessageSent(role="preamble")`, the bubble the chat view already
    renders), armed before the brain call and cancelled the moment the reply
    is in. Never spoken.
-8. **Opt-in topic lines for pooled classes.** `[ack_brain].instant_ack_compose_all
-   = true` lets the composer / live model produce a request-specific line for
+8. **Topic lines for pooled classes.** `[ack_brain].instant_ack_compose_all`
+   lets the composer / live model produce a request-specific line for
    research / personal / screen / mission too, under the same validator, with
-   the pool line as fallback. Off by default.
+   the pool line as fallback. **On by default since 2026-08-18** (maintainer:
+   an ack must always speak to the request, never a stock class line);
+   `false` restores pool-only lines. Verbatim-speech realtime transports keep
+   the pool line for these classes (they cannot compose).
 
 ## Consequences
 
 - Realtime: first audio for a research question moves from ~7 s (generic) to
   ~1.5–2 s (class line, same voice); actions get "I'm opening Spotify."
-  after 1.2 s if still running. `_DELEGATE_BRIDGE_DELAY_S` (6 s) is now only
+  after 3 s if still running. `_DELEGATE_BRIDGE_DELAY_S` (6 s) is now only
   the cap / the delay for unclassified turns.
-- Pipeline: heavy turns speak at 0 / 1.2 s instead of after round one; the
+- Pipeline: heavy turns speak at 0 / 3 s instead of after round one; the
   grounded router ack becomes the 8 s+ progress line.
+- 2026-08-18 amendment (first maintainer feedback, before a live session):
+  short-work grace 1.2 → 3 s — a line 1.2 s in front of an answer that lands
+  at second 3 is the double-tap the ADR forbids, while 3 s is still far
+  inside the "waiting feels rude" window; `instant_ack_compose_all` on by
+  default — pooled class lines survive only as the instant fallback. Same
+  day, pipeline: the progress line is timed from the turn's OWN ack (grace +
+  composer put it well after arm) and the "another interim line just spoke"
+  gate no longer counts that ack — before, the gate saw it and no progress
+  line ever followed.
 - Two chargeable flash calls per action turn at most (ack + spawn/interim),
   both bounded (700 ms ack budget) and breaker-guarded.
 - Amends ADR-0014 gate 1 (suppress-if-fast) — superseded by the class grace

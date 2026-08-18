@@ -79,6 +79,7 @@ from jarvis.speech.interrupt_intent import (
 )
 from jarvis.voice.instant_ack import (
     PROGRESS_AFTER_S,
+    SHORT_GRACE_S,
     InstantAckPlan,
     ToolActivity,
     WorkClass,
@@ -519,7 +520,10 @@ class _LoopLagProbe:
 # so its cap is tighter still. Ready results pre-empt the bridge lifecycle.
 _DELEGATE_BRIDGE_DELAY_S = 6.0
 _CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S = 1.0
-_INSTANT_ACK_GRACE_S = 1.2
+# One source of truth for the short-work grace: the shared core's constant
+# (3 s since 2026-08-18, ADR-0033). Kept as a module attribute so tests can
+# pin it low.
+_INSTANT_ACK_GRACE_S = SHORT_GRACE_S
 # 20 messages, not 8: a failed screen action typically costs the user several
 # correction turns, and each background completion adds a context note. With 8,
 # the original task was trimmed out exactly when the recovery turn needed it
