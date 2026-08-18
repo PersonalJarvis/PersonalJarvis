@@ -4448,6 +4448,16 @@
     "turn_quiet": "still",
     "turn_since_anchor": "nachdem du fertig gesprochen hast",
     "shot_earlier": "Vorhin in dieser Sitzung",
-    "shot_fades": "verblasst in {0}"
+    "shot_fades": "verblasst in {0}",
+    "ide_running": "Läuft",
+    "ide_idle": "Steht",
+    "ide_open_pane": "Dieses Terminal öffnen",
+    "ide_state_working": "arbeitet",
+    "ide_state_starting": "startet",
+    "ide_state_waiting": "wartet",
+    "ide_state_asking": "fragt dich",
+    "ide_state_failed": "fehlgeschlagen",
+    "ide_state_exited": "beendet",
+    "ide_state_idle": "ruht"
   }
 }

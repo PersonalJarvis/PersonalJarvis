@@ -1177,6 +1177,21 @@ export function AgenticGrid({
     [applyRecap, session.id],
   );
 
+  // "Take me to that terminal": the deck's workspace card stages a pane by
+  // call-sign (store.requestIdePane) and the grid answers by maximizing it —
+  // the one gesture that puts a single pane in front of everything else. A
+  // request for a pane this workspace does not have is left alone rather than
+  // maximizing something else; the same request lands again on the next
+  // terminals refresh if the pane appears (a workspace still loading).
+  const idePaneRequest = useEventStore((s) => s.idePaneRequest);
+  const answeredPaneSeq = useRef(0);
+  useEffect(() => {
+    if (!idePaneRequest || idePaneRequest.seq === answeredPaneSeq.current) return;
+    if (!session.terminals.some((terminal) => terminal.name === idePaneRequest.name)) return;
+    answeredPaneSeq.current = idePaneRequest.seq;
+    setMaximized(idePaneRequest.name);
+  }, [idePaneRequest, session.terminals]);
+
   // A terminal can disappear because another client closed it. Keep the local
   // selection honest instead of leaving an invisible name selected.
   useEffect(() => {

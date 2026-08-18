@@ -371,6 +371,14 @@ interface EventStore {
    * while the section is not mounted still lands once it is.
    */
   wikiPageRequest: { slug: string; seq: number } | null;
+  /**
+   * The pending "bring this pane to the front" request for the coding
+   * workspace, or null. Written by `requestIdePane` (the deck's workspace card,
+   * where a click on an agent means "take me to that terminal"), consumed by
+   * the grid, which maximizes the pane by its call-sign. Same staging idiom as
+   * `wikiPageRequest`: made before the IDE is mounted, it still lands.
+   */
+  idePaneRequest: { name: string; seq: number } | null;
   transcription: string;
   transcriptionFinal: boolean;
   toasts: Toast[];
@@ -450,6 +458,7 @@ interface EventStore {
   requestVisual: (target?: string) => void;
   /** Stage a wiki page (by slug) and switch to the Wiki section. */
   requestWikiPage: (slug: string) => void;
+  requestIdePane: (name: string) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
   pushToast: (
     kind: Toast["kind"],
@@ -527,6 +536,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   detachedViews: [],
   visualStage: null,
   wikiPageRequest: null,
+  idePaneRequest: null,
   transcription: "",
   transcriptionFinal: true,
   toasts: [],
@@ -573,6 +583,11 @@ export const useEventStore = create<EventStore>((set, get) => ({
       // very view the user split off to keep. The request itself still lands,
       // which is what a detached Visualization window needs.
       activeSection: state.solo ? state.activeSection : "visualization",
+    })),
+
+  requestIdePane: (name) =>
+    set((state) => ({
+      idePaneRequest: { name, seq: (state.idePaneRequest?.seq ?? 0) + 1 },
     })),
 
   requestWikiPage: (slug) =>

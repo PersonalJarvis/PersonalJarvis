@@ -4448,6 +4448,16 @@
     "turn_quiet": "quiet",
     "turn_since_anchor": "after you finished speaking",
     "shot_earlier": "Earlier this session",
-    "shot_fades": "fades in {0}"
+    "shot_fades": "fades in {0}",
+    "ide_running": "Running",
+    "ide_idle": "Idle",
+    "ide_open_pane": "Open this terminal",
+    "ide_state_working": "working",
+    "ide_state_starting": "starting",
+    "ide_state_waiting": "waiting",
+    "ide_state_asking": "asking you",
+    "ide_state_failed": "failed",
+    "ide_state_exited": "exited",
+    "ide_state_idle": "idle"
   }
 }

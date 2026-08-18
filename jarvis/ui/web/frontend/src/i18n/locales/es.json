@@ -4448,6 +4448,16 @@
     "turn_quiet": "en silencio",
     "turn_since_anchor": "después de que terminaste de hablar",
     "shot_earlier": "Antes en esta sesión",
-    "shot_fades": "se desvanece en {0}"
+    "shot_fades": "se desvanece en {0}",
+    "ide_running": "En marcha",
+    "ide_idle": "Parados",
+    "ide_open_pane": "Abrir este terminal",
+    "ide_state_working": "trabajando",
+    "ide_state_starting": "arrancando",
+    "ide_state_waiting": "esperando",
+    "ide_state_asking": "te pregunta",
+    "ide_state_failed": "falló",
+    "ide_state_exited": "terminado",
+    "ide_state_idle": "inactivo"
   }
 }

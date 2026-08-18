@@ -143,30 +143,74 @@ export function OutputsCard({ className }: { className?: string }) {
 }
 
 // ----------------------------------------------------------------------
-// IDE grid — the coding workspace, shrunk to its panes' states
+// Coding workspace — the crew, not the terminals
 // ----------------------------------------------------------------------
 
 /**
- * A miniature of the Agentic IDE's terminal grid, WITHOUT mounting a single
- * terminal. The IDE's panes are live xterm instances bound to PTY streams,
- * and a second mounted copy steals every pane's output from the first
- * (MainView's sticky-mount comment explains the defect). So this is a status
- * mirror: one tile per pane, its agent, and what it is doing — read from the
- * same endpoints the IDE polls, and nothing more.
+ * The Agentic IDE on the deck, WITHOUT mounting a single terminal. The IDE's
+ * panes are live xterm instances bound to PTY streams, and a second mounted
+ * copy steals every pane's output from the first (MainView's sticky-mount
+ * comment explains the defect). Two empty tiles that said "Claude Code" told
+ * the maintainer nothing (2026-08-18), so this is a crew roster instead:
+ *
+ *   RUNNING ─────────────────────   IDLE ─────────────────
+ *   ● Claude Code   working · 2m    ○ Codex   idle · 14m
+ *     "fix the layout of the…"        "run the tests"
+ *
+ * Every row is one agent with the things a person actually wants to know —
+ * is it doing something, since when, on what — read from the same endpoints
+ * the IDE polls. A click takes you INTO that terminal: the section opens and
+ * the grid maximizes the pane (store.requestIdePane).
  */
-const ACTIVITY_TONE: Record<string, string> = {
-  starting: "bg-amber-400 animate-pulse",
-  working: "bg-primary animate-pulse",
-  waiting: "bg-sky-400",
-  done: "bg-emerald-400",
-  idle: "bg-muted-foreground",
-  stopped: "bg-muted-foreground",
-  error: "bg-destructive",
+type CrewState = "working" | "waiting" | "asking" | "starting" | "failed" | "exited" | "idle";
+
+const CREW_TONE: Record<CrewState, string> = {
+  working: "text-primary",
+  starting: "text-amber-400",
+  waiting: "text-sky-400",
+  asking: "text-amber-400",
+  failed: "text-destructive",
+  exited: "text-muted-foreground",
+  idle: "text-muted-foreground",
 };
+
+const CREW_RUNNING = new Set<CrewState>(["working", "starting", "waiting", "asking"]);
+
+function crewState(status: string, activity: string | undefined): CrewState {
+  if (activity === "working" || activity === "waiting" || activity === "asking" || activity === "starting") {
+    return activity;
+  }
+  if (activity === "failed" || status === "error") return "failed";
+  if (activity === "exited" || status === "exited") return "exited";
+  if (status === "pending") return "starting";
+  return "idle";
+}
+
+/** "2m", "48s", "1h" — the age of the current state, short enough for a row. */
+function ago(epochSeconds: number | null | undefined, nowMs: number): string {
+  if (!epochSeconds) return "";
+  const s = Math.max(0, Math.round(nowMs / 1000 - epochSeconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h`;
+}
+
+interface CrewRow {
+  key: string;
+  name: string;
+  title: string;
+  agent: string;
+  state: CrewState;
+  running: boolean;
+  since: string;
+  prompt: string;
+  prompts: number;
+}
 
 export function IdeGridCard({ className }: { className?: string }) {
   const t = useT();
   const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const requestIdePane = useEventStore((s) => s.requestIdePane);
 
   const state = useQuery<IdeState>({
     queryKey: ["deck", "ide-state"],
@@ -184,71 +228,144 @@ export function IdeGridCard({ className }: { className?: string }) {
   });
 
   const panes = state.data?.session?.terminals ?? [];
-  const activityByKey = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const row of activity.data?.terminals ?? []) {
-      if (row.activity) m.set(row.key, row.activity);
-    }
-    return m;
-  }, [activity.data]);
-  const working = panes.filter((p) => activityByKey.get(p.key) === "working").length;
-  const workspaces = state.data?.workspaces?.length ?? 0;
-  const projectName = state.data?.session?.project?.name ?? "";
+  const rows = useMemo<CrewRow[]>(() => {
+    const byKey = new Map((activity.data?.terminals ?? []).map((r) => [r.key, r]));
+    const now = Date.now();
+    return panes.map((p) => {
+      const act = byKey.get(p.key);
+      const st = crewState(p.status, act?.activity);
+      return {
+        key: p.key,
+        name: p.name,
+        title: p.display_name || p.name,
+        agent: p.agent,
+        state: st,
+        running: CREW_RUNNING.has(st),
+        since: ago(act?.activity_since || p.last_output_at || p.started_at, now),
+        prompt: p.last_prompt || "",
+        prompts: p.prompts_sent,
+      };
+    });
+  }, [panes, activity.data]);
+
+  const running = rows.filter((r) => r.running);
+  const idle = rows.filter((r) => !r.running);
+  const project = state.data?.session?.project;
+  const branch = project?.branch ?? state.data?.workspaces?.find((w) => w.active)?.branch ?? null;
+
+  const open = (name: string) => {
+    requestIdePane(name);
+    setActiveSection("agentic-ide");
+  };
 
   return (
     <DeckCard
       icon={MessagesSquare}
       title={t("deck.card_ide")}
-      meta={
-        panes.length > 0
-          ? `${working}/${panes.length}`
-          : workspaces > 0
-            ? workspaces
-            : undefined
-      }
-      live={working > 0}
+      meta={rows.length > 0 ? `${running.length}/${rows.length}` : undefined}
+      live={running.length > 0}
       variant="bracket"
       onOpen={() => setActiveSection("agentic-ide")}
       openLabel={t("deck.open_section")}
       className={className}
     >
-      {panes.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="text-[11px] text-muted-foreground">
           {state.isError ? t("deck.unavailable") : t("deck.ide_empty")}
         </p>
       ) : (
         <div className="flex h-full min-h-0 flex-col gap-1.5">
-          {projectName && (
-            <div className="truncate font-mono text-[10px] text-muted-foreground">{projectName}</div>
+          {project && (
+            <div className="flex items-center gap-2 truncate font-mono text-[10px] text-muted-foreground">
+              <span className="truncate text-foreground/80">{project.name}</span>
+              {branch && <span className="shrink-0 truncate">⎇ {branch}</span>}
+            </div>
           )}
-          <div
-            className="grid min-h-0 flex-1 gap-1.5"
-            style={{ gridTemplateColumns: `repeat(${Math.min(4, Math.max(1, Math.ceil(Math.sqrt(panes.length))))}, minmax(0, 1fr))` }}
-          >
-            {panes.slice(0, 12).map((p) => {
-              const act = activityByKey.get(p.key) ?? (p.status === "live" ? "idle" : p.status);
-              return (
-                <div
-                  key={p.key}
-                  title={`${p.display_name || p.name} · ${act}`}
-                  className={cn(
-                    "flex min-h-[2.4rem] flex-col justify-between rounded-md border border-border/60 px-1.5 py-1",
-                    act === "working" && "border-primary/50",
-                    act === "error" && "border-destructive/60",
-                  )}
-                >
-                  <div className="flex items-center gap-1">
-                    <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", ACTIVITY_TONE[act] ?? ACTIVITY_TONE.idle)} aria-hidden />
-                    <span className="truncate text-[10px] text-foreground">{p.display_name || p.name}</span>
-                  </div>
-                  <span className="truncate font-mono text-[9px] text-muted-foreground">{p.agent}</span>
-                </div>
-              );
-            })}
+          <div className="grid min-h-0 flex-1 grid-cols-2 gap-x-3">
+            <CrewColumn label={t("deck.ide_running")} rows={running} onOpen={open} hot />
+            <CrewColumn label={t("deck.ide_idle")} rows={idle} onOpen={open} />
           </div>
         </div>
       )}
     </DeckCard>
+  );
+}
+
+function CrewColumn({
+  label,
+  rows,
+  onOpen,
+  hot,
+}: {
+  label: string;
+  rows: CrewRow[];
+  onOpen: (name: string) => void;
+  hot?: boolean;
+}) {
+  const t = useT();
+  return (
+    <div className="flex min-h-0 flex-col">
+      <div
+        className={cn(
+          "flex items-center gap-1.5 border-b pb-1 font-mono text-[9px] uppercase tracking-[0.2em]",
+          hot ? "border-primary/50 text-primary" : "border-border text-muted-foreground",
+        )}
+      >
+        <span>{label}</span>
+        <span className="ml-auto tabular-nums">{rows.length}</span>
+      </div>
+      <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto pt-1">
+        {rows.length === 0 && <li className="text-[10px] text-muted-foreground/70">—</li>}
+        {rows.map((r) => (
+          <li key={r.key}>
+            <button
+              type="button"
+              onClick={() => onOpen(r.name)}
+              title={t("deck.ide_open_pane")}
+              className="group/row flex w-full flex-col gap-0.5 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-primary/10"
+            >
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0",
+                    r.state === "working" || r.state === "starting"
+                      ? "animate-pulse bg-primary shadow-[0_0_6px_1px_hsl(var(--primary)/0.6)]"
+                      : r.state === "failed"
+                        ? "bg-destructive"
+                        : r.state === "waiting" || r.state === "asking"
+                          ? "bg-sky-400"
+                          : "bg-muted-foreground/50",
+                  )}
+                  aria-hidden
+                />
+                <span className="min-w-0 flex-1 truncate text-[11px] text-foreground group-hover/row:text-primary">
+                  {r.title}
+                </span>
+                <span className={cn("shrink-0 font-mono text-[9px] uppercase tracking-wider", CREW_TONE[r.state])}>
+                  {t(`deck.ide_state_${r.state}`)}
+                </span>
+                {r.since && (
+                  <span className="shrink-0 font-mono text-[9px] tabular-nums text-muted-foreground">
+                    · {r.since}
+                  </span>
+                )}
+              </span>
+              <span className="flex items-center gap-1.5 pl-3">
+                <span className="shrink-0 font-mono text-[9px] text-muted-foreground">{r.agent}</span>
+                {r.prompt && (
+                  <span className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-muted-foreground/90">
+                    &ldquo;{r.prompt}&rdquo;
+                  </span>
+                )}
+                {r.prompts > 0 && !r.prompt && (
+                  <span className="font-mono text-[9px] tabular-nums text-muted-foreground">{r.prompts}×</span>
+                )}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
