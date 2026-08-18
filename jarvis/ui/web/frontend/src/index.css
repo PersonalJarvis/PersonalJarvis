@@ -359,15 +359,16 @@
   height: 0;
 }
 
-/* The mission deck's dock scrolls when the window is shorter than its column
-   of icons, but shows no bar: a 10 px thumb inside a 64 px rail would sit on
-   the icons themselves. Top-level for the same reason as the rules above. */
-.deck-dock-scroller {
+/* The icon rail (the deck's dock and the collapsed sidebar) scrolls when the
+   window is shorter than its column of icons, but shows no bar: a 10 px thumb
+   inside a 64 px rail would sit on the icons themselves. Top-level for the
+   same reason as the rules above. */
+.dock-rail-scroller {
   overscroll-behavior: contain;
   scrollbar-width: none;
 }
 
-.deck-dock-scroller::-webkit-scrollbar {
+.dock-rail-scroller::-webkit-scrollbar {
   width: 0;
   height: 0;
 }

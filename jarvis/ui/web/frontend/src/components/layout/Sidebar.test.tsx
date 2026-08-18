@@ -512,12 +512,20 @@ describe("Sidebar icon rail", () => {
   test("keeps every destination named once its label is off the screen", () => {
     renderSidebar(SIDEBAR_RAIL_WIDTH);
 
-    // The label survives as the accessible name and as the hover text — it is
-    // off the screen, not gone. Both non-empty is the assertion; WHAT they say
-    // is the locale's business.
+    // The label survives as the accessible name, and the rail draws its own
+    // label beside the icon on hover — it is off the row, not gone. (No native
+    // title: a browser tooltip on top of the rail's label would be a second,
+    // late label.) WHAT they say is the locale's business.
     const row = screen.getByTestId("nav-row-agentic-ide");
     expect(row.getAttribute("aria-label")).toBeTruthy();
-    expect(row.getAttribute("title")).toBeTruthy();
+    expect(row.getAttribute("title")).toBeNull();
+    act(() => {
+      row.focus();
+      row.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    expect(screen.getByTestId("dock-label").textContent).toContain(
+      row.getAttribute("aria-label"),
+    );
   });
 
   test("still switches section on a click", () => {

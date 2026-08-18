@@ -19,27 +19,25 @@ import {
   layoutDock,
   type DockLayout,
 } from "@/lib/dockMagnify";
-import { playDockTick } from "@/lib/sound";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 /**
- * The deck's section dock — every section of the app as one icon, on the
- * left edge, with the magnification desktop docks made familiar.
+ * The icon rail — every section of the app as one icon, on the left edge,
+ * with a gentle magnification under the pointer.
  *
- * It replaces the sidebar ONLY while the deck is on screen (App.tsx): the
- * sections appear once, not twice, and the rigid list becomes the smooth
- * one. Clicking an icon jumps to that section, where the ordinary sidebar is
- * waiting; the deck's own dock is not a second navigation, it IS the
- * navigation for this one surface.
+ * ONE rail for the whole app: the mission deck's dock and the collapsed
+ * sidebar are the same component, so a section reads the same wherever the
+ * user is — the maintainer found it jarring that leaving the deck dropped the
+ * icons back to a plain list. The list is the sidebar's own `NAV_GROUPS` — one
+ * source, so a section added there appears here without anyone remembering to
+ * add it twice (AP-4). The attention signals are shared too: a provider error
+ * lights API Keys red, a plugin that needs a reconnect lights Skills amber, and
+ * clicking Skills while a plugin needs attention lands on the Plugins tab, the
+ * same shortcut the expanded sidebar takes.
  *
- * The list is the sidebar's own `NAV_GROUPS` — one source, so a section added
- * there appears here without anyone remembering to add it twice (AP-4). The
- * attention signals are the sidebar's too: a provider error lights API Keys,
- * a plugin that needs a reconnect lights Plugins.
- *
- * How the motion is built — the same recipe as the well-known Framer Motion
- * docks, with one deliberate difference:
+ * How the motion is built — the recipe of the well-known Framer Motion docks,
+ * with two deliberate differences:
  *
  * - The column is RIGID. No icon ever leaves its place: the hill is a hill of
  *   sizes only, each icon growing around its own rest centre, neighbours a
@@ -47,22 +45,22 @@ import { useT } from "@/i18n";
  *   make room; the maintainer found that shuffle distracting, so it is gone.
  *   Boxes may overlap by a few px at the peak — only the hovered box paints a
  *   surface, and it is drawn on top, so nothing shows.
- * - Nothing about the pointer goes through React state. The pointer writes a
- *   motion value; the whole layout is ONE derived motion value; every icon
- *   binds its box to that. Re-rendering twenty-odd buttons on every mouse
- *   event, and then letting a CSS transition chase the result, is what made
- *   the first version stutter and trail the mouse.
- * - The hill follows the pointer instantly; only its HEIGHT is sprung. Enter
- *   the rail and the hill rises in place under the pointer; leave it and it
- *   settles back where it was — no pop on entry, no jump on exit, no lag.
+ * - The hill is STEADY under a moving pointer. It sits on the hovered icon's
+ *   centre, not on the pointer itself: moving within an icon changes nothing
+ *   (a pointer that wanders by a pixel used to make every neighbour re-render
+ *   at a fractional size, and thin line icons re-rasterised at fractional
+ *   sizes read as vibration). Crossing to the next icon glides the hill over
+ *   on a critically damped spring, in step with the label.
+ * - Nothing about the pointer goes through React state. The pointer writes
+ *   motion values; the whole layout is ONE derived motion value; every icon
+ *   binds its box to that.
+ * - The hill's HEIGHT is sprung too: enter the rail and it rises in place
+ *   under the pointer; leave it and it settles back where it was.
  * - Geometry is pure math in `lib/dockMagnify.ts`.
  * - Exactly one label: the hovered icon's, gliding from icon to icon at a
- *   fixed distance from the rail, fading in and out. Three labels at once,
- *   popping in and out on a size threshold, read as noise.
- * - A soft detent tick each time the pointer crosses onto another icon, and a
- *   firmer one on the pick — the ratchet of a picker wheel, quiet.
+ *   fixed distance from the rail, fading in and out.
  *
- * Users who asked for less motion get the label and the tick but no hill.
+ * Users who asked for less motion get the label but no hill.
  */
 const BASE = 30; // px — icon box at rest
 const GAP = 8; // px — between icon boxes at rest
@@ -75,26 +73,26 @@ const RAIL_WIDTH = 64; // px — Tailwind w-16, the column the icons centre in
 const PAD_TOP = 12;
 const PAD_BOTTOM = 12;
 /** The rest geometry, for tests that need to aim a pointer at an icon. */
-export const DECK_DOCK_GEOMETRY = { BASE, GAP, PAD_TOP } as const;
-/** Enter/leave: quick, a hair under critical damping so it never wobbles. */
+export const DOCK_RAIL_GEOMETRY = { BASE, GAP, PAD_TOP } as const;
+/** Rise/settle of the hill: quick, a hair under critical damping. */
 const HILL_SPRING = { stiffness: 600, damping: 45, mass: 1 };
+/**
+ * The glide from icon to icon — hill and label alike: critically damped, so
+ * it settles in ~40 ms and never overshoots the icon it lands on.
+ */
+const GLIDE_SPRING = { stiffness: 900, damping: 60, mass: 1 };
 /**
  * Where the label's left edge sits: a fixed distance beyond the fully grown
  * icon, so it does not creep sideways while the icon grows under it.
  */
 const LABEL_LEFT = RAIL_WIDTH / 2 + (BASE * DOCK_MAX_SCALE) / 2 + 12;
-/**
- * The label glides from icon to icon instead of hopping — critically damped,
- * so it settles in ~40 ms and never overshoots the icon it names.
- */
-const LABEL_SPRING = { stiffness: 900, damping: 60, mass: 1 };
 
 interface DockFrame {
   layout: DockLayout;
   hovered: number;
 }
 
-export function DeckDock({ className }: { className?: string }) {
+export function DockRail({ className }: { className?: string }) {
   const t = useT();
   const activeSection = useEventStore((s) => s.activeSection);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
@@ -106,7 +104,7 @@ export function DeckDock({ className }: { className?: string }) {
   const items = useMemo(() => NAV_GROUPS.flat(), []);
   const groupBreaks = useMemo(() => {
     // Index of the first item of every group after the first — a hairline is
-    // drawn above these so the dock keeps the sidebar's grouping.
+    // drawn above these so the rail keeps the sidebar's grouping.
     const breaks = new Set<number>();
     let n = 0;
     for (let g = 0; g < NAV_GROUPS.length; g++) {
@@ -116,10 +114,21 @@ export function DeckDock({ className }: { className?: string }) {
     return breaks;
   }, []);
 
+  // A provider that is set up but failing — surfaced app-wide as a red pip on
+  // API Keys. The amber "needs setup" state is deliberately NOT shown: on a
+  // fresh install every unconfigured section would light up.
   const apikeysError = useMemo(
     () => Object.values(health).some((h) => h?.status === "error"),
     [health],
   );
+  const pluginsNeedReconnect = pluginAttention.count > 0;
+  const pluginWarnHint = pluginAttention.names.length
+    ? `${t("sidebar.plugins_reconnect_alert")}: ${pluginAttention.names.join(", ")}`
+    : t("sidebar.plugins_reconnect_alert");
+
+  // Rest geometry — positions never move, so this is a plain number.
+  const rest = useMemo(() => layoutDock(items.length, BASE, GAP, null), [items.length]);
+  const blockHeight = PAD_TOP + rest.extent + PAD_BOTTOM;
 
   // --- pointer → motion values (no React state on the hot path) -----------
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -127,9 +136,11 @@ export function DeckDock({ className }: { className?: string }) {
   const hoveredRef = useRef(-1);
   const [hovered, setHovered] = useState(-1);
 
-  /** Pointer position along the rail, in the REST layout's coordinates. */
-  const hillY = useMotionValue(0);
-  /** 0 = rail at rest, 1 = hill fully up. Sprung; the position is not. */
+  /** Centre of the hill along the rail, in the rest layout's coordinates —
+   *  the hovered icon's centre, glided to on `GLIDE_SPRING`. */
+  const hillYTarget = useMotionValue(0);
+  const hillY = useSpring(hillYTarget, GLIDE_SPRING);
+  /** 0 = rail at rest, 1 = hill fully up. */
   const hillTarget = useMotionValue(0);
   const hill = useSpring(hillTarget, HILL_SPRING);
   const hoveredMV = useMotionValue(-1);
@@ -149,9 +160,6 @@ export function DeckDock({ className }: { className?: string }) {
       hovered: h,
     };
   });
-  // Rest geometry — positions never move, so this is a plain number.
-  const rest = useMemo(() => layoutDock(items.length, BASE, GAP, null), [items.length]);
-  const blockHeight = PAD_TOP + rest.extent + PAD_BOTTOM;
 
   // --- the one label ------------------------------------------------------
   // The last position is kept so the label fades out where it was rather than
@@ -165,27 +173,28 @@ export function DeckDock({ className }: { className?: string }) {
     lastLabelTop.current = top;
     return top;
   });
-  const labelTopSmooth = useSpring(labelTopRaw, LABEL_SPRING);
+  const labelTopSmooth = useSpring(labelTopRaw, GLIDE_SPRING);
   const labelTop = reduced ? labelTopRaw : labelTopSmooth;
 
   const setHoveredSlot = useCallback(
-    (slot: number, tick: boolean) => {
+    (slot: number) => {
       const prev = hoveredRef.current;
       if (slot === prev) return;
       hoveredRef.current = slot;
       hoveredMV.set(slot);
       setHovered(slot);
-      if (prev < 0 && slot >= 0) {
-        // A fresh label appears AT its icon; only a label that is already on
-        // screen glides. Without this it would fly in from wherever the last
-        // one faded out.
-        labelTopSmooth.jump(
-          PAD_TOP + rest.items[slot].center - (scrollerRef.current?.scrollTop ?? 0),
-        );
+      if (slot < 0) return;
+      const center = rest.items[slot].center;
+      if (prev < 0) {
+        // A fresh hover appears AT its icon; only a hill (and label) that is
+        // already up glides. Without this they would fly in from wherever the
+        // last hover faded out.
+        hillY.jump(center);
+        labelTopSmooth.jump(PAD_TOP + center - (scrollerRef.current?.scrollTop ?? 0));
       }
-      if (tick && slot >= 0) playDockTick("hover");
+      hillYTarget.set(center);
     },
-    [hoveredMV, labelTopSmooth, rest],
+    [hillY, hillYTarget, hoveredMV, labelTopSmooth, rest],
   );
 
   const track = useCallback(
@@ -193,11 +202,12 @@ export function DeckDock({ className }: { className?: string }) {
       const el = scrollerRef.current;
       if (!el) return;
       const y = clientY - el.getBoundingClientRect().top + el.scrollTop - PAD_TOP;
-      hillY.set(y);
-      hillTarget.set(reduced ? 0 : 1);
-      setHoveredSlot(dockSlotAt(y, items.length, BASE, GAP), true);
+      const slot = dockSlotAt(y, items.length, BASE, GAP);
+      setHoveredSlot(slot);
+      // Off the row (the padding, or past the last icon) counts as away.
+      hillTarget.set(slot >= 0 && !reduced ? 1 : 0);
     },
-    [hillY, hillTarget, items.length, reduced, setHoveredSlot],
+    [hillTarget, items.length, reduced, setHoveredSlot],
   );
 
   const onPointerMove = useCallback(
@@ -210,7 +220,7 @@ export function DeckDock({ className }: { className?: string }) {
   const onPointerLeave = useCallback(() => {
     lastClientY.current = null;
     hillTarget.set(0);
-    setHoveredSlot(-1, false);
+    setHoveredSlot(-1);
   }, [hillTarget, setHoveredSlot]);
   // Wheel-scrolling under a still pointer moves the icons under it — re-aim.
   const onScroll = useCallback(() => {
@@ -228,19 +238,25 @@ export function DeckDock({ className }: { className?: string }) {
 
   const hoveredItem = hovered >= 0 ? items[hovered] : null;
   const hoveredCount = hoveredItem?.id === "chats" ? conversations.length : 0;
+  const hoveredHint =
+    hoveredItem?.id === "apikeys" && apikeysError
+      ? t("sidebar.apikeys_alert")
+      : hoveredItem?.id === "skills" && pluginsNeedReconnect
+        ? pluginWarnHint
+        : null;
 
   return (
     <nav
       aria-label={t("deck.sections")}
-      className={cn("relative z-10 flex h-full w-16 shrink-0 flex-col", className)}
+      className={cn("relative z-10 flex min-h-0 w-16 shrink-0 flex-col", className)}
     >
       <div
         ref={scrollerRef}
-        data-testid="deck-dock-rail"
+        data-testid="dock-rail"
         onPointerMove={onPointerMove}
         onPointerLeave={onPointerLeave}
         onScroll={onScroll}
-        className="deck-dock-scroller relative h-full w-full overflow-y-auto overflow-x-hidden"
+        className="dock-rail-scroller relative min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden"
       >
         <div className="relative w-full" style={{ height: blockHeight }}>
           {items.map((item, i) => (
@@ -254,19 +270,23 @@ export function DeckDock({ className }: { className?: string }) {
               active={activeSection === item.id || !!item.matchIds?.includes(activeSection)}
               hovered={hovered === i}
               live={item.id === "chats" && conversations.length > 0}
-              attention={
-                (item.id === "apikeys" && apikeysError) ||
-                (item.id === "skills" && pluginAttention.count > 0)
-              }
+              alert={item.id === "apikeys" && apikeysError}
+              alertTitle={t("sidebar.apikeys_alert")}
+              warn={item.id === "skills" && pluginsNeedReconnect}
+              warnTitle={pluginWarnHint}
               groupBreak={groupBreaks.has(i)}
-              onSelect={() => {
-                playDockTick("select");
-                setActiveSection(item.id);
-              }}
-              onFocus={() => setHoveredSlot(i, false)}
+              // A plugin problem sends the Skills icon straight into the
+              // Plugins tab (where the banner + jump button are), so one click
+              // lands on the fix instead of the default Skills tab.
+              onSelect={() =>
+                setActiveSection(
+                  item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
+                )
+              }
+              onFocus={() => setHoveredSlot(i)}
               onBlur={() => {
                 if (hoveredRef.current === i && lastClientY.current === null) {
-                  setHoveredSlot(-1, false);
+                  setHoveredSlot(-1);
                 }
               }}
             />
@@ -282,17 +302,25 @@ export function DeckDock({ className }: { className?: string }) {
           <motion.div
             key="label"
             aria-hidden
-            data-testid="deck-dock-label"
+            data-testid="dock-label"
             initial={{ opacity: 0, x: -6 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -4 }}
             transition={reduced ? { duration: 0 } : { duration: 0.12, ease: "easeOut" }}
             style={{ top: labelTop, left: LABEL_LEFT, y: "-50%" }}
-            className="pointer-events-none absolute whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground shadow-md backdrop-blur"
+            className="pointer-events-none absolute flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-background/95 px-2 py-1 text-xs text-foreground shadow-md backdrop-blur"
           >
             {resolveNavLabel(t, hoveredItem)}
+            {hoveredItem.beta && (
+              <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary">
+                {t("nav.agentic_ide_beta")}
+              </span>
+            )}
             {hoveredCount > 0 && (
-              <span className="ml-1.5 font-mono text-[10px] text-primary">{hoveredCount}</span>
+              <span className="font-mono text-[10px] text-primary">{hoveredCount}</span>
+            )}
+            {hoveredHint && (
+              <span className="max-w-[28ch] truncate text-muted-foreground">— {hoveredHint}</span>
             )}
           </motion.div>
         )}
@@ -310,7 +338,10 @@ function DockIcon({
   active,
   hovered,
   live,
-  attention,
+  alert,
+  alertTitle,
+  warn,
+  warnTitle,
   groupBreak,
   onSelect,
   onFocus,
@@ -326,8 +357,12 @@ function DockIcon({
   hovered: boolean;
   /** Something is going on in this section (a pip in the accent colour). */
   live: boolean;
-  /** Something needs the user in this section (a pip in the alert colour). */
-  attention: boolean;
+  /** A section this icon fronts has a provider that is set up but failing. */
+  alert: boolean;
+  alertTitle: string;
+  /** Softer "needs attention" — e.g. a plugin whose token needs a reconnect. */
+  warn: boolean;
+  warnTitle: string;
   groupBreak: boolean;
   onSelect: () => void;
   onFocus: () => void;
@@ -353,7 +388,7 @@ function DockIcon({
       )}
       <motion.button
         type="button"
-        data-testid={`deck-dock-${item.id}`}
+        data-testid={`nav-row-${item.id}`}
         onClick={onSelect}
         onFocus={onFocus}
         onBlur={onBlur}
@@ -365,8 +400,10 @@ function DockIcon({
           // On top while hovered: at the peak its box overlaps the neighbours'
           // (transparent) boxes by a few px, and it must win that overlap.
           hovered && "z-10",
+          // The active control is the app's glass surface with the accent on
+          // the glyph — the same language as the expanded sidebar's row.
           active
-            ? "border-primary/50 bg-primary/15 text-primary"
+            ? "jarvis-message-surface border-primary/40 text-primary"
             : hovered
               ? "border-border/60 bg-card/40 text-foreground"
               : "border-transparent text-muted-foreground",
@@ -381,15 +418,28 @@ function DockIcon({
           <Icon className="h-full w-full" />
         </motion.span>
 
-        {(live || attention) && (
+        {/* Pips ride on the icon's corner. The signal is the point, not the
+            row — and there is no room for anything beside a 30 px box. */}
+        {alert ? (
+          <span
+            data-testid={`nav-alert-${item.id}`}
+            role="status"
+            aria-label={alertTitle}
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-background"
+          />
+        ) : warn ? (
+          <span
+            data-testid={`nav-warn-${item.id}`}
+            role="status"
+            aria-label={warnTitle}
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-background"
+          />
+        ) : live ? (
           <span
             aria-hidden
-            className={cn(
-              "absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2 ring-background",
-              attention ? "bg-destructive" : "bg-primary",
-            )}
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
           />
-        )}
+        ) : null}
       </motion.button>
     </>
   );

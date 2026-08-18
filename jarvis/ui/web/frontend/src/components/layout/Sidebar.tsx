@@ -9,6 +9,7 @@ import {
   resolveNavLabel,
   type NavItem,
 } from "@/components/layout/navGroups";
+import { DockRail } from "@/components/layout/DockRail";
 import { useEventStore } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
@@ -71,7 +72,10 @@ export const SIDEBAR_DEFAULT_WIDTH = 280;
  * label — so in the Agentic IDE, where a workspace of a dozen terminals wants
  * every pixel, a fifth of the window stayed spent on a list nobody was reading.
  * The rail keeps navigation one click away (the icons are still there, each
- * with its label on hover) while giving that space back to the panes.
+ * with its label on hover) while giving that space back to the panes. The
+ * rail IS the deck's dock (`DockRail`) — same icons, same magnification, same
+ * signals — so leaving the deck never drops the navigation back to a plainer
+ * list.
  */
 export const SIDEBAR_RAIL_WIDTH = 64;
 
@@ -198,11 +202,14 @@ export function Sidebar({
   return (
     // No right border: the draggable seam beside it draws that line now, and
     // two 1px lines three pixels apart read as a rendering fault.
+    // z-20: above the main area (z-10). The rail's hover label flies out past
+    // the sidebar's edge, and it must paint over the page rather than under it;
+    // the app-wide layers (toasts, docks, dialogs) all sit at z-40 and above.
     <aside
       style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
       data-testid="sidebar"
       data-railed={railed ? "true" : "false"}
-      className="jarvis-nav-surface relative isolate flex h-full shrink-0 flex-col"
+      className="jarvis-nav-surface relative isolate z-20 flex h-full shrink-0 flex-col"
     >
       <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
         <div
@@ -323,47 +330,48 @@ export function Sidebar({
         )}
       </div>
 
-      <nav
-        className={cn(
-          "flex-1 overflow-y-auto scrollbar-jarvis",
-          railed ? "px-1.5 py-2" : "p-2",
-        )}
-      >
-        {NAV_GROUPS.map((group, groupIndex) => (
-          <ul
-            key={groupIndex}
-            className={cn(
-              "space-y-0.5",
-              // Thin divider + breathing room above every group after the first.
-              groupIndex > 0 && "mt-2 border-t border-border/40 pt-2",
-            )}
-          >
-            {group.map((item) => (
-              <NavRow
-                key={item.id}
-                item={item}
-                railed={railed}
-                label={resolveNavLabel(t, item)}
-                active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
-                badge={item.id === "agents" ? agentsCount : undefined}
-                betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
-                alert={item.id === "apikeys" ? apikeysHasError : false}
-                alertTitle={t("sidebar.apikeys_alert")}
-                warn={item.id === "skills" ? pluginsNeedReconnect : false}
-                warnTitle={pluginWarnTitle}
-                // A plugin problem sends the "Skills & Tools" row straight into
-                // the Plugins tab (where the banner + jump button are), so one
-                // click lands on the fix instead of the default Skills tab.
-                onClick={() =>
-                  setActive(
-                    item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
-                  )
-                }
-              />
-            ))}
-          </ul>
-        ))}
-      </nav>
+      {railed ? (
+        // The rail is the app-wide icon dock: it carries the same signals (the
+        // API-Keys error pip, the plugin reconnect pip, the Skills → Plugins
+        // shortcut) from its own sources, so nothing here has to be threaded in.
+        <DockRail className="min-h-0 flex-1" />
+      ) : (
+        <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
+          {NAV_GROUPS.map((group, groupIndex) => (
+            <ul
+              key={groupIndex}
+              className={cn(
+                "space-y-0.5",
+                // Thin divider + breathing room above every group after the first.
+                groupIndex > 0 && "mt-2 border-t border-border/40 pt-2",
+              )}
+            >
+              {group.map((item) => (
+                <NavRow
+                  key={item.id}
+                  item={item}
+                  label={resolveNavLabel(t, item)}
+                  active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
+                  badge={item.id === "agents" ? agentsCount : undefined}
+                  betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
+                  alert={item.id === "apikeys" ? apikeysHasError : false}
+                  alertTitle={t("sidebar.apikeys_alert")}
+                  warn={item.id === "skills" ? pluginsNeedReconnect : false}
+                  warnTitle={pluginWarnTitle}
+                  // A plugin problem sends the "Skills & Tools" row straight into
+                  // the Plugins tab (where the banner + jump button are), so one
+                  // click lands on the fix instead of the default Skills tab.
+                  onClick={() =>
+                    setActive(
+                      item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
+                    )
+                  }
+                />
+              ))}
+            </ul>
+          ))}
+        </nav>
+      )}
 
       <div className={cn("border-t border-border", railed ? "p-1.5" : "p-3")}>
         <button
@@ -425,7 +433,6 @@ function NavRow({
   alertTitle,
   warn = false,
   warnTitle,
-  railed = false,
   onClick,
 }: {
   item: NavItem;
@@ -445,28 +452,19 @@ function NavRow({
   warn?: boolean;
   /** Plain-language hover text for the warn dot. */
   warnTitle?: string;
-  /** Icon-only row — the sidebar has been dragged down to its rail. */
-  railed?: boolean;
   onClick: () => void;
 }) {
   const Icon = item.icon;
-  // On the rail the label is gone from the screen, so it has to survive
-  // somewhere: as the hover text and as the accessible name. Without both, the
-  // narrow sidebar would be a column of unlabelled glyphs. The beta pill has no
-  // room on the rail either, so it folds into the same hover text.
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
-  const fullLabel = betaLabel ? `${label} (${betaLabel})` : label;
   return (
     <li>
       <button
         type="button"
         data-testid={`nav-row-${item.id}`}
         onClick={onClick}
-        aria-label={railed ? fullLabel : undefined}
-        title={railed ? (hint ? `${fullLabel} — ${hint}` : fullLabel) : hint}
+        title={hint}
         className={cn(
-          "group relative flex w-full items-center rounded-lg text-sm transition-all",
-          railed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2",
+          "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
           "hover:bg-background/20",
           active
             ? "jarvis-message-surface text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
@@ -479,30 +477,23 @@ function NavRow({
             active ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
           )}
         />
-        {!railed && (
-          <span className="flex flex-1 items-center gap-1.5 text-left">
-            {label}
-            {betaLabel && (
-              <span
-                data-testid={`nav-beta-${item.id}`}
-                className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary"
-              >
-                {betaLabel}
-              </span>
-            )}
-          </span>
-        )}
-        {/* On the rail the status dots ride ON the icon rather than after the
-            label there is no room for — the signal is the point, not the row. */}
+        <span className="flex flex-1 items-center gap-1.5 text-left">
+          {label}
+          {betaLabel && (
+            <span
+              data-testid={`nav-beta-${item.id}`}
+              className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary"
+            >
+              {betaLabel}
+            </span>
+          )}
+        </span>
         {alert && (
           <span
             data-testid={`nav-alert-${item.id}`}
             role="status"
             aria-label={alertTitle}
-            className={cn(
-              "h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background",
-              railed && "absolute right-1.5 top-1.5",
-            )}
+            className="h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background"
           />
         )}
         {!alert && warn && (
@@ -510,13 +501,10 @@ function NavRow({
             data-testid={`nav-warn-${item.id}`}
             role="status"
             aria-label={warnTitle}
-            className={cn(
-              "h-2 w-2 shrink-0 rounded-full bg-amber-500 ring-2 ring-background",
-              railed && "absolute right-1.5 top-1.5",
-            )}
+            className="h-2 w-2 shrink-0 rounded-full bg-amber-500 ring-2 ring-background"
           />
         )}
-        {badge !== undefined && badge > 0 && !railed && (
+        {badge !== undefined && badge > 0 && (
           <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
             {badge}
           </span>

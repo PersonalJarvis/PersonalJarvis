@@ -3,7 +3,7 @@ import { useEventStore, type VoiceState } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
-import { DeckDock } from "@/components/deck/DeckDock";
+import { DockRail } from "@/components/layout/DockRail";
 import { DeckOrb } from "@/components/deck/DeckOrb";
 import { HudLamp } from "@/components/deck/HudFrame";
 import {
@@ -180,7 +180,7 @@ export function MissionDeckView({
 
       {/* Stage */}
       <div className="flex min-h-0 flex-1">
-        <DeckDock />
+        <DockRail />
 
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden">
           {/* LEFT top: the log — the terminal of the session */}
