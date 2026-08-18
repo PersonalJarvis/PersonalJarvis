@@ -106,7 +106,7 @@ Mounts the *full* server (`jarvis.ui.web.server:create_app`), populates `wiki/ob
 - ❌ Don't open the database — `VaultSearch` already handles FTS5. You only call it.
 - ❌ Don't return the full body in `/tree`. That endpoint is for navigation, not content. Just slug + title + mtime + size.
 - ❌ Don't add authentication. The desktop app is local-only, the existing pattern is unauthenticated.
-- ❌ Don't add OpenAPI tags/descriptions that mention internal data (no `description="reads /Users/admin/Desktop/Personal Jarvis/data/sessions.db"`). The OpenAPI doc is user-visible.
+- ❌ Don't add OpenAPI tags/descriptions that mention internal data (no `description="reads <USER_HOME>/Desktop/Personal Jarvis/data/sessions.db"`). The OpenAPI doc is user-visible.
 - ❌ Don't import from `jarvis.brain.*`. The Wiki view is brain-free.
 - ❌ Don't write to `app.state` from a route handler. State is set at startup only.
 - ❌ Don't introduce async generators for streaming responses. All responses fit in one JSON object.

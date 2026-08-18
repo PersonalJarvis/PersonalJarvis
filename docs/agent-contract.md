@@ -161,7 +161,7 @@ MCP), and credential STORAGE itself. Every one must:
 - **Work on EVERY OS, incl. a headless `python:3.11-slim` VPS** with no
   keyring, GPU, audio, or Windows APIs — base `pip install` + boot must
   succeed there. Use `pathlib` + capability probes + UTF-8; never hardcode
-  `C:\Users\...` or assume cp1252. **Base install stays torch-/GPU-free**,
+  `<USER_HOME>` or assume cp1252. **Base install stays torch-/GPU-free**,
   enforced by `check_requirements_sync.py` + `check_lockfile_universal.py`
   (GPU/torch deps live only in the opt-in `[local-voice]` extra); regenerate
   the lock only with `uv pip compile --universal`. The ONE advertised install

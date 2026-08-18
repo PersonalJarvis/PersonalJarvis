@@ -361,7 +361,7 @@ C) **Full mandate:** you decide the mandate should run despite the formal pass. 
 | 7 | `scripts/voice_e2e_probe.py` 13 scenarios, `ANTI_PATTERNS` | ✅ full (271 lines) |
 | 8 | `jarvis/safety/risk_tier.py` evaluator, TierDecision | ✅ full (137 lines) |
 | 9 | `jarvis/vision/engine.py` `observe`, auto-mode heuristic | ✅ full (260 lines) |
-| 10 | `Aufgaben/JARVIS_REFACTOR_PLAN.md` (≡ /home/claude/ path nonexistent) | ✅ full (469 lines) |
+| 10 | `Aufgaben/JARVIS_REFACTOR_PLAN.md` (≡ <USER_HOME>/ path nonexistent) | ✅ full (469 lines) |
 | 11 | `docs/adr/0010-output-filter-pattern-based.md` + `0011-router-pure-dispatcher.md` | ✅ full (two ADRs, ~70 lines each) |
 
 **Additionally read for the conflict analysis:**

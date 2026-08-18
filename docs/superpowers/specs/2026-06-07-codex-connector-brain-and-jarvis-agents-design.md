@@ -299,7 +299,7 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
 ## 6. Cross-platform / doctrine compliance
 
 - `CodexAuthService` is stdlib-only, uses `pathlib` + `CODEX_HOME`, never
-  hardcodes `C:\Users\...`, and returns a clean "not installed" status on any OS
+  hardcodes `<USER_HOME>`, and returns a clean "not installed" status on any OS
   where `codex` is absent. Base `python:3.11-slim` boot is unaffected — Codex is
   a power-user extra, never required.
 - All subprocess spawns use `creationflags` from `process_utils` and

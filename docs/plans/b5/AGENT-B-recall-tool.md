@@ -170,7 +170,7 @@ If `cfg.wiki_integration` is missing at construction time, default to `Path("wik
 - **Don't call out to an LLM inside `VaultSearch.search`.** This must be pure file-system + regex. Latency is in the voice critical path.
 - **Don't add new dependencies** (no `whoosh`, `tantivy`, etc.). Plain `pathlib` + `re` + optional `yaml` (already in deps).
 - **Don't index `.obsidian/`** — those are config files, not content.
-- **Don't return paths absolute in `ToolResult.output`** — render them relative to `vault_root` so the brain sees `10-notes/Alex.md`, not `C:\Users\...\Alex.md`.
+- **Don't return paths absolute in `ToolResult.output`** — render them relative to `vault_root` so the brain sees `10-notes/Alex.md`, not `<USER_HOME>\Alex.md`.
 - **Don't fail on a malformed YAML frontmatter** — skip the frontmatter, search the rest, log a single `DEBUG` line.
 - **Don't add `"wiki-recall"` to a `SUB_TOOLS` frozenset.** The router tier is the only one that gets self-modification-class tools. Recall is router-tier-only.
 - **Don't echo the user's query into log lines at INFO level** — privacy. Use `DEBUG` for the query, `INFO` for hit-count summary.
