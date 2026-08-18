@@ -198,9 +198,17 @@ TOOL_CALL_FN_RE = re.compile(
 TOOL_CALL_INLINE_RE = re.compile(
     r"\b\w+\{\"[^\"]+\"\s*:[^}]*\}",
 )
+#: A tool envelope, tolerating ONE level of nesting — ``"input": {...}`` is the
+#: normal shape, and a pattern that cannot see past the inner object stops at
+#: its closing brace and leaves a bare "}" standing in the spoken sentence
+#: ("Ich öffne Spotify. }"). One level covers every envelope this codebase
+#: emits; deeper nesting is not expressible in a regex and is out of scope for
+#: a filter that must stay regex-only (CLAUDE.md §5).
+_TOOL_JSON_INNER = r"(?:[^{}]|\{[^{}]*\})"
 TOOL_JSON_RE = re.compile(
-    r"\{[^{}]*\"(?:tool|action|op|command|name|args|parameters|utterance)\""
-    r"\s*:\s*[^}]*\}",
+    r"\{" + _TOOL_JSON_INNER + r"*?"
+    r"\"(?:tool|action|op|command|name|args|parameters|utterance)\""
+    r"\s*:\s*" + _TOOL_JSON_INNER + r"*\}",
     re.IGNORECASE,
 )
 # Tool name as a Python-style keyword call: ``spawn_openclaw(utterance='x', ...)``
