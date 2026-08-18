@@ -131,7 +131,11 @@ def action_grammar_block() -> str:
         '"y2": <num>, "duration_ms": 400}\n'
         '  {"action": "open_app", "name": "<app>"}\n'
         '  {"action": "switch_window", "name": "<window-title substring>"}\n'
-        '  {"action": "wait", "ms": <0-10000>}\n'
+        '  {"action": "wait", "ms": <0-10000>}   deliberate patience while '
+        "the screen is BUSY doing what you asked (page still loading, "
+        "download running, installer working, spinner or progress bar, app "
+        "still starting). A wait counts as progress, not as being stuck — "
+        "waiting beats re-clicking a control that is already working\n"
         '  {"action": "done", "reason": "<the on-screen proof>"}\n'
         '  {"action": "fail", "reason": "<why the goal is impossible>"}'
     )

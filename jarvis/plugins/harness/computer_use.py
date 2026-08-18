@@ -56,8 +56,9 @@ _CANCEL_HEARTBEAT_S = 0.12
 # used to run concurrently (the tool only dedupes IDENTICAL goals) and raced
 # each other's pointer moves and foreground guards. Every launch route (voice,
 # LLM tool, scheduled task) funnels through this harness, so serializing here
-# covers them all. A queued mission waits honoring its own deadline and
-# cancellation; the wait is logged so "nothing happens" is diagnosable.
+# covers them all. A queued mission waits on a SEPARATE queue allowance (not on
+# its mission budget, AU-17) and stays cancellable throughout; the wait is
+# logged so "nothing happens" is diagnosable.
 _DESKTOP_LOCK = asyncio.Lock()
 
 
@@ -153,7 +154,17 @@ class ComputerUseHarness:
         """
         ctx = self._explicit_context or get_computer_use_context()
         timeout_s = max(0.001, float(task.timeout_s))
-        deadline = time.monotonic() + timeout_s
+        # AU-17: the budget bounds the WORK, not the queue. Waiting for the
+        # ONE desktop is not mission work, and charging it to the mission
+        # timeout let a queued mission die of a timeout without ever having
+        # started — with the 600 s ceiling of bdf15515 that is ten minutes of
+        # burning nothing and then reporting failure. So the queue gets its
+        # OWN allowance of the same size, and the work deadline below is armed
+        # only once the desktop is actually held. One equal allowance is
+        # exactly enough to outlast a full-length predecessor, because the
+        # active mission is bounded by the same ceiling.
+        queue_deadline = time.monotonic() + timeout_s
+        deadline = queue_deadline  # re-armed to the full budget on acquire
         t_start = time.time_ns()
         # BUG-CU-HANGUP-RACE (2026-05-28): if the user said "auflegen" in the
         # window between this mission being requested and it actually starting,
@@ -218,7 +229,7 @@ class ComputerUseHarness:
                             is_final=True,
                         )
                         return
-                    remaining_s = deadline - time.monotonic()
+                    remaining_s = queue_deadline - time.monotonic()
                     if remaining_s <= 0:
                         end_reason = "timeout"
                         final_exit_code = _TIMEOUT_EXIT_CODE
@@ -239,6 +250,11 @@ class ComputerUseHarness:
                         lock_acquired = True
                     except TimeoutError:
                         continue
+                # The desktop is ours: the mission's own budget starts NOW,
+                # undiminished by however long the queue took (AU-17).
+                # ``t_start`` deliberately stays at invoke() entry — the
+                # reported duration is honest wall time, queue included.
+                deadline = time.monotonic() + timeout_s
                 # Control-indicator contract (jarvis.cu.indicator): Started
                 # fires the moment this mission may actually drive
                 # mouse/keyboard (token registered AND desktop lock held);

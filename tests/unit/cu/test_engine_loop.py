@@ -965,3 +965,137 @@ async def test_handoff_screen_fails_fast_with_speakable_reason(patched, monkeypa
     assert final.exit_code == 5
     assert "captcha challenge" in final.stderr
     assert not brain.calls, "no model call may happen on a handoff screen"
+
+
+# ---------------------------------------------------------------------------
+# Patience vs. dead end (AU-16). Waiting for a page to load, a download to
+# finish or an installer to run looks EXACTLY like being stuck. A deliberate
+# wait is progress and must survive the no-progress guard; unbounded waiting
+# on a frozen screen must still die.
+# ---------------------------------------------------------------------------
+
+
+async def test_deliberate_wait_is_not_a_fruitless_step(patched):
+    # Five waits in a row on a screen that never changes — more than
+    # _STUCK_FRAMES. Before AU-16 the third one killed the mission as "no
+    # progress"; a mission that patiently waits out a load must reach its goal.
+    assert engine_mod._STUCK_FRAMES < 5, "the scenario must exceed the guard"
+    brain = FakeBrain(
+        ['{"action": "wait", "ms": 1}'] * 5
+        + [
+            '{"action": "done", "reason": "the page finished loading"}',
+            '{"done": true, "proof": "the page is loaded"}',
+        ]
+    )
+
+    chunks = await _run(_ctx(brain, FakeExecutor()))
+
+    final = _final(chunks)
+    assert final.exit_code == 0, f"patience was killed: {final.stderr!r}"
+    assert "no progress" not in final.stderr
+
+
+async def test_waiting_forever_on_a_frozen_screen_still_aborts(patched):
+    # The bound on patience: waits that change nothing accumulate, and once
+    # _MAX_STALLED_WAITS of them pass in a row the mission ends honestly
+    # instead of stalling until the mission timeout.
+    brain = FakeBrain(['{"action": "wait", "ms": 1}'] * 20)
+
+    chunks = await _run(_ctx(brain, FakeExecutor()))
+
+    final = _final(chunks)
+    assert final.exit_code == 5
+    assert "no progress" in final.stderr
+    assert "waited" in final.stderr, (
+        f"the abort must name waiting as the cause, got: {final.stderr!r}"
+    )
+    waits = [c for c in chunks if "wait(" in (c.stdout or "")]
+    assert len(waits) >= engine_mod._MAX_STALLED_WAITS, (
+        "the mission must actually be allowed to wait before giving up"
+    )
+
+
+async def test_repeated_no_op_actions_still_abort_as_a_dead_end(patched):
+    # The dead-end protection stays intact for genuinely fruitless steps: an
+    # action that keeps failing on an unchanged screen ends the mission.
+    brain = FakeBrain(['{"action": "click_element", "name": "Next"}'] * 8)
+    executor = FakeExecutor(failures={"click_element"})
+
+    chunks = await _run(_ctx(brain, executor))
+
+    final = _final(chunks)
+    assert final.exit_code in (5, 8), f"a dead end must abort: {final.stderr!r}"
+    assert len(executor.calls) <= engine_mod._STUCK_FRAMES + 2, (
+        "a dead end must be cut short, not retried indefinitely"
+    )
+
+
+async def test_spent_patience_budget_is_told_to_the_model(patched, monkeypatch):
+    # Patience is also bounded in TIME, so waiting can never eat the whole
+    # mission budget. Once spent, waits shrink to a beat and the model is told
+    # in plain words that it has to act instead.
+    monkeypatch.setattr(engine_mod, "_MAX_TOTAL_WAIT_S", 0.005)
+    brain = FakeBrain(['{"action": "wait", "ms": 10}'] * 5)
+
+    await _run(_ctx(brain, FakeExecutor()))
+
+    assert any("patience budget" in user for _system, user in brain.calls), (
+        "the model must learn that its waiting budget is spent"
+    )
+
+
+async def test_the_model_is_told_that_waiting_is_a_legitimate_move(patched):
+    # A capability nobody is told about is useless: both the discipline block
+    # and the action grammar must surface the wait action and when to use it.
+    brain = FakeBrain(['{"action": "fail", "reason": "stop"}'])
+
+    await _run(_ctx(brain, FakeExecutor()))
+
+    system = brain.calls[0][0]
+    assert '"action": "wait"' in system
+    assert "still loading" in system
+    assert "installer" in system
+
+
+async def test_a_busy_screen_survives_more_than_two_observe_failures(patched, monkeypatch):
+    # A page finishing its load or an installer opening its next window flips
+    # the foreground mid-capture, which trips the capture identity guard. At
+    # two tolerated failures a mission died after ~2 s of ordinary desktop
+    # churn (AU-16); transient blindness must be ridden out, not fatal.
+    real_capture = engine_mod.capture_stable_frame
+    state = {"n": 0}
+
+    def flaky_capture(monitor, **kw):
+        state["n"] += 1
+        if state["n"] <= 3:
+            raise RuntimeError("foreground window changed during capture")
+        return real_capture(monitor, **kw)
+
+    monkeypatch.setattr(engine_mod, "capture_stable_frame", flaky_capture)
+    brain = FakeBrain(
+        [
+            '{"action": "done", "reason": "the page finished loading"}',
+            '{"done": true, "proof": "the page is loaded"}',
+        ]
+    )
+
+    chunks = await _run(_ctx(brain, FakeExecutor()))
+
+    final = _final(chunks)
+    assert final.exit_code == 0, f"transient blindness was fatal: {final.stderr!r}"
+    assert state["n"] > 3, "the retries must actually have happened"
+
+
+async def test_a_screen_that_stays_unreadable_still_fails(patched, monkeypatch):
+    # The honest counterpart: a screen that never becomes readable ends the
+    # mission with the observe exit code instead of grinding to the budget.
+    def dead_capture(monitor, **kw):
+        raise RuntimeError("no display available")
+
+    monkeypatch.setattr(engine_mod, "capture_stable_frame", dead_capture)
+
+    chunks = await _run(_ctx(FakeBrain([]), FakeExecutor()))
+
+    final = _final(chunks)
+    assert final.exit_code == 1
+    assert "cannot see the screen" in final.stderr

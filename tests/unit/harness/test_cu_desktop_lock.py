@@ -149,3 +149,49 @@ async def test_queued_mission_times_out_honestly(
 
     release.set()
     await asyncio.wait_for(first_task, timeout=2.0)
+
+
+async def test_queued_mission_gets_its_full_budget_after_the_lock_frees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The budget bounds the WORK, not the queue (AU-17).
+
+    The holder occupies the desktop for 0.5 s; the queued mission then needs
+    0.6 s of work and carries a 1.0 s budget. Charging the queue wait to that
+    budget left it 0.5 s — less than its work — so it died of a timeout
+    without ever having started. Its budget must start when the desktop does.
+    """
+    release = asyncio.Event()
+    worked: list[str] = []
+
+    def loop_factory(task: HarnessTask, ctx, cancel_token=None) -> AsyncIterator[HarnessResult]:
+        async def run() -> AsyncIterator[HarnessResult]:
+            if task.prompt == "holder":
+                await release.wait()
+            else:
+                await asyncio.sleep(0.6)  # work that outlasts the leftover
+                worked.append(task.prompt)
+            yield HarnessResult(stdout="ok", exit_code=0, is_final=True)
+        return run()
+
+    monkeypatch.setattr(cu_mod, "_resolve_run_cu_loop", lambda: loop_factory)
+    bus = EventBus()
+    ctx = _ctx(bus)
+    first = ComputerUseHarness(context=ctx)
+    queued = ComputerUseHarness(context=ctx)
+
+    async def drain(h: ComputerUseHarness, goal: str, timeout_s: float) -> list[HarnessResult]:
+        return [c async for c in h.invoke(HarnessTask(prompt=goal, timeout_s=timeout_s))]
+
+    first_task = asyncio.create_task(drain(first, "holder", 10))
+    await asyncio.sleep(0.05)  # the holder owns the desktop
+    queued_task = asyncio.create_task(drain(queued, "queued", 1.0))
+    await asyncio.sleep(0.45)  # the queued mission spends this in the queue
+    release.set()
+
+    chunks = await asyncio.wait_for(queued_task, timeout=5.0)
+    assert chunks[-1].exit_code == 0, (
+        f"the queued mission lost budget to the queue: {chunks[-1].stderr!r}"
+    )
+    assert worked == ["queued"]
+    await asyncio.wait_for(first_task, timeout=2.0)

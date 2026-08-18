@@ -107,8 +107,34 @@ _MAX_CONSECUTIVE_FAILURES = 4
 _MAX_LLM_FAILURES = 3
 _MAX_DONE_REJECTS = 3
 _MAX_GUARD_HITS = 5
-_MAX_OBSERVE_FAILURES = 2
+#: Consecutive observation failures before the mission gives up on the screen.
+#: Most observe failures are a BUSY screen, not a broken one — a page finishing
+#: its load or an installer opening its next window flips the foreground
+#: mid-capture and trips the identity guard. At 2 a mission died after ~2
+#: seconds of ordinary desktop churn (AU-16); 4 plus the backoff below rides
+#: out a normal window transition while a genuinely unreadable screen (no
+#: display, revoked capture permission) still fails within seconds.
+_MAX_OBSERVE_FAILURES = 4
+#: Settle beat before re-observing, so the retry does not re-probe into the
+#: same churn. Scaled by ``settle_scale`` (0 in test/benchmark rigs).
+_OBSERVE_RETRY_BACKOFF_S = 0.4
+#: Steps with zero successful actions on an unchanged screen before the
+#: dead-end verdict. Deliberate waits are exempt and bounded separately.
 _STUCK_FRAMES = 3
+#: Consecutive deliberate waits that changed nothing on screen before the wait
+#: itself counts as a dead end. Anything genuinely in progress — a loading
+#: page, a progress bar, an installer — repaints *something* well inside six
+#: look-agains, and any visible change resets this counter. Six is also the
+#: patience a human grants before concluding nothing is happening.
+_MAX_STALLED_WAITS = 6
+#: Total deliberate waiting per mission. Bounds patience against the mission
+#: ceiling ([computer_use].mission_timeout_s, default 600s) so waiting can
+#: never eat the whole budget: at most ~20% of it goes to waiting, the rest
+#: stays available for actual work. Once spent, waits shrink to a beat and
+#: stop being exempt from the no-progress guard.
+_MAX_TOTAL_WAIT_S = 120.0
+#: Length of a wait once the patience budget is spent.
+_WAIT_EXHAUSTED_MS = 250
 
 _SYSTEM_BASE = (
     "You are the computer-use executor: you operate the user's REAL desktop "
@@ -158,6 +184,14 @@ _SYSTEM_BASE = (
     "search boxes) instead of appending.\n"
     "* Use open_app to launch or focus an application. Use switch_window to "
     "focus an open window.\n"
+    "* WAITING IS WORK, not stalling. While the screen is BUSY doing what you "
+    "already asked for — a page still loading, a spinner or progress bar, a "
+    "download running, an installer working, an app still starting — reply "
+    'with {"action": "wait", "ms": <up to 10000>} and look again. Re-clicking '
+    "a control that is already working is what breaks these tasks. But wait "
+    "ONLY while something is visibly in progress: if several waits in a row "
+    "change nothing on screen, stop waiting and either act differently or "
+    "fail with a reason.\n"
     "* done: ONLY when the goal's observable proof is visible in the CURRENT "
     "screenshot; quote that proof in reason.\n"
     "* fail: ONLY when the goal is genuinely impossible from here; explain "
@@ -837,6 +871,9 @@ async def run_cu_loop(
     prev_thumb: bytes | None = None
     fruitless_steps = 0  # steps with zero successful actions on an unchanged screen
     last_step_had_success = False
+    last_step_waited = False  # the previous step deliberately waited
+    stalled_waits = 0  # consecutive waits that changed nothing on screen
+    total_wait_s = 0.0  # deliberate waiting spent so far (patience budget)
     # Normalize the work surface before the first frame and again after every
     # focus change (open_app / switch_window): professional computer-use
     # harnesses never pixel-ground on a small window floating in a big desktop
@@ -951,6 +988,11 @@ async def run_cu_loop(
                     exit_code=_EXIT_OBSERVE,
                 )
                 return
+            # A busy desktop is the common cause (the foreground flips while a
+            # page finishes loading or an installer opens its next window).
+            # Give it a beat instead of re-probing straight back into the same
+            # churn — an instant retry burns the whole budget in ~2 s (AU-16).
+            await asyncio.sleep(_OBSERVE_RETRY_BACKOFF_S * settle_scale)
             continue
         observe_failures = 0
         window_title = _foreground_title()
@@ -973,17 +1015,28 @@ async def run_cu_loop(
         # No-progress guard: several consecutive steps that produced no
         # successful action while the screen never changed means we are
         # circling — judge once (the goal may in fact be met), then stop.
-        if (
-            prev_thumb is not None
-            and thumbs_similar(prev_thumb, frame.thumb)
-            and not last_step_had_success
-        ):
+        #
+        # A step that DELIBERATELY waited is exempt (AU-16). Waiting for a page
+        # to load, a download to finish or an installer to run looks EXACTLY
+        # like being stuck, so counting it here killed patient, correct work
+        # after three steps. Patience still has to terminate, so no-change
+        # waits accumulate on their own counter (and on the time budget spent
+        # in the wait action itself); any visible change resets both.
+        screen_unchanged = prev_thumb is not None and thumbs_similar(
+            prev_thumb, frame.thumb
+        )
+        if screen_unchanged and not last_step_had_success and not last_step_waited:
             fruitless_steps += 1
         else:
             fruitless_steps = 0
+        if not screen_unchanged:
+            stalled_waits = 0
+        elif last_step_waited:
+            stalled_waits += 1
         prev_thumb = frame.thumb
         last_step_had_success = False
-        if fruitless_steps >= _STUCK_FRAMES:
+        last_step_waited = False
+        if fruitless_steps >= _STUCK_FRAMES or stalled_waits >= _MAX_STALLED_WAITS:
             done, proof = await _judge_done(
                 ctx,
                 goal,
@@ -1003,10 +1056,15 @@ async def run_cu_loop(
                 # "the unsubscribe link did not work" was never attempted —
                 # the mission died scrolling).
                 recent = "; ".join(h[:140] for h in history[-2:])
+                cause = (
+                    f"I waited {stalled_waits} times in a row and nothing on "
+                    "screen moved"
+                    if stalled_waits >= _MAX_STALLED_WAITS
+                    else "the screen has not changed despite my actions"
+                )
                 yield _final(
                     stderr=(
-                        f"[cu] fail at step-{step_idx}: no progress — the "
-                        "screen has not changed despite my actions."
+                        f"[cu] fail at step-{step_idx}: no progress — {cause}."
                         + (f" Last attempts: {recent}" if recent else "")
                         + "\n"
                     ),
@@ -1683,8 +1741,26 @@ async def run_cu_loop(
                 profiler.add("act", t0, step_idx)
 
             elif kind == "wait":
-                await asyncio.sleep(action["ms"] / 1000.0)
-                ok, detail = True, f"waited {action['ms']} ms"
+                # Deliberate patience, bounded by a per-mission time budget.
+                # While budget remains the step is marked as a wait, which
+                # exempts it from the no-progress guard above; once the budget
+                # is spent a wait shrinks to a beat, loses the exemption and
+                # the model is told so in plain words.
+                remaining_wait_s = _MAX_TOTAL_WAIT_S - total_wait_s
+                if remaining_wait_s > 0:
+                    wait_ms = min(int(action["ms"]), int(remaining_wait_s * 1000))
+                    last_step_waited = True
+                    detail = f"waited {wait_ms} ms"
+                else:
+                    wait_ms = min(int(action["ms"]), _WAIT_EXHAUSTED_MS)
+                    detail = (
+                        f"waited {wait_ms} ms — the {_MAX_TOTAL_WAIT_S:.0f}s "
+                        "patience budget of this mission is spent; act "
+                        "differently now or stop with fail"
+                    )
+                total_wait_s += wait_ms / 1000.0
+                await asyncio.sleep(wait_ms / 1000.0)
+                ok = True
                 profiler.add("settle", t0, step_idx)
 
             # -- bookkeeping ---------------------------------------------------
@@ -1693,8 +1769,12 @@ async def run_cu_loop(
             if ok:
                 if kind != "wait":
                     acted_since_capture = True
+                    # A wait changed nothing in the world, so it must not
+                    # claim "the screen moved because of me" — its exemption
+                    # from the no-progress guard rides on last_step_waited,
+                    # which is bounded, instead of on this unbounded reset.
+                    last_step_had_success = True
                 consecutive_failures = 0
-                last_step_had_success = True
                 history.append(
                     f"step {step_idx}: {summary} -> OK" + (f" ({detail[:120]})" if detail else ""),
                 )
