@@ -20,6 +20,8 @@ export interface AssistantMode {
   /** How the assistant behaves — appended to the base persona, never replacing it. */
   character: string;
   built_in: boolean;
+  /** A built-in the user has overlaid with their own file — "restore" is real. */
+  edited: boolean;
   voice: string;
   verbosity: Verbosity;
   proactivity: Proactivity;
@@ -27,7 +29,14 @@ export interface AssistantMode {
 
 export interface ModesState {
   modes: AssistantMode[];
+  /** The mode IN FORCE for the next turn — a section override wins here. */
   active: string;
+  /**
+   * The user's own, stored choice. Equal to `active` unless a section override
+   * is in force; then it is the only proof the shelf has that a switch was
+   * saved rather than swallowed.
+   */
+  chosen: string;
   /**
    * A mode a SCREEN switched on (today: the Agentic IDE), which outranks the
    * user's own choice while it lasts. Surfaced so the UI can say why the active
