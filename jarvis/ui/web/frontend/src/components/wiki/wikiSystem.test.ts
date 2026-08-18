@@ -9,6 +9,6 @@ describe("sunPalette", () => {
     expect(dark.core).toBe(0xffd60a);
     expect(light.core).toBe(0xa86b00);
     expect(dark.core).not.toBe(light.core);
-    expect(dark.ringOpacity).toBeLessThan(light.ringOpacity);
+    expect(dark.lightIntensity).toBeGreaterThan(light.lightIntensity);
   });
 });

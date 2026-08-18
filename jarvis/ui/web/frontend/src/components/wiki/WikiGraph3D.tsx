@@ -51,7 +51,6 @@ import {
 import { carryOverPositions, pinPivotAtOrigin } from "@/lib/graphContinuity";
 import {
   hopsFromHub,
-  occupiedShells,
   seatAllOnShells,
   shellRadius,
   snapToShell,
@@ -224,12 +223,6 @@ export function WikiGraph3D({
   }, [graphData, pivotSlug]);
   const hopsRef = useRef(hops);
   hopsRef.current = hops;
-  const shells = useMemo(
-    () => (pivotSlug ? occupiedShells(hops, pivotSlug) : []),
-    [hops, pivotSlug],
-  );
-  const shellsRef = useRef(shells);
-  shellsRef.current = shells;
   const decorKeyRef = useRef("");
   const reducedMotion = useMemo(
     () =>
@@ -642,9 +635,9 @@ export function WikiGraph3D({
         const graph = graphRef.current as unknown as { scene?: () => Scene };
         const scene = graph.scene?.();
         if (!scene) return;
-        const key = `${themeRef.current}:${shellsRef.current.join(",")}`;
+        const key = themeRef.current;
         if (decorKeyRef.current === key) return;
-        syncSystemDecor(scene, themeRef.current, shellsRef.current);
+        syncSystemDecor(scene, themeRef.current);
         decorKeyRef.current = key;
       }}
       onEngineStop={reframe}

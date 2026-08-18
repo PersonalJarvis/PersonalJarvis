@@ -1,16 +1,13 @@
 /**
- * The sun, its corona, the dust rings and the light they throw.
+ * The sun, its corona, and the light they throw.
  *
  * Colours come from a per-appearance table — signal-yellow on dark, gold on
  * light — never one hex on both grounds (CLOUD.md frontend theming).
  */
 import {
   AdditiveBlending,
-  BufferGeometry,
   CanvasTexture,
   Group,
-  Line,
-  LineBasicMaterial,
   Mesh,
   MeshBasicMaterial,
   NormalBlending,
@@ -18,7 +15,6 @@ import {
   SphereGeometry,
   Sprite,
   SpriteMaterial,
-  Vector3,
   type Scene,
   type Texture,
 } from "three";
@@ -30,8 +26,6 @@ export interface SunPalette {
   core: number;
   glowRgb: string;
   light: number;
-  ring: number;
-  ringOpacity: number;
   lightIntensity: number;
   coronaScale: number;
 }
@@ -41,8 +35,6 @@ const PALETTE: Record<Theme, SunPalette> = {
     core: 0xffd60a,
     glowRgb: "255, 214, 10",
     light: 0xffe680,
-    ring: 0xffe08a,
-    ringOpacity: 0.11,
     lightIntensity: 2.1,
     coronaScale: 6.4,
   },
@@ -50,8 +42,6 @@ const PALETTE: Record<Theme, SunPalette> = {
     core: 0xa86b00,
     glowRgb: "168, 107, 0",
     light: 0xc49214,
-    ring: 0x8a5a00,
-    ringOpacity: 0.2,
     lightIntensity: 1.15,
     coronaScale: 5.2,
   },
@@ -62,6 +52,7 @@ export function sunPalette(theme: Theme): SunPalette {
 }
 
 const SUN_LIGHT_NAME = "wiki-sun-light";
+/** Leftover name from the drawn rings — still stripped so a live reload cleans them. */
 const SUN_RING_NAME = "wiki-orbit-ring";
 
 let glowCache: { theme: Theme; texture: Texture } | null = null;
@@ -131,44 +122,17 @@ export function buildSunObject(
   return group;
 }
 
-function makeRing(radius: number, tilt: number, palette: SunPalette): Line {
-  const points: Vector3[] = [];
-  const steps = 160;
-  for (let i = 0; i <= steps; i++) {
-    const angle = (i / steps) * Math.PI * 2;
-    points.push(new Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
-  }
-  const line = new Line(
-    new BufferGeometry().setFromPoints(points),
-    new LineBasicMaterial({
-      color: palette.ring,
-      transparent: true,
-      opacity: palette.ringOpacity,
-      depthWrite: false,
-    }),
-  );
-  line.name = SUN_RING_NAME;
-  line.rotation.x = tilt;
-  line.rotation.z = tilt * 0.35;
-  return line;
-}
-
 /**
- * Keep the scene's sun-light and dust rings in step with the theme and the
- * shells that currently have pages on them. Named objects are replaced, never
- * stacked, so a data refresh does not leave a trail of rings behind.
+ * Keep the scene's sun-light in step with the theme. Old dust rings (from a
+ * previous build) are stripped and never put back — the orbits stay invisible.
  */
-export function syncSystemDecor(
-  scene: Scene,
-  theme: Theme,
-  shells: readonly number[],
-): void {
+export function syncSystemDecor(scene: Scene, theme: Theme): void {
   const palette = sunPalette(theme);
 
-  const stale: Array<Line | PointLight> = [];
+  const stale: PointLight[] = [];
   scene.traverse((obj) => {
     if (obj.name === SUN_LIGHT_NAME || obj.name === SUN_RING_NAME) {
-      stale.push(obj as Line | PointLight);
+      stale.push(obj as PointLight);
     }
   });
   for (const obj of stale) {
@@ -179,11 +143,4 @@ export function syncSystemDecor(
   light.name = SUN_LIGHT_NAME;
   light.position.set(0, 0, 0);
   scene.add(light);
-
-  // At most three rings — one per occupied band, nearest first. A ring per
-  // page would be the railroad the seating is designed not to be.
-  const tilts = [0.14, -0.09, 0.2];
-  shells.slice(0, 3).forEach((radius, i) => {
-    scene.add(makeRing(radius, tilts[i] ?? 0.1, palette));
-  });
 }
