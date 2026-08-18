@@ -19,6 +19,13 @@ import { readDeckMode, writeDeckMode, type DeckMode } from "@/lib/deckMode";
 interface DeckStore extends DeckState {
   mode: DeckMode;
   setMode: (mode: DeckMode) => void;
+  /**
+   * The board was opened this session — by hand, or because a turn began.
+   * Sticky on purpose: the deck's phases (lib/deckStandby.ts) only move
+   * forward, and a start screen must never come back over a conversation.
+   */
+  boardOpen: boolean;
+  openBoard: () => void;
   ingest: (name: string, payload: unknown, tsMs: number) => void;
   /** Tests and a fresh session — forget everything but the surface choice. */
   resetDeck: () => void;
@@ -27,10 +34,15 @@ interface DeckStore extends DeckState {
 export const useDeckStore = create<DeckStore>((set, get) => ({
   ...emptyDeckState(),
   mode: readDeckMode(),
+  boardOpen: false,
 
   setMode: (mode) => {
     writeDeckMode(mode);
     set({ mode });
+  },
+
+  openBoard: () => {
+    if (!get().boardOpen) set({ boardOpen: true });
   },
 
   ingest: (name, payload, tsMs) => {
@@ -39,5 +51,5 @@ export const useDeckStore = create<DeckStore>((set, get) => ({
     if (after !== before) set(after);
   },
 
-  resetDeck: () => set(emptyDeckState()),
+  resetDeck: () => set({ ...emptyDeckState(), boardOpen: false }),
 }));

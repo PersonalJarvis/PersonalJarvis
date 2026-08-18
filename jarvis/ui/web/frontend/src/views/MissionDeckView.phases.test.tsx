@@ -1,0 +1,138 @@
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+/**
+ * The deck's three acts (2026-08-18): the boot sequence while the app comes
+ * up, the standby ring until somebody speaks, the board from the first turn
+ * on — and never back. The instruments themselves are stubbed (each has its
+ * own tests); what is under test is WHICH stage is on, and how the board is
+ * reached.
+ */
+vi.mock("@/components/layout/DockRail", () => ({ DockRail: () => <nav data-testid="dock" /> }));
+vi.mock("@/components/deck/DeckWiki", () => ({
+  WikiCard: ({ className }: { className?: string }) => <section className={className}>wiki</section>,
+}));
+vi.mock("@/components/deck/DeckActivityCards", () => ({
+  IdeGridCard: () => <section>ide</section>,
+  OutputsCard: () => <section>outputs</section>,
+  RunsCard: () => <section>runs</section>,
+  TerminalsCard: () => <section>terminals</section>,
+}));
+vi.mock("@/components/deck/DeckSignalCards", () => ({
+  ApiStatsCard: () => <section>api</section>,
+  CaptureCard: () => <section>capture</section>,
+  LiveCounter: () => <div>counter</div>,
+}));
+vi.mock("@/components/deck/DeckTurnCard", () => ({ TurnCard: () => <section>turn</section> }));
+vi.mock("@/components/deck/DeckLogCard", async () => {
+  const actual = await vi.importActual<typeof import("@/components/deck/DeckLogCard")>(
+    "@/components/deck/DeckLogCard",
+  );
+  return { ...actual, LogCard: () => <section>log</section> };
+});
+vi.mock("@/hooks/useWakeWord", () => ({
+  useWakeWord: () => ({
+    config: {
+      phrase: "Hey Nova",
+      engine: "openwakeword",
+      custom_model_path: "",
+      fuzzy_match_ratio: 0.8,
+      language: "auto",
+      engines: ["openwakeword"],
+      instant_phrases: [],
+      local_whisper_available: false,
+      enabled: true,
+    },
+    loading: false,
+    error: null,
+    refetch: async () => {},
+    saveWakeWord: async () => ({}),
+    setWakeLanguage: async () => {},
+    setWakeActivation: async () => ({}),
+  }),
+}));
+const requestVoiceCall = vi.fn(async () => ({ armed: true }));
+vi.mock("@/lib/voiceApi", () => ({
+  requestVoiceCall: () => requestVoiceCall(),
+  requestVoiceHangup: async () => {},
+}));
+
+import { MissionDeckView } from "@/views/MissionDeckView";
+import { useDeckStore } from "@/store/deck";
+import { useEventStore } from "@/store/events";
+
+function ready() {
+  useEventStore.setState({
+    connected: true,
+    voiceReady: true,
+    wsWarming: false,
+    voiceState: "idle",
+    brainProvider: "openrouter",
+    brainModel: "",
+    assistantName: "Nova",
+    messages: [],
+    thinkingSteps: [],
+    chatThinking: false,
+    activeSection: "chats",
+  });
+}
+
+describe("MissionDeckView — the three acts", () => {
+  beforeEach(() => {
+    useDeckStore.getState().resetDeck();
+    ready();
+    requestVoiceCall.mockClear();
+  });
+  afterEach(() => cleanup());
+
+  test("boots while the app is still coming up — no board", () => {
+    useEventStore.setState({ connected: false, voiceReady: false, wsWarming: true });
+    render(<MissionDeckView />);
+    expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("boot");
+    expect(screen.queryByTestId("deck-board")).toBeNull();
+  });
+
+  test("stands by once everything is up and nobody has spoken", () => {
+    render(<MissionDeckView />);
+    expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("standby");
+    expect(screen.queryByTestId("deck-board")).toBeNull();
+    expect(screen.getByText("Say “Hey Nova” — or click the orb.")).toBeTruthy();
+  });
+
+  test("the first turn opens the board, and the board powers on around the orb", async () => {
+    render(<MissionDeckView />);
+    act(() => useDeckStore.getState().ingest("WakeWordDetected", { keyword: "nova" }, Date.now()));
+    expect(screen.getByTestId("deck-board")).toBeTruthy();
+    // Arrived from the standby on this screen: the instruments reveal.
+    expect(screen.getByTestId("deck-slot-left-top").getAttribute("data-reveal")).toBe("true");
+    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 3000 });
+  });
+
+  test("'Open the board' opens it by hand and it stays open", async () => {
+    render(<MissionDeckView />);
+    fireEvent.click(screen.getByRole("button", { name: "Open the board" }));
+    expect(screen.getByTestId("deck-board")).toBeTruthy();
+    expect(useDeckStore.getState().boardOpen).toBe(true);
+    // A dropped link does not send the person back to the start screen.
+    act(() => useEventStore.setState({ connected: false }));
+    expect(screen.getByTestId("deck-board")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 3000 });
+  });
+
+  test("pressing the orb reaches for the voice AND opens the board at once", () => {
+    render(<MissionDeckView />);
+    fireEvent.click(screen.getByRole("button", { name: /saying “Hey Nova”/ }));
+    expect(screen.getByTestId("deck-board")).toBeTruthy();
+    expect(requestVoiceCall).toHaveBeenCalledTimes(1);
+  });
+
+  test("a deck that mounts into a running session is simply the board — no reveal", () => {
+    useEventStore.setState({
+      messages: [{ id: "m1", role: "assistant", content: "Hallo.", ts: Date.now() }],
+    });
+    render(<MissionDeckView />);
+    expect(screen.getByTestId("deck-board")).toBeTruthy();
+    expect(screen.queryByTestId("deck-standby")).toBeNull();
+    expect(screen.getByTestId("deck-slot-left-top").getAttribute("data-reveal")).toBe("false");
+  });
+});

@@ -56,12 +56,12 @@ export function fmtMs(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")} min`;
 }
 
-function fmtClock(ms: number): string {
+export function fmtClock(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 /** "quiet for 3 min" — coarse on purpose; a second-by-second count would fidget. */
-function fmtQuiet(ms: number): string {
+export function fmtQuiet(ms: number): string {
   if (ms < 60_000) return `${Math.max(1, Math.floor(ms / 1000))} s`;
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)} min`;
   return `${Math.floor(ms / 3_600_000)} h`;
