@@ -47,8 +47,11 @@ export interface GraphCameraApi {
   camera: () => { position: Vec3; fov?: number; aspect?: number };
 }
 
-/** One full revolution. Long enough to read while it happens. */
-const REVOLUTION_MS = 96_000;
+/**
+ * One full revolution. Half again as fast as the first cut (96 s → 64 s,
+ * maintainer 2026-08-18) — still slow enough to read a label while it moves.
+ */
+const REVOLUTION_MS = 64_000;
 
 /**
  * Resting height above the network's own plane, radians.

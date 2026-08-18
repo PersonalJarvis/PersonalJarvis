@@ -40,7 +40,12 @@ import {
   type RenderEdge,
   type RenderNode,
 } from "@/lib/wikiGraph";
-import { CENTRING_STRENGTH, createCentringForce } from "@/lib/graphForces";
+import {
+  CENTRING_STRENGTH,
+  createCentringForce,
+  createLivelinessForce,
+  type LivelyNode,
+} from "@/lib/graphForces";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
 
@@ -183,6 +188,14 @@ export function WikiGraph3D({
   useEffect(() => {
     forcesConfiguredRef.current = false;
   }, [graphData]);
+  const pivotSlugRef = useRef(pivotSlug);
+  pivotSlugRef.current = pivotSlug;
+  const reducedMotion = useMemo(
+    () =>
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    [],
+  );
 
   /**
    * A third axis does not spread a dense graph on its own — the FORCES have to
@@ -220,8 +233,22 @@ export function WikiGraph3D({
     // out of everyone's reach, and `zoomToFit` — which frames every node —
     // renders the entire vault as a marble in an empty room.
     anyRef.d3Force?.("centreGravity", createCentringForce(CENTRING_STRENGTH));
+    // Every page but the pivot keeps moving on its own — a bob and a small
+    // loop, each with its own rhythm — so the map is not a rigid body turning
+    // (maintainer, 2026-08-18). The pivot is read through a ref at tick time,
+    // so a change of pivot pins the new page without rebuilding the forces.
+    // Left out under prefers-reduced-motion, same as the ambient turn.
+    if (!reducedMotion) {
+      anyRef.d3Force?.(
+        "liveliness",
+        createLivelinessForce({
+          now: () => performance.now(),
+          isPinned: (node: LivelyNode) => node.id === pivotSlugRef.current,
+        }),
+      );
+    }
     forcesConfiguredRef.current = true;
-  }, []);
+  }, [reducedMotion]);
 
   // Framing and the slow drift are one piece of state, so one hook owns both
   // (see hooks/useGraphOrbit.ts). It re-frames whenever this counter changes:
@@ -257,7 +284,10 @@ export function WikiGraph3D({
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
     reframe();
-    const timers = [900, 2600, 5000, 8000].map((delay) =>
+    // The last one stands in for the engine-stop re-frame there used to be:
+    // the layout now ticks for good (the pages keep moving), so "settled" is
+    // a matter of time, and by then alpha has long since gone cold.
+    const timers = [900, 2600, 5000, 8000, 12_000].map((delay) =>
       window.setTimeout(reframe, delay),
     );
     return () => timers.forEach(window.clearTimeout);
@@ -408,7 +438,13 @@ export function WikiGraph3D({
       // and this app ships in three languages. The switch's own tooltip says
       // how to steer instead.
       showNavInfo={false}
-      cooldownTicks={200}
+      // The engine never stops: the renderer only pushes node and link
+      // positions to the scene while it ticks, and the liveliness force
+      // needs that every frame. The layout itself still cools (alpha decays
+      // as before, and its forces fade with it) — only the life stays on.
+      // Under reduced motion the engine cools down and stops as it used to.
+      cooldownTicks={reducedMotion ? 200 : Infinity}
+      cooldownTime={reducedMotion ? 15_000 : Infinity}
       d3VelocityDecay={0.6}
       d3AlphaDecay={0.04}
       warmupTicks={40}
