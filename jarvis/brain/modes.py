@@ -295,7 +295,10 @@ def _read_dir(directory: Path, *, built_in: bool) -> dict[str, Mode]:
     found: dict[str, Mode] = {}
     try:
         entries = sorted(directory.glob(f"*{_MODE_FILE_SUFFIX}"))
-    except OSError:
+    except OSError as exc:
+        # An unreadable modes directory contributes nothing; the built-in
+        # (or user) side still applies, so this is a debug note, not a failure.
+        log.debug("modes: cannot list %s (%s) — skipping that directory", directory, exc)
         return found
     for path in entries:
         mode = _parse_mode_file(path, built_in=built_in)
@@ -335,7 +338,7 @@ def get_mode(slug: str) -> Mode | None:
     try:
         wanted = normalize_slug(slug)
     except ModeError:
-        return None
+        return None  # an invalid slug names no mode — the docstring promises None
     for mode in list_modes():
         if mode.slug == wanted:
             return mode
@@ -347,7 +350,7 @@ def has_user_copy(slug: str) -> bool:
     try:
         return _mode_path(normalize_slug(slug)).is_file()
     except (ModeError, OSError):
-        return False
+        return False  # no valid slug or no readable file: either way, no user copy
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +496,7 @@ def _atomic_write(path: Path, text: str) -> None:
         try:
             os.unlink(tmp_name)
         except OSError:
-            pass
+            pass  # best-effort temp cleanup — the original error re-raised below matters
         raise
 
 
@@ -560,7 +563,7 @@ def delete_mode(slug: str) -> bool:
         _mode_path(safe_slug).unlink()
         removed = True
     except FileNotFoundError:
-        removed = False
+        removed = False  # idempotent: nothing to delete is a "no", not an error
     except OSError as exc:
         raise ModeError(f"Could not delete {safe_slug!r}: {exc}") from exc
 
@@ -587,7 +590,7 @@ def restore_builtin(slug: str) -> bool:
         _mode_path(safe_slug).unlink()
         return True
     except FileNotFoundError:
-        return False
+        return False  # no user copy to drop — the packaged version already applies
     except OSError as exc:
         raise ModeError(f"Could not restore {safe_slug!r}: {exc}") from exc
 

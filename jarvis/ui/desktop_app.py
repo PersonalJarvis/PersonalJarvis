@@ -1044,7 +1044,7 @@ def webview_storage_dir(
             if os.access(candidate, os.W_OK):
                 return candidate
         except OSError:
-            continue
+            continue  # unwritable candidate — try the next; the caller warns when none is left
     return None
 
 

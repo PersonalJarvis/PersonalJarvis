@@ -196,7 +196,7 @@ def _hub_slug(request: Request, known_slugs: set[str]) -> str | None:
     try:
         configured = getattr(config.memory.wiki.session_rollup, "user_entity_slug", "")
     except AttributeError:
-        configured = ""
+        configured = ""  # no config or no wiki section on this app — the default slug applies
     slug = resolve_user_entity_slug(configured)
     return slug if slug in known_slugs else None
 

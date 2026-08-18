@@ -70,7 +70,7 @@ def read_origin(skill_root: Path) -> SkillOrigin | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
-        return None
+        return None  # no receipt — nobody installed this skill through the marketplace
     except (OSError, ValueError) as exc:
         log.debug("skill origin receipt unreadable at %s: %s", path, exc)
         return None

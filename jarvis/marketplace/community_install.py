@@ -50,7 +50,7 @@ def _read_override() -> dict[str, Any]:
             return raw
         logger.warning("plugin catalog override has no plugins list — rebuilding")
     except FileNotFoundError:
-        pass
+        pass  # no override file yet — a fresh skeleton is built below
     except (OSError, ValueError) as exc:
         # Never silently discard a user's catalog: an unreadable override is
         # surfaced to the caller instead of being overwritten with a skeleton.

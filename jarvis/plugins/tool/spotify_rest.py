@@ -551,7 +551,7 @@ class SpotifyRestTool:
                 out = await self.list_playlists()
             else:
                 return ToolResult(success=False, output=None, error=f"unknown action {action!r}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - every failure reaches the model via _explain()
             return ToolResult(success=False, output=None, error=self._explain(exc))
 
         if isinstance(out, dict) and out.get("error"):

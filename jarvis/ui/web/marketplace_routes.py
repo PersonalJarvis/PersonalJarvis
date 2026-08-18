@@ -813,6 +813,7 @@ def _community_payload(
                         f"name {spec.id!r}"
                     )
             except AgentPluginError as exc:
+                # Surfaced to the UI as an invalid entry carrying the reason.
                 plugins.append({**base, "valid": False, "error": str(exc)})
                 continue
             item = spec.model_dump(mode="json")
@@ -1592,6 +1593,7 @@ def _describe_staged_plugin(staged_root: Path) -> dict[str, Any]:
         # authority that check exists to deny.
         spec = convert_manifest(plugin_json, mcp_json)
     except AgentPluginError as exc:
+        # The dialog shows this as the single blocking problem — see docstring.
         return {
             "plugin": None,
             "problems": [str(exc)],

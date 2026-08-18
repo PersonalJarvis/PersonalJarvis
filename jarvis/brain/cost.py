@@ -219,6 +219,8 @@ def _load_feed() -> None:
     try:
         mtime = path.stat().st_mtime
     except OSError:
+        # No catalog cache (yet) — the built-in price table applies until the
+        # catalog has been fetched once; a stale feed is dropped meanwhile.
         if _feed_loaded is not None:
             _feed_rates.clear()
             _feed_by_name.clear()

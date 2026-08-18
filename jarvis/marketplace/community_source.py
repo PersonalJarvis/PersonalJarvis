@@ -265,7 +265,7 @@ def _read_cache() -> tuple[float, CommunityIndex] | None:
         raw = json.loads(_CACHE_PATH.read_text(encoding="utf-8-sig"))
         return float(raw["fetched_at"]), CommunityIndex.model_validate(raw["index"])
     except FileNotFoundError:
-        return None
+        return None  # no cache yet — the caller fetches the index
     except (OSError, ValueError, KeyError, ValidationError) as exc:
         logger.warning("community index: unreadable cache (%s) — refetching", exc)
         return None

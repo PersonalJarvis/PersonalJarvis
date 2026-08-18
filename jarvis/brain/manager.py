@@ -1526,7 +1526,7 @@ def _is_whole_structured_document(text: str) -> bool:
         json.loads(s)
         return True
     except (json.JSONDecodeError, ValueError):
-        pass
+        pass  # not JSON — the Python-repr shape is tried next
     # A Python repr is not JSON but is just as unspeakable. Literals only —
     # ``literal_eval`` never executes anything. Bounded so a long prose answer
     # that merely opens with a bracket cannot cost real parse time.
@@ -1535,7 +1535,7 @@ def _is_whole_structured_document(text: str) -> bool:
     try:
         ast.literal_eval(s)
     except (ValueError, SyntaxError, MemoryError, RecursionError):
-        return False
+        return False  # not a Python literal either — this is prose, not a blob
     return True
 
 

@@ -186,7 +186,7 @@ def _report_already_there(kind: str, item_id: str, client: Any) -> int:
         try:
             detail = client.request("GET", f"/api/skills/{item_id}")
         except ApiError:
-            detail = {}
+            detail = {}  # detail is best-effort — the status line reads "unknown" below
         state = str(detail.get("state") or "unknown")
         ready = state in ("active", "validated")
         _field(
@@ -206,7 +206,7 @@ def _report_already_there(kind: str, item_id: str, client: Any) -> int:
                 status = str(plugin.get("status") or "unknown")
                 break
     except ApiError:
-        pass
+        pass  # listing is best-effort — status stays "unknown" and the user is told to connect
     if status == "connected":
         _field("Status", "connected and usable")
     else:

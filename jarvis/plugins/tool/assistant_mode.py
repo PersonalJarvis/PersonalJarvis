@@ -70,6 +70,7 @@ class SwitchModeTool:
         try:
             mode = modes.set_active(slug)
         except modes.ModeError as exc:
+            # Reported through the tool result: the model hears the exact reason.
             available = ", ".join(m.slug for m in modes.list_modes())
             return ToolResult(
                 success=False,
@@ -174,8 +175,11 @@ class SaveModeTool:
                 proactivity=str(args.get("proactivity") or modes.PROACTIVITY_NORMAL),
             )
         except modes.ModeError as exc:
+            # Both failures travel back to the model as the tool error — that is
+            # the report; the model turns it into words for the user.
             return ToolResult(success=False, output=None, error=str(exc))
         except OSError as exc:
+            # Same as above: the disk problem is spelled out in the tool error.
             return ToolResult(success=False, output=None, error=f"Could not save the mode: {exc}")
 
         if not bool(args.get("activate")):

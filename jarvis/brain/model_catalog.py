@@ -864,7 +864,7 @@ def _pricing(entry: dict) -> tuple[float, float] | None:
         prompt = float(pricing.get("prompt"))
         completion = float(pricing.get("completion"))
     except (TypeError, ValueError):
-        return None
+        return None  # missing or non-numeric price — same as no pricing block
     if prompt < 0 or completion < 0:
         return None
     return (prompt * 1_000_000, completion * 1_000_000)

@@ -260,7 +260,10 @@ def _clean_triggers(raw: Any, inp: SkillCreatorInput) -> list[dict[str, Any]]:
                 continue
             try:
                 re.compile(pattern)
-            except re.error:
+            except re.error as exc:
+                _LOG.debug(
+                    "creator: dropped voice trigger with invalid regex %r (%s)", pattern, exc
+                )
                 continue
             trig: dict[str, Any] = {"type": "voice", "pattern": pattern}
             langs = item.get("language")
@@ -744,7 +747,8 @@ class SkillCreatorService:
                 resolve_quality_brain,
                 resolve_tool_model_brain,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _LOG.info("creator: brain resolver unavailable (%s) — provider ladder ends here", exc)
             return
 
         for label, resolver in (
