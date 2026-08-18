@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useEventStore } from "@/store/events";
 import { VoiceOrb } from "@/components/agentic/VoiceOrb";
 import { MascotGigi } from "@/components/MascotGigi";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
+import { HudHaloDefs } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
 
 /**
@@ -82,10 +83,13 @@ export function DeckOrb({
   const [sx, sy] = point(sweep, R * 0.94);
   const [ex, ey] = point(sweep + 36, R * 0.94);
   const B = 16; // bracket arm
+  const haloId = useId();
 
   return (
     <div className={cn("relative shrink-0", className)} style={{ width: size, height: size }}>
       <svg viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 h-full w-full" aria-hidden>
+        <HudHaloDefs id={haloId} />
+        <g filter={`url(#${haloId})`}>
         {/* corner brackets — the reticle's bounds */}
         {[
           `M 0.5 ${B} V 0.5 H ${B}`,
@@ -156,6 +160,7 @@ export function DeckOrb({
             opacity={0.6}
           />
         )}
+        </g>
       </svg>
 
       <div className="absolute inset-0 grid place-items-center">

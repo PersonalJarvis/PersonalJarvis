@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Crosshair, Maximize2, Minimize2, Notebook, X } from "lucide-react";
 import type { NodeObject } from "react-force-graph-3d";
 import { useEventStore } from "@/store/events";
@@ -124,6 +124,19 @@ export function WikiCard({ className }: { className?: string }) {
 
   const graph = useQuery({ queryKey: GRAPH_QUERY_KEY, queryFn: fetchGraph, staleTime: 30_000, retry: false });
   const tree = useQuery({ queryKey: ["deck", "wiki-tree"], queryFn: fetchWikiTree, refetchInterval: 60_000, retry: false });
+
+  // A page the assistant just wrote should appear on the map without a
+  // reload: every WikiPageChanged the deck store folds in re-fetches the graph
+  // (and the counts). Debounced by react-query's own dedup, so a burst of
+  // writes is one request.
+  const queryClient = useQueryClient();
+  const changeCount = changes.length;
+  const newestTs = changes[0]?.ts ?? 0;
+  useEffect(() => {
+    if (changeCount === 0) return;
+    void queryClient.invalidateQueries({ queryKey: GRAPH_QUERY_KEY });
+    void queryClient.invalidateQueries({ queryKey: ["deck", "wiki-tree"] });
+  }, [changeCount, newestTs, queryClient]);
 
   const graphData = useMemo(() => {
     if (!graph.data?.ok) return { nodes: [] as RenderNode[], links: [] as RenderEdge[] };

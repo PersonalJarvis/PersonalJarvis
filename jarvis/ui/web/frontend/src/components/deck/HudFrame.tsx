@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -46,6 +46,28 @@ export function useElementSize<T extends HTMLElement>(): [RefObject<T>, { w: num
   return [ref, size];
 }
 
+/**
+ * A soft halo in the theme's own ground colour under every HUD stroke — the
+ * SVG twin of the stage's text-shadow readability floor. Gold hairlines on a
+ * light theme over a dark picture (or the reverse) would otherwise vanish;
+ * with the halo they read on any wallpaper in either appearance.
+ */
+export function HudHaloDefs({ id }: { id: string }) {
+  return (
+    <defs>
+      <filter id={id} x="-10%" y="-10%" width="120%" height="120%">
+        <feDropShadow
+          dx="0"
+          dy="0"
+          stdDeviation="1.1"
+          floodOpacity="0.85"
+          style={{ floodColor: "hsl(var(--background))" }}
+        />
+      </filter>
+    </defs>
+  );
+}
+
 const CUT = 10; // px — chamfer size
 const BRACKET = 14; // px — corner bracket arm length
 const TICK_STEP = 24; // px — ruler tick spacing
@@ -75,10 +97,11 @@ export function HudFrameOverlay({
   live?: boolean;
   tone?: HudTone;
 }) {
+  const haloId = useId();
   if (w < 4 || h < 4) return null;
   const stroke = toneStroke(tone);
   const faint = "hsl(var(--border))";
-  const main = live ? 0.95 : 0.55;
+  const main = live ? 0.95 : 0.6;
 
   return (
     <svg
@@ -87,6 +110,8 @@ export function HudFrameOverlay({
       preserveAspectRatio="none"
       aria-hidden
     >
+      <HudHaloDefs id={haloId} />
+      <g filter={`url(#${haloId})`}>
       {variant === "bracket" && (
         <>
           {[
@@ -147,6 +172,7 @@ export function HudFrameOverlay({
           <path d={`M ${w - 0.5} 0.5 V ${Math.min(h, 22)}`} stroke={stroke} strokeWidth={1} opacity={0.6} />
         </>
       )}
+      </g>
     </svg>
   );
 }
