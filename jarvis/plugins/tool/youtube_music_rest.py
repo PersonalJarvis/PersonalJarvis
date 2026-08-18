@@ -35,14 +35,14 @@ A direct gated action, never a spawn (AP-5/AP-14).
 from __future__ import annotations
 
 import asyncio
-import difflib
 import html
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
+
+from ._playlist_match import is_liked_name, match_playlist
 
 log = logging.getLogger(__name__)
 
@@ -88,22 +88,6 @@ _NO_SESSION_READ = (
 _MUSIC_CATEGORY_ID = "10"
 _SEARCH_MAX = 25
 _ART_TRACK_SUFFIX = " - Topic"
-
-# Names people use for the liked-songs list; matched after normalisation.
-_LIKED_NAMES: frozenset[str] = frozenset({
-    "liked", "likes", "liked songs", "liked music", "my likes", "favorites", "favourites",
-    # i18n-allow: spoken-input vocabulary (de/es), not prose
-    "gelikte songs", "gelikte lieder", "geliked", "meine likes", "favoriten",
-    "lieblingslieder", "lieblingssongs",
-    "canciones que me gustan", "me gusta", "favoritos", "mis me gusta",
-})
-# Filler around a playlist name ("my running playlist" → "running").
-_PLAYLIST_NOISE_RE = re.compile(
-    r"\b(my|the|playlist"
-    r"|mein|meine|meiner|meinen|wiedergabeliste|die|der|das"  # i18n-allow: spoken-input vocabulary
-    r"|mi|mis|lista|el|la)\b",  # i18n-allow: spoken-input vocabulary
-    re.IGNORECASE,
-)
 
 # How long `play` watches the media session for the new track before it stops
 # claiming to know. A warm browser registers the session within a second; a
@@ -238,40 +222,6 @@ def _slim_video(item: dict[str, Any]) -> dict[str, Any]:
         "video_id": video_id,
         "url": song_url(video_id),
     }
-
-
-def _normalize_name(name: str) -> str:
-    cleaned = _PLAYLIST_NOISE_RE.sub(" ", name.lower())
-    return re.sub(r"\s+", " ", cleaned).strip()
-
-
-def is_liked_name(name: str) -> bool:
-    return _normalize_name(name) in {_normalize_name(n) for n in _LIKED_NAMES} or (
-        name.strip().lower() in _LIKED_NAMES
-    )
-
-
-def match_playlist(name: str, playlists: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The user's playlist a spoken name most plausibly means: exact, then
-    contains, then a fuzzy ratio — never a wild guess below the floor."""
-    wanted = _normalize_name(name)
-    if not wanted or not playlists:
-        return None
-    titled = [(p, _normalize_name(str(p.get("title") or ""))) for p in playlists]
-    for playlist, title in titled:
-        if title == wanted:
-            return playlist
-    for playlist, title in titled:
-        if wanted in title or (title and title in wanted):
-            return playlist
-    scored = sorted(
-        ((difflib.SequenceMatcher(None, wanted, title).ratio(), p) for p, title in titled),
-        key=lambda pair: pair[0],
-        reverse=True,
-    )
-    if scored and scored[0][0] >= 0.6:
-        return scored[0][1]
-    return None
 
 
 class YouTubeMusicRestTool:
