@@ -14,6 +14,7 @@ import { fetchIdeState, fetchTerminalActivity, type IdeState, type ActivityRespo
 import { useCommandActivityStore } from "@/store/commandActivity";
 import type { RunListItem } from "@/components/runs/types";
 import { DeckCard } from "@/components/deck/DeckCard";
+import { useElementSize } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -258,6 +259,12 @@ export function IdeGridCard({ className }: { className?: string }) {
     setActiveSection("agentic-ide");
   };
 
+  // Two columns side by side need room for a name, a state word and an age
+  // on one line; below that the groups stack, so a name is never cut to its
+  // first letter (what the first version did in the deck's right column).
+  const [bodyRef, bodySize] = useElementSize<HTMLDivElement>();
+  const twoColumns = bodySize.w >= 400;
+
   return (
     <DeckCard
       icon={MessagesSquare}
@@ -274,16 +281,21 @@ export function IdeGridCard({ className }: { className?: string }) {
           {state.isError ? t("deck.unavailable") : t("deck.ide_empty")}
         </p>
       ) : (
-        <div className="flex h-full min-h-0 flex-col gap-1.5">
+        <div ref={bodyRef} className="flex h-full min-h-0 flex-col gap-1.5">
           {project && (
             <div className="flex items-center gap-2 truncate font-mono text-[10px] text-muted-foreground">
               <span className="truncate text-foreground/80">{project.name}</span>
               {branch && <span className="shrink-0 truncate">⎇ {branch}</span>}
             </div>
           )}
-          <div className="grid min-h-0 flex-1 grid-cols-2 gap-x-3">
-            <CrewColumn label={t("deck.ide_running")} rows={running} onOpen={open} hot />
-            <CrewColumn label={t("deck.ide_idle")} rows={idle} onOpen={open} />
+          <div
+            className={cn(
+              "min-h-0 flex-1 gap-x-3 gap-y-2",
+              twoColumns ? "grid grid-cols-2" : "flex flex-col overflow-y-auto",
+            )}
+          >
+            <CrewColumn label={t("deck.ide_running")} rows={running} onOpen={open} hot scroll={twoColumns} />
+            <CrewColumn label={t("deck.ide_idle")} rows={idle} onOpen={open} scroll={twoColumns} />
           </div>
         </div>
       )}
@@ -296,15 +308,18 @@ function CrewColumn({
   rows,
   onOpen,
   hot,
+  scroll,
 }: {
   label: string;
   rows: CrewRow[];
   onOpen: (name: string) => void;
   hot?: boolean;
+  /** Own scroll region (side-by-side); stacked groups scroll as one. */
+  scroll?: boolean;
 }) {
   const t = useT();
   return (
-    <div className="flex min-h-0 flex-col">
+    <div className={cn("flex flex-col", scroll && "min-h-0")}>
       <div
         className={cn(
           "flex items-center gap-1.5 border-b pb-1 font-mono text-[9px] uppercase tracking-[0.2em]",
@@ -314,7 +329,7 @@ function CrewColumn({
         <span>{label}</span>
         <span className="ml-auto tabular-nums">{rows.length}</span>
       </div>
-      <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto pt-1">
+      <ul className={cn("space-y-1 pt-1", scroll && "min-h-0 flex-1 overflow-y-auto")}>
         {rows.length === 0 && <li className="text-[10px] text-muted-foreground/70">—</li>}
         {rows.map((r) => (
           <li key={r.key}>
