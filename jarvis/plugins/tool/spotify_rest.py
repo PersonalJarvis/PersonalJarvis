@@ -85,19 +85,15 @@ async def _default_refresher(observed_access_token: str | None = None) -> bool:
 
 
 def _preference_hint_for(service_id: str) -> str:
-    """One sentence about ``[music] preferred_service`` for the tool description,
-    empty when there is nothing to say. Never raises (a description must not)."""
+    """One sentence about ``[music] preferred_service`` for the tool
+    description — cached in ``jarvis.core.music_service`` so a router turn
+    never re-parses the config. Never raises (a description must not)."""
     try:
-        from jarvis.core.config import load_config
-        from jarvis.core.music_service import connected_music_services, preference_hint
+        from jarvis.core.music_service import description_hint
 
-        preferred = str(load_config().music.preferred_service)
-        connected = connected_music_services()
-        return preference_hint(service_id, preferred=preferred, connected=connected)
-    except Exception:  # noqa: BLE001 — a config/store fault means no hint, not no tool
+        return description_hint(service_id)
+    except Exception:  # noqa: BLE001 — a fault means no hint, not no tool
         return ""
-
-
 def _artists(item: dict[str, Any]) -> str:
     names = [a.get("name") for a in item.get("artists") or [] if a.get("name")]
     return ", ".join(n for n in names if n)

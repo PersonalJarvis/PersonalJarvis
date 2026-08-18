@@ -6,8 +6,9 @@ A pywebview window that starts MINIMIZED (a taskbar entry, no focus, no tab —
 and unlike a truly hidden window, WebView2 does start media in it), keeps its
 own persistent browser profile (so a YouTube Music login survives restarts),
 and takes JSON-line commands on stdin — ``load`` a URL, ``show`` / ``hide`` the window, read the
-player ``state``, ``pause`` / ``play`` / ``next`` / ``previous`` / ``volume``
-— answering one JSON line per command on stdout. Playback therefore happens
+player ``state``, ``pause`` / ``play`` / ``toggle`` / ``next`` / ``previous`` /
+``volume`` — answering one JSON line per command on stdout. That closed list
+IS the protocol: no free-form script ever crosses the pipe. Playback therefore happens
 in the background: no browser tab, no focus steal, one window that navigates
 instead of piling up tabs.
 
@@ -168,8 +169,6 @@ def _dispatch(window: Any, cmd: str, msg: dict[str, Any]) -> Any:
     if cmd == "state":
         raw = window.evaluate_js(_STATE_JS)
         return json.loads(raw) if isinstance(raw, str) else raw
-    if cmd == "eval":
-        return window.evaluate_js(str(msg.get("js") or ""))
     if cmd == "volume":
         return window.evaluate_js(_volume_js(int(msg.get("level") or 0)))
     if cmd in _JS:
@@ -190,6 +189,14 @@ def main(argv: list[str] | None = None) -> int:
         help="initial window state (minimized plays from the start; hidden does not)",
     )
     args = parser.parse_args(argv)
+
+    # The protocol is UTF-8 on both pipes whatever the console code page says
+    # (a title with an umlaut must survive the round trip on a cp1252 box).
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception as exc:  # noqa: BLE001 — a non-reconfigurable stream keeps its encoding
+            _log(f"stream reconfigure skipped: {exc}")
 
     # Must be in the environment before the WebView2 runtime is created.
     flag = "--autoplay-policy=no-user-gesture-required"
@@ -212,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.start == "offscreen":
         extra["x"] = -32000
         extra["y"] = -32000
-    window = webview.create_window(
+    window: Any = webview.create_window(
         args.title,
         "about:blank",
         width=1080,
@@ -221,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
         confirm_close=False,
         **extra,
     )
+    if window is None:  # pywebview returns None only when the GUI cannot be created
+        _emit({"event": "unavailable", "error": "no window could be created"})
+        return 2
 
     quitting = {"flag": False}
 
@@ -238,12 +248,18 @@ def main(argv: list[str] | None = None) -> int:
     window.events.closing += _on_closing
 
     def _serve_then_quit() -> None:
-        _serve(window)
-        quitting["flag"] = True
+        # Whatever ends the command loop — EOF, quit, or a read fault — the
+        # window must go down, or the GUI loop would keep a ghost player alive.
         try:
-            window.destroy()
-        except Exception as exc:  # noqa: BLE001 — already gone is fine
-            _log(f"destroy skipped: {exc}")
+            _serve(window)
+        except Exception as exc:  # noqa: BLE001 — logged, and the finally still tears down
+            _log(f"serve loop ended with {type(exc).__name__}: {exc}")
+        finally:
+            quitting["flag"] = True
+            try:
+                window.destroy()
+            except Exception as exc:  # noqa: BLE001 — already gone is fine
+                _log(f"destroy skipped: {exc}")
 
     try:
         # pywebview runs ``func`` on its own worker thread once the GUI loop is up.

@@ -87,3 +87,24 @@ def test_music_config_defaults_and_sanitising():
     assert MusicConfig(playback="Browser").playback == "browser"
     assert set(MUSIC_SERVICES) == {"auto", "spotify", "youtube_music"}
     assert set(MUSIC_PLAYBACK_MODES) == {"background", "browser"}
+
+
+def test_description_hint_reads_the_cached_preference(monkeypatch):
+    import jarvis.core.config as config_mod
+
+    calls = {"n": 0}
+
+    def fake_load_config():
+        calls["n"] += 1
+        return SimpleNamespace(music=SimpleNamespace(preferred_service="youtube_music"))
+
+    monkeypatch.setattr(config_mod, "load_config", fake_load_config)
+    monkeypatch.setattr(ms, "connected_music_services", lambda: ("spotify", "youtube_music"))
+    ms.forget_connected_music_services()
+    assert "prefers YouTube Music" in ms.description_hint("youtube_music")
+    assert "names Spotify explicitly" in ms.description_hint("spotify")
+    assert calls["n"] == 1  # one config read for both descriptions
+    ms.forget_connected_music_services()
+    ms.description_hint("spotify")
+    assert calls["n"] == 2  # a settings write drops the cache
+    ms.forget_connected_music_services()

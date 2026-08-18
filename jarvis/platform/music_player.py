@@ -26,6 +26,7 @@ import logging
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -255,10 +256,15 @@ class MusicPlayer:
         except Exception as exc:  # noqa: BLE001 — pipe gone → the host is gone
             self.stop()
             raise MusicPlayerError(f"player went away: {exc}") from exc
-        deadline = timeout
+        # One fixed deadline: the condition is shared and notified on EVERY
+        # reply, so a per-wait timeout would restart on unrelated traffic.
+        deadline = time.monotonic() + timeout
         with self._cond:
             while req_id not in self._replies:
-                if not self._cond.wait(deadline):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._cond.wait(remaining):
+                    if req_id in self._replies:
+                        break
                     raise MusicPlayerError(f"player did not answer '{cmd}' in {timeout:.0f}s")
                 if not self._ready.is_set() and req_id not in self._replies:
                     raise MusicPlayerError("player exited")

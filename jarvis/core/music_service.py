@@ -83,16 +83,60 @@ def connected_music_services(*, store: object | None = None) -> tuple[str, ...]:
         log.debug("music connection probe failed: %s", exc)
         return _connected_cache[1] if _connected_cache else ()
     result = tuple(live)
-    with _connected_lock:
-        _connected_cache = (now + _CONNECTED_TTL_S, result)
+    if store is None:  # an injected (test) store must never poison the process cache
+        with _connected_lock:
+            _connected_cache = (now + _CONNECTED_TTL_S, result)
     return result
 
 
 def forget_connected_music_services() -> None:
     """Drop the cached connection answer (a connect/disconnect just happened)."""
-    global _connected_cache
+    global _connected_cache, _preferred_cache
     with _connected_lock:
         _connected_cache = None
+        _preferred_cache = None
+
+
+# The preferred service is read from jarvis.toml; a tool description is built
+# on every router turn, so the value is remembered for the same few seconds
+# rather than re-parsing the config each time. The Settings route drops it on
+# write (via forget_connected_music_services), so a change shows at once.
+_preferred_cache: tuple[float, str] | None = None
+
+
+def preferred_music_service() -> str:
+    """``[music] preferred_service`` — cached briefly; a config fault reads as
+    ``auto``. Never raises."""
+    global _preferred_cache
+    now = time.monotonic()
+    with _connected_lock:
+        if _preferred_cache is not None and _preferred_cache[0] > now:
+            return _preferred_cache[1]
+    try:
+        from jarvis.core.config import load_config
+
+        value = str(load_config().music.preferred_service or MUSIC_SERVICE_AUTO)
+    except Exception as exc:  # noqa: BLE001 — a config fault means "no preference"
+        log.debug("preferred music service read failed: %s", exc)
+        value = MUSIC_SERVICE_AUTO
+    with _connected_lock:
+        _preferred_cache = (now + _CONNECTED_TTL_S, value)
+    return value
+
+
+def description_hint(service_id: str) -> str:
+    """The sentence a music tool appends to its description (see
+    :func:`preference_hint`), built from the cached preference and connection
+    state. Never raises — a description must not."""
+    try:
+        return preference_hint(
+            service_id,
+            preferred=preferred_music_service(),
+            connected=connected_music_services(),
+        )
+    except Exception as exc:  # noqa: BLE001 — a fault means no hint, not no tool
+        log.debug("music description hint failed: %s", exc)
+        return ""
 
 
 def service_label(service_id: str) -> str:
@@ -155,9 +199,11 @@ def preference_hint(service_id: str, *, preferred: str, connected: Iterable[str]
 
 __all__ = [
     "connected_music_services",
+    "description_hint",
     "explicit_music_service",
     "forget_connected_music_services",
     "preference_hint",
+    "preferred_music_service",
     "resolve_music_service",
     "service_label",
 ]

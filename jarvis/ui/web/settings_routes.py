@@ -802,6 +802,14 @@ async def put_music_settings(body: MusicSettingsBody, request: Request) -> dict[
             music.playback = playback  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.music update skipped: %s", exc)
+    try:
+        # The music tools remember the preference for a few seconds; a change
+        # here must show on the very next turn.
+        from jarvis.core.music_service import forget_connected_music_services
+
+        forget_connected_music_services()
+    except Exception as exc:  # noqa: BLE001 — a cache miss is the worst case here
+        log.debug("music preference cache reset skipped: %s", exc)
 
     return {
         "ok": True,
