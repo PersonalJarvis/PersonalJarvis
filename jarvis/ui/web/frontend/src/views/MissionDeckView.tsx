@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
@@ -19,6 +19,8 @@ import { WikiCard } from "@/components/deck/DeckWiki";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
+import { useElementSize } from "@/hooks/useElementSize";
+import { orbSizeFor, stageVignette } from "@/lib/deckStage";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -85,6 +87,13 @@ export function MissionDeckView({
   // phrase is known the name it derives from stands in.
   const { config: wakeConfig } = useWakeWord();
   const wakePhrase = wakeConfig?.phrase.trim() || assistantName;
+
+  // The centre grows with the room it has: as large as the stage allows, never
+  // taller than the room left under the headline, and never past the point
+  // where the reticle stops reading as an instrument.
+  const stageRef = useRef<HTMLDivElement>(null);
+  const stage = useElementSize(stageRef);
+  const orbSize = orbSizeFor(stage.width, stage.height);
 
   const running = useMemo(
     () => thinkingSteps.filter((s) => s.status === "active"),
@@ -205,11 +214,15 @@ export function MissionDeckView({
               <TurnCard className="min-h-0" />
               <ApiStatsCard className="min-h-0" />
             </div>
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-2 text-center">
+            <div
+              ref={stageRef}
+              className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-2 text-center"
+              style={{ backgroundImage: stageVignette(orbSize) }}
+            >
               <DeckOrb
                 steps={running}
                 busy={busy}
-                size={236}
+                size={orbSize}
                 readouts={{
                   nw: t(`deck.mood_${mood}`),
                   ne: `${running.length} ${t("deck.orb_steps")}`,

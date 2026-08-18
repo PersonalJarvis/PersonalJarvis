@@ -2065,6 +2065,108 @@
       animation: none !important;
     }
   }
+
+  /* ===========================================================
+     Deck orb — the mask inside the orb.
+     `.deck-core` is the dark core with the glowing eyes and mouth
+     (components/deck/OrbCore.tsx); `.deck-orb-glow` is the soft gold
+     halo behind the sphere. The face reuses the mascot's keyframes
+     (auto-blink, pupil drift, mouth breathing, ear-prick, speak,
+     thinking tilt) and reacts to the real voice state through
+     `data-voice`. Reduced motion stops all of it.
+     =========================================================== */
+  .deck-core {
+    display: block;
+    overflow: visible;
+    /* sunk into the aura: a soft shadow where the core meets the weather */
+    filter: drop-shadow(0 0 7px rgba(0, 0, 0, 0.55));
+  }
+  .deck-core .deck-core-face {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+  }
+  .deck-core .deck-core-eyes {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    animation: gigi-auto-blink 7s ease-in-out infinite;
+  }
+  .deck-core .deck-core-pupils {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    animation: gigi-pupil-drift 11s ease-in-out infinite;
+  }
+  .deck-core .deck-core-mouth {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    animation: gigi-mouth-idle 5.8s ease-in-out infinite;
+  }
+  /* listening: the eyes prick up */
+  .deck-core[data-voice="listening"] .deck-core-eyes {
+    animation: gigi-ear-prick 1.2s ease-in-out infinite;
+  }
+  /* thinking: the head cocks and the eyes wander */
+  .deck-core[data-voice="thinking"] .deck-core-face {
+    animation: gigi-thinking-tilt 2.4s ease-in-out infinite;
+  }
+  .deck-core[data-voice="thinking"] .deck-core-pupils {
+    animation: deck-core-scan 2.4s ease-in-out infinite;
+  }
+  @keyframes deck-core-scan {
+    0%,
+    100% {
+      transform: translate(-6px, -2px);
+    }
+    50% {
+      transform: translate(6px, -2px);
+    }
+  }
+  /* speaking: the mouth moves */
+  .deck-core[data-voice="speaking"] .deck-core-mouth {
+    animation: gigi-speak 0.35s ease-in-out infinite alternate;
+  }
+  /* error: the gold turns hot */
+  .deck-core[data-voice="error"] {
+    filter: drop-shadow(0 0 7px rgba(0, 0, 0, 0.55)) hue-rotate(-40deg) saturate(1.4);
+  }
+
+  .deck-orb-glow {
+    background: radial-gradient(
+      circle,
+      rgba(248, 226, 151, 0.5) 0%,
+      rgba(231, 196, 110, 0.28) 38%,
+      rgba(210, 147, 24, 0.1) 58%,
+      rgba(210, 147, 24, 0) 70%
+    );
+    opacity: 0.6;
+    transition: opacity 600ms ease;
+  }
+  .deck-orb-glow[data-voice="connecting"],
+  .deck-orb-glow[data-voice="thinking"] {
+    opacity: 0.9;
+    animation: deck-orb-glow-breathe 2.6s ease-in-out infinite;
+  }
+  .deck-orb-glow[data-voice="listening"],
+  .deck-orb-glow[data-voice="speaking"] {
+    opacity: 1;
+    animation: deck-orb-glow-breathe 1.6s ease-in-out infinite;
+  }
+  @keyframes deck-orb-glow-breathe {
+    0%,
+    100% {
+      transform: translate(-50%, -50%) scale(1);
+    }
+    50% {
+      transform: translate(-50%, -50%) scale(1.07);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .deck-core,
+    .deck-core *,
+    .deck-orb-glow {
+      animation: none !important;
+    }
+  }
 }
 
 @layer components {
