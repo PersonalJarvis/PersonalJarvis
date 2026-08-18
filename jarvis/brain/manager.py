@@ -848,8 +848,23 @@ def _trigger_names_vehicle(matched_trigger: str) -> bool:
 
 
 def _is_instructional_question(user_text: str) -> bool:
-    """True for how-to / explanatory questions that should be answered directly."""
-    return bool(_INSTRUCTIONAL_QUESTION_RE.search(user_text or ""))
+    """True for how-to / explanatory questions that should be answered directly.
+
+    A question opener does NOT make the whole turn a question. "Warum ist
+    Spotify nicht offen, mach es auf" asks and then commands, and reading it as
+    instructional suppresses the command — the same blind spot the tool loop's
+    copy of this rule carried until commit 163b2808. That copy owns the
+    imperative test; this one calls it rather than growing a second version
+    that can drift.
+    """
+    text = user_text or ""
+    if not _INSTRUCTIONAL_QUESTION_RE.search(text):
+        return False
+    from jarvis.brain.tool_use_loop import (  # noqa: PLC0415 — cycle-safe here
+        _has_trailing_imperative,
+    )
+
+    return not _has_trailing_imperative(text)
 
 
 # Spawn-tool names hidden from a plain knowledge question's tool surface — the
