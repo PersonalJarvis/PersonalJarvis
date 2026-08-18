@@ -129,7 +129,7 @@ async def test_custom_names_are_kept_and_deduplicated(
 
 
 async def test_start_rejects_a_missing_folder(registry: Registry, tmp_path: Path) -> None:
-    with pytest.raises(SessionError, match="Not a folder"):
+    with pytest.raises(SessionError, match="no folder called"):
         await registry.start(str(tmp_path / "nope"), [{"agent": "claude"}])
 
 

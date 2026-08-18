@@ -31,5 +31,6 @@ async def test_a_typed_tilde_becomes_the_home_folder() -> None:
 async def test_a_path_that_is_not_a_folder_is_reported_not_listed(tmp_path: Path) -> None:
     res = await routes.get_folders(path=str(tmp_path / "cd haral"))
 
-    assert res.error and "Not a folder" in res.error
+    # Plain words, and what to do next — this line is shown to the person as is.
+    assert res.error and "no folder called" in res.error and "pick a folder" in res.error
     assert res.entries == []

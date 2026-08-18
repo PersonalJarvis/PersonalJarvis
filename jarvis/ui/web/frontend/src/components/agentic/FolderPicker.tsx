@@ -302,11 +302,11 @@ export function FolderPicker({
     const payload = extractDropPayload(event.dataTransfer);
     if (!payload.path && !payload.name) {
       setDropNote(
-        "That drop carried no folder — browse to it or paste its path.",
+        "That was not a folder. Drop a folder here, or pick one from the list.",
       );
       return;
     }
-    setDropNote("Resolving the dropped folder…");
+    setDropNote("Finding the folder you dropped…");
     // The desktop shell knows the real path of what was dropped and says so a
     // moment after the drop; with only a name, that beats searching for it.
     // The wait itself is armed here, synchronously, so no announcement is
@@ -327,7 +327,7 @@ export function FolderPicker({
           void load(res.resolved);
         } else {
           setDropChoices(res.candidates);
-          setDropNote(res.detail || "Could not resolve that folder.");
+          setDropNote(res.detail || "Could not find that folder.");
         }
       })
       .catch((e) => setDropNote((e as Error).message));
@@ -359,7 +359,7 @@ export function FolderPicker({
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-surface bg-background/85 ring-2 ring-inset ring-primary/60">
           <span className="flex items-center gap-2 text-sm font-medium text-primary">
             <FolderOpen className="h-4 w-4" />
-            Drop a folder to open it here
+            Let go to use this folder
           </span>
         </div>
       )}
@@ -397,14 +397,14 @@ export function FolderPicker({
             onClick={browseNatively}
             disabled={nativeOpen}
             data-testid="native-browse"
-            title="Open the folder window this computer normally uses"
+            title="Choose the folder in a normal folder window"
           >
             {nativeOpen ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <FolderOpen className="h-3.5 w-3.5" />
             )}
-            {nativeOpen ? "Waiting…" : "Browse"}
+            {nativeOpen ? "Window open…" : "Browse"}
           </Button>
         )}
         <IconButton
@@ -455,8 +455,8 @@ export function FolderPicker({
           that hung. Saying so costs one line and saves the confusion. */}
       {nativeOpen && (
         <p className="px-3 pb-2 text-xs text-primary" role="status">
-          A folder window is open — pick a folder there. If you cannot see it,
-          check behind this window or on your taskbar.
+          A folder window has opened. Choose your folder there. If you cannot
+          see it, it is behind this window or in the taskbar.
         </p>
       )}
 
@@ -668,9 +668,9 @@ export function joinPath(base: string, name: string): string {
 /**
  * What was typed, read the way a shell would read it.
  *
- * The field says "like cd", so people type `cd projects` — the command word is
- * not part of the path and is dropped (with cmd's `/d`), and so are quotes
- * around a path pasted from a terminal.
+ * The field used to say "like cd", and people typed `cd projects` — the command
+ * word is not part of the path and is dropped (with cmd's `/d`), and so are
+ * quotes around a path pasted from a terminal.
  */
 export function normalizeTypedPath(raw: string): string {
   let value = raw.trim();
@@ -821,7 +821,7 @@ function PathInput({
         // first, and an immediate close would remove the element under the
         // pointer before the click lands on it.
         onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-        placeholder="…or type a path — Tab completes, like cd"
+        placeholder="…or type a folder name here — Tab completes it"
         aria-label="Folder path"
         data-testid="folder-path-input"
         className="w-full pr-8 font-mono text-xs"

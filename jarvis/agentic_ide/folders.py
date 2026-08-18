@@ -249,9 +249,12 @@ def list_dir(
     target = Path(path).expanduser()
     try:
         if not target.is_dir():
-            return [], f"Not a folder: {target}"
+            return [], (
+                f"There is no folder called {target}. "
+                "Check the spelling, or pick a folder from the list."
+            )
     except OSError as exc:
-        return [], f"Cannot read {target}: {exc}"
+        return [], f"Could not open {target}: {exc}"
 
     entries: list[FolderEntry] = []
     try:
@@ -280,7 +283,7 @@ def list_dir(
                     )
                 )
     except PermissionError:
-        return [], f"No permission to read {target}"
+        return [], f"Jarvis is not allowed to look inside {target}. Pick another folder."
     except OSError as exc:
         return [], f"Cannot read {target}: {exc}"
 

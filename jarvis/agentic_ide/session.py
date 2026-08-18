@@ -1792,7 +1792,9 @@ class Registry:
                 # stat can block for seconds, which would stall every other
                 # request the server is serving.
                 if not await asyncio.to_thread(root.is_dir):
-                    raise SessionError(f"Not a folder: {root}")
+                    raise SessionError(
+                        f"There is no folder called {root} — choose the folder again."
+                    )
             except OSError as exc:
                 raise SessionError(f"Cannot open {root}: {exc}") from exc
 

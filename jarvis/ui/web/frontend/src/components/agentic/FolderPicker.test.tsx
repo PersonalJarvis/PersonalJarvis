@@ -272,7 +272,7 @@ describe("FolderPicker", () => {
       dataTransfer: dataTransfer({}),
     });
 
-    expect(await screen.findByText(/carried no folder/i)).toBeTruthy();
+    expect(await screen.findByText(/was not a folder/i)).toBeTruthy();
     expect(api.resolveDroppedFolder).not.toHaveBeenCalled();
   });
 });
@@ -315,7 +315,7 @@ describe("the system folder window", () => {
 
     fireEvent.click(await screen.findByTestId("native-browse"));
 
-    expect(await screen.findByText(/folder window is open/i)).toBeTruthy();
+    expect(await screen.findByText(/folder window has opened/i)).toBeTruthy();
     release({ path: "/home/ruben/webshop" });
   });
 
@@ -404,7 +404,7 @@ describe("typing a path", () => {
   });
 
   it("reads what was typed the way a shell would", () => {
-    // The field says "like cd" — so people type the cd. It is not part of the
+    // The field used to say "like cd" — so people typed the cd. It is not part of the
     // path, and neither are the quotes around a path pasted from a terminal.
     expect(normalizeTypedPath("cd haral\\.personal-jarvis")).toBe(
       "haral\\.personal-jarvis",
@@ -480,7 +480,8 @@ describe("typing a path", () => {
             path: "/home/ruben/nope",
             parent: "/home/ruben",
             entries: [],
-            error: "Not a folder: /home/ruben/nope",
+            error:
+              "There is no folder called /home/ruben/nope. Check the spelling, or pick a folder from the list.",
             device_name: "Rubens MacBook",
           }
         : { ...LISTING, path: "/home/ruben", parent: "/home" },
@@ -493,7 +494,7 @@ describe("typing a path", () => {
     fireEvent.change(input, { target: { value: "nope" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(await screen.findByText(/Not a folder/)).toBeTruthy();
+    expect(await screen.findByText(/no folder called/)).toBeTruthy();
     expect(onSelect).not.toHaveBeenCalled();
   });
 });

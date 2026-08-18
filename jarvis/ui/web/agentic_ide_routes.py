@@ -1646,7 +1646,7 @@ async def resolve_folder(req: ResolveRequest) -> ResolveResponse:
     wanted = (req.name or "").strip()
     if not wanted:
         return ResolveResponse(
-            detail="That drop carried no folder path — browse to the folder or paste its path."
+            detail="That was not a folder. Drop a folder here, or pick one from the list."
         )
 
     hits = await asyncio.to_thread(search_folders, wanted, limit=12)
@@ -1663,7 +1663,12 @@ async def resolve_folder(req: ResolveRequest) -> ResolveResponse:
     if len(items) == 1:
         return ResolveResponse(resolved=items[0].path, candidates=items)
     if not items:
-        return ResolveResponse(detail=f'No folder called "{wanted}" was found on this machine.')
+        return ResolveResponse(
+            detail=(
+                f'No folder called "{wanted}" was found on this computer. '
+                "Pick one from the list."
+            )
+        )
     return ResolveResponse(
         candidates=items,
         detail=f'Several folders are called "{wanted}" — pick the right one.',
