@@ -7,155 +7,802 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.4.0] — 2026-08-18
+
+This release turns the front page into a mission deck, gives the assistant a
+shelf of characters, and stops making you wait: a heavy turn answers within
+seconds, you keep talking while the tool model works, and speaking interrupts
+thinking. Music plays by voice on Spotify or YouTube Music, Google Cloud
+Vertex AI is a provider family of its own, the marketplace grew a community
+registry with install-by-name, and your own skills actually fire. Underneath,
+a long list of voice, realtime, Agentic IDE and launcher fixes.
 
 ### Added
+
+- **A mission deck as the front page — "what is going on" on one surface, with
+  the classic chat one click away.** Opening the app used to show an empty
+  chat: a consequence, not a state. The deck shows every section on the left
+  with the live ones lit, what the assistant is doing right now on the right,
+  and the Jarvis orb in the middle; a header switch moves between deck and
+  classic view and the choice is remembered. Every figure comes from a payload
+  the bus already publishes; nothing is estimated.
+  - **The orb is the Jarvis orb itself,** cut out of the hero artwork. It
+    breathes with the voice state (reduced motion gets the still picture) and
+    is ringed by one arc per running reasoning step. Clicking it does what the
+    wake phrase does: it starts or ends the conversation.
+  - **One card per signal, each reading its section's own data:** a LOG
+    terminal (one line per thing the assistant heard, thought, did and said,
+    with clock time and duration); a RESPONSE instrument (hear → think → act →
+    speak, a stopwatch, first-token and first-audio marks); runs; outputs; a
+    coding-workspace crew roster (one row per agent — a row jumps INTO that
+    terminal); terminals; the wiki as the same 3D memory map the Wiki section
+    draws; computer use; screen capture; API this session (tokens and cost per
+    model); a live word counter.
+  - **The pictures the deck shows.** Screen Context stays "one capture, then
+    gone"; a mirror keeps AT MOST ONE frame and forgets it after
+    `[screen_context].deck_preview_s` seconds (default 120, 0 = off).
+    Computer-use frames are served by hash only (`GET /api/deck/cu-frame/`);
+    every image response is `no-store`.
+  - **A HUD frame language** — corner brackets, chamfered outlines, tick
+    rulers, status lamps in every title — with a halo on every hairline in the
+    theme's ground colour, so gold lines hold on both appearances over any
+    wallpaper. **One icon rail** (`DockRail`) serves the deck and the collapsed
+    sidebar, with a live pip where something is going on and the sidebar's own
+    signals (API-keys error, plugin reconnect, the Skills → Plugins shortcut).
+  - **A boot sequence and a listening ring before the first word.** The deck
+    no longer shows nine instruments saying "nothing yet" from the first
+    second. Three acts, forward only per session: *boot* — one big ring
+    around the orb, the four gates a voice turn needs (link, voice, brain,
+    wake) drawing in as each turns true, a console typing one line per gate
+    with clock time and measured duration; *standby* — everything up, nobody
+    has spoken: a sweep turns only while the wake word is really being
+    listened for, the headline names the phrase to say, "Open the board" is
+    one press away; *board* — from the first turn (wake word, hotkey, typed
+    message, a press on the orb) the ring folds into the orb, the orb travels
+    to its place and the instruments power on from the centre outward.
+    Nothing on the stage is invented — every gate is a fact the header lamps
+    already show, and a fact that never arrives is called absent instead of
+    spinning forever. Reduced motion gets the same facts without the movement.
+
+- **Modes — the assistant gets a shelf of characters, one of them active.** A
+  mode is how the assistant behaves: the difference between a butler who
+  answers in one line and a friend who asks how your day went. Five built-ins
+  ship — Assistant, Friend, Coach, Focus and Coding — and picking one applies
+  from the next turn in voice AND in chat, no restart. A mode is a LAYER on
+  the base persona, never a replacement, so the rules that keep the assistant
+  honest survive every character.
+  - **A Modes section:** the shelf, and a workshop where you make another one.
+    A card opens with the full character text verbatim, the knobs and the
+    voice; every card carries an explicit "Use", "Edit" loads any mode into
+    the form, a built-in keeps "restore original". "Talk it through" opens a
+    real voice interview — the assistant asks what kind of company you want
+    and writes the mode itself. The mode in force and the mode you chose are
+    shown apart (the payload gains `chosen` next to `active`). In en/de/es.
+  - **By voice:** router tools `list_modes`, `switch_mode` and `save_mode` —
+    "be my friend for a bit" works. Switching changes tone only and is undone
+    in one sentence; saving is ask-tier because it writes a file every future
+    turn reads (ADR-0011 amendment).
+  - **CLI-first:** `GET /api/modes`, `PUT /api/modes/active`,
+    `POST /api/modes`, `DELETE /api/modes/{slug}`,
+    `POST /api/modes/{slug}/restore`, and a `jarvis modes` group (list, show,
+    activate, create, delete, restore). `[persona] active_mode` is the sticky
+    choice; a screen-scoped override lives in memory only.
+  - **A mode can name the voice it speaks in.** A friend should not sound like
+    a butler: a mode may carry a TTS voice id; an empty one keeps what you
+    configured. A realtime session pins its voice when it opens, so there a
+    switch takes effect on the next call; a voice the provider does not have
+    falls back to the configured one — going silent is not recoverable.
+
+- **Instant acknowledgment: on a heavy turn the first sign of life arrives
+  within seconds, and it speaks to the request (ADR-0033).** Turns that go to
+  the Tool Model or a sub-agent left the user 5–30 s without a word. A shared
+  core now decides at dispatch, from the deterministic turn plan, what kind of
+  work starts and how soon to speak: research, screen, mission and connected
+  personal lookups immediately; actions and local lookups after a 3 s grace
+  and only if the turn is still processing. The line is request-specific
+  ("I'm looking up <thing>."), model-composed and accepted only by a
+  structural validator — never a stock "on it"; closed de/en/es pools naming
+  the KIND of work are the instant fallback. Both engines get it, realtime and
+  classic pipeline; when the work outlasts the first line by 8 s, ONE more
+  line grounded in the tool actually running ("Still searching."). The chat
+  shows the same first line as a muted pre-ack bubble. Switches:
+  `[ack_brain].instant_ack` (kill switch),
+  `[ack_brain].instant_ack_compose_all` (on).
+
+- **You keep talking while the tool model works (ADR-0034).** A heavy turn no
+  longer blocks the conversation in the realtime engine, provider-neutral.
+  Parked results never expire: a late answer waits until the session is at
+  rest — the 30 s bound that dropped the answer whenever you kept talking is
+  gone — and, spoken after other exchanges, its opening ties it back to what
+  was asked. The wire is freed the moment you move on: a new turn while an
+  earlier order's provider function call is still open answers that call at
+  once with a closed "still executing" payload (Gemini Live blocks on function
+  responses; NON_BLOCKING is unsupported on Vertex and the 3.1 Live model),
+  `[voice].realtime_unblock_pending_tool_calls` (on). "How far are you?" is
+  owned by the orchestrator before the planner can read it as a new order.
+  Honest scope: the realtime engine ships this now; the classic pipeline's
+  half — `[voice].background_heavy_turns` — is declared in the config in this
+  release, but its pipeline reader lands with the pipeline change that
+  follows; until then a heavy turn on the classic pipeline still waits inline.
+  `docs/adr/0034-non-blocking-heavy-turns.md` names the cells covered,
+  emulated and degraded.
+
+- **The Thinking pause decides when a turn is taken — in both engines, and
+  you may keep talking.** Jarvis no longer takes the turn on every short
+  pause; it waits for a clear one, and words spoken after the pause are
+  appended to the same request instead of being submitted twice. The
+  Settings "Thinking pause" (`speech.vad_silence_ms`) is now ONE value for
+  both voice engines, and which lever applies is a transport capability: a
+  transport that answers on its own boundary (`gemini-live`, `vertex-live`)
+  gets the pause folded into its native turn detection; a transport whose
+  responses Jarvis requests itself (`openai-realtime`, local, third-party)
+  waits the pause out on the session's own microphone before it asks for the
+  answer, and a transcript that lands while you still talk joins the open
+  turn — ONE response answers the whole request. On the classic pipeline the
+  VAD already waited; new is the hold when the final transcript lands while
+  you are speaking again: the text is held and joined with the next
+  utterance, so no instant ack talks over the second half.
+- **Speaking while Jarvis thinks or works now interrupts him — no command word
+  needed.** Barge-in during PLAYBACK always worked; during the silent THINKING
+  wait and a running delegated action it did nothing, and a spoken "stop" was
+  even answered with "I am still working on it" (BUG-135). A second local
+  Silero detector is fed during the silent wait and fires the same `barge_in`
+  control the playback path uses; a deterministic check (regex only, de/en/es,
+  whole-utterance anchored so "do not stop the music" is inert) then tells a
+  stop, a redirect and a continuation apart. A stop cancels every running
+  delegate and confirms out loud; a redirect cancels and routes the
+  replacement, so Jarvis holds the NEW context, not silence.
 
 - **YouTube Music as a marketplace plugin — music by voice, on the account you
   already pay for.** "Play Radiohead", "play my running playlist", "play my
   liked songs", "pause", "skip", "what song is this", "like this", "add this to
   my chill playlist", "create a playlist called Late night". Google publishes
   no YouTube Music API, so the plugin rides the official **YouTube Data API v3**
-  (search, your playlists, likes) through the **same Google OAuth client** as
-  Gmail, Drive and Calendar — one Cloud project, one more API to enable — and
-  never a reverse-engineered private client.
+  through the **same Google OAuth client** as Gmail, Drive and Calendar — one
+  Cloud project, one more API to enable — and never a reverse-engineered
+  private client.
   - **Playback happens in YouTube Music, not in Jarvis** — the same model as
-    the Spotify plugin. Playing opens a `music.youtube.com` deep link in the
-    browser (a song opens as its own radio, an album or playlist as its list;
-    both verified live), so Premium, recommendations and history stay in the
-    user's own account. Jarvis pauses whatever played before, then watches the
-    system's media session and says whether playback actually started —
-    including the honest "press play once" when the browser withholds autoplay.
-  - **Pause, resume, next, previous and "what is playing" come from the OS media
-    session** — new cross-platform seam `jarvis/platform/media_session.py`, the
-    same channel the keyboard's media keys use. Windows reads and steers through
-    WinRT (`winrt-*` in the `[desktop]` extra; measured live, including the
-    case of two Chrome tabs sharing one app id, where a paused YouTube video used
-    to hijack "pause the music"), Linux through `playerctl`, macOS through
-    `nowplaying-cli`; without the tool the answer names the install command
-    instead of a fake success (`docs/os-parity.md` P-33).
+    the Spotify plugin. Playing opens a `music.youtube.com` deep link, so
+    Premium, recommendations and history stay in the user's own account;
+    Jarvis watches the system's media session and says whether playback
+    actually started — including the honest "press play once" when the
+    browser withholds autoplay.
+  - **Pause, resume, next, previous and "what is playing" come from the OS
+    media session** — the same channel the keyboard's media keys use: Windows
+    through WinRT (`winrt-*` in the `[desktop]` extra), Linux through
+    `playerctl`, macOS through `nowplaying-cli`; without the tool the answer
+    names the install command instead of a fake success (`docs/os-parity.md`
+    P-33).
   - **Honest limits, said out loud.** Google allows 100 searches a day per
-    project (each "play <name>" is one; repeats are cached, own playlists cost
-    none); "queue next" does not exist in YouTube's API and the skill says so
-    instead of guessing. Setup: `docs/marketplace/youtube-music-setup.md`.
-  - **A background player instead of a browser tab (default).** "Play X" no
-    longer pops a browser: a small player window of its own (a pywebview
-    companion process with a persistent profile — log in once, keep Premium)
-    starts minimized, loads each song in place, and answers pause / skip /
-    "what is playing" — and, new, **volume by voice**, which no OS media
-    session offers. First run shows YouTube's cookie choice once. Where the
-    player cannot run (headless, no desktop extras) or when Settings → Music
-    says *Browser*, the browser path stays. Measured, not assumed: a truly
-    hidden WebView2 window never starts media, a minimized one does.
+    project (repeats are cached, own playlists cost none); "queue next" does
+    not exist in YouTube's API and the skill says so. Setup:
+    `docs/marketplace/youtube-music-setup.md`.
+  - **A background player instead of a browser tab (default).** A small player
+    window of its own (a pywebview companion process with a persistent profile
+    — log in once, keep Premium) starts minimized, loads each song in place,
+    and answers pause / skip / "what is playing" — and, new, **volume by
+    voice**, which no OS media session offers. Where the player cannot run
+    (headless, no desktop extras) or when Settings → Music says *Browser*, the
+    browser path stays.
   - **Two connectors, one domain — a preference instead of a coin toss.**
-    With Spotify AND YouTube Music connected, "spiel Musik" went to whichever
-    music skill was registered first, and the LLM router picked arbitrarily
-    on the turns no skill captured. New `[music] preferred_service`
-    (Settings → Music, `PUT /api/settings/music`, `jarvis api settings`):
-    a named service always wins ("on YouTube Music"), else the preference,
-    else on *Automatic* the only connected one. ONE resolver
-    (`jarvis/core/music_service.py`) feeds both the deterministic skill
-    capture and the two tools' descriptions, so the router and the capture
-    can never disagree. Five-layer vocabulary with a parity test.
+    With Spotify AND YouTube Music connected, "spiel Musik" went to whichever <!-- i18n-allow: quoted voice request -->
+    music skill was registered first. New `[music] preferred_service`
+    (Settings → Music, `PUT /api/settings/music`): a named service always wins
+    ("on YouTube Music"), else the preference, else on *Automatic* the only
+    connected one. ONE resolver feeds both the deterministic skill capture and
+    the two tools' descriptions, so the router and the capture never disagree.
+
+- **Spotify by voice — a native plugin, and the "no active device" problem
+  solved rather than reported.** Play, pause, skip, back, volume, "what is
+  playing". Spotify publishes no MCP server, only the Web API, so this is a
+  native REST tool behind the keyring-backed Connect button; risk tier
+  `monitor`. The Web API commands Spotify Connect: with one open device the
+  command is re-aimed at it instead of failing with `NO_ACTIVE_DEVICE`; with
+  several, the assistant asks; with none, it says so and offers to open
+  Spotify. Playback control needs Premium — the refusal names Spotify's rule.
+  Bring your own OAuth client: Spotify's Development Mode allows five users
+  per app, so `oauth_client_family: spotify` makes your own client the
+  documented path (PKCE, no client secret); refresh tokens are capped at six
+  months, so the card says `provider_limited`. The Client ID field had
+  nowhere to save to; a parity test now closes that seam for every OAuth
+  family. Setup: `docs/marketplace/spotify-oauth-setup.md`.
 
 - **Google Cloud Vertex AI as a provider family of its own, on every tier.**
   Vertex serves the same Gemini models as Google AI Studio, but bills a Cloud
-  project — and until now it was reachable only by accident: an express-mode key
-  pasted into the Gemini field, detected by a probe, sharing that field so an
-  install could never hold both credentials. Vertex now has its own cards for
-  the brain, the tool model, voice input, voice output and realtime, and is
-  selectable as a subagent. All of them read ONE shared Vertex credential, so
-  setting it up once covers the whole stack.
-  - Two ways in. A Vertex AI express-mode key (`AQ.`), or a Google Cloud
-    project with no key at all: `[google].vertex_project` plus
-    `vertex_location` and an optional `service_account_path`, signed with
-    Application Default Credentials. That second path is what a production
-    project uses, and it was previously wired to text-to-speech only. Measured
-    against a live Cloud project: a Google Cloud API KEY does not work with
-    Vertex at all — not even one restricted to `aiplatform.googleapis.com`. It
-    is refused everywhere with "API keys are not supported by this API", while
-    the same key answers 200 on AI Studio. The cards, the docs and the
-    type-time key hint all say so now, and an `AIza` key pasted into a Vertex
-    field draws a warning instead of a shrug.
-  - The endpoint is decided by the card, not guessed from the key, so an
-    express key is never probed onto the wrong host.
-  - Vertex publishes its own Live model ids. The realtime card would otherwise
-    have inherited the AI Studio one and 404'd on the model even once
-    authentication succeeded.
-  - Vertex is a distinct credential family, deliberately with no cross-read to
-    the Gemini slots in either direction. The two accounts run out of quota
-    independently, which makes crossing between them a real fallback rather
-    than a doomed retry — and an AI Studio key forced onto the Vertex endpoint
-    would not degrade, it would 401 while the UI showed a configured provider.
+  project — and until now it was reachable only by accident, through an
+  express-mode key pasted into the Gemini field. Vertex now has its own cards
+  for the brain, the tool model, voice input, voice output and realtime, and
+  is selectable as a subagent; all of them read ONE shared Vertex credential.
+  - Two ways in: a Vertex AI express-mode key (`AQ.`), or a Google Cloud
+    project with no key at all (`[google].vertex_project`, `vertex_location`,
+    optional `service_account_path`, signed with Application Default
+    Credentials). Measured live: a Google Cloud API KEY does not work with
+    Vertex at all; the cards and docs say so, and an `AIza` key pasted into a
+    Vertex field draws a warning.
+  - The endpoint is decided by the card, not guessed from the key, and Vertex
+    publishes its own Live model ids. Vertex is a distinct credential family
+    with no cross-read to the Gemini slots: the two accounts run out of quota
+    independently, which makes crossing between them a real fallback.
   - Worth picking for voice: the AI Studio text-to-speech preview model is
-    capped at 100 requests per day no matter how you are billed, which is what
-    made the voice go quiet mid-day. A Cloud project has no such cap.
+    capped at 100 requests per day no matter how you are billed — what made
+    the voice go quiet mid-day. A Cloud project has no such cap.
+- **Gemini speech-to-text got the card it never had.** Selecting it meant
+  hand-editing `jarvis.toml`; both Google recognizers now appear in Voice
+  Input with a model picker.
 
-- **Gemini speech-to-text got the card it never had.** The recognizer shipped as
-  a working entry point with no card anywhere in the app, so selecting it meant
-  hand-editing `jarvis.toml`. Both Google recognizers now appear in Voice Input
-  with a model picker.
+- **Marketplace: a community registry — browse, install and remove plugins,
+  skills and wallpapers other people published, by name, from the app, a
+  terminal, or by asking.** New third tab in the Plugins view; every card
+  carries a "Community — not reviewed" badge with publisher and version.
+  Trust model: `docs/marketplace/community-registry.md`.
+  - **The consent dialog is the trust boundary:** before anything is fetched
+    it shows verbatim where requests and your token would go (hosted MCP URL)
+    or which command would run locally (stdio argv). Every registry rule is
+    re-enforced client-side by the Agent Plugins v1.0.0 loader, and bundled
+    package cards win over community cards, so no community entry can shadow
+    a shipped plugin's vocabulary.
+  - **Browsing works offline and never touches boot.** The compiled index is
+    fetched with short timeouts, validated tolerantly and cached atomically;
+    states are honest — fresh, stale copy, unreachable, disabled — and an
+    empty `[marketplace].community_index_url` turns the section off.
+    `GET /api/marketplace/community`, install/uninstall routes underneath.
+  - **Install by name — one route for every kind.**
+    `POST /api/marketplace/community/install/{item_id}` resolves the kind from
+    the index and answers in ONE shape: what landed, whether it is usable
+    right now (a valid skill is; a plugin is not until connected) and what is
+    still missing. `jarvis marketplace install <name>` — the line every
+    marketplace page prints — works now: it shows what the entry is BEFORE
+    fetching, asks once, then states the outcome ("ready to use — no restart
+    needed", "on your list, but NOT connected"); piped or `--json`, no prompt
+    can block a script. By voice, `marketplace-browse` reads the index so the
+    exact name is found, and `marketplace-install` carries the `ask` tier — a
+    plugin brings an outside MCP server with it.
+  - **Wallpapers are a published kind**, downloaded over https under a size
+    ceiling and put through the SAME mill an upload is.
+  - **Read an entry before installing it:**
+    `GET /api/marketplace/community/{name}/contents` shows a skill's
+    instructions, a plugin's two manifests, a wallpaper's picture. The card
+    shows the install as a terminal line to copy (skills also offer
+    `npx skills add`), mirrored with the storefront.
+  - **What came from the marketplace says so, where it landed** — one
+    `MarketplaceBadge` in the Installed tab, on a skill's row, and on a
+    wallpaper filter chip; the origin lives in a sidecar beside the thing
+    itself. An install from the terminal, by voice or from the storefront now
+    reaches the open window (`MarketplaceItemInstalled` on the bus; the
+    window reloads exactly the lane that changed, no restart).
+
+- **Bring your own skill or plugin — drop a folder onto the window, or import
+  it from a path or link.** For months the backend could import a skill and no
+  screen reached it; the honest answer to "how do I add my own skill?" was
+  "copy a folder and restart".
+  - **Skills: an Upload button in the Skills view.** Drop a folder, pick one,
+    or hand over a .zip; the server reports what it found — name, the paths
+    that will actually be installed, and every blocker at once — and only then
+    is there anything to confirm; a skill that trips the safety lint is
+    announced as landing in draft BEFORE the install. Routes:
+    `POST /api/skills/upload/inspect`, `POST /api/skills/upload`; staging is
+    fail-closed. From a terminal, `jarvis skills import <path-or-url>` routes
+    local paths to the new `POST /api/skills/import-local`.
+  - **A SKILL.md written for another agent reads now.** A file in the open
+    Agent Skills format — the one `npx skills add` installs into Claude Code,
+    Cursor, Codex and the rest — used to die on a single foreign frontmatter
+    key. A second, tolerant reading is tried only after the strict schema
+    rejected the file: only descriptive fields are adopted, by whitelist;
+    nothing that grants behaviour crosses over, and a foreign `state` can
+    only hold a skill back. Every dropped key is listed on the skill.
+    `docs/marketplace/portable-skills.md`.
+  - **Plugins: drop a folder holding `plugin.json`** and the preview shows the
+    catalog card it will produce, most importantly the authentication mode. A
+    local upload gets `source: "local"` with its own mark — never the
+    "community" badge and the review it implies.
+
+- **Plugin store: search across every field, filter by connection status, and
+  the whole card connects.** The search box matched the display name only —
+  "payments" found nothing; free text now matches name, description, category,
+  catalog id and OAuth client family, and a connection-status filter joins
+  the category menu. Clicking anywhere on a card starts the connect flow
+  (ONE lock, so two clicks can never race into two OAuth flows); a connected
+  card stays inert, because disconnecting remains a deliberate click.
+
+- **Agentic IDE: a split tree with hand-resizable terminals, branded title
+  bars, and a typed prompt bar that composes exactly like the spoken one.**
+  Splits stay local and dragged sizes persist
+  (`POST /api/agentic-ide/layout/weights`); "Even out" measures TERMINALS, so
+  one click lands every pane at the same width. The focused pane's call-sign
+  wears a filled brand plate (signal-yellow on dark panes, gold on light
+  ones), and all title-bar ink is keyed to the PANE's own ground, so a light
+  pane inside a dark app stays readable. Typing into the prompt bar sends one
+  request with compose on: Jarvis writes the briefed task with `@file`
+  references and types THAT into the pane, and the composer's progress beats
+  ride the event bus (`AgenticIdeComposeProgress`), so 10–30 s of real model
+  work no longer looks like a wedged spinner.
+
+- **Agent accounts show how much of each subscription is left.** Holding
+  several seats of the same coding CLI made the switch possible but left the
+  number the choice is made on invisible. Each row now carries its own meters
+  — the rolling 5-hour window, the weekly one, and any per-model weekly budget
+  the provider scopes separately; readings are live where a provider offers
+  them, else what the CLI last wrote to disk, and every block says which. No
+  token is ever returned or logged. `GET /api/agent-accounts/usage`.
+
+- **Your own skills actually fire now.** Fourteen days of live telemetry
+  showed zero model-initiated `run-skill` calls — the "my skill never fires"
+  complaint, measured. Naming a skill captures deterministically (an
+  imperative use-verb, the word "skill(s)" and an installed skill's spoken
+  name together fire it; a question about a skill is vetoed); the relevance
+  layer leaves shadow mode (`[skills].relevance_shadow` defaults to `false`);
+  the model sees EVERY active skill (cap 48 instead of 20, user-authored
+  first); a clear NARROW match carries the skill's full instructions inline,
+  so a fast router model does not turn a hint into a tool round trip.
+
 - **Create a skill by voice — and it is a real skill, not your sentence in a
-  template.** "Erstell mir einen neuen Skill: Morgenroutine, jeden Morgen um 6
+  template.** "Erstell mir einen neuen Skill: Morgenroutine, jeden Morgen um 6 <!-- i18n-allow: quoted voice request -->
   Uhr E-Mails, Tickets und Kalender vorlesen und dann ein 80er-Klassiker auf <!-- i18n-allow: quoted voice request -->
   YouTube Music" now ends with a written skill: the assistant itself authors
   the whole card — name, the spoken phrase that starts it, a schedule trigger
   (`0 6 * * *`) when you named a time, numbered steps that each name the
-  connector actually attached right now (mail, calendar, tickets, music …) and
-  a spoken answer format — and files it as a draft you switch on in the Skills
-  view. New router tool `create-skill` (one bounded call, never a background
-  worker), the same author behind `POST /api/skills/creator/author` and the new
+  connector actually attached right now, and a spoken answer format — and
+  files it as a draft you switch on in the Skills view. New router tool
+  `create-skill` (one bounded call, never a background worker), the same
+  author behind `POST /api/skills/creator/author` and the new
   `jarvis skills create "<what it should do>" [--name] [--trigger] [--schedule]`.
-  - The author is a provider LADDER, not one model: your active provider first,
-    then the pinned Tool Model, then the API quality tier, then the frontier
-    chain — a rung without a key or that times out is crossed, and if nothing
-    can author, the assistant says so and writes nothing (a template with the
-    request pasted in is never committed unreviewed).
-  - The UI's skill-creator dialog and `jarvis skills draft` see the same live
-    tool inventory now, so their drafts name real connectors too; `draft` gained
-    `--trigger`, `--schedule`, `--language`.
-- **Skills by voice, the rest of the lifecycle:** "welche Skills habe ich",
-  "aktiviere den Skill Morgenroutine", "deaktiviere den Spotify-Skill", "lösch <!-- i18n-allow: quoted voice requests -->
-  den Skill Abendroutine" are first-class app commands now (`skills-list` over
-  a new lean `GET /api/skills/brief`, `skill-enable`, `skill-disable`,
-  `skill-delete` — the last one asks first). Enabling the draft the assistant
-  just wrote is one sentence away, and it happens only when you ask.
-- **The assistant knows its own CLI.** The `cli_jarvisctl` tool now carries the
-  complete `jarvisctl` command tree with argument hints, parity-tested against
-  the real CLI — no more turns spent reading `--help` before a `skills`,
-  `workflows`, `modes`, `tasks`, `wiki` or `board` command.
+  The author is a provider LADDER, not one model: your active provider first,
+  then the pinned Tool Model, then the API quality tier, then the frontier
+  chain — and if nothing can author, the assistant says so and writes nothing.
+  The UI's skill-creator dialog and `jarvis skills draft` see the same live
+  tool inventory; `draft` gained `--trigger`, `--schedule`, `--language`.
+  - **The rest of the lifecycle by voice:** "welche Skills habe ich", <!-- i18n-allow: quoted voice requests -->
+    "aktiviere den Skill Morgenroutine", "deaktiviere den Spotify-Skill", "lösch <!-- i18n-allow: quoted voice requests -->
+    den Skill Abendroutine" are first-class app commands now (`skills-list` <!-- i18n-allow: quoted voice requests -->
+    over a new lean `GET /api/skills/brief`, `skill-enable`, `skill-disable`,
+    `skill-delete` — the last one asks first). Enabling the draft the assistant
+    just wrote is one sentence away, and it happens only when you ask.
+- **The assistant knows its own CLI.** The `cli_jarvisctl` tool now carries
+  the complete `jarvisctl` command tree with argument hints, parity-tested
+  against the real CLI — no more turns spent reading `--help`.
+
+- **The memory map is a solar system that turns around YOUR page.** The Wiki
+  section's 3D map used to turn as one rigid body and read as a flat disc.
+  The hub is the sun and it is your own entity page
+  (`[memory.wiki.session_rollup].user_entity_slug`); pages sit on soft shells
+  by hop count, each turning at its own Kepler speed; the camera looks THROUGH
+  the network. Every wiki write hands each page its previous place, so the
+  network no longer explodes and re-settles on each change;
+  `prefers-reduced-motion` gets the still layout.
+
+- **Run visualization draws a run as an n8n-style workflow.** Every card
+  carries a category — trigger, reasoning, command, file, search, web,
+  integration, agent, result, deliverable — with its own glyph and per-theme
+  hue; parallel workers branch into lanes that merge at the result.
+  `?run=<slug>` deep-links a detached window to the run it talks about.
+
+- **A plainly heavy request delegates without a magic word.** Background work
+  could only start on a delegation word or a confirmed offer, so "Build me a
+  Flask app with a login and a start page" produced an inline answer — never
+  work. A second route in the spawn gate now runs beside the vocabulary one:
+  the turn must read as a request, name a deliverable, carry no small-scope
+  word, and clear a scope threshold — AND the model must have chosen the tool
+  itself. `[brain.routing].force_spawn_mode` gains `balanced` between `strict`
+  and `permissive` and ships as the default; "build me a website" stays
+  inline, add Flask and a start page and it goes.
+
+- **Background work reaches the user.** The Conductor scheduler had been
+  running from every boot and writing every result into its own database
+  without a line to the bus, the voice or the notifications. Its Runner now
+  emits structured facts and the app decides what is said and in which
+  language. News means a state change and nothing else: a job that starts
+  failing, one that recovers, a first-ever failure; the 288th healthy run is
+  silence. The morning briefing is on the clock on a fresh install and follows
+  the configured output language instead of hardcoded German.
+
 - **Two plain wallpapers: black and white.** The Wallpaper section now opens
   with four pictures that ship inside the app — the night original, its
   daylight twin, pure black and pure white — under two chips, "Original" and
   "Plain". Black is a dark wallpaper, white a light one, so adopting either
-  switches the mode along with the ground like every other tile; "Default"
-  still returns to the original of the mode you are in. The plain grounds are
-  drawn, not downloaded — no file, no request, present on a machine with no
-  library, no uploads and no backend.
+  switches the mode along with the ground; "Default" still returns to the
+  original of the mode you are in. The plain grounds are drawn, not
+  downloaded — present on a machine with no library and no backend.
+
+### Changed
+
+- **The router prompt shrank from 27.5k to 3k characters, and it now says
+  "do Y" instead of "never X".** It made up 48 % of the system prompt on every
+  turn and carried 143 prohibition markers against almost no positive
+  instruction — the classic recipe for a model that answers instead of acting.
+  Gone: rules already enforced in code, rules the persona already owns, and
+  four contradictions resolved in favour of the acting side; kept verbatim:
+  the decision table, the `spawn_worker` argument format, and every dated
+  live-failure rule. The prompt also no longer orders silence — an empty
+  reply reaches TTS as nothing, so a spoken command looked ignored.
+- **Real questions go to the capable model.** A keyword list decided the model
+  tier: fifteen of sixteen substantive requests took the cheap model ("list
+  the tradeoffs between …" matched a bare "list"). The capable model is the
+  default now and no keyword can demote; only a whole-utterance greeting,
+  thanks, farewell or clock question and a verb-first command of at most six
+  words stay fast — where both tiers answer identically.
+- **The model is told which tools it actually has.** The prompt rendered 25
+  names from a static seed list under "complete list — no others exist";
+  against a real surface of 84 attached tools not one was a callable name —
+  one reason it said "I don't have a tool for that" while the tool sat in its
+  surface. The block is now rendered from the live surface, and the delegated
+  voice budget grows from 6 rounds / 20 s to 12 / 45 s.
+- **Agentic IDE: the brief writer answers soonest, and a readback that names
+  the wrong pane is caught and recorded.** A spoken "T2, do a deep dive on …"
+  reached the pane 26 s after the sentence ended, 19 s of it the coding CLI's
+  own process start. Under `auto` the order is now Tool Model → API tier →
+  coding CLI (~5 s warm); a hedge that dies is replaced by the next rung
+  instead of a 90 s fallback (BUG-145). The composer no longer spends 10–30 s
+  of reasoning on a spec the receiving agent opens anyway: thinking is off,
+  the brief is lean, and a terminal brief is written in 1–5 s. Separately, twice the live model
+  reported the pane the USER asked about instead of the one the trusted result
+  opened; a mismatch is now published as a recoverable
+  `readback_identifier_swap`. Observation-only for now: how often it would
+  fire is not yet measured.
+- **Gemini worker runs are recorded as structured streams.** The Gemini CLI
+  worker ran in text mode, so the Critic graded blind and the Visualization
+  drew every Gemini run as bare Request → Result. It now uses stream-json.
+- **The marketplace storefront lists only registry-published entries.** Until
+  2026-08-16 it listed all 21 built-in connectors as store entries under an
+  "Official" tick — and none was installable. The rule is in the contract now
+  (`docs/agent-contract.md` §3) and binds app, registry and storefront alike:
+  a listing is a registry-published entry with an Agent Plugins 1.0.0
+  manifest; built-ins belong in the "built in" wall and reach the store only
+  through a registry PR like anyone else's; "Official" names an author, never
+  a review — every entry keeps its "Not human-reviewed" mark, ours included.
+- **Provider & mode parity is a binding rule of the contract.** Every feature
+  — and every plan before it — targets the full provider × mode × OS matrix
+  from the first sentence: every Brain/Tool-Model family incl. local, every
+  realtime transport, every STT/TTS/Vision/Wake provider, realtime engine AND
+  classic pipeline, chat, channels, CLI. A provider-specific mechanism is one
+  declared capability; the rest get the generic path, an emulation, or honest
+  degradation (`docs/agent-contract.md` §3).
 
 ### Fixed
 
+- **Windows: the app is findable again — Start-Menu entry, Desktop shortcut,
+  and a launcher that leaves the Store Python's container (BUG-138).** The
+  Start-Menu shortcut pointed at `pythonw.exe`, and Windows never lists a
+  shortcut whose target is a generic host as an app — it now points at a
+  branded `PersonalJarvis.exe` inside the venv. A Store Python runs inside an
+  MSIX container, so every write to `%APPDATA%` was diverted into a private
+  per-package tree while the shell saw an empty folder — the launcher is now
+  published out of the container through a helper with no package identity.
+  A Desktop shortcut is installed, repaired and removed alongside the
+  Start-Menu entry, and only a real window run claims the shortcut. Same
+  defect shape on Linux (`update-desktop-database`) and macOS (`lsregister`),
+  fixed in the same change (`docs/os-parity.md`).
+- **A start that cannot happen now says so, on every OS — and bare `jarvis`
+  opens the desktop app it always promised.** Under `pythonw`, a macOS `.app`
+  or a Linux `.desktop`, a boot-killing `ModuleNotFoundError` went nowhere.
+  The one import that decides it (pywebview) is checked right after argument
+  parsing (not in `--headless`), logged, and shown in a native dialog when
+  stderr is the null device — a message box on Windows, `osascript` on macOS,
+  `zenity` or `kdialog` on Linux. Separately, `jarvis` with no arguments ran
+  a tray icon with no backend and no window, blocking forever; it now uses
+  the same launcher as `run.bat`, and the tray loop survives behind `--tray`.
+- **One spoken order stays one turn — even past a thinking pause, even a long
+  one.** A realtime provider commits the turn on ITS server VAD; live
+  2026-08-13, ONE order was chopped into three turns at ordinary hesitation
+  pauses and every fragment dispatched an executor — the same coding pane was
+  briefed twice with a quarter of the sentence (BUG-131, BUG-137). The
+  microphone is now the evidence: voiced input frames stamp a local "the user
+  is talking" state, never consulted while Jarvis speaks. A boundary that
+  lands mid-voice appends to the turn instead of splitting it; a delegate
+  holds its dispatch until the mic goes quiet; a background result from an
+  ALREADY ENDED call is never injected into a sentence. No added latency on
+  an ordinary utterance. New session knob `end_of_speech_sensitivity`
+  (default `low`) asks the provider to be patient too.
+- **A cough no longer ends the answer, and the realtime role stops flipping.**
+  Every interrupted edge cancelled the running answer — and Gemini reports
+  background noise the same way, so a cough mid-answer left half a statement.
+  The final input transcript now does the actual cut, because a real barge-in
+  produces words and a cough does not (a settle backstop commits after a
+  second of silence). The tool directive is one standing role plus one short
+  per-turn line instead of three full-text versions per turn. Stated, not
+  fixed: Gemini's `start_of_speech_sensitivity` is still unconfigured.
+- **A delegate reply and a readback are each spoken once (BUG-143, BUG-148),
+  and Vertex Live gets its emergency voice.** On Gemini Live one Jarvis turn
+  carried two turn-ending inputs on the server and both were answered back to
+  back ("Ich habe work geöffnet: T eins." and then "…: T1."). The session <!-- i18n-allow: quoted voice output -->
+  cannot cancel that second generation, so it refuses to play it: a bounded
+  guard discards a generation that begins with no open turn, no new
+  transcript, no local voice and no injection. The guard is armed after the
+  desktop's speaker queue has drained — before, a long readback was spoken
+  twice and three grounded answers in a row were then never heard. And
+  `vertex-live` now maps to Vertex TTS for the no-audio fallback, where the
+  fallback used to stay text-only.
+- **Realtime: "Let me check that…" is no longer cancelled mid-sentence.** The
+  unbacked-promise detector ran on every streaming delta, and its "fewer than
+  24 characters follow the commitment" test is true by construction on a
+  growing prefix. The judgement now happens at `turn_complete`, with a
+  bounded backstop after 0.35 s of provider silence. Cost: an answer opening
+  with a commitment is held for two or three deltas (roughly 100–500 ms).
+- **Gemini Live: per-turn directives reach the model instead of being thrown
+  away.** `update_session` discarded every per-turn instruction — the turn
+  directive, the language pin after a switch — while behaving as if it had
+  been delivered, so the model answered from a frozen prompt. Changed
+  directives now travel as a small out-of-band text turn (the channel BUG-104
+  established), delta only, on an open user turn; a prompted retry speaks
+  instead of staying silent until the 20 s stall watchdog.
+- **Vertex: a Google Cloud project boots as configured, a Live session opens
+  in about a second instead of six to twelve, chat and Live get different
+  regions, and the key field saves (BUG-139..141).** The pre-boot key check
+  dead-listed `vertex` on every boot ("no key") because the project path
+  stores no key — Application Default Credentials sign; the keyless rescue
+  now consults the same credential-probe table every card uses. Credentials
+  and the TLS trust store are resolved once per process instead of inside
+  every Live handshake — session open 5.7–12.2 s → 1.1–1.5 s — and the Live
+  adapter declares the 20 s handshake budget it needs. Measured live, `global`
+  opens NO Live session while named regions lag a generation on chat: new
+  `[google].vertex_realtime_location`; only a `global` `vertex_location`
+  falls back to a named region, with a warning, because moving where audio is
+  processed is a data-residency decision. On the cards, "Unknown secret key:
+  realtime_vertex_api_key" — the Vertex key slots existed everywhere a
+  credential is READ and nowhere it is WRITTEN; and the key-format hint no
+  longer calls an `AIza` key a "Google AI Studio key" — the label is
+  endpoint-neutral, and a correctly pasted Vertex key gets its green
+  confirmation instead of silence.
+- **"Look here, close that window" now does both — the tool surface is
+  narrowed, not emptied.** Three gates removed almost everything the model
+  could act with: a smalltalk turn kept one tool, a screen-image turn got an
+  empty dict, and any turn whose verb missed a regex lost computer_use, both
+  spawn tools and all five write tools — which is why "play music" had no
+  vehicle. Each gate now hides a specific tool class on positive evidence
+  (screen turns still cannot start a background agent from injected on-screen
+  text); an image turn goes from 0 tools to 5. German separable verbs count
+  as operations now: "Mach das Fenster zu" put its particle at the end and <!-- i18n-allow: quoted voice request -->
+  registered as a pure look.
+- **A refusal checks the tools actually attached, not just the capability
+  registry.** The evidence gate, the unsupported-intent check and the
+  local-action gate consulted the registry alone — a cache that lags reality
+  — so a freshly connected plugin, CLI or MCP server was callable and
+  invisible at once: "I have no calendar access" while a calendar tool sat in
+  the tool surface. All three now consult the live tool surface as the last
+  step before speaking; coverage is decided on registered tool NAMES, and a
+  Telegram tool does not answer a WhatsApp request.
+- **Three guards no longer block on everyday German words, and a question
+  opener no longer cancels the command behind it.** A turn opening with
+  "warum" or "wie" blocked every side-effect tool, so "Warum ist Spotify <!-- i18n-allow: quoted voice request -->
+  nicht offen, mach es auf" was guaranteed to do nothing; the guard stands <!-- i18n-allow: quoted voice request -->
+  down when a real imperative follows. The meta-debug keyword list held
+  "Fehler", "Log", "Provider", "Bug" and "Phrase" and ended the turn with a <!-- i18n-allow: quoted voice request -->
+  canned line even after another tool had run; those words count only
+  alongside a reference to the assistant itself. A research verb blocked
+  every `cli_*` and MCP tool, so a question about your own cloud costs could
+  not read your own data; it stands down on a true possessive.
+- **A promise no longer swallows the answer it frames.** An answer that opened
+  with "Ich schaue kurz." and closed with "I'll tell you when that changes" <!-- i18n-allow: quoted voice output -->
+  matched the commitment-and-defer check on both ends, and everything between
+  them — the actual answer — was replaced by a canned phrase. The text is
+  split into clauses and each is classified by structure, the same in German,
+  English and Spanish: with substance present the promise clauses are
+  stripped and the answer kept. Two siblings: a streamed answer opening with
+  "[" was dropped whole (a reply starting with a markdown link was lost); and
+  the unverified-answer backstop deleted correct answers — it now replaces
+  only a concrete claim the model could not have known.
+- **A tool call the model wrote inside prose runs, and its envelope is
+  stripped whole.** The recovery path required the ENTIRE response to be
+  valid JSON, so a model that wrote "Ich öffne Spotify." in front of its <!-- i18n-allow: quoted voice output -->
+  tool call executed nothing. Envelopes are found by scanning for balanced
+  braces; four gates still fail closed (an explicit envelope shape, an odd
+  fence count means truncated, a quote against the envelope means quoted,
+  short prose free of example vocabulary). No bare "}" is spoken.
+- **Six voice filters no longer destroy correct answers, and a scrub can no
+  longer speak an error mid-answer.** `scrub_for_voice` is the last thing that
+  touches the model's words, and six of its patterns ate the answer: a single
+  shell token replaced the WHOLE text with the generic error phrase (every
+  PowerShell how-to came out as an error); the narration stripper left
+  nothing; the tool-args pattern deleted up to 400 characters after the words
+  "action is"; the fn-call pattern matched ANY word followed by parentheses;
+  the jargon list deleted "Provider" and "MCP"; every URL was deleted. Each
+  keeps its protection with a narrower match. The streaming path filtered per
+  sentence, so a short sentence that lost its only noun was spoken as an error
+  inside a healthy answer — it is dropped now, and the fallback is spoken
+  exactly once, only when the whole turn is empty. The sentence splitter no
+  longer breaks "Am 1. Januar" into "Am eins." and "Januar", nor "z. B.". <!-- i18n-allow: quoted voice output -->
+- **Dates, versions and IP addresses are no longer read as one giant number.**
+  The number speller stripped the thousands separator before spelling, and in
+  German and Spanish that separator is the dot, so "17.08.2026" came out as
+  seventeen million and change and "Python 3.11" as three hundred eleven — on
+  every voice turn. Dotted tokens are classified first (date, IPv4, version,
+  thousands/decimal): dates are spoken as dates in each language, versions and
+  addresses group by group. English dates reached TTS as raw digits and were
+  never spelled at all; fixed in passing.
+- **One language resolver decides the turn's language, as the contract says.**
+  Three layers re-derived it with their own German-or-English guess, and each
+  lost user-facing output: the ack generator scored a short German line as
+  English and DROPPED it; the evidence gate refused in a sniffed language and
+  knew no Spanish; the Cartesia and Inworld voices picked German on three bare
+  articles. Now the ack asks the canonical validator, the brain passes the
+  resolved language to the gate, the voice plugins take the caller's language
+  code and warn instead of guessing, and the turn resolves its language once.
+- **No more waiting a minute for an approval nobody can give.** An ask-tier
+  tool blocked for sixty seconds on a confirmation and counted the silence as
+  a refusal; only the voice paths ever passed the flag that lets a human
+  answer, so the CLI, the REST API, the chat surface and every unattended
+  runner walked into that stall and came out denied. A call now declares
+  which approval channel it actually has, in the config snapshot the surface
+  builds in code — never in the arguments the model produces. Desktop chat
+  uses the two-turn confirmation the voice path already had; an unattended
+  runner returns immediately with "approval was impossible", not "the tool
+  was refused". Timeout and denial are distinct outcomes now.
+- **Scheduled workflows can call tools and drive the desktop.** The workflow
+  runner was built with no tool registry and no harness manager attached, so
+  every `harness_dispatch` or `tool_call` step raised "No HarnessManager
+  available" by construction. Tools now arrive through a live view onto the
+  brain. Known and deliberately left: an ask-tier tool in an unattended cron
+  workflow blocks on approval and times out honestly — silent auto-approval is
+  a safety decision, not a wiring fix.
+- **Background work that dies says so out loud, and a finished mission never
+  goes unannounced.** `spawn_worker` created the mission, found no
+  Kontrollierer and returned after a bare log line (the mission stayed
+  PENDING forever); a failed cron trigger, a crashed scheduler tick and a
+  failed workflow step were log-only. All announce through the readback path
+  scheduled tasks already use, so "exit 1" becomes a plain sentence; one
+  shared `FailureAnnouncer` speaks the first failure at once and keeps a
+  repeat silent for an hour. A mission whose summary did not survive the voice
+  filter used to fall silent; the readback retries with the summary-less
+  phrase.
+- **Computer use: no acknowledgment for a screen action the machine cannot
+  run, the 120 s mission guillotine is lifted, a mission may wait for a slow
+  screen, and the queue wait is no longer charged to its budget.** The
+  deterministic fast path spoke a commitment without checking that
+  computer-use is wired at all; it now runs the preflight before the
+  acknowledgment and refuses honestly with a `cu_not_wired` phrase in all
+  three locales. A desktop mission was cut off after a hardcoded 120 seconds
+  while the step budget allowed 100 steps; the ceiling is
+  `[computer_use].mission_timeout_s` now, default 600. Waiting for a page or
+  an installer looked exactly like being stuck, so the model re-clicked a
+  control that was already working — which IS what trips the dead-end guard;
+  the model is now told that waiting is work, bounded (six consecutive waits
+  with no visible change, two minutes per mission). A mission queued behind an
+  active one used to burn its whole budget on the desktop lock; the work
+  clock now starts when the lock is actually held.
+- **Agentic IDE: fleet briefs by voice land on the panes you named in the size
+  you said, hanging up ends a pane's brief, the folder step reads like `cd`,
+  and panes are always shown.**
+  - Six deterministic repairs to fleet briefs, each from a live 2026-08-12/13
+    call: "prompt the five claudes to X, the two codexes to Y" yields a per-CLI
+    task map instead of every pane receiving the whole enumeration (BUG-132);
+    counts in the TASK half of a fleet request never add panes — "open two
+    terminals and the two should hunt bugs, one takes macOS and one takes
+    Linux" opened FOUR billed panes for a spoken "two" (BUG-134); a spoken
+    self-correction no longer opens the RETRACTED fleet (BUG-130); a garbled
+    "Claudes" earns the "did you mean Claude Code?" question instead of two
+    silently inherited panes.
+  - Composing a brief takes 16–30 s while a delegated voice turn is
+    force-answered after 20 s, so one order produced four deliveries and a
+    pane typed into 20 s after the user had hung up (BUG-136). Voice teardown
+    abandons briefs still being written; REST and CLI keep the detach.
+  - A split follows the subscription switch unless its anchor's seat was
+    chosen deliberately: only a pinned seat propagates.
+  - The folder step (BUG-144): a typed "cd project" went through verbatim to a
+    "Not a folder" review step; a leading `cd` and quotes are dropped, a
+    relative path resolves against the folder on screen, and a typed path
+    becomes the selection only after the backend confirmed it is a folder.
+    "Browse" opened BEHIND the maximised app; it opens in front now. A dropped
+    folder used to be searched for by NAME; inside the desktop shell the host
+    now reports the real path (WebView2 verified; `docs/os-parity.md` P-34,
+    macOS/Linux pending).
+  - Panes are always shown, and the wizard advises from ten terminals instead
+    of asking (BUG-146). Six panes on an ordinary window measured 56 columns
+    each and every one was covered by a "needs about 60 columns" card; both
+    that card and the wizard's block were built against a repaint bug
+    measured at ~13 columns but fired at three to four times that width. Both
+    are gone; the terminal is exactly as wide as its tile, and the thresholds
+    (10 terminals, 40 columns) are one muted sentence of advice. Trade-off
+    stated: the ~13-column blank pane is announced beforehand, not prevented.
+- **The mode you picked is read back, and coding mode stays scoped to the
+  Agentic IDE.** The configured-slug reader imported a `get_config` that does
+  not exist and a blanket `except` turned the ImportError into "the default
+  mode", so every switch was written to `jarvis.toml` and never read: the
+  assistant kept answering as Assistant. It reads through `load_config()` now,
+  and a built-in overlaid by your own file is marked `edited`. Opening the IDE
+  used to switch coding mode on and nothing switched it off, so the assistant
+  stayed in coding mode in Chats and by voice until restart; leaving the
+  section hands the mode back — only a mode this SCREEN switched on — through
+  an in-memory override the registry derives from its own state at every
+  transition, so it can never overwrite the mode you chose.
 - **A request to CREATE a skill is no longer captured by a skill it merely
-  mentions.** Voice session 2026-08-18 17:51: "… einen neuen Skill erstellst …
-  ein Lied mit YouTube Music …" was taken by the YouTube Music skill because its <!-- i18n-allow: quoted voice request -->
+  mentions.** Voice session 2026-08-18: "… einen neuen Skill erstellst … ein <!-- i18n-allow: quoted voice request -->
+  Lied mit YouTube Music …" was taken by the YouTube Music skill because its <!-- i18n-allow: quoted voice request -->
   brand trigger matched the words INSIDE the description, the model spent the
   whole tool budget reading `jarvisctl --help`, and the answer was "Das hat
   gerade nicht geklappt." A deterministic authoring resolver <!-- i18n-allow: quoted voice request -->
   (`jarvis/skills/authoring_request.py`) now decides "the user wants a NEW
   skill" before any brand trigger runs — in every spoken conjugation ("Skill
-  erstellst", "skill zu erstellen", "create a skill", "crea un skill") — and
+  erstellst", "skill zu erstellen", "create a skill", "crea un skill") — and <!-- i18n-allow: quoted voice requests -->
   keeps force-spawn and the evidence gate out of such a turn. The
   `skill-creator` builtin's own card is a short "call create-skill once" now;
   Anthropic's long guide moved to `references/anthropic-skill-creator.md`.
   The same rule now covers every word the product uses for "a skill" —
-  routine ("Morgenroutine"), automation, workflow, Ablauf — and lifecycle
-  requests: "deaktiviere den YouTube-Music-Skill" no longer RUNS the music
+  routine ("Morgenroutine"), automation, workflow, Ablauf — and lifecycle <!-- i18n-allow: quoted voice requests -->
+  requests: "deaktiviere den YouTube-Music-Skill" no longer RUNS the music <!-- i18n-allow: quoted voice request -->
   skill.
+- **The wake word stops firing on random words and no longer goes deaf
+  mid-sentence** (BUG-133). Four stacked causes in the Vosk keyword spotter:
+  the acoustic competition re-scored the whole 3 s ring instead of the
+  span-trimmed audio, a leading-isolation gate hard-rejected any wake with
+  speech shortly before it, the verify re-score pooled phrase words from
+  anywhere in the decode, and a stage-1 hit during backoff died behind a
+  stale candidate. New `scripts/vosk_wake_bench.py` replays synthesized de+en
+  voices through the real detector: false fires 10/48 → 0/48.
+- **Dictation's polish pass may no longer cut the verb out of a sentence.**
+  Measured on 68 live polished dictations, 33 had lost at least one word and
+  exactly one was ever rejected. Prompt v7 states the floor (a filler is a
+  SOUND; a verb, auxiliary, modal or negation is corrected in place, never
+  removed) and a new positional `lost_verb` drift guard enforces it.
+- **Push-to-talk heals itself when the key-up edge is lost.** A lost release
+  (focus change, UAC prompt, RDP reconnect) left the recording pill open for
+  the full 60 s max-hold while every later press was swallowed as key-repeat.
+  A press arriving past the repeat grace window is treated as the release
+  that never arrived and submits what was held.
+- **Marketplace security: a community plugin no longer inherits your keys, an
+  https-only download stays https-only past a redirect, launcher arguments
+  cannot walk around the allowlist, and a skill import refuses path-shaped
+  names.** A connected stdio plugin was started with a copy of the whole
+  environment — where `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`
+  and every other exported credential live; an untrusted server now starts
+  with an allowlisted environment plus its own declared token (not covered,
+  and written into the trust model: the delegated worker path hands the
+  server definition to the `claude` CLI). The https guard now travels with
+  the request past every redirect. The stdio rules checked exactly the first
+  word of `npx`, `uvx` or `docker`, while each has options that hand the
+  command line back to the publisher; arguments are now an allowlist per
+  launcher and the package must be a pinned name. And a skill's frontmatter
+  `name` becomes its install folder and was only checked for non-emptiness,
+  so `../../evil` was an arbitrary-file-write primitive; both import routes
+  enforce the slug charset and containment.
+- **Models the static price table never listed are priced, and the Live
+  socket's real model is metered (BUG-142).** The deck's "API this session"
+  card showed 272k tokens as $0: `gemini-3.7-flash` and the Vertex Live
+  default were absent from the table, and the realtime session reported an
+  empty model id whenever the card pinned none. Rates now go static table →
+  cached provider feed (OpenRouter pricing rides on `ModelInfo.pricing`) → $0
+  with a warning; realtime sessions expose the id they really connected. The
+  table gains `gemini-3.7-flash` and `gemini-live-2.5-flash-native-audio` and
+  corrects `gemini-2.5-flash`/`-lite` and `gemini-3.6-flash` to the vendor's
+  list price (verified 2026-08-18).
+- **The desktop keeps its browser profile across restarts, and light mode has
+  an original wallpaper of its own.** pywebview starts in private mode by
+  default: the WebView2 profile lived in a fresh temp folder per launch, and
+  everything the frontend keeps in localStorage died with the process — the
+  chosen wallpaper, the deck/classic surface, pane sizes, the theme cache —
+  which is how a restart landed on light chrome over dark artwork. The
+  profile now lives in `data/webview` per checkout (`docs/os-parity.md` P-35:
+  only WebView2 has been run live). And a mode WITHOUT a pick fell back to
+  the one bundled night scene, so a switch to light put light chrome on a
+  scene where nothing could be read; each mode now falls back to the picture
+  authored for it.
+- **Deck: the signal colours read on paper, the log shows what the live
+  session heard, and the crew roster stacks when narrow.** The deck was built
+  on the dark stage only — tints that glow on black and vanish on ivory; every
+  tint is a pair now. The realtime session never publishes `TranscriptFinal` —
+  what you said arrives as `TranscriptionUpdate` flagged final — so a live
+  conversation showed every SAY, THINK and DONE line and not one word of your
+  own; the log and the word counters read both events.
+- **The background music player: no per-turn config parse, an honest request
+  deadline, a player that always dies.** The music tools read the preferred
+  service from a briefly cached read instead of parsing `jarvis.toml` on every
+  router turn; the player client's request wait uses one fixed monotonic
+  deadline; the host tears its window down in a `finally`, so a read fault
+  can no longer leave a ghost player, and the free-form eval command is gone
+  from the protocol.
 
-- The key-format hint no longer calls an `AIza` key a "Google AI Studio key".
-  The same shape is issued for Google Cloud, so the label is endpoint-neutral
-  now and the note says which card decides where the key is sent. A correctly
-  pasted Vertex key also gets its green confirmation instead of silence.
+### Removed
+
+- **The typed composer left the mission deck.** You speak on the deck, you
+  type on the classic surface; the message bar duplicated the chat and cost
+  the cards a row.
+- **The approval preview in the Agentic IDE's typed prompt bar is retired.**
+  Its fallbacks delivered raw typed text into a pane, which is what the
+  composing bar exists to rule out; the composed brief is typed directly.
+- **The plugin store's "coming soon" strip is gone** — every name on it has a
+  real catalog entry.
+- **Privacy: two PII scrub manifests are no longer published.** The scrub
+  pattern files were tracked in the public repo, so the files defining what
+  must never be public were themselves an inventory of it. They are untracked
+  and gitignored; the CI docs scan falls back to a generic manifest.
 
 ---
 
