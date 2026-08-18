@@ -1636,6 +1636,35 @@
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",
     "languages_group_title": "Idiomas",
+    "music_group_title": "Música",
+    "music": {
+      "service_section": "Servicio preferido",
+      "service_hint": "A dónde va una petición de música cuando no nombras un servicio. Nombrar uno («en Spotify», «en YouTube Music») siempre gana.",
+      "service_labels": {
+        "auto": "Automático",
+        "spotify": "Spotify",
+        "youtube_music": "YouTube Music"
+      },
+      "service_options": {
+        "auto": "El único servicio conectado; con ambos conectados, Spotify.",
+        "spotify": "Las peticiones sin nombre de servicio van a Spotify.",
+        "youtube_music": "Las peticiones sin nombre de servicio van a YouTube Music."
+      },
+      "connected": "conectado",
+      "not_connected": "no conectado — conéctalo en Plugins",
+      "playback_section": "Dónde suena YouTube Music",
+      "playback_hint": "El reproductor en segundo plano es una ventana propia que arranca minimizada: sin pestaña del navegador, sin robar el foco y con volumen por voz. Inicia sesión ahí una vez para usar tu Premium.",
+      "playback_labels": {
+        "background": "Reproductor en segundo plano",
+        "browser": "Navegador"
+      },
+      "playback_options": {
+        "background": "Una ventana de reproductor minimizada; «abre YouTube Music» la trae al frente.",
+        "browser": "Abre cada vez una pestaña de YouTube Music en el navegador."
+      },
+      "player_unavailable": "no disponible en este equipo (sin pantalla o sin extras de escritorio); se usa el navegador",
+      "saved_toast": "Ajustes de música guardados."
+    },
     "team_proxy": {
       "title": "Modo equipo (proxy de claves compartido)",
       "hint": "Enruta los proveedores a través de un proxy de claves compartido con un token por usuario, en lugar de guardar las claves reales en este equipo. Déjalo desactivado para la configuración local normal.",

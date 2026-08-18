@@ -1636,6 +1636,35 @@
     "subtitle": "Wake-Word, Hotkeys, Safety-Policies, Autostart.",
     "overlay_taskbar_group_title": "Leiste & Overlay",
     "languages_group_title": "Sprachen",
+    "music_group_title": "Musik",
+    "music": {
+      "service_section": "Bevorzugter Dienst",
+      "service_hint": "Wohin eine Musik-Anfrage geht, wenn du keinen Dienst nennst. Ein genannter Dienst („auf Spotify“, „auf YouTube Music“) gewinnt immer.",
+      "service_labels": {
+        "auto": "Automatisch",
+        "spotify": "Spotify",
+        "youtube_music": "YouTube Music"
+      },
+      "service_options": {
+        "auto": "Der einzige verbundene Dienst; sind beide verbunden, Spotify.",
+        "spotify": "Musik-Anfragen ohne Dienstnamen gehen an Spotify.",
+        "youtube_music": "Musik-Anfragen ohne Dienstnamen gehen an YouTube Music."
+      },
+      "connected": "verbunden",
+      "not_connected": "nicht verbunden — unter Plugins verbinden",
+      "playback_section": "Wo YouTube Music spielt",
+      "playback_hint": "Der Hintergrund-Player ist ein eigenes kleines Fenster, das minimiert startet: kein Browser-Tab, kein Fokusklau, Lautstärke per Stimme. Dort einmal anmelden, um dein Premium zu nutzen.",
+      "playback_labels": {
+        "background": "Hintergrund-Player",
+        "browser": "Browser"
+      },
+      "playback_options": {
+        "background": "Ein minimiertes Player-Fenster; „öffne YouTube Music“ holt es nach vorn.",
+        "browser": "Öffnet jedes Mal einen YouTube-Music-Tab im Browser."
+      },
+      "player_unavailable": "auf diesem Rechner nicht verfügbar (kein Bildschirm oder keine Desktop-Extras); es wird der Browser benutzt",
+      "saved_toast": "Musik-Einstellungen gespeichert."
+    },
     "team_proxy": {
       "title": "Team-Modus (geteilter Schlüssel-Proxy)",
       "hint": "Provider über einen geteilten Schlüssel-Proxy mit persönlichem Token leiten, statt echte Anbieter-Schlüssel auf diesem Gerät zu speichern. Für das normale lokale Setup ausgeschaltet lassen.",

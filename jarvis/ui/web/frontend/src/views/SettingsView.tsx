@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
+import { MusicGroup } from "@/views/settings/MusicGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { PermissionsPanel } from "@/views/settings/PermissionsPanel";
 import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
@@ -120,6 +121,9 @@ export function SettingsView() {
         </SettingsGroupBoundary>
         <SettingsGroupBoundary group="audio-devices">
           <AudioDevicesGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="music">
+          <MusicGroup />
         </SettingsGroupBoundary>
         <SettingsGroupBoundary group="keybinds">
           <KeybindsPanel />

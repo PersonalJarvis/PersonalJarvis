@@ -110,7 +110,102 @@ class Opener:
         return self.ok
 
 
-def _tool(handler, media=None, opener=None, token=_FAKE_TOKEN, refresher=None):
+class FakePlayer:
+    """The background player as the tool sees it: a state machine over a page.
+
+    ``script`` lists the states ``state()`` answers in order (the last one
+    repeats), so a test can stage "consent page, then playing" or "paused
+    forever". Every command is recorded."""
+
+    def __init__(
+        self,
+        script: list[dict[str, Any]] | None = None,
+        *,
+        available: tuple[bool, str] = (True, ""),
+        running: bool = False,
+    ) -> None:
+        self.script = list(script or [])
+        self._available = available
+        self.running = running
+        self.calls: list[tuple[str, Any]] = []
+        self.loaded: list[str] = []
+        self.shown = 0
+        self.hidden = 0
+
+    def available(self) -> tuple[bool, str]:
+        return self._available
+
+    def is_running(self) -> bool:
+        return self.running
+
+    def load(self, url: str) -> bool:
+        self.loaded.append(url)
+        self.running = True
+        return True
+
+    def state(self) -> dict[str, Any]:
+        if not self.script:
+            return {}
+        if len(self.script) > 1:
+            return self.script.pop(0)
+        return dict(self.script[0])
+
+    def show(self) -> bool:
+        self.shown += 1
+        return True
+
+    def hide(self) -> bool:
+        self.hidden += 1
+        return True
+
+    def play(self) -> bool:
+        self.calls.append(("play", None))
+        return True
+
+    def pause(self) -> bool:
+        self.calls.append(("pause", None))
+        return True
+
+    def next(self) -> bool:
+        self.calls.append(("next", None))
+        return True
+
+    def previous(self) -> bool:
+        self.calls.append(("previous", None))
+        return True
+
+    def set_volume(self, level: int) -> bool:
+        self.calls.append(("volume", level))
+        return True
+
+
+def _page(title="Karma Police", artist="Radiohead", *, paused=False, position=3.0, **extra):
+    base = {
+        "url": "https://music.youtube.com/watch?v=vid123",
+        "title": title,
+        "artist": artist,
+        "album": "OK Computer",
+        "has_video": True,
+        "paused": paused,
+        "position": position,
+        "duration": 260.0,
+        "volume": 40,
+        "ready": True,
+        "consent": False,
+    }
+    base.update(extra)
+    return base
+
+
+def _tool(
+    handler,
+    media=None,
+    opener=None,
+    token=_FAKE_TOKEN,
+    refresher=None,
+    player=None,
+    playback="browser",
+):
     return YouTubeMusicRestTool(
         access_token_provider=lambda: token,
         transport=httpx.MockTransport(handler),
@@ -118,6 +213,9 @@ def _tool(handler, media=None, opener=None, token=_FAKE_TOKEN, refresher=None):
         media=media or FakeMedia(),
         opener=opener or Opener(),
         confirm_timeout_s=0.6,
+        player=player or FakePlayer(available=(False, "no player in this test")),
+        playback_mode=lambda: playback,
+        player_confirm_timeout_s=1.5,
     )
 
 
@@ -210,7 +308,9 @@ async def test_search_playlist_prefers_the_users_own_lists():
 
 
 async def test_not_connected_without_token():
-    tool = YouTubeMusicRestTool(access_token_provider=lambda: None, media=FakeMedia())
+    tool = YouTubeMusicRestTool(
+        access_token_provider=lambda: None, media=FakeMedia(), playback_mode=lambda: "browser"
+    )
     out = await tool.search(query="x")
     assert "not connected" in out["error"].lower()
 
@@ -439,6 +539,89 @@ async def test_playlist_tracks_lists_a_named_playlist():
     ]
 
 
+# -- background player ---------------------------------------------------------
+
+
+async def test_play_prefers_the_background_player_and_confirms_from_its_page():
+    player = FakePlayer([_page(position=0.0), _page(position=2.5)])
+    opener = Opener()
+    tool = _tool(_search_handler, opener=opener, player=player, playback="background")
+    out = await tool.play(query="karma police")
+    assert player.loaded == [song_url("vid123")]
+    assert opener.urls == []  # no browser tab
+    assert out["sink"] == "background_player" and out["playback_confirmed"] is True
+    assert out["now"]["track"] == "Karma Police" and out["now"]["source"] == "background_player"
+    assert out["now"]["volume_percent"] == 40
+
+
+async def test_play_shows_the_player_for_youtubes_cookie_choice():
+    player = FakePlayer([{"url": "https://consent.youtube.com/m?x", "consent": True}])
+    tool = _tool(_search_handler, player=player, playback="background")
+    out = await tool.play(query="karma police")
+    assert out["needs_attention"] == "consent" and player.shown == 1
+    assert "cookie choice" in out["note"]
+
+
+async def test_play_nudges_then_shows_the_player_when_it_stays_paused():
+    player = FakePlayer([_page(paused=True, position=0.0)])
+    tool = _tool(_search_handler, player=player, playback="background")
+    out = await tool.play(query="karma police")
+    assert ("play", None) in player.calls  # one programmatic nudge
+    assert out["playback_confirmed"] is False and out["needs_attention"] == "press_play"
+    assert player.shown == 1
+
+
+async def test_play_falls_back_to_the_browser_when_the_player_cannot_run():
+    player = FakePlayer(available=(False, "no display here"))
+    opener = Opener()
+    tool = _tool(_search_handler, opener=opener, player=player, playback="background")
+    out = await tool.play(query="karma police")
+    assert opener.urls == [song_url("vid123")]
+    assert out["sink"] == "browser" and out["fallback_reason"] == "no display here"
+
+
+async def test_browser_setting_never_touches_the_player():
+    player = FakePlayer([_page()])
+    opener = Opener()
+    tool = _tool(_search_handler, opener=opener, player=player, playback="browser")
+    out = await tool.play(query="karma police")
+    assert player.loaded == [] and opener.urls == [song_url("vid123")]
+    assert out["sink"] == "browser"
+
+
+async def test_controls_and_now_playing_go_to_the_running_player_first():
+    player = FakePlayer([_page()], running=True)
+    media = FakeMedia(now=_playing("Other", "Someone"))
+    tool = _tool(_search_handler, media=media, player=player, playback="background")
+    now = await tool.now_playing()
+    assert now["source"] == "background_player" and now["track"] == "Karma Police"
+    out = await tool.pause()
+    assert out["app"] == "the background player" and ("pause", None) in player.calls
+    assert media.calls == []  # the OS session was never asked
+    out = await tool.set_volume(volume_percent=55)
+    assert out["ok"] and ("volume", 55) in player.calls
+
+
+async def test_volume_without_the_player_is_an_honest_error():
+    out = await _tool(_search_handler, playback="background").set_volume(volume_percent=30)
+    assert "background player" in out["error"]
+
+
+async def test_open_shows_the_player_and_hide_minimizes_it():
+    player = FakePlayer([_page()])
+    tool = _tool(_search_handler, player=player, playback="background")
+    out = await tool.open_home()
+    assert out["shown"] is True and player.loaded == [HOME_URL] and player.shown == 1
+    out = await tool.hide_player()
+    assert out["hidden"] is True and player.hidden == 1
+
+
+async def test_open_in_browser_mode_opens_the_browser():
+    opener = Opener()
+    out = await _tool(_search_handler, opener=opener, playback="browser").open_home()
+    assert opener.urls == [HOME_URL] and out["sink"] == "browser"
+
+
 # -- auth + Google's refusals -------------------------------------------------
 
 
@@ -503,10 +686,15 @@ async def test_execute_explains_search_quota_api_disabled_and_scope():
 
 
 def test_risk_tiers_reads_safe_everything_else_monitor():
-    tool = YouTubeMusicRestTool(access_token_provider=lambda: None, media=FakeMedia())
+    tool = YouTubeMusicRestTool(
+        access_token_provider=lambda: None, media=FakeMedia(), playback_mode=lambda: "browser"
+    )
     for action in ("now_playing", "search", "list_playlists", "playlist_tracks", "liked_songs"):
         assert tool.risk_tier_for_args({"action": action}) == "safe"
-    for action in ("play", "pause", "next", "previous", "open", "like", "add_to_playlist"):
+    for action in (
+        "play", "pause", "next", "previous", "open", "like", "add_to_playlist",
+        "set_volume", "hide_player",
+    ):
         assert tool.risk_tier_for_args({"action": action}) == "monitor"
     assert tool.risk_tier_for_args({"action": "nuke"}) == "ask"
 

@@ -1471,6 +1471,28 @@ def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ducking", "enabled", bool(enabled))
 
 
+def set_preferred_music_service(service: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[music] preferred_service`` — which connector a music request
+    that names no service goes to (``auto`` | ``spotify`` | ``youtube_music``).
+
+    Validated by the caller against ``jarvis.core.music_constants.MUSIC_SERVICES``
+    (the Settings route is the layer that knows the accepted set); this only
+    writes. TOML-only by design: not in the drift-guard's reference snapshot,
+    so the drift-guard never reverts it.
+    """
+    _patch_table(path, "music", "preferred_service", service)
+
+
+def set_music_playback(mode: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[music] playback`` — where YouTube Music plays
+    (``background`` = the hidden in-app player, ``browser`` = the system browser).
+
+    Validated by the caller against ``MUSIC_PLAYBACK_MODES``; TOML-only, not
+    drift-guarded.
+    """
+    _patch_table(path, "music", "playback", mode)
+
+
 def set_sound_effects(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ui] sound_effects`` (the global earcon master switch).
 

@@ -38,7 +38,10 @@ still set it as an env var / credential-manager secret or edit
    read events across ALL your calendars, not just the primary one, so a lesson
    on a secondary "School" calendar isn't missed. See "Keeping it connected".)
 5. **Test users** → add your own Google address. In Testing mode only listed
-   users can authorize.
+   users can authorize — an unlisted account ends Connect on Google's
+   **"Access blocked: <app> has not completed the Google verification process
+   / Error 403: access_denied"** page. That page means exactly this missing
+   entry (or: publish the app, see "Keeping it connected").
 6. **Credentials → Create credentials → OAuth client ID** → Application type
    **Desktop app** → Create. Copy the **Client ID**
    (looks like `1234567890-abc….apps.googleusercontent.com`).

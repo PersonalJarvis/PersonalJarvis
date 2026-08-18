@@ -1736,6 +1736,65 @@ class DuckingConfig(BaseModel):
     macos_master_fallback: bool = False
 
 
+class MusicConfig(BaseModel):
+    """Music connectors — two services, one domain (2026-08-18).
+
+    ``preferred_service`` says which connector a music request that names no
+    service goes to when Spotify AND YouTube Music are connected; ``auto`` keeps
+    the pre-setting behaviour (the only connected one, else Spotify by catalog
+    order). ``playback`` says where YouTube Music plays: the hidden in-app
+    player window (``background`` — no browser tab, no focus steal, one window
+    that navigates) or the system browser (``browser``, also the fallback
+    wherever the player cannot run: no display, no pywebview backend). The
+    vocabulary lives in ``jarvis/core/music_constants.py`` (five-layer L0) and
+    the ``Literal``s below are asserted against it at import time.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    preferred_service: Literal["auto", "spotify", "youtube_music"] = "auto"
+    playback: Literal["background", "browser"] = "background"
+
+    @field_validator("preferred_service", mode="before")
+    @classmethod
+    def _sanitize_preferred_service(cls, v: object) -> object:
+        # A persisted unknown value (a renamed plugin, a typo from a hand edit)
+        # must not brick the config load — it falls back to "auto".
+        from jarvis.core.music_constants import MUSIC_SERVICE_AUTO, MUSIC_SERVICES
+
+        if isinstance(v, str) and v.strip().lower() in MUSIC_SERVICES:
+            return v.strip().lower()
+        return MUSIC_SERVICE_AUTO
+
+    @field_validator("playback", mode="before")
+    @classmethod
+    def _sanitize_playback(cls, v: object) -> object:
+        from jarvis.core.music_constants import (
+            MUSIC_PLAYBACK_BACKGROUND,
+            MUSIC_PLAYBACK_MODES,
+        )
+
+        if isinstance(v, str) and v.strip().lower() in MUSIC_PLAYBACK_MODES:
+            return v.strip().lower()
+        return MUSIC_PLAYBACK_BACKGROUND
+
+
+def _assert_music_literals_match_constants() -> None:
+    """Five-layer pattern (L3): the Literals on ``MusicConfig`` must spell
+    exactly the tuples in ``music_constants`` — a drift here would be a
+    Pydantic ``literal_error`` at load."""
+    from jarvis.core.music_constants import MUSIC_PLAYBACK_MODES, MUSIC_SERVICES
+
+    fields = MusicConfig.model_fields
+    if set(get_args(fields["preferred_service"].annotation)) != set(MUSIC_SERVICES):
+        raise RuntimeError("MusicConfig.preferred_service drifted from MUSIC_SERVICES")
+    if set(get_args(fields["playback"].annotation)) != set(MUSIC_PLAYBACK_MODES):
+        raise RuntimeError("MusicConfig.playback drifted from MUSIC_PLAYBACK_MODES")
+
+
+_assert_music_literals_match_constants()
+
+
 class AutostartConfig(BaseModel):
     """Cross-platform login autostart (the 7th cross-platform port).
 
@@ -3652,6 +3711,8 @@ class JarvisConfig(BaseModel):
     ui: UIConfig = Field(default_factory=UIConfig)
     # Audio ducking — "Mute music while dictating" (Taskbar section).
     ducking: DuckingConfig = Field(default_factory=DuckingConfig)
+    # Music connectors: preferred service + where YouTube Music plays.
+    music: MusicConfig = Field(default_factory=MusicConfig)
     # Cross-platform login autostart (Windows .lnk / macOS LaunchAgent / Linux
     # XDG .desktop). Default ON; headless host = graceful no-op.
     autostart: AutostartConfig = Field(default_factory=AutostartConfig)

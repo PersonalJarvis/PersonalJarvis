@@ -17,16 +17,23 @@ redesign and sit outside YouTube's terms, so this project does not ship one.
 
 | You say | What happens |
 |---|---|
-| "play Radiohead" · "play Karma Police" · "play the album OK Computer" · "play my running playlist" · "play my liked songs" | Jarvis finds it and opens it in **YouTube Music in your browser** — your own account, your Premium, your history. A song opens as its own radio, so music keeps coming. |
-| "pause" · "carry on" · "skip this" · "go back" | Sent to the browser through the system's media session — the same channel your keyboard's play/pause key uses. |
-| "what song is this?" | Read from that media session: track, artist, album, and which app it comes out of. |
+| "play Radiohead" · "play Karma Police" · "play the album OK Computer" · "play my running playlist" · "play my liked songs" | Jarvis finds it and starts it in **YouTube Music** — in the background player (default) or your browser — on your own account, with your Premium and history. A song opens as its own radio, so music keeps coming. |
+| "pause" · "carry on" · "skip this" · "go back" | Steers the background player directly; in browser mode it goes through the system's media session — the same channel your keyboard's play/pause key uses. |
+| "what song is this?" | Read from the player (or the media session): track, artist, album, and which app it comes out of. |
 | "like this song" · "add this to my running playlist" · "create a playlist called Late night" · "what is in my chill playlist?" | Written to your YouTube library through the official API. |
-| "turn it up" | **Not available.** YouTube exposes no volume control; use the system or app volume. |
+| "turn it up" · "volume 30" | Works in the background player (Jarvis drives YouTube Music's own volume slider). In browser mode YouTube exposes no volume control — use the system or app volume. |
 | "queue this next" | **Not available.** There is no queue API; Jarvis offers to play it now or add it to a playlist instead. |
+| "open YouTube Music" · "hide the player" | Brings the background player forward (login, cookie choice, the queue) or minimizes it again. |
 
-Playback happens **in YouTube Music, not in Jarvis** — exactly like the Spotify
-plugin, where the music comes out of Spotify. That is deliberate: it keeps your
-Premium (no ads), your recommendations and your history in your own account.
+Playback happens **in YouTube Music, not in Jarvis's own audio** — exactly
+like the Spotify plugin, where the music comes out of Spotify. By default it
+runs in a **background player**: a small window of its own that starts
+minimized (a taskbar entry, no browser tab, no focus steal) and simply loads
+the next song when you ask for one. Say "open YouTube Music" to bring it
+forward — that is where you log in once (for your Premium, no ads) and make
+YouTube's one-time cookie choice. Settings → Music can switch playback to the
+system browser instead, and the browser is also the automatic fallback where
+the player cannot run (no display, no desktop extras).
 
 ## Part A — the Google Cloud project (once)
 
@@ -38,7 +45,17 @@ project:
 2. **APIs & Services → OAuth consent screen → Scopes** → add
    `https://www.googleapis.com/auth/youtube` (it is a *sensitive* scope; for
    personal use in Testing mode no verification is needed).
-3. That is all — the OAuth client itself is the one you already have. Nothing
+3. **Test users.** While the OAuth app is in *Testing* mode, Google lets ONLY
+   the accounts you list as test users sign in. Open **Google Auth Platform →
+   Audience → Test users → Add users** and add your own Google address (the one
+   you will connect with). Without this, Connect ends on Google's page
+   **"Access blocked: <app> has not completed the Google verification process
+   / Error 403: access_denied"** — that is this missing entry, nothing else.
+   Alternatively **publish the app** (*Audience → Publish app*, In production):
+   then any account can sign in after clicking through Google's "unverified
+   app" warning (Advanced → continue), and the seven-day expiry below goes
+   away too.
+4. That is all — the OAuth client itself is the one you already have. Nothing
    to register: the loopback redirect works out of the box for a Google
    **Desktop app** client.
 
@@ -52,9 +69,22 @@ project:
 3. Your browser opens Google's approval page. Approve the **YouTube** permission.
 4. The tab reports `Connected.` and can be closed.
 
-## Part C — playback control on your machine
+## Part C — playback on your machine
 
-Reading "what is playing" and pause/skip use the OS media session:
+**Background player (default).** Music plays in Jarvis's own small player
+window, which needs a display and the desktop extras (pywebview — the same
+`[desktop]` extra the desktop app uses). It starts minimized and keeps playing
+minimized; "open YouTube Music" brings it forward. First run: YouTube shows its
+cookie choice once, and you can log in there once so playback uses your account
+and Premium — both are remembered in a profile of their own under
+`data/music_player/`. Pause, skip, "what is playing" and volume all go through
+that window directly, on every OS the window can open on. Where it cannot
+(headless, Linux without a GTK/Qt WebKit backend), Jarvis falls back to the
+browser and says why.
+
+**Browser mode** (Settings → Music → Where YouTube Music plays → Browser).
+Playing opens a YouTube Music tab; reading "what is playing" and pause/skip
+then use the OS media session:
 
 | OS | Out of the box | If not |
 |---|---|---|
@@ -84,14 +114,22 @@ truly gone.
   once — after that it starts on its own.
 - **A song is a video.** YouTube's top hit is sometimes the music video or a
   live version. Jarvis says what it actually started so you notice at once.
-- **Two tabs.** Each "play" opens a new YouTube Music tab; Jarvis pauses the
-  old one first, so only one plays. Close the extras whenever you like.
+- **Two tabs (browser mode only).** Each "play" opens a new YouTube Music tab;
+  Jarvis pauses the old one first, so only one plays. The background player has
+  no such pile-up — it navigates one window.
+- **Spotify and YouTube Music both connected?** A request that names a service
+  ("on Spotify", "on YouTube Music") goes there. One that names none goes to
+  the service chosen under **Settings → Music → Preferred service** — or, on
+  *Automatic*, to the only connected one (Spotify if both are).
 
 ## When something does not work
 
 | What you see | What it means |
 |---|---|
+| Google: "Access blocked: … has not completed the Google verification process — Error 403: access_denied" | Your account is not on the OAuth app's **Test users** list (Part A step 3), or publish the app. |
 | "The YouTube Data API v3 is not enabled" | Part A step 1 was skipped in the Cloud project behind your client. |
+| "YouTube asks for your cookie choice once" | First run of the background player: pick your cookie choice in the window that opened; it is remembered. |
+| "The player opened the song but did not start — press play once" | The player window came forward; one click on play, then it starts on its own. |
 | "The stored Google authorization does not include YouTube" | The scope was not approved — reconnect and tick the YouTube permission. |
 | "100 YouTube searches a day … used up" | Google's daily search bucket. Resets at midnight Pacific. |
 | "opened, but playback not confirmed" | The browser withheld autoplay; press play once. |

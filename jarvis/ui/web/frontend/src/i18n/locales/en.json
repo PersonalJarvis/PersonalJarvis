@@ -1636,6 +1636,35 @@
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",
     "languages_group_title": "Languages",
+    "music_group_title": "Music",
+    "music": {
+      "service_section": "Preferred service",
+      "service_hint": "Where a music request goes when you do not name a service. Naming one (\"on Spotify\", \"on YouTube Music\") always wins.",
+      "service_labels": {
+        "auto": "Automatic",
+        "spotify": "Spotify",
+        "youtube_music": "YouTube Music"
+      },
+      "service_options": {
+        "auto": "The only connected service; with both connected, Spotify.",
+        "spotify": "Unnamed music requests go to Spotify.",
+        "youtube_music": "Unnamed music requests go to YouTube Music."
+      },
+      "connected": "connected",
+      "not_connected": "not connected — connect it in Plugins",
+      "playback_section": "Where YouTube Music plays",
+      "playback_hint": "The background player is a small window of its own that starts minimized: no browser tab, no focus steal, and volume control by voice. Log in there once to use your Premium.",
+      "playback_labels": {
+        "background": "Background player",
+        "browser": "Browser"
+      },
+      "playback_options": {
+        "background": "A minimized player window; say \"open YouTube Music\" to bring it forward.",
+        "browser": "Opens a YouTube Music tab in your browser each time."
+      },
+      "player_unavailable": "not available on this machine (no display or no desktop extras); the browser is used instead",
+      "saved_toast": "Music settings saved."
+    },
     "team_proxy": {
       "title": "Team mode (shared key proxy)",
       "hint": "Route providers through a shared key proxy with a per-user token instead of storing real vendor keys on this machine. Leave off for the normal local-key setup.",

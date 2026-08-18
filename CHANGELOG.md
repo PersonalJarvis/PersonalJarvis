@@ -36,8 +36,27 @@ versioning per [SemVer](https://semver.org/).
     instead of a fake success (`docs/os-parity.md` P-33).
   - **Honest limits, said out loud.** Google allows 100 searches a day per
     project (each "play <name>" is one; repeats are cached, own playlists cost
-    none); volume and "queue next" do not exist in YouTube's API and the skill
-    says so instead of guessing. Setup: `docs/marketplace/youtube-music-setup.md`.
+    none); "queue next" does not exist in YouTube's API and the skill says so
+    instead of guessing. Setup: `docs/marketplace/youtube-music-setup.md`.
+  - **A background player instead of a browser tab (default).** "Play X" no
+    longer pops a browser: a small player window of its own (a pywebview
+    companion process with a persistent profile — log in once, keep Premium)
+    starts minimized, loads each song in place, and answers pause / skip /
+    "what is playing" — and, new, **volume by voice**, which no OS media
+    session offers. First run shows YouTube's cookie choice once. Where the
+    player cannot run (headless, no desktop extras) or when Settings → Music
+    says *Browser*, the browser path stays. Measured, not assumed: a truly
+    hidden WebView2 window never starts media, a minimized one does.
+  - **Two connectors, one domain — a preference instead of a coin toss.**
+    With Spotify AND YouTube Music connected, "spiel Musik" went to whichever
+    music skill was registered first, and the LLM router picked arbitrarily
+    on the turns no skill captured. New `[music] preferred_service`
+    (Settings → Music, `PUT /api/settings/music`, `jarvis api settings`):
+    a named service always wins ("on YouTube Music"), else the preference,
+    else on *Automatic* the only connected one. ONE resolver
+    (`jarvis/core/music_service.py`) feeds both the deterministic skill
+    capture and the two tools' descriptions, so the router and the capture
+    can never disagree. Five-layer vocabulary with a parity test.
 
 - **Google Cloud Vertex AI as a provider family of its own, on every tier.**
   Vertex serves the same Gemini models as Google AI Studio, but bills a Cloud

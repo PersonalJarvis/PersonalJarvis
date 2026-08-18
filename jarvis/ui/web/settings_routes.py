@@ -667,6 +667,151 @@ async def put_appearance(body: AppearanceBody, request: Request) -> dict[str, ob
 
 
 # ----------------------------------------------------------------------
+# Music — two connectors, one domain (2026-08-18)
+# ----------------------------------------------------------------------
+
+from jarvis.core.music_constants import (  # noqa: E402 — the settings vocabulary, five-layer L0
+    MUSIC_PLAYBACK_BACKGROUND,
+    MUSIC_PLAYBACK_MODES,
+    MUSIC_PLUGIN_IDS,
+    MUSIC_SERVICE_AUTO,
+    MUSIC_SERVICES,
+)
+
+
+class MusicSettingsBody(BaseModel):
+    preferred_service: str | None = Field(
+        default=None, description="auto | spotify | youtube_music (omit to leave unchanged)"
+    )
+    playback: str | None = Field(
+        default=None, description="background | browser (omit to leave unchanged)"
+    )
+
+
+def _current_music(request: Request) -> tuple[str, str]:
+    """(preferred_service, playback) — fresh from disk, boot config as fallback."""
+    try:
+        from jarvis.core.config import load_config
+
+        music = load_config().music
+        return str(music.preferred_service), str(music.playback)
+    except Exception as exc:  # noqa: BLE001 — never 500 a settings read
+        log.debug("music settings fresh read failed, using boot config: %s", exc)
+    cfg = getattr(request.app.state, "config", None)
+    music = getattr(cfg, "music", None)
+    return (
+        str(getattr(music, "preferred_service", MUSIC_SERVICE_AUTO)),
+        str(getattr(music, "playback", MUSIC_PLAYBACK_BACKGROUND)),
+    )
+
+
+def _connected_music_services() -> list[str]:
+    """Which music connectors currently hold a usable credential — so the
+    Settings card can say which of the choices would actually do something."""
+    try:
+        from jarvis.marketplace.token_store import TokenStore
+
+        store = TokenStore()
+        out: list[str] = []
+        for plugin_id in MUSIC_PLUGIN_IDS:
+            try:
+                tokens = store.load(plugin_id)
+            except Exception as exc:  # noqa: BLE001 — one broken credential stays isolated
+                log.debug("music connection probe: %s unreadable: %s", plugin_id, exc)
+                continue
+            if tokens is not None and tokens.access and not tokens.needs_reauth:
+                out.append(plugin_id)
+        return out
+    except Exception as exc:  # noqa: BLE001 — a store fault must not fail a settings read
+        log.debug("music connection probe failed: %s", exc)
+        return []
+
+
+def _background_player_available() -> bool:
+    try:
+        from jarvis.platform.music_player import background_player_available
+
+        return background_player_available()
+    except Exception as exc:  # noqa: BLE001 — a probe fault reads as "not available"
+        log.debug("background player probe failed: %s", exc)
+        return False
+
+
+@router.get("/music")
+async def get_music_settings(request: Request) -> dict[str, object]:
+    """Preferred music service + where YouTube Music plays, with the accepted
+    values, which connectors are connected, and whether the background player
+    can run on this host."""
+    preferred, playback = _current_music(request)
+    return {
+        "preferred_service": preferred,
+        "playback": playback,
+        "service_options": list(MUSIC_SERVICES),
+        "playback_options": list(MUSIC_PLAYBACK_MODES),
+        "connected": _connected_music_services(),
+        "background_player_available": _background_player_available(),
+    }
+
+
+@router.put("/music")
+async def put_music_settings(body: MusicSettingsBody, request: Request) -> dict[str, object]:
+    """Change the preferred music service and/or where YouTube Music plays."""
+    preferred_now, playback_now = _current_music(request)
+    preferred = preferred_now
+    playback = playback_now
+    if body.preferred_service is not None:
+        preferred = body.preferred_service.strip().lower()
+        if preferred not in MUSIC_SERVICES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown music service {body.preferred_service!r} "
+                    f"(allowed: {list(MUSIC_SERVICES)})"
+                ),
+            )
+    if body.playback is not None:
+        playback = body.playback.strip().lower()
+        if playback not in MUSIC_PLAYBACK_MODES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown playback mode {body.playback!r} "
+                    f"(allowed: {list(MUSIC_PLAYBACK_MODES)})"
+                ),
+            )
+
+    persisted = False
+    try:
+        from jarvis.core import config_writer
+        from jarvis.core.config import resolve_config_path
+
+        path = resolve_config_path()
+        if preferred != preferred_now:
+            config_writer.set_preferred_music_service(preferred, path=path)
+        if playback != playback_now:
+            config_writer.set_music_playback(playback, path=path)
+        persisted = True
+    except Exception as exc:  # noqa: BLE001 — persist is best-effort
+        log.warning("music settings persist failed: %s", exc)
+
+    cfg = getattr(request.app.state, "config", None)
+    music = getattr(cfg, "music", None)
+    if music is not None:
+        try:
+            music.preferred_service = preferred  # type: ignore[attr-defined]
+            music.playback = playback  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory cfg.music update skipped: %s", exc)
+
+    return {
+        "ok": True,
+        "preferred_service": preferred,
+        "playback": playback,
+        "persisted": persisted,
+    }
+
+
+# ----------------------------------------------------------------------
 # STT recognition language — the language Whisper TRANSCRIBES the user's voice
 # into. Distinct from BOTH the UI language (what the user sees) and the reply
 # language (what Jarvis answers in). ``auto`` lets Whisper detect the spoken

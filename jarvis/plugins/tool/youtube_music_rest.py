@@ -83,6 +83,24 @@ _NO_SESSION_READ = (
     "Nothing is registered as playing on this machine, so there is nothing to "
     "report or control here."
 )
+_PLAYER_APP = "the background player"
+_VOLUME_NEEDS_PLAYER = (
+    "Volume can only be set for the background player. Whatever plays elsewhere "
+    "keeps its own volume — use the system or app volume there."
+)
+_CONSENT_NOTE = (
+    "YouTube asks for your cookie choice once before it plays — the player "
+    "window just opened for that; pick, and it is remembered."
+)
+_PRESS_PLAY_NOTE = (
+    "The player opened the song but did not start — press play once in the "
+    "player window that just opened; after that it starts on its own."
+)
+
+# How long `play` watches the background player before it stops claiming to
+# know. A page load plus buffering takes four to five seconds (measured
+# 2026-08-18: position starts advancing ~4.5 s after load).
+_PLAYER_CONFIRM_TIMEOUT_S = 9.0
 
 # Music category on YouTube. Songs on YouTube Music are videos in it.
 _MUSIC_CATEGORY_ID = "10"
@@ -138,6 +156,27 @@ def _default_opener(url: str) -> bool:
     from jarvis.platform.open_path import open_url
 
     return open_url(url)
+
+
+def _default_playback_mode() -> str:
+    """``[music] playback`` — where YouTube Music plays (background | browser)."""
+    from jarvis.core.config import load_config
+
+    return str(load_config().music.playback)
+
+
+def _preference_hint_for(service_id: str) -> str:
+    """One sentence about ``[music] preferred_service`` for a tool description,
+    empty when there is nothing to say. Never raises (a description must not)."""
+    try:
+        from jarvis.core.config import load_config
+        from jarvis.core.music_service import connected_music_services, preference_hint
+
+        preferred = str(load_config().music.preferred_service)
+        connected = connected_music_services()
+        return preference_hint(service_id, preferred=preferred, connected=connected)
+    except Exception:  # noqa: BLE001 — a config/store fault means no hint, not no tool
+        return ""
 
 
 def _clean(text: Any) -> str:
@@ -227,7 +266,7 @@ def _slim_video(item: dict[str, Any]) -> dict[str, Any]:
 class YouTubeMusicRestTool:
     name: str = "youtube_music"
     risk_tier: str = "monitor"
-    description: str = (
+    _BASE_DESCRIPTION: str = (
         "Play and control the user's YouTube Music: start a song, artist, album, "
         "one of their playlists or their liked songs (opens in YouTube Music in the "
         "browser and keeps playing like a radio), pause, resume, skip, go back, say "
@@ -236,10 +275,19 @@ class YouTubeMusicRestTool:
         "'skip this', 'what song is this', 'pause the music', 'like this song', "
         "'add this to my running playlist'. Actions: now_playing, play, pause, "
         "next, previous, search, list_playlists, playlist_tracks, liked_songs, "
-        "like, add_to_playlist, create_playlist, open. Requires the YouTube Music "
-        "plugin to be connected in the Plugins view. Volume is not controllable "
-        "here — use the system or app volume."
+        "like, add_to_playlist, create_playlist, open (show the player), "
+        "hide_player, set_volume. Music plays in a background player window "
+        "(or the browser, per the Settings), so 'set_volume' works there. "
+        "Requires the YouTube Music plugin to be connected in the Plugins view."
     )
+
+    @property
+    def description(self) -> str:
+        """The static description plus the user's music preference, so the
+        LLM router makes the same Spotify-vs-YouTube Music choice the skill
+        capture does (one resolver, ``jarvis.core.music_service``)."""
+        return self._BASE_DESCRIPTION + _preference_hint_for(self.name)
+
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -259,6 +307,8 @@ class YouTubeMusicRestTool:
                     "add_to_playlist",
                     "create_playlist",
                     "open",
+                    "hide_player",
+                    "set_volume",
                 ],
                 "default": "now_playing",
             },
@@ -291,6 +341,10 @@ class YouTubeMusicRestTool:
                 "description": "for like: 'none' removes an earlier like or dislike",
             },
             "limit": {"type": "integer", "default": 5, "description": "results, max 25"},
+            "volume_percent": {
+                "type": "integer",
+                "description": "0-100, for set_volume (background player only)",
+            },
         },
         "required": ["action"],
     }
@@ -303,6 +357,9 @@ class YouTubeMusicRestTool:
         media: Any | None = None,
         opener: Callable[[str], bool] | None = None,
         confirm_timeout_s: float = _CONFIRM_TIMEOUT_S,
+        player: Any | None = None,
+        playback_mode: Callable[[], str] | None = None,
+        player_confirm_timeout_s: float = _PLAYER_CONFIRM_TIMEOUT_S,
     ) -> None:
         from ._http_pool import HttpClientPool
 
@@ -311,6 +368,11 @@ class YouTubeMusicRestTool:
         self._media = media
         self._opener = opener or _default_opener
         self._confirm_timeout_s = confirm_timeout_s
+        # The background player (jarvis.platform.music_player) and the setting
+        # that says whether to use it; both injectable so tests use fakes.
+        self._player = player
+        self._playback_mode = playback_mode or _default_playback_mode
+        self._player_confirm_timeout_s = player_confirm_timeout_s
         self._pool = HttpClientPool(transport=transport)
         # search.list is the rationed call (100/day). Same words → same answer
         # within a session, so a repeat costs nothing.
@@ -327,6 +389,172 @@ class YouTubeMusicRestTool:
 
     async def _capability(self) -> Any:
         return await self._media_controller().capability()
+
+    # -- background player ------------------------------------------------------
+
+    def _player_client(self) -> Any:
+        if self._player is None:
+            from jarvis.platform.music_player import get_music_player
+
+            self._player = get_music_player()
+        return self._player
+
+    def _wants_player(self) -> bool:
+        try:
+            return str(self._playback_mode()) == "background"
+        except Exception:  # noqa: BLE001 — a config fault means the browser path
+            return False
+
+    async def _player_state(self) -> dict[str, Any] | None:
+        """The background player's page state, or None when it is not running
+        or does not answer. Never raises."""
+        player = self._player_client()
+        if not player.is_running():
+            return None
+        try:
+            return await asyncio.to_thread(player.state)
+        except Exception as exc:  # noqa: BLE001 — a dead player reads as "not running"
+            log.debug("background player state failed: %s", exc)
+            return None
+
+    @staticmethod
+    def _player_now(state: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "is_playing": bool(state.get("has_video")) and state.get("paused") is False,
+            "status": "playing"
+            if state.get("has_video") and state.get("paused") is False
+            else "paused",
+            "track": str(state.get("title") or ""),
+            "artist": str(state.get("artist") or ""),
+            "app": _PLAYER_APP,
+            "source": "background_player",
+        }
+        if state.get("album"):
+            out["album"] = state["album"]
+        if isinstance(state.get("position"), int | float):
+            out["position_s"] = round(float(state["position"]))
+        if isinstance(state.get("duration"), int | float) and state["duration"]:
+            out["duration_s"] = round(float(state["duration"]))
+        if isinstance(state.get("volume"), int | float):
+            out["volume_percent"] = int(state["volume"])
+        return out
+
+    async def _play_in_player(self, url: str, started: dict[str, Any] | None) -> dict[str, Any]:
+        """Load the deep link into the background player and watch it start.
+
+        Three outcomes, each said plainly: playing (with what plays), YouTube's
+        one-time cookie choice or a login wall (the window comes forward for
+        it), or a start that did not happen (the window comes forward with
+        "press play once"). Raises MusicPlayerError only when the player itself
+        is unusable, so the caller can fall back to the browser."""
+        player = self._player_client()
+        await asyncio.to_thread(player.load, url)
+        out: dict[str, Any] = {"ok": True, "url": url, "sink": "background_player"}
+        if started:
+            out["started"] = started
+        elapsed = 0.0
+        last: dict[str, Any] = {}
+        nudged = False
+        while elapsed < self._player_confirm_timeout_s:
+            await asyncio.sleep(_CONFIRM_STEP_S)
+            elapsed += _CONFIRM_STEP_S
+            try:
+                last = await asyncio.to_thread(player.state)
+            except Exception as exc:  # noqa: BLE001 — a blink while the page turns
+                log.debug("background player state during confirm: %s", exc)
+                continue
+            if last.get("consent"):
+                await asyncio.to_thread(player.show)
+                out.update(playback_confirmed=False, needs_attention="consent", note=_CONSENT_NOTE)
+                return out
+            playing = last.get("has_video") and last.get("paused") is False
+            if playing and (last.get("position") or 0) > 0:
+                out.update(playback_confirmed=True, now=self._player_now(last))
+                return out
+            # The page is up but paused: one programmatic nudge before asking
+            # the user (autoplay may be allowed but the player idle).
+            if last.get("ready") and last.get("has_video") and last.get("paused") and not nudged:
+                nudged = True
+                try:
+                    await asyncio.to_thread(player.play)
+                except Exception as exc:  # noqa: BLE001 — the nudge is best-effort
+                    log.debug("background player nudge failed: %s", exc)
+        try:
+            await asyncio.to_thread(player.show)
+        except Exception as exc:  # noqa: BLE001 — showing is best-effort
+            log.debug("background player show failed: %s", exc)
+        out.update(playback_confirmed=False, needs_attention="press_play", note=_PRESS_PLAY_NOTE)
+        if last:
+            out["now"] = self._player_now(last)
+        return out
+
+    async def _start_playback(self, url: str, started: dict[str, Any] | None) -> dict[str, Any]:
+        """Where music comes out: the background player when the setting asks
+        for it and this host can run it, else the system browser."""
+        if self._wants_player():
+            player = self._player_client()
+            try:
+                ok, why = await asyncio.to_thread(player.available)
+            except Exception as exc:  # noqa: BLE001 — a probe fault means the browser path
+                ok, why = False, str(exc)
+            if ok:
+                try:
+                    return await self._play_in_player(url, started)
+                except Exception as exc:  # noqa: BLE001 — player unusable → browser, and say so
+                    log.info("background player unusable, opening the browser: %s", exc)
+                    why = f"The background player could not start ({exc})."
+            out = await self._open_and_confirm(url, started)
+            out["sink"] = "browser"
+            if why:
+                out["fallback_reason"] = why
+            return out
+        out = await self._open_and_confirm(url, started)
+        out["sink"] = "browser"
+        return out
+
+    async def set_volume(self, *, volume_percent: int) -> dict[str, Any]:
+        level = max(0, min(int(volume_percent), 100))
+        state = await self._player_state()
+        if not state or not state.get("has_video"):
+            return {"error": _VOLUME_NEEDS_PLAYER}
+        try:
+            ok = await asyncio.to_thread(self._player_client().set_volume, level)
+        except Exception as exc:  # noqa: BLE001 — a dead player is an honest error
+            return {"error": f"The background player did not take the volume: {exc}"}
+        if not ok:
+            return {"error": _VOLUME_NEEDS_PLAYER}
+        return {"ok": True, "volume_percent": level, "app": _PLAYER_APP}
+
+    async def show_player(self) -> dict[str, Any]:
+        """Bring the background player forward (log in, cookie choice, look at
+        the queue). Starts it on the home page when it is not running yet."""
+        if not self._wants_player():
+            return await self._open_browser_home()
+        player = self._player_client()
+        try:
+            ok, why = await asyncio.to_thread(player.available)
+            if not ok:
+                out = await self._open_browser_home()
+                out["fallback_reason"] = why
+                return out
+            if not player.is_running():
+                await asyncio.to_thread(player.load, HOME_URL)
+            await asyncio.to_thread(player.show)
+        except Exception as exc:  # noqa: BLE001 — player unusable → browser, and say so
+            out = await self._open_browser_home()
+            out["fallback_reason"] = f"The background player could not start ({exc})."
+            return out
+        return {"ok": True, "shown": True, "app": _PLAYER_APP}
+
+    async def hide_player(self) -> dict[str, Any]:
+        state = await self._player_state()
+        if state is None:
+            return {"ok": True, "hidden": False, "message": "The background player is not running."}
+        try:
+            await asyncio.to_thread(self._player_client().hide)
+        except Exception as exc:  # noqa: BLE001 — a dead player is already hidden
+            return {"ok": True, "hidden": False, "message": str(exc)}
+        return {"ok": True, "hidden": True}
 
     # -- HTTP -----------------------------------------------------------------
 
@@ -463,6 +691,18 @@ class YouTubeMusicRestTool:
     # -- public actions ------------------------------------------------------
 
     async def now_playing(self) -> dict[str, Any]:
+        state = await self._player_state()
+        if state and state.get("consent"):
+            # The player is parked on YouTube's cookie-choice page: nothing plays
+            # there, and its title is not a song.
+            return {
+                "is_playing": False,
+                "app": _PLAYER_APP,
+                "needs_attention": "consent",
+                "message": _CONSENT_NOTE,
+            }
+        if state and state.get("has_video"):
+            return self._player_now(state)
         media = self._media_controller()
         cap = await media.capability()
         entry = await media.now_playing() if cap.can_read else None
@@ -482,6 +722,25 @@ class YouTubeMusicRestTool:
         return out
 
     async def _control(self, verb: str) -> dict[str, Any]:
+        state = await self._player_state()
+        if state and state.get("has_video"):
+            player = self._player_client()
+            try:
+                ok = bool(await asyncio.to_thread(getattr(player, verb)))
+            except Exception as exc:  # noqa: BLE001 — a dead player is an honest error
+                return {"error": f"The background player did not accept '{verb}': {exc}"}
+            if not ok:
+                return {"error": f"The background player did not accept '{verb}'."}
+            via_player: dict[str, Any] = {"ok": True, "action": verb, "app": _PLAYER_APP}
+            if verb in ("next", "previous"):
+                await asyncio.sleep(1.2)
+                after = await self._player_state()
+                if after:
+                    via_player["now"] = self._player_now(after)
+            else:
+                via_player["track"] = str(state.get("title") or "")
+                via_player["artist"] = str(state.get("artist") or "")
+            return via_player
         media = self._media_controller()
         cap = await media.capability()
         if not cap.can_control:
@@ -608,18 +867,18 @@ class YouTubeMusicRestTool:
             if kind == "liked":
                 liked = await self._liked(headers, 1)
                 if not liked:
-                    return await self._open_and_confirm(
+                    return await self._start_playback(
                         LIKED_PAGE_URL, {"type": "liked", "title": "Liked songs"}
                     )
                 first = liked[0]
-                return await self._open_and_confirm(
+                return await self._start_playback(
                     playlist_url("LM", first["video_id"]),
                     {"type": "liked", "title": "Liked songs", "first": first},
                 )
             if kind == "playlist":
                 mine = await self._resolve_playlist(headers, query)
                 if mine is not None:
-                    return await self._open_and_confirm(
+                    return await self._start_playback(
                         mine["url"], {"type": "playlist", "own": True, **mine}
                     )
                 hits = await self._search_raw(headers, query=query, kind="playlist", limit=1)
@@ -627,13 +886,13 @@ class YouTubeMusicRestTool:
                     return {
                         "error": f"No playlist called {query!r} — neither yours nor a public one."
                     }
-                return await self._open_and_confirm(hits[0]["url"], hits[0])
+                return await self._start_playback(hits[0]["url"], hits[0])
             if kind == "album":
                 hits = await self._search_raw(headers, query=query, kind="album", limit=3)
                 albums = [h for h in hits if h.get("type") == "album"] or hits
                 if not albums:
                     return {"error": f"YouTube Music has no album called {query!r}."}
-                return await self._open_and_confirm(albums[0]["url"], albums[0])
+                return await self._start_playback(albums[0]["url"], albums[0])
             # song or artist: top song, then its radio keeps the artist's world going
             hits = await self._search_raw(headers, query=query, kind="song", limit=1)
             if not hits:
@@ -641,15 +900,21 @@ class YouTubeMusicRestTool:
             started = dict(hits[0])
             if kind == "artist":
                 started["note"] = "Started the artist's top song; the radio continues with them."
-            return await self._open_and_confirm(started["url"], started)
+            return await self._start_playback(started["url"], started)
 
         return await self._with_auth_retry(_do)
 
-    async def open_home(self) -> dict[str, Any]:
+    async def _open_browser_home(self) -> dict[str, Any]:
         opened = self._opener(HOME_URL)
         if not opened:
             return {"error": _NO_BROWSER, "url": HOME_URL}
-        return {"ok": True, "url": HOME_URL}
+        return {"ok": True, "url": HOME_URL, "sink": "browser"}
+
+    async def open_home(self) -> dict[str, Any]:
+        """"Open YouTube Music": the background player comes forward (that is
+        where a login or cookie choice happens), or the browser when the
+        setting says so / the player cannot run here."""
+        return await self.show_player()
 
     async def list_playlists(self) -> dict[str, Any]:
         async def _do(headers: dict[str, str]) -> dict[str, Any]:
@@ -781,8 +1046,8 @@ class YouTubeMusicRestTool:
         if action in ("now_playing", "search", "list_playlists", "playlist_tracks", "liked_songs"):
             return "safe"
         if action in (
-            "play", "pause", "next", "previous", "open", "like",
-            "add_to_playlist", "create_playlist",
+            "play", "pause", "next", "previous", "open", "hide_player", "set_volume",
+            "like", "add_to_playlist", "create_playlist",
         ):
             return "monitor"
         return "ask"
@@ -827,6 +1092,13 @@ class YouTubeMusicRestTool:
                 out = await self.create_playlist(name=playlist or query)
             elif action == "open":
                 out = await self.open_home()
+            elif action == "hide_player":
+                out = await self.hide_player()
+            elif action == "set_volume":
+                level = args.get("volume_percent")
+                if level is None:
+                    return ToolResult(success=False, output=None, error="volume_percent missing")
+                out = await self.set_volume(volume_percent=int(level))
             else:
                 return ToolResult(success=False, output=None, error=f"unknown action {action!r}")
         except Exception as exc:  # noqa: BLE001 — every failure becomes a spoken, actionable error

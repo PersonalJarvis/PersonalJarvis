@@ -97,6 +97,14 @@ def _refresh_plugin_in_live_registry(plugin_id: str) -> None:
     No-op when no shared registry is published (headless without web boot).
     """
     try:
+        # The music tools remember which connectors are connected for a few
+        # seconds; a connect/disconnect must be seen at once, not after the TTL.
+        from jarvis.core.music_service import forget_connected_music_services
+
+        forget_connected_music_services()
+    except Exception:  # noqa: BLE001 — a cache miss is the worst case here
+        log.debug("music connection cache reset skipped", exc_info=True)
+    try:
         from jarvis.marketplace.plugin_shared import get_active_plugin_registry
 
         reg = get_active_plugin_registry()

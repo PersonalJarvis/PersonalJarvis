@@ -5442,6 +5442,10 @@ class BrainManager:
                     vetoed_by=guards.VETO_PLUGIN_NOT_CONNECTED, skill=skill,
                 )
                 return None
+            # Two music connectors, one domain: the request goes to the service
+            # the user named, else the preferred one, else the only connected
+            # one — never to whichever music skill happened to be first.
+            skill = self._prefer_music_service(skill, user_text, ctx.registry)
 
             self._skill_match_band = decision.band
             self._skill_match_class = classify(skill)
@@ -5634,10 +5638,56 @@ class BrainManager:
         except Exception:  # noqa: BLE001
             return False
 
-    @staticmethod
-    def _paired_plugin_disconnected(skill: Any, *, store: Any | None = None) -> bool:
+    def _prefer_music_service(self, skill: Any, user_text: str, registry: Any) -> Any:
+        """Swap a matched MUSIC skill for its sibling when the resolver says the
+        request belongs to the other service (see ``jarvis.core.music_service``).
+
+        Reads ``[music] preferred_service``. Never raises and never swaps to a
+        skill that is missing or whose plugin is not connected — a fault keeps
+        the match as it was."""
+        try:
+            from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
+            from jarvis.core.music_service import resolve_music_service
+
+            fm = getattr(skill, "frontmatter", None)
+            plugin_id = str(getattr(fm, "plugin_id", "") or "").strip()
+            if plugin_id not in MUSIC_PLUGIN_IDS:
+                return skill
+            connected = [
+                pid for pid in MUSIC_PLUGIN_IDS if not self._plugin_disconnected(pid)
+            ]
+            music_cfg = getattr(self._config, "music", None)
+            preferred = str(getattr(music_cfg, "preferred_service", "auto") or "auto")
+            target = resolve_music_service(
+                user_text, preferred=preferred, connected=connected, matched=plugin_id
+            )
+            if not target or target == plugin_id or target not in connected:
+                return skill
+            sibling = registry.get(f"plugin-{target}")
+            if sibling is None:
+                return skill
+            log.info(
+                "music request routed to %s instead of %s (preferred=%s, connected=%s)",
+                target, plugin_id, preferred, connected,
+            )
+            return sibling
+        except Exception as exc:  # noqa: BLE001 — a routing nicety must never break a turn
+            log.debug("music preference routing skipped: %s", exc)
+            return skill
+
+    @classmethod
+    def _paired_plugin_disconnected(cls, skill: Any, *, store: Any | None = None) -> bool:
         """True when ``skill`` is paired to a CATALOG plugin whose credential is
-        absent or flagged for re-auth.
+        absent or flagged for re-auth (see :meth:`_plugin_disconnected`)."""
+        fm = getattr(skill, "frontmatter", None)
+        plugin_id = str(getattr(fm, "plugin_id", "") or "").strip()
+        if not plugin_id:
+            return False
+        return cls._plugin_disconnected(plugin_id, store=store)
+
+    @staticmethod
+    def _plugin_disconnected(plugin_id: str, *, store: Any | None = None) -> bool:
+        """True when catalog plugin ``plugin_id`` holds no usable credential.
 
         Only catalog plugins are judged — every one of them authenticates, so
         "no token" really means "not connected". A community skill naming an
@@ -5651,8 +5701,6 @@ class BrainManager:
         plugin per :data:`_PAIRED_CONNECTION_TTL_S`, not one per matched turn.
         A connect made inside that window merely routes without the skill's
         guidance for a few seconds — the tool itself is callable at once."""
-        fm = getattr(skill, "frontmatter", None)
-        plugin_id = str(getattr(fm, "plugin_id", "") or "").strip()
         if not plugin_id:
             return False
         now = time.monotonic()

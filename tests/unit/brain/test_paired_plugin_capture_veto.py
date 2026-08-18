@@ -85,3 +85,54 @@ def test_production_path_remembers_the_answer_per_plugin(monkeypatch) -> None:
     assert BrainManager._paired_plugin_disconnected(_skill("youtube_music")) is True
     assert BrainManager._paired_plugin_disconnected(_skill("spotify")) is True
     assert loads == ["youtube_music", "spotify"]
+
+
+# -- preferred music service (2026-08-18) ---------------------------------------
+
+
+class _Registry:
+    def __init__(self, skills: dict[str, Any]) -> None:
+        self._skills = skills
+
+    def get(self, name: str) -> Any:
+        return self._skills.get(name)
+
+
+def _manager_with(preferred: str, connected: set[str]) -> Any:
+    """A BrainManager stand-in: only what `_prefer_music_service` touches."""
+    music = SimpleNamespace(preferred_service=preferred)
+    mgr = SimpleNamespace(_config=SimpleNamespace(music=music))
+    mgr._plugin_disconnected = lambda pid, store=None: pid not in connected
+    mgr._prefer_music_service = BrainManager._prefer_music_service.__get__(mgr)
+    return mgr
+
+
+def test_generic_music_request_is_swapped_to_the_preferred_connected_service() -> None:
+    spotify, ytm = _skill("spotify"), _skill("youtube_music")
+    reg = _Registry({"plugin-spotify": spotify, "plugin-youtube_music": ytm})
+    mgr = _manager_with("youtube_music", {"spotify", "youtube_music"})
+    assert mgr._prefer_music_service(spotify, "spiel mal musik", reg) is ytm
+    # a named service still wins over the preference
+    named = "spiel das auf spotify"  # i18n-allow: spoken-input sample
+    assert mgr._prefer_music_service(ytm, named, reg) is spotify
+
+
+def test_only_connected_service_wins_under_auto() -> None:
+    spotify, ytm = _skill("spotify"), _skill("youtube_music")
+    reg = _Registry({"plugin-spotify": spotify, "plugin-youtube_music": ytm})
+    mgr = _manager_with("auto", {"youtube_music"})
+    assert mgr._prefer_music_service(spotify, "spiel musik", reg) is ytm
+
+
+def test_no_swap_when_the_match_already_fits_or_the_sibling_is_missing() -> None:
+    spotify, ytm = _skill("spotify"), _skill("youtube_music")
+    reg = _Registry({"plugin-spotify": spotify, "plugin-youtube_music": ytm})
+    mgr = _manager_with("spotify", {"spotify", "youtube_music"})
+    assert mgr._prefer_music_service(spotify, "spiel musik", reg) is spotify
+    # non-music skills are never touched
+    gmail = _skill("gmail")
+    assert mgr._prefer_music_service(gmail, "spiel musik", reg) is gmail
+    # sibling absent from the registry → keep the match
+    lonely = _Registry({"plugin-spotify": spotify})
+    mgr = _manager_with("youtube_music", {"spotify", "youtube_music"})
+    assert mgr._prefer_music_service(spotify, "spiel musik", lonely) is spotify
