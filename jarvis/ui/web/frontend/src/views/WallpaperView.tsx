@@ -21,8 +21,9 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ViewHeader } from "@/views/ChatsView";
 import {
-  DEFAULT_WALLPAPER_ENTRIES,
+  BUNDLED_WALLPAPER_ENTRIES,
   fullUrlFor,
+  isBundledStyle,
   thumbUrlFor,
   useWallpaperCatalog,
   type WallpaperEntry,
@@ -67,15 +68,15 @@ function shuffleRank(id: string): number {
 
 /** Where a wallpaper came from, as the grid orders it: bundled, own, library. */
 function originRank(item: WallpaperEntry): number {
-  if (item.isDefault) return 0;
+  if (item.isBundled) return 0;
   if (item.isUpload) return 1;
   return 2;
 }
 
-/** The bundled originals in the order they ship: the night scene, then day. */
+/** The bundled pictures in the order they ship: night, day, black, white. */
 function bundledRank(item: WallpaperEntry): number {
-  const index = DEFAULT_WALLPAPER_ENTRIES.findIndex((entry) => entry.id === item.id);
-  return index === -1 ? DEFAULT_WALLPAPER_ENTRIES.length : index;
+  const index = BUNDLED_WALLPAPER_ENTRIES.findIndex((entry) => entry.id === item.id);
+  return index === -1 ? BUNDLED_WALLPAPER_ENTRIES.length : index;
 }
 
 /** The segmented filter/ordering controls share one look. */
@@ -284,9 +285,10 @@ function WallpaperTile({
         <img
           src={thumbUrlFor(item)}
           alt={item.title}
-          // The pinned original is the first thing on screen and the shell has
-          // already loaded it, so waiting for an intersection buys nothing.
-          loading={item.isDefault ? "eager" : "lazy"}
+          // The pinned bundled tiles are the first thing on screen and their
+          // pixels are already in the bundle, so waiting for an intersection
+          // buys nothing.
+          loading={item.isBundled ? "eager" : "lazy"}
           decoding="async"
           width={480}
           height={270}
@@ -399,8 +401,9 @@ function WallpaperPreview({
           </p>
         </div>
         {/* Only an upload can be re-themed: the library's own light/dark comes
-            from the prompt each picture was painted to, and the bundled
-            original is a night scene by definition. */}
+            from the prompt each picture was painted to, and each bundled
+            picture is authored for its mode by definition — a night scene, a
+            daylight one, black, white. */}
         {item.isUpload && (
           <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
             <SegmentButton
@@ -526,14 +529,14 @@ export function WallpaperView() {
     [uploads],
   );
 
-  // The owner's own pictures sit between the bundled originals and the
+  // The owner's own pictures sit between the bundled pictures and the
   // generated library — brought here on purpose, so they are found without
   // scrolling.
   const items = useMemo(() => {
     const catalog = data?.items ?? [];
     if (!ownEntries.length) return catalog;
-    const bundled = catalog.filter((item) => item.isDefault);
-    const rest = catalog.filter((item) => !item.isDefault);
+    const bundled = catalog.filter((item) => item.isBundled);
+    const rest = catalog.filter((item) => !item.isBundled);
     return [...bundled, ...ownEntries, ...rest];
   }, [data?.items, ownEntries]);
 
@@ -563,8 +566,10 @@ export function WallpaperView() {
       },
     ].filter(Boolean) as { slug: string; label: string; count: number }[];
     if (!chips.length) return known;
-    const [bundled, ...rest] = known;
-    return bundled ? [bundled, ...chips, ...rest] : [...chips, ...known];
+    // Right behind the bundled chips (Original, Plain), ahead of the library's.
+    const bundled = known.filter((chip) => isBundledStyle(chip.slug));
+    const rest = known.filter((chip) => !isBundledStyle(chip.slug));
+    return [...bundled, ...chips, ...rest];
   }, [data?.styles, ownEntries]);
 
   const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
@@ -586,13 +591,14 @@ export function WallpaperView() {
     // tile that jumps away the instant its heart is clicked loses the place
     // the reader was looking at. The Favorites filter is where they gather.
     return filtered.sort((left, right) => {
-      // The bundled originals outrank every ordering and every shuffle: the
+      // The bundled pictures outrank every ordering and every shuffle: the
       // night scene is the first wallpaper this app ever had and stays the
-      // first tile, its daylight twin sits right beside it. The owner's own
-      // pictures come next, ahead of the generated five hundred.
+      // first tile, its daylight twin sits right beside it, then the plain
+      // black and white grounds. The owner's own pictures come next, ahead
+      // of the generated five hundred.
       const byOrigin = originRank(left) - originRank(right);
       if (byOrigin !== 0) return byOrigin;
-      if (left.isDefault && right.isDefault) {
+      if (left.isBundled && right.isBundled) {
         return bundledRank(left) - bundledRank(right);
       }
       if (ordering === "style") {

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { cachedTheme, type Theme } from "@/hooks/useTheme";
+import { bundledWallpaperUrl } from "@/lib/bundledWallpapers";
 
 /**
  * Which desktop wallpaper the app is wearing — one choice PER THEME.
@@ -76,12 +77,13 @@ const FAVORITES_KEY = "jarvis.wallpaper.favorites.v1";
 
 /**
  * An id minted by the upload store (`u` + 16 hex), as opposed to one written by
- * the library's manifest builder (`03-anime-neon-07`).
+ * the library's manifest builder (`03-anime-neon-07`) or one of the few ids
+ * that ship inside the app (`original`, `plain-black`, …).
  *
- * The two stores are served from different paths, and the id is what tells them
- * apart — deliberately, so that everything holding only an id (the shell that
- * paints the background, a per-theme selection restored from storage) resolves
- * to the right picture without carrying a flag alongside it.
+ * The three sources are served from different places, and the id is what
+ * tells them apart — deliberately, so that everything holding only an id (the
+ * shell that paints the background, a per-theme selection restored from
+ * storage) resolves to the right picture without carrying a flag alongside it.
  */
 const UPLOAD_ID_PATTERN = /^u[0-9a-f]{16}$/;
 
@@ -89,8 +91,16 @@ export function isUploadId(id: string): boolean {
   return UPLOAD_ID_PATTERN.test(id);
 }
 
-/** Where a chosen wallpaper's full-size file is served from. */
+/**
+ * Where a chosen wallpaper's full-size file is served from.
+ *
+ * A bundled picture answers with its own URL and never touches the API: it is
+ * the one kind of wallpaper that must resolve on a machine with no library, no
+ * uploads and no backend at all.
+ */
 export function wallpaperFullUrl(id: string): string {
+  const bundled = bundledWallpaperUrl(id);
+  if (bundled) return bundled;
   const safe = encodeURIComponent(id);
   return isUploadId(id)
     ? `/api/wallpapers/uploads/${safe}/full`
@@ -99,6 +109,8 @@ export function wallpaperFullUrl(id: string): string {
 
 /** Where a chosen wallpaper's grid thumbnail is served from. */
 export function wallpaperThumbUrl(id: string): string {
+  const bundled = bundledWallpaperUrl(id);
+  if (bundled) return bundled;
   const safe = encodeURIComponent(id);
   return isUploadId(id)
     ? `/api/wallpapers/uploads/${safe}/thumb`

@@ -114,6 +114,14 @@ versioning per [SemVer](https://semver.org/).
   - The UI's skill-creator dialog and `jarvis skills draft` see the same live
     tool inventory now, so their drafts name real connectors too; `draft` gained
     `--trigger`, `--schedule`, `--language`.
+- **Two plain wallpapers: black and white.** The Wallpaper section now opens
+  with four pictures that ship inside the app — the night original, its
+  daylight twin, pure black and pure white — under two chips, "Original" and
+  "Plain". Black is a dark wallpaper, white a light one, so adopting either
+  switches the mode along with the ground like every other tile; "Default"
+  still returns to the original of the mode you are in. The plain grounds are
+  drawn, not downloaded — no file, no request, present on a machine with no
+  library, no uploads and no backend.
 
 ### Fixed
 

@@ -1,6 +1,50 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { useWallpaperStore } from "@/store/wallpaper";
+import { DEFAULT_WALLPAPER_URLS } from "@/lib/bundledWallpapers";
+import {
+  useWallpaperStore,
+  wallpaperFullUrl,
+  wallpaperThumbUrl,
+} from "@/store/wallpaper";
+
+/**
+ * Three id families, three sources — and the id alone tells them apart, so
+ * whoever holds only an id (the shell, a restored pick) lands on the right
+ * picture without a flag beside it.
+ */
+describe("wallpaper URLs by id", () => {
+  it("serves a library id from the catalog endpoint", () => {
+    expect(wallpaperFullUrl("03-anime-neon-01")).toBe("/api/wallpapers/03-anime-neon-01/full");
+    expect(wallpaperThumbUrl("03-anime-neon-01")).toBe("/api/wallpapers/03-anime-neon-01/thumb");
+  });
+
+  it("serves an upload id from the uploads endpoint", () => {
+    expect(wallpaperFullUrl("u0123456789abcdef")).toBe(
+      "/api/wallpapers/uploads/u0123456789abcdef/full",
+    );
+  });
+
+  it("answers a bundled id from the bundle, never from the API", () => {
+    expect(wallpaperFullUrl("original")).toBe(DEFAULT_WALLPAPER_URLS.dark);
+    expect(wallpaperFullUrl("original-light")).toBe(DEFAULT_WALLPAPER_URLS.light);
+    expect(wallpaperThumbUrl("original")).toBe(DEFAULT_WALLPAPER_URLS.dark);
+  });
+
+  it("draws the plain grounds as data URIs — pure black, pure white", () => {
+    const black = wallpaperFullUrl("plain-black");
+    const white = wallpaperFullUrl("plain-white");
+    expect(black.startsWith("data:image/svg+xml,")).toBe(true);
+    expect(white.startsWith("data:image/svg+xml,")).toBe(true);
+    expect(decodeURIComponent(black)).toContain('fill="#000000"');
+    expect(decodeURIComponent(white)).toContain('fill="#ffffff"');
+    // The shell puts the URL into an unquoted CSS url(...): no parentheses or
+    // quotes may survive encoding, or the declaration would end early.
+    for (const url of [black, white]) {
+      expect(url).not.toMatch(/[()'"\s]/);
+    }
+    expect(wallpaperThumbUrl("plain-black")).toBe(black);
+  });
+});
 
 /**
  * The pre-per-theme slot must be migrated, never read live.

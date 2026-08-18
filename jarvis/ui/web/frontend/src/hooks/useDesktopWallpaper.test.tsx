@@ -94,6 +94,20 @@ describe("useDesktopWallpaper", () => {
     );
   });
 
+  it("paints a plain ground straight from the bundle, no request to the API", async () => {
+    act(() => useWallpaperStore.getState().select("plain-white", "light"));
+
+    render(<Probe />);
+    // A drawn colour: the URL is the image, so nothing is fetched from /api/.
+    expect(pending[0]?.src.startsWith("data:image/svg+xml,")).toBe(true);
+    act(() => pending[0]?.onload?.(new Event("load") as never));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("url").textContent?.startsWith("data:image/svg+xml,")).toBe(true),
+    );
+    expect(screen.getByTestId("url").textContent).toContain(encodeURIComponent("#ffffff"));
+  });
+
   it("falls back to the mode's bundled wallpaper when the library is missing", async () => {
     useWallpaperStore.setState({
       selections: { light: "03-anime-neon-01", dark: null },

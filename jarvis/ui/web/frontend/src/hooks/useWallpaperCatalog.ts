@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { defaultWallpaperUrl } from "@/hooks/useDesktopWallpaper";
+import {
+  BUNDLED_WALLPAPERS,
+  ORIGINAL_WALLPAPER_STYLE,
+  PLAIN_WALLPAPER_STYLE,
+} from "@/lib/bundledWallpapers";
 import { wallpaperFullUrl, wallpaperThumbUrl } from "@/store/wallpaper";
 
 /** One wallpaper as the browse grid knows it — metadata only, no pixels. */
@@ -13,9 +17,16 @@ export interface WallpaperEntry {
   styleLabel: string;
   theme: "light" | "dark";
   /**
-   * True for the two wallpapers that ship inside the app rather than in the
-   * generated library — one per mode. They are pinned to the front of the
-   * grid and their pixels come from the bundle, not from `/api/wallpapers`.
+   * True for a wallpaper that ships inside the app rather than in the
+   * generated library: the two originals and the plain black/white grounds.
+   * They are pinned to the front of the grid and their pixels come from the
+   * bundle, not from `/api/wallpapers` (see lib/bundledWallpapers).
+   */
+  isBundled?: boolean;
+  /**
+   * True for the one bundled wallpaper each mode falls back to — the original
+   * of that mode. Adopting it clears the stored choice instead of storing an
+   * id, so the tile and the "Default" button can never disagree.
    */
   isDefault?: boolean;
   /**
@@ -47,67 +58,73 @@ export interface WallpaperCatalog {
   items: WallpaperEntry[];
 }
 
-/** The filter slug and chip label the bundled originals live under. */
-export const DEFAULT_WALLPAPER_STYLE = "original";
-
 /**
- * The wallpapers the app ships with — one per mode, each the picture its mode
- * falls back to.
+ * The wallpapers the app ships with, as the grid knows them.
  *
  * They are assembled here instead of being copied into the generated library
  * so that they are present unconditionally: the library is optional content
  * under a git-ignored directory, these pictures are part of the program. Their
- * pixels come from the same bundled assets the shell already paints, so
- * putting them in the grid costs no download at all.
+ * pixels come from the bundle (the same assets the shell already paints, or a
+ * drawn solid colour), so putting them in the grid costs no download at all.
  *
- * Two of them because a wallpaper belongs to one mode (see
- * useDesktopWallpaper.DEFAULT_WALLPAPER_URLS): the night scene the app was
- * born with, and its daylight twin for light mode. Each carries the mode it
- * was authored for, so adopting one switches the interface into that mode like
- * any other tile — and "back to the default" in light mode lands on the
- * daylight picture, never on the moonlit one.
+ * Which pictures, and why, is the business of lib/bundledWallpapers — the two
+ * originals (one per mode, each its mode's default) and the plain black and
+ * white grounds. Every one carries the mode it was authored for, so adopting
+ * it switches the interface into that mode like any other tile.
  */
-export const DEFAULT_WALLPAPER_ENTRIES: readonly WallpaperEntry[] = [
-  {
-    id: "original",
-    title: "The Original",
-    style: DEFAULT_WALLPAPER_STYLE,
-    styleLabel: "Original",
-    theme: "dark",
-    isDefault: true,
-  },
-  {
-    id: "original-light",
-    title: "The Original, by day",
-    style: DEFAULT_WALLPAPER_STYLE,
-    styleLabel: "Original",
-    theme: "light",
-    isDefault: true,
-  },
-];
+export const BUNDLED_WALLPAPER_ENTRIES: readonly WallpaperEntry[] = BUNDLED_WALLPAPERS.map(
+  ({ id, title, style, styleLabel, theme, isDefault }) => ({
+    id,
+    title,
+    style,
+    styleLabel,
+    theme,
+    isBundled: true,
+    ...(isDefault ? { isDefault: true } : {}),
+  }),
+);
 
-/** The dark original — the first wallpaper ever made for the app. */
-export const DEFAULT_WALLPAPER_ENTRY: WallpaperEntry = DEFAULT_WALLPAPER_ENTRIES[0];
+/**
+ * The style chips for the bundled wallpapers, in the order they lead the chip
+ * row: the originals, then the plain grounds. Counts come from the entries so
+ * a chip can never promise a tile the grid does not have.
+ */
+export const BUNDLED_WALLPAPER_STYLES: readonly WallpaperStyle[] = [
+  { slug: ORIGINAL_WALLPAPER_STYLE, label: "Original" },
+  { slug: PLAIN_WALLPAPER_STYLE, label: "Plain" },
+].map(({ slug, label }) => ({
+  slug,
+  label,
+  count: BUNDLED_WALLPAPER_ENTRIES.filter((entry) => entry.style === slug).length,
+}));
 
-/** Where a grid tile's thumbnail comes from. */
+/** True for a chip that stands for bundled wallpapers rather than library ones. */
+export function isBundledStyle(slug: string): boolean {
+  return BUNDLED_WALLPAPER_STYLES.some((chip) => chip.slug === slug);
+}
+
+/**
+ * Where a grid tile's thumbnail comes from.
+ *
+ * The URL helpers already answer with the bundled picture for a bundled id, so
+ * a tile needs no special case here — the id is the whole story.
+ */
 export function thumbUrlFor(item: WallpaperEntry): string {
-  return item.isDefault ? defaultWallpaperUrl(item.theme) : wallpaperThumbUrl(item.id);
+  return wallpaperThumbUrl(item.id);
 }
 
 /** Where a preview's full-size image comes from. */
 export function fullUrlFor(item: WallpaperEntry): string {
-  return item.isDefault ? defaultWallpaperUrl(item.theme) : wallpaperFullUrl(item.id);
+  return wallpaperFullUrl(item.id);
 }
 
 /** The catalog as it looks before (or without) the generated library. */
 const BUNDLED_ONLY: WallpaperCatalog = {
   available: true,
   libraryAvailable: false,
-  count: DEFAULT_WALLPAPER_ENTRIES.length,
-  styles: [
-    { slug: DEFAULT_WALLPAPER_STYLE, label: "Original", count: DEFAULT_WALLPAPER_ENTRIES.length },
-  ],
-  items: [...DEFAULT_WALLPAPER_ENTRIES],
+  count: BUNDLED_WALLPAPER_ENTRIES.length,
+  styles: [...BUNDLED_WALLPAPER_STYLES],
+  items: [...BUNDLED_WALLPAPER_ENTRIES],
 };
 
 /**
@@ -118,7 +135,7 @@ const BUNDLED_ONLY: WallpaperCatalog = {
  * fetched once per session and kept — refetching it on every visit to the
  * section would buy nothing.
  *
- * The bundled originals are prepended to whatever the server returns, so the
+ * The bundled wallpapers are prepended to whatever the server returns, so the
  * section has something to show even when the request fails or the library was
  * never generated on this machine.
  */
@@ -129,7 +146,7 @@ export function useWallpaperCatalog() {
     retry: 1,
     queryFn: async () => {
       // A failure here is not an error state for the section: the bundled
-      // original is still a wallpaper, and showing it beats showing a stack
+      // pictures are still wallpapers, and showing them beats showing a stack
       // trace because a backend was mid-restart.
       const data = await fetch("/api/wallpapers")
         .then((response) =>
@@ -147,9 +164,9 @@ export function useWallpaperCatalog() {
         libraryAvailable: Boolean(data.available),
         count:
           (typeof data.count === "number" ? data.count : data.items.length) +
-          DEFAULT_WALLPAPER_ENTRIES.length,
-        styles: [BUNDLED_ONLY.styles[0], ...styles],
-        items: [...DEFAULT_WALLPAPER_ENTRIES, ...data.items],
+          BUNDLED_WALLPAPER_ENTRIES.length,
+        styles: [...BUNDLED_WALLPAPER_STYLES, ...styles],
+        items: [...BUNDLED_WALLPAPER_ENTRIES, ...data.items],
       };
     },
   });

@@ -160,6 +160,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The style chip row as labels, from "All styles" onwards. */
+function styleChipLabels(): string[] {
+  const labels = [...document.querySelectorAll("button[aria-pressed]")].map(
+    (button) => button.textContent?.trim() ?? "",
+  );
+  return labels.slice(labels.indexOf("All styles"));
+}
+
 describe("WallpaperView", () => {
   it("browses on thumbnails alone — no full-size image is requested", async () => {
     renderView();
@@ -174,19 +182,83 @@ describe("WallpaperView", () => {
     expect(sources.some((src) => src.endsWith("/full"))).toBe(false);
   });
 
-  it("pins the originals to the very first tiles — night, then day", async () => {
+  it("pins the bundled pictures to the very first tiles — night, day, black, white", async () => {
     renderView();
 
     await screen.findByAltText("Flooded Observatory");
     const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
 
-    expect(tiles).toHaveLength(5);
-    expect(tiles[0].getAttribute("alt")).toBe("The Original");
-    expect(tiles[1].getAttribute("alt")).toBe("The Original, by day");
-    expect(tiles[0].getAttribute("src")).not.toContain("/api/");
-    expect(tiles[1].getAttribute("src")).not.toContain("/api/");
-    // Two different pictures, not the same one twice.
-    expect(tiles[1].getAttribute("src")).not.toBe(tiles[0].getAttribute("src"));
+    expect(tiles).toHaveLength(7);
+    expect(tiles.slice(0, 4).map((tile) => tile.getAttribute("alt"))).toEqual([
+      "The Original",
+      "The Original, by day",
+      "Black",
+      "White",
+    ]);
+    for (const tile of tiles.slice(0, 4)) {
+      expect(tile.getAttribute("src")).not.toContain("/api/");
+    }
+    // Four different pictures, not the same one over and over.
+    expect(new Set(tiles.slice(0, 4).map((tile) => tile.getAttribute("src"))).size).toBe(4);
+  });
+
+  it("draws the plain grounds instead of downloading them", async () => {
+    renderView();
+
+    const black = await screen.findByAltText("Black");
+    const white = await screen.findByAltText("White");
+
+    expect(black.getAttribute("src")?.startsWith("data:image/svg+xml,")).toBe(true);
+    expect(white.getAttribute("src")?.startsWith("data:image/svg+xml,")).toBe(true);
+    expect(black.getAttribute("src")).toContain(encodeURIComponent("#000000"));
+    expect(white.getAttribute("src")).toContain(encodeURIComponent("#ffffff"));
+    // Their chip sits right behind the originals, ahead of the library's.
+    expect(styleChipLabels().slice(0, 4)).toEqual([
+      "All styles",
+      "Original",
+      "Plain",
+      "Cinematic Photorealistic",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Plain" }));
+    await waitFor(() => {
+      const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
+      expect(tiles.map((tile) => tile.getAttribute("alt"))).toEqual(["Black", "White"]);
+    });
+  });
+
+  it("adopting the black ground stores its id under dark and paints dark", async () => {
+    renderView();
+    act(() => useWallpaperStore.getState().select("03-anime-neon-01", "dark"));
+
+    fireEvent.click(await screen.findByAltText("Black"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selections.dark).toBe("plain-black");
+    });
+    expect(isDark()).toBe(true);
+    // Not a default: the black ground is a pick of its own, and the night
+    // original is no longer the one in use.
+    expect(await screen.findByRole("button", { name: /In use/ })).toBeTruthy();
+  });
+
+  it("adopting the white ground switches to light and stores its id there", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByAltText("White"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+
+    await waitFor(() => expect(isDark()).toBe(false));
+    expect(useWallpaperStore.getState().selections.light).toBe("plain-white");
+    // The dark pick is untouched — every mode keeps its own.
+    expect(useWallpaperStore.getState().selections.dark).toBeNull();
+    // And "Default" from here goes back to the daylight original, not to black.
+    fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Default" }));
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selections.light).toBeNull();
+    });
+    expect(isDark()).toBe(false);
   });
 
   it("keeps the original first when sorting by style", async () => {
@@ -355,9 +427,12 @@ describe("WallpaperView", () => {
       expect(requestedSources().filter((src) => src.includes("/api/"))).toHaveLength(1),
     );
     expect(screen.getByAltText("Morning Atrium")).toBeTruthy();
-    // The daylight original is a light wallpaper like any other.
+    // The daylight original and the white ground are light wallpapers like any
+    // other; the night scene and the black ground are not.
     expect(screen.getByAltText("The Original, by day")).toBeTruthy();
+    expect(screen.getByAltText("White")).toBeTruthy();
     expect(screen.queryByAltText("The Original")).toBeNull();
+    expect(screen.queryByAltText("Black")).toBeNull();
   });
 
   it("keeps the same shuffled order across renders", async () => {
@@ -514,16 +589,26 @@ describe("WallpaperView", () => {
     fireEvent.change(input, { target: { files: [file] } });
   }
 
-  it("lists an uploaded picture right after the originals", async () => {
+  it("lists an uploaded picture right after the bundled ones", async () => {
     renderView(CATALOG, [OWN]);
 
     await screen.findByAltText("Kitchen Window");
     const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
 
-    expect(tiles.slice(0, 3).map((tile) => tile.getAttribute("alt"))).toEqual([
+    expect(tiles.slice(0, 5).map((tile) => tile.getAttribute("alt"))).toEqual([
       "The Original",
       "The Original, by day",
+      "Black",
+      "White",
       "Kitchen Window",
+    ]);
+    // Its chip follows the bundled chips too, ahead of the library's.
+    expect(styleChipLabels().slice(0, 5)).toEqual([
+      "All styles",
+      "Original",
+      "Plain",
+      "Yours",
+      "Cinematic Photorealistic",
     ]);
   });
 

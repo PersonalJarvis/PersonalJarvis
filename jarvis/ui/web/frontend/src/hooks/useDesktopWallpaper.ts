@@ -1,32 +1,14 @@
 import { useEffect, useState } from "react";
 
-import jarvisDesktopWallpaperLight from "@/assets/jarvis-desktop-wallpaper-light.webp";
-import jarvisDesktopWallpaper from "@/assets/jarvis-desktop-wallpaper.webp";
-import { useThemeValue, type Theme } from "@/hooks/useTheme";
+import { useThemeValue } from "@/hooks/useTheme";
+import { DEFAULT_WALLPAPER_URLS, defaultWallpaperUrl } from "@/lib/bundledWallpapers";
 import { useWallpaperStore, wallpaperFullUrl } from "@/store/wallpaper";
 
-/**
- * The artwork that ships inside the bundle — one picture per mode, each the
- * default and the fallback of its own mode.
- *
- * Two, not one, because a wallpaper belongs to exactly one mode (see
- * store/wallpaper.ts): the moonlit woodblock ocean is a night scene, and for
- * as long as it stood in for BOTH modes, light chrome landed on it whenever the
- * light slot was empty — a fresh profile, a cleared store, a manual switch to
- * light before any light picture was chosen — and nothing on that screen could
- * be read (maintainer report 2026-08-18). The daylight courtyard is the same
- * character in the light mode's own register, so a mode without a pick of its
- * own now shows a picture authored for it, never the other mode's.
- */
-export const DEFAULT_WALLPAPER_URLS: Readonly<Record<Theme, string>> = {
-  dark: jarvisDesktopWallpaper,
-  light: jarvisDesktopWallpaperLight,
-};
-
-/** The bundled artwork of one mode. */
-export function defaultWallpaperUrl(theme: Theme): string {
-  return DEFAULT_WALLPAPER_URLS[theme];
-}
+// The bundled artwork itself — one picture per mode, each the default and the
+// fallback of its own mode — is defined once in lib/bundledWallpapers, next to
+// the other pictures that ship inside the app. Re-exported here because this
+// hook is where the shell has always asked for it.
+export { DEFAULT_WALLPAPER_URLS, defaultWallpaperUrl };
 
 /** The dark original — the picture the app was born with. */
 export const DEFAULT_WALLPAPER_URL = DEFAULT_WALLPAPER_URLS.dark;
