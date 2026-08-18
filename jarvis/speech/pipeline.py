@@ -5338,26 +5338,40 @@ class SpeechPipeline:
                 "🧹 Background-Filter: %s (fallback=%s)",
                 scrubbed.actions, scrubbed.fallback_used,
             )
-        if is_harmless_scrub_residue(scrubbed):
-            # Filler-only readback: the residue guard replaced it with the
-            # generic error phrase. The mission SUCCEEDED here as often as
-            # not, so speaking that phrase would invent a failure. Silence is
-            # the honest outcome; the bus event still carries the result.
+        if is_harmless_scrub_residue(scrubbed) or not scrubbed.cleaned.strip():
+            # The worker's own summary did not survive the filter. Speaking the
+            # residue guard's error phrase would invent a failure on a mission
+            # that succeeded as often as not — but silence is not the answer
+            # either: the user is waiting for THIS result (AD-OE6,
+            # zero-silent-drop). Retry with the deterministic phrase that
+            # carries no summary, which is hand-tuned to pass the filter.
+            plain = (
+                ph["done"] if event.success
+                else ph["fail"].format(e=ph["unknown_err"])
+            )
             log.info(
                 "Jarvis-Agent background finished (success=%s) — the readback "
-                "carried no substance (%s), staying silent instead of "
-                "speaking the error phrase: %r",
+                "carried no substance (%s), falling back to the summary-less "
+                "phrase instead of the error phrase: %r",
                 event.success,
                 scrubbed.actions,
                 text[:80],
             )
-            return
+            if plain != text:
+                scrubbed = scrub_for_voice(plain, language=lang)
+            if is_harmless_scrub_residue(scrubbed) or not scrubbed.cleaned.strip():
+                # Even the canned line does not survive. Staying silent beats
+                # claiming a failure, but it means a completion went
+                # unannounced — say so in the log, loudly.
+                log.warning(
+                    "Jarvis-Agent background finished (success=%s) and was "
+                    "NEVER announced: both the summary and the canned phrase "
+                    "were filtered away (%s)",
+                    event.success,
+                    scrubbed.actions,
+                )
+                return
         cleaned = scrubbed.cleaned.strip()
-        if not cleaned:
-            log.info(
-                "Jarvis-Agent background fertig — Ansage nach Filter leer, schweige."
-            )
-            return
         log.info(
             "Jarvis-Agent background fertig (success=%s, dauer=%.1fs) — Ansage: %r",
             event.success, event.duration_s, cleaned,
