@@ -110,7 +110,7 @@
     "voice": "alloy"
   },
   "brain.tool_model": {
-    "provider": "grok"
+    "provider": "vertex"
   },
   "brain.computer_use": {
     "provider": "ollama"
@@ -134,5 +134,8 @@
   "brain.providers.local-openai": {
     "base_url": "http://127.0.0.1:8080",
     "model": "gemma-4-12b-it-qat-q4_0"
+  },
+  "brain.providers.vertex": {
+    "tool_model": "gemini-3.7-flash"
   }
 }
