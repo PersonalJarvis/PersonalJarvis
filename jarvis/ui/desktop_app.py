@@ -1159,6 +1159,130 @@ def acquire_single_instance_lock(
 
 
 # ---------------------------------------------------------------------------
+# Conductor -> voice bridge
+# ---------------------------------------------------------------------------
+# Conductor is a standalone OSS package that must never import ``jarvis``, so
+# it cannot reach the EventBus itself. It hands out structured facts through
+# the ``on_event`` callback its Runner has always had; THIS side turns them
+# into a sentence and publishes it — the same seam every other embedded
+# component uses to get the bus.
+#
+# Division of labour: Conductor decides WHETHER a finished run is news
+# (``conductor.core.notify`` — state changes only, never every-run chatter);
+# Jarvis decides WHAT IS SAID and in WHICH LANGUAGE, so no locale is ever
+# baked into the standalone package.
+
+#: One plain sentence per news kind and locale. No job ids, no exit codes, no
+#: stack traces — the user hears the outcome; the technical reason rides along
+#: in ``AnnouncementRequested.detail``, which the transcript shows and the
+#: voice never speaks. Runtime voice output is the closed product surface, so
+#: these strings stay localized (CLAUDE.md §1).
+_CONDUCTOR_NEWS_PHRASES: dict[str, dict[str, str]] = {
+    "failing": {
+        "de": "Der geplante Job {name} schlägt gerade fehl.",  # i18n-allow
+        "en": "The scheduled job {name} has started failing.",
+        "es": "El trabajo programado {name} está fallando.",
+    },
+    "recovered": {
+        "de": "Der geplante Job {name} läuft wieder.",  # i18n-allow
+        "en": "The scheduled job {name} is working again.",
+        "es": "El trabajo programado {name} vuelve a funcionar.",
+    },
+}
+
+
+def _conductor_news_sentence(kind: str, job_name: str, language: str) -> str:
+    """Render one piece of Conductor news as a plain, speakable sentence.
+
+    Returns ``""`` for an unknown kind or a nameless job — an announcement
+    that cannot say WHICH job it means is worse than no announcement.
+    """
+    phrases = _CONDUCTOR_NEWS_PHRASES.get(kind)
+    if phrases is None:
+        return ""
+    name = " ".join(str(job_name or "").split())
+    if not name:
+        return ""
+    return phrases.get(language, phrases["en"]).format(name=name)
+
+
+def _make_conductor_announcer(
+    bus: Any,
+    brain_ref: Callable[[], Any],
+    reply_language_ref: Callable[[], str],
+) -> Callable[[str, dict[str, Any]], Any]:
+    """Build the Conductor ``on_event`` callback that speaks its news.
+
+    Everything except ``job.news`` is ignored here: the ``run.*`` lifecycle
+    stream belongs to the dashboard, not to the voice. The callback is a
+    coroutine function, so ``Runner._emit`` schedules it as its own task and
+    the Conductor run loop never waits on the bus, the brain, or TTS.
+    """
+
+    async def _on_conductor_event(event: str, payload: dict[str, Any]) -> None:
+        from conductor import NEWS_EVENT
+
+        if event != NEWS_EVENT or bus is None:
+            return
+        from jarvis.core.events import AnnouncementRequested
+        from jarvis.core.turn_language import (
+            DEFAULT_LOCALE,
+            resolve_output_language,
+        )
+
+        brain: Any = None
+        with suppress(Exception):
+            brain = brain_ref()
+        pin = ""
+        with suppress(Exception):
+            pin = reply_language_ref() or ""
+        # A background job has no user turn to read a language off, so the
+        # pin wins, then the language the conversation is already running in,
+        # then the default locale — resolved through the ONE resolver like
+        # every other output layer (CLAUDE.md §1). The empty text is what
+        # makes the conversation stickiness apply.
+        language = resolve_output_language(
+            pin,
+            "",
+            "",
+            default=DEFAULT_LOCALE,
+            conversation_language=getattr(brain, "conversation_language", ""),
+        )
+        text = _conductor_news_sentence(
+            str(payload.get("kind") or ""),
+            str(payload.get("job_name") or ""),
+            language,
+        )
+        if not text:
+            return
+        try:
+            result = bus.publish(
+                AnnouncementRequested(
+                    source_layer="desktop_app.conductor",
+                    text=text,
+                    language=language,
+                    priority="normal",
+                    # A readback kind: a job that breaks at 03:00 must still
+                    # reach the user with no session open, so it has to
+                    # survive the hangup gate — the same choice
+                    # ``jarvis/tasks/runner.py`` makes for When-Then results.
+                    kind="subagent",
+                    detail=str(payload.get("detail") or "").strip() or None,
+                )
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 — news is never worth a crash
+            from loguru import logger as _clog
+
+            _clog.opt(exception=exc).warning(
+                "Conductor announcement could not be published"
+            )
+
+    return _on_conductor_event
+
+
+# ---------------------------------------------------------------------------
 # DesktopApp
 # ---------------------------------------------------------------------------
 
@@ -2201,7 +2325,18 @@ class DesktopApp:
             from conductor import Scheduler as _CSched
 
             conductor_store = _CStore()    # ~/.conductor/conductor.sqlite
-            conductor_runner = _CRunner(conductor_store)
+            # The bus reaches Conductor through its ``on_event`` seam, not the
+            # other way round (Conductor never imports ``jarvis``). Without
+            # this, every scheduled job ran into its own SQLite and the user
+            # never learned that anything had happened at all (audit AU-01).
+            conductor_runner = _CRunner(
+                conductor_store,
+                on_event=_make_conductor_announcer(
+                    server.bus,
+                    lambda: getattr(server.app.state, "brain", None),
+                    lambda: getattr(self.cfg.brain, "reply_language", ""),
+                ),
+            )
             conductor_scheduler = _CSched(conductor_store, conductor_runner)
             server.app.state.conductor_store = conductor_store
             server.app.state.conductor_runner = conductor_runner

@@ -4,8 +4,9 @@ Philosophy: **small, immediately functional, demoable.** We want the
 user, after the first launch, to open the WorkflowsView and see 3
 meaningful examples, be able to click "Run", and get a result right away.
 
-- *Morning Briefing* (cron 30 7 * * *) — brain_prompt → speak chain. Produces
-  a mini standup announcement. No external service needed.
+- *Morning Briefing* (cron 30 7 * * *, **enabled**) — brain_prompt → speak
+  chain. Produces a mini standup announcement. No external service needed,
+  which is exactly why it is the only cron seed that ships switched on.
 - *Code Review* (manual) — git diff capture followed by a brain review.
 - *URL Summary* (manual, input field ``url``) — brain_prompt with the
   template variable {{input.url}}. Demos input binding.
@@ -34,17 +35,31 @@ log = logging.getLogger(__name__)
 # Fixed UUIDs, so repeated seeding is idempotent — we recognize
 # existing seed entries by their ID and let user modifications
 # survive (no force overwrite).
-_WF_MORGEN_BRIEFING = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000001")
+_WF_MORNING_BRIEFING = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000001")
 _WF_CODE_REVIEW = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000002")
 _WF_URL_SUMMARY = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000003")
 _WF_EMAIL_DIGEST = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000004")
 _WF_GIT_STANDUP = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000005")
 
 
-def _morgen_briefing() -> WorkflowDef:
+def _morning_briefing() -> WorkflowDef:
+    """The one scheduled workflow that ships ON.
+
+    Every other cron seed here needs something a fresh install does not have
+    (a configured Telegram bot, an authenticated ``gws`` CLI), so shipping
+    them enabled would only produce failing runs. This one needs nothing but
+    a brain and a voice — both of which the app already requires — so it is
+    the honest default for "Jarvis does things without being asked"
+    (audit AU-02: with every cron seed disabled, the scheduler polled an
+    empty list forever and a fresh install did nothing on a schedule).
+
+    Language is NOT pinned here: the prompt asks for the configured output
+    language and the speak step passes ``auto``, so the one resolver decides
+    (CLAUDE.md §1). The seed used to hardcode German for everyone.
+    """
     now_ns = time.time_ns()
     return WorkflowDef(
-        id=_WF_MORGEN_BRIEFING,
+        id=_WF_MORNING_BRIEFING,
         name="Morning Briefing",
         description=(
             "Daily 7:30 announcement: current time, day of week, and a short, "
@@ -56,9 +71,10 @@ def _morgen_briefing() -> WorkflowDef:
                 label="Generate daily summary",
                 prompt=(
                     "You are Jarvis. It's currently morning. Compose a short, "
-                    "friendly morning announcement (max 3 sentences, in German). Include "
-                    "the day of the week and a short motivating remark. NO "
-                    "emojis, NO stating the time — the user can already see that."
+                    "friendly morning announcement (max 3 sentences) in the "
+                    "configured output language. Include the day of the week "
+                    "and a short motivating remark. NO emojis, NO stating the "
+                    "time — the user can already see that."
                 ),
                 max_output_chars=500,
             ),
@@ -66,10 +82,10 @@ def _morgen_briefing() -> WorkflowDef:
                 label="Play announcement",
                 text="{{prev.output}}",
                 priority="normal",
-                language="de",
+                language="auto",
             ),
         ),
-        enabled=False,  # cron default off — user must enable deliberately
+        enabled=True,
         created_at_ns=now_ns,
         created_by="seed",
         tags=("demo", "brain", "speak"),
@@ -257,7 +273,7 @@ def _git_standup_telegram() -> WorkflowDef:
 
 
 SEED_WORKFLOWS: tuple[WorkflowDef, ...] = (
-    _morgen_briefing(),
+    _morning_briefing(),
     _code_review(),
     _url_summary(),
     _email_digest_telegram(),

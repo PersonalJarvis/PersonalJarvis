@@ -5,6 +5,12 @@ One runner = many concurrent runs. Each run is started as its own
 are informed via the ``on_event`` callback — so Jarvis (or any other
 embed situation) can render live updates in the frontend without
 depending on the Conductor package.
+
+The same callback carries the one event a *person* cares about: ``job.news``
+(:data:`conductor.core.notify.NEWS_EVENT`), emitted only when a job changes
+state — it just started failing, or it just recovered. See ``notify.py`` for
+why every-run chatter is deliberately not emitted, and why the payload is
+structured facts rather than a finished sentence.
 """
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..jobs import HANDLERS
+from .notify import NEWS_EVENT, classify_run
 from .schema import JobSpec
 
 if TYPE_CHECKING:
@@ -74,6 +81,11 @@ class Runner:
     ) -> None:
         job_id = job_row["id"]
         spec_json = job_row["spec_json"]
+        # The job's terminal state BEFORE this run — the only thing that makes
+        # this run's outcome newsworthy or not (see ``notify.classify_run``).
+        # Read from the row fetched at trigger time; the scheduler never
+        # overlaps two runs of the same job, so it is the live value.
+        previous_state = job_row.get("last_run_state")
 
         # Reconstruct JobSpec from JSON — we know the type from 'type'
         try:
@@ -89,6 +101,13 @@ class Runner:
             self._emit("run.failed", {
                 "run_id": run_id, "job_id": job_id, "error": str(exc),
             })
+            # A job whose spec no longer loads DID run and DID fail. Recording
+            # that keeps the state machine honest — and makes the second
+            # broken run silent instead of announcing the same breakage twice.
+            await self._finish(
+                job_row, run_id, trigger, previous_state,
+                "failed", f"spec-deserialize: {exc}",
+            )
             return
 
         handler = HANDLERS.get(spec.type)
@@ -101,6 +120,10 @@ class Runner:
                 "run_id": run_id, "job_id": job_id,
                 "error": f"unknown type {spec.type}",
             })
+            await self._finish(
+                job_row, run_id, trigger, previous_state,
+                "failed", f"no handler for type={spec.type}",
+            )
             return
 
         await self._store.update_run(run_id, state="running")
@@ -119,11 +142,14 @@ class Runner:
                 error=f"{type(exc).__name__}: {exc}",
                 metrics={"duration_ms": duration_ms},
             )
-            await self._store.set_last_run(job_id, time.time_ns(), "failed")
             self._emit("run.failed", {
                 "run_id": run_id, "job_id": job_id, "error": str(exc),
                 "duration_ms": duration_ms,
             })
+            await self._finish(
+                job_row, run_id, trigger, previous_state,
+                "failed", f"{type(exc).__name__}: {exc}",
+            )
             log.exception("Job %s run %s crashed", job_row["name"], run_id)
             return
 
@@ -136,7 +162,6 @@ class Runner:
             error=result.error,
             metrics=result.metrics,
         )
-        await self._store.set_last_run(job_id, time.time_ns(), final_state)
         self._emit("run.finished", {
             "run_id": run_id, "job_id": job_id,
             "state": final_state,
@@ -145,6 +170,39 @@ class Runner:
             "duration_ms": result.metrics.get("duration_ms", 0),
             "output_preview": (result.output or "")[:240],
         })
+        await self._finish(
+            job_row, run_id, trigger, previous_state, final_state, result.error,
+        )
+
+    # ------------------------------------------------------------------
+
+    async def _finish(
+        self,
+        job_row: dict[str, Any],
+        run_id: str,
+        trigger: str,
+        previous_state: str | None,
+        new_state: str,
+        error: str | None,
+    ) -> None:
+        """Record the job's terminal state and emit the news, if any.
+
+        Order matters: the store is written first, so the state a subscriber
+        reads back always matches the state it was told about.
+        """
+        job_id = job_row["id"]
+        await self._store.set_last_run(job_id, time.time_ns(), new_state)
+        news = classify_run(
+            job_id=job_id,
+            job_name=job_row.get("name") or "",
+            run_id=run_id,
+            trigger=trigger,
+            previous_state=previous_state,
+            new_state=new_state,
+            error=error,
+        )
+        if news is not None:
+            self._emit(NEWS_EVENT, news.as_payload())
 
     # ------------------------------------------------------------------
 

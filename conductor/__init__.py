@@ -27,6 +27,7 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
+from .core.notify import NEWS_EVENT, RunNews, classify_run
 from .core.runner import Runner
 from .core.scheduler import Scheduler
 from .core.schema import (
@@ -56,13 +57,16 @@ __all__ = [
     "Job",
     "JobSpec",
     "ManualSchedule",
+    "NEWS_EVENT",
     "Run",
+    "RunNews",
     "RunStep",
     "Runner",
     "Schedule",
     "Scheduler",
     "ShellJobSpec",
     "WebhookSchedule",
+    "classify_run",
     "ensure_seed_jobs",
     "SEED_YAML_DIR",
 ]
