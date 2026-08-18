@@ -96,8 +96,10 @@ from __future__ import annotations
 
 import asyncio
 import re
+import statistics
 import sys
 import time
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -153,6 +155,9 @@ _MIN_ATTEMPT_S = 20.0
 # 16-25 s end to end, so a hedge at 30 s fires only on genuinely slow calls and
 # the double spend stays rare. The hedge crosses to the SAME rungs the rescue
 # already uses on failure — quality-tier by construction, never a demotion.
+#
+# Since 2026-08-18 this is the CEILING for a subscription writer, not the
+# threshold itself — see ``_hedge_after_s``.
 HEDGE_AFTER_S = 30.0
 
 # When the writer is a direct API call (the ``api`` and ``tool_model`` rungs),
@@ -161,7 +166,59 @@ HEDGE_AFTER_S = 30.0
 # above would let an already-fast path sit through half a minute of silence
 # before a second writer was allowed to begin. Still above the API path's
 # healthy band, so the double spend stays as rare as it is for the CLI.
+#
+# Since 2026-08-18 the CEILING for an API writer — see ``_hedge_after_s``.
 HEDGE_AFTER_API_S = 20.0
+
+# The insurance threshold calibrates itself to the writer actually in use.
+#
+# The two ceilings above were each measured against ONE writer on ONE day, and
+# each has already been revised (45 → 90 s budget, 30 s, then a separate 20 s
+# for the API rungs) as the writers changed. They still cannot tell a Tool
+# Model that writes a brief in ~5 s (measured 2026-08-18) from a deep
+# reasoning tier that needs 13-21 s: with a fixed 20 s, a hung fast writer
+# costs the user twenty seconds of silence before insurance is even allowed
+# to start — four times what that writer normally takes. So the threshold is
+# derived from the writer's OWN
+# recent, valid briefs in this process: ``_HEDGE_MULTIPLIER`` × their median,
+# never below ``_HEDGE_FLOOR_S`` (a single quick brief must not arm a
+# hair-trigger on the next one, and a bigger brief with five outlines
+# legitimately takes longer than a plain rewrite), never above the ceiling
+# for that writer's family. With no history yet — the first brief after
+# boot — the ceilings apply unchanged, which is exactly the behaviour every
+# hedge test pins.
+#
+# Keyed by the writer's full source (``tool_model:vertex``, ``api``,
+# ``subscription:claude-cli``), so a different model never inherits another's
+# clock. In-memory only: what a writer costs changes with the machine's load
+# (a subscription CLI's spawn tripled within an hour on 2026-08-18), so a
+# figure carried across restarts would more often mislead than help.
+_HEDGE_HISTORY_DEPTH = 5
+_HEDGE_MULTIPLIER = 2.5
+_HEDGE_FLOOR_S = 6.0
+_recent_writer_seconds: dict[str, deque[float]] = {}
+
+
+def _hedge_after_s(source: str) -> float:
+    """Seconds the writer ``source`` may stay silent before insurance starts."""
+    ceiling = HEDGE_AFTER_S if source.startswith("subscription") else HEDGE_AFTER_API_S
+    history = _recent_writer_seconds.get(source)
+    if not history:
+        return ceiling
+    return min(ceiling, max(_HEDGE_FLOOR_S, statistics.median(history) * _HEDGE_MULTIPLIER))
+
+
+def _remember_writer_seconds(source: str, seconds: float) -> None:
+    """Record one VALID brief's wall-clock for ``source``'s future threshold."""
+    if not source or seconds <= 0:
+        return
+    _recent_writer_seconds.setdefault(source, deque(maxlen=_HEDGE_HISTORY_DEPTH)).append(seconds)
+
+
+def _forget_writer_seconds() -> None:
+    """Drop every recorded duration (tests; a process starts empty anyway)."""
+    _recent_writer_seconds.clear()
+
 
 # Speech artefacts the deterministic layer removes. Matching *input vocabulary*
 # in the supported locales — these are the words people actually say while
@@ -900,6 +957,7 @@ async def compose(
     deadline = started + COMPOSE_TIMEOUT_S
     tried: list[str] = [writer_source] if writer_source else []
     attempts: dict[asyncio.Task[str], str] = {}
+    spawned_at: dict[asyncio.Task[str], float] = {}
     # A pinned brain is the caller deciding — no hedge, no rescue, as before.
     may_substitute = writer_task is not None
     hedged = not may_substitute
@@ -931,6 +989,7 @@ async def compose(
             )
         )
         attempts[task] = source
+        spawned_at[task] = time.monotonic()
         return True
 
     def _cancel_attempts() -> None:
@@ -949,15 +1008,12 @@ async def compose(
                 break
             wait_s = deadline - now
             if not hedged:
-                # The threshold follows the PRIMARY writer's family: a
-                # subscription CLI pays a cold process start a direct API call
-                # never does, so "suspiciously slow" starts earlier there.
-                # Read at loop time, not hoisted — tests pin these constants.
-                hedge_after_s = (
-                    HEDGE_AFTER_S
-                    if writer_source.startswith("subscription")
-                    else HEDGE_AFTER_API_S
-                )
+                # The threshold follows the PRIMARY writer: its family's
+                # ceiling (a subscription CLI pays a cold process start a
+                # direct API call never does), tightened by its own recent
+                # briefs. Read at loop time, not hoisted — tests pin the
+                # ceilings.
+                hedge_after_s = _hedge_after_s(writer_source)
                 wait_s = min(wait_s, max(started + hedge_after_s - now, 0.0))
             done, _pending = await asyncio.wait(
                 set(attempts), timeout=wait_s, return_when=asyncio.FIRST_COMPLETED
@@ -965,7 +1021,8 @@ async def compose(
 
             if not done and not hedged:
                 # Nobody failed — the writer is just slow. The next rung starts
-                # alongside it rather than after it; at most once per brief.
+                # alongside it rather than after it; at most ONE extra writer
+                # at a time (see ``hedge_ended`` below for the one exception).
                 hedged = True
                 if deadline - time.monotonic() >= _MIN_ATTEMPT_S:
                     nxt, nxt_source = await asyncio.to_thread(_rescue_writer, tried)
@@ -977,8 +1034,10 @@ async def compose(
                         )
                 continue
 
+            hedge_ended = False
             for task in done:
                 source = attempts.pop(task)
+                hedge_ended = hedge_ended or (hedged and source != writer_source)
                 try:
                     candidate = _strip_wrapper(task.result())
                 except (TimeoutError, asyncio.CancelledError):
@@ -994,6 +1053,9 @@ async def compose(
                     defect = _brief_defect(candidate)
                     if not defect:
                         composed = candidate
+                        _remember_writer_seconds(
+                            source, time.monotonic() - spawned_at.get(task, now)
+                        )
                         break
                     reason = defect
                     logger.info(
@@ -1003,8 +1065,28 @@ async def compose(
                         len(candidate),
                     )
 
-            if composed or attempts:
-                # Won, or a sibling attempt is still writing and may still win.
+            if composed:
+                break
+            if attempts:
+                # A sibling attempt is still writing and may still win. When
+                # the one that just ended was the HEDGE — a rescue rung that
+                # died or wrote a defect while the primary is still stalling —
+                # the next rung takes its place at once: a hedge that never
+                # got to write is no insurance, and the user is still waiting.
+                # Live 2026-08-18: the API rung on the dev box died in 5 ms
+                # (a keyless provider), and the brief then sat out the whole
+                # 90 s budget behind a stalled primary although a signed-in
+                # CLI was idle. Still one extra writer at a time — the dead
+                # hedge is gone — and every rung is tried at most once, so
+                # this cannot spend more than the rescue ladder holds.
+                if hedge_ended and may_substitute and deadline - time.monotonic() >= _MIN_ATTEMPT_S:
+                    nxt, nxt_source = await asyncio.to_thread(_rescue_writer, tried)
+                    if nxt is not None and _spawn_attempt(nxt, nxt_source):
+                        tried.append(nxt_source)
+                        notify(
+                            STAGE_HEDGE,
+                            _hedge_message(terminal_name, writer=_writer_label(nxt)),
+                        )
                 continue
             if not may_substitute:
                 # The caller pinned this model explicitly. Substituting another

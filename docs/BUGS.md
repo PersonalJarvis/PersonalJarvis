@@ -9997,3 +9997,134 @@ hand-off is a no-op elsewhere); `tests/unit/ui/test_native_drop.py`;
 `tests/unit/web/test_agentic_ide_resolve_folder.py`; frontend
 `src/lib/nativeDrop.test.ts` and `FolderPicker.test.tsx` ("uses the real path
 the desktop shell reports").
+
+## BUG-145: a spoken "T2, do a deep dive on …" reaches the pane 26 s after the sentence ends — the brief writer's `auto` order put a coding CLI's cold process start on the voice turn's critical path, and its insurance was tuned for that CLI alone (HIGH, FIXED 2026-08-18)
+
+**Symptom.** Realtime session `63617599` (2026-08-18 16:10, Vertex Live,
+delegate tool mode). The user said "Kannst du bitte Terminal T2 … einen Deep
+Dive machen …" and then watched T2 for 26 s before the brief landed
+(`Agentic IDE prompt -> T2` at 16:10:50.288; the transcript closed at
+16:10:24.15). First audio came at 27.3 s (`first_final_to_first_audio_ms
+27338`). The session recorder holds the whole call as 53.3 s with one
+sentence in and "Ist bei T2." out. The user's own reading was "my computer is <!-- i18n-allow: quoted voice output -->
+lagging".
+
+**Reconstruction (flight recorder + desktop log).**
+
+1. +0.0 s transcript final; +0.5 s the routing decision blocked the event
+   loop for 541 ms (`realtime event loop stalled 541 ms` — a stall of
+   500–880 ms is logged at this point of every session, separate issue).
+2. +1.1 s → +3.7 s: `AgenticIdeComposeProgress start → thinking`. The writer
+   probe (`claude status` + `resolve_subscription_brain: writing on
+   claude-cli`) took 2.6 s.
+3. +3.7 s → +22.7 s: `claude-cli: spawning print-mode turn (prompt=693
+   chars)` … `claude-cli turn ok: 1248 chars in 18.9s`. Nearly all of it was
+   the SPAWN, not the writing: an EMPTY answer from the same CLI (the fact
+   extractor's `2 chars` turns) took 17.2 s and 18.9 s in the same minute,
+   against 5.2–6.2 s at 15:36 and 9–13 s at 16:00. The cold start had
+   tripled within an hour, under a load the log shows plainly: two Claude
+   Code TUIs had just been spawned in T1/T2 (16:09:38), Gemini Live and the
+   wake detectors were running, 117 microphone frames were dropped in the
+   session, and right after it three more CLIs (claude, gemini, codex) were
+   spawned concurrently for fact extraction.
+4. +22.7 s → +26.1 s: the paste was typed; `_await_arrival` polled 3.0 s for
+   the text to show on T2's input line and never saw it (`never saw the
+   prompt reach T2 — reporting it as unconfirmed`); Enter; delivered.
+5. +26.1 s "Ist bei T2." — twice (BUG-143, fixed the same day). No instant <!-- i18n-allow: quoted voice output -->
+   ack was spoken at all: unlike the 15:35 and 15:57 sessions there is no
+   `delegate bridge: … line requested` line for this call, and in those two
+   sessions the composed line was `dropped non-conforming` — the ack shipped
+   2026-08-17 (ADR-0033) has still not produced audio in a live call. Open.
+
+**Root.** Two decisions that were each right for the writer they were
+measured against and wrong together on the voice path.
+(1) `jarvis/agentic_ide/writer.py`: `auto` preferred a connected coding
+subscription because it is work the user has already paid for, and only
+then crossed to the API tier. A subscription CLI pays a cold process start
+per brief — 10–12 s in the 2026-07-26 measurement that raised the compose
+budget to 90 s, 16–25 s end to end for a lean brief on 2026-08-12, 19 s
+today — and that start-up cost scales with machine load exactly when the
+user is doing the most (spawning agents). The user's pinned Tool Model on
+the same box writes the same brief in ~5 s warm (measured 2026-08-18: 5.0 s
+and 4.8 s for the identical instruction; the deep tier 7–8 s for a plain
+rewrite per the composer's own notes).
+(2) `jarvis/agentic_ide/prompt_composer.py`: the hedge — a second writer
+started alongside a stalled first — waited a fixed 30 s for a subscription
+writer and 20 s for an API writer, each figure the healthy p90 of ONE writer
+on ONE day. Neither knows that a Tool Model normally answers in 5 s, so a
+hung fast writer got 20 s of silence before insurance was allowed to start.
+And when the hedge itself died (on the dev box the `api` rung resolves to a
+keyless OpenRouter — `JARVIS__BRAIN__PRIMARY=openrouter` sits in the shell
+environment and overrides `jarvis.toml`'s `vertex`; measured: "No OpenRouter
+API key found" 5 ms after the hedge started), no third writer was allowed —
+"at most once per brief" — and the brief sat out the remaining budget behind
+the stalled primary although a signed-in CLI was idle: measured 90.05 s to
+the deterministic fallback.
+
+**Fix.**
+* `writer.py`: ONE order for `auto` and for the rescue, `_AUTO_ORDER =
+  ("tool_model", "api", "subscription")` — the writer that answers soonest
+  without a quality demotion. The Tool Model leads because it is, in the
+  Tool Model tab's own words, the model that "routes spoken commands and
+  starts background agents"; direct API calls have no process to cold-start;
+  the subscription writes under `auto` only when nothing API-side qualifies,
+  so a downloader whose ONLY credential is a coding CLI still gets a brief,
+  and a user who wants the plan spent on purpose pins `subscription`. Pins
+  are untouched. Under `auto` an unset Tool Model is the ordinary case and no
+  longer logs as a broken pin. Config description and the settings card's
+  "Automatic" label say the new order.
+* `prompt_composer.py`: `HEDGE_AFTER_S` / `HEDGE_AFTER_API_S` are CEILINGS
+  now. `_hedge_after_s(source)` derives the threshold from the writer's own
+  recent valid briefs in this process (2.5 × their median, never below a 6 s
+  floor, never above the family ceiling, keyed by full source so no model
+  inherits another's clock, in-memory only because a CLI's spawn cost
+  tripled within an hour). Without history the ceilings apply unchanged. A
+  hedge that dies or writes a defect while the primary still stalls is
+  replaced by the next rung at once — still one extra writer at a time,
+  every rung tried at most once.
+
+**Class.** A cost-first default on a latency-critical path, and a fixed
+"suspiciously slow" number measured against one writer and applied to
+every writer. Same family as BUG-140 (a per-call cold cost paid on the
+critical path) and the 2026-08-12 hedge (a serial wait that had to be
+measured to be seen). The general rule: on the voice path the first
+question is "who answers soonest", cost and quality are constraints on that
+answer, not the other way round; and any threshold that says "slow" must be
+relative to what THIS writer normally does.
+
+**Verification.** Live on the dev box, same instruction as 16:10, through
+`prompt_composer.compose` with the real config: `tool_model:vertex`
+resolves in 0.00 s warm; the brief lands in 5.0 s and 4.8 s (runs 2 and 3 of
+one process). Honest caveats: run 1 of a fresh process took 56 s — the raw
+google-genai SDK against Vertex `global` answered a bare "Say OK." in 49 s,
+22 s, 9.9 s and 5.7 s in the same minute (17:25), so the provider had a slow
+spell during the measurement; that is the provider, not the writer order,
+and the router (same model) suffers it equally. The hedge history recorded
+`[52.8, 5.0, 4.8]` and would insure the next brief at 12.5 s instead of 20 s.
+Not yet observed in a live voice call — needs the app restarted.
+
+**Tests.** `tests/unit/agentic_ide/test_writer_resolution.py` (auto prefers
+the Tool Model, then the API tier, reaches the subscription last, never
+probes a CLI while a faster writer qualifies, an unset Tool Model logs no
+broken pin, a raising CLI probe degrades); `test_writer_rescue.py` (a dead
+Tool Model crosses to the API tier before the CLI, the subscription is the
+last rescue, first choice and rescue share ONE order); `test_writer_cache.py`
+(cache tests pinned to the subscription rung explicitly);
+`test_composer_hedge.py` (ceilings without history, a fast writer's history
+pulls insurance forward, the floor, never above the ceiling, per-source
+clocks, only valid briefs recorded, bounded history, the loop teaches the
+threshold, a defective brief teaches nothing, history tightens the live
+hedge end to end, a dead hedge is replaced by the next rung, a healthy hedge
+recruits nobody else); `conftest.py` starts every test with an empty writer
+clock.
+
+**Open, seen while looking.** (a) The instant ack (ADR-0033) has produced no
+audio in any of the three sessions this afternoon — needs one live call at
+debug level. (b) The 500–880 ms event-loop stall at every routing decision.
+(c) `JARVIS__BRAIN__PRIMARY=openrouter` / `JARVIS__TTS__PROVIDER=
+openrouter-tts` in the maintainer's shell environment override `jarvis.toml`
+and point the quality tier, the fact extractor ("Verdichter brain-call
+failed: No OpenRouter API key") and the TTS default at a provider without a
+key. (d) The paste's 3 s arrival check did not see the text on T2 — one
+sample, cause unknown (slow render under load vs. a placeholder shape the
+detector does not know).

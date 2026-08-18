@@ -350,3 +350,261 @@ async def test_the_hedge_respects_the_shared_budget(
     )
 
     assert result.composed_by == "fallback"
+
+
+# ---------------------------------------------------------------------------
+# The threshold follows the writer actually in use (2026-08-18).
+#
+# ``HEDGE_AFTER_S`` / ``HEDGE_AFTER_API_S`` are ceilings: a writer with recent
+# valid briefs in this process is insured at a multiple of ITS OWN median, never
+# below the floor and never above its family's ceiling. Without history the
+# ceilings apply unchanged — which is what every test above relies on.
+# ---------------------------------------------------------------------------
+
+
+def test_without_history_the_ceilings_apply(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_S", 30.0)
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 20.0)
+
+    assert prompt_composer._hedge_after_s("subscription:claude-cli") == 30.0  # noqa: SLF001
+    assert prompt_composer._hedge_after_s("tool_model:vertex") == 20.0  # noqa: SLF001
+    assert prompt_composer._hedge_after_s("api") == 20.0  # noqa: SLF001
+
+
+def test_a_fast_writers_history_pulls_insurance_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Tool Model that writes a brief in 3 s is insured at 7.5 s, not 20 s —
+    the fixed API ceiling would let a hung fast writer sit through seven times
+    its normal wait before a second writer was allowed to start."""
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 20.0)
+    for _ in range(3):
+        prompt_composer._remember_writer_seconds("tool_model:vertex", 3.0)  # noqa: SLF001
+
+    assert prompt_composer._hedge_after_s("tool_model:vertex") == pytest.approx(7.5)  # noqa: SLF001
+
+
+def test_the_floor_keeps_one_quick_brief_from_arming_a_hair_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One 0.8 s rewrite must not insure the next, bigger brief at 2 s: a brief
+    that reads five outlines legitimately takes longer than a plain rewrite."""
+    monkeypatch.setattr(prompt_composer, "_HEDGE_FLOOR_S", 6.0)
+    prompt_composer._remember_writer_seconds("api", 0.8)  # noqa: SLF001
+
+    assert prompt_composer._hedge_after_s("api") == 6.0  # noqa: SLF001
+
+
+def test_history_never_lifts_the_threshold_above_the_family_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow writer keeps its measured ceiling; the calibration only ever
+    tightens insurance, it never loosens it past what the constants promise."""
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_S", 30.0)
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 20.0)
+    for _ in range(3):
+        prompt_composer._remember_writer_seconds("subscription:claude-cli", 25.0)  # noqa: SLF001
+        prompt_composer._remember_writer_seconds("api", 25.0)  # noqa: SLF001
+
+    assert prompt_composer._hedge_after_s("subscription:claude-cli") == 30.0  # noqa: SLF001
+    assert prompt_composer._hedge_after_s("api") == 20.0  # noqa: SLF001
+
+
+def test_each_writer_keeps_its_own_clock() -> None:
+    """A different model never inherits another's history — the CLI's 18 s
+    must not slow the Tool Model's insurance, nor the reverse."""
+    for _ in range(3):
+        prompt_composer._remember_writer_seconds("subscription:claude-cli", 18.0)  # noqa: SLF001
+
+    assert (
+        prompt_composer._hedge_after_s("tool_model:vertex")  # noqa: SLF001
+        == prompt_composer.HEDGE_AFTER_API_S
+    )
+
+
+def test_only_a_valid_brief_is_recorded() -> None:
+    prompt_composer._remember_writer_seconds("", 3.0)  # noqa: SLF001
+    prompt_composer._remember_writer_seconds("api", 0.0)  # noqa: SLF001
+    prompt_composer._remember_writer_seconds("api", -1.0)  # noqa: SLF001
+
+    assert not prompt_composer._recent_writer_seconds  # noqa: SLF001
+
+
+def test_the_history_holds_the_last_few_briefs_only() -> None:
+    """A writer that got faster is not held hostage by an old slow spell."""
+    for seconds in (30.0, 30.0, 30.0, 30.0, 30.0, 2.0, 2.0, 2.0, 2.0, 2.0):
+        prompt_composer._remember_writer_seconds("api", seconds)  # noqa: SLF001
+
+    assert list(prompt_composer._recent_writer_seconds["api"]) == [2.0] * 5  # noqa: SLF001
+
+
+async def test_a_delivered_brief_teaches_the_writers_threshold(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loop feeds the calibration: a valid brief from ``tool_model:fast``
+    leaves one measured duration behind under exactly that source."""
+
+    async def _compose(**_kwargs: object) -> str:
+        return BRIEF
+
+    monkeypatch.setattr(
+        prompt_composer, "_resolve_writer", lambda: (_Writer("fast"), "tool_model:fast")
+    )
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _compose)
+
+    result = await prompt_composer.compose(
+        "make the wake path faster", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "llm"
+    history = prompt_composer._recent_writer_seconds  # noqa: SLF001
+    assert list(history) == ["tool_model:fast"]
+    assert len(history["tool_model:fast"]) == 1
+    assert history["tool_model:fast"][0] > 0
+
+
+async def test_a_defective_brief_teaches_nothing(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer whose answer was thrown away must not look fast for it: only
+    the rescue that actually delivered is measured."""
+
+    async def _compose(*, brain: object, **_kwargs: object) -> str:
+        if getattr(brain, "name", "") == "broken":
+            return "ok"  # far too short to be a brief — a defect, not a brief
+        return BRIEF
+
+    monkeypatch.setattr(
+        prompt_composer, "_resolve_writer", lambda: (_Writer("broken"), "tool_model:broken")
+    )
+    monkeypatch.setattr(prompt_composer, "_rescue_writer", lambda tried: (_Writer("fine"), "api"))
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _compose)
+
+    result = await prompt_composer.compose(
+        "make the wake path faster", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "llm"
+    assert list(prompt_composer._recent_writer_seconds) == ["api"]  # noqa: SLF001
+
+
+async def test_history_tightens_the_live_hedge(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end: with the API ceiling far away, a writer whose recent briefs
+    were quick is insured on its own clock, and the second writer wins."""
+    stalled = asyncio.Event()
+    started: list[str] = []
+
+    async def _compose(*, brain: object, **_kwargs: object) -> str:
+        name = getattr(brain, "name", "?")
+        started.append(name)
+        if name == "hung":
+            await stalled.wait()  # never set — cancelled by the winner
+        return HEDGE_BRIEF
+
+    # The ceiling would never fire inside this test; only the calibrated
+    # threshold can. The floor is lowered to make that threshold reachable.
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 60.0)
+    monkeypatch.setattr(prompt_composer, "_HEDGE_FLOOR_S", 0.02)
+    for _ in range(3):
+        prompt_composer._remember_writer_seconds("tool_model:hung", 0.02)  # noqa: SLF001
+    monkeypatch.setattr(
+        prompt_composer, "_resolve_writer", lambda: (_Writer("hung"), "tool_model:hung")
+    )
+    monkeypatch.setattr(prompt_composer, "_rescue_writer", lambda tried: (_Writer("fast"), "api"))
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _compose)
+
+    result = await prompt_composer.compose(
+        "make the wake path faster", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "llm"
+    assert "quick" in result.text
+    assert started == ["hung", "fast"]
+
+
+async def test_a_hedge_that_dies_is_replaced_by_the_next_rung(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live 2026-08-18: the primary stalled, the hedge (a keyless API rung)
+    died in milliseconds, and the brief then sat out the whole budget behind
+    the stall although a signed-in CLI was idle. A dead hedge is no insurance:
+    the next rung takes its place at once, still one extra writer at a time."""
+    stalled = asyncio.Event()
+    started: list[str] = []
+    asked: list[tuple[str, ...]] = []
+
+    async def _compose(*, brain: object, **_kwargs: object) -> str:
+        name = getattr(brain, "name", "?")
+        started.append(name)
+        if name == "slow":
+            await stalled.wait()  # never set — cancelled by the winner
+        if name == "dead":
+            raise RuntimeError("No API key found")
+        return HEDGE_BRIEF
+
+    def _rescue(tried: list[str]) -> tuple[_Writer, str]:
+        asked.append(tuple(tried))
+        if len(asked) == 1:
+            return _Writer("dead"), "api"
+        return _Writer("fast"), "subscription:fast"
+
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 0.05)
+    monkeypatch.setattr(
+        prompt_composer, "_resolve_writer", lambda: (_Writer("slow"), "tool_model:slow")
+    )
+    monkeypatch.setattr(prompt_composer, "_rescue_writer", _rescue)
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _compose)
+
+    notices: list[prompt_composer.ComposeNotice] = []
+    result = await prompt_composer.compose(
+        "make the wake path faster",
+        session=workspace,
+        terminal_name="Kai",
+        on_progress=notices.append,
+    )
+
+    assert result.composed_by == "llm"
+    assert "quick" in result.text
+    assert started == ["slow", "dead", "fast"]
+    # Every rung is asked for once, and the dead one is named as tried.
+    assert asked == [("tool_model:slow",), ("tool_model:slow", "api")]
+    assert len([n for n in notices if n.stage == prompt_composer.STAGE_HEDGE]) == 2
+
+
+async def test_a_healthy_hedge_recruits_nobody_else(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bound still holds: while the hedge is alive and writing, no third
+    writer is started, however long the primary stalls."""
+    stalled = asyncio.Event()
+    started: list[str] = []
+
+    async def _compose(*, brain: object, **_kwargs: object) -> str:
+        name = getattr(brain, "name", "?")
+        started.append(name)
+        if name == "slow":
+            await stalled.wait()
+        await asyncio.sleep(0.2)  # the hedge takes its time — but it is alive
+        return HEDGE_BRIEF
+
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 0.05)
+    monkeypatch.setattr(
+        prompt_composer, "_resolve_writer", lambda: (_Writer("slow"), "tool_model:slow")
+    )
+    monkeypatch.setattr(
+        prompt_composer,
+        "_rescue_writer",
+        lambda tried: (_Writer("hedge"), "api")
+        if len(tried) == 1
+        else pytest.fail("recruited a third writer while the hedge was alive"),
+    )
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _compose)
+
+    result = await prompt_composer.compose(
+        "make the wake path faster", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "llm"
+    assert started == ["slow", "hedge"]

@@ -114,6 +114,20 @@ def _fresh_writer_cache() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_hedge_history() -> None:
+    """Start every test without a remembered writer clock.
+
+    ``prompt_composer`` calibrates its hedge threshold from the durations of
+    the briefs it delivered in this process. Between tests that memory is a
+    leak: an instant fake writer in one test would tighten the insurance for a
+    later test that expects the documented ceiling.
+    """
+    from jarvis.agentic_ide import prompt_composer
+
+    prompt_composer._forget_writer_seconds()  # noqa: SLF001
+
+
+@pytest.fixture(autouse=True)
 def _agent_history_in_tmp(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
