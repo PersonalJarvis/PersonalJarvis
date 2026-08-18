@@ -28,8 +28,9 @@ import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
+import { MascotGigi } from "@/components/MascotGigi";
 import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
-import { installWallpaperSync } from "@/store/wallpaper";
+import { installWallpaperSync, useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
@@ -44,10 +45,12 @@ const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
  *
  * Which artwork is shown belongs to the user — see the Wallpaper section. The
  * picture that ships with the app remains the default, and the one every
- * failure path returns to.
+ * failure path returns to. Gigi is a separate live layer on that ground, not
+ * painted into the picture.
  */
 function DesktopWallpaper() {
   const wallpaperUrl = useDesktopWallpaper();
+  const mascotOn = useWallpaperStore((state) => state.mascotOn);
   return (
     <div
       aria-hidden
@@ -58,6 +61,14 @@ function DesktopWallpaper() {
         className="jarvis-desktop-wallpaper absolute inset-0"
         style={{ backgroundImage: `url(${wallpaperUrl})` }}
       />
+      {mascotOn ? (
+        <div
+          className="jarvis-desktop-wallpaper-mascot"
+          data-testid="jarvis-desktop-wallpaper-mascot"
+        >
+          <MascotGigi size={200} reactToVoice enableComments={false} />
+        </div>
+      ) : null}
       <div className="jarvis-desktop-wallpaper-veil absolute inset-0" />
     </div>
   );

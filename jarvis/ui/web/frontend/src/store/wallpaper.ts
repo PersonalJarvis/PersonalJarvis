@@ -76,6 +76,17 @@ function migrateLegacySelection(): void {
 const FAVORITES_KEY = "jarvis.wallpaper.favorites.v1";
 
 /**
+ * Whether the live Gigi mascot sits ON the wallpaper as its own layer.
+ *
+ * The pictures themselves stay empty of the mascot: painting Gigi into the
+ * pixels made him a sticker, and taking him out of the pixels made the
+ * desktop lose its hero. The mascot is the real Gigi component, composited
+ * on top of whatever picture is showing. Default on — a fresh profile
+ * should still have Gigi on the ground.
+ */
+const MASCOT_KEY = "jarvis.wallpaper.mascot.v1";
+
+/**
  * An id minted by the upload store (`u` + 16 hex), as opposed to one written by
  * the library's manifest builder (`03-anime-neon-07`) or one of the few ids
  * that ship inside the app (`original`, `plain-black`, …).
@@ -141,6 +152,17 @@ function readSelections(): Record<Theme, string | null> {
  * favourites": the value is hand-editable browser storage, and a malformed
  * entry must cost the grid a shortlist, never a mount.
  */
+function readMascotOn(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = window.localStorage.getItem(MASCOT_KEY);
+    if (raw === null) return true;
+    return raw !== "0" && raw !== "false";
+  } catch {
+    return true;
+  }
+}
+
 function readFavorites(): string[] {
   if (typeof window === "undefined") return [];
   try {
@@ -162,8 +184,12 @@ interface WallpaperStore {
   selections: Record<Theme, string | null>;
   /** Favourited wallpaper ids, oldest first. Shared by both themes. */
   favorites: string[];
+  /** Live Gigi on the wallpaper layer. Independent of which picture is showing. */
+  mascotOn: boolean;
   /** Persist a choice for one theme. Pass null to go back to the default. */
   select: (id: string | null, theme: Theme) => void;
+  /** Show or hide the live mascot on the wallpaper. */
+  setMascotOn: (on: boolean) => void;
   /**
    * Drop one wallpaper everywhere it is remembered — every theme slot and the
    * favourites. For a picture that no longer exists: an id kept for a deleted
@@ -191,6 +217,7 @@ interface WallpaperStore {
 export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
   selections: readSelections(),
   favorites: readFavorites(),
+  mascotOn: readMascotOn(),
   select: (id, theme) => {
     try {
       if (id) window.localStorage.setItem(THEME_KEYS[theme], id);
@@ -238,7 +265,20 @@ export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
     }
     set({ favorites: next });
   },
-  adopt: () => set({ selections: readSelections(), favorites: readFavorites() }),
+  setMascotOn: (on) => {
+    try {
+      window.localStorage.setItem(MASCOT_KEY, on ? "1" : "0");
+    } catch {
+      /* the layer still applies to this window */
+    }
+    set({ mascotOn: on });
+  },
+  adopt: () =>
+    set({
+      selections: readSelections(),
+      favorites: readFavorites(),
+      mascotOn: readMascotOn(),
+    }),
   reconcile: (themeOf) => {
     try {
       for (const slot of ["light", "dark"] as Theme[]) {
@@ -276,6 +316,7 @@ export function installWallpaperSync(): () => void {
     THEME_KEYS.light,
     THEME_KEYS.dark,
     FAVORITES_KEY,
+    MASCOT_KEY,
   ]);
   const onStorage = (event: StorageEvent) => {
     if (event.key !== null && !watched.has(event.key)) return;

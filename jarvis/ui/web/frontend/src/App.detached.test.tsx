@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "@/App";
 import { useEventStore } from "@/store/events";
+import { useWallpaperStore } from "@/store/wallpaper";
 
 vi.mock("@/hooks/useWebSocket", () => ({ useWebSocket: () => undefined }));
 vi.mock("@/hooks/useBrainStatus", () => ({ useBrainStatus: () => undefined }));
@@ -57,6 +58,9 @@ vi.mock("@/components/CliConnectPoller", () => ({ CliConnectPoller: () => null }
 vi.mock("@/components/onboarding/OnboardingGate", () => ({
   OnboardingGate: () => null,
 }));
+vi.mock("@/components/MascotGigi", () => ({
+  MascotGigi: () => <div data-testid="mascot-gigi" />,
+}));
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
@@ -65,6 +69,7 @@ beforeEach(() => {
     solo: false,
     detachedViews: [],
   });
+  useWallpaperStore.setState({ mascotOn: true });
 });
 
 afterEach(() => {
@@ -77,9 +82,18 @@ describe("App shell around detached coding views", () => {
     render(<App />);
 
     expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(screen.getByTestId("jarvis-desktop-wallpaper-mascot")).toBeTruthy();
     expect(
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
     ).toBe(true);
+  });
+
+  it("hides the live mascot when the wallpaper layer is switched off", () => {
+    useWallpaperStore.setState({ mascotOn: false });
+    render(<App />);
+
+    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
   });
 
   it("keeps the sidebar reachable in the main window", () => {

@@ -152,3 +152,23 @@ describe("reconcile", () => {
     expect(selections.dark).toBe("05-noir-03");
   });
 });
+
+describe("live mascot on the wallpaper", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useWallpaperStore.setState({ mascotOn: true });
+  });
+
+  it("defaults to on when nothing is stored", () => {
+    useWallpaperStore.getState().adopt();
+    expect(useWallpaperStore.getState().mascotOn).toBe(true);
+  });
+
+  it("persists off and comes back in another adopt", () => {
+    useWallpaperStore.getState().setMascotOn(false);
+    expect(window.localStorage.getItem("jarvis.wallpaper.mascot.v1")).toBe("0");
+    useWallpaperStore.setState({ mascotOn: true });
+    useWallpaperStore.getState().adopt();
+    expect(useWallpaperStore.getState().mascotOn).toBe(false);
+  });
+});

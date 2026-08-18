@@ -84,15 +84,18 @@ function SegmentButton({
   active,
   onClick,
   children,
+  "aria-label": ariaLabel,
 }: {
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  "aria-label"?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-label={ariaLabel}
       aria-pressed={active}
       className={cn(
         "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors",
@@ -512,7 +515,9 @@ export function WallpaperView() {
   const activeTheme = useThemeValue();
   const selectedId = useWallpaperStore((state) => state.selections[activeTheme]);
   const favorites = useWallpaperStore((state) => state.favorites);
+  const mascotOn = useWallpaperStore((state) => state.mascotOn);
   const toggleFavorite = useWallpaperStore((state) => state.toggleFavorite);
+  const setMascotOn = useWallpaperStore((state) => state.setMascotOn);
   const forget = useWallpaperStore((state) => state.forget);
   const reconcile = useWallpaperStore((state) => state.reconcile);
   const apply = useApplyWallpaper();
@@ -800,6 +805,16 @@ export function WallpaperView() {
                 {favoriteCount}
               </span>
             )}
+          </SegmentButton>
+        </div>
+
+        <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+          <SegmentButton
+            active={mascotOn}
+            onClick={() => setMascotOn(!mascotOn)}
+            aria-label="Show Gigi on the wallpaper"
+          >
+            Gigi
           </SegmentButton>
         </div>
 

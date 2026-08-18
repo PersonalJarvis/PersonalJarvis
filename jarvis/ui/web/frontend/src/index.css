@@ -636,6 +636,23 @@
     transform: scale(1.002);
   }
 
+  /*
+   * Live Gigi on the wallpaper. He is a layer, not pixels in the picture:
+   * the artwork stays a scene, and the mascot stays the real Gigi. Sits in
+   * the lower-left of the ground, past a typical nav column, in both modes.
+   */
+  .jarvis-desktop-wallpaper-mascot {
+    position: absolute;
+    left: clamp(20px, 22vw, 340px);
+    bottom: clamp(28px, 11vh, 104px);
+    z-index: 1;
+    filter: drop-shadow(0 16px 28px rgb(0 0 0 / 0.38));
+  }
+
+  :root:not(.dark) .jarvis-desktop-wallpaper-mascot {
+    filter: drop-shadow(0 14px 22px rgb(40 28 12 / 0.22));
+  }
+
   .jarvis-desktop-wallpaper-veil {
     background:
       linear-gradient(
@@ -2165,6 +2182,178 @@
     .deck-core *,
     .deck-orb-glow {
       animation: none !important;
+    }
+  }
+
+  /* ===========================================================
+     Deck standby — the boot sequence and the listening ring
+     (components/deck/DeckStandby.tsx). Everything animated here is
+     a fact moving: the ring's ticks light clockwise while the app
+     comes up, a gate's arc draws in when that gate turns true, the
+     sweep turns only while the wake word is really being listened
+     for, and the ping fires once at the moment the boot is done.
+     Colours are theme tokens (gold on both grounds). Reduced motion
+     stops all of it — the still picture carries the same facts.
+     =========================================================== */
+  .deck-ring-tick[data-ignite="true"] {
+    /* `both`: the tick's own opacity is inline, and only a filling animation
+       outranks it — so the tick is dark until its turn comes. */
+    animation: deck-ring-ignite 420ms ease-out both;
+  }
+  @keyframes deck-ring-ignite {
+    0% {
+      opacity: 0;
+    }
+    35% {
+      opacity: 1;
+    }
+    100% {
+      opacity: var(--tick-opacity, 0.4);
+    }
+  }
+  .deck-ring-bezel[data-ignite="true"] {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: deck-ring-draw 1400ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  }
+  @keyframes deck-ring-draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  /* a gate's arc draws in from its start the moment the gate turns true */
+  .deck-gate-arc[data-state="ok"][data-fresh="true"] {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: deck-ring-draw 520ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  }
+  /* the sweep: one turn every 14 s — the wake-word listener made visible */
+  .deck-ring-sweep {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: deck-ring-sweep 14s linear infinite;
+  }
+  @keyframes deck-ring-sweep {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  /* the ping: once, when the boot completes — a ring leaves the orb and dies at the bezel */
+  .deck-ring-ping {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: deck-ring-ping 1100ms cubic-bezier(0.1, 0.6, 0.3, 1) forwards;
+  }
+  @keyframes deck-ring-ping {
+    0% {
+      transform: scale(0.35);
+      opacity: 0.85;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 0;
+    }
+  }
+  /* boot console: a line types itself in; the cursor blinks */
+  .deck-boot-line[data-fresh="true"] {
+    overflow: hidden;
+    white-space: nowrap;
+    animation: deck-boot-type 360ms steps(28, end) both;
+  }
+  @keyframes deck-boot-type {
+    from {
+      max-width: 0;
+    }
+    to {
+      max-width: 100%;
+    }
+  }
+  .deck-boot-caret {
+    animation: deck-boot-caret 1s steps(2, end) infinite;
+  }
+  @keyframes deck-boot-caret {
+    50% {
+      opacity: 0;
+    }
+  }
+  /* pending gate: three dots walking */
+  .deck-boot-dots span {
+    animation: deck-boot-dot 1.2s ease-in-out infinite;
+  }
+  .deck-boot-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .deck-boot-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  @keyframes deck-boot-dot {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+    40% {
+      opacity: 1;
+    }
+  }
+  /* boot title: letters arrive one after another */
+  .deck-boot-letter {
+    display: inline-block;
+    opacity: 0;
+    animation: deck-boot-letter 320ms ease-out forwards;
+  }
+  @keyframes deck-boot-letter {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  /* the scan bar riding the wipe front when a board card powers on */
+  .deck-scan-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0),
+      hsl(var(--primary) / 0.9) 20%,
+      hsl(var(--primary) / 0.9) 80%,
+      hsl(var(--primary) / 0)
+    );
+    box-shadow: 0 0 10px 1px hsl(var(--primary) / 0.45);
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .deck-ring-tick[data-ignite="true"],
+    .deck-ring-bezel[data-ignite="true"],
+    .deck-gate-arc,
+    .deck-ring-sweep,
+    .deck-ring-ping,
+    .deck-boot-line,
+    .deck-boot-caret,
+    .deck-boot-dots span,
+    .deck-boot-letter {
+      animation: none !important;
+    }
+    .deck-ring-tick[data-ignite="true"] {
+      opacity: var(--tick-opacity, 0.4);
+    }
+    .deck-ring-bezel[data-ignite="true"],
+    .deck-gate-arc[data-state="ok"][data-fresh="true"] {
+      stroke-dasharray: none;
+      stroke-dashoffset: 0;
+    }
+    .deck-boot-letter,
+    .deck-boot-dots span {
+      opacity: 1;
+    }
+    .deck-ring-ping {
+      display: none;
     }
   }
 }

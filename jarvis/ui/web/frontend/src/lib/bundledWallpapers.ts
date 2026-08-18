@@ -122,9 +122,10 @@ export function bundledWallpaperUrl(id: string): string | null {
  * modes, light chrome landed on it whenever the light slot was empty — a
  * fresh profile, a cleared store, a manual switch to light before any light
  * picture was chosen — and nothing on that screen could be read (maintainer
- * report 2026-08-18). The daylight courtyard is the same character in the
- * light mode's own register, so a mode without a pick of its own shows a
- * picture authored for it, never the other mode's.
+ * report 2026-08-18). The daylight courtyard is the same place in the light
+ * mode's own register, so a mode without a pick of its own shows a picture
+ * authored for it, never the other mode's. Gigi is not in these pictures —
+ * he sits on top as a live layer (see store/wallpaper `mascotOn`).
  */
 export const DEFAULT_WALLPAPER_URLS: Readonly<Record<Theme, string>> = {
   dark: defaultOf("dark"),

@@ -151,6 +151,7 @@ beforeEach(() => {
   useWallpaperStore.setState({
     selections: { light: null, dark: null },
     favorites: [],
+    mascotOn: true,
   });
   document.documentElement.classList.add("dark");
 });
@@ -781,5 +782,25 @@ describe("WallpaperView", () => {
     );
 
     expect(await screen.findByAltText("The Original")).toBeTruthy();
+  });
+
+  it("toggles the live Gigi layer without changing the picture", async () => {
+    renderView();
+    await screen.findByAltText("The Original");
+
+    const toggle = screen.getByRole("button", {
+      name: "Show Gigi on the wallpaper",
+    });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(useWallpaperStore.getState().mascotOn).toBe(true);
+
+    fireEvent.click(toggle);
+
+    expect(useWallpaperStore.getState().mascotOn).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(useWallpaperStore.getState().selections).toEqual({
+      light: null,
+      dark: null,
+    });
   });
 });
