@@ -82,6 +82,12 @@ export interface WikiGraph3DProps {
   width: number;
   height: number;
   highlightSlug?: string;
+  /**
+   * The page the ambient orbit turns around — the user's own entity page when
+   * the vault has one (`hub` in the graph payload). Absent, the camera turns
+   * around the network's middle as before.
+   */
+  pivotSlug?: string | null;
   onNodeClick: (slug: string) => void;
   /** Any change re-frames the camera; the host's Center button bumps it. */
   resetSignal: number;
@@ -96,6 +102,7 @@ export function WikiGraph3D({
   width,
   height,
   highlightSlug,
+  pivotSlug = null,
   onNodeClick,
   resetSignal,
   nodeLabel,
@@ -223,10 +230,18 @@ export function WikiGraph3D({
   const [frameSignal, setFrameSignal] = useState(0);
   const reframe = useCallback(() => setFrameSignal((tick) => tick + 1), []);
 
+  // The live node object for the pivot: the simulation writes its position
+  // onto this very object, so handing it to the orbit lets the camera follow.
+  const pivotNode = useMemo(
+    () => (pivotSlug ? (graphData.nodes.find((n) => n.id === pivotSlug) ?? null) : null),
+    [graphData.nodes, pivotSlug],
+  );
+
   useGraphOrbit({
     graphRef: graphRef as RefObject<GraphCameraApi | undefined>,
     hostRef,
     nodes: graphData.nodes as Array<Partial<Vec3>>,
+    pivot: pivotNode as Partial<Vec3> | null,
     frameSignal,
   });
 

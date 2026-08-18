@@ -53,12 +53,14 @@ async function fetchGraph(): Promise<WikiGraphPayload> {
 function DeckWikiScene({
   graphData,
   highlightSlug,
+  pivotSlug,
   resetSignal,
   onNodeClick,
   className,
 }: {
   graphData: { nodes: RenderNode[]; links: RenderEdge[] };
   highlightSlug?: string;
+  pivotSlug?: string | null;
   resetSignal: number;
   onNodeClick: (slug: string) => void;
   className?: string;
@@ -100,6 +102,7 @@ function DeckWikiScene({
               width={size.w}
               height={size.h}
               highlightSlug={highlightSlug}
+              pivotSlug={pivotSlug}
               onNodeClick={onNodeClick}
               resetSignal={resetSignal}
               nodeLabel={nodeLabel}
@@ -145,7 +148,11 @@ export function WikiCard({ className }: { className?: string }) {
 
   const pages = tree.data?.stats?.total_pages ?? graphData.nodes.length;
   const links = tree.data?.stats?.total_links ?? graphData.links.length;
-  const highlightSlug = changes[0]?.slug;
+  // The pivot: the user's own page, as the route names it. Until something
+  // changes this session that page is also the one that glows, so the centre
+  // of the turn is recognisable as a page and not just a point in space.
+  const hub = graph.data?.hub ?? null;
+  const highlightSlug = changes[0]?.slug ?? hub ?? undefined;
 
   const openPage = useCallback(
     (slug: string) => {
@@ -198,6 +205,7 @@ export function WikiCard({ className }: { className?: string }) {
           <DeckWikiScene
             graphData={graphData}
             highlightSlug={highlightSlug}
+            pivotSlug={hub}
             resetSignal={resetTick}
             onNodeClick={openPage}
           />
@@ -215,6 +223,7 @@ export function WikiCard({ className }: { className?: string }) {
           <WikiExpanded
             graphData={graphData}
             highlightSlug={highlightSlug}
+            pivotSlug={hub}
             pages={pages}
             links={links}
             recent={changes.map((c) => c.slug)}
@@ -242,6 +251,7 @@ export function WikiCard({ className }: { className?: string }) {
 function WikiExpanded({
   graphData,
   highlightSlug,
+  pivotSlug,
   pages,
   links,
   recent,
@@ -251,6 +261,7 @@ function WikiExpanded({
 }: {
   graphData: { nodes: RenderNode[]; links: RenderEdge[] };
   highlightSlug?: string;
+  pivotSlug?: string | null;
   pages: number;
   links: number;
   recent: string[];
@@ -298,6 +309,7 @@ function WikiExpanded({
         <DeckWikiScene
           graphData={graphData}
           highlightSlug={highlightSlug}
+          pivotSlug={pivotSlug}
           resetSignal={resetTick}
           onNodeClick={onNodeClick}
         />

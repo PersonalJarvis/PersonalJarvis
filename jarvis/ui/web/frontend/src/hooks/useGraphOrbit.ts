@@ -1,15 +1,18 @@
 /**
- * The camera work for the 3D memory maps: fill the frame, then keep moving.
+ * The camera work for the 3D memory maps: fill the frame, then keep turning.
  *
  * Two jobs, one owner, because they are the same state. Framing decides where
  * the middle of the network is and how far back to stand; the drift walks the
  * camera around that same point. Split across two places they fight — the
  * drift keeps restoring an angle the fit just changed.
  *
- * The motion is deliberately slow: a full turn takes well over a minute, with
- * a slight rise and fall on top so the network reads as a solid object in
- * space rather than a flat picture that happens to spin. It is ambient, not
- * animation — you should be able to read a label while it moves.
+ * The motion is ONE thing: a steady clockwise turn around a fixed pivot, seen
+ * from a raised camera so the turn reads as a rotation about a point rather
+ * than nodes sliding sideways (maintainer decision 2026-08-18: "always
+ * rotates around a fixed point, clockwise"). No rise and fall on top — a
+ * bobbing camera made the pivot itself look like it was drifting. It is
+ * still ambient, not animation: a full turn takes well over a minute, and
+ * you can read a label while it moves.
  *
  * Three things stop it, and all three matter:
  *  - The user touching the map. Nothing is more irritating than a view that
@@ -24,10 +27,12 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 
 import {
+  framingAround,
   framingFor,
   orbitDistance,
   orbitFrom,
   orbitPoint,
+  stepAzimuth,
   type Orbit,
   type Vec3,
 } from "@/lib/graphCamera";
@@ -45,12 +50,26 @@ export interface GraphCameraApi {
 /** One full revolution. Long enough to read while it happens. */
 const REVOLUTION_MS = 96_000;
 
-/** The rise and fall on top of the rotation. */
-const SWAY_PERIOD_MS = 19_000;
-const SWAY_RADIANS = 0.11;
+/**
+ * Resting height above the network's own plane, radians.
+ *
+ * Lower than it used to be (was 1.0 ≈ 57°, a near top-down view that made the
+ * map read as a flat disc turning). At ≈ 30° the camera looks THROUGH the
+ * network: pages on the near side sweep past large, pages on the far side
+ * pass behind the pivot small, and the whole thing reads as a volume in space
+ * — what the maintainer asked for on 2026-08-18. Still high enough that the
+ * turn is unmistakably a rotation about the pivot rather than a tilt.
+ */
+const BASE_ELEVATION = 0.52;
 
-/** Resting height above the network's own plane — a slight look down. */
-const BASE_ELEVATION = 0.24;
+/**
+ * The camera also rises and falls as it goes round — a slow nod on top of the
+ * turn, so the same page is not always the one in front and the parallax
+ * changes from pass to pass. Its period is deliberately NOT a divisor of the
+ * revolution: the view never repeats exactly.
+ */
+const ELEVATION_SWING = 0.28;
+const SWING_MS = 61_000;
 
 /** How long after the user's last touch the drift picks back up. */
 const RESUME_AFTER_MS = 3_500;
@@ -64,6 +83,13 @@ export interface GraphOrbitOptions {
   hostRef: RefObject<HTMLElement | null>;
   /** Live node array; the simulation writes x/y/z onto these objects. */
   nodes: readonly Partial<Vec3>[];
+  /**
+   * The node to turn around, when the map has one — the user's own page. The
+   * simulation keeps moving it, so the object is read fresh every frame and
+   * the camera follows; absent, the orbit turns around the network's trimmed
+   * mean as before.
+   */
+  pivot?: Partial<Vec3> | null;
   /** Bump to re-frame: new data, a settled layout, the Center button. */
   frameSignal: number;
 }
@@ -72,6 +98,7 @@ export function useGraphOrbit({
   graphRef,
   hostRef,
   nodes,
+  pivot = null,
   frameSignal,
 }: GraphOrbitOptions): void {
   const centreRef = useRef<Vec3>({ x: 0, y: 0, z: 0 });
@@ -80,21 +107,26 @@ export function useGraphOrbit({
     azimuth: 0,
     elevation: BASE_ELEVATION,
   });
-  // Phase of the sway, kept separately so pausing does not make the camera
-  // jump when it resumes at a different point in the cycle.
-  const swayRef = useRef(0);
   const pausedUntilRef = useRef(0);
   const resyncRef = useRef(false);
   // Read once per mount rather than per frame; the array identity changes on
   // every data generation but the objects inside are the live ones.
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
+  const pivotRef = useRef(pivot);
+  pivotRef.current = pivot;
+  /** Where the elevation swing is in its cycle; advanced by the drift. */
+  const swingPhaseRef = useRef(0);
+  /** The height the swing oscillates around — ours, or the user's after a drag. */
+  const baseElevationRef = useRef(BASE_ELEVATION);
 
   /** Point the camera at the middle of the network, far enough back to see it. */
   const frame = useCallback((transitionMs = 700): void => {
     const graph = graphRef.current;
     if (!graph) return;
-    const framing = framingFor(nodesRef.current, 0.95);
+    const framing = pivotRef.current
+      ? framingAround(pivotRef.current, nodesRef.current, 0.95)
+      : framingFor(nodesRef.current, 0.95);
     if (!framing) return;
 
     const camera = graph.camera();
@@ -110,6 +142,7 @@ export function useGraphOrbit({
     const current = camera?.position
       ? orbitFrom(framing.centre, camera.position)
       : null;
+    baseElevationRef.current = BASE_ELEVATION;
     orbitRef.current = {
       distance,
       azimuth: current?.azimuth ?? 0,
@@ -183,37 +216,49 @@ export function useGraphOrbit({
       if (!graph || orbitRef.current.distance === 0) return;
 
       if (resyncRef.current) {
-        // Carry on from wherever the user left the camera — including how far
-        // out they zoomed — instead of yanking it back to our own angle. The
-        // sway is subtracted back out so the stored elevation stays the
-        // RESTING one; keeping the swayed value would let each pause ratchet
-        // the camera a little further up or down.
+        // Carry on from wherever the user left the camera — their angle,
+        // their height, how far out they zoomed — instead of yanking it back
+        // to our own. The pivot stays ours: the turn continues around the
+        // same point, just from where they parked the view.
         const camera = graph.camera();
         if (camera?.position) {
           const seen = orbitFrom(centreRef.current, camera.position);
           if (seen.distance > 0) {
-            orbitRef.current = {
-              ...seen,
-              elevation: seen.elevation - Math.sin(swayRef.current) * SWAY_RADIANS,
-            };
+            orbitRef.current = seen;
+            baseElevationRef.current = seen.elevation;
           }
         }
         resyncRef.current = false;
       }
 
-      const orbit = orbitRef.current;
-      orbit.azimuth -= (elapsed / REVOLUTION_MS) * Math.PI * 2;
-      swayRef.current += (elapsed / SWAY_PERIOD_MS) * Math.PI * 2;
-      const elevation = orbit.elevation + Math.sin(swayRef.current) * SWAY_RADIANS;
+      // The pivot node keeps moving while the layout settles (and again after
+      // new data); following it each frame is what makes the turn stay
+      // centred on the page rather than on where it was when we framed.
+      const pivotNode = pivotRef.current;
+      if (pivotNode && Number.isFinite(pivotNode.x)) {
+        centreRef.current = {
+          x: pivotNode.x ?? 0,
+          y: pivotNode.y ?? 0,
+          z: pivotNode.z ?? 0,
+        };
+      }
 
-      graph.cameraPosition(
-        orbitPoint(centreRef.current, { ...orbit, elevation }),
-        centreRef.current,
-        0,
+      const orbit = orbitRef.current;
+      orbit.azimuth = stepAzimuth(orbit.azimuth, elapsed, REVOLUTION_MS);
+      swingPhaseRef.current += (elapsed / SWING_MS) * Math.PI * 2;
+      orbit.elevation = clampElevation(
+        baseElevationRef.current + Math.sin(swingPhaseRef.current) * ELEVATION_SWING,
       );
+
+      graph.cameraPosition(orbitPoint(centreRef.current, orbit), centreRef.current, 0);
     };
 
     raf = window.requestAnimationFrame(step);
     return () => window.cancelAnimationFrame(raf);
   }, [graphRef]);
+}
+
+/** Keep the nod inside a range where "up" stays up and the pivot stays framed. */
+function clampElevation(value: number): number {
+  return Math.min(1.25, Math.max(0.12, value));
 }

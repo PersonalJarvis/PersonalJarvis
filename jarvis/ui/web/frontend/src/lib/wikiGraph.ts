@@ -37,6 +37,12 @@ export interface WikiGraphPayload {
   nodes: WikiGraphNode[];
   edges: WikiGraphEdge[];
   broken: WikiGraphBrokenLink[];
+  /**
+   * The page the memory map turns around — the user's own entity page, as
+   * the route names it (null when the vault has no such page yet). Absent on
+   * an older backend, which is why the type allows it to be missing.
+   */
+  hub?: string | null;
 }
 
 /**

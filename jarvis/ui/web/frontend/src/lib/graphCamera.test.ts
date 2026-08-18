@@ -9,10 +9,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  framingAround,
+  ORBIT_DIRECTION,
   framingFor,
   orbitDistance,
   orbitFrom,
   orbitPoint,
+  projectToScreen,
+  stepAzimuth,
 } from "@/lib/graphCamera";
 
 /** A ball of nodes around a known centre, plus optional outliers. */
@@ -41,6 +45,19 @@ describe("framingFor", () => {
     expect(framing!.radius).toBeCloseTo(50, 5);
   });
 
+  it("keeps the pivot inside the cluster when one page drifted away", () => {
+    // Nine pages, one of them linked to nothing and far off — a small vault
+    // on its first day. The plain average would sit halfway out to the stray
+    // and the readable cluster would swing around empty space.
+    const nodes = [...cluster(8, 30), { x: 900, y: 0, z: 0 }];
+    const framing = framingFor(nodes, 0.95)!;
+    expect(Math.abs(framing.centre.x)).toBeLessThan(5);
+    expect(Math.abs(framing.centre.z)).toBeLessThan(5);
+    // …and with nine nodes the 95th percentile still covers all of them, so
+    // the stray stays in the picture, orbiting at the edge.
+    expect(framing.radius).toBeGreaterThan(800);
+  });
+
   it("does not let one stray node blow the radius up", () => {
     const nodes = [...cluster(40, 50), { x: 4000, y: 0, z: 0 }];
     const framing = framingFor(nodes, 0.95)!;
@@ -64,6 +81,33 @@ describe("framingFor", () => {
   it("keeps a floor so a single node is not framed from inside itself", () => {
     const framing = framingFor([{ x: 0, y: 0, z: 0 }])!;
     expect(framing.radius).toBeGreaterThan(0);
+  });
+});
+
+describe("framingAround", () => {
+  it("turns around the page it was given, not the middle of the cloud", () => {
+    // A hub off to one side of a cluster: the trimmed mean sits in the
+    // cluster, the pivot sits on the hub.
+    const hub = { x: 100, y: 0, z: 0 };
+    const others = cluster(12, 30, { x: -40, y: 0, z: 0 });
+    const framing = framingAround(hub, [hub, ...others], 0.95);
+    expect(framing).not.toBeNull();
+    expect(framing!.centre).toEqual(hub);
+    const mean = framingFor([hub, ...others], 0.95)!.centre;
+    expect(Math.abs(mean.x - hub.x)).toBeGreaterThan(50);
+  });
+
+  it("measures the radius from the pivot so the network around it stays framed", () => {
+    const hub = { x: 0, y: 0, z: 0 };
+    const points = [hub, ...cluster(20, 50)];
+    const framing = framingAround(hub, points, 1)!;
+    expect(framing.radius).toBeCloseTo(50, 5);
+  });
+
+  it("reads missing pivot coordinates as the origin and has nothing to frame without nodes", () => {
+    expect(framingAround({}, [])).toBeNull();
+    const framing = framingAround({}, [{ x: 10, y: 0, z: 0 }], 1)!;
+    expect(framing.centre).toEqual({ x: 0, y: 0, z: 0 });
   });
 });
 
@@ -123,5 +167,49 @@ describe("orbitPoint / orbitFrom", () => {
     expect(orbit.distance).toBe(0);
     expect(Number.isFinite(orbit.azimuth)).toBe(true);
     expect(Number.isFinite(orbit.elevation)).toBe(true);
+  });
+});
+
+describe("the ambient drift", () => {
+  it("turns the network clockwise on the screen around the pivot", () => {
+    // A node on the network's plane, watched from the drifting camera: its
+    // screen angle must DECREASE (clockwise, the way a clock hand goes) step
+    // after step, whatever the elevation the camera happens to be at.
+    const centre = { x: 0, y: 0, z: 0 };
+    const node = { x: 40, y: 0, z: 0 };
+    for (const elevation of [0.3, 1.0, 1.4]) {
+      let azimuth = 0.7;
+      let previous = Number.NaN;
+      for (let step = 0; step < 12; step++) {
+        const eye = orbitPoint(centre, { distance: 300, azimuth, elevation });
+        const { x, y } = projectToScreen(eye, centre, node);
+        const angle = Math.atan2(y, x);
+        if (!Number.isNaN(previous)) {
+          let delta = angle - previous;
+          if (delta > Math.PI) delta -= Math.PI * 2;
+          if (delta < -Math.PI) delta += Math.PI * 2;
+          expect(delta, `elevation ${elevation}, step ${step}`).toBeLessThan(0);
+        }
+        previous = angle;
+        azimuth = stepAzimuth(azimuth, 4_000, 96_000);
+      }
+    }
+  });
+
+  it("completes exactly one revolution per revolution period", () => {
+    const azimuth = stepAzimuth(0.5, 96_000, 96_000);
+    expect(azimuth).toBeCloseTo(0.5 + ORBIT_DIRECTION * Math.PI * 2, 9);
+  });
+
+  it("keeps the camera exactly as far from the pivot as it turns", () => {
+    // The pivot is fixed and so is the distance: nothing about the drift
+    // moves the point the network turns around.
+    const centre = { x: 5, y: -2, z: 9 };
+    let azimuth = 0;
+    for (let step = 0; step < 30; step++) {
+      azimuth = stepAzimuth(azimuth, 3_000, 96_000);
+      const eye = orbitPoint(centre, { distance: 120, azimuth, elevation: 1.0 });
+      expect(Math.hypot(eye.x - centre.x, eye.y - centre.y, eye.z - centre.z)).toBeCloseTo(120, 6);
+    }
   });
 });

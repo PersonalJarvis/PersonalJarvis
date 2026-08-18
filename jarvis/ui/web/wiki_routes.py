@@ -54,6 +54,7 @@ from jarvis.memory.wiki.integration import (
     get_running_curator,
 )
 from jarvis.memory.wiki.page import parse_markdown
+from jarvis.memory.wiki.prompt import resolve_user_entity_slug
 from jarvis.memory.wiki.protocols import WikiPage
 from jarvis.memory.wiki.search import VaultSearch
 from jarvis.memory.wiki.telemetry import telemetry as _telemetry
@@ -178,6 +179,26 @@ def _display_title(page: WikiPage) -> str:
         if candidate and "{{" not in candidate:
             return candidate
     return _human_title_from_slug(page.slug)
+
+
+def _hub_slug(request: Request, known_slugs: set[str]) -> str | None:
+    """The page the memory map turns around: the user's own entity page.
+
+    The vault names ONE page for the person Jarvis serves
+    (``[memory.wiki.session_rollup].user_entity_slug``, ``"user"`` when unset)
+    and the consolidator hangs new knowledge off it. That is the natural pivot
+    for the map's orbit — the maintainer's "main wiki point" (2026-08-18) —
+    so the graph route states it rather than leaving the client to guess a
+    hub from link counts. ``None`` when that page does not exist yet.
+    """
+    config = getattr(request.app.state, "config", None)
+    configured = ""
+    try:
+        configured = getattr(config.memory.wiki.session_rollup, "user_entity_slug", "")
+    except AttributeError:
+        configured = ""
+    slug = resolve_user_entity_slug(configured)
+    return slug if slug in known_slugs else None
 
 
 def _kind_of(page: WikiPage) -> str:
@@ -618,6 +639,8 @@ async def get_graph(request: Request) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
         "broken": broken,
+        # The pivot of the memory map — see ``_hub_slug``.
+        "hub": _hub_slug(request, known_slugs),
     }
 
 

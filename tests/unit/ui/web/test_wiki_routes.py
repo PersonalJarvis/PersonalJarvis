@@ -371,6 +371,27 @@ def test_graph_with_linked_pages_produces_nodes_and_edges(populated_vault: Path)
         assert edge["context"] != ""
 
 
+def test_graph_names_the_hub_when_the_user_page_exists(populated_vault: Path) -> None:
+    """The map turns around the user's own entity page — the route says which."""
+    app = _make_app(populated_vault)
+    app.state.config.memory.wiki = SimpleNamespace(
+        session_rollup=SimpleNamespace(user_entity_slug="example-user"),
+    )
+    with TestClient(app) as client:
+        body = client.get("/api/wiki/graph").json()
+    assert body["hub"] == "example-user"
+
+
+def test_graph_hub_is_null_when_no_such_page_and_without_config(populated_vault: Path) -> None:
+    # No [memory.wiki.session_rollup] at all: resolves to "user", which this
+    # vault does not have — so no hub, and no guess.
+    app = _make_app(populated_vault)
+    with TestClient(app) as client:
+        body = client.get("/api/wiki/graph").json()
+    assert body["ok"] is True
+    assert body["hub"] is None
+
+
 def test_graph_with_broken_wikilink_lists_it_in_broken_bucket(tmp_path: Path) -> None:
     vault = tmp_path / "vault"
     _write_page(
