@@ -13,7 +13,9 @@
  * 4. **Browsing** — the list, projects and repositories sorted first.
  * 5. **Typing a path** — with completion, the way `cd` works in a terminal.
  * 6. **Drag and drop** — drop a folder (or a file inside it) anywhere on the
- *    panel. See `extractDropPayload` for why this needs a backend round-trip.
+ *    panel. Inside the desktop shell the host reports the real path
+ *    (`waitForNativeDrop`); in a browser only the NAME is known, and the
+ *    backend searches for it — see `extractDropPayload`.
  *
  * The in-page browser is not a fallback for the system window, it is the floor:
  * the system window opens on the machine the BACKEND runs on, so it is useless
@@ -53,6 +55,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { waitForNativeDrop } from "@/lib/nativeDrop";
 import { Button, Field, IconButton, SectionLabel } from "./controls";
 import {
   fetchFolders,
@@ -283,7 +286,19 @@ export function FolderPicker({
       return;
     }
     setDropNote("Resolving the dropped folder…");
-    void resolveDroppedFolder(payload)
+    // The desktop shell knows the real path of what was dropped and says so a
+    // moment after the drop; with only a name, that beats searching for it.
+    // The wait itself is armed here, synchronously, so no announcement is
+    // missed — outside the shell it answers null at once.
+    const nativePaths = payload.path
+      ? Promise.resolve(null)
+      : waitForNativeDrop({ name: payload.name });
+    void nativePaths
+      .then((native) =>
+        resolveDroppedFolder(
+          native?.paths[0] ? { path: native.paths[0] } : payload,
+        ),
+      )
       .then((res) => {
         if (res.resolved) {
           setDropNote(res.detail || null);

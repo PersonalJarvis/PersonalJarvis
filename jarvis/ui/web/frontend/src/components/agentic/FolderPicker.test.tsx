@@ -222,6 +222,45 @@ describe("FolderPicker", () => {
     expect(await screen.findByText("/a/webshop")).toBeTruthy();
   });
 
+  it("uses the real path the desktop shell reports instead of searching by name", async () => {
+    // Inside the shell the host knows where the dropped folder lives and says
+    // so a moment after the drop; the picker waits for that instead of asking
+    // the backend to guess from the name.
+    (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP =
+      true;
+    try {
+      vi.mocked(api.resolveDroppedFolder).mockResolvedValue({
+        resolved: "/home/x/Desktop/webshop",
+        candidates: [],
+        detail: "",
+      });
+      const onSelect = vi.fn();
+      render(<FolderPicker selected={null} onSelect={onSelect} />);
+      await screen.findByText("webshop");
+
+      fireEvent.drop(screen.getByTestId("folder-drop-zone"), {
+        dataTransfer: dataTransfer({ directoryName: "webshop" }),
+      });
+      window.dispatchEvent(
+        new CustomEvent("jarvis-native-drop", {
+          detail: { paths: ["/home/x/Desktop/webshop"], names: ["webshop"] },
+        }),
+      );
+
+      await waitFor(() =>
+        expect(api.resolveDroppedFolder).toHaveBeenCalledWith({
+          path: "/home/x/Desktop/webshop",
+        }),
+      );
+      await waitFor(() =>
+        expect(onSelect).toHaveBeenCalledWith("/home/x/Desktop/webshop"),
+      );
+    } finally {
+      delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean })
+        .__JARVIS_EMBEDDED_DESKTOP;
+    }
+  });
+
   it("says so plainly when a drop carried nothing usable", async () => {
     render(<FolderPicker selected={null} onSelect={vi.fn()} />);
     await screen.findByText("webshop");

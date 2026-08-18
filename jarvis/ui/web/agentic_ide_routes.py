@@ -1647,6 +1647,15 @@ async def resolve_folder(req: ResolveRequest) -> ResolveResponse:
 
     hits = await asyncio.to_thread(search_folders, wanted, limit=12)
     items = [FolderItem(**asdict(e)) for e in hits]
+    # A dropped folder is CALLED exactly that, so a folder that merely contains
+    # the name (a "C--Users-x-Desktop-shop" cache dir next to a real "shop")
+    # is not a rival for it: one exact match wins outright, and only several
+    # exact matches are a real ambiguity.
+    exact = [item for item in items if item.name.lower() == wanted.lower()]
+    if len(exact) == 1:
+        return ResolveResponse(resolved=exact[0].path, candidates=items)
+    if len(exact) > 1:
+        items = exact
     if len(items) == 1:
         return ResolveResponse(resolved=items[0].path, candidates=items)
     if not items:
@@ -4107,7 +4116,7 @@ def _writer_options() -> list[PromptWriterOption]:
     options = [
         PromptWriterOption(
             id="auto",
-            label="Automatic (a connected subscription, else the API model)",
+            label="Automatic (your Tool Model, else the API model, else a connected subscription)",
             connected=True,
         ),
         _tool_model_option(),

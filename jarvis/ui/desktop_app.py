@@ -4415,6 +4415,7 @@ class DesktopApp:
             # Not fatal: the window still authenticates via open access / the
             # shared cookie jar; only the embedded-shell niceties are lost.
             pass
+        self._register_native_drop(window)
         try:
             from jarvis.ui.icon_utils import (  # noqa: PLC0415
                 project_icon_path,
@@ -4500,6 +4501,20 @@ class DesktopApp:
         """Attach the closing/closed contract to the current main window."""
         self._window.events.closing += self._on_window_closing
         self._window.events.closed += self._on_main_window_closed
+        # Real paths for dropped files/folders (see jarvis/ui/native_drop.py).
+        # A `loaded` hook, not `func`: pywebview forgets DOM handlers on every
+        # page load, and the UI reloads itself after each frontend build.
+        self._window.events.loaded += lambda w=self._window: self._register_native_drop(w)
+
+    @staticmethod
+    def _register_native_drop(window: Any) -> None:
+        """Wire the drop-path bridge into a freshly loaded page — never raises."""
+        try:
+            from jarvis.ui.native_drop import register_native_drop  # noqa: PLC0415
+
+            register_native_drop(window)
+        except Exception:  # noqa: BLE001, S110 - the drop bridge is never load-bearing
+            pass
 
     def _on_main_window_closed(self) -> None:
         """pywebview ``closed`` hook of the MAIN window.

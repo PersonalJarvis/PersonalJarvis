@@ -327,6 +327,35 @@ def test_ensure_main_window_recreates_and_rehooks(monkeypatch) -> None:
     assert app._window_visible is True
     assert len(created[0].events.closing) == 1  # quit contract re-attached
     assert len(created[0].events.closed) == 1  # null-out re-attached
+    assert len(created[0].events.loaded) == 1  # drop-path bridge re-attached
+
+
+# --- native drop bridge --------------------------------------------------------
+
+
+def test_every_window_load_rewires_the_drop_path_bridge(monkeypatch) -> None:
+    """pywebview forgets DOM handlers on each page load, and the UI reloads
+    itself after a frontend build — so the bridge is (re)registered from the
+    ``loaded`` hook of the main window and of every detached window."""
+    import sys
+
+    registered: list[Any] = []
+    monkeypatch.setattr(
+        "jarvis.ui.native_drop.register_native_drop",
+        lambda window: registered.append(window) or True,
+    )
+    app = _app(monkeypatch)
+    app._hook_main_window_lifecycle()
+    for hook in app._window.events.loaded:
+        hook()
+    assert registered == [app._window]
+
+    created: list[_FakeWindow] = []
+    monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
+    app.open_detached_window("agentic-ide")
+    for hook in created[0].events.loaded:
+        hook()
+    assert registered == [app._window, created[0]]
 
 
 def test_ensure_main_window_shows_existing_window(monkeypatch) -> None:

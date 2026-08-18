@@ -27,6 +27,7 @@ the two things that actually matter — a display and a program that can draw th
 dialog — and every OS without both degrades to an honest "not available here",
 which is what keeps the REST browser the advertised path.
 """
+
 from __future__ import annotations
 
 import os
@@ -144,6 +145,7 @@ def support() -> PickerSupport:
 # --------------------------------------------------------------------------- #
 _PROMPT = "Choose the folder the agents should work in"
 
+
 # Written with placeholders rather than f-strings: these scripts are dense with
 # braces of their own, and doubling every one of them to survive `str.format`
 # would make them unreadable and easy to break.
@@ -175,15 +177,34 @@ def _fill(script: str, **values: str) -> str:
 # multi-threaded apartment — and the invisible topmost owner form exists only to
 # lend its z-order, because a dialog opened by a background process otherwise
 # appears behind every other window and looks like nothing happened.
+#
+# The owner is a one-pixel borderless form, NOT a full-size form with
+# `Opacity = 0`: Windows silently drops WS_EX_TOPMOST from a layered window that
+# is completely transparent, so an opacity-0 owner is not topmost at all, the
+# dialog it owns is not either, and behind a maximised app window the picker is
+# invisible — exactly the "Browse does nothing" report. A faint 1x1 window keeps
+# the flag (measured: 0.01 keeps it, 0 loses it). It sits in the middle of the
+# screen the mouse is on, because the dialog centres itself over its owner and
+# the mouse is where the person just clicked "Browse".
 _WINDOWS_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 $owner = New-Object System.Windows.Forms.Form
-$owner.TopMost = $true
+$owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $owner.ShowInTaskbar = $false
-$owner.Opacity = 0
+$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$owner.MinimumSize = New-Object System.Drawing.Size(1, 1)
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$mouse = [System.Windows.Forms.Cursor]::Position
+$area = [System.Windows.Forms.Screen]::FromPoint($mouse).WorkingArea
+$owner.Location = New-Object System.Drawing.Point(
+    ($area.Left + [int]($area.Width / 2)),
+    ($area.Top + [int]($area.Height / 2)))
+$owner.Opacity = 0.01
+$owner.TopMost = $true
 $owner.Show()
 $owner.Activate()
 $ownerHandle = $owner.Handle
@@ -362,9 +383,28 @@ def _extract(stdout: str) -> str | None:
     return cleaned or None
 
 
-def choose_folder(
-    *, start: str | None = None, timeout: float = DEFAULT_TIMEOUT_S
-) -> PickResult:
+def _let_the_dialog_take_the_foreground() -> None:
+    """Hand our foreground right to the helper about to be started (Windows).
+
+    Windows lets a process activate a window only while it holds the foreground
+    right; the app has it because the user just clicked "Browse", the helper
+    process does not. ``AllowSetForegroundWindow(ASFW_ANY)`` passes it on for the
+    next activation, so the dialog opens focused instead of merely visible.
+    Best effort: when the app is not in the foreground the call fails, and the
+    topmost owner window still makes the dialog visible.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        asfw_any = ctypes.c_uint32(0xFFFFFFFF).value  # -1 as DWORD
+        ctypes.windll.user32.AllowSetForegroundWindow(asfw_any)
+    except Exception as exc:  # noqa: BLE001 - a nicety, never a reason to fail
+        logger.debug("Agentic IDE: could not pass the foreground right on: {}", exc)
+
+
+def choose_folder(*, start: str | None = None, timeout: float = DEFAULT_TIMEOUT_S) -> PickResult:
     """Show the system folder dialog and return what the user picked.
 
     Blocking — call it off the event loop. Cancelling is an ordinary outcome
@@ -390,6 +430,7 @@ def choose_folder(
     argv, env_extra = built
 
     env = {**os.environ, **env_extra}
+    _let_the_dialog_take_the_foreground()
     try:
         completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
             argv,

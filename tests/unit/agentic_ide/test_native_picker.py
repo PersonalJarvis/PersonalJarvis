@@ -253,3 +253,28 @@ def test_the_windows_command_runs_in_a_single_threaded_apartment() -> None:
     argv, _env = native_picker._command(None, "powershell")
     assert "-STA" in argv
     assert "-NoProfile" in argv
+
+
+def test_the_windows_owner_window_is_never_fully_transparent() -> None:
+    """Regression guard for the "Browse does nothing" report.
+
+    The dialog is made visible above a maximised app window by a topmost owner.
+    Windows drops the topmost flag from a layered window whose opacity is 0, so
+    an ``Opacity = 0`` owner is not topmost, the dialog it owns opens BEHIND the
+    app, and the button looks dead. The owner must therefore be faint, never
+    invisible — and topmost.
+    """
+    script = native_picker._fill(native_picker._WINDOWS_SCRIPT)
+    assert "$owner.Opacity = 0\n" not in script
+    assert "$owner.Opacity = 0.01" in script
+    assert "$owner.TopMost = $true" in script
+    # The dialog centres itself over its owner: park the owner where the person
+    # is looking, i.e. on the screen the mouse is on.
+    assert "Screen]::FromPoint($mouse).WorkingArea" in script
+
+
+def test_handing_over_the_foreground_right_is_a_no_op_elsewhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    native_picker._let_the_dialog_take_the_foreground()  # must not raise

@@ -9941,3 +9941,59 @@ transcript, after local microphone voice, after the window, a late result
 Jarvis injected itself; the capability gate; every disarm reason; the drop
 ceiling). `tests/unit/diagnostics/test_realtime_forensics.py` carries the
 new finding.
+
+## BUG-144: "Browse" in the Agentic IDE folder step does nothing — the system folder window opens BEHIND the maximised app because its invisible owner is not topmost, and a dropped folder is only searched for by name (HIGH, FIXED 2026-08-18)
+
+**Symptom.** Clicking "Browse" in "Choose the project folder" showed
+"Waiting… A folder window is open — pick a folder there" and nothing else;
+five minutes later the log said `the folder dialog was left open and timed
+out`. Dropping a folder from Explorer onto the step answered "Several folders
+are called “shop” — pick the right one" and listed the real folder next
+to two cache directories whose NAMES merely contained it.
+
+**Root.** Two, plus a ranking bug. (1) `native_picker._WINDOWS_SCRIPT` opened
+the Common Item Dialog owned by a WinForms form with `TopMost = $true` and
+`Opacity = 0`. Windows silently drops `WS_EX_TOPMOST` from a layered window
+that is completely transparent (measured: ex-style `0x90100`, no `0x8`; with
+opacity 0.01 the flag stays), so the owner was NOT topmost, the dialog it owns
+was not either, and it opened behind the maximised app window — the process
+was alive and the dialog "visible" to `IsWindowVisible`, just covered. Nothing
+in the log said so because nothing was wrong from the helper's point of view.
+(2) A browser hands a page only the NAME of a dropped folder; the picker sent
+that name to `/folders/resolve`, which searched for it. Inside the desktop
+shell the host knows the real path (pywebview delivers it as
+`pywebviewFullPath` to a Python `drop` handler on every OS) but nobody asked.
+(3) `resolve_folder` treated every substring hit of `search_folders` as a
+rival of the exact-name hit.
+
+**Fix.** (1) The owner is a one-pixel borderless form at opacity 0.01,
+topmost, parked in the middle of the screen the mouse is on (the dialog
+centres itself over its owner) — and `choose_folder` hands the app's
+foreground right to the helper first (`AllowSetForegroundWindow(ASFW_ANY)`,
+Windows only, best effort) so the dialog opens focused, not merely visible.
+(2) `jarvis/ui/native_drop.py` registers a pywebview DOM `drop` handler on
+`window` (not `body`, whose serialisation would be the whole document) from
+the `loaded` hook of the main and every detached window, and dispatches a
+`jarvis-native-drop` DOM event carrying the resolved paths; the frontend's
+`waitForNativeDrop()` (src/lib/nativeDrop.ts), armed synchronously in the
+picker's drop handler, uses that path and falls back to the name search after
+2 s or at once outside the shell. Verified end-to-end for a dropped FOLDER on
+WebView2 (`CoreWebView2File.Path` returns the directory path); macOS/Linux
+ride pywebview's own implementation, unverified from this machine
+(`docs/os-parity.md` P-34). (3) One exact-name match resolves outright;
+several exact matches are offered without the look-alikes.
+
+**Class.** A window opened by a background helper is invisible unless it is
+topmost AND the topmost flag actually took (fully transparent layered windows
+lose it); a fully transparent owner is a bug that reads as "the button does
+nothing". Browser drops carry names, not paths — inside the shell, ask the
+host. A search hit that merely CONTAINS the wanted name is not a rival for the
+exact one.
+
+**Regression tests.** `tests/unit/agentic_ide/test_native_picker.py`
+(`test_the_windows_owner_window_is_never_fully_transparent`, foreground
+hand-off is a no-op elsewhere); `tests/unit/ui/test_native_drop.py`;
+`tests/unit/ui/test_desktop_detached_windows.py::test_every_window_load_rewires_the_drop_path_bridge`;
+`tests/unit/web/test_agentic_ide_resolve_folder.py`; frontend
+`src/lib/nativeDrop.test.ts` and `FolderPicker.test.tsx` ("uses the real path
+the desktop shell reports").
