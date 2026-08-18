@@ -46,8 +46,18 @@ WHITELIST_WORDS: tuple[str, ...] = (
 # Mandate: engineering jargon — standalone words are scrubbed, but not
 # inside hyphen-compounds ("Browser-Provider" is anchored to "Browser",
 # a user-concept word, so the compound is preserved).
+#
+# 2026-08-18 audit OF-04: "Provider" and "MCP" are REMOVED from this list.
+# Both became ordinary user-facing vocabulary — the app's own UI names brain
+# providers and the MCP connector store — and the excision left a broken clause
+# behind instead of a cleaner sentence ("Der Provider war nicht erreichbar." ->
+# "Der war nicht erreichbar."; a bare "Provider." even fell through to the
+# residue fallback and was spoken as an error). A noun cannot be deleted out of
+# the middle of a sentence by regex; scrubbing it produces worse output than
+# saying it. "Harness" and "Subprocess" stay — they name internals the user has
+# no concept for and never appear as the subject of a user-facing sentence.
 JARGON_WORDS: tuple[str, ...] = (
-    "Harness", "MCP", "Subprocess", "Provider",
+    "Harness", "Subprocess",
 )
 
 # Phase 1 extension 2026-04-28: engineering jargon compounds that, as a whole
@@ -131,6 +141,30 @@ SHELL_COMMAND_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 2026-08-18 audit OF-03: a SINGLE signature hit used to replace the WHOLE answer
+# with the generic error phrase, which destroyed every shell how-to the user
+# asked for ("In PowerShell liest du eine Variable mit $env:PATH aus." -> "Es
+# trat ein Fehler auf."). The maintainer is a developer; "$env:", "[System.X]::Y",
+# "Add-Type" and "bash -c" are normal parts of a CORRECT spoken answer. The guard
+# now asks a second question before firing: is this text a COMMAND, or a SENTENCE
+# that mentions one? The distinction is token shape, not token count — a command
+# line is dominated by code tokens (flags, brackets, quotes, paths, ``::``),
+# while an explanation is dominated by plain words.
+#
+# A token counts as CODE when it carries a character that spoken prose never
+# has (brace/bracket/angle/pipe/backslash/dollar/equals/semicolon/quote/backtick,
+# a ``::`` scope operator, a ``/`` path-or-flag separator) or when it is a
+# ``-Flag`` / ``--flag``. A token counts as PROSE when it is nothing but letters
+# plus optional trailing punctuation. Everything else (numbers, dotted
+# identifiers, hyphenated names like "Add-Type") counts as neither, so it can
+# neither rescue a command nor condemn a sentence.
+_SHELL_CODE_TOKEN_RE = re.compile(r"[{}\[\]<>|\\$=;\"'`]|::|/|^-{1,2}[A-Za-z]")
+_SHELL_PROSE_TOKEN_RE = re.compile(r"^[^\W\d_]{2,}[.,!?;:)\]\"']*$")
+# A sentence needs a real clause worth of plain words before it earns the
+# exemption, and the plain words must clearly outweigh the code tokens.
+MIN_PROSE_TOKENS_FOR_SHELL_EXEMPTION = 4
+PROSE_TO_CODE_RATIO_FOR_SHELL_EXEMPTION = 2
+
 # Tool-call patterns:
 #   1) tool_name({"...": "..."})       — function-call form (OpenAI)
 #   2) tool_name{"...": "..."}         — Anthropic tool-use inline
@@ -152,8 +186,14 @@ TOOL_NAMES: tuple[str, ...] = (
     "verify_via_curl", "verify_localhost", "start_preview_server",
 )
 
+# 2026-08-18 audit OF-06: this used to be ``\b\w+\s*\(\s*\{…\}\s*\)`` — ANY word
+# followed by parentheses with braces, despite the comment above promising a
+# conservative, tool-name-anchored set. It deleted ordinary sentences that named
+# a function ("Rufe berechne({\"a\": 1}) auf, dann bist du fertig." -> "Rufe auf,
+# dann bist du fertig."). Now anchored on TOOL_NAMES like patterns 4 and 5, so
+# the promise in the comment is the actual behaviour.
 TOOL_CALL_FN_RE = re.compile(
-    r"\b\w+\s*\(\s*\{[^{}]*\}\s*\)",
+    r"\b(?:" + "|".join(TOOL_NAMES) + r")\s*\(\s*\{[^{}]*\}\s*\)",
 )
 TOOL_CALL_INLINE_RE = re.compile(
     r"\b\w+\{\"[^\"]+\"\s*:[^}]*\}",
@@ -226,14 +266,35 @@ TOOL_CALL_PROSE_RE = re.compile(
 )
 # Fallback: individual "<key> is <value>" phrases with tool-arg keys,
 # even without a tool-name prefix (the brain may have omitted the tool name).
+#
+# 2026-08-18 audit OF-05: the key list is SPLIT by ambiguity. "utterance",
+# "context_hints", "tool_hint" and "step_id" are tool vocabulary that never
+# occurs in a spoken sentence, so one occurrence still identifies a leak. But
+# "action" and "target" are ordinary English words, and a single one of them
+# swallowed up to 400 characters of a correct answer ("Status: action is delayed
+# until tomorrow because the server is down." -> "Status:."). They now only
+# count inside a CHAIN — an "<key> is <value>" phrase directly followed by
+# another one — which is the shape the F-AUDIT-4 leak actually had and which an
+# ordinary sentence does not have.
 TOOL_ARGS_PROSE_KEYS: tuple[str, ...] = (
     "utterance", "context_hints", "context hints",
-    "action", "target", "tool_hint", "tool hint",
-    "step_id", "step id",
+    "tool_hint", "tool hint", "step_id", "step id",
 )
+TOOL_ARGS_PROSE_AMBIGUOUS_KEYS: tuple[str, ...] = (
+    "action", "target",
+)
+_UNAMBIGUOUS_ARG_KEYS = "|".join(re.escape(k) for k in TOOL_ARGS_PROSE_KEYS)
+_AMBIGUOUS_ARG_KEYS = "|".join(re.escape(k) for k in TOOL_ARGS_PROSE_AMBIGUOUS_KEYS)
+_ANY_ARG_KEY = _UNAMBIGUOUS_ARG_KEYS + "|" + _AMBIGUOUS_ARG_KEYS
 TOOL_ARGS_PROSE_RE = re.compile(
-    r"\b(?:" + "|".join(re.escape(k) for k in TOOL_ARGS_PROSE_KEYS) + r")"
-    r"\s+is\s+[^.\n]{1,400}",
+    r"\b(?:"
+    # tool-only vocabulary — a single "<key> is <value>" is already a leak
+    r"(?:" + _UNAMBIGUOUS_ARG_KEYS + r")\s+is\s+[^.\n]{1,400}"
+    r"|"
+    # ordinary words — only as the head of a chain of >= 2 arg phrases
+    r"(?:" + _AMBIGUOUS_ARG_KEYS + r")\s+is\s+[^.\n]{1,400}?"
+    r"\b(?:" + _ANY_ARG_KEY + r")\s+is\s+[^.\n]{1,400}"
+    r")",
     re.IGNORECASE,
 )
 LONG_BASE64_RE = re.compile(
@@ -262,6 +323,20 @@ MORE_RESULTS_RE = re.compile(
 # "www." token so a normal sentence is never touched (no false positive on a
 # plain word that happens to contain a dot).
 BARE_WWW_RE = re.compile(r"\bwww\.\S+", re.IGNORECASE)
+
+# 2026-08-18 audit OF-07: the URL/domain passes used to DELETE the token, which
+# left the preposition in front of it dangling ("Die Doku steht auf https://…
+# und erklaert alles." -> "Die Doku steht auf und erklaert alles."). A spoken
+# sentence needs an object where the link stood, so the link is REPLACED by a
+# spoken placeholder instead of cut out. The source itself still never reaches
+# TTS — the 2026-06-28 forensic was about the scheme, path and domain being read
+# out character by character, and none of that survives. Runtime-output-language
+# doctrine: all supported locales, no German default for a Spanish-pinned user.
+SOURCE_LINK_PLACEHOLDER: dict[str, str] = {
+    "de": "der Website",  # i18n-allow: spoken German placeholder (runtime voice output)
+    "en": "the website",
+    "es": "el sitio web",
+}
 
 # Markdown
 MARKDOWN_BOLD_RE = re.compile(r"\*\*")
@@ -440,6 +515,35 @@ class ScrubResult:
     fallback_used: bool = False
 
 
+def _has_meaningful_content(text: str) -> bool:
+    """``True`` when ``text`` still carries something worth speaking.
+
+    Same threshold the post-scrub residue guard uses. Prose-shaping passes call
+    it BEFORE committing their substitution, so a filter can never be the reason
+    the whole answer disappears (2026-08-18 audit OF-02).
+    """
+    return sum(1 for c in text if c.isalnum()) >= MIN_MEANINGFUL_CHARS
+
+
+def _is_prose_mentioning_code(text: str) -> bool:
+    """``True`` when ``text`` is a SENTENCE that mentions a command, not a command.
+
+    Token-shape heuristic behind the shell guard's prose exemption — see the
+    comment at ``_SHELL_CODE_TOKEN_RE``. Regex-only, no LLM (mandate § "DO NOT").
+    """
+    prose = 0
+    code = 0
+    for token in text.split():
+        if _SHELL_CODE_TOKEN_RE.search(token):
+            code += 1
+        elif _SHELL_PROSE_TOKEN_RE.match(token):
+            prose += 1
+    return (
+        prose >= MIN_PROSE_TOKENS_FOR_SHELL_EXEMPTION
+        and prose > PROSE_TO_CODE_RATIO_FOR_SHELL_EXEMPTION * code
+    )
+
+
 def scrub_for_voice(
     text: str, *, language: str = "de", ack_mode: bool = False
 ) -> ScrubResult:
@@ -495,7 +599,10 @@ def scrub_for_voice(
     #     sentence, so the whole text is replaced rather than partially stripped
     #     (a half-spoken command is worse than the generic phrase). Live bug
     #     2026-06-28: TTS read a SendKeys PowerShell command aloud verbatim.
-    if SHELL_COMMAND_RE.search(text):
+    #     Exemption (audit OF-03, 2026-08-18): a text whose tokens are dominated
+    #     by plain words is an ANSWER that mentions a command, not a command —
+    #     the developer asked how to read $env:PATH and must get the answer.
+    if SHELL_COMMAND_RE.search(text) and not _is_prose_mentioning_code(text):
         fallback = FALLBACK_PHRASES.get(language, FALLBACK_PHRASES["de"])
         return ScrubResult(
             cleaned=fallback,
@@ -556,13 +663,20 @@ def scrub_for_voice(
     # 3b. Web-search source artefacts — URLs, bare www-domains, and the
     #     "Weitere Ergebnisse von <domain>" / "more results from <domain>" SERP
     #     footer. The brain may read a raw search hit aloud instead of answering
-    #     (live forensic 2026-06-28, Turn 4). The footer is cut BEFORE the bare
-    #     www-domain so "von www.x.de" goes as one unit. Fail-closed defense; the
-    #     real fix is the search_web answer_instruction that tells the brain to
-    #     synthesize. Real spoken prose carries no http:// or www. token.
-    new = URL_RE.sub("", out)
-    new = MORE_RESULTS_RE.sub("", new)
-    new = BARE_WWW_RE.sub("", new)
+    #     (live forensic 2026-06-28, Turn 4). The footer is cut FIRST, whole, so
+    #     "von www.x.de" / "from https://x.de" goes as one unit — it is a SERP
+    #     artefact, not a link the sentence refers to. A link the sentence DOES
+    #     refer to is replaced by a spoken placeholder rather than deleted, so
+    #     the preposition in front of it keeps its object (audit OF-07). Neither
+    #     the scheme, the path nor the domain ever reaches TTS. Fail-closed
+    #     defense; the real fix is the search_web answer_instruction that tells
+    #     the brain to synthesize.
+    placeholder = SOURCE_LINK_PLACEHOLDER.get(
+        language, SOURCE_LINK_PLACEHOLDER["de"]
+    )
+    new = MORE_RESULTS_RE.sub("", out)
+    new = URL_RE.sub(placeholder, new)
+    new = BARE_WWW_RE.sub(placeholder, new)
     if new != out:
         actions.append("removed_source_artifacts")
         out = new
@@ -577,8 +691,14 @@ def scrub_for_voice(
     # is noting/saving something or reviewing the last transcription/answer; it
     # happens silently in the background (maintainer mandate 2026-06-28). Cut the
     # whole narration clause (DE/EN/ES). Runs in both normal + ack mode.
+    #
+    # 2026-08-18 audit OF-02: the strip only commits when OTHER content survives
+    # in the same text. "Ich merke mir das." IS the whole answer — a confirmation
+    # the user asked for — and stripping it emptied the text, which then hit the
+    # residue guard and came back as "Es trat ein Fehler auf.". The mandate is
+    # "don't ANNOUNCE bookkeeping alongside the answer", not "never confirm".
     new = BACKGROUND_ACTION_RE.sub("", out)
-    if new != out:
+    if new != out and _has_meaningful_content(new):
         actions.append("removed_background_action_narration")
         out = new
 
@@ -699,4 +819,5 @@ __all__ = [
     "JARGON_WORDS",
     "OPENER_BUDGET",
     "FALLBACK_PHRASES",
+    "SOURCE_LINK_PLACEHOLDER",
 ]

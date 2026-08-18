@@ -970,3 +970,209 @@ def test_shell_guard_does_not_destroy_normal_prose(clean: str) -> None:
     # Hyphen compounds, ranges and ordinary speech must NOT trip the guard.
     result = scrub_for_voice(clean, language="de")
     assert result.fallback_used is False
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-08-18 — over-broad filters that destroyed CORRECT answers.
+#
+# Every case below was measured against the real function before the fix. Each
+# pattern keeps its protection (the guard tests above still pass); what changed
+# is that a single ambiguous token no longer condemns the whole answer.
+# ---------------------------------------------------------------------------
+
+
+# --- OF-03: one shell signature nuked the entire answer --------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The measured failure: became "Es trat ein Fehler auf." in full.
+        "In PowerShell liest du eine Variable mit $env:PATH aus.",  # i18n-allow
+        "Mit Add-Type laedst du eine .NET-Assembly nach, dann geht das.",  # i18n-allow
+        "Du kannst das mit cmd /c start discord jederzeit selbst starten.",  # i18n-allow
+        "Read the variable with $env:PATH and the shell prints the value.",
+        "The static call [System.Math]::Round rounds the number for you.",
+    ],
+)
+def test_shell_guard_exempts_prose_that_mentions_a_command(text: str) -> None:
+    """OF-03: an ANSWER about a command is not a command.
+
+    The maintainer is a developer — ``$env:``, ``[System.X]::Y``, ``Add-Type``
+    and ``cmd /c`` are normal parts of a correct spoken how-to. The guard now
+    weighs token shape: plain words must clearly outweigh code tokens.
+    """
+    result = scrub_for_voice(text, language="de")
+    assert result.fallback_used is False
+    assert "Es trat ein Fehler auf" not in result.cleaned  # i18n-allow
+    assert "replaced_shell_command" not in result.actions
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A command line stays fail-closed even with a few word-shaped tokens.
+        "cmd /c start discord",
+        "powershell -Command \"Start-Process notepad -ArgumentList 'C:\\tmp\\f.txt'\"",
+        'bash -c "echo hallo"',
+    ],
+)
+def test_shell_guard_still_refuses_a_bare_command_line(text: str) -> None:
+    """OF-03 regression floor: the protection must not have been traded away."""
+    result = scrub_for_voice(text, language="de")
+    assert result.fallback_used is True
+    assert "replaced_shell_command" in result.actions
+
+
+# --- OF-02: a legitimate confirmation came back as an error ----------------
+
+
+def test_background_narration_alone_is_spoken_not_turned_into_an_error() -> None:
+    """OF-02: "Ich merke mir das." was replaced by "Es trat ein Fehler auf.".
+
+    The mandate is "do not ANNOUNCE bookkeeping alongside the answer", not
+    "never confirm". When the narration IS the whole text, the user explicitly
+    asked for that confirmation — the strip only commits when other content
+    survives.
+    """
+    for text in (
+        "Ich merke mir das.",  # i18n-allow
+        "Ich notiere mir das.",  # i18n-allow
+        "I am noting that down.",
+        "Tomo nota.",
+    ):
+        result = scrub_for_voice(text, language="de")
+        assert result.fallback_used is False, text
+        assert result.cleaned == text, text
+        assert "removed_background_action_narration" not in result.actions, text
+
+
+# --- OF-05: two ordinary English words ate 400 characters ------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The measured failure: everything after the colon was deleted.
+        "Status: action is delayed until tomorrow because the server is down.",
+        "The target is the second shelf on the left side of the room.",
+        "Your action is required before Friday, otherwise the booking expires.",
+    ],
+)
+def test_ambiguous_arg_word_alone_is_not_a_tool_leak(text: str) -> None:
+    """OF-05: 'action'/'target' are ordinary words — one alone is not a leak."""
+    result = scrub_for_voice(text, language="en")
+    assert "removed_tool_json" not in result.actions
+    assert result.cleaned == text
+
+
+def test_ambiguous_arg_words_in_a_chain_are_still_removed() -> None:
+    """OF-05 regression floor: the F-AUDIT-4 shape is a CHAIN of arg phrases,
+    and that is exactly what still gets cut — even without a tool-name prefix."""
+    text = (  # i18n-allow
+        "Ich versuche es. action is das Projekt analysiert "
+        "target is Arbeitsordner. Fertig."
+    )
+    result = scrub_for_voice(text, language="de")
+    assert "action is" not in result.cleaned
+    assert "target is" not in result.cleaned
+    assert "removed_tool_json" in result.actions
+    assert "Fertig" in result.cleaned  # i18n-allow
+
+
+# --- OF-06: any word followed by (braces) was deleted ----------------------
+
+
+def test_ordinary_function_call_in_prose_survives() -> None:
+    """OF-06: 'berechne({"a": 1})' is not a tool call — the sentence stays."""
+    text = 'Rufe berechne({"a": 1}) auf, dann bist du fertig.'  # i18n-allow
+    result = scrub_for_voice(text, language="de")
+    assert "berechne(" in result.cleaned
+    assert "auf, dann bist du fertig" in result.cleaned  # i18n-allow
+
+
+def test_tool_name_fn_call_with_nested_paren_is_still_removed() -> None:
+    """OF-06 regression floor: the fn-call form still fires for a REAL tool
+    name, including the nested-paren body that the keyword-args pattern alone
+    would only half-cut."""
+    text = 'Ich starte das: spawn_worker({"utterance": "sag :)"}) und melde mich.'  # i18n-allow
+    result = scrub_for_voice(text, language="de")
+    assert "spawn_worker" not in result.cleaned
+    assert "utterance" not in result.cleaned
+    assert "removed_tool_json" in result.actions
+    assert "melde mich" in result.cleaned  # i18n-allow
+
+
+# --- OF-04: 'Provider' / 'MCP' are ordinary user-facing words now ----------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Der Provider war nicht erreichbar.",  # i18n-allow
+        "Provider.",
+        "Der MCP Store zeigt alle Verbindungen.",  # i18n-allow
+        "Ich habe den Provider gewechselt.",  # i18n-allow
+    ],
+)
+def test_provider_and_mcp_are_no_longer_scrubbed_as_jargon(text: str) -> None:
+    """OF-04: excising the noun left a broken clause ("Der war nicht
+    erreichbar.") and a bare "Provider." even fell through to the error phrase.
+    Both words name things the app's own UI shows the user."""
+    result = scrub_for_voice(text, language="de")
+    assert result.cleaned == text
+    assert result.fallback_used is False
+    assert "removed_engineering_jargon" not in result.actions
+
+
+def test_remaining_jargon_words_are_still_scrubbed() -> None:
+    """OF-04 regression floor: 'Subprocess' / 'Harness' name internals the user
+    has no concept for and stay on the list."""
+    for text in ("Der Subprocess ist fertig.", "Das Harness ist gestartet."):  # i18n-allow
+        result = scrub_for_voice(text, language="de")
+        assert "removed_engineering_jargon" in result.actions, text
+        assert "subprocess" not in result.cleaned.lower(), text
+        assert "harness" not in result.cleaned.lower(), text
+
+
+# --- OF-07: deleting a URL left the preposition dangling -------------------
+
+
+def test_url_is_replaced_by_a_spoken_placeholder_not_deleted() -> None:
+    """OF-07: "Die Doku steht auf <url> und erklaert alles." lost its object
+    and became "Die Doku steht auf und erklaert alles.". The link is now
+    replaced by a placeholder, so the sentence still parses when spoken."""
+    text = "Die Doku steht auf https://docs.python.org und erklaert alles."  # i18n-allow
+    result = scrub_for_voice(text, language="de")
+    assert "http" not in result.cleaned.lower()
+    assert "docs.python.org" not in result.cleaned.lower()
+    assert "auf der Website und erklaert alles" in result.cleaned  # i18n-allow
+    assert "removed_source_artifacts" in result.actions
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [("de", "der Website"), ("en", "the website"), ("es", "el sitio web")],
+)
+def test_url_placeholder_is_localized(language: str, expected: str) -> None:
+    """Runtime-output-language doctrine: the placeholder table carries every
+    supported locale — a Spanish-pinned user never hears the German one."""
+    from jarvis.brain.output_filter import SOURCE_LINK_PLACEHOLDER
+
+    assert set(SOURCE_LINK_PLACEHOLDER) >= {"de", "en", "es"}
+    result = scrub_for_voice("Mehr dazu auf https://example.org heute.", language=language)
+    assert expected in result.cleaned
+    assert "example.org" not in result.cleaned
+
+
+def test_serp_footer_is_still_deleted_whole_not_placeholdered() -> None:
+    """OF-07 regression floor: the "Weitere Ergebnisse von <domain>" footer is a
+    SERP artefact, not a link the sentence refers to — it goes as one unit, with
+    no placeholder left behind."""
+    text = "Note 2 gibt es ab 34,5 Punkten. Weitere Ergebnisse von www.gutefrage.net"
+    result = scrub_for_voice(text, language="de")
+    low = result.cleaned.lower()
+    assert "gutefrage" not in low
+    assert "weitere ergebnisse" not in low
+    assert "website" not in low
+    assert "removed_source_artifacts" in result.actions
