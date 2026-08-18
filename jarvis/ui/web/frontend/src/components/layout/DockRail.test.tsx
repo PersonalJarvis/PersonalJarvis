@@ -98,6 +98,25 @@ describe("DockRail", () => {
     );
   });
 
+  test("hovering does not grow or move an icon — the rail holds its size and place", () => {
+    // The magnification was taken back by the maintainer (2026-08-18): the
+    // hovered icon gets its surface and its label, nothing else changes.
+    renderRail();
+    const rail = screen.getByTestId("dock-rail");
+    const before = ITEMS.map((item) => {
+      const el = screen.getByTestId(`nav-row-${item.id}`);
+      return [el.style.top, el.style.width, el.style.height].join("|");
+    });
+
+    moveTo(rail, centreOf(2));
+    const during = ITEMS.map((item) => {
+      const el = screen.getByTestId(`nav-row-${item.id}`);
+      return [el.style.top, el.style.width, el.style.height].join("|");
+    });
+    expect(during).toEqual(before);
+    expect(screen.getByTestId(`nav-row-${ITEMS[2].id}`).style.width).toBe("30px");
+  });
+
   test("leaving the rail takes the label away", async () => {
     renderRail();
     const rail = screen.getByTestId("dock-rail");

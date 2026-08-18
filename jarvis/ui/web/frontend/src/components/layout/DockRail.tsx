@@ -6,25 +6,17 @@ import {
   useReducedMotion,
   useSpring,
   useTransform,
-  type MotionValue,
 } from "framer-motion";
 import { useEventStore, type SectionId } from "@/store/events";
 import { NAV_GROUPS, resolveNavLabel, type NavItem } from "@/components/layout/navGroups";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
-import {
-  DOCK_MAX_SCALE,
-  DOCK_RADIUS_UNITS,
-  dockSlotAt,
-  layoutDock,
-  type DockLayout,
-} from "@/lib/dockMagnify";
+import { dockSlotAt, layoutDock } from "@/lib/dockMagnify";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 /**
- * The icon rail — every section of the app as one icon, on the left edge,
- * with a gentle magnification under the pointer.
+ * The icon rail — every section of the app as one icon, on the left edge.
  *
  * ONE rail for the whole app: the mission deck's dock and the collapsed
  * sidebar are the same component, so a section reads the same wherever the
@@ -36,61 +28,35 @@ import { useT } from "@/i18n";
  * clicking Skills while a plugin needs attention lands on the Plugins tab, the
  * same shortcut the expanded sidebar takes.
  *
- * How the motion is built — the recipe of the well-known Framer Motion docks,
- * with two deliberate differences:
+ * There is NO magnification. The dock went through the desktop-dock hill (icons
+ * growing under the pointer, neighbours pushed apart, then a rigid version
+ * with a hill of sizes only) and the maintainer took the whole idea back on
+ * 2026-08-18: the icons as they sit are right, the growing under the pointer
+ * was not. So the icons hold their size and place, always. What hover does:
+ * the hovered icon gets the glass surface, and exactly one label glides from
+ * icon to icon at a fixed distance from the rail, fading in and out. The
+ * pointer never goes through React state on the way to the label — it writes
+ * a motion value and the label position derives from it. Geometry (where each
+ * icon rests) is pure math in `lib/dockMagnify.ts`.
  *
- * - The column is RIGID. No icon ever leaves its place: the hill is a hill of
- *   sizes only, each icon growing around its own rest centre, neighbours a
- *   little, the hovered one most. The desktop docks push neighbours apart to
- *   make room; the maintainer found that shuffle distracting, so it is gone.
- *   Boxes may overlap by a few px at the peak — only the hovered box paints a
- *   surface, and it is drawn on top, so nothing shows.
- * - The hill is STEADY under a moving pointer. It sits on the hovered icon's
- *   centre, not on the pointer itself: moving within an icon changes nothing
- *   (a pointer that wanders by a pixel used to make every neighbour re-render
- *   at a fractional size, and thin line icons re-rasterised at fractional
- *   sizes read as vibration). Crossing to the next icon glides the hill over
- *   on a critically damped spring, in step with the label.
- * - Nothing about the pointer goes through React state. The pointer writes
- *   motion values; the whole layout is ONE derived motion value; every icon
- *   binds its box to that.
- * - The hill's HEIGHT is sprung too: enter the rail and it rises in place
- *   under the pointer; leave it and it settles back where it was.
- * - Geometry is pure math in `lib/dockMagnify.ts`.
- * - Exactly one label: the hovered icon's, gliding from icon to icon at a
- *   fixed distance from the rail, fading in and out.
- *
- * Users who asked for less motion get the label but no hill.
+ * Users who asked for less motion get the label without the glide.
  */
 const BASE = 30; // px — icon box at rest
 const GAP = 8; // px — between icon boxes at rest
-const ICON = 16; // px — glyph at rest; scales with the box
+const ICON = 16; // px — glyph
 const RAIL_WIDTH = 64; // px — Tailwind w-16, the column the icons centre in
-/**
- * Space above the first and below the last icon at rest. Also what a
- * magnified end icon grows into — half its extra size, well under 12 px.
- */
+/** Space above the first and below the last icon. */
 const PAD_TOP = 12;
 const PAD_BOTTOM = 12;
 /** The rest geometry, for tests that need to aim a pointer at an icon. */
 export const DOCK_RAIL_GEOMETRY = { BASE, GAP, PAD_TOP } as const;
-/** Rise/settle of the hill: quick, a hair under critical damping. */
-const HILL_SPRING = { stiffness: 600, damping: 45, mass: 1 };
 /**
- * The glide from icon to icon — hill and label alike: critically damped, so
- * it settles in ~40 ms and never overshoots the icon it lands on.
+ * The label's glide from icon to icon: critically damped, so it settles in
+ * ~40 ms and never overshoots the icon it lands on.
  */
 const GLIDE_SPRING = { stiffness: 900, damping: 60, mass: 1 };
-/**
- * Where the label's left edge sits: a fixed distance beyond the fully grown
- * icon, so it does not creep sideways while the icon grows under it.
- */
-const LABEL_LEFT = RAIL_WIDTH / 2 + (BASE * DOCK_MAX_SCALE) / 2 + 12;
-
-interface DockFrame {
-  layout: DockLayout;
-  hovered: number;
-}
+/** Where the label's left edge sits: a fixed distance beyond the icon. */
+const LABEL_LEFT = RAIL_WIDTH / 2 + BASE / 2 + 12;
 
 export function DockRail({ className }: { className?: string }) {
   const t = useT();
@@ -135,41 +101,17 @@ export function DockRail({ className }: { className?: string }) {
   const lastClientY = useRef<number | null>(null);
   const hoveredRef = useRef(-1);
   const [hovered, setHovered] = useState(-1);
-
-  /** Centre of the hill along the rail, in the rest layout's coordinates —
-   *  the hovered icon's centre, glided to on `GLIDE_SPRING`. */
-  const hillYTarget = useMotionValue(0);
-  const hillY = useSpring(hillYTarget, GLIDE_SPRING);
-  /** 0 = rail at rest, 1 = hill fully up. */
-  const hillTarget = useMotionValue(0);
-  const hill = useSpring(hillTarget, HILL_SPRING);
   const hoveredMV = useMotionValue(-1);
-
-  const frame = useTransform([hillY, hill, hoveredMV], (latest: number[]): DockFrame => {
-    const [y, a, h] = latest;
-    const amount = Math.min(1, Math.max(0, a));
-    return {
-      layout: layoutDock(
-        items.length,
-        BASE,
-        GAP,
-        amount > 0.002 ? y : null,
-        1 + (DOCK_MAX_SCALE - 1) * amount,
-        DOCK_RADIUS_UNITS,
-      ),
-      hovered: h,
-    };
-  });
 
   // --- the one label ------------------------------------------------------
   // The last position is kept so the label fades out where it was rather than
-  // jumping to a default the instant the pointer leaves. Derived from `frame`
-  // (rather than from the hovered index alone) so a scroll under a still
-  // pointer, which re-aims the hill, moves the label along.
+  // jumping to a default the instant the pointer leaves. Derived from the
+  // hovered slot as a motion value, so a scroll under a still pointer (which
+  // re-aims the hover) moves the label along without a React render.
   const lastLabelTop = useRef(PAD_TOP + GAP + BASE / 2);
-  const labelTopRaw = useTransform(frame, (f) => {
-    if (f.hovered < 0) return lastLabelTop.current;
-    const top = PAD_TOP + f.layout.items[f.hovered].center - (scrollerRef.current?.scrollTop ?? 0);
+  const labelTopRaw = useTransform(hoveredMV, (h: number) => {
+    if (h < 0) return lastLabelTop.current;
+    const top = PAD_TOP + rest.items[h].center - (scrollerRef.current?.scrollTop ?? 0);
     lastLabelTop.current = top;
     return top;
   });
@@ -184,17 +126,16 @@ export function DockRail({ className }: { className?: string }) {
       hoveredMV.set(slot);
       setHovered(slot);
       if (slot < 0) return;
-      const center = rest.items[slot].center;
       if (prev < 0) {
-        // A fresh hover appears AT its icon; only a hill (and label) that is
-        // already up glides. Without this they would fly in from wherever the
-        // last hover faded out.
-        hillY.jump(center);
-        labelTopSmooth.jump(PAD_TOP + center - (scrollerRef.current?.scrollTop ?? 0));
+        // A fresh hover appears AT its icon; only a label that is already up
+        // glides. Without this it would fly in from wherever the last hover
+        // faded out.
+        labelTopSmooth.jump(
+          PAD_TOP + rest.items[slot].center - (scrollerRef.current?.scrollTop ?? 0),
+        );
       }
-      hillYTarget.set(center);
     },
-    [hillY, hillYTarget, hoveredMV, labelTopSmooth, rest],
+    [hoveredMV, labelTopSmooth, rest],
   );
 
   const track = useCallback(
@@ -202,12 +143,10 @@ export function DockRail({ className }: { className?: string }) {
       const el = scrollerRef.current;
       if (!el) return;
       const y = clientY - el.getBoundingClientRect().top + el.scrollTop - PAD_TOP;
-      const slot = dockSlotAt(y, items.length, BASE, GAP);
-      setHoveredSlot(slot);
       // Off the row (the padding, or past the last icon) counts as away.
-      hillTarget.set(slot >= 0 && !reduced ? 1 : 0);
+      setHoveredSlot(dockSlotAt(y, items.length, BASE, GAP));
     },
-    [hillTarget, items.length, reduced, setHoveredSlot],
+    [items.length, setHoveredSlot],
   );
 
   const onPointerMove = useCallback(
@@ -219,9 +158,8 @@ export function DockRail({ className }: { className?: string }) {
   );
   const onPointerLeave = useCallback(() => {
     lastClientY.current = null;
-    hillTarget.set(0);
     setHoveredSlot(-1);
-  }, [hillTarget, setHoveredSlot]);
+  }, [setHoveredSlot]);
   // Wheel-scrolling under a still pointer moves the icons under it — re-aim.
   const onScroll = useCallback(() => {
     if (lastClientY.current !== null) track(lastClientY.current);
@@ -263,9 +201,7 @@ export function DockRail({ className }: { className?: string }) {
             <DockIcon
               key={item.id}
               item={item}
-              index={i}
               restCenter={rest.items[i].center}
-              frame={frame}
               label={resolveNavLabel(t, item)}
               active={activeSection === item.id || !!item.matchIds?.includes(activeSection)}
               hovered={hovered === i}
@@ -331,9 +267,7 @@ export function DockRail({ className }: { className?: string }) {
 
 function DockIcon({
   item,
-  index,
   restCenter,
-  frame,
   label,
   active,
   hovered,
@@ -348,10 +282,8 @@ function DockIcon({
   onBlur,
 }: {
   item: NavItem;
-  index: number;
   /** The icon's fixed centre along the rail, px from the row's start. */
   restCenter: number;
-  frame: MotionValue<DockFrame>;
   label: string;
   active: boolean;
   hovered: boolean;
@@ -368,13 +300,6 @@ function DockIcon({
   onFocus: () => void;
   onBlur: () => void;
 }) {
-  // Each icon binds its box to the shared layout — written straight to the
-  // element by the motion runtime, never through a React render. The centre
-  // is fixed; the box grows around it, so `top` moves up exactly as `size`
-  // grows.
-  const top = useTransform(frame, (f) => PAD_TOP + restCenter - f.layout.items[index].size / 2);
-  const size = useTransform(frame, (f) => f.layout.items[index].size);
-  const glyph = useTransform(frame, (f) => ICON * f.layout.items[index].scale);
   const Icon = item.icon;
 
   return (
@@ -386,7 +311,7 @@ function DockIcon({
           style={{ top: PAD_TOP + restCenter - BASE / 2 - GAP / 2 - 0.5 }}
         />
       )}
-      <motion.button
+      <button
         type="button"
         data-testid={`nav-row-${item.id}`}
         onClick={onSelect}
@@ -395,11 +320,8 @@ function DockIcon({
         aria-label={label}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "absolute left-1/2 flex items-center justify-center rounded-xl border transition-colors duration-150",
+          "absolute left-1/2 flex -translate-x-1/2 items-center justify-center rounded-xl border transition-colors duration-150",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
-          // On top while hovered: at the peak its box overlaps the neighbours'
-          // (transparent) boxes by a few px, and it must win that overlap.
-          hovered && "z-10",
           // The active control is the app's glass surface with the accent on
           // the glyph — the same language as the expanded sidebar's row.
           active
@@ -408,15 +330,15 @@ function DockIcon({
               ? "border-border/60 bg-card/40 text-foreground"
               : "border-transparent text-muted-foreground",
         )}
-        style={{ top, width: size, height: size, x: "-50%" }}
+        style={{ top: PAD_TOP + restCenter - BASE / 2, width: BASE, height: BASE }}
       >
-        <motion.span
+        <span
           aria-hidden
           className="flex shrink-0 items-center justify-center"
-          style={{ width: glyph, height: glyph }}
+          style={{ width: ICON, height: ICON }}
         >
           <Icon className="h-full w-full" />
-        </motion.span>
+        </span>
 
         {/* Pips ride on the icon's corner. The signal is the point, not the
             row — and there is no room for anything beside a 30 px box. */}
@@ -440,7 +362,7 @@ function DockIcon({
             className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
           />
         ) : null}
-      </motion.button>
+      </button>
     </>
   );
 }
