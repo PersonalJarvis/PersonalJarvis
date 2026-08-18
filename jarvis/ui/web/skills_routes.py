@@ -248,6 +248,17 @@ class SkillCreatorDraftBody(BaseModel):
     category: str = Field(default="general", max_length=80)
     trigger_hint: str = Field(default="", max_length=500)
     extra_context: str = Field(default="", max_length=4000)
+    # A 5-field cron (local time) or a spoken recurrence the caller already
+    # extracted, and the user's language code so the skill is written in it.
+    schedule_hint: str = Field(default="", max_length=120)
+    language: str = Field(default="", max_length=8)
+
+
+class SkillCreatorAuthorBody(SkillCreatorDraftBody):
+    """Body for ``POST /api/skills/creator/author`` — draft AND commit in one
+    call, the way voice/chat (``create-skill`` tool) and ``jarvisctl skills
+    create`` do it. Brain-REQUIRED: without an authoring brain the call fails
+    with 503 and writes nothing (a skeleton is never committed unreviewed)."""
 
 
 class SkillCreatorRefineBody(SkillCreatorDraftBody):
@@ -372,13 +383,23 @@ async def create_skill_draft(
 ) -> dict[str, Any]:
     """Generates an AI draft without writing any files."""
     _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
-    from jarvis.skills.creator_service import SkillCreatorInput, SkillCreatorService
+    from jarvis.skills.creator_service import (
+        SkillCreatorInput,
+        SkillCreatorService,
+        build_authoring_context,
+    )
 
     reg = _require_registry(request)
     brain = getattr(request.app.state, "brain", None)
     bus = getattr(request.app.state, "bus", None)
     config = getattr(request.app.state, "config", None)
-    service = SkillCreatorService(brain=brain, registry=reg, bus=bus, config=config)
+    service = SkillCreatorService(
+        brain=brain,
+        registry=reg,
+        bus=bus,
+        config=config,
+        context=build_authoring_context(brain_manager=brain, registry=reg),
+    )
     result = await service.draft(
         SkillCreatorInput(
             intent=body.intent,
@@ -386,6 +407,8 @@ async def create_skill_draft(
             category=body.category,
             trigger_hint=body.trigger_hint,
             extra_context=body.extra_context,
+            schedule_hint=body.schedule_hint,
+            language=body.language,
         )
     )
     return {
@@ -393,6 +416,68 @@ async def create_skill_draft(
         "skill_md": result.skill_md,
         "validation": result.validation,
         "brain_used": result.brain_used,
+        "brain_source": result.brain_source,
+    }
+
+
+@router.post("/creator/author")
+async def author_skill(
+    body: SkillCreatorAuthorBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Author AND commit a new skill in one call (voice/CLI parity).
+
+    The brain writes the whole skill from ``intent`` — trigger phrase, schedule
+    cron, steps per connected tool, spoken answer format — and it lands as
+    ``state: draft`` (AP-15): activate it in the Skills view. 503 when no brain
+    could author it (nothing is written), 409/400 from the writer as usual.
+    """
+    _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
+    from jarvis.skills.authoring import SkillAuthoringError
+    from jarvis.skills.creator_service import (
+        SkillCreatorInput,
+        SkillCreatorService,
+        SkillCreatorUnavailable,
+        build_authoring_context,
+    )
+
+    reg = _require_registry(request)
+    brain = getattr(request.app.state, "brain", None)
+    bus = getattr(request.app.state, "bus", None)
+    config = getattr(request.app.state, "config", None)
+    service = SkillCreatorService(
+        brain=brain,
+        registry=reg,
+        bus=bus,
+        config=config,
+        context=build_authoring_context(brain_manager=brain, registry=reg),
+    )
+    try:
+        authored = await service.author(
+            SkillCreatorInput(
+                intent=body.intent,
+                name_hint=body.name_hint,
+                category=body.category,
+                trigger_hint=body.trigger_hint,
+                extra_context=body.extra_context,
+                schedule_hint=body.schedule_hint,
+                language=body.language,
+            )
+        )
+    except SkillCreatorUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except SkillAuthoringError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    detail = _skill_to_detail(authored.skill)
+    return {
+        "skill": detail,
+        "draft": authored.result.draft,
+        "skill_md": authored.result.skill_md,
+        "validation": authored.result.validation,
+        "brain_used": True,
+        "brain_source": authored.result.brain_source,
     }
 
 
@@ -403,13 +488,23 @@ async def refine_skill_draft(
 ) -> dict[str, Any]:
     """Revises an AI draft based on feedback / follow-up questions."""
     _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
-    from jarvis.skills.creator_service import SkillCreatorInput, SkillCreatorService
+    from jarvis.skills.creator_service import (
+        SkillCreatorInput,
+        SkillCreatorService,
+        build_authoring_context,
+    )
 
     reg = _require_registry(request)
     brain = getattr(request.app.state, "brain", None)
     bus = getattr(request.app.state, "bus", None)
     config = getattr(request.app.state, "config", None)
-    service = SkillCreatorService(brain=brain, registry=reg, bus=bus, config=config)
+    service = SkillCreatorService(
+        brain=brain,
+        registry=reg,
+        bus=bus,
+        config=config,
+        context=build_authoring_context(brain_manager=brain, registry=reg),
+    )
     result = await service.refine(
         SkillCreatorInput(
             intent=body.intent,
@@ -419,6 +514,8 @@ async def refine_skill_draft(
             extra_context=body.extra_context,
             existing_draft=body.draft,
             feedback=body.feedback,
+            schedule_hint=body.schedule_hint,
+            language=body.language,
         )
     )
     return {
@@ -426,6 +523,7 @@ async def refine_skill_draft(
         "skill_md": result.skill_md,
         "validation": result.validation,
         "brain_used": result.brain_used,
+        "brain_source": result.brain_source,
     }
 
 

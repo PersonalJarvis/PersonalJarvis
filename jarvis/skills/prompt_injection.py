@@ -185,6 +185,10 @@ def render_available_skills_section(
     body = "\n".join(bullets)
     outro = (
         "\n\nIf several skills could match, pick the most specific one. "
-        "Draft/disabled skills are rejected by the tool automatically."
+        "Draft/disabled skills are rejected by the tool automatically. "
+        "When the user asks you to CREATE a new skill "
+        "(\"erstell mir einen Skill, der …\", "  # i18n-allow: quoted phrase
+        "\"create a skill that …\"), call the `create-skill` tool with their "
+        "full description — never `run-skill`, and never a worker."
     )
     return f"{header}\n{intro}\n{body}{outro}"

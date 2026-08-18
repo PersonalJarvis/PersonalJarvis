@@ -95,8 +95,40 @@ versioning per [SemVer](https://semver.org/).
   a working entry point with no card anywhere in the app, so selecting it meant
   hand-editing `jarvis.toml`. Both Google recognizers now appear in Voice Input
   with a model picker.
+- **Create a skill by voice — and it is a real skill, not your sentence in a
+  template.** "Erstell mir einen neuen Skill: Morgenroutine, jeden Morgen um 6
+  Uhr E-Mails, Tickets und Kalender vorlesen und dann ein 80er-Klassiker auf <!-- i18n-allow: quoted voice request -->
+  YouTube Music" now ends with a written skill: the assistant itself authors
+  the whole card — name, the spoken phrase that starts it, a schedule trigger
+  (`0 6 * * *`) when you named a time, numbered steps that each name the
+  connector actually attached right now (mail, calendar, tickets, music …) and
+  a spoken answer format — and files it as a draft you switch on in the Skills
+  view. New router tool `create-skill` (one bounded call, never a background
+  worker), the same author behind `POST /api/skills/creator/author` and the new
+  `jarvis skills create "<what it should do>" [--name] [--trigger] [--schedule]`.
+  - The author is a provider LADDER, not one model: your active provider first,
+    then the pinned Tool Model, then the API quality tier, then the frontier
+    chain — a rung without a key or that times out is crossed, and if nothing
+    can author, the assistant says so and writes nothing (a template with the
+    request pasted in is never committed unreviewed).
+  - The UI's skill-creator dialog and `jarvis skills draft` see the same live
+    tool inventory now, so their drafts name real connectors too; `draft` gained
+    `--trigger`, `--schedule`, `--language`.
 
 ### Fixed
+
+- **A request to CREATE a skill is no longer captured by a skill it merely
+  mentions.** Voice session 2026-08-18 17:51: "… einen neuen Skill erstellst …
+  ein Lied mit YouTube Music …" was taken by the YouTube Music skill because its <!-- i18n-allow: quoted voice request -->
+  brand trigger matched the words INSIDE the description, the model spent the
+  whole tool budget reading `jarvisctl --help`, and the answer was "Das hat
+  gerade nicht geklappt." A deterministic authoring resolver <!-- i18n-allow: quoted voice request -->
+  (`jarvis/skills/authoring_request.py`) now decides "the user wants a NEW
+  skill" before any brand trigger runs — in every spoken conjugation ("Skill
+  erstellst", "skill zu erstellen", "create a skill", "crea un skill") — and
+  keeps force-spawn and the evidence gate out of such a turn. The
+  `skill-creator` builtin's own card is a short "call create-skill once" now;
+  Anthropic's long guide moved to `references/anthropic-skill-creator.md`.
 
 - The key-format hint no longer calls an `AIza` key a "Google AI Studio key".
   The same shape is issued for Google Cloud, so the label is endpoint-neutral

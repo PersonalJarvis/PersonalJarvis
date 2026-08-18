@@ -1095,3 +1095,78 @@ the process.
 - `tests/unit/brain/test_modes.py`
 - `tests/integration/test_modes_routes.py`
 - `tests/unit/brain/test_routing.py` (ROUTER_TOOLS exact set)
+
+## Amendment: `create-skill` router tool (2026-08-18)
+
+`create-skill` joins `ROUTER_TOOLS`: the brain can now WRITE a new skill from
+the user's spoken description (`jarvis/plugins/tool/create_skill.py`).
+
+### Context
+
+Voice session 2026-08-18 17:51: "Ich möchte, dass du mir bitte einen neuen
+Skill erstellst — Morgenroutine, jeden Morgen um 6 Uhr E-Mails, Linear-Tickets
+und Kalender vorlesen, dann ein 80er-Klassiker auf YouTube Music."
+Three things went wrong at once, and each was structural:
+
+1. **The wrong skill captured the turn.** The trigger channel captures on the
+   longest author regex, and `plugin-youtube_music`'s brand-only trigger
+   matched the words INSIDE the description of the skill to be built. The
+   `skill-creator` builtin's own trigger knew only the infinitive ("Skill
+   erstellen"), not the conjugated verb the user said ("Skill erstellst").
+2. **The brain had no tool to write a skill.** The only live authoring path
+   was the UI dialog (`POST /api/skills/creator/{draft,commit}`) and, two
+   commands deep, `jarvisctl skills draft` + `commit` with JSON piped between
+   them. The model spent three tool rounds on `jarvisctl --help`, hit the 45 s
+   loop deadline and said "Das hat gerade nicht geklappt."
+3. **Even that path could produce a template, not a skill.** The creator's
+   deterministic skeleton copies the intent 1:1 into `description` and a body
+   that says "1. …", never derives a schedule trigger, and its single brain
+   call died on the dev box's unkeyed active provider.
+
+The 2026-07-25 note that a router tool "would be a third route to the same
+behaviour and a fourth place to forget the AP-15 guard" was reasoning about
+the phantom `spawn-skill-author`; the guard is enforced in ONE place
+(`SkillCreatorService.commit` forces `state="draft"`), so a tool that calls
+that service adds a caller, not a place to forget.
+
+### Decision
+
+- `jarvis/skills/authoring_request.py` — a deterministic resolver ahead of the
+  trigger channel (Channel 0.5 in `BrainManager._match_skill_for_turn`): word
+  "skill" + a creation shape (indefinite/new article, or a creation verb in
+  any conjugation right before/after the noun) + not an information question.
+  An authoring request resolves to the active `skill-creator` builtin with
+  trigger-grade rights, or to NO skill when that builtin is off — never to a
+  connector named inside the request. Force-spawn and the evidence gate stand
+  down on such a turn (`_skill_authoring_turn`).
+- `create-skill` (monitor): ONE bounded call — live tool inventory + installed
+  skills → the brain ladder (active provider → Tool Model → quality tier →
+  frontier chain, crossing on a dead rung, AP-21/AP-22) → a complete draft
+  (name, description, spoken trigger regex, schedule cron when a time was
+  named, numbered steps per connected tool, spoken answer format) → committed
+  as `state: draft` (AP-15). Never a skeleton: without an authoring brain the
+  tool fails honestly and writes nothing (`SkillCreatorUnavailable`).
+- Parity across surfaces (§3 provider & mode parity): the same
+  `SkillCreatorService.author()` backs `POST /api/skills/creator/author` and
+  `jarvis skills create`; the realtime engines reach it through the delegate
+  router brain like every other router tool; the UI dialog keeps its
+  review-then-commit flow and now sees the same tool inventory.
+- The `skill-creator` builtin's body is a short card ("restate, call
+  create-skill once, report") — Anthropic's 450-line guide moved to
+  `references/anthropic-skill-creator.md`; its regex accepts conjugated verbs.
+
+Direct gated action, never a spawn, never in a worker tool set (AP-5/AP-14).
+
+### Regression guards
+
+- `tests/unit/skills/test_authoring_request.py` (the live transcript, hits and
+  hard negatives)
+- `tests/unit/brain/test_skill_authoring_turn.py` (youtube_music no longer
+  captures the authoring turn; stand-downs)
+- `tests/unit/plugins/test_create_skill_tool.py` (registered, router-visible,
+  loader-constructible; draft on disk; honest failure writes nothing)
+- `tests/unit/skills/test_creator_service.py` (brain ladder crossover,
+  inventory in the prompt, trigger normalisation, `author()` refuses a
+  skeleton, collision suffix)
+- `tests/unit/ui/web/test_skills_routes.py`, `tests/unit/cli_ctl/test_commands_wave23.py`
+- `tests/fixtures/skill_routing/golden.yaml` (forensic positive)

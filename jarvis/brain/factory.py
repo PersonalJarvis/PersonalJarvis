@@ -117,6 +117,18 @@ ROUTER_TOOLS = frozenset({
     # Available to BOTH Router-Tier (here) and in Wave 4: bypasses the
     # Jarvis-Agent worker because the worker itself has no skill layer.
     "run-skill",
+    # Skill authoring by voice/chat (2026-08-18): the brain writes a NEW skill
+    # from the user's description — one bounded brain call through the
+    # SkillCreatorService ladder, committed as ``state: draft`` (AP-15, the
+    # user activates it in the Skills view). Direct gated action (monitor: an
+    # inactive file, instantly deletable), never a spawn — never in a worker
+    # tool set (AP-5/AP-14). Replaces the phantom ``spawn-skill-author`` (see
+    # jarvis/brain/tools/skill_authoring.py) with a tool the entry-point
+    # loader CAN construct: it resolves registry + brain lazily at execute
+    # time. Live reason: the 2026-08-18 17:51 voice turn "erstell mir einen
+    # neuen Skill …" had no authoring tool at all and died on `jarvisctl
+    # --help` rounds. See ADR-0011 amendment "create-skill router tool".
+    "create-skill",
     # Phase B5 (recall-tool): read-only keyword search over the long-term
     # Obsidian wiki vault. Router-tier only — never in SUB_TOOLS (AP-D9).
     # The brain calls this when the user asks "what do we know about X" or
@@ -564,6 +576,15 @@ def _load_tools_for_tier(
                 )
 
                 inst = cls(service_resolver=build_ultrawiki_service_resolver())
+            elif ep.name == "create-skill":
+                # Skill authoring by voice/chat: the tool resolves the live
+                # SkillRegistry (skill_context) and the live BrainManager
+                # (runtime_refs) at execute time — both are set AFTER the
+                # brain is built — so it loads unconditionally and the tool
+                # surface stays stable. `bus` lets the writer publish
+                # SkillCreated for the live Skills view; `config` feeds the
+                # brain resolvers when the manager is not reachable yet.
+                inst = cls(bus=bus, config=config)
             elif ep.name == "update-profile":
                 # Profile-write tool: mutate the SAME live UserProfile instance
                 # the BrainManager renders from (factory passes one instance to

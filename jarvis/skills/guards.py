@@ -55,6 +55,12 @@ VETO_SHADOW_MODE = "shadow_mode"
 # Applied by the brain's capture path (it needs the token store), never by the
 # pure guard ladder, so the offline routing eval stays credential-free.
 VETO_PLUGIN_NOT_CONNECTED = "plugin_not_connected"
+# The user asked to CREATE a skill ("erstell mir einen Skill, der …"),  # i18n-allow: example
+# and every service named inside that request is the new skill's CONTENT, never a command
+# — so no domain skill may capture the turn. Applied by the brain's capture path
+# via :mod:`jarvis.skills.authoring_request` when the ``skill-creator`` builtin
+# is not available to take the turn itself.
+VETO_AUTHORING_REQUEST = "authoring_request"
 
 VETO_REASONS: frozenset[str] = frozenset({
     VETO_DEFINITIONAL,
@@ -70,6 +76,7 @@ VETO_REASONS: frozenset[str] = frozenset({
     VETO_KILL_SWITCH,
     VETO_SHADOW_MODE,
     VETO_PLUGIN_NOT_CONNECTED,
+    VETO_AUTHORING_REQUEST,
 })
 
 #: Guard identifiers, in the order the ladder evaluates them. Exposed so the
@@ -342,6 +349,7 @@ __all__ = [
     "GUARD_ORDER",
     "LOCAL_ACTION_CLAIMING_MODES",
     "MATCHABLE_STATES",
+    "VETO_AUTHORING_REQUEST",
     "VETO_AUTO_FIRE_NEVER",
     "VETO_BAND_BELOW_FLOOR",
     "VETO_BLOCK_TIER",

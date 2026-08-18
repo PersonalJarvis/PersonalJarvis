@@ -1866,6 +1866,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "awareness-recall",
             # Skills-Brain-Integration (also in SUB_TOOLS — structural D9 protection)
             "run-skill",
+            # Skill authoring by voice/chat (2026-08-18): the brain writes a NEW
+            # skill from the user's description in one bounded call, committed
+            # as state=draft (AP-15). Direct gated action (monitor), never a
+            # spawn (AP-5/AP-14). ADR-0011 amendment "create-skill router tool".
+            "create-skill",
             # Phase B5 (recall-tool): read-only keyword search over the wiki vault.
             "wiki-recall",
             # Phase B5 follow-up (commit 825b1f94a): full-page reader (read-only)

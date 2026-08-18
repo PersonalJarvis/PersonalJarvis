@@ -308,6 +308,61 @@ def test_creator_commit_persists_reviewed_draft(skills_root: Path) -> None:
     assert "Committed Via Route" in names
 
 
+def test_creator_author_refuses_without_brain_and_writes_nothing(skills_root: Path) -> None:
+    """One-shot authoring (voice / CLI parity) is brain-REQUIRED: with no brain
+    on app.state it answers 503 and no skeleton lands on disk — a template
+    with the sentence pasted in is not the skill the user asked for."""
+    client, _reg = _client(skills_root)
+    res = client.post(
+        "/api/skills/creator/author",
+        json={"intent": "jeden morgen um 6 meine mails vorlesen", "schedule_hint": "0 6 * * *"},  # i18n-allow: test input
+    )
+    assert res.status_code == 503, res.text
+    assert not any(skills_root.iterdir())
+
+
+def test_creator_author_writes_a_draft_skill_with_a_brain(skills_root: Path) -> None:
+    from jarvis.core.protocols import BrainDelta
+
+    class _Brain:
+        def complete(self, request):  # noqa: ANN001, ANN202
+            async def _gen():
+                yield BrainDelta(
+                    content=(
+                        '{"name": "Mail Morgen", "description": "Liest morgens Mails vor.", '
+                        '"category": "productivity", "tags": ["mail"], '
+                        '"triggers": [{"type": "voice", "pattern": "(mail morgen)"}], '
+                        '"requires_tools": [], "risk_policy": {"default_tier": "monitor"}, '
+                        '"body": "Morgens Mails.\\n\\n## Schritte\\n\\n1. gmail: ungelesene Mails nennen.\\n"}'
+                    ),
+                    finish_reason="stop",
+                )
+
+            return _gen()
+
+    from jarvis.ui.web.skills_routes import router
+
+    reg = SkillRegistry(skills_root, bus=None, state_prefs_loader=prefs.load_state_overrides)
+    reg.reload_sync()
+    app = FastAPI()
+    app.state.skill_registry = reg
+    app.state.brain = _Brain()
+    app.include_router(router)
+    client = TestClient(app)
+    res = client.post(
+        "/api/skills/creator/author",
+        json={"intent": "jeden morgen mails vorlesen", "schedule_hint": "0 6 * * *"},  # i18n-allow: test input
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["brain_used"] is True
+    assert body["skill"]["name"] == "Mail Morgen"
+    assert body["skill"]["state"] == "draft"  # AP-15
+    crons = [t["cron"] for t in body["draft"]["triggers"] if t["type"] == "schedule"]
+    assert crons == ["0 6 * * *"]
+    assert (skills_root / "mail-morgen" / "SKILL.md").exists()
+
+
 def test_link_health_returns_clean_501_when_module_absent(skills_root: Path) -> None:
     _make_skill(skills_root, "alpha")
     client, _reg = _client(skills_root)

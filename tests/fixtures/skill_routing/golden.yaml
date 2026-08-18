@@ -538,6 +538,16 @@ skills:
         lang: de
         min_band: fire
         source: authored
+      # forensic 2026-08-18 17:51 (voice session): the conjugated verb AFTER
+      # the noun ("… einen neuen Skill erstellst") missed the infinitive-only
+      # trigger of the day, and the brand mentioned INSIDE the description
+      # handed the turn to plugin-youtube_music. Trigger channel: the authoring
+      # phrase must outrank the brand mention. Transcript shortened, wording kept.
+      - text: "ich möchte dass du mir bitte einen neuen skill erstellst und zwar morgenroutine, der soll jeden morgen um 6 uhr meine e-mails und kalendereinträge vorlesen und dann ein lied mit youtube music abspielen"
+        channel: trigger
+        lang: de
+        min_band: fire
+        source: forensic
 
   # --- Known gaps -------------------------------------------------------
   # This skill carries no voice trigger AND thin, English-only vocabulary, so

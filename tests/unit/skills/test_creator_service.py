@@ -255,3 +255,155 @@ async def test_commit_persists_draft_to_registry(registry, skills_root) -> None:
     assert fetched.state == SkillLifecycleState.DRAFT
     on_disk = (skills_root / "committed-skill" / "SKILL.md").read_text(encoding="utf-8")
     assert "state: draft" in on_disk
+
+
+# ----------------------------------------------------------------------
+# 2026-08-18 — voice authoring: brain ladder, live inventory, author()
+# ----------------------------------------------------------------------
+
+
+class _RecordingBrain(_FakeBrain):
+    """A fake brain that also keeps the request it was asked with."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.requests: list = []
+
+    def complete(self, request):  # noqa: ANN001
+        self.requests.append(request)
+        return super().complete(request)
+
+
+class _DeadBrain:
+    """A provider that is configured but cannot answer (no key)."""
+
+    def complete(self, request):  # noqa: ANN001, ARG002
+        raise RuntimeError("No API key found")
+
+
+_ROUTINE_BRAIN_JSON = """{
+  "name": "Morgenroutine",
+  "description": "Reads mail, tickets and calendar in the morning, then plays a song.",
+  "category": "productivity",
+  "tags": ["morning", "routine"],
+  "triggers": [
+    {"type": "voice", "pattern": "(morgenroutine|morning routine)", "language": ["de", "en"]},
+    {"type": "voice", "pattern": ".*"},
+    {"type": "voice", "pattern": "(unclosed"},
+    {"type": "schedule", "cron": "not a cron"}
+  ],
+  "requires_tools": ["gmail", "made_up_tool"],
+  "risk_policy": {"default_tier": "monitor"},
+  "body": "Short morning briefing.\\n\\n## Steps\\n\\n1. gmail: unread mail.\\n2. youtube_music: an 80s classic.\\n",
+  "assumptions": ["Lenya Tickets = Linear"]
+}"""
+
+
+@pytest.mark.asyncio
+async def test_brain_ladder_crosses_a_dead_active_provider(registry, monkeypatch) -> None:
+    """The user's active provider is tried first (AP-21) — and when it cannot
+    answer (no key), the ladder crosses to the Tool Model instead of handing
+    the user a skeleton (AP-22)."""
+    from types import SimpleNamespace
+
+    from jarvis.brain import resolver as resolver_mod
+
+    dead = _DeadBrain()
+    bm = _FakeBrainManager(dead, name="openrouter")
+    tool_model = _RecordingBrain(_GOOD_BRAIN_JSON)
+    tool_model.name = "vertex"
+    monkeypatch.setattr(resolver_mod, "resolve_tool_model_brain", lambda cfg, bus=None: tool_model)
+    monkeypatch.setattr(resolver_mod, "resolve_quality_brain", lambda cfg, bus=None: None)
+    monkeypatch.setattr(resolver_mod, "resolve_frontier_brain", lambda cfg, bus=None: None)
+
+    svc = SkillCreatorService(brain=bm, registry=registry, config=SimpleNamespace())
+    result = await svc.draft(SkillCreatorInput(intent="something"))
+    assert bm.requested == ["openrouter"]  # the active provider was tried first
+    assert result.brain_used is True
+    assert result.brain_source.startswith("tool_model")
+    assert result.draft["name"] == "Brain Made Skill"
+
+
+@pytest.mark.asyncio
+async def test_prompt_carries_the_live_inventory_and_the_skill_contract(registry) -> None:
+    """What makes the draft a WORKING skill: the model sees which connectors
+    are attached (by name) and the trigger/schedule contract."""
+    from jarvis.skills.creator_service import AuthoringContext
+
+    brain = _RecordingBrain(_GOOD_BRAIN_JSON)
+    ctx = AuthoringContext(
+        tools=(("gmail", "Read and send Gmail."), ("youtube_music", "Play music.")),
+        skills=(("morning-routine", "Morning briefing."),),
+    )
+    svc = SkillCreatorService(brain=brain, registry=registry, context=ctx)
+    await svc.draft(
+        SkillCreatorInput(intent="jeden morgen um 6 mails vorlesen", schedule_hint="0 6 * * *", language="de")  # i18n-allow: test input
+    )
+    request = brain.requests[0]
+    user = request.messages[0].content
+    assert "AVAILABLE TOOLS" in user
+    assert "gmail" in user and "youtube_music" in user
+    assert "INSTALLED SKILLS" in user and "morning-routine" in user
+    assert "Schedule hint: 0 6 * * *" in user
+    assert "language: de" in user
+    assert "cron" in request.system and "schedule" in request.system
+    assert "AVAILABLE TOOLS" in request.system
+
+
+@pytest.mark.asyncio
+async def test_brain_draft_is_normalised_triggers_and_tools(registry) -> None:
+    """Overbroad / invalid voice patterns and invalid crons are dropped, the
+    caller's cron hint is added when the model forgot it, and requires_tools is
+    filtered to connectors that exist."""
+    from jarvis.skills.creator_service import AuthoringContext
+
+    ctx = AuthoringContext(tools=(("gmail", ""), ("youtube_music", "")))
+    svc = SkillCreatorService(brain=_FakeBrain(_ROUTINE_BRAIN_JSON), registry=registry, context=ctx)
+    result = await svc.draft(SkillCreatorInput(intent="x", schedule_hint="0 6 * * *"))
+    assert result.brain_used is True
+    triggers = result.draft["triggers"]
+    voice = [t["pattern"] for t in triggers if t["type"] == "voice"]
+    crons = [t["cron"] for t in triggers if t["type"] == "schedule"]
+    assert voice == ["(morgenroutine|morning routine)"]
+    assert crons == ["0 6 * * *"]
+    assert result.draft["requires_tools"] == ["gmail"]
+    assert result.validation["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_author_commits_the_brain_draft_as_a_draft_skill(registry, skills_root) -> None:
+    svc = SkillCreatorService(
+        brain=_FakeBrain(_ROUTINE_BRAIN_JSON), registry=registry, user_skills_root=skills_root
+    )
+    authored = await svc.author(SkillCreatorInput(intent="morgenroutine", schedule_hint="0 6 * * *"))  # i18n-allow: test input
+    assert authored.name == "Morgenroutine"
+    assert authored.slug == "morgenroutine"
+    assert authored.skill.state == SkillLifecycleState.DRAFT  # AP-15
+    on_disk = (skills_root / "morgenroutine" / "SKILL.md").read_text(encoding="utf-8")
+    assert "state: draft" in on_disk
+    assert "cron: 0 6 * * *" in on_disk
+    assert "youtube_music" in on_disk
+
+
+@pytest.mark.asyncio
+async def test_author_refuses_to_commit_a_skeleton(registry, skills_root) -> None:
+    """No brain → no skill. The skeleton is the user's sentence pasted into a
+    template; on the voice path nobody edits it, so nothing must be written."""
+    from jarvis.skills.creator_service import SkillCreatorUnavailable
+
+    svc = SkillCreatorService(brain=None, registry=registry, user_skills_root=skills_root)
+    with pytest.raises(SkillCreatorUnavailable):
+        await svc.author(SkillCreatorInput(intent="pause spotify when I talk"))
+    assert not any(skills_root.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_author_suffixes_the_name_on_a_collision(registry, skills_root) -> None:
+    svc = SkillCreatorService(
+        brain=_FakeBrain(_ROUTINE_BRAIN_JSON), registry=registry, user_skills_root=skills_root
+    )
+    first = await svc.author(SkillCreatorInput(intent="a"))
+    second = await svc.author(SkillCreatorInput(intent="a"))
+    assert first.name == "Morgenroutine"
+    assert second.name == "Morgenroutine 2"
+    assert (skills_root / "morgenroutine-2" / "SKILL.md").exists()

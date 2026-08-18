@@ -4977,6 +4977,15 @@ class BrainManager:
                 getattr(self._skill_turn_match, "name", "?"),
             )
             return EvidenceVerdict(kind="pass")
+        # A skill AUTHORING request names calendar / mail / music only as the
+        # content of the skill to be written; the capability that serves the
+        # turn is the create-skill tool, not those domains' connectors.
+        if getattr(self, "_skill_authoring_turn", False):
+            log.info(
+                "Evidence gate stood down: skill authoring request — the "
+                "create-skill tool is the capability"
+            )
+            return EvidenceVerdict(kind="pass")
 
         try:
             cfg = self._config.brain.evidence_domains
@@ -5162,6 +5171,12 @@ class BrainManager:
     _skill_turn_content_fallback: str = ""
     _skill_turn_source_fallback: str = "match"
     _skill_injected_inline_fallback: bool = False
+    # Skill AUTHORING turn (2026-08-18): the user asked to create a NEW skill
+    # (``jarvis.skills.authoring_request``). Set by ``_match_skill_for_turn``
+    # on every probe; while True the force-spawn guard and the evidence gate
+    # stand down — the create-skill router tool is the capability that owns
+    # such a turn, whether or not the skill-creator builtin captured it.
+    _skill_authoring_turn: bool = False
     # AD-S6: warn exactly once per manager lifetime when the AVAILABLE
     # SKILLS section cannot be rendered (RC2 used to be silent).
     _skills_omit_warned: bool = False
@@ -5339,6 +5354,7 @@ class BrainManager:
         self._skill_relevance = None
         self._skill_match_band = "none"
         self._skill_match_class = ""
+        self._skill_authoring_turn = False
         try:
             from jarvis.skills import guards, match_eval, match_log
             from jarvis.skills.autofire_policy import classify, may_capture
@@ -5346,6 +5362,12 @@ class BrainManager:
 
             ctx = try_get_skill_context()
             if ctx is None:
+                # No registry to look anything up in — but an authoring request
+                # is still recognisable from the words alone, and the flag is
+                # what keeps the create-skill tool in charge of the turn.
+                from jarvis.skills.authoring_request import is_skill_authoring_request
+
+                self._skill_authoring_turn = is_skill_authoring_request(user_text)
                 return None
 
             # Channel 0 (2026-08-12): the user NAMED a skill ("nutz den Skill
@@ -5378,6 +5400,55 @@ class BrainManager:
                     skill=explicit_skill, fired=True,
                 )
                 return explicit_skill
+
+            # Channel 0.5 (2026-08-18): the user asked to CREATE a skill
+            # ("erstell mir einen neuen Skill, der … mit YouTube Music …").
+            # Every service named inside that sentence is the CONTENT of the
+            # skill to be built, never a command to that service — yet the
+            # trigger channel below would hand the turn to whichever brand
+            # regex matches first (live 2026-08-18 17:51: plugin-youtube_music
+            # captured the authoring turn, the model burned the tool budget on
+            # `jarvisctl --help`, the user heard "Das hat gerade nicht
+            # geklappt"). Resolved BEFORE the trigger channel, deterministically:
+            # the skill-creator builtin captures with trigger-grade rights when
+            # it is active; when it is not, NO skill captures and the
+            # create-skill router tool owns the turn on its own.
+            from jarvis.skills.authoring_request import (
+                resolve_skill_authoring_request,
+            )
+
+            authoring = resolve_skill_authoring_request(user_text, ctx.registry)
+            if authoring is not None:
+                self._skill_authoring_turn = True
+                authoring_skill = authoring.skill
+                if authoring_skill is None:
+                    log.info(
+                        "skill authoring request — no domain skill may capture "
+                        "this turn; the create-skill tool owns it"
+                    )
+                    self._record_skill_decision(
+                        user_text, authoring.decision, lang=lang,
+                        vetoed_by=guards.VETO_AUTHORING_REQUEST,
+                    )
+                    return None
+                if self._skill_is_blocked(authoring_skill):
+                    self._record_skill_decision(
+                        user_text, authoring.decision, lang=lang,
+                        vetoed_by=guards.VETO_BLOCK_TIER, skill=authoring_skill,
+                    )
+                    return None
+                log.info(
+                    "skill authoring request → %s captures the turn "
+                    "(services named inside the request are content, not commands)",
+                    getattr(authoring_skill, "name", "?"),
+                )
+                self._skill_match_band = authoring.decision.band
+                self._skill_match_class = classify(authoring_skill)
+                self._record_skill_decision(
+                    user_text, authoring.decision, lang=lang,
+                    skill=authoring_skill, fired=True,
+                )
+                return authoring_skill
 
             cfg = self._skills_config()
             decision = match_eval.evaluate_match(
@@ -8144,6 +8215,13 @@ class BrainManager:
         # direct probe is defense-in-depth for callers outside generate().
         if self._skill_turn_match is not None or self._match_skill_for_turn(t) is not None:
             log.info("force-spawn skipped: utterance matches an installed skill")
+            return False
+        # A request to CREATE a skill is authored inline by the create-skill
+        # tool (one bounded LLM call, lands as a draft) — never a background
+        # mission, even when the skill-creator builtin is disabled and no skill
+        # captured the turn above.
+        if getattr(self, "_skill_authoring_turn", False):
+            log.info("force-spawn skipped: skill authoring request — create-skill owns it")
             return False
         # A connected CLI's capability already covers this intent → prefer its
         # cli_<name> tool, never a Computer-Use spawn (the CLI does it headless,

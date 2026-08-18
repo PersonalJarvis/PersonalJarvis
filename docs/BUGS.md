@@ -10183,3 +10183,195 @@ width, however narrow, and says nothing"); `WorkspaceLauncher.crowded.test.tsx`
 ("says so from ten terminals up, and lets the wizard carry on", "opens
 exactly the count that was asked for" with 30 panes and no confirmation);
 `layout.test.ts` (the constants' arithmetic).
+
+## BUG-147: "erstell mir einen neuen Skill … mit YouTube Music" — the music skill captured the authoring request, the brain had no tool to write a skill, and the answer was "that did not work" (HIGH, FIXED 2026-08-18) <!-- i18n-allow: quoted voice request -->
+
+**Symptom.** Realtime voice session `a62cbc4d` (2026-08-18 17:51, Vertex Live,
+delegate tool mode). The user asked, in German, for a new "morning routine"
+skill: every morning at six read the new mail, the Linear tickets ("Lenya
+Tickets" in the transcript) and the day's calendar, then play an 80s classic
+on YouTube Music, a different one each time. Jarvis said "I'm still on it"
+after 9 s and, 90 s later, the spoken equivalent of "that did not work just
+now". No skill existed afterwards.
+
+**Reconstruction (desktop log + flight recorder).**
+
+1. `SkillMatchEvaluated`: source `trigger`, band `fire`, winner
+   `plugin-youtube_music`, candidates `[["plugin-youtube_music", 1.0]]`. The
+   music connector's trigger is brand-only and un-anchored
+   (`(youtube ?music|yt ?music|ytmusic)`), so it matches the brand ANYWHERE —
+   including inside the description of a skill the user wants built. The
+   `skill-creator` builtin's own trigger knew only the German infinitive
+   ("… Skill erstellen"); the user said the conjugated "… Skill erstellst"
+   after the noun, and the regex missed.
+2. `Evidence gate stood down: turn is owned by matched skill
+   plugin-youtube_music`, `force-spawn skipped: utterance matches an installed
+   skill` — the music skill's instructions were injected inline, `run-skill`
+   was dropped.
+3. The model understood the request anyway and looked for a way to write a
+   skill: `ActionExecuted cli_jarvisctl "jarvisctl --help"` (4.1 s),
+   `"jarvisctl skills --help"` (1.6 s), `"jarvisctl skills draft --help"`
+   (1.6 s) — three rounds of reading help text, each preceded by a slow
+   provider round (Vertex TTFT 2–50 s that afternoon), then
+   `tool_use_loop: 45.0s deadline reached after 53.6s / 3 round(s) — forcing
+   a final tool-less answer round`. There was NO router tool for creating a
+   skill: `spawn-skill-author` had been documented "deliberately unreachable"
+   since 2026-07-25 (it needed a runner the entry-point loader cannot supply),
+   and the live authoring path was the UI dialog plus a two-step
+   `jarvisctl skills draft` → `commit` with JSON piped between them.
+4. Even that path would not have produced what the user asked for: the
+   creator's single brain call ran on the BrainManager's active provider —
+   on this box `openrouter`, pinned by a stale shell variable and unkeyed —
+   and its fallback is a deterministic skeleton that pastes the intent 1:1
+   into `description` and a body reading "1. …", with no schedule trigger
+   and no step naming a tool.
+
+**Root cause.** Three structural gaps: (a) the trigger channel had no notion
+that a request to CREATE a skill makes every service named inside it CONTENT,
+not a command; (b) the brain had no authoring tool at all; (c) the authoring
+service was one provider deep and its degradation was a template.
+
+**Fix.**
+- `jarvis/skills/authoring_request.py` — deterministic resolver ahead of the
+  trigger channel (Channel 0.5 in `BrainManager._match_skill_for_turn`): word
+  "skill" + a creation shape (indefinite/new article, or a creation verb in
+  ANY conjugation right before/after the noun; DE/EN/ES) + not an information
+  question. Resolves to the active `skill-creator` builtin with trigger-grade
+  rights, or to NO skill when it is disabled — never to a connector named
+  inside the request. Force-spawn and the evidence gate stand down on such a
+  turn (`_skill_authoring_turn`). New veto `authoring_request` in
+  `jarvis/skills/guards.py`.
+- `create-skill` router tool (`jarvis/plugins/tool/create_skill.py`, in
+  `ROUTER_TOOLS`, monitor): ONE bounded call — live tool inventory + installed
+  skills → the brain ladder (active provider → Tool Model → quality tier →
+  frontier chain, crossing on a dead rung) → a complete draft (name,
+  description, spoken trigger regex, schedule cron when a time was named,
+  numbered steps naming the connectors that exist, spoken answer format) →
+  committed as `state: draft` (AP-15). Without an authoring brain it fails
+  honestly and writes nothing. Same `SkillCreatorService.author()` behind
+  `POST /api/skills/creator/author` and `jarvis skills create`.
+- `SkillCreatorService`: provider ladder, tool inventory in the prompt, the
+  Jarvis skill contract in the system prompt, trigger normalisation
+  (overbroad/invalid voice patterns and bad crons dropped, the caller's cron
+  hint added when the model forgot it, `requires_tools` filtered to real
+  names), name-collision suffixing.
+- `skill-creator` builtin: short instruction card ("restate, call
+  create-skill once, report"); trigger regex accepts conjugated verbs;
+  Anthropic's guide moved to `references/anthropic-skill-creator.md`.
+
+**Measured.** With the fix, the exact transcript resolves to `skill-creator`
+(the music skill no longer captures it), and a live probe of the authoring
+prompt on this box's Tool Model (Vertex) produced a complete `Morgenroutine`
+skill in 33 s: `cron: 0 6 * * *`, voice trigger
+`(morgenroutine|morgen routine|…)`, four steps naming `gmail`,
+`linear/list_issues`, `google_calendar`, `youtube_music`, "Lenya Tickets"
+mapped to Linear under `assumptions`, spoken answer format, `state: draft`.
+
+**Regression tests.** `tests/unit/skills/test_authoring_request.py` (the live
+transcript + hard negatives), `tests/unit/brain/test_skill_authoring_turn.py`,
+`tests/unit/plugins/test_create_skill_tool.py`,
+`tests/unit/skills/test_creator_service.py` (ladder crossover, inventory in
+the prompt, `author()` never commits a skeleton),
+`tests/unit/ui/web/test_skills_routes.py`,
+`tests/unit/cli_ctl/test_commands_wave23.py`,
+`tests/fixtures/skill_routing/golden.yaml` (forensic positive).
+
+## BUG-147: a Vertex Live readback is spoken twice, and three grounded answers in a row are never heard — the stale-generation guard was stamped before the speaker drained, and Vertex Live had no realtime-scoped emergency voice (HIGH, FIXED 2026-08-18)
+
+**Symptom.** Realtime voice session `28cf8436` (2026-08-18 18:39, Vertex Live,
+delegate tool mode, desktop). Turn 0 ("what music would you recommend") was
+answered with a 7.6 s readback ("Für konzentriertes Arbeiten empfehle ich
+… Lo Fi …") — and the moment it ended the same sentence was spoken again
+("… Lo-Fi …", turn 1, EMPTY user text, its own 225 output tokens). Turn 2
+("… bisschen langweilig, aber fokussieren") repeated the same way (4.6 s
+readback, then turn 3 verbatim). Then turns 4, 5 and 6 ("… was Cooles von Ed
+Sheeran", "Hallo. …", "Hallo, sprich mal mit mir.") each produced a grounded
+Brain answer that was recorded in the transcript and NEVER heard: `provider
+produced no audio for a grounded Brain result; using surface TTS fallback` →
+`Realtime surface fallback has no realtime-scoped TTS for provider
+'vertex-live' — keeping the turn text-only`. Reported by the maintainer as
+"he spoke twice, and after a while I heard no output at all".
+
+**Reconstruction (recorder + flight recorder + desktop log).**
+
+1. The doubled turns are BUG-143's shape exactly — a second server generation
+   re-rendering the injected result — and the postmortem confirms the
+   BUG-143 guard was live (`stale_generations_dropped` present) yet counted
+   ZERO drops. The guard was armed at the provider's `turn_complete` and
+   judged with a 2.5 s window. On the desktop the surface boundary that
+   follows the arm — `_complete_surface_turn` → `send_json(turn_complete)` →
+   `RealtimePlayback.finish_turn()` — BLOCKS until the speaker queue has
+   drained, and Gemini streams a reply faster than real time. So for any
+   reply whose remaining playback exceeded 2.5 s the stamp was already
+   expired when the phantom generation's first event was judged
+   (`_stale_generation_guard_reason` → window elapsed → disarm), and the
+   generation played as a user-less turn. BUG-143's live case had ~2 s
+   replies and never crossed the window; the fix was verified against a
+   test surface whose `send_json` returns immediately.
+2. The silent turns: after the trusted result was delivered (tool response
+   for the provider-requested turns 4/5, result text for the deterministic
+   turn 6) the provider sent a `turn_complete` ~0.3 s later with no audio,
+   no transcript and only the function-call's own output tokens metered.
+   The session did what it should — the no-audio net fired the surface
+   fallback — but `_REALTIME_SURFACE_TTS_FAMILY` mapped ONLY `gemini-live`
+   to a TTS sibling. `vertex-live` had none, so the strict mode-separation
+   rule (never the pipeline `[tts]` voice) left the turn text-only, on a
+   host whose pipeline had a working Vertex TTS (`Vertex TTS client built`
+   two log lines later). WHY the provider rendered nothing for those three
+   deliveries could not be attributed: nothing recorded what was sent on the
+   wire (result text vs. steering delta vs. tool response) or which
+   generation a boundary closed.
+
+**Fix.**
+
+- `jarvis/realtime/session.py`: the guard is armed AFTER
+  `_complete_surface_turn` returns, from a stamp taken then, and only if
+  `_may_arm_stale_generation_guard(boundary_at)` holds — no turn opened, no
+  server speech edge, and no local microphone voice since the provider
+  boundary (a confirmed barge-in during the drain stamps
+  `_last_voiced_input_monotonic` and stands the guard down before it arms).
+  The window comment on `_STALE_GENERATION_WINDOW_S` now states that it runs
+  from the SURFACE boundary. `_DelegateTurnState.delivered_at` plus INFO
+  lines for "delegate result delivered via text / tool result / direct
+  speech", "stale-generation guard armed", and the no-audio warning now
+  naming "boundary N s after delivery" make the next incident readable.
+- `jarvis/plugins/tts/__init__.py`: `vertex-live → vertex-tts`. The
+  emergency voice for a Vertex Live session is `VertexTTS` — same Gemini
+  voice catalogue, same one-take streaming profile — keyed through the
+  Vertex realtime slots or, keyless, the Cloud project path
+  (`vertex_credential_configured`, Application Default Credentials).
+  Provider & mode parity: every realtime family that HAS a TTS sibling gets
+  its emergency voice; `openai-realtime` still has none and stays text-only.
+- `jarvis/plugins/realtime/gemini_live.py`: wire forensics, one INFO line
+  per client text/tool input (`text input sent`, `tool response sent`,
+  `delivered a per-turn steering delta`) and one per server generation
+  boundary (`generation started N s after the last <kind> input`,
+  `turn complete — audio=… transcript=… function_calls=… generation=…`,
+  `interrupted`), so a doubled or missing readback is attributable to the
+  input that provoked it from the log alone.
+
+**Not changed, on purpose.** The provider's empty answer to a delivered
+result is NOT second-guessed at the boundary: with the wire log in place the
+next occurrence says whether that `turn_complete` was a genuine empty
+generation or a late boundary of an earlier one, and only then is a change
+to the no-audio net justified. Until then the fallback voice is audible on
+every realtime family that has one.
+
+**Class rule.** A time window measured at one boundary and consumed at
+another is only as good as the code between them: any await between the
+stamp and the judgement — here a surface call that drains a speaker — turns
+"2.5 s after the reply ended" into "2.5 s after the provider stopped
+sending". Stamp fail-open windows at the LAST boundary before they are read.
+And a fallback map keyed by provider id is a parity surface: every family
+that ships a sibling must be in it, or the honest-degradation path degrades
+one family further than the others.
+
+**Guards.** `tests/unit/realtime/test_stale_generation_after_readback.py`
+(`test_second_generation_is_discarded_even_after_a_long_speaker_drain` — a
+`send_json` that blocks on `turn_complete` longer than the window, phantom
+still discarded; `test_voice_during_the_speaker_drain_keeps_the_next_answer`
+— a barge-in during the drain never arms the guard);
+`tests/unit/plugins/tts/test_realtime_surface_tts.py`
+(`test_vertex_live_builds_vertex_tts_with_session_voice`,
+`test_vertex_live_builds_on_the_project_path_without_a_key`,
+`test_vertex_live_without_any_credential_yields_no_surface_tts`).

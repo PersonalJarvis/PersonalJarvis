@@ -33,6 +33,22 @@ def test_skills_draft_sends_intent(capture_api):
     assert call["body"]["intent"] == "do a thing"
 
 
+def test_skills_create_authors_and_writes_in_one_step(capture_api):
+    """The CLI twin of the voice path's create-skill tool: one call, one route."""
+    res = runner.invoke(
+        app,
+        ["skills", "create", "read my mail every morning", "--name", "Mail Morning",
+         "--schedule", "0 6 * * *", "--language", "en"],
+    )
+    assert res.exit_code == 0, res.output
+    call = _last(capture_api)
+    assert call["path"] == "/api/skills/creator/author"
+    assert call["body"]["intent"] == "read my mail every morning"
+    assert call["body"]["name_hint"] == "Mail Morning"
+    assert call["body"]["schedule_hint"] == "0 6 * * *"
+    assert call["body"]["language"] == "en"
+
+
 # --- outputs --------------------------------------------------------------
 def test_outputs_list(capture_api):
     runner.invoke(app, ["outputs", "list"])

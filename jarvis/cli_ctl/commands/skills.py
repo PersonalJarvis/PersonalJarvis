@@ -29,16 +29,54 @@ def draft(
     intent: str = typer.Argument(..., help="What the skill should do."),
     name_hint: str = typer.Option(None, "--name-hint"),
     category: str = typer.Option(None, "--category"),
+    trigger_hint: str = typer.Option(None, "--trigger", help="Spoken phrase that should start it."),
+    schedule: str = typer.Option(None, "--schedule", help="5-field cron, local time."),
+    language: str = typer.Option(None, "--language", help="Language code (de/en/es)."),
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Generate a skill draft from an intent (AI author; lands as state=draft)."""
+    """Generate a skill draft from an intent WITHOUT writing it (review, then `commit`)."""
     body: dict[str, object] = {"intent": intent}
     if name_hint:
         body["name_hint"] = name_hint
     if category:
         body["category"] = category
+    if trigger_hint:
+        body["trigger_hint"] = trigger_hint
+    if schedule:
+        body["schedule_hint"] = schedule
+    if language:
+        body["language"] = language
     invoke.run("POST", "/api/skills/creator/draft", body=body, assume_yes=yes, dry_run=dry_run)
+
+
+@app.command()
+def create(
+    intent: str = typer.Argument(..., help="What the skill should do, in your own words."),
+    name: str = typer.Option(None, "--name", help="Name for the skill (optional)."),
+    trigger_hint: str = typer.Option(None, "--trigger", help="Spoken phrase that should start it."),
+    schedule: str = typer.Option(None, "--schedule", help="5-field cron, local time."),
+    language: str = typer.Option(None, "--language", help="Language code (de/en/es)."),
+    yes: bool = options.yes_opt(),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Author AND write a new skill in one step (the voice path's `create-skill`).
+
+    The assistant writes the whole skill — trigger phrase, schedule, steps per
+    connected tool, spoken answer format — and it lands as state=draft: switch
+    it on in the Skills view. Fails (503) instead of writing a template when no
+    brain can author it.
+    """
+    body: dict[str, object] = {"intent": intent}
+    if name:
+        body["name_hint"] = name
+    if trigger_hint:
+        body["trigger_hint"] = trigger_hint
+    if schedule:
+        body["schedule_hint"] = schedule
+    if language:
+        body["language"] = language
+    invoke.run("POST", "/api/skills/creator/author", body=body, assume_yes=yes, dry_run=dry_run)
 
 
 @app.command()

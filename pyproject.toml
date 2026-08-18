@@ -773,13 +773,18 @@ update-profile = "jarvis.plugins.tool.profile_update:UpdateProfileTool"
 # could never load. It is absent from ROUTER_TOOLS (the only allow-set, so
 # factory.py filtered it out), and its __init__ requires a `runner=` argument
 # the entry-point loader cannot supply, so the tempting one-line "just add it to
-# ROUTER_TOOLS" fix raises TypeError at tool load. The entry point is removed
-# rather than wired, because the capability is not missing: the `skill-creator`
-# builtin plus POST /api/skills/creator/{draft,refine,validate,commit} are the
-# live authoring path, already enforcing the AP-15 draft guard. A router tool
-# would be a third route to the same behaviour and a fourth place to forget that
-# guard. Enforced by
+# ROUTER_TOOLS" fix raises TypeError at tool load. Enforced by
 # tests/unit/brain/test_router_tool_entrypoint_parity.py.
+# create-skill (2026-08-18) — the brain-reachable authoring path that note
+# said was unnecessary. It was: the voice turn "erstell mir einen neuen Skill
+# …" (2026-08-18 17:51) had no tool to write a skill and died on three
+# `jarvisctl --help` rounds. Unlike the phantom, this tool takes only what the
+# loader can give (bus, config) and resolves the registry + brain lazily. It
+# calls the SAME SkillCreatorService the UI dialog and `jarvisctl skills
+# create` use, so the AP-15 draft guard is enforced in ONE place (`commit`
+# forces state=draft). Router-tier, monitor, never a spawn (AP-5/AP-14). See
+# ADR-0011 amendment "create-skill router tool".
+create-skill = "jarvis.plugins.tool.create_skill:CreateSkillTool"
 # App-Control (2026-05-31) — gives the brain a complete overview of the Desktop
 # App and lets it change settings/providers/MCP by voice/chat. Router-tier;
 # direct safe/ask-gated actions, never a spawn (AP-5/AP-14). describe is read-only
