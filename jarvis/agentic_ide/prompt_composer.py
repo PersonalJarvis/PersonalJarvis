@@ -16,20 +16,19 @@ happens when any of that is unavailable.
 
 What the composed prompt contains, and why each part earns its place:
 
-* **A briefed task in markdown**, not a rephrased sentence. Opus 5 and Fable 5
-  both work best from a complete specification given up front, so the prompt
-  states the task, why it matters, the files, the scope bound, and what done
-  looks like — dropping any section it cannot ground rather than padding it.
+* **A briefed task in markdown**, not the raw transcript. The task, the
+  neighbouring ``@files``, and a ``## Done when`` only when the user stated
+  one — dropping any section it cannot ground rather than padding it. The
+  agent opens those files; the brief does not narrate them.
 * **File references in the agent's own syntax** (``@path``), inside the Key
   files list with a reason each. Both supported CLIs read ``@`` as "pull this
   file into context", which removes the agent's entire opening round of blind
   searching. Paths come from the workspace file index — never invented, and
   every one is verified to exist before it ships.
-* **Real symbol names**, because the writer reads a bounded outline of those
-  files first (``code_skeleton``). Without it the prompt can only say "the
-  ranking logic" where it could say ``_fuse_ranked()``.
-* **The repository's own house rules**, so ``## Done when`` cites the project's
-  actual test command instead of inventing a plausible one.
+* **A slim outline of the top files**, so the writer can name a real symbol
+  in the Key files list (``_fuse_ranked()`` instead of "the ranking logic")
+  without pasting the module. House rules stay out: the receiving agent
+  already has them.
 
 Two-layer construction, because the product must work for a downloader with no
 API key at all (§3):
@@ -52,44 +51,32 @@ API key at all (§3):
 The composer is honest about which layer produced the result (``composed_by``),
 because the readback the user hears should not claim more than happened.
 
-**On latency (deliberate trade, maintainer decision 2026-07-25).** An earlier
-change routed this through the router-tier model the voice turn already held,
-because a rewrite took 1-3 s there against 7-8 s on the deep tier. That
-optimised the wrong axis: the maintainer's instruction was that these prompts
-must be accurate about the codebase and "must not be dumb", and chose the
-slower, better prompt explicitly. Reading file outlines costs more still. So
-the composer takes its time and the bound below is generous — what must never
-happen is a silent demotion to a weaker model, because nobody inspects a prompt
-that looks fine.
+**On latency (maintainer decision 2026-08-18, supersedes 2026-07-25).** The
+2026-07-25 trade sent this through a thinking model and asked for a 1400-2400
+character specification of the code. Live that was 10-30 s of writing for a
+job that is: clean the spoken sentence, attach the neighbouring ``@files``.
+A competitor Flash call did the same job in about a second, at comparable
+quality. The tolerance is therefore 1-5 s. Thinking is off
+(``reasoning_effort="none"``), the brief is lean (see ``prompt_blueprint``),
+and house rules stay out of the writer prompt because the receiving agent
+already has them. What must still never happen is a silent demotion to a
+weaker *quality tier* — a fast Flash/Tool-Model writer is the intended
+rung, not a fallback.
 
-**What was made faster, and what deliberately was not.** The model's own
-writing is the wait, and shortening it means a shorter brief — the one thing
-this module exists not to do. What WAS serial and did not need to be is the
-preparation around it: resolving the writer (a config load plus a subscription
-probe per candidate CLI) ran on the event loop and finished before the first
-file was opened, and the file outlines were read before the house rules were.
-All of that now overlaps and none of it runs on the loop, so the model call
-starts as soon as the slowest single piece of preparation is done instead of
-after their sum.
+Preparation still overlaps: resolving the writer and reading a slim outline
+of the top files run together so the model call starts as soon as the
+slowest single piece is done.
 
-Measured again live 2026-08-12 (09:54, T1+T3): the writer call was 95%+ of a
-72 s delivery, and two things inside it were pure overhead. First, every
-subscription-CLI turn paid to start MCP servers, skills, and session
-persistence it can never use — the CLI brain now switches those off for
-structured turns (see ``claude_cli``), which cut the same real payload from
-27.5 s to 16.4 s with the brief unchanged. Second, a slow writer was waited
-out IN FULL before anyone else was allowed to start; attempts now overlap
-after ``HEDGE_AFTER_S`` and the first valid brief wins, which bounds the tail
-without demoting the model.
+A slow writer is still hedged after ``HEDGE_AFTER_S`` / ``HEDGE_AFTER_API_S``
+and the first valid brief wins. The hedge is insurance against a hang, not
+the path to a 1 s brief.
 
-**On the silence.** The rest is perceived latency: for 10-27 s nothing at all
-was said, so a working composer and a wedged one looked identical. The three
-beats below (``start`` → ``thinking``/``drafting`` → ``ready``, and ``sent``
-once the pane took it) are printed as they happen, and each one names the pane
-it belongs to — with a fleet composing at once, an unattributed line is worse
-than none. They are terminal lines, so they follow the English-artifact rule
-like every other log line; the SPOKEN readback the user hears is a separate
-surface and stays in the turn's resolved output language.
+**On the silence.** The beats below (``start`` → ``thinking``/``drafting`` →
+``ready``, and ``sent`` once the pane took it) are printed as they happen,
+and each one names the pane it belongs to. They are terminal lines, so they
+follow the English-artifact rule like every other log line; the SPOKEN
+readback the user hears is a separate surface and stays in the turn's
+resolved output language.
 """
 
 from __future__ import annotations
@@ -168,7 +155,10 @@ HEDGE_AFTER_S = 30.0
 # healthy band, so the double spend stays as rare as it is for the CLI.
 #
 # Since 2026-08-18 the CEILING for an API writer — see ``_hedge_after_s``.
-HEDGE_AFTER_API_S = 20.0
+# Tightened 20 → 8 s the same day: a no-thinking Flash/Tool-Model brief is
+# supposed to land inside 5 s, so a 20 s first-boot ceiling let a hung
+# writer sit four times the tolerance before insurance even started.
+HEDGE_AFTER_API_S = 8.0
 
 # The insurance threshold calibrates itself to the writer actually in use.
 #
@@ -632,25 +622,13 @@ def _rescue_writer(tried: Sequence[str]):  # noqa: ANN202 - (Brain | None, str)
     return resolve_rescue_writer(cli_timeout_s=COMPOSE_TIMEOUT_S, exclude=tuple(tried))
 
 
-# How much of the repository's agent instructions to carry. Enough for the
-# headline conventions; far short of pasting a whole CLAUDE.md into every call.
-_HOUSE_RULES_CHARS = 1200
-
-
-def _house_rules(session) -> str:  # noqa: ANN001 - Session, avoid an import cycle
-    """The repository's own conventions, so ``## Done when`` stays grounded.
-
-    Without this the writer has to guess a test command, and a guessed one is
-    exactly the kind of invented acceptance criterion the blueprint forbids.
-    """
-    from .code_skeleton import skeleton_for
-
-    names = list(getattr(session.profile, "instruction_files", None) or [])
-    for name in names:
-        text = skeleton_for(session.folder, name, max_chars=_HOUSE_RULES_CHARS)
-        if text:
-            return f"From {name}:\n{text}"
-    return ""
+# Slim outlines only. The receiving agent opens the @files itself; a handful
+# of signatures is enough for the writer to name a real symbol. The previous
+# 5 × 9 k / 34 k budget (plus a 1200-char house-rules dump) was most of the
+# input tokens on every call, and house rules already live in the agent's
+# own system prompt.
+_OUTLINE_FILES = 3
+_OUTLINE_CHARS = 1_800
 
 
 async def _llm_compose(
@@ -675,18 +653,16 @@ async def _llm_compose(
         # Deterministic rewriting, not creative writing: the prompt must carry
         # the user's intent, so temperature stays low.
         temperature=0.2,
-        # Generous, because on a thinking model max_tokens covers the THINKING
-        # as well as the answer. Measured: at 3000 with medium effort, a live
-        # investigation brief was cut off mid-sentence ("...to find") and still
-        # returned as a success. The brief itself never exceeds MAX_BODY_CHARS;
-        # the headroom exists so the reasoning cannot eat the answer.
-        max_tokens=8000,
+        # The brief itself is capped well below this (see prompt_blueprint).
+        # Thinking is off, so the budget no longer has to cover a reasoning
+        # trace — 2048 is a lean brief plus a dropped-file description, not
+        # the 8000 that existed so medium effort could not eat the answer.
+        max_tokens=2048,
         stream=True,
-        # Turning a spoken sentence plus a set of file outlines into a briefed
-        # task is judgement work, not transcription. The documentation is
-        # explicit that thinking disabled performs worse than a modest effort at
-        # comparable cost, and "none" is what made this a rephraser.
-        reasoning_effort="medium",
+        # Maintainer 2026-08-18: writing this brief is "what was said, plus
+        # the neighbouring @files". Medium effort was the 10-30 s wait. Gemini
+        # maps "none" to thinking_budget=0; providers without a knob ignore it.
+        reasoning_effort="none",
     )
     chunks: list[str] = []
     async for delta in brain.complete(request):
@@ -701,19 +677,23 @@ async def _read_context(
     session,  # noqa: ANN001 - Session, avoid an import cycle
     candidates: list[str],
 ) -> tuple[dict[str, str], str]:
-    """The file outlines and the repository's house rules, read at once.
+    """Slim file outlines for the writer. House rules are not included.
 
-    Both are disk IO on a path a voice turn is waiting on, and neither needs
-    the other's result. They used to be awaited one after the other for no
-    reason beyond the order they were written in.
+    The receiving agent already has the repository's instruction files in its
+    own prompt; pasting them here cost tokens and thinking time without
+    changing what the pane does. Outlines stay, tightly bounded, so the
+    writer can name a real symbol in ``## Key files``.
     """
     from .code_skeleton import skeletons as read_skeletons
 
-    outlines, house_rules = await asyncio.gather(
-        asyncio.to_thread(read_skeletons, session.folder, candidates),
-        asyncio.to_thread(_house_rules, session),
+    outlines = await asyncio.to_thread(
+        read_skeletons,
+        session.folder,
+        candidates,
+        max_files=_OUTLINE_FILES,
+        max_total=_OUTLINE_CHARS,
     )
-    return outlines, house_rules
+    return outlines, ""
 
 
 async def _compose_once(
@@ -822,9 +802,10 @@ async def compose(
     """Build the prompt for ``terminal_name`` out of what the user said.
 
     ``brain`` pins the writing model explicitly. Leave it None — the default
-    resolves a quality-tier model and degrades openly when none is reachable.
-    Passing a fast model here trades prompt accuracy for a few seconds, which
-    is the trade the maintainer decided against on 2026-07-25.
+    resolves the writer ``jarvis.agentic_ide.writer`` chose (Tool Model first
+    under ``auto``) and degrades openly when none is reachable. The call
+    itself is a no-thinking rewrite; a slower pin is still honoured, it just
+    should not be the default.
 
     ``attachments`` are ``drop_analysis.DropAnalysis`` entries for files the
     user dropped alongside the instruction — a described screenshot, an

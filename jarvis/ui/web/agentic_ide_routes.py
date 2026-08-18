@@ -3475,12 +3475,13 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
             # point the agent at files that are not in its tree.
             session, term_for_compose = found
 
-            # Composition is 10-30 s of real model work, and the typed prompt
-            # bar used to show a silent spinner for all of it. The composer's
-            # own beats ride the app socket so every client can narrate the
-            # wait; the stdout line stays, because a headless install watches
-            # THAT. A dry run keeps the default sink — it is a preview, and
-            # progress lines about a prompt nobody asked to send are noise.
+            # Composition is a no-thinking rewrite (target 1-5 s) and the
+            # typed prompt bar used to show a silent spinner for all of it.
+            # The composer's own beats ride the app socket so every client
+            # can narrate the wait; the stdout line stays, because a
+            # headless install watches THAT. A dry run keeps the default
+            # sink — it is a preview, and progress lines about a prompt
+            # nobody asked to send are noise.
             beat_bus = getattr(request.app.state, "bus", None)
             on_progress = None
             if beat_bus is not None and not req.dry_run:

@@ -8,6 +8,7 @@ request. So the guardrails are asserted POSITIVELY: the prohibition must be
 present and phrased as one. Whether the writer model then obeys is a live
 question, not a unit-test question.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -49,8 +50,20 @@ def test_every_kind_demands_the_markdown_skeleton(kind):
     text = system_prompt(kind)
     assert "## Task" in text
     assert "## Key files" in text
-    assert "## Scope" in text
     assert "## Done when" in text
+    # A lean brief: the agent opens the @files, so these sections stay out
+    # of the skeleton (they may still be named in the "do not add" rule).
+    skeleton = _skeleton_only(text)
+    assert "## How it works today" not in skeleton
+    assert "## Why this matters" not in skeleton
+    assert "## Scope" not in skeleton
+
+
+def _skeleton_only(text: str) -> str:
+    """The markdown skeleton block, not the surrounding rules that mention it."""
+    start = text.find("## Task")
+    end = text.find("- Output ONLY the brief")
+    return text[start:end] if start != -1 and end != -1 else text
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
@@ -126,8 +139,9 @@ def test_implement_specifies_the_outcome_without_dictating_the_route():
     assert "Specify the OUTCOME completely" in text
     # Complete must be defined as context, not as dictated steps.
     assert "not that you dictated the steps" in text
-    # And the generic prohibition list must stay OUT of `## Scope`.
-    assert "only when the user actually drew a line" in text
+    # A bound the user drew belongs in the task, not in a Scope dump.
+    assert "A bound the user actually drew belongs in `## Task`" in text
+    assert "Do not narrate how those files work today" in text
 
 
 def test_question_forbids_changing_anything():
@@ -247,26 +261,24 @@ def test_the_target_length_sits_inside_the_hard_ceiling():
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
 def test_every_kind_states_the_target_length_not_only_the_ceiling(kind):
-    """Both bounds, and a floor that names what a too-short brief dropped.
+    """Both bounds, and the words are spent on the task plus key files.
 
-    "Be thorough" used to carry the floor and it bought length from the wrong
-    place — the writer padded with dictated implementation steps rather than
-    with description. The floor is now stated as the thing actually missing
-    from a thin brief: context the writer was handed and did not pass on.
+    The 1400-2400 floor bought a map of the code the agent then re-read from
+    the same @files. The new target is the cleaned task plus a Key files list.
     """
     text = system_prompt(kind)
     assert str(TARGET_MIN_CHARS) in text
     assert str(TARGET_MAX_CHARS) in text
-    assert "Under 800 you have dropped context you were given" in text
+    assert "clean task and a concrete Key files" in text
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
-def test_every_kind_separates_describing_from_inventing(kind):
-    """The anti-invention rule was suppressing legitimate description too."""
+def test_every_kind_forbids_inventing_without_asking_for_a_code_map(kind):
+    """Invent nothing, and do not narrate the files the agent will open."""
     text = system_prompt(kind)
-    assert "DESCRIBING is not INVENTING" in text
     assert "INVENTING is forbidden" in text
-    assert "DESCRIBING is wanted" in text
+    assert "the agent will open the @files" in text
+    assert "DESCRIBING is wanted" not in text
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
@@ -286,9 +298,9 @@ def test_every_kind_asks_for_the_goal_and_not_the_implementation(kind):
 
 
 @pytest.mark.parametrize("kind", _ALL_KINDS)
-def test_every_kind_offers_the_current_behaviour_section(kind):
-    """Describing today's code is what saves the agent a discovery round."""
-    assert "## How it works today" in system_prompt(kind)
+def test_no_kind_asks_the_writer_to_map_todays_code(kind):
+    """The agent opens the @files. Narrating them was the 10-30 s wait."""
+    assert "Do not add a `## Scope` or `## How it works today` section" in system_prompt(kind)
 
 
 def test_no_kind_tells_the_writer_to_keep_it_short():

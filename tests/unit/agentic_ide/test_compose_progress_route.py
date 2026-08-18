@@ -1,6 +1,6 @@
 """The typed prompt bar hears the brief being written, beat by beat.
 
-Composition is 10-30 s of real model work. The composer has always narrated
+Composition is a no-thinking rewrite (target 1-5 s). The composer has always narrated
 its stages, but for a typed send that narration went to stdout — the one place
 the desktop user is guaranteed not to be looking — so the bar showed a silent
 spinner and a working composer was indistinguishable from a wedged one. The

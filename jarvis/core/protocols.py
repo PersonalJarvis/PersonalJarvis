@@ -110,19 +110,13 @@ class BrainRequest:
     # Hint for providers whose models spend internal reasoning ("thinking")
     # tokens before answering. "none" asks the provider to disable/minimize
     # internal reasoning for THIS call — used by small deterministic
-    # structured-output calls (Computer-Use actions/judges) where thinking
-    # would eat the whole ``max_tokens`` budget and truncate the visible
-    # reply. The graded levels serve callers whose OUTPUT is the product: the
-    # Agentic IDE's prompt composer passes "medium" because turning a spoken
-    # sentence plus a set of file outlines into a briefed task is judgement
-    # work, and "none" is what once made it a mere rephraser.
+    # structured-output calls (Computer-Use actions/judges) and by the
+    # Agentic IDE prompt composer, where thinking was the 10-30 s wait on a
+    # job that is "clean the spoken sentence and attach the neighbouring
+    # files". The graded levels remain for callers whose OUTPUT is still
+    # judgement work (the work splitter still passes "medium").
     # ``None`` keeps the provider default; providers without a reasoning knob
     # ignore the field (capability hint, never a hard switch).
-    #
-    # The graded levels were added 2026-07-26: the composer had been passing
-    # "medium" into a field declared to accept only "none" since it was
-    # written, which survived only because nothing validates this. An
-    # annotation that is wrong is worse than none — the next caller trusts it.
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
 
 
@@ -330,7 +324,11 @@ class Brain(Protocol):
     supports_tools: bool
     supports_vision: bool
 
-    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+    # Declared WITHOUT ``async``: every implementation is an async GENERATOR,
+    # so calling it returns the iterator directly and no call site awaits it.
+    # An ``async def`` here would type the call as a coroutine and make every
+    # ``async for delta in brain.complete(req)`` a false type error.
+    def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         """Stream a response. When stream=False everything is in the first delta."""
         ...
 

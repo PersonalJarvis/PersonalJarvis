@@ -349,6 +349,31 @@ async def test_an_explicitly_pinned_brain_is_used(
     assert seen["brain"] is pinned
 
 
+async def test_the_writer_call_disables_thinking() -> None:
+    """The 10-30 s wait was medium-effort reasoning. This brief is a rewrite."""
+
+    class Brain:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+            self.requests.append(request)
+            yield type("Delta", (), {"content": "## Task\nDo it."})()
+
+    brain = Brain()
+    text = await prompt_composer._llm_compose(  # noqa: SLF001
+        brain=brain,
+        system_prompt="sys",
+        user_block="user",
+    )
+
+    assert text == "## Task\nDo it."
+    assert len(brain.requests) == 1
+    request = brain.requests[0]
+    assert request.reasoning_effort == "none"
+    assert request.max_tokens == 2048
+
+
 # --------------------------------------------------------------------------
 # The deterministic filler pass may not eat words that carry the instruction
 # --------------------------------------------------------------------------

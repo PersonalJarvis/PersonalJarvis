@@ -32,19 +32,16 @@ made the receiving agent behave *worse*:
   can never open, which is worth exactly as much as writing nothing. The
   recent turns travel with the instruction (``conversation``) so the reference
   can be replaced by what it stands for.
-* **Full specification up front.** Complete does not mean prescriptive: the
-  agent should not have to come back with questions, which is a statement
-  about the CONTEXT it was handed, not about how many steps were dictated.
-* **The reason, not only the request.** A model connects a task to the right
-  context when it knows the intent behind it, so ``## Why this matters`` earns
-  its place whenever the intent is actually known.
-* **Scope as intent, not as a prohibition list.** The first version listed
-  what the agent must not do (no surrounding cleanup, no unrequested
-  refactors, no speculative abstractions, no defensive handling). Anthropic's
-  own measured replacement for exactly that failure mode is an intent
-  instruction — deliver what was asked at the scope intended, make routine
-  judgement calls, flag rather than silently widen — which in testing cut
-  scope drift to near zero without producing extra clarifying questions.
+* **A lean brief, not a map of the code.** Complete means the agent has the
+  task and the starting ``@files``, not that the writer narrated how those
+  files work. The agent opens them. A 1400-2400 character specification
+  (2026-07-27) cost 10-30 s of thinking and then made the agent re-read the
+  same files; the 2026-08-18 mandate is 1-5 s, cleaned speech plus key files.
+* **Scope lives in the task, not in a prohibition list.** The first version
+  listed what the agent must not do (no surrounding cleanup, no unrequested
+  refactors, no speculative abstractions). Anthropic's own measured
+  replacement is an intent instruction — deliver what was asked at the
+  scope intended — which cut scope drift without extra clarifying questions.
 * **No verification ritual.** "If your prompt contains explicit verification
   instructions … remove them: instructions like these cause over-verification
   … and removing them reduces wasted tokens with no loss in quality." Success
@@ -66,6 +63,7 @@ spoken language pulls same-language commit messages and comments after it. The
 *spoken readback* to the user is unaffected — that stays in the turn's
 resolved output language.
 """
+
 from __future__ import annotations
 
 import re
@@ -81,54 +79,31 @@ from .task_kind import (
 )
 
 # The hard ceiling. MAX_PROMPT_CHARS is the transport cap above this.
-# Set above what real briefs measure rather than at it: a limit the writer
-# breaches on every ordinary composition teaches it that the limits in this
-# prompt are approximate, and the ones that matter — invent nothing, never end
-# on a reference — are not.
-MAX_BODY_CHARS = 3600
+# Set above what a lean brief plus a dropped-file description measures, not
+# at the target: a limit the writer breaches on every ordinary composition
+# teaches it that the limits in this prompt are approximate.
+MAX_BODY_CHARS = 1800
 
-# What a GOOD prompt weighs, which is a different question from what is allowed.
-# Both bounds were learned the hard way and BOTH are load-bearing:
-#
-# * Without a stated target the writer is brief — three live compositions came
-#   back at 549 / 865 / 904 characters, and a lean-prompt A/B on 2026-07-27
-#   produced a `## Done when` reading "the time taken is reduced", which is not
-#   an acceptance criterion at all. A model reads "keep it under N" as "be
-#   brief", so the target has to be said out loud.
-# * The old 1800-3200 target then bought length from the wrong place. The brief
-#   it produced measured 3801 characters — over its own ceiling — and spent the
-#   surplus dictating an implementation the agent should have chosen itself.
-#
-# So the target came down and the rules changed what the words are spent ON:
-# describing the code that exists, not prescribing the code to write. Every
-# character also costs the user real waiting time — 3801 characters took 21.8 s
-# against 16.0 s for a leaner brief on the same writer.
-TARGET_MIN_CHARS = 1400
-TARGET_MAX_CHARS = 2400
+# What a GOOD prompt weighs. The 1400-2400 target (2026-07-27) bought a
+# specification the agent then re-read from the same @files, and the writer
+# spent 10-30 s of thinking plus generation on it. A competitor Flash call
+# that cleaned the spoken sentence and attached the neighbouring files landed
+# a comparable brief in about a second (maintainer, 2026-08-18). The target
+# is therefore the cleaned task plus a short Key files list — not a map of
+# the code the agent is about to open.
+TARGET_MIN_CHARS = 280
+TARGET_MAX_CHARS = 900
 
 _SKELETON = """\
 ## Task
-<what must be achieved, in the imperative - two to four sentences naming the
-concrete symbols, files and behaviours involved>
-
-## Why this matters
-<the intent behind the request, and what breaks or improves for the user -
-ONLY when known or clearly derivable>
-
-## How it works today
-<the current behaviour in real symbol names: which function does what, who
-calls it, which state it keeps>
+<what must be achieved, in the imperative - one to three sentences>
 
 ## Key files
-- `@path/to/file` - what lives here and which symbol in it matters
+- `@path/to/file` - why this file is the starting point
 - `@path/to/other` - same, specifically
 
-## Scope
-<the bound the user actually drew>
-
 ## Done when
-- <an observable outcome>
-- <an observable outcome>\
+- <an observable outcome the user actually stated>\
 """
 
 _SHARED_RULES = f"""\
@@ -168,24 +143,20 @@ Markdown, exactly this skeleton:
 - `## Task` is mandatory; every other section is OPTIONAL. Omit any you cannot \
 ground rather than padding it.
 
-DESCRIBING is not INVENTING, and the difference decides how good this brief is:
-- INVENTING is forbidden: a requirement, constraint, boundary or success \
+INVENTING is forbidden: a requirement, constraint, boundary or success \
 criterion the user did not state and the workspace does not establish. `## Done \
 when` holds only what the user asked for or what the repository itself \
-determines (its test command, its lint gate); `## Scope` only a line the user \
-actually drew. Omit either otherwise.
-- DESCRIBING is wanted, in detail: what the code in the outlines does, which \
-function is called from where, what the workspace profile and house rules \
-impose. That is context you were handed and the agent would otherwise rediscover.
+determines (its test command, its lint gate). Omit it otherwise. Do not add a \
+`## Scope` or `## How it works today` section - the agent will open the @files \
+and discover the current code itself.
+
 - Aim for {TARGET_MIN_CHARS}-{TARGET_MAX_CHARS} characters, never over \
-{MAX_BODY_CHARS}. Under 800 you have dropped context you were given. Length \
-comes from concrete file, symbol and behaviour detail - never from filler, \
-restatement, hedging or dictated steps.
+{MAX_BODY_CHARS}. Length comes from a clean task and a concrete Key files \
+list, never from restating the files' internals, hedging or dictated steps.
 - `@path` references only inside `## Key files`, only from the candidate list, \
-each naming the symbol that matters ("`_fuse_ranked()`, which merges the ranked \
-lists before the relevance gate" beats "the ranking pipeline"). Never end the \
-prompt on an `@path` or `/command` - a trailing reference holds the agent's \
-completion popup open and the prompt is never submitted.
+each with one short reason. Never end the prompt on an `@path` or `/command` \
+- a trailing reference holds the agent's completion popup open and the prompt \
+is never submitted.
 - ENGLISH, whatever language the user spoke.
 - Preserve every constraint, file, symbol and intent expressed; drop speech \
 artefacts and the clause addressing the agent by name.
@@ -210,15 +181,14 @@ This is an IMPLEMENTATION task. Specific to it:
 coming back with questions: the behaviour that must exist afterwards, how it \
 should behave when things go wrong, and any constraint it has to respect. \
 Complete means the agent lacks no context - not that you dictated the steps.
-- `## How it works today` is close to mandatory here: the function the change \
-lands in, what it currently does, and who calls it - the agent cannot fit a \
-change into code it has to find first. Give it the MAP, not every path; the \
-helpers it will meet on its own do not need listing.
-- `## Scope` only when the user actually drew a line. Do not fill it with \
-generic don'ts - "no unrequested refactors", "no speculative abstractions", "no \
-surrounding cleanup" are things the agent already gets right, and spending the \
-section on them costs the place a real boundary would have gone.
-- `## Done when` states observable outcomes, not activities.\
+- Point at the starting files. Do not narrate how those files work today - \
+the agent will open them. A symbol name from the outline is enough.
+- A bound the user actually drew belongs in `## Task`, not in a separate \
+section. Do not fill the brief with generic don'ts - "no unrequested \
+refactors", "no speculative abstractions", "no surrounding cleanup" are \
+things the agent already gets right.
+- `## Done when` states observable outcomes, not activities, and only when \
+the user stated one or the workspace names the test command.\
 """,
     KIND_REVIEW: """\
 This is a REVIEW task. Specific to it:
@@ -243,9 +213,8 @@ would confirm it. Say so explicitly.
 a fix before the user has seen it.
 - Carry across every symptom, error message, timing and reproduction detail \
 the user gave, VERBATIM. Those are the evidence; do not summarise them away.
-- Describe the path the code takes through the area under suspicion, in real \
-symbol names, and name the places where it could plausibly go wrong. Giving \
-the agent the map is not the same as giving it the answer.\
+- Point at the files under suspicion. Do not walk the path for the agent - \
+it will open the @files.\
 """,
     KIND_QUESTION: """\
 This is a QUESTION. Specific to it:
@@ -262,8 +231,8 @@ The kind of work is not clearly determined. Stay with what the user said:
 - State the task as they framed it, at the scope they framed it. Do not \
 sharpen an open request into a specific one - if they were broad, the agent \
 gets to decide where to start.
-- Still describe the relevant code as it stands today. Being unsure which KIND \
-of work this is is no reason to hand over less context.
+- Attach the candidate files. Do not fill in a map of the code - being unsure \
+which KIND of work this is is no reason to write a longer brief.
 - If they described a problem rather than asking for a change, say that the \
 deliverable is the assessment.\
 """,
@@ -313,8 +282,8 @@ The user DROPPED one or more files into this instruction, and their contents \
 are given above. Specific to that:
 - Carry the substance across. The agent may not be able to open an image at \
 all, so the description is its only view of it: put what the image actually \
-shows into `## How it works today` or `## Task`, in detail, rather than \
-writing "the screenshot the user dropped".
+shows into `## Task`, in detail, rather than writing "the screenshot the \
+user dropped".
 - Quote the exact strings. Error messages, stack traces, labels and code from \
 an attachment go into the prompt VERBATIM — those are what the agent will \
 search the repository for, and a paraphrase cannot be grepped.
@@ -382,16 +351,14 @@ def user_block(
         else "(no candidate files matched - omit the Key files section)"
     )
     parts.append(
-        "CANDIDATE FILES (repo-relative; use only these in @ references)\n"
-        + candidate_block
+        "CANDIDATE FILES (repo-relative; use only these in @ references)\n" + candidate_block
     )
 
     spoken = conversation_module.render(conversation or ())
     if spoken:
         parts.append(
             "THE CONVERSATION THIS CAME OUT OF (oldest first; the agent will "
-            "never see any of it, so resolve every back-reference against it)\n"
-            + spoken
+            "never see any of it, so resolve every back-reference against it)\n" + spoken
         )
 
     parts.append(

@@ -18,8 +18,8 @@ def test_declared_values_cover_every_level_in_use() -> None:
     assert {"none", "low", "medium", "high"} <= set(literal)
 
 
-def test_medium_is_accepted_by_the_agentic_ide_composer() -> None:
-    """The composer's live value: judgement work, not transcription."""
+def test_medium_is_accepted_by_the_work_splitter() -> None:
+    """The work splitter still passes medium; the composer now passes none."""
     request = BrainRequest(messages=(), reasoning_effort="medium")
     assert request.reasoning_effort == "medium"
 
