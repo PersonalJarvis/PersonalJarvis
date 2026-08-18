@@ -154,6 +154,10 @@ async def test_happy_path_announcement_handler_calls_tts_once() -> None:
         _realtime_session_owns_voice=lambda: False,
         _register_assistant_speech=lambda _text: None,
         _playback_confirmed=lambda _result: True,
+        # Instant acknowledgment (2026-08-17): the handler compares the source
+        # layer against the class constant, so the stub must carry it.
+        _INSTANT_ACK_SOURCE_LAYER=SpeechPipeline._INSTANT_ACK_SOURCE_LAYER,
+        _interim_line_spoke_recently=lambda _seconds: False,
     )
     stub._tts.synthesize = MagicMock(return_value=iter([b"audio-chunk"]))
 
