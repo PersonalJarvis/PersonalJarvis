@@ -3,6 +3,8 @@ import { useEventStore, type VoiceState } from "@/store/events";
 import { JarvisOrb } from "@/components/deck/JarvisOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import { HudHaloDefs } from "@/components/deck/HudFrame";
+import { readVoiceInputLevel } from "@/lib/voiceInputLevel";
+import { driveTarget, isOnset, orbDriveFor, smoothOrbLevel } from "@/lib/orbLevel";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,6 +32,17 @@ import { cn } from "@/lib/utils";
  * with a CSS transform/opacity animation (index.css) — so the browser turns
  * it on the compositor and the main thread never hears of it; the halo
  * filter stays on the still reticle. Reduced motion stops all of it.
+ *
+ * And it MOVES WITH THE VOICE, all of it (maintainer, 2026-08-19: "when you
+ * speak the sun moved — that, on the next level; not just the core, all of
+ * it, smooth"). One animation-frame loop computes the orb's LEVEL
+ * (`lib/orbLevel.ts`: the real microphone while listening, a speech-shaped
+ * envelope while the assistant speaks, a heartbeat while it thinks), smooths
+ * it, and writes it to ONE CSS variable on the root (`--orb-level`); the
+ * core's size and brightness, the glow, the corona's rays, the rings and the
+ * level arc on the bezel all read that variable in CSS (index.css). A jump
+ * in the level — a word landing — sends one ripple from the sun to the
+ * bezel. One number, one smoothing, so every part moves as one thing.
  */
 export interface OrbReadouts {
   nw: string;
@@ -110,8 +123,51 @@ export function DeckOrb({
   const B = 16; // bracket arm
   const haloId = useId();
 
+  // The level loop: one number for everything that moves with the voice,
+  // written to the root as `--orb-level`. Runs only while a voice state
+  // drives it; idle (and reduced motion) is a still 0 and no loop at all.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const ripplesRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const drive = orbDriveFor(voiceState);
+    if (reduced || drive === "idle") {
+      root.style.setProperty("--orb-level", "0");
+      return;
+    }
+    let raf = 0;
+    let level = 0;
+    const t0 = performance.now();
+    let last = t0;
+    let lastRipple = Number.NEGATIVE_INFINITY;
+    const tick = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      const target = driveTarget(drive, (now - t0) / 1000, readVoiceInputLevel(now));
+      const next = smoothOrbLevel(level, target, dt);
+      if (isOnset(level, next, now - lastRipple)) {
+        lastRipple = now;
+        spawnRipple(ripplesRef.current);
+      }
+      level = next;
+      root.style.setProperty("--orb-level", level.toFixed(3));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      root.style.setProperty("--orb-level", "0");
+    };
+  }, [voiceState, reduced]);
+
   return (
-    <div className={cn("relative shrink-0", className)} style={{ width: size, height: size }}>
+    <div
+      ref={rootRef}
+      className={cn("deck-orb-root relative shrink-0", className)}
+      style={{ width: size, height: size }}
+      data-testid="deck-orb"
+    >
       <svg viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 h-full w-full" aria-hidden>
         <HudHaloDefs id={haloId} />
         <g filter={`url(#${haloId})`}>
@@ -183,26 +239,28 @@ export function DeckOrb({
 
       {/* The living parts, each its own layer (CSS, index.css): the dashed
           inner scale turning one way, a sparse orbit the other, a satellite
-          on the bezel while nothing runs, and the idle ping. */}
-      <OrbitLayer size={size} r={R * 0.66} className="deck-orb-orbit-a" dash="2 6" opacity={0.55} />
-      <OrbitLayer size={size} r={R * 0.76} className="deck-orb-orbit-b" dash="18 54" opacity={0.32} />
-      {!busy && (
-        <svg
-          viewBox={`0 0 ${size} ${size}`}
-          className="deck-orb-satellite pointer-events-none absolute inset-0 h-full w-full"
-          aria-hidden
-          data-testid="deck-orb-satellite"
-        >
-          <path
-            d={`M ${point(-16, R * 0.94)[0]} ${point(-16, R * 0.94)[1]} A ${R * 0.94} ${R * 0.94} 0 0 1 ${R} ${R - R * 0.94}`}
-            fill="none"
-            stroke="hsl(var(--primary))"
-            strokeWidth={1.5}
-            opacity={0.45}
-          />
-          <circle cx={R} cy={R - R * 0.94} r={2.2} fill="hsl(var(--primary))" />
-        </svg>
-      )}
+          on the bezel while nothing runs, and the idle ping. The rings sit
+          in one wrapper that swells and brightens with the level. */}
+      <div className="deck-orb-rings pointer-events-none absolute inset-0" aria-hidden>
+        <OrbitLayer size={size} r={R * 0.66} className="deck-orb-orbit-a" dash="2 6" opacity={0.55} />
+        <OrbitLayer size={size} r={R * 0.76} className="deck-orb-orbit-b" dash="18 54" opacity={0.32} />
+        {!busy && (
+          <svg
+            viewBox={`0 0 ${size} ${size}`}
+            className="deck-orb-satellite pointer-events-none absolute inset-0 h-full w-full"
+            data-testid="deck-orb-satellite"
+          >
+            <path
+              d={`M ${point(-16, R * 0.94)[0]} ${point(-16, R * 0.94)[1]} A ${R * 0.94} ${R * 0.94} 0 0 1 ${R} ${R - R * 0.94}`}
+              fill="none"
+              stroke="hsl(var(--primary))"
+              strokeWidth={1.5}
+              opacity={0.45}
+            />
+            <circle cx={R} cy={R - R * 0.94} r={2.2} fill="hsl(var(--primary))" />
+          </svg>
+        )}
+      </div>
       {voiceState === "idle" && (
         <div
           aria-hidden
@@ -211,6 +269,41 @@ export function DeckOrb({
           style={{ inset: size * 0.08 }}
         />
       )}
+
+      {/* The level arc on the bezel: grows from the top down both sides with
+          the voice — a meter, reading `--orb-level` (CSS). */}
+      <svg
+        viewBox={`0 0 ${size} ${size}`}
+        className="deck-orb-vu pointer-events-none absolute inset-0 h-full w-full"
+        aria-hidden
+        data-testid="deck-orb-vu"
+      >
+        <path
+          d={`M ${R} ${R - R * 0.94} A ${R * 0.94} ${R * 0.94} 0 0 1 ${R} ${R + R * 0.94}`}
+          pathLength={1}
+          fill="none"
+          stroke="hsl(var(--primary))"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+        <path
+          d={`M ${R} ${R - R * 0.94} A ${R * 0.94} ${R * 0.94} 0 0 0 ${R} ${R + R * 0.94}`}
+          pathLength={1}
+          fill="none"
+          stroke="hsl(var(--primary))"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+      </svg>
+
+      {/* Ripples: one ring per word landing, from the sun to the bezel.
+          Spawned by the level loop, gone when their animation ends. */}
+      <div
+        ref={ripplesRef}
+        className="pointer-events-none absolute inset-0 grid place-items-center"
+        aria-hidden
+        data-testid="deck-orb-ripples"
+      />
 
       <div className="absolute inset-0 grid place-items-center">
         {onPress ? (
@@ -261,13 +354,25 @@ function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: num
     <>
       <div
         aria-hidden
-        className="deck-orb-glow pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+        className="deck-orb-glow pointer-events-none absolute left-1/2 top-1/2 rounded-full"
         data-voice={voiceState}
         style={{ width: glow, height: glow }}
       />
       <JarvisOrb size={orbSize} voiceState={voiceState} className="absolute inset-0" />
     </>
   );
+}
+
+/** The most ripples alive at once — a burst is a few waves, not a strobe. */
+const MAX_RIPPLES = 4;
+
+/** One ripple ring, leaving the sun for the bezel; removes itself when done. */
+function spawnRipple(host: HTMLDivElement | null): void {
+  if (!host || host.childElementCount >= MAX_RIPPLES) return;
+  const el = document.createElement("div");
+  el.className = "deck-orb-ripple rounded-full";
+  el.addEventListener("animationend", () => el.remove(), { once: true });
+  host.appendChild(el);
 }
 
 /**

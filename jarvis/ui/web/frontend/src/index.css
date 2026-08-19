@@ -2146,6 +2146,20 @@
     filter: drop-shadow(0 0 7px rgba(0, 0, 0, 0.55)) hue-rotate(-40deg) saturate(1.4);
   }
 
+  /* -----------------------------------------------------------
+     The orb moves with the voice (DeckOrb.tsx, JarvisOrb.tsx).
+     `--orb-level` is ONE number, 0..1, on the orb's root — the real
+     microphone while listening, a speech-shaped envelope while the
+     assistant speaks, a heartbeat while it thinks (lib/orbLevel.ts)
+     — smoothed once, written once per frame. Everything below
+     reads it: the sun's size and brightness, the glow, the corona's
+     rays, the rings, the level arc on the bezel. Transform, opacity
+     and a GPU brightness only, so it all moves as one and costs
+     the main thread one style write.
+     ----------------------------------------------------------- */
+  .deck-orb-root {
+    --orb-level: 0;
+  }
   .deck-orb-glow {
     background: radial-gradient(
       circle,
@@ -2154,31 +2168,69 @@
       rgba(210, 147, 24, 0.1) 58%,
       rgba(210, 147, 24, 0) 70%
     );
-    opacity: 0.6;
-    transition: opacity 600ms ease;
-  }
-  .deck-orb-glow[data-voice="connecting"],
-  .deck-orb-glow[data-voice="thinking"] {
-    opacity: 0.9;
-    animation: deck-orb-glow-breathe 2.6s ease-in-out infinite;
-  }
-  .deck-orb-glow[data-voice="listening"],
-  .deck-orb-glow[data-voice="speaking"] {
-    opacity: 1;
-    animation: deck-orb-glow-breathe 1.6s ease-in-out infinite;
-  }
-  @keyframes deck-orb-glow-breathe {
-    0%,
-    100% {
-      transform: translate(-50%, -50%) scale(1);
-    }
-    50% {
-      transform: translate(-50%, -50%) scale(1.07);
-    }
+    opacity: calc(0.6 + var(--orb-level, 0) * 0.4);
+    transform: translate(-50%, -50%) scale(calc(1 + var(--orb-level, 0) * 0.18));
+    will-change: transform, opacity;
   }
   /* at rest the glow breathes slowly — alive, not busy */
   .deck-orb-glow[data-voice="idle"] {
     animation: deck-orb-glow-idle 5.5s ease-in-out infinite;
+  }
+  /* the sun itself: bigger and brighter with the voice */
+  .deck-orb-reactor {
+    transform: scale(calc(1 + var(--orb-level, 0) * 0.09));
+    filter: brightness(calc(1 + var(--orb-level, 0) * 0.55));
+    will-change: transform, filter;
+  }
+  /* the corona: slow-turning rays behind the sun, seen only in the voice */
+  .deck-orb-corona {
+    inset: -18%;
+    background: repeating-conic-gradient(
+      from 0deg,
+      hsl(var(--primary) / 0) 0deg 5deg,
+      hsl(var(--primary) / 0.55) 8deg,
+      hsl(var(--primary) / 0) 11deg 20deg
+    );
+    -webkit-mask-image: radial-gradient(circle, transparent 30%, #000 42%, #000 58%, transparent 68%);
+    mask-image: radial-gradient(circle, transparent 30%, #000 42%, #000 58%, transparent 68%);
+    opacity: calc(var(--orb-level, 0) * 0.9);
+    animation: deck-orb-turn 30s linear infinite;
+    will-change: transform, opacity;
+  }
+  /* the rings swell and brighten a little with it */
+  .deck-orb-rings {
+    transform: scale(calc(1 + var(--orb-level, 0) * 0.035));
+    opacity: calc(0.75 + var(--orb-level, 0) * 0.25);
+    will-change: transform, opacity;
+  }
+  /* the level arc on the bezel: two half-circles from the top, drawn as far
+     as the level goes; nothing at 0 */
+  .deck-orb-vu path {
+    stroke-dasharray: 1;
+    stroke-dashoffset: calc(1 - var(--orb-level, 0));
+    opacity: 0.9;
+  }
+  .deck-orb-vu {
+    filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.6));
+  }
+  /* a ripple: one ring from the sun to the bezel per word landing */
+  .deck-orb-ripple {
+    width: 78%;
+    height: 78%;
+    border: 1.5px solid hsl(var(--primary) / 0.85);
+    box-shadow: 0 0 8px hsl(var(--primary) / 0.4);
+    animation: deck-orb-ripple 800ms cubic-bezier(0.1, 0.6, 0.3, 1) forwards;
+    will-change: transform, opacity;
+  }
+  @keyframes deck-orb-ripple {
+    0% {
+      transform: scale(0.92);
+      opacity: 0.75;
+    }
+    100% {
+      transform: scale(1.24);
+      opacity: 0;
+    }
   }
   @keyframes deck-orb-glow-idle {
     0%,
@@ -2259,10 +2311,14 @@
     .deck-orb-orbit-b,
     .deck-orb-satellite,
     .deck-orb-ping,
+    .deck-orb-corona,
+    .deck-orb-ripple,
     .deck-ring-orbit {
       animation: none !important;
     }
-    .deck-orb-ping {
+    .deck-orb-ping,
+    .deck-orb-corona,
+    .deck-orb-ripple {
       display: none;
     }
   }

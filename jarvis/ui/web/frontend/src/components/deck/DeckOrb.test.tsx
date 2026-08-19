@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 // framer-motion's motion.img is a plain <img> for these assertions.
@@ -11,6 +11,8 @@ vi.mock("framer-motion", async () => {
 });
 
 import { DeckOrb } from "@/components/deck/DeckOrb";
+import { useEventStore } from "@/store/events";
+import { clearVoiceInputLevel, setVoiceInputLevel } from "@/lib/voiceInputLevel";
 
 /**
  * The orb is the click-shaped wake word (maintainer, 2026-08-18): pressing
@@ -39,6 +41,27 @@ describe("DeckOrb", () => {
     // The satellite steps aside for the busy sweep — one signal on the bezel.
     rerender(<DeckOrb steps={[]} busy />);
     expect(screen.queryByTestId("deck-orb-satellite")).toBeNull();
+    // The meter, the corona and the ripple host are there, at rest at zero.
+    expect(screen.getByTestId("deck-orb-vu")).toBeTruthy();
+    expect(screen.getByTestId("deck-orb-ripples").childElementCount).toBe(0);
+    expect(screen.getByTestId("deck-orb").style.getPropertyValue("--orb-level")).toBe("0");
+  });
+
+  test("moves with the voice: the real microphone level while listening, one variable for all", async () => {
+    useEventStore.setState({ voiceState: "listening" });
+    setVoiceInputLevel(0.8, "native");
+    try {
+      render(<DeckOrb steps={[]} busy={false} />);
+      const root = screen.getByTestId("deck-orb");
+      await waitFor(() => {
+        expect(Number(root.style.getPropertyValue("--orb-level"))).toBeGreaterThan(0.3);
+      });
+      // A word landing sent a ripple from the sun towards the bezel.
+      expect(screen.getByTestId("deck-orb-ripples").childElementCount).toBeGreaterThan(0);
+    } finally {
+      clearVoiceInputLevel();
+      useEventStore.setState({ voiceState: "idle" });
+    }
   });
 
   test("the centre is the Jarvis orb artwork, and nothing rides in its core", () => {
