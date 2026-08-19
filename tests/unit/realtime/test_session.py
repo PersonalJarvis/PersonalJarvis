@@ -196,6 +196,51 @@ class AutomaticDelegateProvider(FakeProvider):
         return self.session
 
 
+class ScriptedTextTurnsSession(FakeSession):
+    """Emit one native turn, then one scripted batch per trusted text input.
+
+    Batch ``n`` is released when the ``n``-th ``send_text`` arrives, so a test
+    can script "the provider answers the re-ask" and "the provider stays mute
+    again, then renders the delegate result" as distinct transports.
+    """
+
+    creates_responses_automatically = True
+
+    def __init__(self, before_result, *batches):
+        super().__init__([])
+        self._before_result = before_result
+        self._batches = list(batches)
+        self._text_arrived = asyncio.Event()
+
+    async def receive(self):
+        for event in self._before_result:
+            yield event
+            await asyncio.sleep(0)
+        for index, batch in enumerate(self._batches, start=1):
+            while len(self.text_inputs) < index:
+                await self._text_arrived.wait()
+                self._text_arrived.clear()
+            for event in batch:
+                yield event
+                await asyncio.sleep(0)
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        self._text_arrived.set()
+
+
+class ScriptedTextTurnsProvider(FakeProvider):
+    def __init__(self, before_result, *batches):
+        super().__init__([])
+        self._before_result = before_result
+        self._batches = batches
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = ScriptedTextTurnsSession(self._before_result, *self._batches)
+        return self.session
+
+
 class FailingProvider(FakeProvider):
     name = "failing-family"
 
@@ -4775,17 +4820,23 @@ async def test_direct_mode_builds_bridge_from_brain(wire_supervisor_gateway):
 
 
 @pytest.mark.asyncio
-async def test_direct_mode_recovers_provider_turn_that_has_no_output():
-    """A substantive user turn must never complete as successful silence."""
-    user_text = "I am bored. What could we do?"
-    recovered_reply = "We could build a tiny game together."
+async def test_empty_provider_turn_is_reasked_natively_before_any_brain_call():
+    """A native turn the provider dropped is asked again — no Tool Model.
+
+    Live 2026-08-18: Gemini Live closed ten smalltalk turns ("Was geht ab?",
+    "Okay.") without output and every one was recovered through the full
+    Brain chain (18–46k tokens, 4–7 s to the first word). The planner had
+    routed them natively; the first recovery must be the live model itself.
+    """  # i18n-allow: quoted live utterances
+    user_text = "Tell me a joke about penguins."
+    native_reply = "We could build a tiny game together."
     spoken_audio = AudioChunk(
         pcm=b"\x01\x02" * 8,
         sample_rate=24_000,
         timestamp_ns=0,
     )
-    brain = FakeBrain(replies=(recovered_reply,))
-    provider = AutomaticDelegateProvider(
+    brain = FakeBrain(replies=("never spoken",))
+    provider = ScriptedTextTurnsProvider(
         [
             RealtimeEvent(
                 type="input_transcript",
@@ -4794,6 +4845,72 @@ async def test_direct_mode_recovers_provider_turn_that_has_no_output():
             ),
             RealtimeEvent(type="turn_complete"),
         ],
+        [
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=native_reply,
+                is_final=True,
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ],
+    )
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_mode="direct",
+        jsons=jsons,
+        binaries=binaries,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert brain.calls == [], "the Brain chain is the SECOND net, not the first"
+    assert len(provider.session.text_inputs) == 1
+    reask = provider.session.text_inputs[0]
+    assert "without any spoken answer" in reask
+    assert user_text in reask
+    assert "<trusted_action_result>" not in reask
+    assert binaries == [spoken_audio.pcm]
+    assert sum(item.get("type") == "turn_complete" for item in jsons) == 1
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == native_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_direct_mode_recovers_provider_turn_that_has_no_output():
+    """A substantive user turn must never complete as successful silence.
+
+    The provider drops the turn, ignores the re-ask with a second empty
+    boundary, and only then does the Brain chain run — exactly once.
+    """
+    user_text = "Tell me a joke about penguins."
+    recovered_reply = "We could build a tiny game together."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    brain = FakeBrain(replies=(recovered_reply,))
+    provider = ScriptedTextTurnsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        # The re-ask is answered with a second empty boundary ...
+        [RealtimeEvent(type="turn_complete")],
+        # ... and the delegate result is then rendered natively.
         [
             RealtimeEvent(
                 type="output_transcript_delta",
@@ -4820,13 +4937,116 @@ async def test_direct_mode_recovers_provider_turn_that_has_no_output():
     await asyncio.wait_for(sess.wait_finished(), timeout=2)
 
     assert [call[0] for call in brain.calls] == [user_text]
-    assert len(provider.session.text_inputs) == 1
-    assert "<trusted_action_result>" in provider.session.text_inputs[0]
+    assert len(provider.session.text_inputs) == 2
+    assert "without any spoken answer" in provider.session.text_inputs[0]
+    assert "<trusted_action_result>" in provider.session.text_inputs[1]
     assert binaries == [spoken_audio.pcm]
     assert sum(item.get("type") == "turn_complete" for item in jsons) == 1
     completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
     assert len(completed) == 1
     assert completed[0].jarvis_text == recovered_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_mute_reask_falls_back_to_brain_after_the_readback_budget(monkeypatch):
+    """A re-ask the provider never answers at all is not the end of the turn."""
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_DELEGATE_READBACK_WAIT_S", 0.1)
+    user_text = "Tell me a joke about penguins."
+    recovered_reply = "We could build a tiny game together."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    brain = FakeBrain(replies=(recovered_reply,))
+    provider = ScriptedTextTurnsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        # The re-ask produces NOTHING — not even a boundary ...
+        [],
+        # ... the watchdog dispatches the Brain chain, whose result renders.
+        [
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=recovered_reply,
+                is_final=True,
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ],
+    )
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_mode="direct",
+        binaries=binaries,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=3)
+
+    assert [call[0] for call in brain.calls] == [user_text]
+    assert len(provider.session.text_inputs) == 2
+    assert "<trusted_action_result>" in provider.session.text_inputs[1]
+    assert binaries == [spoken_audio.pcm]
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == recovered_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_that_needs_the_orchestrator_is_not_reasked():
+    """A turn the planner routed to the orchestrator never goes back native."""
+    user_text = "What is in my wiki about the Berlin project?"
+    recovered_reply = "Your wiki has two pages about the Berlin project."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    brain = FakeBrain(replies=(recovered_reply,))
+    provider = ScriptedTextTurnsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        [
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=recovered_reply,
+                is_final=True,
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ],
+    )
+    binaries: list[bytes] = []
+    sess = _session(provider, brain=brain, tool_mode="direct", binaries=binaries)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert [call[0] for call in brain.calls] == [user_text]
+    assert len(provider.session.text_inputs) == 1
+    assert "<trusted_action_result>" in provider.session.text_inputs[0]
+    assert binaries == [spoken_audio.pcm]
     await sess.end(reason="test")
 
 
@@ -4907,11 +5127,16 @@ async def test_empty_provider_turn_without_brain_speaks_local_error():
 
 @pytest.mark.asyncio
 async def test_empty_recovery_response_uses_surface_tts_without_rerunning_brain():
-    """A second provider failure speaks the grounded result through local TTS."""
-    user_text = "I am bored. What could we do?"
+    """A third provider failure speaks the grounded result through local TTS.
+
+    Empty turn, empty re-ask, Brain chain once, and the provider stays mute on
+    the delivered result too: the surface TTS speaks it, the brain is not
+    re-run.
+    """
+    user_text = "Tell me a joke about penguins."
     recovered_reply = "We could build a tiny game together."
     brain = FakeBrain(replies=(recovered_reply,))
-    provider = AutomaticDelegateProvider(
+    provider = ScriptedTextTurnsProvider(
         [
             RealtimeEvent(
                 type="input_transcript",
@@ -4920,6 +5145,7 @@ async def test_empty_recovery_response_uses_surface_tts_without_rerunning_brain(
             ),
             RealtimeEvent(type="turn_complete"),
         ],
+        [RealtimeEvent(type="turn_complete")],
         [RealtimeEvent(type="turn_complete")],
     )
     jsons: list[dict] = []
@@ -5820,12 +6046,12 @@ async def test_turn_complete_waits_for_slow_delegate_task_on_same_turn():
     brain = FakeBrain(replies=("Completed on the original turn.",), gate=gate)
     provider = FakeProvider(
         [
-            RealtimeEvent(type="input_transcript", text="do it", is_final=True),
+            RealtimeEvent(type="input_transcript", text="Open the calculator.", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="slow-same-turn",
                 tool_name="jarvis_action",
-                tool_args={"request": "do it"},
+                tool_args={"request": "Open the calculator."},
             ),
             RealtimeEvent(type="turn_complete"),
         ]
@@ -5838,7 +6064,7 @@ async def test_turn_complete_waits_for_slow_delegate_task_on_same_turn():
 
     assert original_turn_id
     assert original_turn_id in sess._delegate_turns
-    assert sess._last_user_text == "do it"
+    assert sess._last_user_text == "Open the calculator."
     assert sess._turn_has_pending_delegate(original_turn_id) is True
 
     gate.set()

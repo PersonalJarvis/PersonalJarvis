@@ -290,9 +290,44 @@ CU_BLOCKED_MODEL_FEEDBACK: str = (
 )
 
 
+def is_explicit_computer_use_turn(user_text: str) -> bool:
+    """Does this turn unmistakably ask Jarvis to OPERATE the desktop?
+
+    The realtime engine's deterministic hand-over to the computer-use
+    orchestrator (ADR-0035 §2). Deliberately NARROWER than
+    :func:`llm_computer_use_allowed`, which decides whether a model-chosen
+    ``computer_use`` call MAY run: there a bare action verb ("öffne Spotify")
+    is enough, because the model already picked the vehicle. Here the
+    orchestrator is imposed on the turn, at 5–45 s of latency, so only the
+    strongest evidence counts —
+
+    * the harness itself is named ("computer use"), or
+    * a desktop ACTION verb and a desktop SURFACE noun appear together
+      ("klick auf den Button", "mach das Fenster zu", "öffne den Browser und
+      geh auf …"), and the turn is not a LOOK request.  # i18n-allow: quoted utterances
+
+    A bare verb without a surface ("öffne Spotify", "starte die
+    Morgenroutine") stays with the live model and its own functions, which
+    may still choose ``jarvis_action`` themselves.  # i18n-allow: quoted utterances
+    An empty turn is not an order.
+    """
+    normalized = _normalized(user_text).strip()
+    if not normalized:
+        return False
+    if _EXPLICIT_HARNESS_RE.search(normalized):
+        return True
+    if _is_look_request(user_text):
+        return False
+    return bool(
+        _DESKTOP_ACTION_RE.search(normalized)
+        and _DESKTOP_SURFACE_RE.search(normalized)
+    )
+
+
 __all__ = [
     "CU_BLOCKED_MODEL_FEEDBACK",
     "CU_VEHICLE_TOOL_NAMES",
     "FOLLOW_UP_WINDOW_S",
+    "is_explicit_computer_use_turn",
     "llm_computer_use_allowed",
 ]

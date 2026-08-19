@@ -1516,6 +1516,9 @@ class LatencyPhase(StrEnum):
     # model (detail carries class, delay and whether it is contextual).
     REALTIME_DELEGATE_BRIDGE_REQUESTED = "realtime_delegate_bridge_requested"
     REALTIME_DELEGATE_COMPLETED = "realtime_delegate_completed"
+    # The provider closed a content-bearing turn without output and was asked
+    # again natively before any Brain-chain recovery (2026-08-19).
+    REALTIME_EMPTY_TURN_REASK = "realtime_empty_turn_reask"
     REALTIME_TOOL_COMPLETED = "realtime_tool_completed"
     REALTIME_SCRUB_CANCEL = "realtime_scrub_cancel"
     REALTIME_CANCEL = "realtime_cancel"
@@ -1748,6 +1751,14 @@ class RealtimeSessionPostmortem(Event):
     delegate_delivery_duplicates_suppressed: int = 0
     #: In-flight delegates transferred from socket to process lifetime.
     delegate_deliveries_detached: int = 0
+    #: ADR-0035 (hybrid tool mode): function calls the live model made
+    #: itself through the realtime tool bridge, how many of them failed,
+    #: how many a guard refused, and how many turns the deterministic
+    #: computer-use classifier handed to the Tool Model.
+    native_tool_calls: int = 0
+    native_tool_failures: int = 0
+    native_tool_denied: int = 0
+    delegate_cu_dispatches: int = 0
     #: Provider generations discarded whole: they began right after a rendered
     #: readback with no new user input — the server answered a second boundary
     #: for the same request (BUG-143). Zero in a healthy call.

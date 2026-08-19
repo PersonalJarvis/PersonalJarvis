@@ -1380,6 +1380,13 @@ class OpenAIRealtimeProvider:
     # This is account/quota metadata, not a provider-name feature gate.
     credential_family = "openai"
     supports_realtime = True
+    # ADR-0035 §4: this wire bills the whole context per response and is
+    # TPM-metered (BUG-051: 134 declarations ≈ 26k tokens hit a 40k TPM tier
+    # after one turn), so native declarations are bounded tighter here than
+    # on a setup-once transport. Tools over the budget stay reachable through
+    # jarvis_action; ``[voice].realtime_tool_declaration_budget_tokens`` can
+    # only lower this further (the smaller of the two applies).
+    tool_declaration_budget_tokens = 8_000
     implicit_usage_fallback_allowed = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
@@ -1596,6 +1603,9 @@ class LocalRealtimeProvider:
 
     name = "local-realtime"
     supports_realtime = True
+    # Same OpenAI-protocol wire, same per-response context billing model —
+    # and a self-hosted model is usually the smaller one (ADR-0035 §4).
+    tool_declaration_budget_tokens = 8_000
     # Never an implicit stand-in: a self-hosted endpoint is a deliberate choice,
     # and quietly routing a call into one the user did not pick is the opposite
     # of what a local card is for.

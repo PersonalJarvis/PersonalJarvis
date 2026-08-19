@@ -32,6 +32,10 @@ from jarvis.brain.action_honesty import (
     action_not_started_phrase,
     has_deferred_action_claim,
 )
+from jarvis.brain.cu_gate import (
+    CU_VEHICLE_TOOL_NAMES,
+    is_explicit_computer_use_turn,
+)
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.brain.provider_test import (
     BAD_KEY,
@@ -718,6 +722,102 @@ _DELEGATE_TURN_NORMAL_DIRECTIVE = (
     "knowledge yourself, right away."
 )
 
+# --- Hybrid tool mode (ADR-0035, 2026-08-19) --------------------------------
+# The live model holds the Jarvis tool catalog itself (minus the computer-use
+# vehicles) AND one jarvis_action function. jarvis_action is narrowed to what
+# the live model structurally cannot do on its own: operate the screen (the
+# Tool Model orchestrates computer use), look at the screen (the supervisor
+# attaches the image), and reach a capability it has no function for (dropped
+# under the declaration budget, or connected after the session opened).
+_DELEGATE_DECLARATION_HYBRID: dict[str, Any] = {
+    "name": "jarvis_action",
+    "description": (
+        "Hand a request to the Jarvis orchestrator. Call it ONLY for: (1) "
+        "operating the user's computer on screen — opening, clicking, typing, "
+        "and navigating inside application windows or the browser until a "
+        "multi-step desktop task is finished; (2) looking at the user's "
+        "screen or a window and describing or reading it; (3) a Jarvis "
+        "capability you have NO function of your own for. For everything "
+        "else — the user's Wiki and memory, calendar, mail, music, settings, "
+        "skills, missions, coding panes, files, connected services — call "
+        "your own matching function directly instead. Never call this for "
+        "general world knowledge, definitions, opinions, or smalltalk. Also "
+        "call it to relay the user's answer to a pending orchestrator question."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "request": {
+                "type": "string",
+                "description": "The user's request in their own words.",
+            }
+        },
+        "required": ["request"],
+    },
+}
+_HYBRID_ROLE_DIRECTIVE = (
+    "You have live function tools that act on the user's Jarvis app, their "
+    "data, and their connected services, plus ONE orchestrator function, "
+    "jarvis_action. The user's own world — their Wiki or personal memory, "
+    "their own past ('do you remember', 'when did I'), their calendar, mail, "
+    "music, files, settings, skills, background missions, coding panes, "
+    "integrations, and system state — is reached with YOUR OWN functions, "
+    "called immediately in the same response: you cannot see any of it "
+    "yourself, so guessing is always wrong, and announcing a lookup without "
+    "calling the function is a lie. Chain functions when a request needs "
+    "several steps. jarvis_action is reserved for operating the computer on "
+    "screen (it clicks, types, and navigates inside any application window "
+    "until a multi-step desktop task is done), for looking at the screen, "
+    "and for a Jarvis capability you have no function for; a round trip "
+    "through it costs the user many seconds, so never use it for something "
+    "one of your own functions does. General world knowledge is YOURS: "
+    "public facts and figures, well-known people and companies, "
+    "definitions, explanations, recommendations, opinions, and ordinary "
+    "social chat. Answer those at once from your own knowledge, without any "
+    "function call, even when you are only mostly sure — qualify briefly "
+    "instead of calling anything. Never tell the user you lack a tool, an "
+    "API, access, or permission for something in their world, and never "
+    "propose manual workarounds instead of acting: call the function (again, "
+    "with the user's correction folded in). The Jarvis-Agent spawn function "
+    "is EXPLICIT-REQUEST ONLY: call it when the user themselves asks for an "
+    "agent, a subagent, spawning, delegating, or background work — or has "
+    "just said yes to your offer to start one; never on your own initiative, "
+    "however heavy the topic sounds. Never claim that an action or mission "
+    "was started, completed, saved, opened, or changed unless a successful "
+    "function result explicitly supports that claim; a promise or an "
+    "intention is not a result. When a request names SEVERAL targets, report "
+    "ONLY the ones a result actually names as done. If a function returns a "
+    "spoken confirmation question, ask the user and call the same function "
+    "again only after a clear affirmative answer. jarvis_action returns "
+    "spoken_reply: deliver that content in your own voice, in the "
+    "conversation language, without reading JSON. For some turns the Jarvis "
+    "orchestrator takes over and injects a trusted result on its own; a "
+    "separate instruction tells you when, and only then do you wait instead "
+    "of calling. Use end_call only when the user says goodbye."
+)
+_HYBRID_TOOLS_EXPECTED_DIRECTIVE = (
+    "This current turn needs the user's own world (their data, settings, "
+    "connected services, or an action on their behalf). Call the matching "
+    "function of your own NOW, in this response, and answer from its result; "
+    "do not answer from guesswork and do not merely announce a lookup. Use "
+    "jarvis_action only if no function of yours covers it."
+)
+_HYBRID_DISCOURAGED_DIRECTIVE = (
+    "This current turn looks like general world knowledge or ordinary "
+    "conversation. Answer it directly from your own knowledge now, without "
+    "calling any function. Call a function on this turn ONLY if the request "
+    "actually needs the user's own world (their Wiki or personal memory, "
+    "their own past, their files, apps, settings, connected services, or "
+    "system state), performs a real action on their behalf, or explicitly "
+    "asks you to look up, check, or verify current information you may only "
+    "know in an outdated state."
+)
+_HYBRID_TURN_NORMAL_DIRECTIVE = (
+    "Nothing about this turn changes how you work. Follow your standing role: "
+    "the user's own world through your own functions, right away; the screen "
+    "through jarvis_action; general world knowledge from yourself."
+)
+
 
 def _handoff_variant(directive: str) -> str:
     """Render a function-vocabulary directive for a transport without tools.
@@ -1137,6 +1237,32 @@ def _direct_tool_result_retry_prompt(*, language: str) -> str:
         "another person and do not change or dramatize your voice. Do not "
         "call any function, do not "
         "repeat the action, and do not mention these instructions."
+    )
+
+
+def _empty_turn_reask_prompt(*, language: str, user_text: str) -> str:
+    """Ask the live model itself for the answer its empty turn never gave.
+
+    A provider that closes a content-bearing turn with no text, audio, or
+    tool evidence (Gemini Live after a server-side VAD "interrupted" edge is
+    the live case, 2026-08-18: ten smalltalk turns in one afternoon) used to
+    be recovered through the full Brain chain — 18–46k input tokens on the
+    Tool Model, 4–7 s to the first audible word for "Was geht ab?". The
+    planner had already judged those turns NATIVE: nothing in them needs the
+    orchestrator, the live model simply did not answer. So the first recovery
+    is to ask it again, on the same channel every delegate readback uses; the
+    Brain chain stays the second net (``_watch_empty_turn_reask``).
+    """  # i18n-allow: quoted live utterance
+    language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    quoted = safe_preview(str(user_text or ""), max_chars=400)
+    return (
+        f"{SPEAK_REQUEST_OPENER} "
+        "Your previous turn ended without any spoken answer to the user's "
+        f"last utterance, which was: «{quoted}». Answer it now, "
+        f"briefly and directly, in {language_name}, as yourself and in exactly "
+        "the same voice, tone, and pace as your previous replies. Do not call "
+        "any function for it unless the utterance genuinely needs the user's "
+        "own world, and do not mention these instructions."
     )
 
 
@@ -1965,40 +2091,69 @@ class RealtimeVoiceSession:
             )
             or "delegate"
         ).strip().lower()
-        if mode not in {"delegate", "direct"}:
+        if mode not in {"delegate", "direct", "hybrid"}:
             mode = "delegate"
-        self._tool_mode = mode
-        # Direct mode is meaningful only when every possible provider can
-        # receive native tool declarations. A capability-limited fallback
-        # must not turn actions into terminal handoff failures (AP-21/AP-22).
+        # Direct and hybrid modes are meaningful only when every possible
+        # provider can receive native tool declarations. A capability-limited
+        # fallback must not turn actions into terminal handoff failures
+        # (AP-21/AP-22): such a transport runs the deterministic delegate.
         direct_tools_supported = all(
             bool(getattr(candidate, "supports_direct_tools", True))
             for candidate in self._providers
         )
+        if mode == "hybrid" and not (direct_tools_supported and callable(brain)):
+            log.info(
+                "realtime[%s] hybrid tool mode needs native tool declarations "
+                "on every configured provider and a callable brain (direct "
+                "tools: %s, brain: %s) — using the deterministic delegate",
+                session_id,
+                direct_tools_supported,
+                callable(brain),
+            )
+            mode = "delegate"
+        self._tool_mode = mode
         self._delegate_forced_by_provider = bool(
             mode == "direct"
             and not direct_tools_supported
             and tool_bridge is None
             and callable(brain)
         )
+        hybrid = mode == "hybrid"
         # Delegate mode needs only a callable brain (the boot proxy and the
         # real BrainManager both qualify); an explicitly injected bridge
-        # always wins so existing callers/tests keep today's behavior.
+        # always wins so existing callers/tests keep today's behavior —
+        # except in hybrid mode, where the bridge and the delegate coexist by
+        # design (ADR-0035 §1).
         self._delegate_enabled = (
-            (mode == "delegate" or self._delegate_forced_by_provider)
-            and tool_bridge is None
+            (mode == "delegate" or self._delegate_forced_by_provider or hybrid)
+            and (tool_bridge is None or hybrid)
             and callable(brain)
         )
-        if tool_bridge is None and not self._delegate_enabled:
+        if tool_bridge is None and (hybrid or not self._delegate_enabled):
             try:
                 from jarvis.realtime.tools import RealtimeToolBridge
 
-                tool_bridge = RealtimeToolBridge.from_supervisor_gateway(
-                    language=self._language
-                )
+                if hybrid:
+                    tool_bridge = RealtimeToolBridge.from_supervisor_gateway(
+                        language=self._language,
+                        excluded_tool_names=CU_VEHICLE_TOOL_NAMES,
+                        compact=True,
+                        declaration_budget_chars=self._declaration_budget_chars(),
+                    )
+                else:
+                    tool_bridge = RealtimeToolBridge.from_supervisor_gateway(
+                        language=self._language
+                    )
             except Exception:  # noqa: BLE001 — conversation still works without tools
                 log.warning("Realtime tool bridge is unavailable", exc_info=True)
         self._tool_bridge = tool_bridge
+        # ADR-0035 §3/§7: native tool calls get their own ack watchdog and
+        # counters; the turn id keeps the ack to one line per turn.
+        self._native_tool_calls = 0
+        self._native_tool_failures = 0
+        self._native_tool_denied = 0
+        self._delegate_cu_dispatches = 0
+        self._native_ack_turn_id = ""
         self._delegate_tasks: set[asyncio.Task[None]] = set()
         self._delegate_tasks_by_turn: dict[str, set[asyncio.Task[None]]] = {}
         self._delegate_states_by_turn: dict[str, _DelegateTurnState] = {}
@@ -2006,6 +2161,12 @@ class RealtimeVoiceSession:
         # task — it must never hold a turn open, defer a VAD edge, or refuse
         # an announcement on behalf of work that is merely a sleeping timer.
         self._delegate_bridge_task: asyncio.Task[None] | None = None
+        # Empty-turn re-ask (2026-08-19): the turn that was asked again
+        # natively after the provider closed it without output, and the
+        # watchdog that falls back to the Brain chain if the re-ask stays
+        # mute too. One re-ask per turn; the id is what makes it one.
+        self._empty_turn_reask_turn_id = ""
+        self._empty_turn_reask_task: asyncio.Task[None] | None = None
         # The tool the delegated turn is ACTUALLY running (ToolExecutor's
         # ActionProposed on the bus) — grounds the +8 s progress line
         # ("still searching" / "still on the screen") instead of a filler.
@@ -2061,7 +2222,26 @@ class RealtimeVoiceSession:
                 session_id,
                 bool(callable(brain)),
             )
-        if self._delegate_enabled:
+        if self._delegate_enabled and hybrid and tool_bridge is not None:
+            dropped = tuple(getattr(tool_bridge, "dropped_names", ()) or ())
+            log.info(
+                "realtime[%s] tool mode: hybrid — %d native tools (~%d tokens, "
+                "%d over-budget name(s) reachable via jarvis_action%s), "
+                "computer use via jarvis_action on the Tool Model",
+                session_id,
+                len(tool_bridge.declarations),
+                int(getattr(tool_bridge, "declaration_chars", 0) or 0) // 4,
+                len(dropped),
+                f": {', '.join(dropped)}" if dropped else "",
+            )
+        elif self._delegate_enabled and hybrid:
+            log.warning(
+                "realtime[%s] tool mode: hybrid requested but no supervisor "
+                "tool gateway is ready — only jarvis_action is declared; the "
+                "delegate carries every action this session",
+                session_id,
+            )
+        elif self._delegate_enabled:
             log.info(
                 "realtime[%s] tool mode: delegate — one action function "
                 "backed by the router brain",
@@ -4232,6 +4412,25 @@ class RealtimeVoiceSession:
                             # localized uncertainty instead of letting the
                             # native model invent the public fact.
                             self._delegate_required_for_turn = True
+                        # ADR-0035 §2: in hybrid mode the live model holds the
+                        # functions, so a planner "orchestrator" verdict steers
+                        # it to call them (tools_expected) instead of forcing
+                        # the delegate. The delegate is still imposed for what
+                        # the live model structurally cannot do — operate the
+                        # screen (explicit computer use), look at it (screen
+                        # context), ground a public fact on a provider that
+                        # declares it, and answer a turn the delegate already
+                        # owns (pending confirm / open question).
+                        hybrid_turn = self._hybrid_enabled
+                        computer_use_turn = bool(
+                            hybrid_turn
+                            and self._last_user_text
+                            and is_explicit_computer_use_turn(self._last_user_text)
+                        )
+                        planner_forces_delegate = bool(
+                            turn_plan.requires_orchestrator
+                            and (not hybrid_turn or screen_context_turn)
+                        )
                         if (
                             self._last_user_text
                             and deterministic_delegate_available
@@ -4244,11 +4443,14 @@ class RealtimeVoiceSession:
                         ):
                             self._delegate_required_for_turn = (
                                 self._delegate_required_for_turn
-                                or turn_plan.requires_orchestrator
+                                or planner_forces_delegate
+                                or computer_use_turn
                                 or ambiguous_action_default
                                 or self._brain_awaits_voice_confirm()
                                 or self._answers_open_delegate_question()
                             )
+                        if computer_use_turn and self._delegate_required_for_turn:
+                            self._delegate_cu_dispatches += 1
                         if wait_query_claimed:
                             # The orchestrator answered this turn; no
                             # dispatch, no grounding, no provider response.
@@ -4267,6 +4469,11 @@ class RealtimeVoiceSession:
                             "delegate_discouraged": (
                                 not turn_plan.requires_orchestrator
                                 and not ambiguous_action_default
+                            ),
+                            "tools_expected": bool(
+                                hybrid_turn
+                                and turn_plan.requires_orchestrator
+                                and not self._delegate_required_for_turn
                             ),
                         }
                         turn_tool_directive = self._tool_directive(
@@ -7386,6 +7593,124 @@ class RealtimeVoiceSession:
                 )
             return False
 
+        # First net: ask the live model itself (a native turn the planner left
+        # native has nothing the Brain chain could add except latency). The
+        # Brain chain is the second net — on a second empty boundary, or when
+        # the re-ask never produces a response at all.
+        if await self._reask_provider_for_empty_turn(turn_id):
+            return True
+        self._recover_empty_turn_via_brain(turn_id)
+        return True
+
+    async def _reask_provider_for_empty_turn(self, turn_id: str) -> bool:
+        """Ask the live model again before paying a Brain-chain recovery.
+
+        Fires at most ONCE per turn, and only for a turn the planner routed
+        natively with no grounding, no pending confirmation and no open
+        delegate question — exactly the turns on which the orchestrator has
+        nothing to contribute. The request travels on the provider's trusted
+        text channel (the same wire as every delegate readback), so it is
+        provider-neutral: a transport without ``send_text`` simply skips to
+        the Brain chain. Returns True when the re-ask was sent; the watchdog
+        then owns the turn until audio arrives or the readback budget runs
+        out.
+        """
+        if not turn_id or self._empty_turn_reask_turn_id == turn_id:
+            return False
+        send_text = getattr(self._session, "send_text", None)
+        if not callable(send_text):
+            return False
+        if self._active_requires_public_fact_grounding:
+            return False
+        if self._brain_awaits_voice_confirm() or self._answers_open_delegate_question():
+            return False
+        try:
+            plan = self._plan_turn(self._last_user_text)
+        except Exception:  # noqa: BLE001 — a planner fault must not block recovery
+            return False
+        if plan.requires_public_fact_grounding:
+            return False
+        if plan.requires_orchestrator and (
+            not self._hybrid_enabled or TurnReason.SCREEN_CONTEXT in plan.reasons
+        ):
+            # Delegate mode: an orchestrator turn is the delegate's. Hybrid
+            # mode (ADR-0035 §2): the live model holds the functions, so only
+            # what it structurally cannot do skips the re-ask.
+            return False
+        if self._hybrid_enabled and is_explicit_computer_use_turn(self._last_user_text):
+            return False
+        self._empty_turn_reask_turn_id = turn_id
+        self._drop_provider_output_until_new_response = False
+        try:
+            await send_text(
+                _empty_turn_reask_prompt(
+                    language=self._language, user_text=self._last_user_text
+                )
+            )
+        except Exception:  # noqa: BLE001 — the Brain chain runs instead
+            log.warning(
+                "realtime[%s] empty-turn re-ask could not be sent; recovering "
+                "through the Brain chain",
+                self.session_id,
+                exc_info=True,
+            )
+            return False
+        log.warning(
+            "realtime[%s] provider completed turn %s without text, audio, or "
+            "tool evidence; asked the live model again (Brain chain on a "
+            "second miss)",
+            self.session_id,
+            turn_id,
+        )
+        self._mark_latency_named(
+            "REALTIME_EMPTY_TURN_REASK",
+            detail=f"turn={turn_id};budget_s={self._delegate_readback_budget_s():.1f}",
+        )
+        previous = self._empty_turn_reask_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._empty_turn_reask_task = asyncio.create_task(
+            self._watch_empty_turn_reask(turn_id)
+        )
+        return True
+
+    async def _watch_empty_turn_reask(self, turn_id: str) -> None:
+        """Fall back to the Brain chain when the re-asked provider stays mute."""
+        deadline = time.monotonic() + self._delegate_readback_budget_s()
+        try:
+            while True:
+                if (
+                    self._ended
+                    or self._session is None
+                    or self._turn_id != turn_id
+                    or turn_id in self._delegate_turns
+                    or self._user_speech_active
+                ):
+                    return
+                if (
+                    self._output_active
+                    or self._output_samples_sent > 0
+                    or "".join(self._output_transcript).strip()
+                ):
+                    return
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(_DELEGATE_READBACK_POLL_S)
+        except asyncio.CancelledError:
+            raise
+        if turn_id in self._delegate_turns or self._turn_id != turn_id:
+            return
+        log.warning(
+            "realtime[%s] the re-asked provider rendered nothing within %.1fs "
+            "for turn %s; recovering through the Brain chain",
+            self.session_id,
+            self._delegate_readback_budget_s(),
+            turn_id,
+        )
+        self._recover_empty_turn_via_brain(turn_id)
+
+    def _recover_empty_turn_via_brain(self, turn_id: str) -> None:
+        """Second net: the deterministic delegate answers the empty turn."""
         self._delegate_required_for_turn = True
         turn_state = _DelegateTurnState(
             deterministic=True,
@@ -7405,7 +7730,6 @@ class RealtimeVoiceSession:
             turn_id,
         )
         self._start_deterministic_delegate(self._last_user_text)
-        return True
 
     def _direct_tool_fallback_text(self) -> tuple[str, bool]:
         """Return one speakable result without serializing raw tool payloads."""
@@ -7792,7 +8116,53 @@ class RealtimeVoiceSession:
         self._output_language_retry_requested = False
         self._embedded_silence_ms = 0.0
 
+    @property
+    def _hybrid_enabled(self) -> bool:
+        """ADR-0035: the live model holds the catalog AND jarvis_action.
+
+        ``getattr`` on purpose: directive tests build bare sessions without
+        ``__init__`` and read the role/mode lines, which must then mean the
+        classic delegate wording.
+        """
+        return bool(
+            getattr(self, "_tool_mode", "") == "hybrid"
+            and getattr(self, "_delegate_enabled", False)
+        )
+
+    def _declaration_budget_chars(self) -> int:
+        """The native declaration budget in characters (ADR-0035 §4).
+
+        The smaller of the config bound and every candidate provider's own
+        declared budget (``tool_declaration_budget_tokens``, a capability —
+        AP-21); 0 = unbounded.
+        """
+        configured = int(
+            getattr(
+                getattr(self._config, "voice", None),
+                "realtime_tool_declaration_budget_tokens",
+                20_000,
+            )
+            or 0
+        )
+        budgets = [configured] if configured > 0 else []
+        for candidate in self._providers:
+            declared = int(
+                getattr(candidate, "tool_declaration_budget_tokens", 0) or 0
+            )
+            if declared > 0:
+                budgets.append(declared)
+        if not budgets:
+            return 0
+        return min(budgets) * 4
+
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
+        if self._hybrid_enabled:
+            native = (
+                self._tool_bridge.declarations
+                if self._tool_bridge is not None
+                else ()
+            )
+            return (*native, _DELEGATE_DECLARATION_HYBRID, _END_CALL_DECLARATION)
         if self._delegate_enabled:
             return (_DELEGATE_DECLARATION, _END_CALL_DECLARATION)
         if self._tool_bridge is not None:
@@ -7809,6 +8179,8 @@ class RealtimeVoiceSession:
         target = provider if provider is not None else self._provider
         if not bool(getattr(target, "supports_direct_tools", True)):
             return _DELEGATE_ROLE_DIRECTIVE_HANDOFF
+        if self._hybrid_enabled:
+            return _HYBRID_ROLE_DIRECTIVE
         return _DELEGATE_ROLE_DIRECTIVE
 
     def _turn_mode_directive(
@@ -7817,6 +8189,7 @@ class RealtimeVoiceSession:
         delegate_required: bool = False,
         action_pending: bool = False,
         delegate_discouraged: bool = False,
+        tools_expected: bool = False,
         provider: Any = None,
     ) -> str:
         """The ONE turn-scoped line, prefixed so it retracts the previous one.
@@ -7826,20 +8199,34 @@ class RealtimeVoiceSession:
         empty: on an append-only steering channel an empty directive retracts
         nothing, so the previous turn's "do not answer at all" would keep
         standing over the model (RT-08).
+
+        ``tools_expected`` is the hybrid-mode reading of a planner
+        ``requires_orchestrator`` verdict (ADR-0035 §2): the live model holds
+        the functions, so the turn is steered to call them now instead of
+        being handed to the delegate.
         """
         if not self._delegate_enabled:
             return ""
+        target = provider if provider is not None else self._provider
+        native_tools = bool(getattr(target, "supports_direct_tools", True))
+        hybrid = self._hybrid_enabled and native_tools
         if delegate_required:
             body = _DELEGATE_REQUIRED_DIRECTIVE
         elif action_pending:
             body = _DELEGATE_PENDING_DIRECTIVE
+        elif hybrid and tools_expected:
+            body = _HYBRID_TOOLS_EXPECTED_DIRECTIVE
         elif delegate_discouraged:
-            target = provider if provider is not None else self._provider
-            body = (
-                _DELEGATE_DISCOURAGED_DIRECTIVE
-                if bool(getattr(target, "supports_direct_tools", True))
-                else _DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF
-            )
+            if hybrid:
+                body = _HYBRID_DISCOURAGED_DIRECTIVE
+            else:
+                body = (
+                    _DELEGATE_DISCOURAGED_DIRECTIVE
+                    if native_tools
+                    else _DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF
+                )
+        elif hybrid:
+            body = _HYBRID_TURN_NORMAL_DIRECTIVE
         else:
             body = _DELEGATE_TURN_NORMAL_DIRECTIVE
         return f"{_TURN_MODE_PREFIX}{body}"
@@ -7850,6 +8237,7 @@ class RealtimeVoiceSession:
         delegate_required: bool = False,
         action_pending: bool = False,
         delegate_discouraged: bool = False,
+        tools_expected: bool = False,
         provider: Any = None,
     ) -> str:
         """Role plus this turn's mode line, for the full instruction block.
@@ -7865,6 +8253,7 @@ class RealtimeVoiceSession:
                 delegate_required=delegate_required,
                 action_pending=action_pending,
                 delegate_discouraged=delegate_discouraged,
+                tools_expected=tools_expected,
                 provider=provider,
             )
             return f"{role}\n\n{mode}" if mode else role
@@ -9283,6 +9672,15 @@ class RealtimeVoiceSession:
                 {"success": False, "error": "Tool call is not available."},
             )
             return
+        self._native_tool_calls += 1
+        started_at = time.monotonic()
+        # ADR-0035 §3: a native call blocks the live model until its result
+        # arrives, so a slow one gets the instant-ack treatment — one line
+        # after the short grace, at most once per turn.
+        ack_task = asyncio.create_task(
+            self._native_tool_ack_after_grace(self._turn_id, wire_name),
+            name=f"rt-native-tool-ack-{self.session_id}",
+        )
         try:
             execute = self._tool_bridge.execute
             execute_kwargs: dict[str, Any] = {
@@ -9312,17 +9710,91 @@ class RealtimeVoiceSession:
                 "success": False,
                 "error": "The tool failed safely and was not completed.",
             }
+        finally:
+            if not ack_task.done():
+                ack_task.cancel()
         if result.get("success"):
             self._executed_tool_names.add(original_name)
+        elif result.get("confirmation_required"):
+            pass  # a pending confirmation is neither a failure nor a denial
+        elif "not run" in str(result.get("error", "")) or "not available" in str(
+            result.get("error", "")
+        ):
+            self._native_tool_denied += 1
+        else:
+            self._native_tool_failures += 1
         self._direct_tool_results.append((original_name, dict(result)))
         self._mark_latency_named(
             "REALTIME_TOOL_COMPLETED",
             detail=(
-                f"tool={original_name};success={bool(result.get('success'))}"
+                f"tool={original_name};success={bool(result.get('success'))};"
+                f"duration_ms={round((time.monotonic() - started_at) * 1000)}"
             ),
         )
         self._drop_provider_output_until_new_response = False
         await self._session.send_tool_result(call_id, wire_name, result)
+
+    async def _native_tool_ack_after_grace(self, turn_id: str, wire_name: str) -> None:
+        """Speak one instant-ack line when a native tool call outlives the grace.
+
+        The live model is blocked on the function call (ADR-0034 §2), so the
+        line cannot ride the live voice; it takes the surface status channel
+        BUG-070 established, in the turn's language, from the closed pool for
+        the work class the planner assigned the turn (a tool name falls back
+        to the tool-activity pools). One line per turn; cancelled by the
+        result.
+        """
+        try:
+            await asyncio.sleep(_INSTANT_ACK_GRACE_S)
+        except asyncio.CancelledError:
+            raise
+        if (
+            self._ended
+            or self._session is None
+            or not turn_id
+            or self._turn_id != turn_id
+            or self._native_ack_turn_id == turn_id
+            or self._user_speech_active
+            or self._output_active
+            or self._output_samples_sent > 0
+        ):
+            return
+        self._native_ack_turn_id = turn_id
+        line = ""
+        try:
+            plan = plan_instant_ack(
+                self._plan_turn(self._last_user_text), self._last_user_text
+            )
+            if plan is not None:
+                line = pick_instant_ack_text(
+                    plan.work_class, self._language, agent_brand=self._agent_brand()
+                )
+        except Exception:  # noqa: BLE001 — the ack is best-effort
+            log.debug("realtime[%s] native-tool ack plan failed", self.session_id, exc_info=True)
+        if not line:
+            activity = classify_tool_activity(wire_name)
+            line = pick_progress_text(activity, self._language)
+        if not line:
+            line = _pick_delegate_bridge_text(self._language)
+        if not line:
+            return
+        log.info(
+            "realtime[%s] native tool %s still running after %.1fs; speaking "
+            "the instant ack on the surface channel",
+            self.session_id,
+            wire_name,
+            _INSTANT_ACK_GRACE_S,
+        )
+        self._mark_latency_named(
+            "REALTIME_DELEGATE_BRIDGE_REQUESTED",
+            detail=f"kind=native_tool;tool={wire_name}",
+        )
+        try:
+            await self._send_json(
+                self._surface_speech_message(line, spoken_kind=SPOKEN_KIND_PROGRESS)
+            )
+        except Exception:  # noqa: BLE001 — a failed ack must not hurt the call
+            log.debug("realtime[%s] native-tool ack send failed", self.session_id, exc_info=True)
 
     async def _handle_end_call(self, event: Any) -> None:
         if self._session is not None and self._session_takes_tool_results():
@@ -11067,6 +11539,10 @@ class RealtimeVoiceSession:
                 self._delegate_delivery_duplicates_suppressed
             ),
             delegate_deliveries_detached=self._delegate_deliveries_detached,
+            native_tool_calls=self._native_tool_calls,
+            native_tool_failures=self._native_tool_failures,
+            native_tool_denied=self._native_tool_denied,
+            delegate_cu_dispatches=self._delegate_cu_dispatches,
             stale_generations_dropped=self._stale_generations_dropped,
             opening_responses_bounded=diag.get("opening_responses_bounded", 0),
             self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),
@@ -11194,6 +11670,12 @@ class RealtimeVoiceSession:
         ):
             self._delegate_bridge_task.cancel()
         self._delegate_bridge_task = None
+        if (
+            self._empty_turn_reask_task is not None
+            and not self._empty_turn_reask_task.done()
+        ):
+            self._empty_turn_reask_task.cancel()
+        self._empty_turn_reask_task = None
         if self._action_proposed_subscribed and self._bus is not None:
             try:
                 from jarvis.core.events import ActionProposed

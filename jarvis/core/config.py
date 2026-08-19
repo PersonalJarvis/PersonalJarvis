@@ -2649,14 +2649,27 @@ class VoiceConfig(BaseModel):
     # This must be selected explicitly: choosing the similarly named Realtime
     # provider never implies this classic-pipeline profile.
     profile: str = ""
-    # Realtime tool exposure. "delegate" (default) gives the live model one
-    # compact jarvis_action function and hands action turns to the key-aware
-    # router Brain. This keeps the persistent realtime prompt small; declaring
-    # the full dynamic catalog consumed ~26k input tokens per response and hit
-    # a 40k TPM limit after one turn. "direct" remains an explicit diagnostic
-    # opt-in. Read once per session; unknown values fail closed to the compact
-    # delegate mode.
-    realtime_tool_mode: str = "delegate"
+    # Realtime tool exposure (ADR-0035, 2026-08-19). "hybrid" (default): the
+    # live model calls every Jarvis tool itself — the supervisor catalog minus
+    # the computer-use vehicles, rendered compactly under
+    # ``realtime_tool_declaration_budget_tokens`` — plus one ``jarvis_action``
+    # function for computer use, screen looks and any capability it has no
+    # function for; the Tool Model runs only those delegated turns. "delegate":
+    # the pre-ADR-0035 default — one compact jarvis_action function, every
+    # action turn goes to the key-aware router Brain. "direct": the whole
+    # dynamic catalog natively and no jarvis_action (diagnostic; a live
+    # reproduction on a TPM-metered wire cost ~26k input tokens per response,
+    # BUG-051). Read once per session; unknown values fail closed to
+    # "delegate".
+    realtime_tool_mode: str = "hybrid"
+    # ADR-0035 §4: upper bound (tokens, estimated as characters / 4) for the
+    # tool declarations a hybrid/direct session sends to the live model. Over
+    # budget, declarations are dropped in a deterministic priority order and
+    # every dropped name is logged; a dropped tool stays reachable through
+    # jarvis_action. A provider may declare a LOWER budget for its own wire
+    # (``tool_declaration_budget_tokens`` capability, AP-21); the smaller of
+    # the two applies. 0 disables the bound.
+    realtime_tool_declaration_budget_tokens: int = 20_000
     # ADR-0034 (2026-08-18). When the user opens a NEW turn while an earlier
     # order's provider function call (jarvis_action) is still unanswered on
     # the wire, the session answers that call at once with a closed "still

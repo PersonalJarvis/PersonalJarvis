@@ -214,8 +214,11 @@ def test_pipeline_mode_never_builds_realtime_session(monkeypatch):
     )
 
 
-def test_realtime_tool_mode_defaults_to_compact_delegate_execution() -> None:
-    assert VoiceConfig().realtime_tool_mode == "delegate"
+def test_realtime_tool_mode_defaults_to_hybrid_native_tools() -> None:
+    """ADR-0035: the live model holds the catalog itself; the Tool Model is
+    for computer use. ``delegate`` and ``direct`` remain explicit choices."""
+    assert VoiceConfig().realtime_tool_mode == "hybrid"
+    assert VoiceConfig().realtime_tool_declaration_budget_tokens > 0
 
 
 def test_one_realtime_key_builds_without_a_classic_brain(monkeypatch) -> None:

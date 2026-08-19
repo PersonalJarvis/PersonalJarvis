@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, cast
@@ -42,6 +43,26 @@ _VALID_WIRE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _MAX_DESCRIPTION_CHARS = 4_000
 _MAX_ARGUMENT_CHARS = 32_000
 _MAX_RESULT_CHARS = 8_000
+# ADR-0035 §4 compact rendering for the live model: router-brain tool
+# descriptions run to 500-2 900 characters of usage prose written for a
+# text model with a 12-round loop; the live model needs the purpose and the
+# parameters, and the ToolExecutor enforces the risk rules regardless. A
+# sentence boundary is preferred when cutting.
+COMPACT_DESCRIPTION_CHARS = 450
+COMPACT_PARAMETER_DESCRIPTION_CHARS = 120
+#: Rough token estimate for the declaration budget (characters per token).
+CHARS_PER_TOKEN = 4
+# Drop order when a declaration set exceeds its budget (ADR-0035 §4): the
+# lowest-priority family goes first, longest declaration first inside it.
+# Dropped tools stay reachable through ``jarvis_action``. Families are
+# matched on the tool name; anything unmatched is the last to go.
+_BUDGET_DROP_FAMILIES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("agentic-ide", re.compile(r"^agentic[-_]ide[-_]")),
+    ("cli", re.compile(r"^cli_")),
+    ("mcp", re.compile(r"^mcp__|/")),
+)
+
+log = logging.getLogger(__name__)
 
 
 def _wire_name(name: str) -> str:
@@ -79,6 +100,79 @@ def _bounded_result(success: bool, output: Any, error: str | None) -> dict[str, 
     }
 
 
+def _compact_text(text: str, limit: int) -> str:
+    """Cut ``text`` to ``limit`` characters, preferring a sentence boundary."""
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value
+    cut = value[:limit]
+    boundary = max(cut.rfind(". "), cut.rfind(".\n"), cut.rfind("! "), cut.rfind("? "))
+    if boundary >= limit // 2:
+        return cut[: boundary + 1].strip()
+    return cut.rstrip() + "…"
+
+
+def _compact_schema(schema: Any, parameter_description_limit: int) -> Any:
+    """Return ``schema`` with every nested ``description`` capped; structure intact."""
+    if isinstance(schema, dict):
+        compacted: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key == "description" and isinstance(value, str):
+                compacted[key] = _compact_text(value, parameter_description_limit)
+            else:
+                compacted[key] = _compact_schema(value, parameter_description_limit)
+        return compacted
+    if isinstance(schema, list):
+        return [_compact_schema(item, parameter_description_limit) for item in schema]
+    return schema
+
+
+def _declaration_size(declaration: dict[str, Any]) -> int:
+    try:
+        return len(json.dumps(declaration, ensure_ascii=False, default=str))
+    except Exception:  # noqa: BLE001 - an unserializable schema counts as large
+        return _MAX_DESCRIPTION_CHARS
+
+
+def _drop_rank(name: str) -> int:
+    """Lower rank = dropped earlier (ADR-0035 §4 family order)."""
+    for rank, (_family, pattern) in enumerate(_BUDGET_DROP_FAMILIES):
+        if pattern.search(name):
+            return rank
+    return len(_BUDGET_DROP_FAMILIES)
+
+
+def _apply_declaration_budget(
+    rendered: list[tuple[str, dict[str, Any]]],
+    budget_chars: int,
+) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
+    """Trim ``rendered`` (name, declaration) pairs to ``budget_chars``.
+
+    Deterministic: the lowest-priority family goes first, the longest
+    declaration first inside it, ties by name. Returns (kept in the original
+    order, dropped names in drop order). ``budget_chars <= 0`` keeps all.
+    """
+    if budget_chars <= 0:
+        return list(rendered), []
+    sizes = {name: _declaration_size(decl) for name, decl in rendered}
+    total = sum(sizes.values())
+    if total <= budget_chars:
+        return list(rendered), []
+    drop_order = sorted(
+        (name for name, _decl in rendered),
+        key=lambda name: (_drop_rank(name), -sizes[name], name),
+    )
+    dropped: list[str] = []
+    for name in drop_order:
+        if total <= budget_chars:
+            break
+        dropped.append(name)
+        total -= sizes[name]
+    dropped_set = set(dropped)
+    kept = [(name, decl) for name, decl in rendered if name not in dropped_set]
+    return kept, dropped
+
+
 @dataclass(slots=True)
 class _PendingConfirmation:
     trace_id: UUID
@@ -97,12 +191,26 @@ class RealtimeToolBridge:
         gateway: SupervisorToolGateway | None = None,
         language: str,
         tools_source: Any = None,
+        excluded_tool_names: frozenset[str] | set[str] | None = None,
+        compact: bool = False,
+        declaration_budget_chars: int = 0,
     ) -> None:
+        """``excluded_tool_names`` are never declared AND never executed by
+        this bridge (ADR-0035: the computer-use vehicles stay delegate-only).
+        ``compact`` renders descriptions for the live model (ADR-0035 §4);
+        ``declaration_budget_chars`` (0 = unbounded) trims the set in the
+        documented priority order and records the dropped names."""
         self._tools = dict(tools or {})
         self._tools_source = tools_source
         self._executor = executor
         self._gateway = gateway
         self._language = language
+        self._excluded_tool_names: frozenset[str] = frozenset(
+            str(name) for name in (excluded_tool_names or ())
+        )
+        self._compact = bool(compact)
+        self._declaration_budget_chars = max(0, int(declaration_budget_chars or 0))
+        self._dropped_names: tuple[str, ...] = ()
         self._descriptors: dict[str, SupervisorToolDescriptor] = (
             self._read_descriptors()
         )
@@ -114,13 +222,24 @@ class RealtimeToolBridge:
 
     @classmethod
     def from_supervisor_gateway(
-        cls, *, language: str
+        cls,
+        *,
+        language: str,
+        excluded_tool_names: frozenset[str] | set[str] | None = None,
+        compact: bool = False,
+        declaration_budget_chars: int = 0,
     ) -> RealtimeToolBridge | None:
         """Build from the safety gateway without requiring a classic brain call."""
         gateway = runtime_refs.get_supervisor_tool_gateway()
         if gateway is None or not gateway.catalog():
             return None
-        return cls(gateway=gateway, language=language)
+        return cls(
+            gateway=gateway,
+            language=language,
+            excluded_tool_names=excluded_tool_names,
+            compact=compact,
+            declaration_budget_chars=declaration_budget_chars,
+        )
 
     @classmethod
     def from_brain(cls, _brain: Any, *, language: str) -> RealtimeToolBridge | None:
@@ -128,6 +247,19 @@ class RealtimeToolBridge:
         return cls.from_supervisor_gateway(language=language)
 
     def _read_descriptors(
+        self,
+        tools_override: dict[str, Any] | None = None,
+    ) -> dict[str, SupervisorToolDescriptor]:
+        descriptors = self._read_descriptors_unfiltered(tools_override)
+        if not self._excluded_tool_names:
+            return descriptors
+        return {
+            name: item
+            for name, item in descriptors.items()
+            if name not in self._excluded_tool_names
+        }
+
+    def _read_descriptors_unfiltered(
         self,
         tools_override: dict[str, Any] | None = None,
     ) -> dict[str, SupervisorToolDescriptor]:
@@ -158,28 +290,72 @@ class RealtimeToolBridge:
             )
         return descriptors
 
+    def _render_declaration(
+        self, name: str, descriptor: SupervisorToolDescriptor
+    ) -> dict[str, Any]:
+        if not self._compact:
+            return {
+                "name": name,
+                "description": descriptor.description[:_MAX_DESCRIPTION_CHARS],
+                "parameters": descriptor.input_schema,
+            }
+        return {
+            "name": name,
+            "description": _compact_text(
+                descriptor.description, COMPACT_DESCRIPTION_CHARS
+            ),
+            "parameters": _compact_schema(
+                descriptor.input_schema, COMPACT_PARAMETER_DESCRIPTION_CHARS
+            ),
+        }
+
     def _build_declarations(self) -> tuple[dict[str, Any], ...]:
         self._wire_to_name.clear()
-        declarations: list[dict[str, Any]] = []
+        rendered: list[tuple[str, dict[str, Any]]] = []
         for name, descriptor in sorted(self._descriptors.items()):
             wire = _wire_name(str(name))
             if wire in self._wire_to_name:
                 continue
             self._wire_to_name[wire] = str(name)
-            declarations.append(
-                {
-                    "name": wire,
-                    "description": descriptor.description[
-                        :_MAX_DESCRIPTION_CHARS
-                    ],
-                    "parameters": descriptor.input_schema,
-                }
+            rendered.append((str(name), self._render_declaration(wire, descriptor)))
+        kept, dropped = _apply_declaration_budget(
+            rendered, self._declaration_budget_chars
+        )
+        self._dropped_names = tuple(dropped)
+        if dropped:
+            # Names are logged in full (AP-30): a silently trimmed catalog
+            # looks exactly like a complete one. The dropped tools remain
+            # reachable through jarvis_action.
+            log.warning(
+                "realtime tool bridge: %d declaration(s) over the %d-char "
+                "(~%d-token) budget were dropped from the native set and stay "
+                "reachable through jarvis_action: %s",
+                len(dropped),
+                self._declaration_budget_chars,
+                self._declaration_budget_chars // CHARS_PER_TOKEN,
+                ", ".join(dropped),
             )
-        return tuple(declarations)
+            for name in dropped:
+                self._wire_to_name.pop(_wire_name(name), None)
+        return tuple(declaration for _name, declaration in kept)
 
     @property
     def declarations(self) -> tuple[dict[str, Any], ...]:
         return self._declarations
+
+    @property
+    def dropped_names(self) -> tuple[str, ...]:
+        """Catalog tools NOT declared natively under the declaration budget."""
+        return self._dropped_names
+
+    @property
+    def excluded_tool_names(self) -> frozenset[str]:
+        return self._excluded_tool_names
+
+    @property
+    def declaration_chars(self) -> int:
+        """Serialized size of the declared set (the budget's own unit)."""
+        return sum(_declaration_size(item) for item in self._declarations)
 
     def set_language(self, language: str) -> None:
         self._language = language
