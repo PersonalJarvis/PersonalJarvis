@@ -1,4 +1,4 @@
-"""Stale-generation guard after a delivered readback (BUG-143).
+"""Stale-generation guard after a delivered readback (BUG-143 / BUG-149).
 
 Live forensic 2026-08-18 14:25 (session 7b20e182, turns 4/5 and 6/7): on a
 server-VAD transport one Jarvis turn carried TWO turn-ending inputs on the
@@ -7,6 +7,10 @@ speech — and the provider answered both, back to back. Every answer after
 the injected result re-rendered that same result, so the user heard "Ich
 habe work geöffnet: T eins." and then "Ich habe work geöffnet: T1.", and
 the recorder wrote a phantom turn with no user text for the repeat.
+
+BUG-149 (2026-08-19, session e1ba9504): the first extra generation WAS
+dropped, then ``_finish_stale_generation_drop`` disarmed the watch and
+Vertex Live spoke a truncated echo on the next unprompted generation.
 
 The session cannot cancel that second generation (Gemini has no response
 cancel). It refuses to play it instead: a generation that begins right after
@@ -82,6 +86,9 @@ class _ServerVadWire:
     * ``second-generation`` — a second generation of the same reply starts
       immediately after the readback boundary, with no user input at all
       (the live failure).
+    * ``second-generation-twice`` — TWO unprompted generations after the
+      readback (BUG-149: Vertex Live started another the moment the first
+      phantom closed; the first was dropped, the second played).
     * ``after-user-input`` — the user asks a follow-up first; the provider's
       answer to it must play.
     * ``after-local-voice`` — no transcript yet, but the microphone carried
@@ -135,9 +142,16 @@ class _ServerVadWire:
         await asyncio.sleep(0.02)
         if self.before_second_generation is not None:
             await self.before_second_generation()
-        if self._script == "second-generation":
+        if self._script in {"second-generation", "second-generation-twice"}:
             async for event in self._readback(REPLY):
                 yield event
+            if self._script == "second-generation-twice":
+                # A second phantom, starting the moment the first one's
+                # boundary released the withhold. Live Vertex Live did this
+                # with a truncated echo of the same confirmation.
+                await asyncio.sleep(0.02)
+                async for event in self._readback(REPLY.split()[0] + " " + REPLY.split()[1]):
+                    yield event
         elif self._script == "after-user-input":
             yield RealtimeEvent(
                 type="input_transcript",
@@ -310,9 +324,38 @@ async def test_second_generation_after_readback_is_discarded_whole(
     assert sum(1 for m in messages if m.get("type") == "turn_complete") == 1
     assert _turn_starts(bus) == 1
     assert session._stale_generations_dropped == 1
-    # The guard stood down with the discarded generation's own boundary.
+    # The withhold ended with the discarded generation's boundary. The
+    # watch stays armed so a second phantom cannot play (BUG-149).
     assert session._stale_generation_dropping is False
-    assert session._stale_generation_guard_armed_at == 0.0
+    assert session._stale_generation_guard_armed_at > 0.0
+
+
+@pytest.mark.asyncio
+async def test_second_unprompted_generation_after_a_dropped_one_is_also_discarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-08-19 11:10 (BUG-149, session e1ba9504, Vertex Live).
+
+    The first extra generation was dropped (``stale_generations_dropped=1``)
+    and the guard stood down on its boundary. Vertex Live then started a
+    second unprompted generation — empty user text, 338 ms to first audio —
+    that spoke a truncated echo of the same confirmation. Both extras must
+    stay inaudible; only the original readback reaches the speaker.
+    """
+    _shorten_delegate_waits(monkeypatch)
+    provider = _ServerVadProvider(script="second-generation-twice")
+
+    session, messages, binaries, bus = await _run(provider, settle_s=0.5)
+
+    assert provider.session.text_inputs, "the trusted result was never injected"
+    assert REPLY in provider.session.text_inputs[0]
+    assert len(binaries) == 1
+    assert _assistant_texts(messages) == [REPLY]
+    assert sum(1 for m in messages if m.get("type") == "turn_complete") == 1
+    assert _turn_starts(bus) == 1
+    assert session._stale_generations_dropped == 2
+    assert session._stale_generation_dropping is False
+    assert session._stale_generation_guard_armed_at > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -710,3 +753,28 @@ def test_drop_without_a_boundary_is_released_at_the_ceiling() -> None:
     assert session._stale_generation_drop_active() is False
     assert session._stale_generation_dropping is False
     assert session._must_withhold_provider_output() is False
+
+
+def test_finishing_a_drop_keeps_the_watch_armed() -> None:
+    """BUG-149: the first phantom's boundary must not stand the watch down."""
+    session = RealtimeVoiceSession(
+        session_id="watch-stays",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=_ServerVadProvider(script="second-generation"),
+        config=_config(),
+        bus=None,
+        browser_sample_rate=16_000,
+        surface="desktop",
+        brain=_DelegatingBrain(),
+    )
+    session._session = SimpleNamespace(creates_responses_automatically=True)
+    session._arm_stale_generation_guard(REPLY)
+    armed_at = session._stale_generation_guard_armed_at
+    session._stale_generation_dropping = True
+    session._stale_generation_transcript.append(REPLY)
+    session._finish_stale_generation_drop()
+    assert session._stale_generation_dropping is False
+    assert session._stale_generation_guard_armed_at == armed_at
+    assert session._stale_generation_guard_reply == REPLY
+    assert session._stale_generation_guard_reason()

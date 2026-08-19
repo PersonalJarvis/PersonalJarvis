@@ -10392,3 +10392,42 @@ still discarded; `test_voice_during_the_speaker_drain_keeps_the_next_answer`
 (`test_vertex_live_builds_vertex_tts_with_session_voice`,
 `test_vertex_live_builds_on_the_project_path_without_a_key`,
 `test_vertex_live_without_any_credential_yields_no_surface_tts`).
+
+## BUG-149: after a Vertex Live delegate readback the same confirmation is spoken twice — the stale-generation guard dropped the first phantom and then stood down (HIGH, FIXED 2026-08-19)
+
+**Symptom.** Realtime voice session `e1ba9504` (2026-08-19 11:10, Vertex Live,
+delegate tool mode, desktop). User: "Nova, kannst bitteschön eine Musik
+abspielen vor dem Morgen?" YouTube Music played. The provider rendered
+"Läuft für dich." — and ~500 ms later a second turn with EMPTY user text
+spoke the truncated echo "Läuft für". Heard twice, logged twice. Reported
+by the maintainer from the Mission-deck SAY lines.
+
+**Reconstruction (flight recorder).** Turn 0: orchestrator → `youtube_music`
+(21 s) → Vertex `gemini-3.7-flash` (42.7 k / 268, text_len=15) → Vertex Live
+readback "Läuft für dich." Postmortem: `stale_generations_dropped=1`,
+`delegate_delivery_duplicates_suppressed=0`, `turns_completed=2`. The
+BUG-143/148 guard WAS live and DID drop one extra generation. Then
+`_finish_stale_generation_drop` disarmed the watch on that phantom's
+`turn_complete`. Vertex Live started another unprompted generation the
+moment the withhold lifted (338 ms to first audio, 11.2 k / 60, no tools,
+`user_text=""`). That one played.
+
+**Fix (`jarvis/realtime/session.py::_finish_stale_generation_drop`).** The
+withhold for one discarded generation still ends on its own boundary. The
+watch stays armed for the rest of the 2.5 s window. Fresh evidence (user
+speech, an open turn, a deliberate injection, the window) still disarms via
+`_stale_generation_guard_reason`. Capability-gated the same way as
+BUG-143: only `creates_responses_automatically` transports. Covers every
+server-VAD family (gemini-live, vertex-live, and any later automatic
+transport), not just the box that reproduced it.
+
+**Class rule.** "Stand down when the thing you were waiting for arrives" is
+wrong when the producer can emit another of the same thing. A fail-open
+window is the bound; a single discarded event is not.
+
+**Guards.** `tests/unit/realtime/test_stale_generation_after_readback.py`
+(`test_second_unprompted_generation_after_a_dropped_one_is_also_discarded`
+— two extras after the readback, one spoken reply, two drops;
+`test_finishing_a_drop_keeps_the_watch_armed`; the original
+`test_second_generation_after_readback_is_discarded_whole` now asserts the
+watch stays armed).

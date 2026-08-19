@@ -279,11 +279,16 @@ _DELEGATE_READBACK_POLL_S = 0.1
 # reply's remaining playback — 7.6 s and 4.6 s readbacks both slipped past a
 # 2.5 s window and were spoken twice (live 2026-08-18 18:40, BUG-148).
 _STALE_GENERATION_WINDOW_S = 2.5
-# A discarded generation is released by its own boundary. Every awaited state
-# in this file carries a bound (the turn stall watchdog, the late-result
-# flush), and this one is no exception: a transport that loses that single
-# terminal frame while the socket stays open must not leave the session deaf
-# for the rest of the call. Same order as _TURN_STALL_TIMEOUT_S.
+# The withhold for ONE discarded generation is released by that generation's
+# own boundary. The WATCH stays armed for the rest of the window: Gemini Live
+# / Vertex Live can emit a second unprompted generation the moment the first
+# phantom ends (live 2026-08-19 11:10, session e1ba9504 — BUG-149: the first
+# extra was dropped, then "Läuft für" played as a user-less turn). Every
+# awaited state in this file carries a bound (the turn stall watchdog, the
+# late-result flush), and the withhold is no exception: a transport that
+# loses that single terminal frame while the socket stays open must not
+# leave the session deaf for the rest of the call. Same order as
+# _TURN_STALL_TIMEOUT_S.
 _STALE_GENERATION_DROP_MAX_S = 20.0
 _STALE_GENERATION_TRANSCRIPT_MAX_CHARS = 400
 # Mid-reply audio-flow diagnostics: an audible hole inside one spoken answer
@@ -2196,13 +2201,15 @@ class RealtimeVoiceSession:
         # plain turn re-rendering one of them is a stale ghost repeat, not a
         # fresh answer (live forensic 2026-07-21 11:32).
         self._stale_readback_refs: list[str] = []
-        # Stale-generation guard (BUG-143, see _STALE_GENERATION_WINDOW_S).
-        # ``armed_at`` is the monotonic moment a provider-rendered delegate
-        # readback turn closed; a generation that begins while it is armed —
-        # no open turn, no new user input — is discarded WHOLE (``dropping``
-        # stays set until that generation's own boundary), never played and
-        # never opened as a turn. ``transcript`` keeps what was discarded for
-        # the log line, bounded, so a live call can be checked afterwards.
+        # Stale-generation guard (BUG-143 / BUG-149, see
+        # _STALE_GENERATION_WINDOW_S). ``armed_at`` is the monotonic moment a
+        # provider-rendered delegate readback turn closed; every generation
+        # that begins while it is armed — no open turn, no new user input —
+        # is discarded WHOLE (``dropping`` stays set until THAT generation's
+        # own boundary). The watch itself stays armed until the window, a
+        # fresh user turn, or a deliberate injection — one phantom's
+        # boundary must not let the next one through. ``transcript`` keeps
+        # what was discarded for the log line, bounded.
         self._stale_generation_guard_armed_at = 0.0
         self._stale_generation_guard_reply = ""
         self._stale_generation_dropping = False
@@ -8009,7 +8016,8 @@ class RealtimeVoiceSession:
         deliberate injection opened it), the microphone carried the user's
         voice after the readback ended, a server speech edge was confirmed,
         or the bounded window simply ran out. Each of them disarms the guard
-        for good — it never survives into a later turn.
+        for good. A discarded generation's own boundary does NOT — that
+        would let the next unprompted generation through (BUG-149).
         """
         armed_at = self._stale_generation_guard_armed_at
         if not armed_at:
@@ -8097,7 +8105,14 @@ class RealtimeVoiceSession:
         )
 
     def _finish_stale_generation_drop(self) -> None:
-        """The discarded generation reached its boundary: log and stand down."""
+        """The discarded generation reached its boundary: release the withhold.
+
+        The watch stays armed. Standing it down here was BUG-149: Vertex Live
+        started a second unprompted generation the moment the first phantom
+        closed, and that one played as a user-less turn. Fresh evidence
+        (user speech, an open turn, a deliberate injection, the window)
+        still disarms via ``_stale_generation_guard_reason``.
+        """
         discarded = "".join(self._stale_generation_transcript).strip()
         heard = _normalize_for_repeat_match(discarded)
         delivered = _normalize_for_repeat_match(self._stale_generation_guard_reply)
@@ -8116,7 +8131,6 @@ class RealtimeVoiceSession:
         self._stale_generation_dropping = False
         self._stale_generation_dropping_since = 0.0
         self._stale_generation_transcript.clear()
-        self._disarm_stale_generation_guard()
 
     async def _reject_stale_generation_tool_call(self, event: Any) -> None:
         """Answer a stale generation's function call without executing it.
