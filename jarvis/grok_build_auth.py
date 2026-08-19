@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -98,9 +99,11 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 def _derive_auth(auth: dict[str, Any] | None) -> tuple[bool, str]:
     """Return ``(connected, mode)`` from a parsed ``auth.json`` dict.
 
-    Tolerant by design: Grok Build's on-disk shape may evolve; any recognised
-    subscription token or account identity is ``subscription``, a stored API
-    key field is ``api_key``, and anything else degrades to disconnected.
+    Tolerant by design: Grok Build's on-disk shape may evolve; a recognised
+    subscription token is ``subscription``, a stored API key field is
+    ``api_key``, and anything else degrades to disconnected. Account identity
+    (email / user id) is display-only — leftover profile JSON after ``grok
+    logout`` must not paint the card Ready.
     """
     if not isinstance(auth, dict):
         return False, "unknown"
@@ -120,14 +123,6 @@ def _derive_auth(auth: dict[str, Any] | None) -> tuple[bool, str]:
         value = auth.get(key)
         if isinstance(value, str) and value.strip():
             return True, "subscription"
-    user = auth.get("user") if isinstance(auth.get("user"), dict) else None
-    account = auth.get("account") if isinstance(auth.get("account"), dict) else None
-    identity = user or account
-    if isinstance(identity, dict) and any(
-        isinstance(identity.get(k), str) and identity.get(k).strip()
-        for k in ("email", "user_id", "id", "username")
-    ):
-        return True, "subscription"
     for key in ("XAI_API_KEY", "xai_api_key", "api_key"):
         value = auth.get(key)
         if isinstance(value, str) and value.strip():
@@ -192,6 +187,13 @@ def _latest_login_mtime(home: Path) -> float | None:
     return None
 
 
+def _wipe_isolated_login(dest: Path) -> None:
+    """Drop stale auth copies so a logout is visible under the redirected home."""
+    for name in (*_LOGIN_FILES, _ISO_HOME_MARKER):
+        with suppress(OSError):
+            (dest / name).unlink(missing_ok=True)
+
+
 def prepare_worker_home(
     *, src_home: Path | None = None, dest_root: Path | None = None
 ) -> Path | None:
@@ -199,11 +201,15 @@ def prepare_worker_home(
 
     Returns the isolated home path, or ``None`` when there is no login to copy.
     User hooks, plugins and interactive sessions stay in the real ``~/.grok``.
+    A missing source login wipes any leftover copy so Disconnect cannot leave
+    a live SuperGrok token under ``DATA_DIR``.
     """
     src = src_home if src_home is not None else grok_home()
     dest = dest_root if dest_root is not None else iso_home_root()
     mtime = _latest_login_mtime(src)
     if mtime is None:
+        with _ISO_HOME_LOCK:
+            _wipe_isolated_login(dest)
         return None
     with _ISO_HOME_LOCK:
         dest.mkdir(parents=True, exist_ok=True)
@@ -384,14 +390,17 @@ class GrokBuildAuthService:
             except (OSError, subprocess.SubprocessError) as exc:
                 log.debug("grok logout spawn failed, falling back to file unlink: %s", exc)
             else:
-                if proc.returncode == 0:
-                    return True, None
-                log.debug(
-                    "grok logout exited %s; falling back to auth.json unlink",
-                    proc.returncode,
-                )
+                if proc.returncode != 0:
+                    log.debug(
+                        "grok logout exited %s; falling back to auth.json unlink",
+                        proc.returncode,
+                    )
         try:
             (self._home_dir() / "auth.json").unlink(missing_ok=True)
-            return True, None
         except OSError as exc:
             return False, str(exc)
+        try:
+            prepare_worker_home(src_home=self._home_dir())
+        except Exception as exc:  # noqa: BLE001 — wipe is best-effort after logout
+            log.debug("Grok Build isolated-home wipe after logout failed: %s", exc)
+        return True, None

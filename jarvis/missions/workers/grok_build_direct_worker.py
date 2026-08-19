@@ -217,7 +217,18 @@ def _event_looks_like_tool(obj: dict[str, Any]) -> str | None:
 
 
 class GrokBuildDirectWorker:
-    """Heavy worker that calls ``grok -p`` over the SuperGrok subscription."""
+    """Heavy worker that calls ``grok -p`` over the SuperGrok subscription.
+
+    ``cli`` is declared ``"codex"`` so the Phase-6 telemetry schema needs no
+    migration (same reason as GoogleCliWorker). The synthetic init event's
+    ``model`` field carries ``grok-build/<model>`` so debugging stays unambiguous.
+
+    Broker grant: issued and closed for a truthful capability report. Grok
+    Build's isolated worker home deliberately does not ingest user hooks or
+    plugins; the official CLI has no documented equivalent of Codex's
+    ``-c mcp_servers.*`` injection, so marketplace MCP is an honest
+    degradation (reported unavailable unless a future grok MCP write lands).
+    """
 
     cli: ClassVar[Literal["claude", "codex", "python", "browser"]] = "codex"
 
@@ -253,7 +264,55 @@ class GrokBuildDirectWorker:
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         del allowed_tools, permission_mode, max_turns, allow_backend_fallback
-        del mission_id, _broker_binding
+        broker_binding = _broker_binding
+        issued_here = broker_binding is None
+        if issued_here:
+            broker_binding = self.capability_inventory.bind_broker(
+                ttl_s=timeout_s + _HARDCAP_GRACE_S + 60.0,
+                mission_id=mission_id or None,
+                worker_id=worker_id,
+            )
+        try:
+            async for event in self._spawn_bound(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                resume_session_id=resume_session_id,
+                extra_args=extra_args,
+                timeout_s=timeout_s,
+                first_output_timeout_s=first_output_timeout_s,
+                broker_binding=broker_binding,
+            ):
+                yield event
+        finally:
+            if issued_here and broker_binding is not None:
+                try:
+                    broker_binding.close()
+                except Exception:  # noqa: BLE001 - cleanup must not mask cancellation
+                    logger.exception(
+                        "GrokBuildDirectWorker: broker binding cleanup failed"
+                    )
+
+    async def _spawn_bound(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],
+        job: Any,
+        worker_id: str,
+        log_dir: Path,
+        model: str = "",
+        resume_session_id: str | None = None,
+        extra_args: tuple[str, ...] = (),
+        timeout_s: float = _DEFAULT_TIMEOUT_S,
+        first_output_timeout_s: float = _DEFAULT_FIRST_OUTPUT_TIMEOUT_S,
+        broker_binding: Any | None = None,
+    ) -> AsyncIterator[Any]:
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         stdout_log = log_dir / "stream.jsonl"
         stderr_log = log_dir / "stderr.log"
@@ -270,7 +329,9 @@ class GrokBuildDirectWorker:
             model=f"grok-build/{effective_model}",
             tools=[],
             cwd=str(worktree),
-            external_capabilities=self.capability_inventory.report_for("grok-build"),
+            external_capabilities=self.capability_inventory.report_for(
+                "grok-build", binding=broker_binding
+            ),
         )
         if binary is None:
             yield ClaudeResult(
@@ -290,6 +351,8 @@ class GrokBuildDirectWorker:
             extra_args=extra_args,
         )
         env_for_grok = _build_grok_build_env(env)
+        if broker_binding is not None:
+            env_for_grok = broker_binding.apply_environment(env_for_grok)
         logger.info(
             "GrokBuildDirectWorker[%s] spawn: cwd=%s model=%s argv=%s",
             worker_id,

@@ -35,6 +35,15 @@ def test_derive_auth_empty() -> None:
     assert _derive_auth(None) == (False, "unknown")
 
 
+def test_derive_auth_identity_without_token_is_disconnected() -> None:
+    """Leftover profile JSON after logout must not paint Ready."""
+    assert _derive_auth({"user": {"email": "ada@example.com"}}) == (False, "unknown")
+    assert _derive_auth({"account": {"id": "u1", "username": "ada"}}) == (
+        False,
+        "unknown",
+    )
+
+
 def test_email_from_user_object() -> None:
     assert _email_from_auth({"user": {"email": "ada@example.com"}}) == "ada@example.com"
 
@@ -90,6 +99,22 @@ def test_prepare_worker_home_copies_auth_not_hooks(tmp_path: Path) -> None:
     assert (dest / "auth.json").is_file()
     assert not (dest / "hooks").exists()
     assert "[cli]" in (dest / "config.toml").read_text(encoding="utf-8")
+
+
+def test_prepare_worker_home_wipes_stale_copy_after_logout(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    (dest / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": "stale"}}),
+        encoding="utf-8",
+    )
+    (dest / ".jarvis_src_mtime").write_text("1.0", encoding="utf-8")
+    isolated = prepare_worker_home(src_home=src, dest_root=dest)
+    assert isolated is None
+    assert not (dest / "auth.json").exists()
+    assert not (dest / ".jarvis_src_mtime").exists()
 
 
 def test_status_not_installed(monkeypatch, tmp_path: Path) -> None:

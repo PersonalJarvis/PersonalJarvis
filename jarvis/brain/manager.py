@@ -2103,6 +2103,7 @@ _SUBAGENT_VOICE_TO_CANONICAL: dict[str, str] = {
     "nvidia": "nvidia", "nim": "nvidia", "nemotron": "nvidia",
     "antigravity": "antigravity",
     "grok-build": "grok-build",
+    "grok build": "grok-build",
     "grokbuild": "grok-build",
     "grok-cli": "grok-build",
 }

@@ -19,6 +19,8 @@ RECOGNITION_CASES: list[tuple[str, str, str]] = [
     # subagent_switch
     ("stell den subagent provider auf gemini", "subagent_switch", "gemini"),  # i18n-allow: fixture
     ("stell den subagent provider von antigravity auf codex um", "subagent_switch", "codex"),  # i18n-allow: fixture
+    ("switch the sub-agent to grok build", "subagent_switch", "grok build"),
+    ("switch the sub-agent to grok", "subagent_switch", "grok"),
     # language_switch
     ("stell auf Englisch um", "language_switch", "en"),               # i18n-allow: fixture
     ("antworte auf deutsch und englisch", "language_switch", "de"),   # i18n-allow: fixture

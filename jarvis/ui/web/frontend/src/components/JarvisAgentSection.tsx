@@ -130,8 +130,17 @@ const PROVIDER_LABELS: Record<string, string> = {
 async function pollStatusUntilConnected(
   statusUrl: string,
   onTick: () => void | Promise<void>,
-  { maxMs = 120_000, intervalMs = 2_500 }: { maxMs?: number; intervalMs?: number } = {},
+  {
+    maxMs = 120_000,
+    intervalMs = 2_500,
+    isReady,
+  }: {
+    maxMs?: number;
+    intervalMs?: number;
+    isReady?: (data: { connected?: boolean; mode?: string }) => boolean;
+  } = {},
 ): Promise<boolean> {
+  const ready = isReady ?? ((data) => Boolean(data?.connected));
   const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -140,7 +149,7 @@ async function pollStatusUntilConnected(
       const res = await fetch(statusUrl);
       if (res.ok) {
         const data = await res.json();
-        if (data?.connected) return true;
+        if (ready(data)) return true;
       }
     } catch {
       // transient (app restarting / network blip) — keep polling
@@ -1278,7 +1287,10 @@ function GrokBuildConnectionCard({
       await loginGrokBuild();
       pushToast("info", "Grok Build login started — finish it in the browser window");
       await onChanged();
-      void pollStatusUntilConnected("/api/grok-build/status", onChanged).then((ok) => {
+      void pollStatusUntilConnected("/api/grok-build/status", onChanged, {
+        isReady: (data) =>
+          Boolean(data?.connected && data?.mode === "subscription"),
+      }).then((ok) => {
         if (ok) {
           pushToast("success", `Grok Build connected — now selectable as a ${agentBrandNow()}`);
         }
@@ -1315,7 +1327,7 @@ function GrokBuildConnectionCard({
       warning={
         !installed && (
           <CardHint icon={Terminal}>
-            Install Grok Build before connecting (irm https://x.ai/cli/install.ps1 | iex).
+            {status?.message || "Install Grok Build before connecting."}
           </CardHint>
         )
       }
