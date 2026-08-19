@@ -6,18 +6,19 @@ import { HudHaloDefs } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
 
 /**
- * The centre of the deck: the Jarvis orb with the mascot in its core, set in
- * a reticle — a dial ring, corner brackets, one bright arc per running step,
- * and four small readouts at the compass points.
+ * The centre of the deck: the Jarvis orb in a reticle — a dial ring, corner
+ * brackets, one bright arc per running step, and four small readouts at the
+ * compass points.
  *
  * The orb is the product's own artwork (`JarvisOrb`: the sphere cut out of
  * `hero-orb.png`), moved a little by the real voice state, with a soft gold
  * glow carrying it past its own edge. The maintainer asked for the picture
  * itself in the middle (2026-08-18) after the procedural cloud with a dark
- * mascot on it read as a blob. The reticle is the deck's addition, and every
- * part of it carries information: the arcs are parallel work made visible,
- * the sweep turns only while something runs, the readouts are live values the
- * caller sources.
+ * mascot on it read as a blob. A mascot later rode in the core for a day
+ * and came back out (2026-08-19): two ghosts on one stage. The reticle is
+ * the deck's addition, and every part of it carries information: the arcs
+ * are parallel work made visible, the sweep turns only while something
+ * runs, the readouts are live values the caller sources.
  */
 export interface OrbReadouts {
   nw: string;
@@ -220,8 +221,7 @@ export function DeckOrb({
  * The orb — the part of the centre a press lands on.
  *
  * Back to front: a soft gold glow wider than the sphere (`.deck-orb-glow`,
- * keyed on the voice state), then the artwork itself with the mascot in its
- * core (`JarvisOrb`).
+ * keyed on the voice state), then the artwork itself (`JarvisOrb`).
  */
 function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: number }) {
   const glow = Math.round(orbSize * 1.35);

@@ -2,6 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "@/App";
+import { useDeckStore } from "@/store/deck";
 import { useEventStore } from "@/store/events";
 import { useWallpaperStore } from "@/store/wallpaper";
 
@@ -70,6 +71,10 @@ beforeEach(() => {
     detachedViews: [],
   });
   useWallpaperStore.setState({ mascotOn: true });
+  // Classic chat is a normal section: the live mascot stays on the ground.
+  // The mission deck hides it (see the test below) — defaulting to classic
+  // here keeps the wallpaper assertions about "a normal section" honest.
+  useDeckStore.setState({ mode: "classic" });
 });
 
 afterEach(() => {
@@ -90,6 +95,14 @@ describe("App shell around detached coding views", () => {
 
   it("hides the live mascot when the wallpaper layer is switched off", () => {
     useWallpaperStore.setState({ mascotOn: false });
+    render(<App />);
+
+    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
+  });
+
+  it("hides the live mascot while the mission deck is on stage", () => {
+    useDeckStore.setState({ mode: "deck" });
     render(<App />);
 
     expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
