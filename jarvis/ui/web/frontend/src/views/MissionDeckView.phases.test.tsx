@@ -96,7 +96,20 @@ describe("MissionDeckView — the three acts", () => {
     render(<MissionDeckView />);
     expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("standby");
     expect(screen.queryByTestId("deck-board")).toBeNull();
-    expect(screen.getByText("Say “Hey Nova” — or click the orb.")).toBeTruthy();
+    expect(screen.getByTestId("deck-standby-cue").textContent).toBe("Say “Hey Nova”");
+  });
+
+  test("a reason for the board that comes and goes still leaves the board open", async () => {
+    render(<MissionDeckView />);
+    // The transport negotiates: the board takes over …
+    act(() => useEventStore.setState({ voiceState: "connecting" }));
+    expect(screen.getByTestId("deck-board")).toBeTruthy();
+    // … and the reason vanishes without a turn. The board stays: an
+    // interrupted hand-off left the ring back with nothing in it (2026-08-19).
+    act(() => useEventStore.setState({ voiceState: "idle" }));
+    expect(useDeckStore.getState().boardOpen).toBe(true);
+    expect(screen.getByTestId("deck-board")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 3000 });
   });
 
   test("the first turn opens the board, and the board powers on around the orb", async () => {

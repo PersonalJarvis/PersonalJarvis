@@ -4505,7 +4505,10 @@
     "standby_since": "seit {0}",
     "standby_still": "Stimme ruht",
     "standby_error": "Stimme meldet einen Fehler – siehe Log",
-    "standby_hint": "Das Board öffnet sich, sobald du sprichst.",
+    "standby_cue": "Sag „{0}“",
+    "standby_cue_off": "Klick auf den Orb",
+    "standby_cue_sub": "– oder klick auf den Orb. Das Board öffnet sich, sobald du sprichst.",
+    "standby_cue_sub_off": "– oder drück den Hotkey. Das Board öffnet sich, sobald du sprichst.",
     "open_board": "Board öffnen"
   },
   "modes_view": {

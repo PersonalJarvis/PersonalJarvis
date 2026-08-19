@@ -16,9 +16,10 @@ import { DeckOrb } from "@/components/deck/DeckOrb";
  * The orb is the click-shaped wake word (maintainer, 2026-08-18): pressing
  * the orb in the centre does what saying the phrase does. Display-only
  * callers get no button at all. The orb is the product's own artwork — the
- * sphere cut out of `hero-orb.png` — with the mascot in its core (maintainer's
- * pick, 2026-08-18, replacing the dark mask), and it carries the live voice
- * state so it can breathe with it.
+ * sphere cut out of `hero-orb.png` — and nothing else in its core: the mascot
+ * that rode there for a day made two ghosts on one stage next to the live
+ * wallpaper mascot (maintainer, 2026-08-19). It carries the live voice state
+ * so it can breathe with it.
  */
 describe("DeckOrb", () => {
   afterEach(() => cleanup());
@@ -29,17 +30,15 @@ describe("DeckOrb", () => {
     expect(screen.getByTestId("jarvis-orb")).toBeTruthy();
   });
 
-  test("the centre is the Jarvis orb artwork with the mascot in its core", () => {
+  test("the centre is the Jarvis orb artwork, and nothing rides in its core", () => {
     render(<DeckOrb steps={[]} busy={false} />);
     const orb = screen.getByTestId("jarvis-orb");
     expect(orb.getAttribute("data-voice")).toBe("idle");
     const images = orb.querySelectorAll("img");
-    expect(images).toHaveLength(2);
+    expect(images).toHaveLength(1);
     expect(images[0].getAttribute("src")).toBe("/deck-orb.png");
-    expect(images[1].getAttribute("src")).toBe("/jarvis-gigi-256.png");
     // Artwork, not content: nothing here is read out.
     expect(images[0].getAttribute("alt")).toBe("");
-    expect(images[1].getAttribute("alt")).toBe("");
   });
 
   test("a press on the orb fires the handler and carries its label", () => {

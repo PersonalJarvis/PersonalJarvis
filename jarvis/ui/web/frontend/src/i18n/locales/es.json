@@ -4505,7 +4505,10 @@
     "standby_since": "desde {0}",
     "standby_still": "voz en reposo",
     "standby_error": "la voz reportó un error — mira el registro",
-    "standby_hint": "El tablero se abre en cuanto hables.",
+    "standby_cue": "Di «{0}»",
+    "standby_cue_off": "Haz clic en el orbe",
+    "standby_cue_sub": "— o haz clic en el orbe. El tablero se abre en cuanto hables.",
+    "standby_cue_sub_off": "— o pulsa el atajo. El tablero se abre en cuanto hables.",
     "open_board": "Abrir el tablero"
   },
   "modes_view": {

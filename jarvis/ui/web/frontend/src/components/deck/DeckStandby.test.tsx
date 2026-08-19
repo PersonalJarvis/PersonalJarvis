@@ -153,7 +153,9 @@ describe("DeckStandby — standby", () => {
     renderStage("standby");
     expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("standby");
     expect(screen.getByText("standby")).toBeTruthy();
-    expect(screen.getByText("Say “Hey Nova” — or click the orb.")).toBeTruthy();
+    // The cue: big, and it names the phrase.
+    expect(screen.getByTestId("deck-standby-cue").textContent).toBe("Say “Hey Nova”");
+    expect(screen.getByText(/or click the orb\. The board opens the moment you speak\./)).toBeTruthy();
     // The wake word is on and the voice is idle: the ring sweeps.
     expect(screen.getByTestId("deck-standby-ring").getAttribute("data-sweep")).toBe("true");
     expect(screen.getByTestId("deck-ring-sweep")).toBeTruthy();
@@ -166,9 +168,11 @@ describe("DeckStandby — standby", () => {
     expect(c.queryByText(/ ms$| s$/)).toBeNull();
   });
 
-  test("a wake word that is off is said so, and the ring stays still", () => {
+  test("a wake word that is off is said so, the cue points at the orb, and the ring stays still", () => {
     renderStage("standby", { wakeConfig: { ...WAKE, enabled: false } });
     expect(console_().getByText(/wake word off/)).toBeTruthy();
+    expect(screen.getByTestId("deck-standby-cue").textContent).toBe("Click the orb");
+    expect(screen.getByText(/or press the hotkey/)).toBeTruthy();
     expect(screen.getByTestId("deck-standby-ring").getAttribute("data-sweep")).toBe("false");
     expect(screen.queryByTestId("deck-ring-sweep")).toBeNull();
     expect(console_().getByText("voice idle")).toBeTruthy();

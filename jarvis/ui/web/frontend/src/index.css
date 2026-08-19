@@ -2229,8 +2229,10 @@
   }
   /* the sweep: one turn every 14 s — the wake-word listener made visible */
   .deck-ring-sweep {
-    transform-box: fill-box;
-    transform-origin: center;
+    /* view-box, not fill-box: the sweep is a short arc, and its own box's
+       centre is nowhere near the ring's — it must turn about the ring. */
+    transform-box: view-box;
+    transform-origin: 50% 50%;
     animation: deck-ring-sweep 14s linear infinite;
   }
   @keyframes deck-ring-sweep {
@@ -2240,9 +2242,22 @@
   }
   /* the ping: once, when the boot completes — a ring leaves the orb and dies at the bezel */
   .deck-ring-ping {
-    transform-box: fill-box;
-    transform-origin: center;
+    transform-box: view-box;
+    transform-origin: 50% 50%;
     animation: deck-ring-ping 1100ms cubic-bezier(0.1, 0.6, 0.3, 1) forwards;
+  }
+  /* the cue under the orb breathes slowly: it is waiting for the person */
+  .deck-standby-cue {
+    animation: deck-standby-cue 3.2s ease-in-out infinite;
+  }
+  @keyframes deck-standby-cue {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.62;
+    }
   }
   @keyframes deck-ring-ping {
     0% {
@@ -2334,6 +2349,7 @@
     .deck-gate-arc,
     .deck-ring-sweep,
     .deck-ring-ping,
+    .deck-standby-cue,
     .deck-boot-line,
     .deck-boot-caret,
     .deck-boot-dots span,

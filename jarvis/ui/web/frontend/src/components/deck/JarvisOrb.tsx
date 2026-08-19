@@ -11,9 +11,9 @@ import { cn } from "@/lib/utils";
  * on the wallpaper as a thing, not as a picture of a thing. The maintainer
  * asked for exactly this on 2026-08-18: the orb IS a PNG, so bring the PNG.
  *
- * The mascot rides in the plasma core as a silhouette — the same language as
- * the wallpaper's black ghost on gold, and readable at any size because the
- * core is the brightest thing on the screen.
+ * The core carries NO mascot. It did for a day (a silhouette on the gold,
+ * 2026-08-18); with the live mascot on the wallpaper that made two ghosts on
+ * one stage, and the maintainer took it out (2026-08-19): the orb is the orb.
  *
  * Voice state moves it a little, honestly and cheaply: a slow breath at rest,
  * a brighter, quicker pulse while listening, quicker still while it speaks, a
@@ -52,10 +52,6 @@ const MOTION: Record<VoiceState, { animate: TargetAndTransition; duration: numbe
   },
 };
 
-/** Where the plasma core sits inside the cut-out (fractions of the image). */
-const CORE_CENTRE_Y = 0.547;
-const MASCOT_OF_ORB = 0.24;
-
 export function JarvisOrb({
   size,
   voiceState,
@@ -89,15 +85,6 @@ export function JarvisOrb({
               ? { duration: spec.duration, repeat: Infinity, ease: "easeInOut" }
               : { duration: 0.4 }
         }
-      />
-      {/* The mascot in the core. A silhouette on gold, like the wallpaper. */}
-      <img
-        src="/jarvis-gigi-256.png"
-        alt=""
-        draggable={false}
-        aria-hidden
-        className="pointer-events-none absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-        style={{ top: `${CORE_CENTRE_Y * 100}%`, width: size * MASCOT_OF_ORB, height: size * MASCOT_OF_ORB }}
       />
     </div>
   );

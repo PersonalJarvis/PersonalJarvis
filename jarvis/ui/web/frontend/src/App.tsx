@@ -46,9 +46,11 @@ const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
  * Which artwork is shown belongs to the user — see the Wallpaper section. The
  * picture that ships with the app remains the default, and the one every
  * failure path returns to. Gigi is a separate live layer on that ground, not
- * painted into the picture.
+ * painted into the picture — and he steps off it while the mission deck is on
+ * stage (`hideMascot`): the deck's ring and console own that corner, and a
+ * second ghost next to the orb was one too many (maintainer, 2026-08-19).
  */
-function DesktopWallpaper() {
+function DesktopWallpaper({ hideMascot = false }: { hideMascot?: boolean }) {
   const wallpaperUrl = useDesktopWallpaper();
   const mascotOn = useWallpaperStore((state) => state.mascotOn);
   return (
@@ -61,7 +63,7 @@ function DesktopWallpaper() {
         className="jarvis-desktop-wallpaper absolute inset-0"
         style={{ backgroundImage: `url(${wallpaperUrl})` }}
       />
-      {mascotOn ? (
+      {mascotOn && !hideMascot ? (
         <div
           className="jarvis-desktop-wallpaper-mascot"
           data-testid="jarvis-desktop-wallpaper-mascot"
@@ -286,7 +288,7 @@ export default function App() {
   if (solo) {
     return (
       <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
-        <DesktopWallpaper />
+        <DesktopWallpaper hideMascot={deckOnStage} />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
           <SectionStage visualization={visualizationActive}>
@@ -303,7 +305,7 @@ export default function App() {
   return (
     <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
-      <DesktopWallpaper />
+      <DesktopWallpaper hideMascot={deckOnStage} />
 
       {!deckOnStage && (
         <>

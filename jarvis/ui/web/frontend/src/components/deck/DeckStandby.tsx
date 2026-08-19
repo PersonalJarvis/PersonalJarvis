@@ -45,8 +45,9 @@ import { useT } from "@/i18n";
  * Standby: the sweep turns on the ring while the wake word is actually being
  * listened for (and stays still when it is not — hotkey-only setups, a link
  * that dropped), the clock and the "quiet for" figure tick, the orb breathes.
- * The headline names the phrase to say. Nothing else moves: the standby has
- * to be calm enough to sit next to for an hour.
+ * The cue under the orb names the phrase to say — big, breathing slowly,
+ * because it is the one thing a newcomer must read. Nothing else moves: the
+ * standby has to be calm enough to sit next to for an hour.
  *
  * The board is one press away at all times (`onOpenBoard`), and takes over
  * on its own the moment a turn opens — that hand-off is MissionDeckView's,
@@ -56,7 +57,7 @@ import { useT } from "@/i18n";
 /** How the orb travels between this ring and its place on the board. */
 export const ORB_TRAVEL = { layout: { duration: 0.62, ease: [0.2, 0.8, 0.2, 1] } } as const;
 /** The ring is labelled at the compass points only when there is room. */
-const LABELS_MIN_RING = 480;
+const LABELS_MIN_RING = 520;
 /** The corner blocks leave the ring's sides alone from this stage width. */
 const WIDE_STAGE = 1040;
 
@@ -196,8 +197,10 @@ export function DeckStandby({
     return out;
   }, [gates]);
 
-  const headline =
-    phase === "boot" ? null : t("deck.idle_headline").replace("{0}", wakePhrase);
+  // The cue under the orb: what to do so something happens. Big, because a
+  // person who has never used the app must read it from across the room
+  // (maintainer, 2026-08-19: "you have to see that you must say something").
+  const wakeOn = gates.find((g) => g.id === "wake")?.state === "ok";
 
   const corner = (extra: string, children: ReactNode) => (
     <div className={cn("absolute z-10", extra)}>{children}</div>
@@ -258,7 +261,7 @@ export function DeckStandby({
             </motion.div>
           </div>
 
-          {/* Under the reticle, inside the ring: the boot title, then the phrase to say. */}
+          {/* Under the reticle, inside the ring: the boot title, then the cue. */}
           <div
             className="absolute inset-x-0 flex justify-center px-6 text-center"
             style={{ top: ring / 2 + reticle / 2 + 12 }}
@@ -266,17 +269,28 @@ export function DeckStandby({
             {phase === "boot" ? (
               <BootTitle text={t("deck.boot_title")} animate={!reduced} />
             ) : (
-              <motion.p
-                key="idle"
+              <motion.div
+                key="cue"
                 variants={{
                   hidden: { opacity: 0, y: 6 },
                   show: { opacity: 1, y: 0, transition: { duration: 0.5, delay: 0.3 } },
                   exit: { opacity: 0, y: 6, transition: { duration: 0.2 } },
                 }}
-                className="max-w-[40ch] text-pretty text-sm leading-relaxed text-muted-foreground"
+                className="flex flex-col items-center gap-1"
               >
-                {headline}
-              </motion.p>
+                <p
+                  className={cn(
+                    "font-display text-lg font-bold uppercase tracking-[0.26em] text-primary sm:text-xl",
+                    !reduced && "deck-standby-cue",
+                  )}
+                  data-testid="deck-standby-cue"
+                >
+                  {wakeOn ? t("deck.standby_cue").replace("{0}", wakePhrase) : t("deck.standby_cue_off")}
+                </p>
+                <p className="max-w-[62ch] text-pretty text-xs leading-relaxed text-muted-foreground">
+                  {t(wakeOn ? "deck.standby_cue_sub" : "deck.standby_cue_sub_off")}
+                </p>
+              </motion.div>
             )}
           </div>
         </div>
@@ -392,11 +406,6 @@ export function DeckStandby({
           variants={{ exit: { opacity: 0, x: 14, transition: { duration: 0.25 } } }}
           className="flex flex-col items-end gap-1.5"
         >
-          {wide && (
-            <span className="max-w-[28ch] text-pretty text-[11px] leading-snug text-muted-foreground">
-              {t("deck.standby_hint")}
-            </span>
-          )}
           <button
             type="button"
             onClick={onOpenBoard}

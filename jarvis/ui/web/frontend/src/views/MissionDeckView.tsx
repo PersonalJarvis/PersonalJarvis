@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
@@ -115,6 +115,15 @@ export function MissionDeckView({
     messageCount: messages.length,
     voiceEngaged: callActive || connecting,
   });
+  // Forward only, for real: a transient reason for the board (a call being
+  // set up, a voice state that came and went without a turn) must not let the
+  // standby come back over a stage that already handed off — an interrupted
+  // hand-off leaves the orb's shared-layout crossfade half-way, with the ring
+  // back and nothing in it (seen 2026-08-19). So the first board render
+  // latches the store's sticky flag.
+  useEffect(() => {
+    if (phase === "board") openBoard();
+  }, [phase, openBoard]);
   // The board powers on with its choreography ONLY when it takes over from
   // the standby on this very screen. A deck that mounts straight into a
   // running session (a section change and back) is simply there. Fixed on
