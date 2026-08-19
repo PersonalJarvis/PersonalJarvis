@@ -69,6 +69,21 @@ _MIN_CACHE_TOKENS = 4096
 # after an SDK or remote-model change. Keys include the budget so rejecting
 # the router's zero budget never disables a positive budget in another tier.
 _REJECTED_THINKING_BUDGETS: set[tuple[str, int]] = set()
+# Models that rejected ``thinking_level`` (Gemini 2.5 and earlier: the
+# parameter is Gemini-3-only). Next call on the same model skips the level
+# and uses ``thinking_budget`` instead — one doomed 400 per process, not
+# per turn (AP-21: capability memory, never a model-name pin).
+_REJECTED_THINKING_LEVELS: set[str] = set()
+
+# Gemini 3 discrete levels. ``none`` maps to LOW, not MINIMAL: gemini-3.7-flash
+# 400s on MINIMAL (docs 2026-08-17) and its default is MEDIUM — which is the
+# 10-30 s wait the composer is trying to kill. LOW is the lowest 3.7 accepts.
+_EFFORT_TO_THINKING_LEVEL: dict[str, str] = {
+    "none": "LOW",
+    "low": "LOW",
+    "medium": "MEDIUM",
+    "high": "HIGH",
+}
 
 
 def _is_stale_context_cache_error(exc: Exception) -> bool:
@@ -96,6 +111,60 @@ def _is_stale_context_cache_error(exc: Exception) -> bool:
     ):
         return True
     return False
+
+
+def _thinking_config_for(
+    *,
+    model: str,
+    ctor_budget: int | None,
+    effort: str | None,
+    rejected_budgets: set[int],
+) -> tuple[Any | None, str]:
+    """The ThinkingConfig for this call, and whether it is a ``level`` or ``budget``.
+
+    Gemini 3 wants ``thinking_level``; Gemini 2.5 wants ``thinking_budget``.
+    Sending both 400s on Gemini 3. Sending ``thinking_budget=0`` on
+    gemini-3.7-flash either 400s or is ignored, after which the model
+    thinks at its default MEDIUM — the 10-30 s composer wait. ``none``
+    and an explicit constructor budget of 0 therefore prefer LOW. A model
+    that already rejected the level (remembered in ``_REJECTED_THINKING_LEVELS``)
+    falls through to the budget. Never raises: an old SDK without the
+    field degrades to the budget path.
+    """
+    from google.genai import types as _genai_types
+
+    def _budget_cfg(value: int) -> Any | None:
+        if (
+            value in rejected_budgets
+            or (model, value) in _REJECTED_THINKING_BUDGETS
+        ):
+            return None
+        try:
+            return _genai_types.ThinkingConfig(thinking_budget=value)
+        except (TypeError, AttributeError, ValueError):
+            return None
+
+    # A positive or dynamic constructor budget is an explicit cap — keep
+    # the 2.5-style field. Zero means "off", which Gemini 3 does not have.
+    if ctor_budget is not None and ctor_budget != 0:
+        cfg = _budget_cfg(ctor_budget)
+        return (cfg, "budget") if cfg is not None else (None, "")
+
+    wants_off = ctor_budget == 0 or effort == "none"
+    level = _EFFORT_TO_THINKING_LEVEL.get(effort or "")
+    if level is None and wants_off:
+        level = "LOW"
+
+    if level and model not in _REJECTED_THINKING_LEVELS:
+        try:
+            return _genai_types.ThinkingConfig(thinking_level=level), "level"
+        except (TypeError, AttributeError, ValueError):
+            pass
+
+    if wants_off:
+        cfg = _budget_cfg(0)
+        return (cfg, "budget") if cfg is not None else (None, "")
+    return None, ""
 
 
 def _is_thinking_config_rejected_error(exc: Exception) -> bool:
@@ -848,38 +917,23 @@ class GeminiBrain:
         except Exception:  # noqa: BLE001 — never break the brain call over an SDK shape change
             log.debug("could not disable Gemini automatic_function_calling", exc_info=True)
 
-        # Latency-Sprint-1: thinking budget. Only when explicitly set —
-        # otherwise we leave the choice to the SDK default (previous
-        # behavior). ``ThinkingConfig`` is available from google-genai >= 0.7;
-        # older SDK versions don't have the field and raise AttributeError. In
-        # that case we ignore the value instead of killing the whole brain
-        # call (best-effort optimization).
-        effective_thinking_budget = self._thinking_budget
-        if (
-            effective_thinking_budget is None
-            and getattr(req, "reasoning_effort", None) == "none"
-        ):
-            # The caller asked for minimal internal reasoning (small
-            # structured-output calls: Computer-Use actions/judges). A
-            # thinking-by-default model otherwise spends the whole
-            # ``max_output_tokens`` budget on thoughts and the visible reply
-            # arrives truncated mid-JSON — live forensic 2026-07-16: every CU
-            # step failed "unterminated JSON" with thoughts=304 of
-            # max_tokens=320. An explicit constructor budget always wins.
-            effective_thinking_budget = 0
-        if (
-            effective_thinking_budget is not None
-            and effective_thinking_budget not in self._rejected_thinking_budgets
-            and (self._model, effective_thinking_budget)
-            not in _REJECTED_THINKING_BUDGETS
-        ):
-            try:
-                from google.genai import types as _genai_types
-                config_dict["thinking_config"] = _genai_types.ThinkingConfig(
-                    thinking_budget=effective_thinking_budget,
-                )
-            except (ImportError, AttributeError):
-                pass
+        # Latency-Sprint-1: thinking. Gemini 3 wants ``thinking_level``;
+        # Gemini 2.5 wants ``thinking_budget``. ``none`` / budget 0 prefer
+        # LOW — gemini-3.7-flash's default is MEDIUM, and budget=0 is not a
+        # Gemini-3 off switch (it 400s or is ignored, then the model thinks
+        # at MEDIUM for 10-30 s). See ``_thinking_config_for``.
+        thinking_kind = ""
+        try:
+            thinking_cfg, thinking_kind = _thinking_config_for(
+                model=self._model,
+                ctor_budget=self._thinking_budget,
+                effort=getattr(req, "reasoning_effort", None),
+                rejected_budgets=self._rejected_thinking_budgets,
+            )
+        except Exception:  # noqa: BLE001 — old SDK / unexpected shape
+            thinking_cfg, thinking_kind = None, ""
+        if thinking_cfg is not None:
+            config_dict["thinking_config"] = thinking_cfg
 
         # ╔══════════════════════════════════════════════════════════════╗
         # ║  BUG-019 ROOT CAUSE — STALE GEMINI CONTEXT-CACHE REFERENCE   ║
@@ -1140,7 +1194,37 @@ class GeminiBrain:
                         "thinking_budget",
                         None,
                     )
+                    cache_on_wire = bool(cache_name and "cached_content" in config_dict)
+                    if (
+                        thinking_kind == "level"
+                        and not (not thinking_config_blamed and cache_on_wire)
+                    ):
+                        # Gemini 2.5 400s on thinking_level. Fall through to
+                        # the budget path instead of dropping the knob —
+                        # dropping it on 3.7-flash is how MEDIUM thinking
+                        # comes back and the composer waits 10-30 s. Skip
+                        # this hop when a cache reference is also on the
+                        # wire: a generic 400 then has two suspects and
+                        # the two-variable retry must not blame either.
+                        _REJECTED_THINKING_LEVELS.add(self._model)
+                        from google.genai import types as _retry_types
+                        fallback = None
+                        if (
+                            0 not in self._rejected_thinking_budgets
+                            and (self._model, 0) not in _REJECTED_THINKING_BUDGETS
+                        ):
+                            try:
+                                fallback = _retry_types.ThinkingConfig(
+                                    thinking_budget=0
+                                )
+                            except (TypeError, AttributeError, ValueError):
+                                fallback = None
+                        if fallback is not None:
+                            config_dict["thinking_config"] = fallback
+                            thinking_kind = "budget"
+                            continue
                     config_dict.pop("thinking_config", None)
+                    thinking_kind = ""
                     # A generic 400 while a context-cache reference is on the
                     # wire could ALSO be a differently-worded dead-cache
                     # rejection this branch would otherwise consume — and the

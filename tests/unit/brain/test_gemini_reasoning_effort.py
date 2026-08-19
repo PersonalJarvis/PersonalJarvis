@@ -10,13 +10,14 @@ every CU step failed "unterminated JSON" and the mission aborted.
 Contract pinned here:
 
 * ``reasoning_effort="none"`` on the request → ``thinking_config`` with
-  ``thinking_budget=0`` goes on the wire (thinking disabled for this call).
-* An explicit constructor ``thinking_budget`` always wins over the hint.
+  ``thinking_level=LOW`` (Gemini 3). gemini-3.7-flash has no off switch,
+  400s on MINIMAL, and its default is MEDIUM — budget=0 is not the knob.
+* A model that rejects ``thinking_level`` (Gemini 2.5) is recovered by a
+  retry with ``thinking_budget=0``, then without the field if that 400s
+  too — capability probe, not a model-name pin (AP-21).
+* An explicit constructor ``thinking_budget`` other than 0 always wins
+  over the hint.
 * No hint, no constructor budget → no ``thinking_config`` (SDK default).
-* A model that REJECTS budget=0 (thinking-mandatory Pro class answers 400
-  "Budget 0 is invalid. This model only works in thinking mode.") is
-  recovered by ONE retry without the field — capability probe, not a
-  model-name pin (AP-21).
 
 Uses the same fake-client shape as ``test_gemini_stale_cache_bug019.py``;
 ``google.genai`` must be importable for ``ThinkingConfig`` to be attached,
@@ -33,6 +34,7 @@ import pytest
 from jarvis.core.protocols import BrainMessage, BrainRequest
 from jarvis.plugins.brain.gemini import (
     _REJECTED_THINKING_BUDGETS,
+    _REJECTED_THINKING_LEVELS,
     GeminiBrain,
 )
 
@@ -43,8 +45,10 @@ pytest.importorskip("google.genai")
 def _clear_process_capability_memory() -> Iterator[None]:
     """Keep process-wide production capability memory isolated per test."""
     _REJECTED_THINKING_BUDGETS.clear()
+    _REJECTED_THINKING_LEVELS.clear()
     yield
     _REJECTED_THINKING_BUDGETS.clear()
+    _REJECTED_THINKING_LEVELS.clear()
 
 
 class _FakeGeminiClient:
@@ -110,6 +114,14 @@ async def _drain(stream: AsyncIterator[Any]) -> list[Any]:
     return out
 
 
+def _level_name(tc: object | None) -> str:
+    """``ThinkingLevel.LOW`` and the string ``"LOW"`` both count as LOW."""
+    raw = getattr(tc, "thinking_level", None) if tc is not None else None
+    if raw is None:
+        return ""
+    return str(getattr(raw, "value", raw) or "").upper().rsplit(".", 1)[-1]
+
+
 def _request(reasoning_effort: str | None) -> BrainRequest:
     return BrainRequest(
         messages=(BrainMessage(role="user", content="ping"),),
@@ -132,7 +144,66 @@ async def test_reasoning_effort_none_disables_thinking() -> None:
         "reasoning_effort='none' must attach a thinking_config — without it "
         "a thinking-by-default model eats the 320-token output budget"
     )
-    assert getattr(tc, "thinking_budget", None) == 0
+    # Gemini 3.7 Flash: LOW is the lowest accepted level. Budget=0 is not
+    # an off switch there, and sending both fields 400s.
+    assert _level_name(tc) == "LOW"
+    assert getattr(tc, "thinking_budget", None) is None
+
+
+@pytest.mark.asyncio
+async def test_constructor_budget_zero_uses_thinking_level_low() -> None:
+    """The router cap is thinking_budget=0. On Gemini 3 that is not an off
+    switch — LOW is the closest the model accepts."""
+    provider = GeminiBrain(model="gemini-3.7-flash", thinking_budget=0)
+    fake = _FakeGeminiClient()
+    provider._client = fake  # type: ignore[assignment]
+
+    await _drain(provider.complete(_request(None)))
+
+    tc = fake.calls[0].get("thinking_config")
+    assert _level_name(tc) == "LOW"
+    assert getattr(tc, "thinking_budget", None) is None
+
+
+@pytest.mark.asyncio
+async def test_thinking_level_rejection_falls_back_to_budget_zero() -> None:
+    """Gemini 2.5 400s on thinking_level and accepts thinking_budget=0."""
+
+    class _LevelThenBudget(_FakeGeminiClient):
+        async def generate_content_stream(  # type: ignore[override]
+            self, *, model: str, contents: list[Any], config: dict[str, Any]
+        ) -> AsyncIterator[Any]:
+            self.calls.append(dict(config))
+            tc = config.get("thinking_config")
+            if tc is not None and getattr(tc, "thinking_level", None):
+                raise RuntimeError(
+                    "400 INVALID_ARGUMENT. thinking_level is not supported "
+                    "for this model."
+                )
+
+            async def _stream() -> AsyncIterator[Any]:
+                yield SimpleNamespace(
+                    text='{"action": "done"}',
+                    candidates=[],
+                    usage_metadata=None,
+                )
+
+            return _stream()
+
+    provider = GeminiBrain(model="gemini-2.5-flash")
+    fake = _LevelThenBudget()
+    provider._client = fake  # type: ignore[assignment]
+
+    deltas = await _drain(provider.complete(_request("none")))
+
+    assert len(fake.calls) == 2
+    assert _level_name(fake.calls[0].get("thinking_config")) == "LOW"
+    assert getattr(fake.calls[1].get("thinking_config"), "thinking_budget", None) == 0
+    assert any(d.content for d in deltas)
+
+    await _drain(provider.complete(_request("none")))
+    assert len(fake.calls) == 3
+    assert getattr(fake.calls[2].get("thinking_config"), "thinking_budget", None) == 0
 
 
 @pytest.mark.asyncio
@@ -169,9 +240,10 @@ async def test_thinking_mandatory_model_recovers_without_the_field() -> None:
 
     deltas = await _drain(provider.complete(_request("none")))
 
-    assert len(fake.calls) == 2
-    assert fake.calls[0].get("thinking_config") is not None
-    assert "thinking_config" not in fake.calls[1]
+    assert len(fake.calls) == 3
+    assert _level_name(fake.calls[0].get("thinking_config")) == "LOW"
+    assert getattr(fake.calls[1].get("thinking_config"), "thinking_budget", None) == 0
+    assert "thinking_config" not in fake.calls[2]
     assert any(d.content for d in deltas), "recovered stream must yield text"
 
 
@@ -196,12 +268,12 @@ async def test_generic_invalid_argument_recovers_without_the_field() -> None:
 
     deltas = await _drain(provider.complete(_request("none")))
 
-    assert len(fake.calls) == 2, (
-        "the generic INVALID_ARGUMENT 400 must trigger exactly one retry "
-        "without thinking_config"
+    assert len(fake.calls) == 3, (
+        "level rejected → budget=0 → drop the field; three attempts, then text"
     )
     assert fake.calls[0].get("thinking_config") is not None
-    assert "thinking_config" not in fake.calls[1]
+    assert getattr(fake.calls[1].get("thinking_config"), "thinking_budget", None) == 0
+    assert "thinking_config" not in fake.calls[2]
     assert any(d.content for d in deltas), "recovered stream must yield text"
 
 
@@ -219,15 +291,16 @@ async def test_parameterless_400_recovers_and_is_remembered() -> None:
 
     deltas = await _drain(provider.complete(_request("none")))
 
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == 3
     assert fake.calls[0].get("thinking_config") is not None
-    assert "thinking_config" not in fake.calls[1]
+    assert getattr(fake.calls[1].get("thinking_config"), "thinking_budget", None) == 0
+    assert "thinking_config" not in fake.calls[2]
     assert any(d.content for d in deltas), "recovered stream must yield text"
 
-    # Second turn: the blame is proven — no thinking_config, no extra 400.
+    # Second turn: both knobs are proven rejected — no thinking_config.
     await _drain(provider.complete(_request("none")))
-    assert len(fake.calls) == 3
-    assert "thinking_config" not in fake.calls[2]
+    assert len(fake.calls) == 4
+    assert "thinking_config" not in fake.calls[3]
 
 
 @pytest.mark.asyncio
@@ -243,7 +316,7 @@ async def test_parameterless_400_is_remembered_across_instances() -> None:
     first._client = first_fake  # type: ignore[assignment]
 
     await _drain(first.complete(_request("none")))
-    assert len(first_fake.calls) == 2
+    assert len(first_fake.calls) == 3
 
     second = GeminiBrain(model="gemini-short-lived-curator")
     second_fake = _FakeGeminiClient(reject_thinking_generic=True)
@@ -267,14 +340,18 @@ async def test_unrelated_400_still_propagates_and_forgets_nothing() -> None:
     with pytest.raises(RuntimeError, match="invalid argument"):
         await _drain(provider.complete(_request("none")))
 
-    # One original attempt + one blame-probe retry, then the error surfaced.
-    assert len(fake.calls) == 2
+    # level → budget → drop, then the error surfaced. Budget blame is not
+    # proven because the retry without the field also 400'd.
+    assert len(fake.calls) == 3
 
     fake.reject_everything_generic = False
     await _drain(provider.complete(_request("none")))
-    assert fake.calls[2].get("thinking_config") is not None, (
-        "an unproven blame must not permanently disable thinking_config"
+    # The level was proven rejected (the hop happened). The budget was
+    # not: the no-config retry 400'd too, so the next turn still sends it.
+    assert fake.calls[3].get("thinking_config") is not None, (
+        "an unproven budget blame must not permanently disable thinking_config"
     )
+    assert getattr(fake.calls[3].get("thinking_config"), "thinking_budget", None) == 0
 
 
 @pytest.mark.asyncio

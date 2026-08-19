@@ -661,7 +661,8 @@ async def _llm_compose(
         stream=True,
         # Maintainer 2026-08-18: writing this brief is "what was said, plus
         # the neighbouring @files". Medium effort was the 10-30 s wait. Gemini
-        # maps "none" to thinking_budget=0; providers without a knob ignore it.
+        # maps "none" to thinking_level=LOW on Gemini 3 (3.7-flash has no
+        # off switch and 400s on budget=0); providers without a knob ignore it.
         reasoning_effort="none",
     )
     chunks: list[str] = []
