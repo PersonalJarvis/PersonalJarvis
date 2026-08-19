@@ -283,7 +283,7 @@ _STALE_GENERATION_WINDOW_S = 2.5
 # own boundary. The WATCH stays armed for the rest of the window: Gemini Live
 # / Vertex Live can emit a second unprompted generation the moment the first
 # phantom ends (live 2026-08-19 11:10, session e1ba9504 — BUG-149: the first
-# extra was dropped, then "Läuft für" played as a user-less turn). Every
+# extra was dropped, then a truncated echo played as a user-less turn). Every
 # awaited state in this file carries a bound (the turn stall watchdog, the
 # late-result flush), and the withhold is no exception: a transport that
 # loses that single terminal frame while the socket stays open must not

@@ -9905,7 +9905,9 @@ unconditionally: the guard only ever arms as a turn closes, so any turn open
 at that moment was opened by a real transcript DURING the drop and keeps
 waiting for its own answer instead of being closed as "empty" and re-routed
 through the Brain chain. The discarded transcript is logged (bounded) and the
-guard stands down. Any fresh evidence disarms it for good — a new input
+withhold stands down. The watch stays armed (BUG-149): a second unprompted
+generation the moment the first phantom ends must still be dropped. Any
+fresh evidence disarms it for good — a new input
 transcript (`_disarm_stale_generation_guard` at the input-observed site),
 local voice (`_last_voiced_input_monotonic`), an open turn,
 `_external_update`, the window, a transport rebuild — and the drop itself is
@@ -10400,11 +10402,11 @@ delegate tool mode, desktop). User: "Nova, kannst bitteschön eine Musik
 abspielen vor dem Morgen?" YouTube Music played. The provider rendered
 "Läuft für dich." — and ~500 ms later a second turn with EMPTY user text
 spoke the truncated echo "Läuft für". Heard twice, logged twice. Reported
-by the maintainer from the Mission-deck SAY lines.
+by the maintainer from the Mission-deck SAY lines. <!-- i18n-allow: quoted live voice output -->
 
 **Reconstruction (flight recorder).** Turn 0: orchestrator → `youtube_music`
 (21 s) → Vertex `gemini-3.7-flash` (42.7 k / 268, text_len=15) → Vertex Live
-readback "Läuft für dich." Postmortem: `stale_generations_dropped=1`,
+readback "Läuft für dich." Postmortem: `stale_generations_dropped=1`, <!-- i18n-allow: quoted live voice output -->
 `delegate_delivery_duplicates_suppressed=0`, `turns_completed=2`. The
 BUG-143/148 guard WAS live and DID drop one extra generation. Then
 `_finish_stale_generation_drop` disarmed the watch on that phantom's
