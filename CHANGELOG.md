@@ -20,6 +20,11 @@ versioning per [SemVer](https://semver.org/).
 - **Vertex Live native tools work again.** Vertex reports hybrid function
   calls as `default:run_shell`. The bridge treated that as an unknown tool
   and the model said the tools were down (BUG-153).
+- **A spoken "I'm playing that" is no longer treated as done.** Hybrid
+  voice could announce a playlist (or any other action) without calling
+  the tool; the user had to ask again. The session now recovers those
+  false completions, music capture rematches to the connected service,
+  and an in-flight native tool no longer looks like silence (BUG-154).
 - **The Jarvis Bar keeps thinking while the Tool Model works.** After the
   short "I'll play that" ack it used to look ready even though YouTube
   Music was still running. Progress speech now returns to thinking until

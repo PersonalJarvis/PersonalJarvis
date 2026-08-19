@@ -4580,6 +4580,131 @@ async def test_blocked_action_promise_still_dispatches_after_boundary_timeout(
 
 
 @pytest.mark.asyncio
+async def test_false_completion_without_a_tool_dispatches_the_action():
+    """Live 2026-08-19 17:13: the model announced a 2010s playlist with
+    function_calls=0. That is a finished-looking result, not a deferred
+    'I'll look later', so the old promise guard let the turn end. Recovery
+    must still run the action."""
+    user_text = "Egal einfach irgendwas aus den 2010ern"  # i18n-allow: live follow-up
+    claim = (
+        "Alles klar, ich spiele dir eine Playlist mit Songs "  # i18n-allow
+        "aus den 2010ern."  # i18n-allow: live 2026-08-19 17:13
+    )
+    brain = FakeBrain(replies=("Playing 2010s hits now.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text=user_text, is_final=True),
+            RealtimeEvent(type="output_transcript_delta", text=claim),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_bridge=FakeToolBridge(),
+        tool_mode="hybrid",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    async with asyncio.timeout(2):
+        while not brain.calls:  # noqa: ASYNC110 - fake has no event
+            await asyncio.sleep(0.01)
+
+    assert brain.calls[0][0] == user_text
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_clarifying_question_is_not_an_unbacked_action():
+    """Turn 1 of the same session asked what kind of music — that is not a
+    claim that playback started, so recovery must not steal the turn."""
+    user_text = "Kannst du bitte richtig coole Musik spielen?"  # i18n-allow
+    question = "Was genau für Musik gefällt dir denn?"  # i18n-allow: live question
+    brain = FakeBrain(replies=("never spoken",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text=user_text, is_final=True),
+            RealtimeEvent(type="output_transcript_delta", text=question),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_bridge=FakeToolBridge(),
+        tool_mode="hybrid",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert brain.calls == []
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_in_flight_native_tool_cancels_empty_turn_brain_recovery(
+    monkeypatch,
+):
+    """Live 2026-08-19 17:13 turn 3: youtube_music was already running when
+    the empty-turn watchdog expired and started a second Brain dispatch.
+    An in-flight native call is evidence; do not recover over it."""
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_DELEGATE_READBACK_WAIT_S", 0.2)
+
+    class _SlowBridge(FakeToolBridge):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def execute(self, *, wire_name, arguments):
+            self.calls.append((wire_name, arguments))
+            self.started.set()
+            await self.release.wait()
+            return "youtube_music", {
+                "success": True,
+                "output": "playing",
+                "error": None,
+            }
+
+    user_text = "Ja, dann spiel es auch ab."  # i18n-allow: live third ask
+    brain = FakeBrain(replies=("never spoken",))
+    bridge = _SlowBridge()
+    provider = ScriptedTextTurnsProvider(
+        [
+            RealtimeEvent(type="input_transcript", text=user_text, is_final=True),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        [
+            RealtimeEvent(
+                type="tool_call",
+                call_id="call-yt",
+                tool_name="youtube_music",
+                tool_args={"action": "play", "query": "2010s"},
+            ),
+        ],
+    )
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_bridge=bridge,
+        tool_mode="hybrid",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(bridge.started.wait(), timeout=2)
+    await asyncio.sleep(0.45)
+    assert brain.calls == [], "in-flight youtube_music must own the turn"
+    bridge.release.set()
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+    assert bridge.calls and bridge.calls[0][0] == "youtube_music"
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_fast_deterministic_delegate_needs_no_bridge_line(monkeypatch):
     """A result faster than the bridge delay keeps the turn chatter-free."""
     monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.15)

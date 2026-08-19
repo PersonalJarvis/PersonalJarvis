@@ -1,10 +1,11 @@
-"""Execution-state backstop for model promises about future actions.
+"""Execution-state backstop for model promises and false completions.
 
-Models occasionally end a turn with an acknowledgement such as "I'll check and
-get back to you" without emitting a tool call. Jarvis has no autonomous
-continuation after that response, so the sentence is not harmless filler: it is
-an ungrounded claim that work is running. This module detects that narrow,
-high-confidence shape with regex only and provides a localized honest fallback.
+Models occasionally end a turn with "I'll check and get back to you" or
+with a finished-looking result ("I'm playing you a playlist") without a
+tool call. Jarvis has no autonomous continuation after that response, so
+the sentence is not harmless filler: it is an ungrounded claim that work
+is running or already done. This module detects both shapes with regex
+only and provides a localized honest fallback.
 
 The judgement is made per clause, never over the whole text. An answer that
 opens with "Let me check." and signs off with "I'll get back to you when that
@@ -26,6 +27,38 @@ from typing import NamedTuple
 def _normalize(text: str) -> str:
     folded = unicodedata.normalize("NFKD", str(text or "").casefold())
     return "".join(ch for ch in folded if not unicodedata.combining(ch))
+
+
+# Present-tense / perfect claims that the action is already happening or done
+# FOR the user. Distinct from the deferred "I'll look later" vocabulary
+# below: these sentences carry a long result-shaped tail ("a playlist of
+# 2010s songs") that ``_analyse`` treats as substance, so they never look
+# "bare". Live 2026-08-19 17:13 (vertex-live hybrid): the model announced
+# a 2010s playlist in German with function_calls=0 — the user had to say
+# it again before the tool ran.
+_FALSE_COMPLETION_RE = re.compile(
+    r"(?:"
+    r"\bich\s+(?:spiele?|offne|starte|sende|schicke|speichere|"  # i18n-allow: German output matcher
+    r"lege\s+an|setze|mache)\s+"  # i18n-allow: German output matcher
+    r"(?:dir|fur\s+dich)\b|"  # i18n-allow: German output matcher
+    r"\bich\s+habe\s+(?:dir|fur\s+dich)\s+"  # i18n-allow: DE output
+    r"(?:gerade\s+)?.{0,48}"
+    r"(?:gespielt|geoffnet|gestartet|gesendet|"  # i18n-allow: DE output
+    r"geschickt|gespeichert|erledigt)\b|"  # i18n-allow: DE output
+    r"\bi(?:'m|\s+am)\s+(?:playing|opening|starting|sending|saving)\s+"
+    r"(?:you\s+)?(?:a|the|your)\b|"
+    r"\bi(?:'ll|\s+will)\s+(?:play|open|start|send|save)\s+"
+    r"(?:you\s+)?(?:a|the|your)\b|"
+    r"\bi(?:'ve|\s+have)\s+(?:just\s+)?(?:played|opened|started|sent|saved)\s+"
+    r"(?:you\s+)?(?:a|the|your|it)\b|"
+    r"\bplaying\s+you\s+(?:a|the)\b|"
+    r"\bte\s+(?:pongo|reproduzco)\s+(?:una?\s+)?"  # i18n-allow: ES output
+    r"(?:playlist|cancion|musica)\b|"  # i18n-allow: ES output
+    r"\bte\s+(?:envio|abro)\s+(?:el|la|un|una|tu)\b|"  # i18n-allow: ES output
+    r"\bestoy\s+(?:reproduciendo|abriendo|iniciando|enviando)\b|"  # i18n-allow
+    r"\bhe\s+(?:reproducido|abierto|iniciado|enviado|guardado)\b"  # i18n-allow
+    r")"
+)
 
 
 _ACTION_COMMITMENT_RE = re.compile(
@@ -280,6 +313,35 @@ def has_deferred_action_claim(text: str) -> bool:
     return _analyse(text).kind == "bare"
 
 
+def _clause_is_false_completion(clause: _Clause) -> bool:
+    body = clause.body.rstrip()
+    if not body or body.endswith("?"):
+        return False
+    return _FALSE_COMPLETION_RE.search(_normalize(body)) is not None
+
+
+def has_false_completion_claim(text: str) -> bool:
+    """Return whether ``text`` is a false completion with no other substance.
+
+    Used when the model narrates the outcome ("I'm playing you a playlist")
+    without a tool call. The deferred-promise analyser cannot see these:
+    the fake result is the tail, so they look delivered. A list or answer
+    in another clause is substance and must not be replaced.
+    """
+    clauses = _split_clauses(text)
+    if not any(_clause_is_false_completion(clause) for clause in clauses):
+        return False
+    return not any(
+        clause.substance and not _clause_is_false_completion(clause)
+        for clause in clauses
+    )
+
+
+def has_unbacked_action_claim(text: str) -> bool:
+    """Either shape of an action claim that has no execution evidence."""
+    return has_deferred_action_claim(text) or has_false_completion_claim(text)
+
+
 def action_not_started_phrase(language: str) -> str:
     """Return the honest fallback in one resolved runtime output language."""
     return _ACTION_NOT_STARTED_PHRASES.get(
@@ -297,6 +359,8 @@ def replace_unbacked_action_claim(
     """Drop an unbacked promise without ever dropping a delivered answer."""
     if executed_tools:
         return text
+    if has_false_completion_claim(text):
+        return action_not_started_phrase(language)
     analysis = _analyse(text)
     if analysis.kind == "bare":
         return action_not_started_phrase(language)
@@ -308,5 +372,7 @@ def replace_unbacked_action_claim(
 __all__ = [
     "action_not_started_phrase",
     "has_deferred_action_claim",
+    "has_false_completion_claim",
+    "has_unbacked_action_claim",
     "replace_unbacked_action_claim",
 ]

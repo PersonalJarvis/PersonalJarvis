@@ -10698,3 +10698,82 @@ tool. Resolve at lookup; echo on the wire what the provider emitted.
 **Parity.** Lookup is session/bridge-level, every realtime transport.
 Only Vertex Live is known to emit the `default:` prefix; OpenAI and
 Gemini AI Studio send the declared name and hit the exact-match path.
+
+
+## BUG-154: hybrid live model says the action is done, then does nothing — user has to ask again (HIGH, FIXED 2026-08-19)
+
+**Symptom (Windows live forensic, 17:13, `vertex-live` /
+`gemini-live-2.5-flash-native-audio`, hybrid tool mode).** User: "Kannst du
+bitte richtig coole Musik spielen?"  <!-- i18n-allow: live user utterance -->
+Model asked what kind. User: "Egal einfach irgendwas aus den 2010ern."  <!-- i18n-allow: live follow-up -->
+Model said "Alles klar, ich spiele dir eine Playlist mit Songs aus den 2010ern."  <!-- i18n-allow: live spoken false completion -->
+— then silence. No music. The user had to say it a third time
+("Ja, dann spiel es auch ab.") before `youtube_music` ran.  <!-- i18n-allow: live third ask -->
+Same class on other actions: the voice claims the work is done, nothing
+happened, repeating it once makes it work.
+
+**Timeline (`data/jarvis_desktop.log`, session `c0f763c0`).**
+
+| Time | What happened |
+|---|---|
+| 17:13:22 | Turn 1 complete — 1.8 s audio, 37 chars, **function_calls=0** (clarifying question; allowed) |
+| 17:13:34 | Turn 2 complete — 3.7 s audio, 67 chars, **function_calls=0** (false completion; the bug) |
+| 17:13:52 | Turn 3: native `youtube_music` starts |
+| 17:13:55 | Empty-turn watchdog recovers through the Brain chain **over the in-flight tool** |
+| 17:13:55 | `plugin-spotify` matched, plugin not connected, capture aborted — YouTube Music sibling never ran |
+
+**Three stacked faults.**
+
+1. *False completion is not a deferred promise.* The existing
+   `has_deferred_action_claim` guard looks for "I'll check later". "Ich
+   spiele dir eine Playlist …" looks like a delivered result (long tail),  <!-- i18n-allow: live spoken false completion -->
+   so the turn was persisted as success. Prompt rules already forbid
+   announcing without a function call; live 17:13 is proof they are not a
+   correctness boundary.
+2. *Skill capture vetoed the disconnected winner before rematch.*
+   `_prefer_music_service` existed and would have swapped Spotify → YouTube
+   Music. It ran *after* `VETO_PLUGIN_NOT_CONNECTED` returned None.
+3. *The empty-turn watchdog ignored in-flight native tools.*
+   `_executed_tool_names` is written only when execute *finishes*. A 28 s
+   `youtube_music` call looked like silence, so Brain recovery raced it.
+
+**Fix.**
+
+- `has_false_completion_claim` (regex-only, de/en/es): first-person
+  present/perfect action *for the user* ("ich spiele dir", "I'm playing  <!-- i18n-allow: matcher example -->
+  you a", "te pongo una playlist"). `_recover_unbacked_action_claim` uses  <!-- i18n-allow: matcher example -->
+  `has_unbacked_action_claim` (deferred OR false completion). The
+  clarifying question of turn 1 does not match.
+- `_match_skill_for_turn` rematches the music sibling *before* the
+  disconnected veto, so Brain recovery of a music turn actually plays.
+- `_native_tools_in_flight` is counted around native execute; the
+  empty-turn re-ask watchdog and empty-turn recovery treat an in-flight
+  call as evidence and stand down.
+
+**Class rule.** A spoken outcome is not execution evidence. Detect both
+shapes — "I'll do it later" *and* "I am doing it now" — and recover
+through the orchestrator when no tool ran. An in-flight tool is already
+the recovery.
+
+**Parity.** Hybrid and delegate: the unbacked claim starts the
+deterministic Brain dispatch (the 17:13 cell). Direct-tool mode and
+classic `BrainManager.generate` keep the existing honest fallback
+("I did not start an action…") when no tool ran — they do not
+re-dispatch, same as deferred promises. Skill rematch is Brain-level, so
+a later Brain pass on a music turn plays the connected service.
+Execute-time music reroute (unnamed request → preferred / only connected
+service) remains the net when the live model *does* call the wrong
+sibling. Covers every realtime transport; Vertex Live is the forensic.
+
+**Guards.** `tests/unit/brain/test_action_honesty.py`
+(`test_false_completion_claims_are_detected`,
+`test_questions_and_hobby_talk_are_not_false_completions`,
+`test_honesty_fallback_is_not_itself_a_false_completion`,
+`test_german_perfect_needs_the_beneficiary`);
+`tests/unit/realtime/test_session.py`
+(`test_false_completion_without_a_tool_dispatches_the_action`,
+`test_clarifying_question_is_not_an_unbacked_action`,
+`test_in_flight_native_tool_cancels_empty_turn_brain_recovery`);
+`tests/unit/brain/test_paired_plugin_capture_veto.py`
+(`test_capture_rematches_before_the_disconnected_veto`,
+`test_match_skill_for_turn_swaps_disconnected_spotify`).

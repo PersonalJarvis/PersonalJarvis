@@ -5521,6 +5521,13 @@ class BrainManager:
                     vetoed_by=guards.VETO_BLOCK_TIER, skill=skill,
                 )
                 return None
+            # Two music connectors, one domain: rematch BEFORE the
+            # disconnected veto. Live 2026-08-19 17:13: plugin-spotify won
+            # the trigger, the veto aborted capture, and the connected
+            # YouTube Music sibling never ran — the live model then
+            # announced a playlist with function_calls=0. A named service
+            # still wins; veto only if the winner is still disconnected.
+            skill = self._prefer_music_service(skill, user_text, ctx.registry)
             if self._paired_plugin_disconnected(skill):
                 # Two connectors can serve one domain (Spotify and YouTube
                 # Music both answer "spiel Musik"). A paired skill whose plugin
@@ -5537,10 +5544,6 @@ class BrainManager:
                     vetoed_by=guards.VETO_PLUGIN_NOT_CONNECTED, skill=skill,
                 )
                 return None
-            # Two music connectors, one domain: the request goes to the service
-            # the user named, else the preferred one, else the only connected
-            # one — never to whichever music skill happened to be first.
-            skill = self._prefer_music_service(skill, user_text, ctx.registry)
 
             self._skill_match_band = decision.band
             self._skill_match_class = classify(skill)

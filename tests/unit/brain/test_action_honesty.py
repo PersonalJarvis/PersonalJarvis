@@ -7,6 +7,8 @@ import pytest
 from jarvis.brain.action_honesty import (
     action_not_started_phrase,
     has_deferred_action_claim,
+    has_false_completion_claim,
+    has_unbacked_action_claim,
     replace_unbacked_action_claim,
 )
 from jarvis.brain.manager import BrainManager
@@ -199,6 +201,66 @@ async def test_brain_manager_replaces_a_provider_promise_without_tool_evidence()
     reply = await manager.generate("Tell me something interesting.", use_history=False)
 
     assert reply == action_not_started_phrase("en")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        (
+            "Alles klar, ich spiele dir eine Playlist mit Songs "  # i18n-allow
+            "aus den 2010ern."  # i18n-allow: live 2026-08-19 17:13
+        ),
+        "I'm playing you a playlist of 2010s hits.",
+        "I'll play you a playlist of songs from the 2010s.",
+        "I've just sent the email.",
+        "Te pongo una playlist de los 2010.",  # i18n-allow: Spanish output matcher
+    ],
+)
+def test_false_completion_claims_are_detected(text: str) -> None:
+    """Narrating the outcome is not the same as a deferred 'I'll look later'."""
+    assert has_false_completion_claim(text) is True
+    assert has_unbacked_action_claim(text) is True
+    assert replace_unbacked_action_claim(
+        text, executed_tools=(), language="en"
+    ) == action_not_started_phrase("en")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Was genau für Musik gefällt dir denn?",  # i18n-allow: live clarifying question
+        "Ich spiele gerne Tennis am Wochenende.",  # i18n-allow: hobby, not an action
+        "Ich habe gestern Tennis gespielt.",  # i18n-allow: hobby perfect, no beneficiary
+        "You can play the playlist from the sidebar.",
+        "Looking at the 2010s, the hits were huge.",
+        "I'll send you a list: A, B and C are ready.",
+        "Te pongo un ejemplo.",  # i18n-allow: idiom, not playback
+    ],
+)
+def test_questions_and_hobby_talk_are_not_false_completions(text: str) -> None:
+    assert has_false_completion_claim(text) is False
+
+
+@pytest.mark.parametrize("language", ["de", "en", "es"])
+def test_honesty_fallback_is_not_itself_a_false_completion(language: str) -> None:
+    phrase = action_not_started_phrase(language)
+    assert has_false_completion_claim(phrase) is False
+    assert has_unbacked_action_claim(phrase) is False
+
+
+def test_german_perfect_needs_the_beneficiary() -> None:
+    opened = "Ich habe dir die Datei geöffnet."  # i18n-allow: beneficiary + open
+    assert has_false_completion_claim(opened) is True
+
+
+def test_executed_tool_grounds_a_false_completion() -> None:
+    text = "I'm playing you a playlist of 2010s hits."
+    assert (
+        replace_unbacked_action_claim(
+            text, executed_tools={"youtube_music"}, language="en"
+        )
+        == text
+    )
 
 
 def test_packaged_persona_forbids_narrating_a_future_action() -> None:

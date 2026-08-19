@@ -9801,56 +9801,57 @@ class RealtimeVoiceSession:
         )
         self._native_tools_in_flight += 1
         try:
-            execute = self._tool_bridge.execute
-            execute_kwargs: dict[str, Any] = {
-                "wire_name": wire_name,
-                "arguments": arguments,
-            }
             try:
-                parameters = inspect.signature(execute).parameters.values()
-            except (TypeError, ValueError):
-                parameters = ()
-            if any(
-                parameter.name == "trace_id"
-                or parameter.kind is inspect.Parameter.VAR_KEYWORD
-                for parameter in parameters
+                execute = self._tool_bridge.execute
+                execute_kwargs: dict[str, Any] = {
+                    "wire_name": wire_name,
+                    "arguments": arguments,
+                }
+                try:
+                    parameters = inspect.signature(execute).parameters.values()
+                except (TypeError, ValueError):
+                    parameters = ()
+                if any(
+                    parameter.name == "trace_id"
+                    or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters
+                ):
+                    execute_kwargs["trace_id"] = self._turn_trace_id
+                original_name, result = await execute(**execute_kwargs)
+            except Exception:  # noqa: BLE001 -- a failed tool must not kill duplex audio
+                log.warning("realtime tool execution failed: %s", wire_name, exc_info=True)
+                await self._publish_error(
+                    "RealtimeToolError",
+                    f"Realtime tool execution failed: {wire_name}",
+                    recoverable=True,
+                )
+                original_name = wire_name
+                result = {
+                    "success": False,
+                    "error": "The tool failed safely and was not completed.",
+                }
+            if result.get("success"):
+                self._executed_tool_names.add(original_name)
+            elif result.get("confirmation_required"):
+                pass  # a pending confirmation is neither a failure nor a denial
+            elif "not run" in str(result.get("error", "")) or "not available" in str(
+                result.get("error", "")
             ):
-                execute_kwargs["trace_id"] = self._turn_trace_id
-            original_name, result = await execute(**execute_kwargs)
-        except Exception:  # noqa: BLE001 -- a failed tool must not kill duplex audio
-            log.warning("realtime tool execution failed: %s", wire_name, exc_info=True)
-            await self._publish_error(
-                "RealtimeToolError",
-                f"Realtime tool execution failed: {wire_name}",
-                recoverable=True,
+                self._native_tool_denied += 1
+            else:
+                self._native_tool_failures += 1
+            self._direct_tool_results.append((original_name, dict(result)))
+            self._mark_latency_named(
+                "REALTIME_TOOL_COMPLETED",
+                detail=(
+                    f"tool={original_name};success={bool(result.get('success'))};"
+                    f"duration_ms={round((time.monotonic() - started_at) * 1000)}"
+                ),
             )
-            original_name = wire_name
-            result = {
-                "success": False,
-                "error": "The tool failed safely and was not completed.",
-            }
         finally:
             self._native_tools_in_flight = max(0, self._native_tools_in_flight - 1)
             if not ack_task.done():
                 ack_task.cancel()
-        if result.get("success"):
-            self._executed_tool_names.add(original_name)
-        elif result.get("confirmation_required"):
-            pass  # a pending confirmation is neither a failure nor a denial
-        elif "not run" in str(result.get("error", "")) or "not available" in str(
-            result.get("error", "")
-        ):
-            self._native_tool_denied += 1
-        else:
-            self._native_tool_failures += 1
-        self._direct_tool_results.append((original_name, dict(result)))
-        self._mark_latency_named(
-            "REALTIME_TOOL_COMPLETED",
-            detail=(
-                f"tool={original_name};success={bool(result.get('success'))};"
-                f"duration_ms={round((time.monotonic() - started_at) * 1000)}"
-            ),
-        )
         self._drop_provider_output_until_new_response = False
         await self._session.send_tool_result(call_id, wire_name, result)
 

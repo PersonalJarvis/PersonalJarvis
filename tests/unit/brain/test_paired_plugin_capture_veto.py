@@ -10,11 +10,16 @@ a real store read, and never on a fault.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from jarvis.brain.manager import BrainManager
+from jarvis.core.bus import EventBus
+from jarvis.core.config import JarvisConfig
 from jarvis.skills import guards
+from jarvis.skills.registry import SkillRegistry
+from jarvis.skills.skill_context import SkillContext, set_skill_context
 
 
 class _Store:
@@ -122,6 +127,67 @@ def test_only_connected_service_wins_under_auto() -> None:
     reg = _Registry({"plugin-spotify": spotify, "plugin-youtube_music": ytm})
     mgr = _manager_with("auto", {"youtube_music"})
     assert mgr._prefer_music_service(spotify, "spiel musik", reg) is ytm
+
+
+def test_capture_rematches_before_the_disconnected_veto() -> None:
+    """Live 2026-08-19 17:13: plugin-spotify won, the veto aborted, YouTube
+    Music never captured. Rematch first, then veto the winner."""
+    spotify, ytm = _skill("spotify"), _skill("youtube_music")
+    reg = _Registry({"plugin-spotify": spotify, "plugin-youtube_music": ytm})
+    mgr = _manager_with("auto", {"youtube_music"})
+    rematched = mgr._prefer_music_service(spotify, "spiel musik", reg)  # i18n-allow
+    store = _Store({"youtube_music": _tokens()})
+    assert rematched is ytm
+    assert BrainManager._paired_plugin_disconnected(rematched, store=store) is False
+    assert BrainManager._paired_plugin_disconnected(spotify, store=store) is True
+
+
+class _StubRunner:
+    def render_instructions(self, skill: Any, *, args: dict | None = None) -> str:
+        return f"# {skill.name}\nPlay."
+
+
+def _write_music_skill(root: Path, name: str, plugin_id: str, pattern: str) -> None:
+    folder = root / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "SKILL.md").write_text(
+        "---\n"
+        'schema_version: "1"\n'
+        f"name: {name}\n"
+        f"description: Play music on {plugin_id}.\n"
+        f"plugin_id: {plugin_id}\n"
+        "triggers:\n"
+        "  - type: voice\n"
+        f'    pattern: "{pattern}"\n'
+        "    language: [de, en]\n"
+        "risk_policy:\n"
+        "  default_tier: monitor\n"
+        "---\n"
+        "# Demo\nPlay the song.\n",
+        encoding="utf-8",
+    )
+
+
+def test_match_skill_for_turn_swaps_disconnected_spotify(tmp_path: Path) -> None:
+    """The live 17:13 veto-before-rematch: Spotify wins the trigger, is not
+    connected, capture must still return YouTube Music."""
+    _write_music_skill(tmp_path, "plugin-spotify", "spotify", "(musik|music)")
+    _write_music_skill(
+        tmp_path, "plugin-youtube_music", "youtube_music", "(youtube music)"
+    )
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
+    try:
+        mgr = BrainManager(config=JarvisConfig(), bus=EventBus(), tools={})
+        mgr._plugin_disconnected = (  # type: ignore[method-assign]
+            lambda pid, store=None: pid != "youtube_music"
+        )
+        matched = mgr._match_skill_for_turn("spiel mal musik")  # i18n-allow
+        assert matched is not None
+        assert matched.name == "plugin-youtube_music"
+    finally:
+        set_skill_context(None)
 
 
 def test_no_swap_when_the_match_already_fits_or_the_sibling_is_missing() -> None:

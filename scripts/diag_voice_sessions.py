@@ -46,7 +46,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from jarvis.brain.action_honesty import has_deferred_action_claim  # noqa: E402
+from jarvis.brain.action_honesty import has_unbacked_action_claim  # noqa: E402
 from jarvis.diagnostics.realtime_forensics import (  # noqa: E402
     evaluate_postmortem,
     extract_postmortems,
@@ -114,7 +114,7 @@ def _check_promise_without_action(session: Session) -> None:
         payload = event.get("payload") or {}
         jarvis_text = str(payload.get("jarvis_text", "") or "")
         tool_calls = payload.get("tool_calls") or ()
-        if jarvis_text and not tool_calls and has_deferred_action_claim(jarvis_text):
+        if jarvis_text and not tool_calls and has_unbacked_action_claim(jarvis_text):
             session.findings.append(
                 Finding(
                     severity="high",

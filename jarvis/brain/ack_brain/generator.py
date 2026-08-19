@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 
 from jarvis.brain.ack_brain.circuit_breaker import CircuitBreaker
 from jarvis.brain.ack_brain.persona_prompt import get_persona_prompt
-from jarvis.brain.action_honesty import has_deferred_action_claim
+from jarvis.brain.action_honesty import has_unbacked_action_claim
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.turn_language import (
     detect_text_language,
@@ -358,7 +358,7 @@ class AckGenerator:
             await self._breaker.record_success()
             return None
 
-        if has_deferred_action_claim(scrubbed):
+        if has_unbacked_action_claim(scrubbed):
             _emit_counter(
                 "ack_unbacked_action_suppressed_total",
                 provider=provider_label,
@@ -410,7 +410,7 @@ class AckGenerator:
         scrubbed = scrub_result.cleaned
         if sum(1 for c in scrubbed if c.isalnum()) < 3:
             return None
-        if has_deferred_action_claim(scrubbed):
+        if has_unbacked_action_claim(scrubbed):
             return None
         if _detect_self_answer(scrubbed):
             return None
