@@ -206,3 +206,25 @@ def test_memory_save_specifics() -> None:
         "memory-save must have no triggers — TriggerMatcher must not fire it"
     )
     assert fm.risk_policy.default_tier == "safe"
+
+
+def test_spotify_play_verb_plus_song_noun_triggers() -> None:
+    """Generic "play a song" must capture so music_service can swap to the
+    preferred connected connector. Live 2026-08-19: a play request that named
+    no service was taken by disconnected Spotify."""
+    skill = parse_skill(builtin_skill_path("plugin-spotify"))
+    assert skill.frontmatter is not None
+    patterns = [
+        re.compile(t.pattern, re.IGNORECASE)
+        for t in skill.frontmatter.triggers
+        if t.type == "voice" and t.pattern
+    ]
+    hits = "bitte mal ein schönes Lied abspielen?"  # i18n-allow: live utterance
+    misses = "was bedeutet das Lied"  # i18n-allow: definitional, no play verb
+    assert any(p.search(hits) for p in patterns)
+    # The brand/musik trigger still fires on "Lied" only if a play verb is
+    # next to it; a bare song-noun question must not.
+    play_noun = [
+        p for p in patterns if "lied" in (p.pattern or "") and "spotify" not in (p.pattern or "")
+    ]
+    assert play_noun and not any(p.search(misses) for p in play_noun)

@@ -84,16 +84,6 @@ async def _default_refresher(observed_access_token: str | None = None) -> bool:
     return attempt.usable
 
 
-def _preference_hint_for(service_id: str) -> str:
-    """One sentence about ``[music] preferred_service`` for the tool
-    description — cached in ``jarvis.core.music_service`` so a router turn
-    never re-parses the config. Never raises (a description must not)."""
-    try:
-        from jarvis.core.music_service import description_hint
-
-        return description_hint(service_id)
-    except Exception:  # noqa: BLE001 — a fault means no hint, not no tool
-        return ""
 def _artists(item: dict[str, Any]) -> str:
     names = [a.get("name") for a in item.get("artists") or [] if a.get("name")]
     return ", ".join(n for n in names if n)
@@ -168,8 +158,14 @@ class SpotifyRestTool:
     def description(self) -> str:
         """The static description plus the user's music preference (see
         ``jarvis.core.music_service``): with YouTube Music also connected, the
-        LLM router must send an unnamed music request where the setting says."""
-        return self._BASE_DESCRIPTION + _preference_hint_for(self.name)
+        LLM router must send an unnamed music request where the setting says.
+        The hint is first so a compact live-model description still carries it."""
+        try:
+            from jarvis.core.music_service import compose_tool_description
+
+            return compose_tool_description(self.name, self._BASE_DESCRIPTION)
+        except Exception:  # noqa: BLE001 — a description must not raise
+            return self._BASE_DESCRIPTION
 
     schema: dict[str, Any] = {
         "type": "object",

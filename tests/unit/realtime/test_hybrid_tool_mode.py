@@ -370,6 +370,17 @@ def test_router_catalog_renders_for_every_realtime_wire() -> None:
 # --- Execute-side turn-shape guards (live lesson 2026-08-19 12:50) ----------
 
 
+@pytest.fixture(autouse=True)
+def _music_services_are_local(monkeypatch):
+    """Execute-time music reroute reads the token store; unit tests must not."""
+    monkeypatch.setattr(
+        "jarvis.core.music_service.connected_music_services", lambda: ()
+    )
+    monkeypatch.setattr(
+        "jarvis.core.music_service.preferred_music_service", lambda: "auto"
+    )
+
+
 def _descriptor_with_tier(name: str, tier: str) -> SupervisorToolDescriptor:
     return SupervisorToolDescriptor(
         name=name,
@@ -384,12 +395,14 @@ class _RecordingGateway:
     def __init__(self, descriptors):
         self._items = tuple(descriptors)
         self.executed: list[str] = []
+        self.arguments: list[object] = []
 
     def catalog(self):
         return self._items
 
-    async def execute(self, name, _arguments, _request):
+    async def execute(self, name, arguments, _request):
         self.executed.append(name)
+        self.arguments.append(arguments)
         return ToolResult(success=True, output="ok")
 
     async def publish_guard_denied(self, *_a, **_k):
@@ -460,6 +473,85 @@ async def test_monitor_tool_needs_an_order_a_tasking_or_a_world_request():
     result = await _call(bridge, "search_web", "Was geht ab?")  # i18n-allow: German fixture
     assert result["success"] is True
     assert gateway.executed == ["google_calendar", "spotify", "search_web"]
+
+
+@pytest.mark.asyncio
+async def test_vertex_toolset_prefix_executes_the_declared_hybrid_tool():
+    """Live 2026-08-19 16:07: vertex-live called ``default:run_shell``.
+
+    The prefix is a transport artifact. Hybrid execute must still run the
+    declared tool instead of answering "not available in this session."
+    """
+    gateway, bridge = _guarded_bridge()
+    result = await _call(bridge, "default:search_web", "Was geht ab?")  # i18n-allow
+    assert result["success"] is True
+    assert gateway.executed == ["search_web"]
+
+
+@pytest.mark.asyncio
+async def test_unnamed_music_call_is_rerouted_to_the_preferred_service(monkeypatch):
+    """Live 2026-08-19: preference YouTube Music, Spotify not connected, the
+    hybrid model still called ``spotify`` for an unnamed play-something-I-like
+    request. Execute-time reroute is the correctness boundary."""
+    from jarvis.core import music_service as ms
+
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "youtube_music")
+    monkeypatch.setattr(
+        ms, "connected_music_services", lambda: ("spotify", "youtube_music")
+    )
+    gateway = _RecordingGateway(
+        [
+            _descriptor_with_tier("spotify", "monitor"),
+            _descriptor_with_tier("youtube_music", "monitor"),
+        ]
+    )
+    bridge = RealtimeToolBridge(gateway=gateway, language="de", compact=True)
+    utterance = "Mach einfach irgendwie Schönes, was mir gefällt."  # i18n-allow
+    result = await _call(bridge, "spotify", utterance)
+    assert result["success"] is True
+    assert gateway.executed == ["youtube_music"]
+    assert gateway.arguments and gateway.arguments[0].get("type") == "liked"
+
+
+@pytest.mark.asyncio
+async def test_named_music_service_is_not_rerouted(monkeypatch):
+    from jarvis.core import music_service as ms
+
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "youtube_music")
+    monkeypatch.setattr(
+        ms, "connected_music_services", lambda: ("spotify", "youtube_music")
+    )
+    gateway = _RecordingGateway(
+        [
+            _descriptor_with_tier("spotify", "monitor"),
+            _descriptor_with_tier("youtube_music", "monitor"),
+        ]
+    )
+    bridge = RealtimeToolBridge(gateway=gateway, language="de", compact=True)
+    named = "spiel das auf Spotify"  # i18n-allow: spoken-input sample
+    result = await _call(bridge, "spotify", named)
+    assert result["success"] is True
+    assert gateway.executed == ["spotify"]
+
+
+@pytest.mark.asyncio
+async def test_disconnected_music_tool_reroutes_to_the_connected_sibling(
+    monkeypatch,
+):
+    from jarvis.core import music_service as ms
+
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "auto")
+    monkeypatch.setattr(ms, "connected_music_services", lambda: ("youtube_music",))
+    gateway = _RecordingGateway(
+        [
+            _descriptor_with_tier("spotify", "monitor"),
+            _descriptor_with_tier("youtube_music", "monitor"),
+        ]
+    )
+    bridge = RealtimeToolBridge(gateway=gateway, language="de", compact=True)
+    result = await _call(bridge, "spotify", "Spiel mir ein schönes Lied.")  # i18n-allow
+    assert result["success"] is True
+    assert gateway.executed == ["youtube_music"]
 
 
 def _wire_suffix(name: str) -> str:

@@ -165,16 +165,6 @@ def _default_playback_mode() -> str:
     return str(load_config().music.playback)
 
 
-def _preference_hint_for(service_id: str) -> str:
-    """One sentence about ``[music] preferred_service`` for the tool
-    description — cached in ``jarvis.core.music_service`` so a router turn
-    never re-parses the config. Never raises (a description must not)."""
-    try:
-        from jarvis.core.music_service import description_hint
-
-        return description_hint(service_id)
-    except Exception:  # noqa: BLE001 — a fault means no hint, not no tool
-        return ""
 def _clean(text: Any) -> str:
     return html.unescape(str(text or "")).strip()
 
@@ -267,9 +257,10 @@ class YouTubeMusicRestTool:
         "one of their playlists or their liked songs (opens in YouTube Music in the "
         "browser and keeps playing like a radio), pause, resume, skip, go back, say "
         "what is playing right now, like a song, add a song to a playlist, create a "
-        "playlist, list playlists. Use for 'play Radiohead on YouTube Music', "
-        "'skip this', 'what song is this', 'pause the music', 'like this song', "
-        "'add this to my running playlist'. Actions: now_playing, play, pause, "
+        "playlist, list playlists. Use for 'play Radiohead', 'play a nice song', "
+        "'play something I like', 'skip this', 'what song is this', "
+        "'pause the music', 'like this song', 'add this to my running playlist'. "
+        "Actions: now_playing, play, pause, "
         "next, previous, search, list_playlists, playlist_tracks, liked_songs, "
         "like, add_to_playlist, create_playlist, open (show the player), "
         "hide_player, set_volume. Music plays in a background player window "
@@ -281,8 +272,14 @@ class YouTubeMusicRestTool:
     def description(self) -> str:
         """The static description plus the user's music preference, so the
         LLM router makes the same Spotify-vs-YouTube Music choice the skill
-        capture does (one resolver, ``jarvis.core.music_service``)."""
-        return self._BASE_DESCRIPTION + _preference_hint_for(self.name)
+        capture does (one resolver, ``jarvis.core.music_service``). The hint
+        is first so a compact live-model description still carries it."""
+        try:
+            from jarvis.core.music_service import compose_tool_description
+
+            return compose_tool_description(self.name, self._BASE_DESCRIPTION)
+        except Exception:  # noqa: BLE001 — a description must not raise
+            return self._BASE_DESCRIPTION
 
     schema: dict[str, Any] = {
         "type": "object",

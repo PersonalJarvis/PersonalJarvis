@@ -57,11 +57,64 @@ def test_auto_takes_the_only_connected_service_else_the_match():
 def test_preference_hint_only_when_both_connected_and_a_preference_exists():
     both = ("spotify", "youtube_music")
     assert ms.preference_hint("spotify", preferred="auto", connected=both) == ""
-    assert ms.preference_hint("spotify", preferred="youtube_music", connected=("spotify",)) == ""
+    only_spotify = ms.preference_hint(
+        "spotify", preferred="youtube_music", connected=("spotify",)
+    )
+    assert "connected music service" in only_spotify
     pro = ms.preference_hint("youtube_music", preferred="youtube_music", connected=both)
     con = ms.preference_hint("spotify", preferred="youtube_music", connected=both)
     assert "prefers YouTube Music" in pro and "does not name another service" in pro
     assert "prefers YouTube Music" in con and "names Spotify explicitly" in con
+
+
+def test_preference_hint_when_only_one_service_is_connected():
+    live = ("youtube_music",)
+    assert "connected music service" in ms.preference_hint(
+        "youtube_music", preferred="auto", connected=live
+    )
+    dead = ms.preference_hint("spotify", preferred="auto", connected=live)
+    assert "not connected" in dead and "YouTube Music" in dead
+
+
+def test_compose_tool_description_puts_the_hint_first(monkeypatch):
+    monkeypatch.setattr(ms, "description_hint", lambda _sid: " HINT.")
+    composed = ms.compose_tool_description("spotify", "Play songs.")
+    assert composed.startswith("HINT.") and composed.endswith("Play songs.")
+
+
+def test_reroute_music_tool_sends_unnamed_requests_to_the_preferred_service(
+    monkeypatch,
+):
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "youtube_music")
+    monkeypatch.setattr(
+        ms, "connected_music_services", lambda: ("spotify", "youtube_music")
+    )
+    unnamed = "Mach einfach irgendwie Schönes, was mir gefällt."  # i18n-allow
+    assert ms.reroute_music_tool("spotify", unnamed) == "youtube_music"
+    named = "spiel das auf spotify"  # i18n-allow: spoken-input sample
+    assert ms.reroute_music_tool("youtube_music", named) == "spotify"
+    assert ms.reroute_music_tool("search_web", unnamed) == "search_web"
+
+
+def test_reroute_music_tool_uses_the_only_connected_service(monkeypatch):
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "auto")
+    monkeypatch.setattr(ms, "connected_music_services", lambda: ("youtube_music",))
+    assert ms.reroute_music_tool("spotify", "play a nice song") == "youtube_music"
+
+
+def test_adapt_music_arguments_taste_request_plays_liked_songs():
+    text = "Mach einfach irgendwie Schönes, was mir gefällt."  # i18n-allow
+    out = ms.adapt_music_arguments(
+        text, source="spotify", target="youtube_music", args={"action": "play"}
+    )
+    assert out["action"] == "play" and out["type"] == "liked"
+    titled = ms.adapt_music_arguments(
+        text,
+        source="spotify",
+        target="youtube_music",
+        args={"action": "play", "query": "Karma Police", "type": "track"},
+    )
+    assert titled["type"] == "song" and titled["query"] == "Karma Police"
 
 
 def test_connected_music_services_reads_the_store_and_isolates_faults():

@@ -9,10 +9,12 @@ module is the one place that decides, pure and unit-testable:
 3. Otherwise ``auto``: the only connected service, else the skill that matched
    the turn (Spotify by catalog order — the behaviour before the setting).
 
-The brain applies the answer to the deterministic skill capture; the two
-music tools carry it in their descriptions so the LLM router makes the same
-choice on the turns no skill captures. Both read the SAME resolver, so a
-preference can never be honoured in one place and ignored in the other.
+The brain applies the answer to the deterministic skill capture. The two
+music tools put the same sentence at the START of their descriptions (hybrid
+live models compact to 450 characters, so a trailing hint was being cut).
+Execute-time reroute (``reroute_music_tool``) is the correctness boundary:
+prompt compliance is not one (hybrid live 2026-08-19: preference YouTube
+Music, Spotify not connected, the live model still called ``spotify``).
 """
 from __future__ import annotations
 
@@ -41,6 +43,29 @@ _EXPLICIT: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 _LABELS = {MUSIC_SERVICE_SPOTIFY: "Spotify", MUSIC_SERVICE_YOUTUBE_MUSIC: "YouTube Music"}
+
+# "play something I like" is liked songs, not a title search.
+# Word-boundaried so a song title that happens to contain "like" stays a title.
+_TASTE_RE = re.compile(
+    r"(?:"
+    r"was\s+mir\s+gef[aä]llt|"  # i18n-allow: spoken-input vocabulary
+    r"something\s+i\s+(?:like|love)|"
+    r"songs?\s+i\s+(?:like|love)|"
+    r"liked\s+songs?|"
+    r"meine\s+likes|"  # i18n-allow: spoken-input vocabulary
+    r"lo\s+que\s+me\s+gusta"
+    r")",
+    re.IGNORECASE,
+)
+
+# Spotify `type=track` vs YouTube Music `type=song`.
+_TYPE_MAP: dict[tuple[str, str], dict[str, str]] = {
+    (MUSIC_SERVICE_SPOTIFY, MUSIC_SERVICE_YOUTUBE_MUSIC): {"track": "song"},
+    (MUSIC_SERVICE_YOUTUBE_MUSIC, MUSIC_SERVICE_SPOTIFY): {
+        "song": "track",
+        "liked": "playlist",
+    },
+}
 
 log = logging.getLogger(__name__)
 
@@ -180,9 +205,29 @@ def resolve_music_service(
 
 def preference_hint(service_id: str, *, preferred: str, connected: Iterable[str]) -> str:
     """One sentence for a music tool's description, so the LLM router honours
-    the same preference the skill capture does. Empty when there is nothing to
-    say (one service, or no preference)."""
+    the same preference the skill capture does.
+
+    With only one service connected, the sentence names that service (and
+    tells the disconnected sibling not to take unnamed requests) — otherwise
+    a live model still sees both declarations and picks the disconnected
+    one. Empty only when nothing is connected, or two are connected with no
+    named preference (``auto``).
+    """
     live = [pid for pid in MUSIC_PLUGIN_IDS if pid in set(connected)]
+    if len(live) == 1:
+        only = live[0]
+        if service_id == only:
+            return (
+                f" {service_label(only)} is the connected music service: use this tool "
+                "for any music request that does not name another service."
+            )
+        if service_id in MUSIC_PLUGIN_IDS:
+            return (
+                f" {service_label(service_id)} is not connected. Use "
+                f"{service_label(only)} for music unless the user names "
+                f"{service_label(service_id)} explicitly."
+            )
+        return ""
     pref = (preferred or MUSIC_SERVICE_AUTO).strip().lower()
     if len(live) < 2 or pref == MUSIC_SERVICE_AUTO or pref not in live:
         return ""
@@ -197,13 +242,112 @@ def preference_hint(service_id: str, *, preferred: str, connected: Iterable[str]
     )
 
 
+def compose_tool_description(service_id: str, base: str) -> str:
+    """Put the preference/connection sentence FIRST so a 450-character compact
+    live-model description still carries it."""
+    hint = description_hint(service_id).strip()
+    body = str(base or "").strip()
+    if not hint:
+        return body
+    return f"{hint} {body}" if body else hint
+
+
+def reroute_music_tool(called: str, text: str) -> str:
+    """The music tool this call should actually run (see module docstring).
+
+    ``called`` is the tool the model named. Unnamed requests go to the
+    preferred connected service, else the only connected one. A named
+    service still wins. Never raises — a fault keeps ``called``.
+    """
+    if called not in MUSIC_PLUGIN_IDS:
+        return called
+    try:
+        target = resolve_music_service(
+            text,
+            preferred=preferred_music_service(),
+            connected=connected_music_services(),
+            matched=called,
+        )
+    except Exception as exc:  # noqa: BLE001 — a routing nicety must never break a turn
+        log.debug("music tool reroute skipped: %s", exc)
+        return called
+    return target if target in MUSIC_PLUGIN_IDS else called
+
+
+def adapt_music_arguments(
+    text: str,
+    *,
+    source: str,
+    target: str,
+    args: dict[str, object] | None,
+) -> dict[str, object]:
+    """Map arguments across the two music tools and, for a taste request
+    ("something I like"), play liked songs instead of searching the words
+    as a title."""
+    out: dict[str, object] = dict(args or {})
+    if source != target:
+        item_type = str(out.get("type") or "")
+        mapped = _TYPE_MAP.get((source, target), {}).get(item_type)
+        if mapped:
+            out["type"] = mapped
+        action = str(out.get("action") or "").strip()
+        if target == MUSIC_SERVICE_YOUTUBE_MUSIC and action in {
+            "list_devices",
+            "queue",
+        }:
+            out["action"] = "play"
+        elif target == MUSIC_SERVICE_SPOTIFY and action in {
+            "liked_songs",
+            "like",
+            "open",
+            "hide_player",
+            "add_to_playlist",
+            "create_playlist",
+        }:
+            if action in {"liked_songs", "like"}:
+                out["action"] = "play"
+                out["type"] = "playlist"
+                out.setdefault("query", "Liked Songs")
+            elif action in {"open", "hide_player"}:
+                out["action"] = "now_playing"
+            else:
+                out["action"] = "play"
+    return _apply_taste(text, target, out)
+
+
+def _apply_taste(
+    text: str, target: str, args: dict[str, object]
+) -> dict[str, object]:
+    if not _TASTE_RE.search(text or ""):
+        return args
+    action = str(args.get("action") or "play").strip() or "play"
+    if action not in {"play", "search", "now_playing"}:
+        return args
+    query = str(args.get("query") or "").strip()
+    if query and not _TASTE_RE.search(query):
+        # A concrete title in `query` still wins over the taste phrasing.
+        return args
+    args["action"] = "play"
+    if query:
+        args.pop("query", None)
+    if target == MUSIC_SERVICE_YOUTUBE_MUSIC:
+        args["type"] = "liked"
+    else:
+        args["type"] = "playlist"
+        args["query"] = "Liked Songs"
+    return args
+
+
 __all__ = [
+    "adapt_music_arguments",
+    "compose_tool_description",
     "connected_music_services",
     "description_hint",
     "explicit_music_service",
     "forget_connected_music_services",
     "preference_hint",
     "preferred_music_service",
+    "reroute_music_tool",
     "resolve_music_service",
     "service_label",
 ]

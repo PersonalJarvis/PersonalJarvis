@@ -666,6 +666,53 @@ class ToolUseLoop:
         )
         return tool, alias
 
+    def _reroute_music_tool(
+        self,
+        tool: Tool | None,
+        tool_name: str,
+        tool_args: Any,
+        user_utterance: str,
+    ) -> tuple[Tool | None, str, Any]:
+        """Send an unnamed music call to the preferred/only connected service.
+
+        Same resolver the skill capture uses. A named service still wins.
+        Never raises — a fault keeps the model's pick.
+        """
+        try:
+            from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
+            from jarvis.core.music_service import (
+                adapt_music_arguments,
+                reroute_music_tool,
+            )
+        except Exception:  # noqa: BLE001 — a routing nicety must never break a turn
+            return tool, tool_name, tool_args
+        if tool_name not in MUSIC_PLUGIN_IDS:
+            return tool, tool_name, tool_args
+        try:
+            target = reroute_music_tool(tool_name, user_utterance)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("tool_use_loop: music tool reroute skipped: %s", exc)
+            return tool, tool_name, tool_args
+        if target == tool_name:
+            return tool, tool_name, tool_args
+        new_tool, new_name = self._resolve_tool(target)
+        if new_tool is None:
+            return tool, tool_name, tool_args
+        log.info(
+            "tool_use_loop: music tool rerouted %s -> %s",
+            tool_name,
+            new_name,
+        )
+        args = tool_args if isinstance(tool_args, dict) else {}
+        try:
+            adapted = adapt_music_arguments(
+                user_utterance, source=tool_name, target=new_name, args=args
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("tool_use_loop: music arg adapt skipped: %s", exc)
+            adapted = args
+        return new_tool, new_name, adapted
+
     async def _publish_guard_denied(
         self, tool_name: str, reason: str, tid: UUID,
     ) -> None:
@@ -912,6 +959,9 @@ class ToolUseLoop:
                 first_input = first_call.get("input", {}) or {}
                 if not isinstance(first_input, dict):
                     first_input = {}
+                _, first_name, first_input = self._reroute_music_tool(
+                    None, first_name, first_input, user_utterance
+                )
                 try:
                     await ack_emitter(first_name, first_input)
                 except Exception as exc:  # noqa: BLE001 — emitter must never block tool execution
@@ -962,6 +1012,9 @@ class ToolUseLoop:
                 # and the tool-result message all key on it); the raw model
                 # spelling stays in ``final_agg.tool_calls`` above.
                 tool, tool_name = self._resolve_tool(tool_name)
+                tool, tool_name, tool_args = self._reroute_music_tool(
+                    tool, tool_name, tool_args, user_utterance
+                )
                 stt_blocked, stt_reason = (
                     _is_stt_hallucinated(tool_name, tool_args)
                     if tool is not None else (False, "")

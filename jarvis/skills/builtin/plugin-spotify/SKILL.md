@@ -10,6 +10,12 @@ intent_objects: [spotify, musik, music, música, lied, song, canción, track, ti
 triggers:
   - type: voice
     pattern: '(spotify|musik|music|música)'  # i18n-allow: spoken-input vocabulary
+  # Play-verb + a music noun ("play a song" / "Lied abspielen") — the bare
+  # noun is not a trigger (a question about a song is not a play request).
+  # Generic capture lands here, then music_service swaps to the preferred
+  # connected connector.
+  - type: voice
+    pattern: '(spiel\w*|play|abspielen|pon|reproduce).{0,48}(lied|song|titel|track|playlist|album|canción)|(lied|song|titel|track|playlist|album|canción).{0,24}(spiel\w*|play|abspielen|pon|reproduce)'  # i18n-allow: spoken-input vocabulary, de/en/es
 requires_tools: [spotify]
 risk_policy:
   default_tier: monitor
