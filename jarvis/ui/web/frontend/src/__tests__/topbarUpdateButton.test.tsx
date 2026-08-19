@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "@/components/layout/TopBar";
 import { useEventStore } from "@/store/events";
 
+vi.mock("@/components/MascotGigi", () => ({
+  MascotGigi: () => <div data-testid="mascot-gigi" />,
+}));
+
 function mockUpdateStatus(body: Record<string, unknown>): void {
   vi.stubGlobal(
     "fetch",

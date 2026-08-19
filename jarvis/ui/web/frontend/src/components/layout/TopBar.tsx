@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppWindow, Download, RotateCw } from "lucide-react";
 
 import { useEventStore, type SectionId } from "@/store/events";
+import { useDeckStore } from "@/store/deck";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
+import { MascotGigi } from "@/components/MascotGigi";
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { openExternalUrl } from "@/lib/openExternal";
 
@@ -49,6 +51,7 @@ export function TopBar() {
   const activeSection = useEventStore((s) => s.activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
+  const deckMode = useDeckStore((s) => s.mode);
   // The coding workspace takes the actions into its own toolbar row, under
   // every id that reaches it. The rule is "the section carries the actions
   // itself" — a section that does not would lose Restart, which is the one
@@ -61,8 +64,24 @@ export function TopBar() {
     return null;
   }
 
+  /*
+   * The deck hides the sidebar, and the sidebar is where Gigi lives on every
+   * other screen. Without him here the top-left of the front page is a blank
+   * strip. He stays a compact header mark — not the wallpaper overlay that
+   * used to sit in every empty section corner.
+   */
+  const showGigi = activeSection === "chats" && deckMode === "deck";
+
   return (
     <div className="jarvis-shell-surface flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border px-4 backdrop-blur-md">
+      {showGigi ? (
+        <span
+          className="mr-auto flex h-8 w-8 shrink-0 items-center justify-center"
+          data-testid="topbar-gigi"
+        >
+          <MascotGigi size={32} reactToVoice enableComments={false} />
+        </span>
+      ) : null}
       {/* Status, not an action — carries its own `mr-auto` so it sits at the
           left end of this right-aligned bar and never crowds the buttons. */}
       <CodingModeBadge />

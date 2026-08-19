@@ -1,10 +1,14 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar, TopBarActions } from "./TopBar";
 import { useEventStore } from "@/store/events";
+import { useDeckStore } from "@/store/deck";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
+}));
+vi.mock("@/components/MascotGigi", () => ({
+  MascotGigi: () => <div data-testid="mascot-gigi" />,
 }));
 
 // The bar is section-aware now, so every test below states which screen it is
@@ -145,6 +149,31 @@ describe("TopBar restart button", () => {
  * through that Restart button, so a refactor that quietly drops it from the IDE
  * would leave the section with no way to pick up its own rebuild.
  */
+describe("TopBar Gigi on the mission deck", () => {
+  afterEach(() => {
+    act(() => useDeckStore.setState({ mode: "deck" }));
+  });
+
+  it("sits in the top-left while the deck is the front page", () => {
+    useDeckStore.setState({ mode: "deck" });
+    render(<TopBar />);
+    expect(screen.getByTestId("topbar-gigi")).toBeTruthy();
+  });
+
+  it("steps off on every other section — the sidebar already carries the mark", () => {
+    useDeckStore.setState({ mode: "deck" });
+    useEventStore.setState({ activeSection: "tasks" });
+    render(<TopBar />);
+    expect(screen.queryByTestId("topbar-gigi")).toBeNull();
+  });
+
+  it("steps off classic chat, where the sidebar is back", () => {
+    useDeckStore.setState({ mode: "classic" });
+    render(<TopBar />);
+    expect(screen.queryByTestId("topbar-gigi")).toBeNull();
+  });
+});
+
 describe("TopBar in the classic terminal grid", () => {
   it("renders no bar of its own there", () => {
     useEventStore.setState({ activeSection: "agentic-ide-classic" });
