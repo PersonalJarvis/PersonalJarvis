@@ -56,6 +56,22 @@ vi.mock("@/lib/voiceApi", () => ({
   requestVoiceCall: () => requestVoiceCall(),
   requestVoiceHangup: async () => {},
 }));
+vi.mock("@/components/MascotGigi", () => ({
+  MascotGigi: () => <div data-testid="mascot-gigi" />,
+}));
+vi.mock("@/components/layout/TopBar", () => ({
+  TopBarActions: () => (
+    <>
+      <button type="button">Restart</button>
+      <button type="button" data-testid="detach-view-button">
+        Own window
+      </button>
+    </>
+  ),
+}));
+vi.mock("@/components/layout/CodingModeBadge", () => ({
+  CodingModeBadge: () => null,
+}));
 
 import { MissionDeckView } from "@/views/MissionDeckView";
 import { useDeckStore } from "@/store/deck";
@@ -158,6 +174,13 @@ describe("MissionDeckView — the three acts", () => {
     fireEvent.click(screen.getByRole("button", { name: /saying “Hey Nova”/ }));
     expect(screen.getByTestId("deck-board")).toBeTruthy();
     expect(requestVoiceCall).toHaveBeenCalledTimes(1);
+  });
+
+  test("the header carries Gigi and the chrome actions — one row, not two", () => {
+    render(<MissionDeckView />);
+    expect(screen.getByTestId("deck-header-gigi")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
+    expect(screen.getByTestId("detach-view-button")).toBeTruthy();
   });
 
   test("a deck that mounts into a running session is simply the board — no reveal", () => {

@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
  * not even visible — is a footgun. The real switch stays next to the panes it
  * affects; this takes the user there.
  */
-export function CodingModeBadge() {
+export function CodingModeBadge({ className }: { className?: string }) {
   const t = useT();
   const mode = useEventStore((s) => s.codingMode);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
@@ -64,11 +64,12 @@ export function CodingModeBadge() {
       // to exactly the users who depend on it most.
       disabled={activeSection === "agentic-ide" || activeSection === "agentic-ide-classic"}
       className={cn(
-        "mr-auto inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1",
+        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1",
         "text-xs font-medium transition-colors disabled:cursor-default",
         mode.active
           ? "border-primary/60 bg-primary/15 text-primary hover:bg-primary/25"
           : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground",
+        className,
       )}
     >
       <Brain aria-hidden className="h-3.5 w-3.5" />

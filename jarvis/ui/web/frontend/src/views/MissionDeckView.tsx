@@ -5,6 +5,9 @@ import { useDeckStore } from "@/store/deck";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { DockRail } from "@/components/layout/DockRail";
+import { TopBarActions } from "@/components/layout/TopBar";
+import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
+import { MascotGigi } from "@/components/MascotGigi";
 import { DeckOrb, type OrbReadouts } from "@/components/deck/DeckOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import { DeckStandby, ORB_TRAVEL } from "@/components/deck/DeckStandby";
@@ -39,7 +42,7 @@ import { useT } from "@/i18n";
  * The layout follows the maintainer's sketch of 2026-08-17 (photographed
  * rotated; read upright):
  *
- *   ┌ voice bars · lamps · live counter ─────────── name · brain · switch ┐
+ *   ┌ gigi · voice bars · lamps · counter ── name · brain · switch · chrome ┐
  *   │ dock │ [log — the     [response][api]        [ WIKI — 3D, tall    ] │
  *   │      │  terminal]     (      ORB      )       [                    ] │
  *   │      │ [outputs][run]   [capture]            [terminals] [ide grid] │
@@ -208,9 +211,16 @@ export function MissionDeckView({
   return (
     <MotionConfig reducedMotion="user">
     <div className="flex h-full min-h-0 flex-col">
-      {/* Status bar: voice bars, lamps and the live counter left; identity,
-          brain and the surface switch right. A thin bracket rule underneath. */}
-      <header className="relative flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2">
+      {/* One header. The shell TopBar steps aside on this screen (same
+          rule as the IDE): Gigi and the chrome actions live here so the
+          front page is not two bars with a hole between them. */}
+      <header className="relative flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2">
+        <span
+          className="flex h-8 w-8 shrink-0 items-center justify-center"
+          data-testid="deck-header-gigi"
+        >
+          <MascotGigi size={32} reactToVoice enableComments={false} />
+        </span>
         <div className="flex items-center gap-3">
           <VoiceWaveform
             levelRef={voiceInputLevelRef}
@@ -238,7 +248,7 @@ export function MissionDeckView({
 
         <LiveCounter />
 
-        <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1">
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="font-display text-sm font-bold uppercase tracking-[0.18em]">
             {assistantName}
           </span>
@@ -254,6 +264,8 @@ export function MissionDeckView({
             onClick={() => setActiveSection("apikeys")}
           />
           {headerAccessory}
+          <CodingModeBadge />
+          <TopBarActions />
         </div>
 
         <svg

@@ -7,7 +7,6 @@ import { useUpdate } from "@/hooks/useUpdate";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
-import { MascotGigi } from "@/components/MascotGigi";
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { openExternalUrl } from "@/lib/openExternal";
 
@@ -32,11 +31,13 @@ import { openExternalUrl } from "@/lib/openExternal";
  * guard (409 → arm a force override) rather than killing live missions silently.
  * We avoid a native ``window.confirm`` on purpose — it blocks the pywebview loop.
  *
- * **One section renders the bar itself.** The Agentic IDE is a wall of terminal
- * output with a single header row of its own, and a second full-width bar above
- * it holding two buttons cost that view ~40 px it had better uses for. So the
- * IDE takes `TopBarActions` into its own row and this bar steps aside there —
- * the actions are still on that screen, which is the rule that matters; what
+ * **Two surfaces render the bar themselves.** The Agentic IDE is a wall of
+ * terminal output with a single header row of its own, and a second full-width
+ * bar above it holding two buttons cost that view ~40 px it had better uses
+ * for. The mission deck has the same shape: its HUD is already a header, and
+ * an empty chrome strip above it was a second, boring row. Both take
+ * `TopBarActions` into their own row and this bar steps aside there — the
+ * actions are still on that screen, which is the rule that matters; what
  * moved is the furniture around them. Every other view keeps the bar.
  */
 const CONFIRM_TIMEOUT_MS = 4000;
@@ -65,26 +66,23 @@ export function TopBar() {
   }
 
   /*
-   * The deck hides the sidebar, and the sidebar is where Gigi lives on every
-   * other screen. Without him here the top-left of the front page is a blank
-   * strip. He stays a compact header mark — not the wallpaper overlay that
-   * used to sit in every empty section corner.
+   * The deck already has a header. A second empty strip above it was the
+   * boring row. Same rule as the IDE: this bar steps aside, the actions
+   * move into that header (`MissionDeckView`). While chats is detached the
+   * main window is a placeholder and needs the bar back.
    */
-  const showGigi = activeSection === "chats" && deckMode === "deck";
+  const deckOnStage = activeSection === "chats" && deckMode === "deck";
+  const chatsDetached = !solo && detachedViews.includes("chats");
+  if (deckOnStage && !chatsDetached) {
+    return null;
+  }
 
   return (
     <div className="jarvis-shell-surface flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border px-4 backdrop-blur-md">
-      {showGigi ? (
-        <span
-          className="mr-auto flex h-8 w-8 shrink-0 items-center justify-center"
-          data-testid="topbar-gigi"
-        >
-          <MascotGigi size={32} reactToVoice enableComments={false} />
-        </span>
-      ) : null}
-      {/* Status, not an action — carries its own `mr-auto` so it sits at the
-          left end of this right-aligned bar and never crowds the buttons. */}
-      <CodingModeBadge />
+      {/* Status, not an action — `mr-auto` pins it left so it never crowds
+          the buttons. The deck header does not pass this: it already sits
+          in a right-hand cluster. */}
+      <CodingModeBadge className="mr-auto" />
       <TopBarActions />
     </div>
   );

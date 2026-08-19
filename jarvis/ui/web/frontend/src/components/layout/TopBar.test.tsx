@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar, TopBarActions } from "./TopBar";
 import { useEventStore } from "@/store/events";
@@ -12,14 +12,17 @@ vi.mock("@/components/MascotGigi", () => ({
 }));
 
 // The bar is section-aware now, so every test below states which screen it is
-// on rather than inheriting whatever a previous one left behind.
-beforeEach(() =>
+// on rather than inheriting whatever a previous one left behind. Classic
+// chat keeps the global bar; the mission deck renders no bar of its own
+// (the actions live in that header — see the deck describe below).
+beforeEach(() => {
   useEventStore.setState({
     activeSection: "chats",
     solo: false,
     detachedViews: [],
-  }),
-);
+  });
+  useDeckStore.setState({ mode: "classic" });
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar detach button", () => {
@@ -149,28 +152,19 @@ describe("TopBar restart button", () => {
  * through that Restart button, so a refactor that quietly drops it from the IDE
  * would leave the section with no way to pick up its own rebuild.
  */
-describe("TopBar Gigi on the mission deck", () => {
-  afterEach(() => {
-    act(() => useDeckStore.setState({ mode: "deck" }));
-  });
-
-  it("sits in the top-left while the deck is the front page", () => {
+describe("TopBar on the mission deck", () => {
+  it("renders no bar of its own there — the deck header carries the actions", () => {
     useDeckStore.setState({ mode: "deck" });
-    render(<TopBar />);
-    expect(screen.getByTestId("topbar-gigi")).toBeTruthy();
+    const { container } = render(<TopBar />);
+    expect(container.firstChild).toBeNull();
   });
 
-  it("steps off on every other section — the sidebar already carries the mark", () => {
+  it("restores the global bar in the main window while chats is detached", () => {
     useDeckStore.setState({ mode: "deck" });
-    useEventStore.setState({ activeSection: "tasks" });
-    render(<TopBar />);
-    expect(screen.queryByTestId("topbar-gigi")).toBeNull();
-  });
-
-  it("steps off classic chat, where the sidebar is back", () => {
-    useDeckStore.setState({ mode: "classic" });
-    render(<TopBar />);
-    expect(screen.queryByTestId("topbar-gigi")).toBeNull();
+    useEventStore.setState({ detachedViews: ["chats"] });
+    const { container } = render(<TopBar />);
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
   });
 });
 

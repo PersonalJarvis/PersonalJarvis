@@ -8,10 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TopBar } from "@/components/layout/TopBar";
 import { useEventStore } from "@/store/events";
-
-vi.mock("@/components/MascotGigi", () => ({
-  MascotGigi: () => <div data-testid="mascot-gigi" />,
-}));
+import { useDeckStore } from "@/store/deck";
 
 function mockUpdateStatus(body: Record<string, unknown>): void {
   vi.stubGlobal(
@@ -27,7 +24,13 @@ function mockUpdateStatus(body: Record<string, unknown>): void {
 
 describe("TopBar update button", () => {
   beforeEach(() => {
-    useEventStore.setState({ assistantName: "Assistant", toasts: [] });
+    // The mission deck hides this bar; these tests need the global chrome.
+    useDeckStore.setState({ mode: "classic" });
+    useEventStore.setState({
+      assistantName: "Assistant",
+      toasts: [],
+      activeSection: "settings",
+    });
   });
   afterEach(() => {
     cleanup();
