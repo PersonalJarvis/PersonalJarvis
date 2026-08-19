@@ -595,6 +595,29 @@
       },
       "native_tool": "youtube_music",
       "post_install_hint_md": "Setup: see docs/marketplace/youtube-music-setup.md — it shares the Google OAuth client with Gmail, Drive and Calendar; only **enable the YouTube Data API v3** in that Cloud project, add the `youtube` scope, and list your own account under the app's **Test users** (or publish the app) — otherwise Google answers `403 access_denied`. Google publishes no YouTube Music API, so this talks to the official YouTube Data API v3 (search, your playlists, likes) and plays in a **background player** — a small window of its own that starts minimized, where you log in once for your Premium (Settings → Music can switch to the browser instead). Pause, skip, volume and \"what is playing\" steer that player; in browser mode they go through the system's media session (Windows out of the box; Linux needs `playerctl`, macOS `nowplaying-cli`). Google allows **100 searches a day** per project — enough for one household, not for a party."
+    },
+    {
+      "id": "higgsfield",
+      "display_name": "Higgsfield",
+      "description": "Generate images, videos and characters with 30+ creative models",
+      "category": "Media & Creativity",
+      "logo_slug": "higgsfield",
+      "logo_color": "D1FE17",
+      "featured": false,
+      "longevity": "self_renewing",
+      "longevity_note": "Higgsfield issues a refresh token. How long the access token lasts is unpublished; Jarvis renews it in the background and will ask you to reconnect if that ever fails.",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.higgsfield.ai/.well-known/oauth-protected-resource/mcp",
+        "mcp_url": "https://mcp.higgsfield.ai/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.higgsfield.ai/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_higgsfield_access_token}"
+      },
+      "post_install_hint_md": "Sign in with your Higgsfield account — there is no API key. Higgsfield requires an active paid plan for this connection. Every generation spends plan credits at the normal rate; Unlimited and free generations on higgsfield.ai do not apply here. There is no spend cap, so ask for the credit cost and wait for your OK before generating. Images usually finish in seconds; videos can take several minutes. Results also appear in your Higgsfield Assets."
     }
   ]
 }

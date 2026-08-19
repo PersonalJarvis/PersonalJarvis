@@ -214,6 +214,7 @@ def test_seed_dcr_connectors_begin_at_protected_resource_metadata() -> None:
         "canva": "https://mcp.canva.com/.well-known/oauth-protected-resource",
         "airtable": "https://mcp.airtable.com/.well-known/oauth-protected-resource",
         "cal_com": "https://mcp.cal.com/.well-known/oauth-protected-resource",
+        "higgsfield": "https://mcp.higgsfield.ai/.well-known/oauth-protected-resource/mcp",
     }
     assert {
         plugin_id: catalog.by_id(plugin_id).auth.discovery_url
@@ -315,6 +316,20 @@ def test_gmail_pkce_loopback_full_mail_scope() -> None:
     assert spec.auth.callback_path == ""
     assert spec.auth.offline_access is True
     assert spec.native_tool == "gmail"
+
+
+def test_higgsfield_is_dcr_one_click_with_http_mcp() -> None:
+    spec = _seed().by_id("higgsfield")
+    assert spec is not None
+    assert spec.display_name == "Higgsfield"
+    assert spec.category == "Media & Creativity"
+    assert spec.auth.mode == "hosted_mcp_oauth_dcr"
+    assert spec.auth.mcp_url == "https://mcp.higgsfield.ai/mcp"
+    assert spec.auth.refresh_supported is True
+    assert spec.mcp_server is not None
+    assert spec.mcp_server["transport"] == "http"
+    assert spec.mcp_server["url"] == "https://mcp.higgsfield.ai/mcp"
+    assert spec.native_tool is None
 
 
 def test_youtube_music_joins_the_google_client_family_as_native_tool() -> None:

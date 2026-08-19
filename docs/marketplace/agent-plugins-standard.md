@@ -89,11 +89,12 @@ violates the spec's name constraints and changes for the standard package
 | ClickUp | ☐ needs update | `mcp.json` (`streamable-http`, `https://mcp.clickup.com/mcp`) |
 | Dropbox | ☐ needs update | `mcp.json` (`streamable-http`, `https://mcp.dropbox.com/mcp`) |
 | Canva | ☐ needs update | `mcp.json` (`streamable-http`, `https://mcp.canva.com/mcp`) |
+| Higgsfield | ☐ needs update | `mcp.json` (`streamable-http`, `https://mcp.higgsfield.ai/mcp`); DCR discovery is the path-aware RFC 9728 URL (`…/oauth-protected-resource/mcp`) |
 | Airtable | ☐ needs update | `mcp.json` (`streamable-http`, `https://mcp.airtable.com`) |
 | Cal.com | ☐ needs update · **rename** `cal_com` → `cal-com` | `mcp.json` (`streamable-http`, `https://mcp.cal.com/mcp`) |
 | Home Assistant | ☐ needs update · **rename** `home_assistant` → `home-assistant` | Extension-only (native tool; the instance URL is user data and can never be packaged) |
 
-Tally: 14 plugins gain a portable `mcp.json`; 7 are extension-only
+Tally: 15 plugins gain a portable `mcp.json`; 7 are extension-only
 (Vercel, Discord, Telegram, Google Drive, Gmail, Google Calendar,
 Home Assistant); 4 need a spec-conformant rename.
 
