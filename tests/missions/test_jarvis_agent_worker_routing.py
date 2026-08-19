@@ -62,6 +62,13 @@ def test_api_agent_providers_are_not_a_claude_fallback() -> None:
     assert subagent_runs_on_claude_fallback("openclaw-claude") is True
 
 
+@pytest.mark.parametrize("step_model", ["", "claude-opus-4-8", "gemini-3.1-pro", "grok-4.6"])
+def test_grok_build_routes_to_direct_worker(step_model: str) -> None:
+    """Choosing 'grok-build' (xAI subscription CLI) is a hard lock."""
+    assert _select_subagent_worker_kind("grok-build", step_model) == "grok_build"
+    assert _select_subagent_worker_kind("grok-cli", step_model) == "grok_build"
+
+
 @pytest.mark.parametrize("step_model", ["", "claude-opus-4-8", "gemini-3.1-pro"])
 def test_antigravity_routes_to_oauth_cli_worker(step_model: str) -> None:
     """Choosing 'antigravity' (Google subscription) routes to the dedicated
@@ -210,7 +217,8 @@ def test_api_agent_providers_no_longer_flagged_as_claude(provider: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "provider", ["openai-codex", "chatgpt", "gemini", "claude-api", "antigravity"]
+    "provider",
+    ["openai-codex", "chatgpt", "gemini", "claude-api", "antigravity", "grok-build"],
 )
 def test_native_providers_not_flagged(provider: str) -> None:
     """A provider with its own dedicated worker (incl. claude-api itself, which

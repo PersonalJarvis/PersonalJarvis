@@ -9,8 +9,10 @@ import {
   codexLogout,
   loginAntigravity,
   loginClaude,
+  loginGrokBuild,
   logoutAntigravity,
   logoutClaude,
+  logoutGrokBuild,
   saveSubagentModel,
   startCodexLogin,
   switchSubagentProvider,
@@ -21,6 +23,7 @@ import {
   type Billing,
   type ClaudeStatus,
   type CodexStatus,
+  type GrokBuildStatus,
 } from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
@@ -111,6 +114,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   // Antigravity drives the Google subscription CLI as a direct worker (OAuth, no
   // API key), the Google sibling of Codex.
   antigravity: "Antigravity (Google subscription)",
+  "grok-build": "Grok Build",
 };
 
 /**
@@ -158,6 +162,7 @@ export function JarvisAgentSection({
   const [antigravityStatus, setAntigravityStatus] =
     useState<AntigravityStatus | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
+  const [grokBuildStatus, setGrokBuildStatus] = useState<GrokBuildStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The same per-machine view preference the provider tiers read. The subagent
   // tier used to ignore it, which made Local Mode look broken exactly where a
@@ -168,11 +173,12 @@ export function JarvisAgentSection({
   // provider highlight + the per-provider "Key gesetzt" badges track live.
   const reload = useCallback(async () => {
     try {
-      const [res, codexRes, antigravityRes, claudeRes] = await Promise.all([
+      const [res, codexRes, antigravityRes, claudeRes, grokBuildRes] = await Promise.all([
         fetch("/api/jarvis-agent/status"),
         fetch("/api/codex/status").catch(() => null),
         fetch("/api/antigravity/status").catch(() => null),
         fetch("/api/claude/status").catch(() => null),
+        fetch("/api/grok-build/status").catch(() => null),
       ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: SubagentStatus = await res.json();
@@ -191,6 +197,11 @@ export function JarvisAgentSection({
         setClaudeStatus(await claudeRes.json());
       } else {
         setClaudeStatus(null);
+      }
+      if (grokBuildRes?.ok) {
+        setGrokBuildStatus(await grokBuildRes.json());
+      } else {
+        setGrokBuildStatus(null);
       }
       setError(null);
     } catch (e) {
@@ -250,11 +261,15 @@ export function JarvisAgentSection({
   const claudeRow = inLocalMode(
     bridge.mapping.find((r) => r.jarvis === "claude-api"),
   );
+  const grokBuildRow = inLocalMode(
+    bridge.mapping.find((r) => r.jarvis === "grok-build"),
+  );
   const providerRows = localVisibleRows.filter(
     (r) =>
       r.jarvis !== "openai-codex" &&
       r.jarvis !== "antigravity" &&
-      r.jarvis !== "claude-api",
+      r.jarvis !== "claude-api" &&
+      r.jarvis !== "grok-build",
   );
   // Split the generic providers by access type so each lands in the right
   // group. Splitting on the backend `billing` field keeps a future provider in
@@ -272,7 +287,8 @@ export function JarvisAgentSection({
   );
   const apiProviderRows = providerRows.filter((r) => r.billing === "api");
   const hasSubscriptionColumn =
-    Boolean(codexRow || antigravityRow || claudeRow) || subProviderRows.length > 0;
+    Boolean(codexRow || antigravityRow || claudeRow || grokBuildRow) ||
+    subProviderRows.length > 0;
   const hasApiColumn = Boolean(claudeRow) || apiProviderRows.length > 0;
 
   return (
@@ -370,6 +386,13 @@ export function JarvisAgentSection({
               onChanged={reload}
             />
           )}
+          {grokBuildRow && (
+            <GrokBuildConnectionCard
+              status={grokBuildStatus}
+              row={grokBuildRow}
+              onChanged={reload}
+            />
+          )}
           {subProviderRows.map((row) => (
             <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
           ))}
@@ -432,7 +455,11 @@ function SubagentModelCard({
   // The subagent worker slug → the catalog provider id (Codex's worker slug
   // "openai-codex" maps to the catalog's "codex"; all others match 1:1).
   const catalogProvider =
-    status.brain_primary === "openai-codex" ? "codex" : status.brain_primary;
+    status.brain_primary === "openai-codex"
+      ? "codex"
+      : status.brain_primary === "grok-build"
+        ? "grok-build"
+        : status.brain_primary;
   // Whether the ACTIVE worker's server can be told to download a model. Read
   // off the provider catalog rather than a provider name, so a second local
   // server type that ships a puller lights this up on its own (AP-21).
@@ -600,6 +627,8 @@ const PROVIDER_ICON: Record<string, string> = {
   openrouter: "openrouter",
   nvidia: "nvidia",
   antigravity: "antigravity",
+  grok: "grok",
+  "grok-build": "grok",
 };
 
 /**
@@ -1215,6 +1244,96 @@ function AntigravityConnectionCard({
             <ConnectButton onClick={connect} disabled={pending || !installed} />
           )}
           <CliTestControl endpoint="/api/antigravity/test" onChanged={onChanged} />
+        </>
+      }
+    />
+  );
+}
+
+function GrokBuildConnectionCard({
+  status,
+  row,
+  onChanged,
+}: {
+  status: GrokBuildStatus | null;
+  row: SubagentMappingRow | undefined;
+  onChanged: () => void | Promise<void>;
+}) {
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [pending, setPending] = useState(false);
+  const { activating, activate } = useSubagentActivate(row, onChanged);
+  const connected = Boolean(status?.connected && status.mode === "subscription");
+  const installed = status?.installed ?? false;
+  const usable = Boolean(installed && row?.key_set);
+  const isActive = Boolean(usable && row?.is_active_brain);
+  const detail = connected
+    ? status?.user_email
+      ? `Connected as ${status.user_email}`
+      : status?.message || "Connected via SuperGrok / X Premium+"
+    : status?.message || "Grok Build login not connected";
+
+  async function connect() {
+    setPending(true);
+    try {
+      await loginGrokBuild();
+      pushToast("info", "Grok Build login started — finish it in the browser window");
+      await onChanged();
+      void pollStatusUntilConnected("/api/grok-build/status", onChanged).then((ok) => {
+        if (ok) {
+          pushToast("success", `Grok Build connected — now selectable as a ${agentBrandNow()}`);
+        }
+      });
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function disconnect() {
+    setPending(true);
+    try {
+      await logoutGrokBuild();
+      pushToast("info", "Grok Build login disconnected");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <AgentCardShell
+      label="Grok Build"
+      slug={row?.jarvis}
+      title="Grok Build"
+      billing={row?.billing}
+      active={isActive}
+      badge={<StatusPill state={isActive ? "active" : usable ? "ready" : "open"} />}
+      subtitle={detail}
+      warning={
+        !installed && (
+          <CardHint icon={Terminal}>
+            Install Grok Build before connecting (irm https://x.ai/cli/install.ps1 | iex).
+          </CardHint>
+        )
+      }
+      footer={
+        <>
+          {usable && row && (
+            <SubagentActiveControl
+              row={row}
+              activating={activating}
+              onActivate={activate}
+            />
+          )}
+          {connected ? (
+            <DisconnectButton onClick={disconnect} disabled={pending} />
+          ) : (
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
+          )}
+          <CliTestControl endpoint="/api/grok-build/test" onChanged={onChanged} />
         </>
       }
     />

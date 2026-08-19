@@ -131,6 +131,21 @@ def test_antigravity_names_the_resolved_cli_kind(monkeypatch):
     assert "Gemini CLI" in result.message
 
 
+def test_grok_build_not_installed(monkeypatch):
+    from jarvis.grok_build_auth import GrokBuildAuthService, GrokBuildAuthStatus
+
+    monkeypatch.setattr(
+        GrokBuildAuthService,
+        "status",
+        lambda self: GrokBuildAuthStatus(installed=False, message="not found"),
+    )
+    result = agent_cli_probe.test_grok_build()
+    assert result.ok is False
+    assert result.installed is False
+    assert result.searched_path
+    assert "x.ai/cli" in result.message
+
+
 def test_antigravity_not_installed(monkeypatch):
     monkeypatch.setattr(
         "jarvis.google_cli.resolver.resolve_google_cli", lambda: None

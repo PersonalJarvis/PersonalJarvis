@@ -49,6 +49,12 @@ def test_only_subscription_cli_providers_use_cli_login() -> None:
         elif spec.id == "claude-cli":
             assert spec.auth_mode == "claude_cli"
             assert spec.login_cli == ("claude", "/login")
+        elif spec.id == "grok-build":
+            assert spec.auth_mode == "grok_build"
+            assert spec.login_cli == ("grok", "login")
+            assert spec.secret_keys == ()
+            assert provider_billing(spec) == "subscription"
+            assert spec.brain_switchable is False
         else:
             assert spec.login_cli is None, f"{spec.id}: unexpected login_cli"
 

@@ -33,7 +33,7 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 _VERSION_TIMEOUT_S = 8.0
 
-AgentCliName = Literal["claude", "codex", "antigravity"]
+AgentCliName = Literal["claude", "codex", "antigravity", "grok-build"]
 
 
 @dataclass(frozen=True)
@@ -214,10 +214,42 @@ def test_antigravity() -> AgentCliTestResult:
     )
 
 
+def test_grok_build() -> AgentCliTestResult:
+    from jarvis.grok_build_auth import GrokBuildAuthService, grok_build_install_hint
+
+    t0 = time.monotonic()
+    ensure_cli_paths()
+    from jarvis import grok_build_auth
+
+    grok_build_auth.clear_version_cache()
+    status = GrokBuildAuthService().status()
+    if not status.installed:
+        return _not_installed("grok-build", grok_build_install_hint(), t0)
+    ok = status.version is not None
+    message = status.message if ok else (
+        f"Found at {status.binary_path}, but 'grok --version' did not answer "
+        "— the install looks broken."
+    )
+    return AgentCliTestResult(
+        cli="grok-build",
+        ok=ok,
+        installed=True,
+        binary_path=status.binary_path,
+        version=status.version,
+        connected=status.connected,
+        auth_mode=status.mode,
+        account=status.user_email,
+        message=message,
+        searched_path=_searched_path_dirs(),
+        duration_ms=int((time.monotonic() - t0) * 1000),
+    )
+
+
 __all__ = [
     "AgentCliName",
     "AgentCliTestResult",
     "test_antigravity",
     "test_claude",
     "test_codex",
+    "test_grok_build",
 ]

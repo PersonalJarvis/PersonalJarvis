@@ -242,6 +242,7 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     # in every region. The authenticated live catalog replaces this fallback.
     "grok": _curated(
         [
+            ("grok-4.6", "Grok 4.6"),
             ("grok-4.3", "Grok 4.3"),
             ("grok-4.5", "Grok 4.5"),
         ]
@@ -727,6 +728,23 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
                 [
                     ("gemini-3.5-flash", "Gemini 3.5 Flash"),
                     ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+                ]
+            )
+        ),
+        live=False,
+    )
+    # Grok Build — SuperGrok / X Premium+ CLI worker. No public /v1/models over
+    # the subscription login, so curated only. Grok 4.6 is the current Grok
+    # Build default (official docs, 2026-08).
+    cat["grok-build"] = CatalogSpec(
+        "brain",
+        "model",
+        tuple(
+            _curated(
+                [
+                    ("grok-4.6", "Grok 4.6"),
+                    ("grok-4.3", "Grok 4.3"),
+                    ("grok-4.5", "Grok 4.5"),
                 ]
             )
         ),

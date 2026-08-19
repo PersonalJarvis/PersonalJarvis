@@ -47,7 +47,7 @@ choices rather than as a permanent list of every available service.
 | **Voice input** | Speech recognition in Pipeline mode and dictation | Cloud and on-device cards are available. |
 | **Dictation** | Optional punctuation and wording cleanup after recognition | It improves text; it does not transcribe audio. |
 | **Realtime** | One live model that listens and speaks | Model and voice are selected together; Computer Use remains separate. |
-| **Agents** | Longer background work | API-key providers and supported coding-CLI subscriptions appear separately. |
+| **Agents** | Longer background work | API-key providers and supported coding-CLI subscriptions (Codex, Claude, Antigravity, Grok Build) appear separately. |
 | **Advanced** | Optional team proxy, telephony, and classic Wiki model | These do not have to be configured for normal chat. |
 
 The **Pipeline / Realtime** switch changes the voice-provider tabs, not the

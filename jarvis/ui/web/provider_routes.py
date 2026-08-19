@@ -44,6 +44,12 @@ from jarvis.missions.worker_runtime.provider_map import (
 from jarvis.missions.worker_runtime.provider_map import (
     CODEX_SUBAGENT_SLUGS as _CODEX_SUBAGENT_SLUGS,
 )
+from jarvis.missions.worker_runtime.provider_map import (
+    GROK_BUILD_SUBAGENT_CANONICAL as _GROK_BUILD_SUBAGENT_CANONICAL,  # noqa: F401
+)
+from jarvis.missions.worker_runtime.provider_map import (
+    GROK_BUILD_SUBAGENT_SLUGS as _GROK_BUILD_SUBAGENT_SLUGS,
+)
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
 
 from .provider_spec import (
@@ -327,6 +333,10 @@ def _cli_installed(spec: ProviderSpec) -> bool | None:
         # service would report the PATH install even when the user pinned a
         # different binary.
         return CodexAuthService(_codex_binary_path()).status().installed
+    if spec.auth_mode == "grok_build":
+        from jarvis.grok_build_auth import GrokBuildAuthService
+
+        return GrokBuildAuthService().status().installed
     return None
 
 
@@ -547,6 +557,11 @@ def _spec_to_payload(
         from jarvis.google_cli.auth_service import GoogleCliAuthService
 
         antigravity_status = GoogleCliAuthService().status().to_dict()
+    grok_build_status = None
+    if spec.id == "grok-build":
+        from jarvis.grok_build_auth import GrokBuildAuthService
+
+        grok_build_status = GrokBuildAuthService().status().to_dict()
 
     payload = {
         "id": spec.id,
@@ -627,6 +642,11 @@ def _spec_to_payload(
         "configured": (
             bool(antigravity_status["connected"])
             if antigravity_status is not None
+            else bool(
+                grok_build_status["connected"]
+                and grok_build_status["mode"] == "subscription"
+            )
+            if grok_build_status is not None
             else bool(codex_status["connected"] and codex_status["mode"] == "chatgpt")
             if codex_status is not None and not spec.secret_keys
             else _is_credential_present(
@@ -636,7 +656,9 @@ def _spec_to_payload(
         ),
         "active": active,
         "cli_installed": (
-            _cli_installed(spec)
+            bool(grok_build_status["installed"])
+            if grok_build_status is not None
+            else _cli_installed(spec)
             if codex_status is None
             else bool(codex_status["installed"])
         ),
@@ -648,6 +670,8 @@ def _spec_to_payload(
     }
     if antigravity_status is not None:
         payload["antigravity_status"] = antigravity_status
+    if grok_build_status is not None:
+        payload["grok_build_status"] = grok_build_status
     if codex_status is not None:
         payload["codex_status"] = codex_status
         if spec.tier == "brain":
@@ -1486,6 +1510,10 @@ def _worker_usable(provider: str) -> bool:
             return bool(
                 GoogleCliAuthService().status().connected or get_jarvis_agent_secret("gemini")
             )
+        if p in _GROK_BUILD_SUBAGENT_SLUGS:
+            from jarvis.grok_build_auth import GrokBuildAuthService, grok_build_provider_ready
+
+            return grok_build_provider_ready(GrokBuildAuthService().status())
         if p in {"claude-api", "claude"}:
             from jarvis.claude_auth import ClaudeAuthService
 
@@ -2428,7 +2456,11 @@ async def set_brain_model(
     if cat.tier == "brain":
         # Codex / Antigravity probes would drive a slow subscription CLI (and
         # bill a real call); skip the live probe for those OAuth-CLI providers.
-        do_probe = getattr(spec, "auth_mode", None) not in ("codex", "antigravity")
+        do_probe = getattr(spec, "auth_mode", None) not in (
+            "codex",
+            "antigravity",
+            "grok_build",
+        )
         return await _apply_brain_model(provider_id, value, body, request, probe=do_probe)
     if cat.tier == "tts":
         return _apply_tts_selection(provider_id, value, cat.selects, body, request)

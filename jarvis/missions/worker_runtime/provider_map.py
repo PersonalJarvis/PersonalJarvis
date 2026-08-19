@@ -38,6 +38,8 @@ __all__ = [
     "CODEX_SUBAGENT_CANONICAL",
     "ANTIGRAVITY_SUBAGENT_SLUGS",
     "ANTIGRAVITY_SUBAGENT_CANONICAL",
+    "GROK_BUILD_SUBAGENT_SLUGS",
+    "GROK_BUILD_SUBAGENT_CANONICAL",
 ]
 
 
@@ -66,6 +68,17 @@ CODEX_SUBAGENT_CANONICAL: Final[str] = "openai-codex"
 # (BUG-008).
 ANTIGRAVITY_SUBAGENT_SLUGS: Final[frozenset[str]] = frozenset({"antigravity"})
 ANTIGRAVITY_SUBAGENT_CANONICAL: Final[str] = "antigravity"
+
+# Subagent slugs that route to the DIRECT Grok Build CLI worker
+# (GrokBuildDirectWorker) over the SuperGrok / X Premium+ subscription —
+# NOT through MAPPINGS and NOT the xAI API-key slug ``grok``. Mirror of
+# CODEX_SUBAGENT_SLUGS so the acceptance set is a SINGLE SOURCE OF TRUTH
+# shared by /api/jarvis-agent/switch, the brain-tool path, and the worker
+# selector (init._select_subagent_worker_kind).
+GROK_BUILD_SUBAGENT_SLUGS: Final[frozenset[str]] = frozenset(
+    {"grok-build", "grok-cli", "grokbuild"}
+)
+GROK_BUILD_SUBAGENT_CANONICAL: Final[str] = "grok-build"
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,6 +18,12 @@ def test_antigravity_is_not_a_main_brain_tier_default() -> None:
     assert "antigravity" not in TIER_DEFAULTS_BY_PROVIDER["deep"]
 
 
+def test_grok_build_is_not_a_main_brain_tier_default() -> None:
+    assert "grok-build" in SUBAGENT_ONLY_BRAIN_PROVIDERS
+    assert "grok-build" not in TIER_DEFAULTS_BY_PROVIDER["router"]
+    assert "grok-build" not in TIER_DEFAULTS_BY_PROVIDER["deep"]
+
+
 def test_codex_is_not_a_main_brain_tier_default() -> None:
     assert "codex" in SUBAGENT_ONLY_BRAIN_PROVIDERS
     assert "openai-codex" in SUBAGENT_ONLY_BRAIN_PROVIDERS

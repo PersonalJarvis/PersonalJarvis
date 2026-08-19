@@ -357,6 +357,7 @@ class WebServer:
         from .feedback_routes import router as feedback_router
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
+        from .grok_build_routes import router as grok_build_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
         from .missions_auth import router as missions_auth_router
@@ -417,6 +418,7 @@ class WebServer:
         app.include_router(provider_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
+        app.include_router(grok_build_router)
         # Several subscriptions per coding CLI, switchable without a logout.
         app.include_router(agent_accounts_router)
         app.include_router(control_router)
@@ -1327,6 +1329,52 @@ class WebServer:
                     "is_active_brain": primary == "antigravity",
                     # Google subscription OAuth OR a Gemini API key.
                     "billing": "subscription_or_api",
+                }
+            )
+
+            # Grok Build is a DIRECT worker (GrokBuildDirectWorker over the
+            # official grok CLI) with no worker slug, so it is not in MAPPINGS.
+            # SuperGrok / X Premium+ subscription only — the xAI API-key path
+            # stays on the separate ``grok`` card.
+            grok_build_status = None
+            try:
+                from jarvis.grok_build_auth import (
+                    GrokBuildAuthService,
+                    grok_build_provider_ready,
+                )
+
+                grok_build_status = await asyncio.to_thread(
+                    GrokBuildAuthService().status
+                )
+                grok_build_connected = (
+                    grok_build_status.connected
+                    and grok_build_status.mode == "subscription"
+                )
+            except Exception:  # noqa: BLE001
+                grok_build_connected = False
+            grok_build_ready = (
+                grok_build_provider_ready(grok_build_status)
+                if grok_build_status is not None
+                else False
+            )
+            mapping_rows.append(
+                {
+                    "jarvis": "grok-build",
+                    "openclaw": "grok-cli (direct)",
+                    "env_var": "SuperGrok-OAuth",
+                    "env_fallback": None,
+                    "key_set": grok_build_ready,
+                    "api_key_set": False,
+                    "dedicated_key_set": False,
+                    "shared_key_set": False,
+                    "oauth_connected": grok_build_connected,
+                    "credential_source": "oauth" if grok_build_connected else "none",
+                    "secret_key": None,
+                    "dashboard_url": None,
+                    "credential_help": None,
+                    "is_active_brain": primary == "grok-build",
+                    "billing": "subscription",
+                    "label": "Grok Build",
                 }
             )
 

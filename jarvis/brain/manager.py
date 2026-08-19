@@ -227,7 +227,7 @@ PROVIDER_ALIASES = {
 }
 
 SUBAGENT_ONLY_BRAIN_PROVIDERS: frozenset[str] = frozenset(
-    {"antigravity", "codex", "openai-codex"}
+    {"antigravity", "codex", "openai-codex", "grok-build", "grok-cli", "grokbuild"}
 )
 
 _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
@@ -259,6 +259,7 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "nvidia": "NVIDIA NIM",
     "gemini": "Google Gemini",
     "antigravity": "Google Antigravity (Gemini)",
+    "grok-build": "Grok Build (xAI subscription)",
 }
 
 
@@ -2101,12 +2102,16 @@ _SUBAGENT_VOICE_TO_CANONICAL: dict[str, str] = {
     "grok": "grok",
     "nvidia": "nvidia", "nim": "nvidia", "nemotron": "nvidia",
     "antigravity": "antigravity",
+    "grok-build": "grok-build",
+    "grokbuild": "grok-build",
+    "grok-cli": "grok-build",
 }
 _SUBAGENT_DISPLAY: dict[str, str] = {
     "openai": "OpenAI", "openai-codex": "Codex", "claude-api": "Claude",
     "gemini": "Gemini", "openrouter": "OpenRouter", "grok": "xAI Grok",
     "nvidia": "NVIDIA NIM",
     "antigravity": "Antigravity",
+    "grok-build": "Grok Build",
 }
 _SUBAGENT_SWITCH_CONFIRM: dict[str, str] = {
     "de": "Erledigt — dein Sub-Agent läuft ab der nächsten Mission auf {p}.",

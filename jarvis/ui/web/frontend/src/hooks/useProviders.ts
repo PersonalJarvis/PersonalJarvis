@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
+export type AuthMode = "api_key" | "codex" | "antigravity" | "claude_cli" | "grok_build" | "none";
 // Mirror of provider_spec.Tier. "dictation" is the odd one out and deliberately
 // so: it is the OPTIONAL tier that tidies dictated text, and a missing key there
 // costs nothing — the dictation is delivered exactly as it was recognized. Every
@@ -168,6 +168,7 @@ export interface ProviderDescriptor {
    * in the Subagent section. It is not switchable as the main Brain provider.
    */
   antigravity_status?: AntigravityStatus;
+  grok_build_status?: GrokBuildStatus;
 }
 
 export interface CodexStatus {
@@ -210,6 +211,22 @@ export interface AntigravityStatus {
   connected: boolean;
   mode: string; // "oauth-personal" | "api_key" | "unknown"
   cli_kind: string | null; // "agy" | "gemini"
+  message: string;
+  version: string | null;
+  user_email: string | null;
+  binary_path: string;
+  error: string | null;
+}
+
+/**
+ * Mirror of `jarvis/grok_build_auth.py::GrokBuildAuthStatus.to_dict()`.
+ * SuperGrok / X Premium+ sibling of CodexStatus: whether the `grok` CLI is
+ * installed and signed in, plus the account email.
+ */
+export interface GrokBuildStatus {
+  installed: boolean;
+  connected: boolean;
+  mode: string; // "subscription" | "api_key" | "unknown"
   message: string;
   version: string | null;
   user_email: string | null;
@@ -703,6 +720,29 @@ export async function loginClaude(): Promise<void> {
         ? detail.message
         : detail ?? `HTTP ${res.status}`,
     );
+  }
+}
+
+/** Starts the interactive SuperGrok sign-in (POST /api/grok-build/login). */
+export async function loginGrokBuild(): Promise<void> {
+  const res = await fetch("/api/grok-build/login", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = body.detail;
+    throw new Error(
+      typeof detail === "object" && detail?.message
+        ? detail.message
+        : detail ?? `HTTP ${res.status}`,
+    );
+  }
+}
+
+/** Disconnects the Grok Build subscription login (POST /api/grok-build/logout). */
+export async function logoutGrokBuild(): Promise<void> {
+  const res = await fetch("/api/grok-build/logout", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
 }
 

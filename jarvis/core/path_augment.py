@@ -42,6 +42,8 @@ def _posix_candidates() -> list[str]:
         "/opt/local/bin",
         # Native installers (Claude Code, pipx, uv) and the XDG user bin dir.
         str(home / ".local" / "bin"),
+        # Official Grok Build installer (install.sh) may drop ``grok`` here.
+        str(home / ".grok" / "bin"),
         # Claude Code's npm-local migration target (`claude install`).
         str(home / ".claude" / "local"),
         # A user-configured npm prefix (`npm config set prefix ~/.npm-global`).
@@ -108,6 +110,11 @@ def _windows_candidates() -> list[str]:
     # the module docstring).
     dirs.append(str(home / ".local" / "bin"))
     dirs.append(str(home / ".claude" / "local"))
+    # Official Grok Build installer (install.ps1) drops ``grok`` next to
+    # other native CLIs; some builds also use a dedicated bin under GROK_HOME.
+    dirs.append(str(home / ".grok" / "bin"))
+    if local:
+        dirs.append(os.path.join(local, "grok", "bin"))
     return dirs
 
 

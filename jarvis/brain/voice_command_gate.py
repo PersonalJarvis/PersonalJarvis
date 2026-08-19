@@ -198,8 +198,9 @@ _SUBAGENT_QUALIFIER = re.compile(
 )
 # Longer variants first so "openai-codex" wins over "openai".
 _SUBAGENT_PROVIDER_WORDS = (
-    "openai-codex", "openrouter", "antigravity", "chatgpt", "anthropic",
-    "claude", "gemini", "openai", "grok", "codex", "gpt",
+    "openai-codex", "openrouter", "antigravity", "grok-build", "grokbuild",
+    "grok-cli", "chatgpt", "anthropic", "claude", "gemini", "openai", "grok",
+    "codex", "gpt",
 )
 _SUBAGENT_SWITCH_VERB = re.compile(
     r"\b(?:wechsel[n]?|wechsle|umstell\w*|umschalt\w*|stell\w*|set|switch|change|nimm|mach)\b",

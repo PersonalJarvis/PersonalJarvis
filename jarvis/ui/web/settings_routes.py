@@ -2972,7 +2972,7 @@ def _available_brain_providers(request: Request) -> list[dict[str, object]]:
         spec = get_spec(name)
         kind = (
             "agent"
-            if getattr(spec, "auth_mode", "") in ("codex", "antigravity")
+            if getattr(spec, "auth_mode", "") in ("codex", "antigravity", "grok_build")
             else "api"
         )
         out.append(

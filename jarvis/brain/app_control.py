@@ -291,6 +291,16 @@ def is_credential_present(spec: ProviderSpec, binary_path: str | None = None) ->
             return GoogleCliAuthService().status().connected
         except Exception:  # noqa: BLE001 — Google CLI absent is just "not present"
             return False
+    if spec.auth_mode == "grok_build":
+        try:
+            from jarvis.grok_build_auth import (
+                GrokBuildAuthService,
+                grok_build_provider_ready,
+            )
+
+            return grok_build_provider_ready(GrokBuildAuthService().status())
+        except Exception:  # noqa: BLE001 — Grok Build CLI absent is just "not present"
+            return False
     return False
 
 
@@ -672,6 +682,8 @@ async def _switch_subagent(
             ANTIGRAVITY_SUBAGENT_SLUGS,
             CODEX_SUBAGENT_CANONICAL,
             CODEX_SUBAGENT_SLUGS,
+            GROK_BUILD_SUBAGENT_CANONICAL,
+            GROK_BUILD_SUBAGENT_SLUGS,
             JARVIS_TO_WORKER_SLUG,
             canonical_worker_provider,
         )
@@ -775,6 +787,46 @@ async def _switch_subagent(
             old=old,
         )
 
+    if canon in GROK_BUILD_SUBAGENT_SLUGS:
+        grok_build_status = None
+        try:
+            from jarvis.grok_build_auth import (
+                GrokBuildAuthService,
+                grok_build_provider_ready,
+            )
+
+            grok_build_status = await asyncio.to_thread(
+                GrokBuildAuthService().status
+            )
+        except Exception as exc:  # noqa: BLE001 — absent CLI is a normal capability miss
+            log.debug("Grok Build CLI readiness probe failed: %s", exc)
+        if grok_build_status is None or not grok_build_status.installed:
+            return {
+                "ok": False,
+                "error_kind": "subagent_unavailable",
+                "error": (
+                    "Grok Build is not installed. Install the grok CLI from "
+                    f"x.ai/build, or select the xAI Grok {brand} provider for "
+                    "key-only execution."
+                ),
+            }
+        if not grok_build_provider_ready(grok_build_status):
+            return {
+                "ok": False,
+                "error_kind": "missing_credential",
+                "error": (
+                    "Grok Build is not connected — sign in with SuperGrok or "
+                    f"X Premium+ (install grok and run grok login), then "
+                    f"switch the {brand}."
+                ),
+            }
+        return _complete_agent_switch(
+            GROK_BUILD_SUBAGENT_CANONICAL,
+            cfg=cfg,
+            persist=persist,
+            old=old,
+        )
+
     if canon not in JARVIS_TO_WORKER_SLUG:
         # List EVERY worker-capable provider, not just the API/harness ones —
         # Codex and Antigravity route through their own workers, so omitting them
@@ -782,7 +834,11 @@ async def _switch_subagent(
         # openai/openrouter" reply (forensic 2026-06-27).
         known = ", ".join(sorted(
             set(JARVIS_TO_WORKER_SLUG)
-            | {CODEX_SUBAGENT_CANONICAL, ANTIGRAVITY_SUBAGENT_CANONICAL}
+            | {
+                CODEX_SUBAGENT_CANONICAL,
+                ANTIGRAVITY_SUBAGENT_CANONICAL,
+                GROK_BUILD_SUBAGENT_CANONICAL,
+            }
         ))
         return {
             "ok": False,

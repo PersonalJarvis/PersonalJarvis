@@ -231,6 +231,18 @@ def test_antigravity_subagent_slugs_ssot() -> None:
 
     assert "antigravity" in ANTIGRAVITY_SUBAGENT_SLUGS
     assert ANTIGRAVITY_SUBAGENT_CANONICAL == "antigravity"
+
+
+def test_grok_build_subagent_slugs_are_the_ssot() -> None:
+    from jarvis.missions.worker_runtime.provider_map import (
+        GROK_BUILD_SUBAGENT_CANONICAL,
+        GROK_BUILD_SUBAGENT_SLUGS,
+    )
+
+    assert "grok-build" in GROK_BUILD_SUBAGENT_SLUGS
+    assert "grok-cli" in GROK_BUILD_SUBAGENT_SLUGS
+    assert GROK_BUILD_SUBAGENT_CANONICAL == "grok-build"
+    assert "grok" not in GROK_BUILD_SUBAGENT_SLUGS
     # Not a MAPPINGS provider (OAuth CLI has no worker slug, like codex).
     assert "antigravity" not in JARVIS_TO_WORKER_SLUG
 

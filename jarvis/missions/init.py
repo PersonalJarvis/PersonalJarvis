@@ -49,6 +49,7 @@ from .voice.readback import MissionReadback
 from .worker_runtime.provider_map import (
     ANTIGRAVITY_SUBAGENT_SLUGS,
     CODEX_SUBAGENT_SLUGS,
+    GROK_BUILD_SUBAGENT_SLUGS,
 )
 from .workers.api_agent_worker import ApiAgentWorker
 from .workers.capabilities import (
@@ -60,6 +61,7 @@ from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
 from .workers.gemini_worker import GeminiWorker
 from .workers.google_cli_worker import GoogleCliWorker
+from .workers.grok_build_direct_worker import GrokBuildDirectWorker
 
 logger = logging.getLogger(__name__)
 
@@ -372,7 +374,7 @@ def _select_subagent_worker_kind(sub_jarvis_provider: str | None, step_model: st
     """Pure routing decision for the Heavy-Task subagent worker.
 
     Returns one of ``"claude_direct"`` | ``"codex_direct"`` | ``"antigravity"``
-    | ``"subjarvis"`` | ``"gemini"``.
+    | ``"grok_build"`` | ``"subjarvis"`` | ``"gemini"``.
 
     Defense-in-depth (2026-05-29, user mandate: heavy tasks run on the
     configured provider — claude-api -> Claude Max OAuth — and Gemini must
@@ -398,6 +400,8 @@ def _select_subagent_worker_kind(sub_jarvis_provider: str | None, step_model: st
     # stripped from the worker env (the OAuth login then bills the subscription).
     if sub_jarvis_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
         return "antigravity"
+    if sub_jarvis_provider in GROK_BUILD_SUBAGENT_SLUGS:
+        return "grok_build"
     # openai / openrouter / grok / nvidia run on their own provider via the in-process
     # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop writing files
     # into the worktree). They used to fall through to "subjarvis" ->
@@ -1243,6 +1247,12 @@ async def bootstrap_missions(
                 "(agy over PTY, OAuth login, no API key) — billed against Antigravity."
             )
             return GoogleCliWorker(capability_inventory=capability_inventory)
+        if kind == "grok_build":
+            logger.info(
+                "Mission worker -> GrokBuildDirectWorker over the SuperGrok "
+                "subscription (grok -p, OAuth login, no API key)."
+            )
+            return GrokBuildDirectWorker(capability_inventory=capability_inventory)
         if kind == "api_agent":
             # openai / openrouter / grok / nvidia: run on the selected
             # provider via the in-process ApiAgentWorker — see

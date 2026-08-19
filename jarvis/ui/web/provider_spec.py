@@ -18,7 +18,7 @@ from typing import Literal
 
 from jarvis.dictation.polish_client import POLISH_FAMILIES
 
-AuthMode = Literal["api_key", "codex", "antigravity", "claude_cli", "none"]
+AuthMode = Literal["api_key", "codex", "antigravity", "claude_cli", "grok_build", "none"]
 Tier = Literal["brain", "tts", "stt", "realtime", "dictation"]
 # How using a provider is billed. Derived from auth_mode (never branched on a
 # provider name — see provider_billing): an API key bills per token on an API
@@ -127,7 +127,7 @@ def provider_billing(spec: ProviderSpec) -> Billing:
     * ``none`` → ``"local"`` — no credential, runs on-device.
     * everything else (``api_key``) → ``"api"`` — pay per token on an API account.
     """
-    if spec.auth_mode in ("antigravity", "codex", "claude_cli"):
+    if spec.auth_mode in ("antigravity", "codex", "claude_cli", "grok_build"):
         return "subscription_or_api" if spec.secret_keys else "subscription"
     if spec.auth_mode == "none":
         return "local"
@@ -475,6 +475,34 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "tool loops. Your grok.com and xAI API accounts share a login, but "
             "API usage is billed separately through the xAI Console. The same "
             "key also powers Grok Voice TTS."
+        ),
+    ),
+    # ── Brain: xAI subscription via the official Grok Build CLI ──
+    # Sibling of Codex / Antigravity / Claude CLI: spends a SuperGrok or
+    # X Premium+ login instead of a per-token xAI key. No secret_keys slot —
+    # the per-token path for this family already exists as ``grok``.
+    #
+    # ``brain_switchable=False``: process start-up is a full coding-agent CLI,
+    # too slow for a spoken turn, so this must never become the main brain.
+    ProviderSpec(
+        id="grok-build",
+        label="Grok Build (xAI subscription)",
+        tier="brain",
+        auth_mode="grok_build",
+        secret_keys=(),
+        dashboard_url=None,
+        login_cli=("grok", "login"),
+        install_hint=(
+            "irm https://x.ai/cli/install.ps1 | iex   "
+            "(macOS/Linux: curl -fsSL https://x.ai/cli/install.sh | bash)"
+        ),
+        credential_path_hint="~/.grok/auth.json",
+        brain_switchable=False,
+        signup_url="https://grok.com/supergrok",
+        credential_help=(
+            "Sign in with SuperGrok or X Premium+ to run heavy subagent tasks "
+            "via the Grok Build CLI — no API key, billed to your subscription. "
+            "The xAI API-key path is the separate Grok card."
         ),
     ),
     ProviderSpec(
