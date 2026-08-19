@@ -302,7 +302,7 @@ async def test_cancelling_compose_mid_resolution_reaps_the_context_read(
         except asyncio.CancelledError:
             ctx_reaped.set()
             raise
-        return {}, ""
+        return "", {}
 
     def _slow_resolve() -> tuple[object, str]:
         hold.wait(timeout=5.0)

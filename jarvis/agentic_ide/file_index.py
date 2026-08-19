@@ -26,6 +26,7 @@ an exact stem hit beats a partial one, a hit in the file NAME beats one in a
 parent directory, and tests rank below implementation unless the request is
 about tests.
 """
+
 from __future__ import annotations
 
 import os
@@ -41,15 +42,61 @@ from .folders import _SKIP_DIRS
 _MAX_FILES = 30_000
 _MAX_DEPTH = 12
 
+# The tree handed to the 1 s writer. Enough directories to see where a
+# feature lives; small enough that Flash reads it instead of thinking about
+# it. Hot directories (query tokens hit the name or the files) list more.
+_MAP_CHARS = 4_000
+_MAP_DIRS = 40
+_MAP_FILES_HOT = 12
+_MAP_FILES_COLD = 3
+
 # Extensions worth indexing: source, config, and docs. Binaries and media are
 # never what someone points a coding agent at.
 _INTERESTING_SUFFIXES = frozenset(
     {
-        ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte",
-        ".rs", ".go", ".java", ".kt", ".swift", ".c", ".h", ".cc", ".cpp", ".hpp",
-        ".cs", ".rb", ".php", ".sh", ".ps1", ".bat", ".sql", ".graphql", ".proto",
-        ".toml", ".yaml", ".yml", ".json", ".ini", ".cfg", ".env.example",
-        ".md", ".mdx", ".rst", ".txt", ".css", ".scss", ".html",
+        ".py",
+        ".pyi",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".vue",
+        ".svelte",
+        ".rs",
+        ".go",
+        ".java",
+        ".kt",
+        ".swift",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".hpp",
+        ".cs",
+        ".rb",
+        ".php",
+        ".sh",
+        ".ps1",
+        ".bat",
+        ".sql",
+        ".graphql",
+        ".proto",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".ini",
+        ".cfg",
+        ".env.example",
+        ".md",
+        ".mdx",
+        ".rst",
+        ".txt",
+        ".css",
+        ".scss",
+        ".html",
     }
 )
 
@@ -77,32 +124,203 @@ _KEEP_HIDDEN = frozenset({".claude", ".agents", ".github"})
 _STOPWORDS = frozenset(
     {
         # structural / generic
-        "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "with",
-        "der", "die", "das", "den", "dem", "des", "und", "oder", "von", "im",
-        "auf", "für", "fuer", "mit", "bei", "zum", "zur", "el", "la", "los", "las",
-        "de", "del", "y", "o", "con", "para", "por",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "with",
+        "der",
+        "die",
+        "das",
+        "den",
+        "dem",
+        "des",
+        "und",
+        "oder",
+        "von",
+        "im",
+        "auf",
+        "für",
+        "fuer",
+        "mit",
+        "bei",
+        "zum",
+        "zur",
+        "el",
+        "la",
+        "los",
+        "las",
+        "de",
+        "del",
+        "y",
+        "o",
+        "con",
+        "para",
+        "por",
         # question words / auxiliaries — pure conversational scaffolding
-        "was", "wer", "wie", "wo", "wann", "warum", "welche", "welcher", "welches",
-        "ist", "sind", "war", "waren", "hat", "haben", "wird", "werden", "kann",
-        "soll", "sollte", "muss", "gibt", "gib", "dass", "wenn", "aber", "auch",
-        "noch", "schon", "nur", "sich", "sein", "seine", "ihre", "einen", "eine",
-        "einer", "eines", "etwas", "irgendwas", "irgendwie", "dann", "denn",
-        "what", "who", "how", "where", "when", "why", "which", "is", "are",
-        "were", "has", "have", "will", "would", "should", "must", "can", "does",
-        "this", "that", "these", "those", "there", "here", "some", "any", "about",
-        "qué", "que", "quien", "cómo", "como", "donde", "cuando", "cual", "está",
-        "estan", "tiene", "puede", "debe", "esto", "eso", "aqui", "algo",
+        "was",
+        "wer",
+        "wie",
+        "wo",
+        "wann",
+        "warum",
+        "welche",
+        "welcher",
+        "welches",
+        "ist",
+        "sind",
+        "war",
+        "waren",
+        "hat",
+        "haben",
+        "wird",
+        "werden",
+        "kann",
+        "soll",
+        "sollte",
+        "muss",
+        "gibt",
+        "gib",
+        "dass",
+        "wenn",
+        "aber",
+        "auch",
+        "noch",
+        "schon",
+        "nur",
+        "sich",
+        "sein",
+        "seine",
+        "ihre",
+        "einen",
+        "eine",
+        "einer",
+        "eines",
+        "etwas",
+        "irgendwas",
+        "irgendwie",
+        "dann",
+        "denn",
+        "what",
+        "who",
+        "how",
+        "where",
+        "when",
+        "why",
+        "which",
+        "is",
+        "are",
+        "were",
+        "has",
+        "have",
+        "will",
+        "would",
+        "should",
+        "must",
+        "can",
+        "does",
+        "this",
+        "that",
+        "these",
+        "those",
+        "there",
+        "here",
+        "some",
+        "any",
+        "about",
+        "qué",
+        "que",
+        "quien",
+        "cómo",
+        "como",
+        "donde",
+        "cuando",
+        "cual",
+        "está",
+        "estan",
+        "tiene",
+        "puede",
+        "debe",
+        "esto",
+        "eso",
+        "aqui",
+        "algo",
         # request verbs (they say what to DO, not which file)
-        "mach", "mache", "machen", "bau", "baue", "schreib", "schreibe", "fix",
-        "fixe", "behebe", "prüf", "pruef", "prüfe", "check", "checke", "teste",
-        "test", "starte", "start", "build", "write", "make", "run", "change",
-        "create", "add", "remove", "delete", "look", "read", "find", "search",
-        "review", "analyse", "analyze", "analysiere", "untersuche", "schau",
-        "haz", "escribe", "crea", "revisa", "arregla",
+        "mach",
+        "mache",
+        "machen",
+        "bau",
+        "baue",
+        "schreib",
+        "schreibe",
+        "fix",
+        "fixe",
+        "behebe",
+        "prüf",
+        "pruef",
+        "prüfe",
+        "check",
+        "checke",
+        "teste",
+        "test",
+        "starte",
+        "start",
+        "build",
+        "write",
+        "make",
+        "run",
+        "change",
+        "create",
+        "add",
+        "remove",
+        "delete",
+        "look",
+        "read",
+        "find",
+        "search",
+        "review",
+        "analyse",
+        "analyze",
+        "analysiere",
+        "untersuche",
+        "schau",
+        "haz",
+        "escribe",
+        "crea",
+        "revisa",
+        "arregla",
         # meta words about the code itself
-        "code", "datei", "dateien", "file", "files", "funktion", "function",
-        "klasse", "class", "modul", "module", "bug", "fehler", "error", "problem",
-        "sache", "thing", "stuff", "part", "teil", "mal", "bitte", "kurz", "nochmal",
+        "code",
+        "datei",
+        "dateien",
+        "file",
+        "files",
+        "funktion",
+        "function",
+        "klasse",
+        "class",
+        "modul",
+        "module",
+        "bug",
+        "fehler",
+        "error",
+        "problem",
+        "sache",
+        "thing",
+        "stuff",
+        "part",
+        "teil",
+        "mal",
+        "bitte",
+        "kurz",
+        "nochmal",
     }
 )
 
@@ -147,14 +365,23 @@ class FileIndex:
             return []
         wants_tests = bool(wanted & {"test", "tests", "spec", "specs"})
         wants_docs = bool(
-            wanted & {"doc", "docs", "documentation", "readme", "report", "spec",
-                      "dokumentation", "bericht", "documentacion", "informe"}
+            wanted
+            & {
+                "doc",
+                "docs",
+                "documentation",
+                "readme",
+                "report",
+                "spec",
+                "dokumentation",
+                "bericht",
+                "documentacion",
+                "informe",
+            }
         )
         scored: list[tuple[float, int, int, str]] = []
         for entry in self.entries:
-            score = _score(
-                entry, wanted, wants_tests=wants_tests, wants_docs=wants_docs
-            )
+            score = _score(entry, wanted, wants_tests=wants_tests, wants_docs=wants_docs)
             if score > 0:
                 # Shorter paths win ties: the top-level `config.py` is far more
                 # likely meant than a same-named file nested six levels deep.
@@ -169,6 +396,68 @@ class FileIndex:
             return []
         scored.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
         return [rel for _s, _d, _sz, rel in scored[: max(1, limit)]]
+
+    def render_map(self, text: str = "", *, max_chars: int = _MAP_CHARS) -> str:
+        """A compact tree the prompt writer can actually pick files from.
+
+        Lexical ``suggest`` is a hint, not understanding: "when prompting a
+        terminal takes too long" never names ``prompt_composer.py``. The writer
+        needs to *see* the layout — directories and the files in the ones that
+        fit the request — and choose. Built from the cached walk, no extra
+        disk. Bounded so a 1 s Flash call can read it.
+        """
+        if not self.entries:
+            return ""
+        wanted = tokenize(text)
+        by_dir: dict[str, list[_Entry]] = {}
+        for entry in self.entries:
+            parent = entry.rel.rsplit("/", 1)[0] if "/" in entry.rel else ""
+            by_dir.setdefault(parent, []).append(entry)
+
+        def _dir_score(dirname: str, files: list[_Entry]) -> float:
+            name_hits = len(tokenize(dirname.replace("/", " ")) & wanted) if wanted else 0
+            file_hits = 0
+            if wanted:
+                for item in files:
+                    if item.stem_tokens & wanted or item.path_tokens & wanted:
+                        file_hits += 1
+            # Shallower packages first when the query does not name a dir:
+            # ``jarvis/`` is a better glance than a nested fixture folder.
+            depth = dirname.count("/") + (1 if dirname else 0)
+            return name_hits * 4.0 + file_hits * 1.5 - 0.15 * depth
+
+        ranked = sorted(
+            by_dir.items(),
+            key=lambda kv: (-_dir_score(kv[0], kv[1]), kv[0]),
+        )
+        lines: list[str] = []
+        used = 0
+        for index, (dirname, files) in enumerate(ranked):
+            if index >= _MAP_DIRS:
+                break
+            score = _dir_score(dirname, files)
+            hot = bool(wanted) and score >= 2.0
+            cap = _MAP_FILES_HOT if (hot or not wanted and index < 16) else _MAP_FILES_COLD
+            files_sorted = sorted(
+                files,
+                key=lambda item: (
+                    -(len(item.stem_tokens & wanted) if wanted else 0),
+                    -item.size,
+                    item.rel,
+                ),
+            )
+            header = f"{dirname}/" if dirname else "./"
+            shown = files_sorted[:cap]
+            names = [item.rel.rsplit("/", 1)[-1] for item in shown]
+            extra = len(files) - len(shown)
+            line = f"{header}  {'  '.join(names)}"
+            if extra > 0:
+                line += f"  (+{extra})"
+            if used + len(line) + 1 > max_chars:
+                break
+            lines.append(line)
+            used += len(line) + 1
+        return "\n".join(lines)
 
 
 def _singular(token: str) -> str:
@@ -212,9 +501,7 @@ def tokenize(text: str) -> set[str]:
     return out
 
 
-def _score(
-    entry: _Entry, wanted: set[str], *, wants_tests: bool, wants_docs: bool
-) -> float:
+def _score(entry: _Entry, wanted: set[str], *, wants_tests: bool, wants_docs: bool) -> float:
     """How strongly this file answers to the words the user used."""
     stem_hits = entry.stem_tokens & wanted
     path_hits = (entry.path_tokens - entry.stem_tokens) & wanted
@@ -343,9 +630,7 @@ def build_index(root: str | Path) -> FileIndex:
                                 or stem.lower().endswith(("_test", ".test", ".spec"))
                             ),
                             is_doc=_is_doc(rel, name),
-                            dir_names=frozenset(
-                                part.lower() for part in parent.split("/") if part
-                            ),
+                            dir_names=frozenset(part.lower() for part in parent.split("/") if part),
                             size=_entry_size(item),
                         )
                     )

@@ -286,7 +286,9 @@ async def test_the_writer_gets_candidate_paths_not_file_bodies(
         "review the vosk wake provider", session=workspace, terminal_name="Kai"
     )
 
-    assert "jarvis/plugins/wake/vosk_kws_provider.py" in seen["user"]
+    assert "WORKSPACE TREE" in seen["user"]
+    assert "jarvis/plugins/wake/" in seen["user"]
+    assert "vosk_kws_provider.py" in seen["user"]
     assert "FILE OUTLINES" not in seen["user"]
     assert "candidate_shape_ok" not in seen["user"]
     # House rules stay out: the receiving agent already has them.

@@ -195,6 +195,27 @@ def test_user_block_puts_the_request_after_the_longform_data():
     assert block.rstrip().endswith("Write the prompt now.")
 
 
+def test_user_block_carries_the_workspace_tree_as_the_file_map():
+    """The writer picks @files from the tree, not from five lexical hits."""
+    block = user_block(
+        utterance="the terminal prompt is too slow",
+        instruction="the terminal prompt is too slow",
+        terminal_name="T4",
+        agent_display="Claude Code",
+        profile_lines=["Folder: /repo"],
+        candidates=["jarvis/agentic_ide/prompt_history.py"],
+        skeletons={},
+        house_rules="",
+        tree="jarvis/agentic_ide/  prompt_composer.py  file_index.py  session.py",
+    )
+
+    assert "WORKSPACE TREE" in block
+    assert "prompt_composer.py" in block
+    assert "SPOKEN WORDS ALREADY POINTED AT" in block
+    assert "use only these in @references" not in block
+    assert block.index("WORKSPACE TREE") < block.index("WHAT THE USER SAID")
+
+
 def test_user_block_survives_having_nothing_to_offer():
     block = user_block(
         utterance="do the thing",

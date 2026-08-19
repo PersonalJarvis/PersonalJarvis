@@ -700,16 +700,20 @@ async def _llm_compose(
 
 async def _read_context(
     session,  # noqa: ANN001 - Session, avoid an import cycle
-    candidates: list[str],
-) -> tuple[dict[str, str], str]:
-    """No file bodies. Candidate paths travel separately in the user block.
+    instruction: str,
+) -> tuple[str, dict[str, str]]:
+    """The workspace tree, from the cached walk. No file bodies.
 
     Kept as an awaitable so cancellation still reaps a sibling task, and so
-    tests can patch this hook. Production reads nothing: the tree index
-    already picked the paths, and the agent opens them.
+    tests can patch this hook. The index was built when the folder opened;
+    rendering the map is in-memory.
     """
-    del session, candidates
-    return {}, ""
+    from .file_index import cached_index
+
+    index = cached_index(getattr(session, "folder", "") or "")
+    if index is None:
+        return "", {}
+    return index.render_map(instruction), {}
 
 
 async def _compose_once(
@@ -722,7 +726,7 @@ async def _compose_once(
     agent_display: str,
     candidates: list[str],
     kind: str,
-    context,  # noqa: ANN001 - Awaitable[tuple[dict[str, str], str]]
+    context,  # noqa: ANN001 - Awaitable[tuple[str, dict[str, str]]]
     notify: Callable[[str, str], None],
     attachments: list,
     conversation: Sequence[tuple[str, str]],
@@ -736,7 +740,10 @@ async def _compose_once(
     """
     from . import prompt_blueprint as blueprint
 
-    outlines, house_rules = await context
+    packed = await context
+    tree, outlines = packed if isinstance(packed[0], str) else ("", packed[0])
+    if not isinstance(outlines, dict):
+        outlines = {}
 
     notify(
         STAGE_THINKING,
@@ -759,9 +766,10 @@ async def _compose_once(
             profile_lines=session.profile.summary_lines(),
             candidates=candidates,
             skeletons=outlines,
-            house_rules=house_rules,
+            house_rules="",
             attachments=attachments,
             conversation=conversation,
+            tree=tree,
         ),
         on_first_delta=lambda: notify(
             STAGE_DRAFTING,
@@ -954,8 +962,8 @@ async def _compose_after_start(
         notify(STAGE_FALLBACK, f"{terminal_name} gets the plain brief instead: {note}.")
         return deterministic("fallback", note, candidates=candidates)
 
-    # Candidate paths are enough; file bodies stay out (see `_read_context`).
-    context_task = asyncio.create_task(_read_context(session, candidates))
+    # The tree is in-memory (the walk already ran when the folder opened).
+    context_task = asyncio.create_task(_read_context(session, subject))
 
     try:
         writer, writer_source = (

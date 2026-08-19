@@ -6,6 +6,7 @@ repo first, a plural that never matches, or a walk that never terminates. Each
 gets a test here because none of them would show up as an error — just as an
 agent that starts by searching for the file you already named.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,7 +31,9 @@ def repo(tmp_path: Path) -> Path:
     (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
     (tmp_path / "node_modules" / "pkg" / "turn_language.py").write_text("x")
     (tmp_path / ".claude" / "worktrees" / "old" / "jarvis" / "core").mkdir(parents=True)
-    (tmp_path / ".claude" / "worktrees" / "old" / "jarvis" / "core" / "turn_language.py").write_text("x")
+    (
+        tmp_path / ".claude" / "worktrees" / "old" / "jarvis" / "core" / "turn_language.py"
+    ).write_text("x")
     (tmp_path / "logo.png").write_bytes(b"\x89PNG")
     return tmp_path
 
@@ -74,8 +77,32 @@ def test_implementation_outranks_its_test_unless_tests_are_asked_for(
 
 
 def test_conversational_scaffolding_matches_nothing(repo: Path) -> None:
-    """"was ist das" carries no addressing power and must not rank a file."""
+    """ "was ist das" carries no addressing power and must not rank a file."""
     assert index_suggest(repo, "was ist das denn") == []
+
+
+def test_render_map_puts_the_named_file_in_its_directory(repo: Path) -> None:
+    mapped = file_index.build_index(repo).render_map("schau dir den vosk wake provider an")
+    assert "jarvis/plugins/wake/" in mapped
+    assert "vosk_kws_provider.py" in mapped
+
+
+def test_render_map_still_shows_the_tree_when_words_match_nothing(
+    repo: Path,
+) -> None:
+    """Lexical suggest is a hint. The writer has to see the layout even when
+    the spoken sentence names no file — otherwise attaching files is a guess
+    from five overlapping names."""
+    index = file_index.build_index(repo)
+    assert index.suggest("it takes too long after I speak") == []
+    mapped = index.render_map("it takes too long after I speak")
+    assert "jarvis/plugins/wake/" in mapped
+    assert "vosk_kws_provider.py" in mapped
+
+
+def test_render_map_stays_inside_its_character_budget(repo: Path) -> None:
+    mapped = file_index.build_index(repo).render_map("wake", max_chars=80)
+    assert len(mapped) <= 80
 
 
 def index_suggest(root: Path, text: str) -> list[str]:
@@ -106,7 +133,7 @@ def test_cache_is_per_folder_and_clearable(repo: Path) -> None:
 # composed prompt then told the agent the code "needs to be discovered" — which
 # is the job the file index exists to do.
 def test_a_compound_product_name_finds_its_own_package(tmp_path: Path):
-    """"UltraWiki" splits to ultra+wiki; the directory is one word, `ultrawiki`.
+    """ "UltraWiki" splits to ultra+wiki; the directory is one word, `ultrawiki`.
 
     Those never met, so the package was unreachable by the name people write.
     """
@@ -145,7 +172,7 @@ def test_source_outranks_a_report_that_merely_shares_the_words(tmp_path: Path):
 
 
 def test_naming_a_package_pulls_in_its_siblings(tmp_path: Path):
-    """"Review the ultrawiki ranking" should reach the neighbouring modules,
+    """ "Review the ultrawiki ranking" should reach the neighbouring modules,
     not only the one file whose stem happens to match."""
     pkg = tmp_path / "jarvis" / "ultrawiki"
     pkg.mkdir(parents=True)
@@ -161,9 +188,7 @@ def test_naming_a_package_pulls_in_its_siblings(tmp_path: Path):
     # The same-named file in an unrelated package must not crowd them out —
     # being absent entirely is the better outcome, so only its ORDER is pinned.
     if "jarvis/speech/pipeline.py" in hits:
-        assert hits.index("jarvis/ultrawiki/pipeline.py") < hits.index(
-            "jarvis/speech/pipeline.py"
-        )
+        assert hits.index("jarvis/ultrawiki/pipeline.py") < hits.index("jarvis/speech/pipeline.py")
 
 
 def test_a_documentation_request_still_reaches_documentation(tmp_path: Path):

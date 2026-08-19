@@ -153,10 +153,11 @@ and discover the current code itself.
 - Aim for {TARGET_MIN_CHARS}-{TARGET_MAX_CHARS} characters, never over \
 {MAX_BODY_CHARS}. Length comes from a clean task and a concrete Key files \
 list, never from restating the files' internals, hedging or dictated steps.
-- `@path` references only inside `## Key files`, only from the candidate list, \
-each with one short reason. Never end the prompt on an `@path` or `/command` \
-- a trailing reference holds the agent's completion popup open and the prompt \
-is never submitted.
+- `@path` references only inside `## Key files`, only paths that appear in the \
+workspace tree (join a directory header with the file name under it), each \
+with one short reason. Never invent a path. Never end the prompt on an \
+`@path` or `/command` - a trailing reference holds the agent's completion \
+popup open and the prompt is never submitted.
 - ENGLISH, whatever language the user spoke.
 - Preserve every constraint, file, symbol and intent expressed; drop speech \
 artefacts and the clause addressing the agent by name.
@@ -307,6 +308,7 @@ def user_block(
     house_rules: str,
     attachments: list | None = None,
     conversation: Sequence[tuple[str, str]] | None = None,
+    tree: str = "",
 ) -> str:
     """Everything the composer knows, laid out for one model call.
 
@@ -336,6 +338,13 @@ def user_block(
         )
         parts.append(_ATTACHMENT_RULES)
 
+    if tree:
+        parts.append(
+            "WORKSPACE TREE (repo-relative; a directory header plus the files "
+            "under it. Pick Key files from HERE - join header + name to form "
+            "@path. Do not invent paths, do not open files, the agent will)\n" + tree
+        )
+
     if skeletons:
         outlines = "\n\n".join(
             f'<file path="{path}">\n{text}\n</file>' for path, text in skeletons.items()
@@ -345,14 +354,22 @@ def user_block(
             "real symbols instead of describing code vaguely)\n" + outlines
         )
 
-    candidate_block = (
-        "\n".join(f"- {c}" for c in candidates)
-        if candidates
-        else "(no candidate files matched - omit the Key files section)"
-    )
-    parts.append(
-        "CANDIDATE FILES (repo-relative; use only these in @ references)\n" + candidate_block
-    )
+    if tree:
+        if candidates:
+            parts.append(
+                "SPOKEN WORDS ALREADY POINTED AT (hints from the names, not a "
+                "limit - the tree above is the real map)\n"
+                + "\n".join(f"- {c}" for c in candidates)
+            )
+    else:
+        candidate_block = (
+            "\n".join(f"- {c}" for c in candidates)
+            if candidates
+            else "(no candidate files matched - omit the Key files section)"
+        )
+        parts.append(
+            "CANDIDATE FILES (repo-relative; use only these in @references)\n" + candidate_block
+        )
 
     spoken = conversation_module.render(conversation or ())
     if spoken:
