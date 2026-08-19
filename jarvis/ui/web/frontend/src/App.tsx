@@ -46,9 +46,9 @@ const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
  * Which artwork is shown belongs to the user — see the Wallpaper section. The
  * picture that ships with the app remains the default, and the one every
  * failure path returns to. Gigi is a separate live layer on that ground, not
- * painted into the picture — and he steps off it while the mission deck is on
- * stage (`hideMascot`): the deck's ring and console own that corner, and a
- * second ghost next to the orb was one too many (maintainer, 2026-08-19).
+ * painted into the picture — and he only sits on Chats (`hideMascot` everywhere
+ * else). Work sections were showing a second ghost in the empty corner, and
+ * the mission deck's ring already owns that same spot (maintainer, 2026-08-19).
  */
 function DesktopWallpaper({ hideMascot = false }: { hideMascot?: boolean }) {
   const wallpaperUrl = useDesktopWallpaper();
@@ -285,10 +285,18 @@ export default function App() {
    * report through them) and the right-click edit menu (the desktop WebView
    * has no native context menu, so this is the only mouse-driven paste).
    */
+  /*
+   * Gigi belongs on the Chats ground only. Every other section was painting
+   * the same live ghost into empty corners (Tasks, Wiki, Profile, …) and the
+   * deck already hides him for the same reason as before: two heroes in one
+   * corner. The wallpaper picture stays; only the mascot layer steps off.
+   */
+  const hideMascot = activeSection !== "chats" || deckOnStage;
+
   if (solo) {
     return (
       <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
-        <DesktopWallpaper hideMascot={deckOnStage} />
+        <DesktopWallpaper hideMascot={hideMascot} />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
           <SectionStage visualization={visualizationActive}>
@@ -305,7 +313,7 @@ export default function App() {
   return (
     <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
-      <DesktopWallpaper hideMascot={deckOnStage} />
+      <DesktopWallpaper hideMascot={hideMascot} />
 
       {!deckOnStage && (
         <>

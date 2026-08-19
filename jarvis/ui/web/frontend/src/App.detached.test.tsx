@@ -109,6 +109,14 @@ describe("App shell around detached coding views", () => {
     expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
   });
 
+  it("hides the live mascot on every section except Chats", () => {
+    useEventStore.setState({ activeSection: "tasks" });
+    render(<App />);
+
+    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
+  });
+
   it("keeps the sidebar reachable in the main window", () => {
     useEventStore.setState({
       activeSection: "agentic-ide",
