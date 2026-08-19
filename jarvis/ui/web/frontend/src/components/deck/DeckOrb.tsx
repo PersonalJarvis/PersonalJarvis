@@ -19,6 +19,17 @@ import { cn } from "@/lib/utils";
  * the deck's addition, and every part of it carries information: the arcs
  * are parallel work made visible, the sweep turns only while something
  * runs, the readouts are live values the caller sources.
+ *
+ * And it is ALIVE at rest (maintainer, 2026-08-19: the still reticle looked
+ * boring on both stages): the inner scale turns slowly one way, a sparse
+ * orbit the other, a satellite rides the bezel, the glow breathes, and while
+ * the assistant is idle a faint ping leaves the orb every few seconds — the
+ * listening heartbeat. Calm, not busy: slow periods, low opacities, nothing
+ * that competes with a real signal (the satellite steps aside for the busy
+ * sweep). Each living part is its own small layer — a root `<svg>` or a div
+ * with a CSS transform/opacity animation (index.css) — so the browser turns
+ * it on the compositor and the main thread never hears of it; the halo
+ * filter stays on the still reticle. Reduced motion stops all of it.
  */
 export interface OrbReadouts {
   nw: string;
@@ -143,18 +154,8 @@ export function DeckOrb({
           return <line key={deg} x1={ax} y1={ay} x2={bx} y2={by} stroke="hsl(var(--primary))" strokeWidth={1.5} opacity={0.9} />;
         })}
 
-        {/* inner scale ring around the orb */}
+        {/* inner scale ring around the orb (the dashed scale inside it turns — see below) */}
         <circle cx={R} cy={R} r={R * 0.84} fill="none" stroke="hsl(var(--primary))" strokeWidth={1} opacity={0.5} />
-        <circle
-          cx={R}
-          cy={R}
-          r={R * 0.66}
-          fill="none"
-          stroke="hsl(var(--primary))"
-          strokeWidth={1}
-          strokeDasharray="2 6"
-          opacity={0.55}
-        />
 
         {arcs.map((a) => (
           <path
@@ -179,6 +180,37 @@ export function DeckOrb({
         )}
         </g>
       </svg>
+
+      {/* The living parts, each its own layer (CSS, index.css): the dashed
+          inner scale turning one way, a sparse orbit the other, a satellite
+          on the bezel while nothing runs, and the idle ping. */}
+      <OrbitLayer size={size} r={R * 0.66} className="deck-orb-orbit-a" dash="2 6" opacity={0.55} />
+      <OrbitLayer size={size} r={R * 0.76} className="deck-orb-orbit-b" dash="18 54" opacity={0.32} />
+      {!busy && (
+        <svg
+          viewBox={`0 0 ${size} ${size}`}
+          className="deck-orb-satellite pointer-events-none absolute inset-0 h-full w-full"
+          aria-hidden
+          data-testid="deck-orb-satellite"
+        >
+          <path
+            d={`M ${point(-16, R * 0.94)[0]} ${point(-16, R * 0.94)[1]} A ${R * 0.94} ${R * 0.94} 0 0 1 ${R} ${R - R * 0.94}`}
+            fill="none"
+            stroke="hsl(var(--primary))"
+            strokeWidth={1.5}
+            opacity={0.45}
+          />
+          <circle cx={R} cy={R - R * 0.94} r={2.2} fill="hsl(var(--primary))" />
+        </svg>
+      )}
+      {voiceState === "idle" && (
+        <div
+          aria-hidden
+          data-testid="deck-orb-ping"
+          className="deck-orb-ping pointer-events-none absolute rounded-full"
+          style={{ inset: size * 0.08 }}
+        />
+      )}
 
       <div className="absolute inset-0 grid place-items-center">
         {onPress ? (
@@ -235,6 +267,45 @@ function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: num
       />
       <JarvisOrb size={orbSize} voiceState={voiceState} className="absolute inset-0" />
     </>
+  );
+}
+
+/**
+ * One turning ring of the reticle: a dashed circle in its own root `<svg>`,
+ * so its CSS rotation is a compositor transform (a transform on a group
+ * INSIDE an svg repaints the whole svg every frame).
+ */
+function OrbitLayer({
+  size,
+  r,
+  className,
+  dash,
+  opacity,
+}: {
+  size: number;
+  r: number;
+  className: string;
+  dash: string;
+  opacity: number;
+}) {
+  const c = size / 2;
+  return (
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      className={cn("pointer-events-none absolute inset-0 h-full w-full", className)}
+      aria-hidden
+    >
+      <circle
+        cx={c}
+        cy={c}
+        r={r}
+        fill="none"
+        stroke="hsl(var(--primary))"
+        strokeWidth={1}
+        strokeDasharray={dash}
+        opacity={opacity}
+      />
+    </svg>
   );
 }
 

@@ -30,6 +30,17 @@ describe("DeckOrb", () => {
     expect(screen.getByTestId("jarvis-orb")).toBeTruthy();
   });
 
+  test("is alive at rest: turning scales, a satellite on the bezel, the idle ping", () => {
+    const { container, rerender } = render(<DeckOrb steps={[]} busy={false} />);
+    expect(container.querySelector(".deck-orb-orbit-a")).toBeTruthy();
+    expect(container.querySelector(".deck-orb-orbit-b")).toBeTruthy();
+    expect(screen.getByTestId("deck-orb-satellite")).toBeTruthy();
+    expect(screen.getByTestId("deck-orb-ping")).toBeTruthy();
+    // The satellite steps aside for the busy sweep — one signal on the bezel.
+    rerender(<DeckOrb steps={[]} busy />);
+    expect(screen.queryByTestId("deck-orb-satellite")).toBeNull();
+  });
+
   test("the centre is the Jarvis orb artwork, and nothing rides in its core", () => {
     render(<DeckOrb steps={[]} busy={false} />);
     const orb = screen.getByTestId("jarvis-orb");

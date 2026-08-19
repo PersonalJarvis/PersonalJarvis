@@ -562,7 +562,10 @@ function StandbyRing({
   const stroke = "hsl(var(--primary))";
   const tickOpacity = [0.3, 0.55, 0.9] as const;
 
+  const innerR = Math.max(reticle / 2 + 18, R * 0.62);
+
   return (
+    <>
     <svg
       viewBox={`0 0 ${size} ${size}`}
       className="absolute inset-0 h-full w-full"
@@ -698,17 +701,27 @@ function StandbyRing({
         )}
       </g>
 
-      {/* a faint scale between reticle and arcs — the ring's inner edge */}
+    </svg>
+
+    {/* a faint scale between reticle and arcs — the ring's inner edge — in
+        its own layer, turning slowly against the sweep (CSS, compositor) */}
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      className="deck-ring-orbit pointer-events-none absolute inset-0 h-full w-full"
+      aria-hidden
+    >
+      <circle cx={C} cy={C} r={innerR} fill="none" stroke={stroke} strokeWidth={1} strokeDasharray="2 8" opacity={0.22} />
       <circle
         cx={C}
         cy={C}
-        r={Math.max(reticle / 2 + 18, R * 0.62)}
+        r={innerR + 10}
         fill="none"
         stroke={stroke}
         strokeWidth={1}
-        strokeDasharray="2 8"
-        opacity={0.22}
+        strokeDasharray="26 74"
+        opacity={0.16}
       />
     </svg>
+    </>
   );
 }
