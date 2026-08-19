@@ -4370,6 +4370,7 @@
     "mood_fail": "trouble",
     "mood_offline": "offline",
     "stat_brain": "Brain",
+    "stat_realtime": "Realtime",
     "stat_model": "Model",
     "stat_running": "Running",
     "switch_to_classic": "Classic chat",

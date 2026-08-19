@@ -334,7 +334,11 @@ export function DeckOrb({
         <>
           <Readout className="left-1 top-1 text-left" text={readouts.nw} />
           <Readout className="right-1 top-1 text-right" text={readouts.ne} />
-          <Readout className="bottom-1 left-1 text-left" text={readouts.sw} />
+          <Readout
+            className="bottom-1 left-1 text-left"
+            text={readouts.sw}
+            testId="deck-orb-provider"
+          />
           <Readout className="bottom-1 right-1 text-right" text={readouts.se} />
         </>
       )}
@@ -414,9 +418,18 @@ function OrbitLayer({
   );
 }
 
-function Readout({ text, className }: { text: string; className?: string }) {
+function Readout({
+  text,
+  className,
+  testId,
+}: {
+  text: string;
+  className?: string;
+  testId?: string;
+}) {
   return (
     <span
+      data-testid={testId}
       className={cn(
         "pointer-events-none absolute max-w-[42%] truncate px-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-primary/90",
         className,

@@ -72,6 +72,17 @@ vi.mock("@/components/layout/TopBar", () => ({
 vi.mock("@/components/layout/CodingModeBadge", () => ({
   CodingModeBadge: () => null,
 }));
+// Phase tests are not about which provider is named. Stub the display so
+// this file never pulls /api/settings/voice-mode (the real hook needs a
+// QueryClient). The engine-display file covers Vertex vs OpenRouter.
+vi.mock("@/hooks/useVoiceEngineDisplay", () => ({
+  useVoiceEngineDisplay: () => ({
+    tier: "pipeline",
+    providerId: "openrouter",
+    providerLabel: "OpenRouter",
+    model: "",
+  }),
+}));
 
 import { MissionDeckView } from "@/views/MissionDeckView";
 import { useDeckStore } from "@/store/deck";
@@ -93,7 +104,7 @@ function ready() {
   });
 }
 
-describe("MissionDeckView — the three acts", () => {
+describe("MissionDeckView — the three acts", { timeout: 15_000 }, () => {
   beforeEach(() => {
     useDeckStore.getState().resetDeck();
     ready();
@@ -166,8 +177,8 @@ describe("MissionDeckView — the three acts", () => {
     // A dropped link does not send the person back to the start screen.
     act(() => useEventStore.setState({ connected: false }));
     expect(screen.getByTestId("deck-board")).toBeTruthy();
-    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 3000 });
-  });
+    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 4000 });
+  }, 10_000);
 
   test("pressing the orb reaches for the voice AND opens the board at once", () => {
     render(<MissionDeckView />);

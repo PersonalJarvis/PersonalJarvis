@@ -4370,6 +4370,7 @@
     "mood_fail": "con fallos",
     "mood_offline": "sin conexión",
     "stat_brain": "Cerebro",
+    "stat_realtime": "Tiempo real",
     "stat_model": "Modelo",
     "stat_running": "Activos",
     "switch_to_classic": "Chat clásico",

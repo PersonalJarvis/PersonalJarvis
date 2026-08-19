@@ -15,6 +15,7 @@ import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
+import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
@@ -102,8 +103,7 @@ export function Sidebar({
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
-  const brainProvider = useEventStore((s) => s.brainProvider);
-  const brainModel = useEventStore((s) => s.brainModel);
+
   // Per-section provider health (same source as the API-Keys tab dots). The
   // sidebar surfaces only a hard "error" — a provider that is set up but failing
   // — so a broken key is visible from anywhere without opening the page. The
@@ -133,11 +133,11 @@ export function Sidebar({
   // follows the VOICE MODE rather than the pipeline brain (in realtime mode the
   // pipeline brain is dormant, and showing it there misled the user —
   // "OpenRouter" while Gemini Live was doing all the talking), and the status
-  // line needs its connecting phase. A RUNNING realtime session's live
-  // provider/model outrank the configured pick (a mid-call cross-family
-  // fallback must be visible, AP-22); when idle the resolved provider + its
-  // pinned/default model are shown.
+  // line needs its connecting phase. Same resolver as the mission-deck header
+  // and orb (`useVoiceEngineDisplay`): a live session outranks the configured
+  // pick so a mid-call cross-family fallback is visible (AP-22).
   const voiceMode = useVoiceMode();
+  const engine = useVoiceEngineDisplay();
 
   // The window connects in ~1s but the voice feature warms up ~20s in the
   // background. During that gap show a "Voice starting…" spinner instead of the
@@ -162,30 +162,15 @@ export function Sidebar({
         ? t("voice_state.connecting")
         : t(`voice_state.${voiceState}`);
 
-  const providerLabel = useMemo(() => prettyProviderName(brainProvider), [brainProvider]);
-
-  const realtimeFooter = voiceMode.mode === "realtime";
-  const liveRealtimeSession =
-    realtimeFooter &&
-    voiceMode.sessionActive &&
-    voiceMode.activeSessionMode === "realtime";
+  const realtimeFooter = engine.tier === "realtime";
   const footerLabel = realtimeFooter
     ? t("sidebar.realtime_label")
     : t("sidebar.brain_label");
   const footerTooltip = realtimeFooter
     ? t("sidebar.realtime_tooltip")
     : t("sidebar.brain_tooltip");
-  const footerProvider = realtimeFooter
-    ? liveRealtimeSession && voiceMode.activeSessionProvider
-      ? prettyProviderName(voiceMode.activeSessionProvider)
-      : voiceMode.activeProviderLabel ??
-        prettyProviderName(voiceMode.activeProvider ?? "unknown")
-    : providerLabel;
-  const footerModel = realtimeFooter
-    ? liveRealtimeSession && voiceMode.activeSessionModel
-      ? voiceMode.activeSessionModel
-      : voiceMode.activeModel ?? ""
-    : brainModel;
+  const footerProvider = engine.providerLabel;
+  const footerModel = engine.model;
 
   const [logoRetry, setLogoRetry] = useState(0);
 
@@ -525,22 +510,3 @@ function tailTruncate(s: string, n: number): string {
   return "…" + s.slice(s.length - (n - 1));
 }
 
-function prettyProviderName(id: string): string {
-  const map: Record<string, string> = {
-    "claude-api": "Claude (API)",
-    "openrouter": "OpenRouter",
-    "ollama-local": "Ollama (local)",
-    "ollama-cloud": "Ollama (Cloud)",
-    "gemini": "Gemini",
-    "openai": "OpenAI",
-    "codex": "Codex",
-    "mock": "Mock-Brain",
-    // Realtime tier — used by the footer card in realtime voice mode when the
-    // backend's pretty label is unavailable (cosmetic fallback only).
-    "openai-realtime": "OpenAI Realtime",
-    "gemini-live": "Gemini Live",
-    "local-realtime": "Self-hosted realtime",
-    "unknown": "—",
-  };
-  return map[id] ?? id;
-}

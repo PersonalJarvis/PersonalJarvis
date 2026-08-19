@@ -320,6 +320,22 @@ describe("Sidebar footer in realtime voice mode", () => {
       "google/gemini-3.5-flash",
     );
   });
+
+  test("Vertex AI Live is named as such, not as the pipeline brain", () => {
+    voiceModeMock.value = {
+      ...voiceModeMock.value,
+      mode: "realtime",
+      activeProvider: "vertex-live",
+      activeProviderLabel: "Vertex AI Live",
+      activeModel: "gemini-live-2.5-flash-preview-native-audio-dialog",
+    };
+
+    renderSidebar();
+
+    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
+    expect(screen.getByText("Vertex AI Live")).toBeTruthy();
+    expect(screen.queryByText("OpenRouter")).toBeNull();
+  });
 });
 
 describe("Sidebar assistant name header", () => {

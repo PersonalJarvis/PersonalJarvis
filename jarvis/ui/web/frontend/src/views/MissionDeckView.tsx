@@ -23,6 +23,7 @@ import { ApiStatsCard, CaptureCard, LiveCounter } from "@/components/deck/DeckSi
 import { LogCard } from "@/components/deck/DeckLogCard";
 import { TurnCard } from "@/components/deck/DeckTurnCard";
 import { WikiCard, warmWikiScene } from "@/components/deck/DeckWiki";
+import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
@@ -89,8 +90,6 @@ export function MissionDeckView({
 }) {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
-  const brainProvider = useEventStore((s) => s.brainProvider);
-  const brainModel = useEventStore((s) => s.brainModel);
   const connected = useEventStore((s) => s.connected);
   const voiceReady = useEventStore((s) => s.voiceReady);
   const voiceState = useEventStore((s) => s.voiceState);
@@ -105,6 +104,11 @@ export function MissionDeckView({
   const boardOpen = useDeckStore((s) => s.boardOpen);
   const openBoard = useDeckStore((s) => s.openBoard);
   const { warming } = useVoiceReadiness();
+  // Header + orb name the engine that will answer the next spoken turn, not
+  // the dormant sibling. Pipeline and realtime are independent picks; the
+  // sidebar footer already followed this rule and the deck was still showing
+  // the classic brain (OpenRouter) while Vertex AI Live was talking.
+  const engine = useVoiceEngineDisplay();
   // The orb is the click-shaped wake word: the same start/stop path the
   // classic surface's voice bubble uses, so both do exactly one thing.
   const { active: callActive, busy: callBusy, connecting, toggleCall } = useVoiceCall();
@@ -196,7 +200,7 @@ export function MissionDeckView({
   const readouts: OrbReadouts = {
     nw: t(`deck.mood_${mood}`),
     ne: `${running.length} ${t("deck.orb_steps")}`,
-    sw: brainProvider || "—",
+    sw: engine.providerLabel,
     se: `${wordsSession} ${t("deck.orb_words")}`,
   };
   // Pressing the orb reaches for the voice — the board opens on the press
@@ -242,7 +246,10 @@ export function MissionDeckView({
         <div className="flex items-center gap-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
           <Lamp on={connected} label={t("deck.lamp_link")} />
           <Lamp on={voiceReady} label={t("deck.lamp_voice")} />
-          <Lamp on={Boolean(brainProvider)} label={t("deck.lamp_brain")} />
+          <Lamp
+            on={engine.providerLabel !== "—"}
+            label={t(engine.tier === "realtime" ? "deck.stat_realtime" : "deck.lamp_brain")}
+          />
           <Lamp on={cuActive} label={t("deck.lamp_cu")} />
         </div>
 
@@ -253,14 +260,16 @@ export function MissionDeckView({
             {assistantName}
           </span>
           <HeaderStat
-            label={t("deck.stat_brain")}
-            value={brainProvider || "—"}
+            label={t(engine.tier === "realtime" ? "deck.stat_realtime" : "deck.stat_brain")}
+            value={engine.providerLabel}
             hot
+            testId="deck-stat-engine"
             onClick={() => setActiveSection("apikeys")}
           />
           <HeaderStat
             label={t("deck.stat_model")}
-            value={brainModel || "—"}
+            value={engine.model || "—"}
+            testId="deck-stat-model"
             onClick={() => setActiveSection("apikeys")}
           />
           {headerAccessory}
@@ -548,11 +557,13 @@ function HeaderStat({
   value,
   hot,
   onClick,
+  testId,
 }: {
   label: string;
   value: string;
   hot?: boolean;
   onClick?: () => void;
+  testId?: string;
 }) {
   const body = (
     <>
@@ -564,10 +575,17 @@ function HeaderStat({
       </span>
     </>
   );
-  if (!onClick) return <div className="flex items-baseline gap-1.5 whitespace-nowrap">{body}</div>;
+  if (!onClick) {
+    return (
+      <div data-testid={testId} className="flex items-baseline gap-1.5 whitespace-nowrap">
+        {body}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
+      data-testid={testId}
       onClick={onClick}
       className="flex items-baseline gap-1.5 whitespace-nowrap transition-colors hover:[&>span]:text-primary"
     >
