@@ -138,6 +138,24 @@ describe("BrowserRealtimeControl", () => {
     expect(useEventStore.getState().voiceState).toBe("thinking");
   });
 
+  it("keeps thinking after a progress surface line finishes speaking", async () => {
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      fakes.callbacks?.onStatus?.("error_spoken", {
+        text: "I'll play that.",
+        spoken_kind: "progress",
+      }),
+    );
+    act(() => fakes.callbacks?.onStatus?.("tts_end", {}));
+    expect(useEventStore.getState().voiceState).toBe("thinking");
+
+    act(() => fakes.callbacks?.onStatus?.("turn_complete", {}));
+    expect(useEventStore.getState().voiceState).toBe("listening");
+  });
+
   it("requires a configured Realtime provider before opening the microphone", () => {
     fakes.available = false;
     render(<BrowserRealtimeControl />);

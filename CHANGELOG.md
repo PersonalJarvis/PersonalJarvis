@@ -20,6 +20,10 @@ versioning per [SemVer](https://semver.org/).
 - **Vertex Live native tools work again.** Vertex reports hybrid function
   calls as `default:run_shell`. The bridge treated that as an unknown tool
   and the model said the tools were down (BUG-153).
+- **The Jarvis Bar keeps thinking while the Tool Model works.** After the
+  short "I'll play that" ack it used to look ready even though YouTube
+  Music was still running. Progress speech now returns to thinking until
+  the result is spoken.
 
 ## [1.4.0] — 2026-08-18
 

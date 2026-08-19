@@ -9072,7 +9072,25 @@ class SpeechPipeline:
                             _close_output_segment(
                                 preserve_echo_tail=speaking,
                             )
-                            await self._set_turn_state(TurnTakingState.LISTENING)
+                            # A progress/preamble line is not the end of the
+                            # turn. Returning to LISTENING here made the
+                            # Jarvis Bar look ready while the Tool Model was
+                            # still running (live 2026-08-19: "I'll play
+                            # that" → still bars → music starts seconds
+                            # later). The thinking look stays until the
+                            # result is spoken.
+                            spoken_kind = str(
+                                message.get("spoken_kind", "") or ""
+                            )
+                            await self._set_turn_state(
+                                TurnTakingState.PROCESSING
+                                if spoken_kind
+                                in (
+                                    SPOKEN_KIND_PROGRESS,
+                                    SPOKEN_KIND_PREAMBLE,
+                                )
+                                else TurnTakingState.LISTENING
+                            )
             elif kind == "provider_error":
                 log.warning("Realtime desktop status: %s", message)
             elif kind == "provider_fallback":

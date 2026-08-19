@@ -302,6 +302,84 @@ async def test_interim_audio_returns_to_thinking_before_final_answer(
 
 
 @pytest.mark.asyncio
+async def test_surface_progress_ack_returns_to_thinking_while_the_tool_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native-tool instant ack must not leave the Jarvis Bar looking ready.
+
+    Live 2026-08-19: "I'll play that" spoke through surface TTS, then
+    SPEAKING → LISTENING while YouTube Music was still running. Progress
+    speech is not the end of the turn.
+    """
+    pipe = _pipe()
+    ack_pcm = b"\x0a\x00" * 16
+    result_pcm = b"\x0b\x00" * 16
+    surface_tts = _FakeTTS(ack_pcm)
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts",
+        lambda _cfg, _provider: surface_tts,
+    )
+
+    class _ProgressAckSession(_FakeRealtimeSession):
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            await self._send_json(
+                {
+                    "type": "audio_ready",
+                    "provider": "fake-live",
+                    "input_sample_rate": 16_000,
+                    "output_sample_rate": 24_000,
+                }
+            )
+            await self._send_json(
+                {
+                    "type": "transcript",
+                    "role": "user",
+                    "text": "play a nice song",
+                    "is_final": True,
+                }
+            )
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": "I'll play that.",
+                    "language": "en",
+                    "spoken_kind": "progress",
+                }
+            )
+            await self._send_binary(result_pcm)
+            await self._send_json({"type": "turn_complete"})
+
+    def _build(**kwargs):
+        return _ProgressAckSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        pipeline_mod,
+        "MicrophoneCapture",
+        lambda **_kwargs: _SilentMic(),
+    )
+
+    reason = await asyncio.wait_for(pipe._active_realtime_session(), timeout=2.0)
+
+    assert reason == HANGUP_TURN_COMPLETE
+    assert ack_pcm in pipe._player.pcm
+    assert result_pcm in pipe._player.pcm
+    state_changes = [
+        state
+        for index, state in enumerate(pipe._test_states)
+        if index == 0 or state != pipe._test_states[index - 1]
+    ]
+    assert state_changes == [
+        pipeline_mod.TurnTakingState.PROCESSING,
+        pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
+        pipeline_mod.TurnTakingState.PROCESSING,
+        pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
+        pipeline_mod.TurnTakingState.LISTENING,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

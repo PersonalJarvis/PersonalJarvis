@@ -30,7 +30,7 @@ from uuid import uuid4
 from jarvis.brain import turn_planner as _planner_vocab
 from jarvis.brain.action_honesty import (
     action_not_started_phrase,
-    has_deferred_action_claim,
+    has_unbacked_action_claim,
 )
 from jarvis.brain.cu_gate import (
     CU_VEHICLE_TOOL_NAMES,
@@ -2160,6 +2160,7 @@ class RealtimeVoiceSession:
         # ADR-0035 §3/§7: native tool calls get their own ack watchdog and
         # counters; the turn id keeps the ack to one line per turn.
         self._native_tool_calls = 0
+        self._native_tools_in_flight = 0
         self._native_tool_failures = 0
         self._native_tool_denied = 0
         self._delegate_cu_dispatches = 0
@@ -4896,7 +4897,7 @@ class RealtimeVoiceSession:
                         f"{self._provider_output_probe}{event.text}"[-4_096:]
                     )
                     self._withheld_promise_parts.append(event.text)
-                    if has_deferred_action_claim(self._provider_output_probe):
+                    if has_unbacked_action_claim(self._provider_output_probe):
                         # ARM ONLY — never cancel here. Whether a commitment was
                         # left without a delivered result is a judgement about a
                         # FINISHED response; on a streaming prefix the sentence
@@ -6167,6 +6168,19 @@ class RealtimeVoiceSession:
             words = len(cleaned.split())
             self._advance_echo_horizon(words * 0.4 + 1.0)
 
+    async def _speak_interim_and_keep_thinking(self, text: str) -> None:
+        """Speak a progress line and put the bar back on thinking.
+
+        Surfaces drain the canned line then return to THINKING so the
+        Jarvis Bar / orb keep showing work in flight until the result
+        is spoken (live 2026-08-19: native-tool ack went SPEAKING then
+        LISTENING while YouTube Music was still running).
+        """
+        await self._send_json(
+            self._surface_speech_message(text, spoken_kind=SPOKEN_KIND_PROGRESS)
+        )
+        await self._send_json({"type": "thinking"})
+
     def _surface_speech_message(
         self,
         text: str,
@@ -6586,8 +6600,9 @@ class RealtimeVoiceSession:
     async def _recover_unbacked_action_claim(self) -> bool:
         """Turn a provider's unsupported action promise into a real outcome.
 
-        TERMINAL ONLY. ``has_deferred_action_claim`` asks whether a commitment
-        was left without a delivered result, which a still-growing stream can
+        TERMINAL ONLY. ``has_unbacked_action_claim`` asks whether a
+        commitment or a false completion ("I'm playing you a playlist") was
+        left without a delivered result, which a still-growing stream can
         never answer. Call this from a closed response (``turn_complete``) or
         from the settled-silence backstop in the turn stall watchdog — never
         from a transcript delta.
@@ -6595,8 +6610,9 @@ class RealtimeVoiceSession:
         if (
             self._external_update is not None
             or self._executed_tool_names
+            or self._native_tools_in_flight
             or self._delegate_delivery_started()
-            or not has_deferred_action_claim(self._provider_output_probe)
+            or not has_unbacked_action_claim(self._provider_output_probe)
         ):
             return False
 
@@ -7541,6 +7557,7 @@ class RealtimeVoiceSession:
             or self._output_samples_sent > 0
             or self._gate.pending_audio_ms > 0
             or "".join(self._output_transcript).strip()
+            or self._native_tools_in_flight
             or turn_id in self._delegate_turns
             or self._has_pending_delegate_from_earlier_turn()
         ):
@@ -7773,6 +7790,9 @@ class RealtimeVoiceSession:
                     self._output_active
                     or self._output_samples_sent > 0
                     or "".join(self._output_transcript).strip()
+                    or self._native_tools_in_flight
+                    or self._direct_tool_results
+                    or self._executed_tool_names
                 ):
                     self._clear_deferred_interruption()
                     return
@@ -7781,7 +7801,13 @@ class RealtimeVoiceSession:
                 await asyncio.sleep(_DELEGATE_READBACK_POLL_S)
         except asyncio.CancelledError:
             raise
-        if turn_id in self._delegate_turns or self._turn_id != turn_id:
+        if (
+            turn_id in self._delegate_turns
+            or self._turn_id != turn_id
+            or self._native_tools_in_flight
+            or self._direct_tool_results
+            or self._executed_tool_names
+        ):
             return
         log.warning(
             "realtime[%s] the re-asked provider rendered nothing within %.1fs "
@@ -9421,7 +9447,7 @@ class RealtimeVoiceSession:
             "running — answering with the deterministic progress line",
             self.session_id,
         )
-        await self._send_json(self._surface_speech_message(status_text))
+        await self._speak_interim_and_keep_thinking(status_text)
 
     def _grounded_pending_status_text(self) -> str:
         """One progress line for a running order: grounded when a tool is known.
@@ -9773,6 +9799,7 @@ class RealtimeVoiceSession:
             ),
             name=f"rt-native-tool-ack-{self.session_id}",
         )
+        self._native_tools_in_flight += 1
         try:
             execute = self._tool_bridge.execute
             execute_kwargs: dict[str, Any] = {
@@ -9803,6 +9830,7 @@ class RealtimeVoiceSession:
                 "error": "The tool failed safely and was not completed.",
             }
         finally:
+            self._native_tools_in_flight = max(0, self._native_tools_in_flight - 1)
             if not ack_task.done():
                 ack_task.cancel()
         if result.get("success"):
@@ -9882,9 +9910,7 @@ class RealtimeVoiceSession:
             detail=f"kind=native_tool;tool={wire_name}",
         )
         try:
-            await self._send_json(
-                self._surface_speech_message(line, spoken_kind=SPOKEN_KIND_PROGRESS)
-            )
+            await self._speak_interim_and_keep_thinking(line)
         except Exception:  # noqa: BLE001 — a failed ack must not hurt the call
             log.debug("realtime[%s] native-tool ack send failed", self.session_id, exc_info=True)
 

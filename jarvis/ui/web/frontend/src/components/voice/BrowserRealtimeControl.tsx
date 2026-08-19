@@ -99,6 +99,11 @@ export function BrowserRealtimeControl() {
   const levelRef = useRef(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
   const connectionGenerationRef = useRef(0);
+  // A progress/preamble surface line is not the end of the turn. After the
+  // browser finishes speaking it, tts_end must restore thinking — not
+  // listening — or the pill looks ready while the Tool Model is still
+  // working.
+  const resumeThinkingAfterSpeechRef = useRef(false);
   const browserSurface = Boolean(
     capabilities.data &&
       (capabilities.data.native_file_actions === false || !hasEmbeddedDesktopBridge()),
@@ -217,6 +222,10 @@ export function BrowserRealtimeControl() {
             const text = typeof payload.text === "string" ? payload.text : "";
             if (text.trim()) setSpokenText(text.trim());
             setError("");
+            const kind =
+              typeof payload.spoken_kind === "string" ? payload.spoken_kind : "";
+            resumeThinkingAfterSpeechRef.current =
+              kind === "progress" || kind === "preamble";
           } else if (status === "hangup") {
             // The session ended through a voice hang-up command or end_call.
             // Release the microphone and return to idle.
@@ -224,7 +233,16 @@ export function BrowserRealtimeControl() {
           } else if (status === "thinking") {
             setVoice("thinking");
           } else if (status === "turn_complete" || status === "tts_end") {
-            setVoice("listening");
+            if (
+              status === "tts_end" &&
+              resumeThinkingAfterSpeechRef.current
+            ) {
+              resumeThinkingAfterSpeechRef.current = false;
+              setVoice("thinking");
+            } else {
+              resumeThinkingAfterSpeechRef.current = false;
+              setVoice("listening");
+            }
           } else if (status === "tts_cancel") {
             setVoice("listening");
           } else if (
