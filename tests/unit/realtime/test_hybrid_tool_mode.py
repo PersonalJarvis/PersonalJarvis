@@ -381,14 +381,31 @@ def _music_services_are_local(monkeypatch):
     )
 
 
-def _descriptor_with_tier(name: str, tier: str) -> SupervisorToolDescriptor:
+def _descriptor_with_tier(
+    name: str, tier: str, *, risk_tier_for_args=None
+) -> SupervisorToolDescriptor:
     return SupervisorToolDescriptor(
         name=name,
         description=f"{name} tool",
         input_schema={"type": "object", "properties": {}},
         risk_tier=tier,  # type: ignore[arg-type]
         is_action_tool=False,
+        risk_tier_for_args=risk_tier_for_args,
     )
+
+
+def _music_read_tier(args: dict) -> str:
+    action = str((args or {}).get("action") or "now_playing").strip() or "now_playing"
+    if action in {
+        "now_playing",
+        "search",
+        "list_playlists",
+        "playlist_tracks",
+        "liked_songs",
+        "list_devices",
+    }:
+        return "safe"
+    return "monitor"
 
 
 class _RecordingGateway:
@@ -552,6 +569,59 @@ async def test_disconnected_music_tool_reroutes_to_the_connected_sibling(
     result = await _call(bridge, "spotify", "Spiel mir ein schönes Lied.")  # i18n-allow
     assert result["success"] is True
     assert gateway.executed == ["youtube_music"]
+
+
+@pytest.mark.asyncio
+async def test_now_playing_question_runs_the_music_read():
+    """Live 2026-08-19 17:46: 'Welches Lied' while a track was playing.
+
+    youtube_music is statically monitor because play mutates. now_playing
+    is safe per args. The shape guard used the static tier and treated the
+    question as smalltalk — ActionDenied, canned failure spoken.
+    """
+    gateway = _RecordingGateway(
+        [
+            _descriptor_with_tier(
+                "youtube_music", "monitor", risk_tier_for_args=_music_read_tier
+            ),
+            _descriptor_with_tier("spotify", "monitor"),
+        ]
+    )
+    bridge = RealtimeToolBridge(gateway=gateway, language="de", compact=True)
+    result = await _call(bridge, "youtube_music", "Welches Lied")  # i18n-allow
+    assert result["success"] is True
+    assert gateway.executed == ["youtube_music"]
+
+    result = await _call(bridge, "youtube_music", "What song is this")
+    assert result["success"] is True
+
+    result = await _call(
+        bridge, "youtube_music", "Que cancion es esta?"  # i18n-allow
+    )
+    assert result["success"] is True
+
+    result = await _call(bridge, "spotify", "Was geht ab?")  # i18n-allow
+    assert result["success"] is False and "was not run" in result["error"]
+    assert gateway.executed == ["youtube_music", "youtube_music", "youtube_music"]
+
+
+@pytest.mark.asyncio
+async def test_now_playing_question_does_not_start_playback():
+    gateway = _RecordingGateway(
+        [
+            _descriptor_with_tier(
+                "youtube_music", "monitor", risk_tier_for_args=_music_read_tier
+            ),
+        ]
+    )
+    bridge = RealtimeToolBridge(gateway=gateway, language="de", compact=True)
+    await bridge.handle_user_transcript("Welches Lied")  # i18n-allow
+    _name, result = await bridge.execute(
+        wire_name="youtube_music", arguments={"action": "play"}
+    )
+    assert result["success"] is False
+    assert "was not run" in result["error"]
+    assert gateway.executed == []
 
 
 def _wire_suffix(name: str) -> str:

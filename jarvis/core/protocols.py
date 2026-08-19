@@ -191,6 +191,10 @@ class SupervisorToolDescriptor:
     input_schema: dict[str, Any]
     risk_tier: RiskTier
     is_action_tool: bool = False
+    # Optional per-call hook (same contract as ``Tool.risk_tier_for_args``).
+    # Catalog build captures it so the hybrid execute guard can treat a
+    # ``now_playing`` read as ``safe`` without holding the Tool object.
+    risk_tier_for_args: Any = None
 
 
 @dataclass(frozen=True, slots=True)

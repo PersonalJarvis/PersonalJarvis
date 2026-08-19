@@ -233,7 +233,24 @@ _CONNECTED_DOMAIN_RE = re.compile(
     r"github|gitlab|drive|notion|slack|discord|telegram|whatsapp|"
     r"repositor(?:y|ies)|pull requests?|deployments?|cloud billing|contact\w*|"
     r"postfach|posteingang|kalender|termin\w*|kontakt\w*|abrechnung\w*|"
-    r"correo|bandeja|calendario|cita\w*|contacto\w*)\b"  # i18n-allow: speech input
+    r"correo|bandeja|calendario|cita\w*|contacto\w*|"
+    r"spotify|youtube\s+music|yt\s*music|ytmusic|playlist\w*)\b"  # i18n-allow: speech input
+)
+# A now-playing question is the user's connected player, not public-song
+# trivia and not smalltalk. Live 2026-08-19 17:46: "Welches Lied" while a
+# track was playing. Bare "song"/"lied" stay out of _CONNECTED_DOMAIN_RE
+# so "Which song won Eurovision?" remains a public fact.
+_MUSIC_NOW_PLAYING_RE = re.compile(
+    r"(?:"
+    r"welches\s+lied|"  # i18n-allow: spoken-input vocabulary
+    r"welche\s+musik|"  # i18n-allow: spoken-input vocabulary
+    r"was\s+(?:fuer\s+(?:ein\s+)?)?(?:lied|song|musik)\s+(?:ist|laeuft|spielt)|"  # i18n-allow
+    r"what\s+song\s+is\s+(?:this|that|it)|"
+    r"which\s+song\s+is\s+(?:this|that|it)|"
+    r"what(?:'s|\s+is)\s+playing|"
+    r"que\s+cancion\s+es|"  # i18n-allow: spoken-input vocabulary
+    r"now\s+playing"
+    r")"
 )
 # App/runtime nouns that are too common for the bare-mention LOCAL_STATE rule
 # — they count only combined with a lookup, action, or ownership signal,
@@ -708,6 +725,7 @@ def is_public_fact_question(text: str) -> bool:
         or _APP_STATE_RE.search(normalized)
         or _OWNERSHIP_RE.search(normalized)
         or _CONNECTED_DOMAIN_RE.search(normalized)
+        or _MUSIC_NOW_PLAYING_RE.search(normalized)
         or _CONTACT_DETAIL_RE.search(normalized)
     ):
         return False
@@ -865,6 +883,8 @@ def plan_turn(
         and not definition
         and (lookup or action_intent or private)
     ):
+        reasons.add(TurnReason.CONNECTED_DATA)
+    if _MUSIC_NOW_PLAYING_RE.search(normalized) and not definition:
         reasons.add(TurnReason.CONNECTED_DATA)
     if (
         _APP_STATE_RE.search(normalized)
@@ -1032,6 +1052,7 @@ def plan_turn(
         required_without_public_search
         or evidence_domain_hit
         or _CONNECTED_DOMAIN_RE.search(normalized)
+        or _MUSIC_NOW_PLAYING_RE.search(normalized)
         or _CONTACT_DETAIL_RE.search(normalized)
         or private
     ):

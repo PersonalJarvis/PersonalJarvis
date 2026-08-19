@@ -252,6 +252,38 @@ def test_plural_connected_domains_never_route_to_public_search(
     assert PUBLIC_FACT_GROUNDING_CAPABILITY not in plan.required_capabilities
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Welches Lied",  # i18n-allow: live 2026-08-19 17:46
+        "Welche Musik läuft?",  # i18n-allow: spoken-input fixture
+        "What song is this?",
+        "Que cancion es esta?",  # i18n-allow: spoken-input fixture
+    ],
+)
+def test_now_playing_questions_are_connected_data(utterance: str) -> None:
+    plan = plan_turn(utterance, requires_public_fact_grounding=True)
+    assert TurnReason.CONNECTED_DATA in plan.reasons
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert plan.requires_public_fact_grounding is False
+    assert PUBLIC_FACT_GROUNDING_CAPABILITY not in plan.required_capabilities
+    assert is_public_fact_question(utterance) is False
+
+
+def test_public_song_trivia_is_not_connected_music_state() -> None:
+    plan = plan_turn(
+        "Which song won Eurovision 2023?",
+        requires_public_fact_grounding=True,
+    )
+    assert TurnReason.CONNECTED_DATA not in plan.reasons
+
+
+def test_smalltalk_is_not_music_connected_data() -> None:
+    plan = plan_turn("Was geht ab?")  # i18n-allow: spoken-input fixture
+    assert TurnReason.CONNECTED_DATA not in plan.reasons
+    assert plan.path is TurnPath.NATIVE_REALTIME
+
+
 def test_read_only_dynamic_connector_matches_live_capability(
     registry: CapabilityRegistry,
 ) -> None:

@@ -165,7 +165,48 @@ def _plugin_id_of(name: str) -> str:
     return pid if sep else ""
 
 
-def _turn_shape_refusal(descriptor: SupervisorToolDescriptor, name: str, user_text: str) -> str:
+_CALL_RISK_TIERS = frozenset({"safe", "monitor", "ask", "block"})
+
+
+def _effective_call_tier(
+    descriptor: SupervisorToolDescriptor,
+    arguments: dict[str, Any] | None,
+) -> str:
+    """Static descriptor tier, refined by ``risk_tier_for_args`` when present.
+
+    ``youtube_music`` / ``spotify`` are statically ``monitor`` because play
+    mutates. ``now_playing`` is ``safe``. Live 2026-08-19 17:46: the shape
+    guard used only the static tier and refused "Welches Lied".  # i18n-allow
+    """
+    static = str(getattr(descriptor, "risk_tier", "monitor") or "monitor")
+    if static not in _CALL_RISK_TIERS:
+        static = "monitor"
+    hook = getattr(descriptor, "risk_tier_for_args", None)
+    if not callable(hook):
+        return static
+    try:
+        dynamic = hook(arguments if isinstance(arguments, dict) else {})
+    except Exception:  # noqa: BLE001 — a broken hook must not brick the call
+        return static
+    if dynamic in _CALL_RISK_TIERS:
+        return str(dynamic)
+    return static
+
+
+def _is_music_plugin(name: str) -> bool:
+    try:
+        from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
+    except Exception:  # noqa: BLE001 — a missing constant must not brick the guard
+        return False
+    return name in MUSIC_PLUGIN_IDS
+
+
+def _turn_shape_refusal(
+    descriptor: SupervisorToolDescriptor,
+    name: str,
+    user_text: str,
+    arguments: dict[str, Any] | None = None,
+) -> str:
     """Refuse a native call whose tool the user's words cannot have asked for.
 
     The live model holds the whole catalog (ADR-0035) and, on a garbled or
@@ -185,6 +226,11 @@ def _turn_shape_refusal(descriptor: SupervisorToolDescriptor, name: str, user_te
     * any other non-``safe`` tool runs only on a turn that orders, tasks, or
       asks for the user's world (a planner reason) — a turn with none of
       those ("Was geht ab?", "Okay.") gets no side effect.  # i18n-allow: quoted utterances
+
+    The effective tier is per-call: ``risk_tier_for_args`` can mark a read
+    such as ``now_playing`` ``safe`` even when the tool is statically
+    ``monitor``. A music *write* (play/pause/skip) still needs an order —
+    "Welches Lied" must not restart the player.  # i18n-allow
 
     Read-only ``safe`` tools are never refused here. An empty utterance
     (non-conversational launch routes) fails open. Returns the model-facing
@@ -208,7 +254,7 @@ def _turn_shape_refusal(descriptor: SupervisorToolDescriptor, name: str, user_te
                 "Answer the user's actual request; call a plugin function only "
                 "when the user names that service or clearly asks for it."
             )
-    tier = str(getattr(descriptor, "risk_tier", "monitor") or "monitor")
+    tier = _effective_call_tier(descriptor, arguments)
     if tier == "safe":
         return ""
     orders = is_action_order(text)
@@ -223,6 +269,13 @@ def _turn_shape_refusal(descriptor: SupervisorToolDescriptor, name: str, user_te
         )
     if orders or is_assistant_tasking(text):
         return ""
+    if _is_music_plugin(name):
+        return (
+            f"{name} was not run: the user's words do not order an action — "
+            "they are a question, a remark, or a greeting. Never start a "
+            "consequential action from such a turn. Answer the user directly, "
+            "or ask what they want done."
+        )
     try:
         has_world_reason = bool(plan_turn(text).reasons)
     except Exception:  # noqa: BLE001 — the planner must not brick a tool call
@@ -390,12 +443,14 @@ class RealtimeToolBridge:
                 raw_tier if raw_tier in {"safe", "monitor", "ask", "block"}
                 else "monitor",
             )
+            hook = getattr(tool, "risk_tier_for_args", None)
             descriptors[str(name)] = SupervisorToolDescriptor(
                 name=str(name),
                 description=str(getattr(tool, "description", "")),
                 input_schema=schema,
                 risk_tier=risk_tier,
                 is_action_tool=bool(getattr(tool, "is_action_tool", False)),
+                risk_tier_for_args=hook if callable(hook) else None,
             )
         return descriptors
 
@@ -788,7 +843,7 @@ class RealtimeToolBridge:
             # a fresh turn to shape-check: "Yes." orders nothing by itself.
             return ""
         else:
-            message = _turn_shape_refusal(descriptor, name, user_text)
+            message = _turn_shape_refusal(descriptor, name, user_text, arguments)
             if not message:
                 return ""
         await self._publish_denied(name, message)

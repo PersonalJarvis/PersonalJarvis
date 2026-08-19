@@ -10777,3 +10777,154 @@ sibling. Covers every realtime transport; Vertex Live is the forensic.
 `tests/unit/brain/test_paired_plugin_capture_veto.py`
 (`test_capture_rematches_before_the_disconnected_veto`,
 `test_match_skill_for_turn_swaps_disconnected_spotify`).
+
+
+## BUG-155: "I'm still on it" during a realtime call speaks a different voice — native-tool progress and surface fallbacks default to Charon (HIGH, FIXED 2026-08-19)
+
+**Symptom.** Realtime voice session `bc7e99c9` (2026-08-19 17:45, Vertex Live,
+`gemini-live-2.5-flash-native-audio`, hybrid). The live replies were a
+female native-audio voice. After the user confirmed a playlist start, a 13.7 s
+`youtube_music` call ran and Jarvis said the German progress pool line
+("still on it") in a different, male voice. The same flip hit the short
+success and failure readbacks — every line that left the live socket.
+
+**Reconstruction (`data/jarvis_desktop.log` + `voice_turns`).**
+
+| Time | What spoke | Voice label |
+|---|---|---|
+| 17:45:19 | live native reply | *(empty — `_active_voice` was blank)* |
+| 17:45:43 | surface TTS fallback of the short success | Charon @ vertex-tts |
+| 17:46:20 | `native tool youtube_music still running after 3.0s; speaking the instant ack on the surface channel` | Charon @ vertex-tts |
+| 17:46:37 | live native short "running" readback | *(empty; the progress line had already stamped Charon on the turn)* |
+| 17:46:44 | surface TTS fallback of the canned failure | Charon @ vertex-tts |
+
+`build_realtime_surface_tts` logged `same-family 'vertex-tts' (voice 'Charon')`
+on the first fallback of the process.
+
+**Root cause, two layers.**
+
+1. *Vertex Live had no voice catalog.* `REALTIME_VOICES` / `REALTIME_MODELS`
+   keyed only `gemini-live`. The Vertex card's picker was empty, so
+   `[brain.providers.vertex-live].voice` was never written. The live adapter
+   omitted `PrebuiltVoiceConfig` and Google picked its undocumented
+   native-audio default (female on this box).
+2. *Surface TTS had a different default.* `_active_voice` stayed `""`,
+   `_surface_speech_message` sent no voice hint, and
+   `build_realtime_surface_tts` hard-fell through to Charon (masculine).
+   Native-tool acks cannot ride the live model (it is blocked on the
+   function call, ADR-0034) so they *must* use that surface channel —
+   and it was the wrong speaker.
+
+Same class as BUG-089 / BUG-090 (a second voice mid-call) and the
+rejected ADR-0033 alternative ("Surface TTS for the realtime ack — a
+second voice mid-call is the exact BUG-090 failure"). The live-model
+bridge path already keeps one voice; the native-tool / no-audio
+surface path did not.
+
+**Fix.**
+
+- `REALTIME_VOICES["vertex-live"]` is the same 30-voice Gemini roster;
+  `REALTIME_MODELS["vertex-live"]` leads with
+  `gemini-live-2.5-flash-native-audio`. The Vertex card picker and
+  preview work.
+- `GeminiLiveProvider.default_voice = "Kore"` (inherited by Vertex Live).
+  An empty card pin still sends `PrebuiltVoiceConfig` and fills
+  `_active_voice`, so the live socket and the surface sibling name the
+  same voice. A per-card pin still overrides it.
+- `build_realtime_surface_tts(..., session_voice=)` takes the live
+  session's voice first. The desktop `error_spoken` path passes the hint
+  into the builder, not only into `synthesize`.
+
+**Class rule.** A progress / fallback line mid-call is not a second
+assistant. If the live model cannot speak it, the surface sibling must
+use the session's voice name — never a family default that disagrees
+with the socket. A realtime provider without a voice catalog cannot
+keep that promise.
+
+**Parity.** Catalog + default + surface hint cover gemini-live and
+vertex-live (the two families with a same-voice TTS sibling).
+openai-realtime / local-realtime have no surface TTS sibling; their
+progress lines stay on the live socket or stay text-only.
+
+**Guards.** `tests/unit/brain/test_model_catalog.py`
+(`test_every_realtime_card_has_a_voice_catalog`,
+`test_vertex_live_models_lead_with_the_hardcoded_default`);
+`tests/unit/web/test_realtime_provider_category.py`
+(`test_get_realtime_options_vertex_live_shares_the_gemini_voice_roster`);
+`tests/unit/realtime/test_session.py`
+(`test_active_provider_selection_falls_back_to_adapter_default_voice`,
+`test_progress_line_carries_the_active_voice_hint`);
+`tests/unit/realtime/test_gemini_live.py`
+(`test_open_session_pins_the_adapter_default_voice_when_unset`);
+`tests/unit/plugins/tts/test_realtime_surface_tts.py`
+(`test_session_voice_override_wins_over_empty_config`).
+
+
+## BUG-156: "Welches Lied" while music plays answers "that did not work" — hybrid execute treated a now-playing read as smalltalk (HIGH, FIXED 2026-08-19) <!-- i18n-allow: quoted live German utterance under forensic analysis -->
+
+**Symptom (Windows live forensic, 17:46, `vertex-live` /
+`gemini-live-2.5-flash-native-audio`, hybrid tool mode).** Music was
+playing. The user asked "Welches Lied". Jarvis spoke "Das hat gerade
+nicht geklappt." Three seconds later the live model produced a 68-character
+reply (the track name) and it was withheld because of the surface TTS
+fallback. <!-- i18n-allow: quoted live German utterances and spoken replies under forensic analysis -->
+
+**Timeline (`data/jarvis_desktop.log` + flight recorder, session
+`bc7e99c9`).**
+
+| Time | What happened |
+|---|---|
+| 17:46:38 | Previous turn said "Läuft." — Ed Sheeran *Perfect* was playing |
+| 17:46:43 | User: "Welches Lied". Routing: orchestrator, `capability,connected_data` |
+| 17:46:43 | Native `youtube_music` in 30 ms → `ActionDenied`: "nothing in the user's words asks for it" |
+| 17:46:44 | Vertex Live interrupted; surface TTS of the 30-char canned failure |
+| 17:46:47 | Live model audio 2.2 s / 38 chars, then another `youtube_music`, then 2.7 s / 68 chars — withheld after the fallback |
+
+**Three stacked faults.**
+
+1. *The shape guard used the static tool tier.* `youtube_music` is
+   `monitor` because play mutates. `risk_tier_for_args(now_playing)` is
+   `safe`. `_turn_shape_refusal` read only `descriptor.risk_tier`.
+2. *Bare `plan_turn("Welches Lied")` had no reason.* The session planner
+   saw a skill/capability. The execute guard calls `plan_turn` with no
+   skill index and no context. `_CONNECTED_DOMAIN_RE` had gmail/calendar,
+   not a now-playing question.
+3. *The canned fallback hid the later correct reply.* Same Vertex empty
+   generation + interrupt shape as BUG-152/153. The first fix is to let
+   the read run so the grounded result is the track, not the denial.
+
+**Fix.**
+
+- Catalog descriptors carry `risk_tier_for_args`. The hybrid guard uses
+  the per-call tier, so `now_playing` / empty args are `safe` and never
+  shape-refused.
+- A music *write* (play/pause/skip) still needs an action order —
+  "Welches Lied" must not restart the player.
+- Planner: service names (`spotify`, `youtube music`, `playlist`) join
+  `_CONNECTED_DOMAIN_RE`. A dedicated now-playing matcher
+  (`welches lied`, `what song is this`, `que cancion es`) adds
+  `CONNECTED_DATA`. Bare `song`/`lied` stay out so "Which song won
+  Eurovision?" remains a public fact. The matcher is also a
+  non-public-evidence exception so a local model that requires
+  public-fact grounding does not web-search the playing track.
+
+**Class rule.** A read of connected state is not a side effect. Resolve
+the risk tier per arguments at execute time. A now-playing question is
+connected data, not smalltalk and not a public-song fact.
+
+**Parity.** Session-level hybrid execute, every realtime transport
+(`openai-realtime` / `gemini-live` / `vertex-live`). Direct and
+delegate do not use this shape guard; they already reach `now_playing`
+through the orchestrator. The planner change is shared, so classic chat
+and the deterministic delegate get the same now-playing routing. Classic
+pipeline and every OS.
+
+**Guards.** `tests/unit/realtime/test_hybrid_tool_mode.py`
+(`test_now_playing_question_runs_the_music_read`,
+`test_now_playing_question_does_not_start_playback`);
+`tests/unit/brain/test_turn_planner.py`
+(`test_now_playing_questions_are_connected_data`,
+`test_public_song_trivia_is_not_connected_music_state`,
+`test_smalltalk_is_not_music_connected_data`);
+`tests/unit/brain/test_factory_supervisor_gateway.py`
+(`test_catalog_carries_the_per_args_risk_tier_hook`).

@@ -41,3 +41,26 @@ def test_factory_registration_publishes_manager_and_public_gateway() -> None:
     gateway = runtime_refs.get_supervisor_tool_gateway()
     assert isinstance(gateway, BrainSupervisorToolGateway)
     assert [descriptor.name for descriptor in gateway.catalog()] == ["health"]
+
+
+def test_catalog_carries_the_per_args_risk_tier_hook() -> None:
+    class _Music:
+        name = "youtube_music"
+        description = "Play and read YouTube Music."
+        schema = {"type": "object", "properties": {}}
+        risk_tier = "monitor"
+
+        async def execute(self, _arguments, _context):
+            return ToolResult(success=True, output="ok")
+
+        def risk_tier_for_args(self, args):
+            action = str((args or {}).get("action") or "now_playing")
+            return "safe" if action == "now_playing" else "monitor"
+
+    gateway = BrainSupervisorToolGateway(
+        SimpleNamespace(_tools={"youtube_music": _Music()}, _tool_executor=None)
+    )
+    descriptor = gateway.catalog()[0]
+    assert descriptor.risk_tier == "monitor"
+    assert descriptor.risk_tier_for_args({"action": "now_playing"}) == "safe"
+    assert descriptor.risk_tier_for_args({"action": "play"}) == "monitor"
