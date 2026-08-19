@@ -275,7 +275,16 @@ class CapabilityRegistry:
               hallucination-prone surface the UNSUPPORTED gate exists to
               guard.
           (b) every registered capability's own verb list — so a freshly
-              added MCP whose verbs are not in (a) still counts.
+              added MCP whose verbs are not in (a) still counts. DOMAIN
+              capabilities (``source`` ``skill`` / ``cli``) count only when
+              one of their OWN objects is named too — the same rule
+              ``resolve_intent`` applies. Their verb lists are domain
+              vocabulary ("guck", "schau", "check", "weiter"), and  # i18n-allow: German tokens
+              as universal action verbs they turned ordinary conversation
+              into action turns: with gcloud connected, "Kannst mal bitte
+              gucken, was morgen für ein Tag ist?" read as an ACTION  # i18n-allow: live quote
+              and paid a 5.5 s Tool-Model delegation for a date (live
+              2026-08-18 15:35). Only a verb *about that domain* is an order.
 
         Smalltalk / Q&A utterances ("wie spaet ist es", "was ist Python")
         match neither and return False.
@@ -294,9 +303,18 @@ class CapabilityRegistry:
         with self._lock:
             caps = list(self._caps.values())
         for cap in caps:
-            for v in cap.verbs:
-                if re.search(r"\b" + re.escape(_normalize(v)) + r"\b", normalised):
-                    return True
+            verb_hit = any(
+                re.search(r"\b" + re.escape(_normalize(v)) + r"\b", normalised)
+                for v in cap.verbs
+            )
+            if not verb_hit:
+                continue
+            if cap.source in ("skill", "cli") and not any(
+                re.search(r"\b" + re.escape(_normalize(o)) + r"\b", normalised)
+                for o in cap.objects
+            ):
+                continue
+            return True
         return False
 
     #: Prompt-render budget. Every MCP tool and CLI registers a capability,

@@ -759,3 +759,120 @@ def test_recall_of_the_users_past_delegates_as_private_data(utterance: str) -> N
 )
 def test_storytelling_past_tense_stays_native(utterance: str) -> None:
     assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+# --- Conversation mis-routes measured live 2026-08-18 (flight recorder) -----
+# Each of these paid a 3–16 s Tool-Model delegation for an answer the live
+# model gives in under a second. The maintainer mandate (2026-08-19): a
+# mis-routed conversational turn is a bug, latency IS the failure.
+
+
+@pytest.fixture
+def connected_gcloud_registry() -> CapabilityRegistry:
+    """A CLI capability with domain vocabulary as the live box had it."""
+    value = CapabilityRegistry()
+    value.register(
+        Capability(
+            id="cli.gcloud",
+            source="cli",
+            verbs=("zeig", "list", "show", "check", "guck", "gucke", "gucken", "schau"),
+            objects=("gcp", "google cloud", "gcloud", "bucket", "billing", "projekt"),
+            description="gcloud CLI",
+            risk_tier="ask",
+            requires_evidence=True,
+        )
+    )
+    value.register(
+        Capability(
+            id="tool.contact-lookup",
+            source="router_tool",
+            verbs=("such", "suche", "find", "finde", "zeig", "nenn", "lookup"),
+            objects=("kontakt", "contact", "nummer", "telefonnummer", "adresse"),
+            description="contact lookup",
+            risk_tier="safe",
+            requires_evidence=False,
+        )
+    )
+    return value
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Hallo, sprich mal mit mir.",  # i18n-allow: live utterance (3.2 s delegation)
+        "Sprich doch mal bitte kurz mit mir.",  # i18n-allow: German speech-input fixture
+        "Talk to me.",
+        "Kannst du mir mal, hallo, kannst du mir bitte sagen, was du für Musik "  # i18n-allow: live
+        "empfehlen würdest?",  # i18n-allow: live utterance
+        "Okay, es tut mir was zu verstehen. Wie genau die Relativitätstheorie "  # i18n-allow: live
+        "von Albert Einstein funktioniert?",  # i18n-allow: live utterance (5.9 s)
+        "Wer waren die 10 berühmtesten Wissenschaftler?",  # i18n-allow: live utterance (5.6 s)
+        "Wer ist der Präsident von Frankreich?",  # i18n-allow: German speech-input fixture
+        "Kannst mal bitte gucken, was morgen für ein Tag ist?",  # i18n-allow: live (5.5 s)
+        "How are you doing today?",
+        "Wie geht's dir heute?",  # i18n-allow: German speech-input fixture
+        "Sag mir was über Berlin.",  # i18n-allow: German speech-input fixture
+        "Kannst du mir helfen?",  # i18n-allow: German speech-input fixture
+        "Erklär mir, wie ein Transformer funktioniert.",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_live_conversation_misroutes_stay_native(
+    utterance: str, connected_gcloud_registry: CapabilityRegistry
+) -> None:
+    plan = plan_turn(
+        utterance,
+        capability_registry=connected_gcloud_registry,
+        tool_names=("search_web", "contact-lookup", "cli_gcloud", "google_calendar"),
+    )
+    assert plan.path is TurnPath.NATIVE_REALTIME, sorted(plan.reasons)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # The same verbs WITH their domain object, a real possessive, or a
+        # language switch keep delegating — the fix is precision, not silence.
+        "Sprich Englisch mit mir.",  # i18n-allow: German speech-input fixture
+        "Guck mal in meinem Google Cloud Projekt nach den Buckets.",  # i18n-allow: German fixture
+        "Such mir die Telefonnummer von Anna raus.",  # i18n-allow: German speech-input fixture
+        "Zeig mir meine Termine für morgen.",  # i18n-allow: German speech-input fixture
+        "Ich möchte, dass du mir einen Termin für Montag anlegst.",  # i18n-allow: German fixture
+        "Wie ist das Wetter heute?",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_domain_verbs_with_their_objects_still_delegate(
+    utterance: str, connected_gcloud_registry: CapabilityRegistry
+) -> None:
+    plan = plan_turn(
+        utterance,
+        capability_registry=connected_gcloud_registry,
+        tool_names=("search_web", "contact-lookup", "cli_gcloud", "google_calendar"),
+    )
+    assert plan.path is TurnPath.ORCHESTRATOR
+
+
+def test_domain_cli_verb_without_its_object_is_not_an_action(
+    connected_gcloud_registry: CapabilityRegistry,
+) -> None:
+    """``has_action_intent`` mirrors ``resolve_intent``: a CLI/skill verb is an
+    order only about its own domain."""
+    registry = connected_gcloud_registry
+    no_object = "Kannst mal bitte gucken, was morgen ist?"  # i18n-allow: German fixture
+    assert registry.has_action_intent(no_object) is False
+    assert registry.has_action_intent("Guck mal in die gcloud Buckets.") is True  # i18n-allow
+    assert registry.has_action_intent("Schick Anna eine Mail.") is True  # i18n-allow
+
+
+def test_calendar_evidence_domain_is_connected_not_public(
+) -> None:
+    """'steht morgen … an' is the user's calendar, never a web search."""
+    from jarvis.core.config import EvidenceDomainsConfig
+
+    plan = plan_turn(
+        "Was steht morgen an?",  # i18n-allow: German speech-input fixture
+        evidence_domains=EvidenceDomainsConfig().domains,
+    )
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.CONNECTED_DATA in plan.reasons
+    assert TurnReason.PUBLIC_FACT not in plan.reasons
+    assert plan.requires_public_fact_grounding is False

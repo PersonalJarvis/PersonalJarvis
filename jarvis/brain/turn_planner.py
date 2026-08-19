@@ -104,9 +104,16 @@ _INSTRUCTIONAL_RE = re.compile(
     r"cuales son tus capacidades)\b"  # i18n-allow: speech input
     # i18n-allow: multilingual speech-input matching data
 )
+# The bare German dative "mir" ("to me") is deliberately NOT ownership
+# (removed 2026-08-19): it is the object of telling and explaining — "sag
+# mir", "erklaer mir", "es tut mir leid", "kannst du mir helfen" — and as a
+# possessive signal it delegated plain conversation ("Hallo, sprich mal mit
+# mir" 3.2 s, a relativity question 5.9 s, live 2026-08-18). Real private
+# data keeps its possessive ("meine Termine", "mein Wiki") or its recall
+# idiom (_RECALL_RE).  # i18n-allow: names the German tokens under discussion
 _OWNERSHIP_RE = re.compile(
     r"\b(?:my|mine|our|we|about me|remember me|"
-    r"mein\w*|unser\w*|mir|wir|ueber mich|uber mich|erinner\w* mich|"  # i18n-allow: speech input
+    r"mein\w*|unser\w*|wir|ueber mich|uber mich|erinner\w* mich|"  # i18n-allow: speech input
     r"mi|mis|mio|nuestr\w*|sobre mi|recuerd\w* de mi)\b"  # i18n-allow: speech input
 )
 # Explicit recall of the user's own past ("weisst du noch", "wann war ich",
@@ -276,7 +283,7 @@ _ACTION_FALLBACK_RE = re.compile(
     r"verschieb\w*|schick\w*|send\w*|fuehr\w*|bau\w*|ruf\w*|klick\w*|"
     r"tipp\w*|buch\w*|kauf\w*|antwort\w*|wechsel\w*|wechsl\w*|schalt\w*|"
     r"stell\w*|spiel\w*|merk(?!wuerdig)\w*|notier\w*|trag(?!isch|oedi)\w*|"
-    r"leg(?:e|st|t|en)?\b|setz\w*|pausier\w*|aktivier\w*|deaktivier\w*|"
+    r"leg(?:e|st|t|en)?\b|anleg\w*|setz\w*|pausier\w*|aktivier\w*|deaktivier\w*|"
     r"erinner\w*|dreh\w*|mach\w*|nutz\w*|benutz\w*|verwend\w*|"
     r"sprich\w*|sprech\w*|brich|brech\w*|abbrech\w*|lauter|leiser|"  # i18n-allow: speech input
     r"abre\w*|cierra\w*|inicia\w*|crea\w*|escrib\w*|guarda\w*|"
@@ -338,6 +345,35 @@ _WHY_RE = re.compile(
 # Its span is removed before the weak action/current scans so "machst" and
 # "morgen" cannot delegate; "Woran arbeitest du?" (mission status) is a
 # separate LOCAL_STATE idiom and stays.  # i18n-allow: quoted German utterance
+# "Talk to me" is a request for conversation, not an order to act: the verb
+# ("sprich", "red", "talk", "speak") is the assistant's ordinary job. Only
+# the filler-padded idiom is stripped; "Sprich Englisch mit mir" (a language
+# switch) keeps its object between verb and pronoun and still delegates.
+# Live 2026-08-18 18:41: "Hallo, sprich mal mit mir." paid a 3.2 s
+# delegation to be told "Ich bin da."  # i18n-allow: quoted German utterances
+_TALK_TO_ME_RE = re.compile(
+    # i18n-allow: multilingual speech-input matching data
+    r"\b(?:sprich|sprech\w*|red(?:e|et)?|unterhalt(?:e|et)? dich|quatsch\w*|"
+    r"plauder\w*)(?:\s+(?:doch|mal|bitte|kurz|einfach|jetzt|ruhig|gern(?:e)?))*"
+    r"\s+mit mir\b|"
+    r"\b(?:talk|speak|chat)(?:\s+(?:to|with))?\s+(?:to|with)?\s*me\b|"
+    r"\bhabla(?:me)?\s+conmigo\b|\bcharla\s+conmigo\b"
+)
+# Wellbeing / presence chat: "Wie geht's dir heute?", "How are you doing
+# today?" carry a time word that reads as a freshness marker and, with the
+# question mark, force-delegated the greeting (current_data + uncertain).
+# The idiom span — including its trailing today/now — is removed before the
+# weak scans; a real freshness topic ("wie ist das Wetter heute") never
+# matches it.  # i18n-allow: quoted German utterance
+_WELLBEING_RE = re.compile(
+    # i18n-allow: multilingual speech-input matching data
+    r"\bwie geht(?:'?s| es)(?: dir| ihnen| euch)?"
+    r"(?:\s+(?:denn|so|gerade|heute|jetzt|momentan|eigentlich))*\b|"
+    r"\bhow are you(?: doing| feeling)?(?:\s+(?:today|now|right now))?\b|"
+    r"\bhow(?:'s| is) it going(?:\s+(?:today|now))?\b|"
+    r"\bwhat(?:'s| is) up(?:\s+(?:today|now))?\b|"
+    r"\b(?:que tal|como estas)(?:\s+(?:hoy|ahora))?\b"
+)
 _ASSISTANT_DAYPLAN_RE = re.compile(
     # i18n-allow: multilingual speech-input matching data
     r"\bwas machst du\b"
@@ -753,12 +789,17 @@ def plan_turn(
     weak_scan_text = _ASSISTANT_DAYPLAN_RE.sub(" ", normalized)
     weak_scan_text = _DATE_TRIVIA_RE.sub(" ", weak_scan_text)
     weak_scan_text = _GERMAN_NONCOMMAND_ACTION_SPAN_RE.sub(" ", weak_scan_text)
+    weak_scan_text = _TALK_TO_ME_RE.sub(" ", weak_scan_text)
+    weak_scan_text = _WELLBEING_RE.sub(" ", weak_scan_text)
 
     action_intent = bool(_ACTION_FALLBACK_RE.search(weak_scan_text))
     if capability_registry is not None:
+        # The registry sweep reads the SAME idiom-stripped text as the
+        # fallback regex: a verb inside a suppressed idiom ("sprich mal mit
+        # mir", "was machst du heute") is not an order either way.  # i18n-allow
         try:
             action_intent = action_intent or bool(
-                capability_registry.has_action_intent(text)
+                capability_registry.has_action_intent(weak_scan_text)
             )
         except Exception:  # noqa: BLE001,S110 - local fallback remains available
             pass
@@ -902,6 +943,7 @@ def plan_turn(
         if inherited:
             reasons.add(TurnReason.UNCERTAIN)
 
+    evidence_domain_hit = False
     if evidence_domains and lookup and not definition:
         for keywords in evidence_domains.values():
             if any(
@@ -909,6 +951,7 @@ def plan_turn(
                 for keyword in keywords
             ):
                 reasons.add(TurnReason.CONNECTED_DATA)
+                evidence_domain_hit = True
                 break
 
     # A lookup that names a live capability/tool but no stronger category is
@@ -950,8 +993,13 @@ def plan_turn(
     }
     if TurnReason.CAPABILITY in reasons and required_without_public_search:
         non_public_evidence.add(TurnReason.CAPABILITY)
+    # An evidence-domain keyword ("steht morgen … an" → calendar) IS connected
+    # evidence: without it here, "Was ist morgen? Steht morgen irgendwas an?"
+    # was graded a fresh PUBLIC fact and web-searched (live 2026-08-18
+    # 19:32: "Ich konnte das gerade nicht zuverlässig prüfen").  # i18n-allow: live quotes
     if TurnReason.CONNECTED_DATA in reasons and (
         required_without_public_search
+        or evidence_domain_hit
         or _CONNECTED_DOMAIN_RE.search(normalized)
         or _CONTACT_DETAIL_RE.search(normalized)
         or private

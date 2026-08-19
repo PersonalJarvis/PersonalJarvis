@@ -256,8 +256,11 @@ _SEED_CAPABILITIES: list[Capability] = [
         id="local.reset_orb_position",
         source="local_action",
         verbs=(
-            "reset", "zurueck", "zurück", "bring", "bringe",  # i18n-allow
-            "orb", "overlay", "move", "verschiebbe",
+            # "zurueck"/"orb"/"overlay" moved to the objects (2026-08-19): as
+            # VERBS the adverb "zurück" ("ich bin zurück", "komm zurück") and  # i18n-allow
+            # the nouns made has_action_intent fire on ordinary speech; the
+            # intent still resolves through verb + object ("setz das Orb zurück").  # i18n-allow
+            "reset", "bring", "bringe", "move", "verschiebbe", "setz", "setze",
         ),
         objects=(
             "orb", "overlay", "position", "fenster", "window",
@@ -272,7 +275,11 @@ _SEED_CAPABILITIES: list[Capability] = [
         source="local_action",
         verbs=(
             "oeffne", "öffne", "starte", "start", "spawne", "spawn",  # i18n-allow
-            "open", "launch", "neue", "new",
+            # "neue"/"new" are adjectives, not verbs ("gibt es neue  # i18n-allow
+            # Nachrichten?", "any new ideas?") — they made has_action_intent
+            # fire on plain questions (2026-08-19). The open/start/spawn verbs
+            # already cover "öffne zwei neue Terminals".  # i18n-allow
+            "open", "launch",
         ),
         objects=(
             "terminal", "terminals", "konsole", "konsolen", "console",
@@ -338,7 +345,14 @@ _SEED_CAPABILITIES: list[Capability] = [
         verbs=(
             "schreib", "schreibe", "mail", "maile",
             "such", "suche", "find", "finde", "zeig", "zeige",
-            "nenn", "nenne", "kontaktier", "kontaktiere", "wer", "lookup",
+            # NB: the question word "wer" was a VERB here until 2026-08-19:
+            # every "Wer ist/war/waren …?" question resolved to this
+            # capability (has_action_intent True, CAPABILITY + CONNECTED_DATA),
+            # so "Wer waren die 10 berühmtesten Wissenschaftler?" paid a  # i18n-allow: live quote
+            # 5.6 s Tool-Model delegation. A contact lookup is carried by its
+            # OBJECTS (kontakt, nummer, telefon, adresse, mail …) plus a real
+            # verb; a bare question word is never an order.
+            "nenn", "nenne", "kontaktier", "kontaktiere", "lookup",
         ),
         objects=(
             "kontakt", "kontakte", "contact", "contacts", "person", "leute",
