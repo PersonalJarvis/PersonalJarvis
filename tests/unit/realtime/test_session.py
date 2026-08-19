@@ -4950,6 +4950,210 @@ async def test_empty_turn_reask_keeps_native_audio_after_a_second_empty_boundary
 
 
 @pytest.mark.asyncio
+async def test_empty_turn_reask_survives_the_interrupt_settle_window(monkeypatch):
+    """A 1s RT-09 settle must not kill the re-asked native reply.
+
+    Live 2026-08-19 16:07 (vertex-live, "Was geht ab?"): steering closed
+    empty, the re-ask went out, the first interrupt's 1s settle committed
+    BEFORE native audio (1.14s), withheld the 2.9s greeting, and the user
+    heard nothing. The watchdog owns that silence; native audio that still
+    comes must be spoken.
+    """  # i18n-allow: quoted live utterance
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_INTERRUPTION_CONFIRM_WINDOW_S", 0.05)
+    monkeypatch.setattr(session_module, "_INTERRUPTION_SETTLE_POLL_S", 0.02)
+
+    user_text = "Hello there."
+    native_reply = "Hello. I am ready."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+
+    class _DelayedNativeAfterReask(ScriptedTextTurnsSession):
+        async def receive(self):
+            for event in self._before_result:
+                yield event
+                await asyncio.sleep(0)
+            while not self.text_inputs:
+                await self._text_arrived.wait()
+                self._text_arrived.clear()
+            yield RealtimeEvent(type="interrupted")
+            yield RealtimeEvent(type="turn_complete")
+            await asyncio.sleep(0.18)
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text=native_reply,
+                is_final=True,
+            )
+            yield RealtimeEvent(type="audio_delta", audio=spoken_audio)
+            yield RealtimeEvent(type="turn_complete")
+
+    class _DelayedNativeProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _DelayedNativeAfterReask(
+                [
+                    RealtimeEvent(
+                        type="input_transcript",
+                        text=user_text,
+                        is_final=True,
+                    ),
+                    RealtimeEvent(type="interrupted"),
+                    RealtimeEvent(type="turn_complete"),
+                ]
+            )
+            return self.session
+
+    brain = FakeBrain(replies=("never spoken",))
+    provider = _DelayedNativeProvider([])
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_mode="direct",
+        jsons=jsons,
+        binaries=binaries,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=3)
+
+    assert brain.calls == [], "the settle must not start the Brain chain"
+    assert binaries == [spoken_audio.pcm]
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == native_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_reask_reply_survives_speaker_drain(monkeypatch):
+    """A stale interrupt must not ``tts_cancel`` while the speaker drains.
+
+    Live 2026-08-19 15:59: the native 3.6 s greeting was already playing when
+    ``turn_complete`` blocked on desktop ``finish_turn``. One second of
+    expected provider silence committed the earlier empty interrupt and the
+    user heard half a sentence.
+    """
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_INTERRUPTION_CONFIRM_WINDOW_S", 0.05)
+    user_text = "Hello there."
+    native_reply = "Hello. I am ready."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    brain = FakeBrain(replies=("never spoken",))
+    provider = ScriptedTextTurnsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            ),
+            RealtimeEvent(type="interrupted"),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        [
+            RealtimeEvent(type="interrupted"),
+            RealtimeEvent(type="turn_complete"),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=native_reply,
+                is_final=True,
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ],
+    )
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+
+    async def slow_send_json(message):
+        jsons.append(message)
+        if message.get("type") == "turn_complete":
+            await asyncio.sleep(0.3)
+
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="delegate-test",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=slow_send_json,
+        provider=provider,
+        config=_delegate_cfg("direct"),
+        bus=bus,
+        brain=brain,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=3)
+
+    assert brain.calls == []
+    assert binaries == [spoken_audio.pcm]
+    assert not any(item.get("type") == "tts_cancel" for item in jsons)
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == native_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_vertex_prefixed_native_tool_call_echoes_the_original_wire_name():
+    """Vertex Live must get ``default:open_app`` back on the function response.
+
+    Lookup strips the prefix; the wire still echoes the name the provider
+    emitted, or Vertex rejects the tool response.
+    """
+    bridge = FakeToolBridge()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Open Calculator",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="call-1",
+                tool_name="default:open_app",
+                tool_args={"app_name": "Calculator"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="vertex-prefix-tool",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        tool_bridge=bridge,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert bridge.calls == [("default:open_app", {"app_name": "Calculator"})]
+    assert provider.session.tool_results == [
+        (
+            "call-1",
+            "default:open_app",
+            {"success": True, "output": "opened", "error": None},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_direct_mode_recovers_provider_turn_that_has_no_output(monkeypatch):
     """A substantive user turn must never complete as successful silence.
 

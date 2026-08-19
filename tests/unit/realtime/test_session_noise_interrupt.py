@@ -56,16 +56,15 @@ def _assistant_text(jsons):
     return "".join(
         str(message.get("text") or "")
         for message in jsons
-        if message.get("type") == "transcript"
-        and message.get("role") == "assistant"
+        if message.get("type") == "transcript" and message.get("role") == "assistant"
     )
 
 
-async def _run(provider, *, binaries, jsons):
+async def _run(provider, *, binaries, jsons, send_json=None):
     sess = RealtimeVoiceSession(
         session_id="noise-interrupt",
         send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
-        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        send_json=send_json or (lambda message: jsons.append(message) or asyncio.sleep(0)),
         provider=provider,
         config=_cfg(),
         bus=None,
@@ -119,9 +118,7 @@ async def test_confirmed_barge_in_still_cuts_the_answer():
         )
         yield RealtimeEvent(type="interrupted")
         # Real words, moments later: this is a barge-in.
-        yield RealtimeEvent(
-            type="input_transcript", text="Hey, listen to me.", is_final=True
-        )
+        yield RealtimeEvent(type="input_transcript", text="Hey, listen to me.", is_final=True)
         yield RealtimeEvent(type="turn_complete")
 
     binaries, jsons = [], []
@@ -159,3 +156,116 @@ async def test_unconfirmed_interruption_is_committed_once_the_provider_stops():
         session_mod._INTERRUPTION_CONFIRM_WINDOW_S = original
 
     assert any(item.get("type") == "tts_cancel" for item in jsons)
+
+
+@pytest.mark.asyncio
+async def test_empty_interrupt_before_a_reply_is_ignored():
+    """Gemini Live fires ``interrupted`` for our own text with nothing playing.
+
+    Live 2026-08-19 15:59: steering and the empty-turn re-ask each produced
+    an empty ``interrupted``+``turn_complete`` before the real greeting.
+    Deferring that armed a silence backstop that later cut the spoken reply.
+    """
+
+    async def script():
+        yield RealtimeEvent(type="input_transcript", text=OPENING, is_final=True)
+        yield RealtimeEvent(type="interrupted")
+        yield RealtimeEvent(type="output_transcript_delta", text="It is sunny and warm.")
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=HEAD + TAIL, sample_rate=24_000, timestamp_ns=0),
+        )
+        yield RealtimeEvent(type="turn_complete")
+
+    binaries, jsons = [], []
+    provider = _scripted(script)
+    sess = await _run(provider, binaries=binaries, jsons=jsons)
+
+    assert binaries == [HEAD + TAIL]
+    assert "It is sunny and warm." in _assistant_text(jsons)
+    assert not any(item.get("type") == "tts_cancel" for item in jsons)
+    assert sess._unconfirmed_interruptions == 0
+
+
+@pytest.mark.asyncio
+async def test_completed_reply_survives_the_interrupt_silence_window():
+    """A cough mid-reply must not tts_cancel after the generation's own boundary."""
+
+    from jarvis.realtime import session as session_mod
+
+    async def script():
+        yield RealtimeEvent(type="input_transcript", text=OPENING, is_final=True)
+        yield RealtimeEvent(type="output_transcript_delta", text="It is sunny")
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=HEAD, sample_rate=24_000, timestamp_ns=0),
+        )
+        yield RealtimeEvent(type="interrupted")
+        yield RealtimeEvent(type="output_transcript_delta", text=" and warm.")
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=TAIL, sample_rate=24_000, timestamp_ns=0),
+        )
+        yield RealtimeEvent(type="turn_complete")
+        await asyncio.sleep(0.4)
+
+    binaries, jsons = [], []
+    provider = _scripted(script)
+    original = session_mod._INTERRUPTION_CONFIRM_WINDOW_S
+    session_mod._INTERRUPTION_CONFIRM_WINDOW_S = 0.05
+    try:
+        sess = await _run(provider, binaries=binaries, jsons=jsons)
+    finally:
+        session_mod._INTERRUPTION_CONFIRM_WINDOW_S = original
+
+    assert binaries == [HEAD, TAIL]
+    assert "and warm." in _assistant_text(jsons)
+    assert not any(item.get("type") == "tts_cancel" for item in jsons)
+    assert sess._unconfirmed_interruptions == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_interrupt_cannot_cancel_speaker_drain():
+    """Desktop ``finish_turn`` blocks on ``turn_complete``; that silence is expected.
+
+    Live 2026-08-19 15:59: the 3.6 s greeting was still draining when the
+    settle task treated 1 s of post-boundary provider silence as a confirmed
+    barge-in and sent ``tts_cancel``. The user heard half a sentence.
+    """
+
+    from jarvis.realtime import session as session_mod
+
+    async def script():
+        yield RealtimeEvent(type="input_transcript", text=OPENING, is_final=True)
+        yield RealtimeEvent(type="output_transcript_delta", text="It is sunny")
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=HEAD, sample_rate=24_000, timestamp_ns=0),
+        )
+        yield RealtimeEvent(type="interrupted")
+        yield RealtimeEvent(type="output_transcript_delta", text=" and warm.")
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=TAIL, sample_rate=24_000, timestamp_ns=0),
+        )
+        yield RealtimeEvent(type="turn_complete")
+
+    binaries, jsons = [], []
+
+    async def slow_send_json(message):
+        jsons.append(message)
+        if message.get("type") == "turn_complete":
+            await asyncio.sleep(0.3)
+
+    provider = _scripted(script)
+    original = session_mod._INTERRUPTION_CONFIRM_WINDOW_S
+    session_mod._INTERRUPTION_CONFIRM_WINDOW_S = 0.05
+    try:
+        sess = await _run(provider, binaries=binaries, jsons=jsons, send_json=slow_send_json)
+    finally:
+        session_mod._INTERRUPTION_CONFIRM_WINDOW_S = original
+
+    assert binaries == [HEAD, TAIL]
+    assert "and warm." in _assistant_text(jsons)
+    assert not any(item.get("type") == "tts_cancel" for item in jsons)
+    assert sess._unconfirmed_interruptions == 1

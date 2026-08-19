@@ -7,6 +7,20 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **A Gemini Live greeting no longer dies mid-sentence.** Vertex Live fires
+  an empty `interrupted` for our own steering text, then speaks the real
+  reply. The session used to treat the quiet after that reply's
+  `turn_complete` as a confirmed barge-in and cancel the speaker drain —
+  full text in the log, half a sentence in the air. The same settle could
+  also fire *before* first audio and withhold the whole greeting (BUG-152).
+- **Vertex Live native tools work again.** Vertex reports hybrid function
+  calls as `default:run_shell`. The bridge treated that as an unknown tool
+  and the model said the tools were down (BUG-153).
+
 ## [1.4.0] — 2026-08-18
 
 This release turns the front page into a mission deck, gives the assistant a

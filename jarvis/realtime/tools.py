@@ -89,6 +89,25 @@ def _wire_name(name: str) -> str:
     return f"{normalized[:52]}_{digest}"
 
 
+def canonical_tool_wire_name(name: str) -> str:
+    """Strip a Gemini/Vertex tool-set prefix from a function-call name.
+
+    Vertex Live groups ``function_declarations`` under an unnamed Tool and
+    reports calls as ``{toolset}:{function}`` (live 2026-08-19 16:07:
+    ``default:run_shell``). AI Studio and OpenAI send the bare declared
+    name. Only an identifier prefix plus a legal wire-name suffix is
+    stripped — URLs and other colons stay intact. The original name is
+    still what ``send_tool_result`` must echo back on the wire.
+    """
+    raw = str(name or "").strip()
+    if not raw or ":" not in raw:
+        return raw
+    prefix, suffix = raw.split(":", 1)
+    if suffix and prefix.isidentifier() and _VALID_WIRE_NAME.fullmatch(suffix):
+        return suffix
+    return raw
+
+
 def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
@@ -516,7 +535,8 @@ class RealtimeToolBridge:
         arguments: dict[str, Any],
         trace_id: UUID | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        name = self._wire_to_name.get(wire_name, "")
+        name = self._declared_name_for_wire(wire_name)
+        name, arguments = self._maybe_reroute_music(name, arguments)
         descriptor = self._descriptors.get(name)
         if descriptor is None:
             await self._publish_denied(wire_name, "unknown realtime tool")
@@ -641,6 +661,66 @@ class RealtimeToolBridge:
         if self._gateway is not None:
             return await self._gateway.cancel_pending(trace_id)
         return bool(await self._executor.cancel_pending(trace_id))
+
+    def _declared_name_for_wire(self, wire_name: str) -> str:
+        """Map a provider function-call name onto a catalog tool name.
+
+        Tries the wire name as sent, then a stripped tool-set prefix
+        (``default:run_shell``), then the hashed form used for names
+        that are not legal identifiers.
+        """
+        if not wire_name:
+            return ""
+        mapped = self._wire_to_name.get(wire_name, "")
+        if mapped:
+            return mapped
+        canonical = canonical_tool_wire_name(wire_name)
+        mapped = self._wire_to_name.get(canonical, "")
+        if mapped:
+            return mapped
+        return self._wire_to_name.get(_wire_name(canonical), "")
+
+    def _maybe_reroute_music(
+        self, name: str, arguments: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Send an unnamed music call to the preferred/only connected service.
+
+        Hybrid live models hold both music tools and pick by description
+        (2026-08-19: preference YouTube Music, Spotify not connected, the
+        model still called ``spotify``). Descriptions are a hint; this is
+        the correctness boundary. A named service still wins. Never raises.
+        """
+        try:
+            from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
+            from jarvis.core.music_service import (
+                adapt_music_arguments,
+                reroute_music_tool,
+            )
+        except Exception:  # noqa: BLE001 — a routing nicety must never break a turn
+            return name, arguments
+        if name not in MUSIC_PLUGIN_IDS:
+            return name, arguments
+        try:
+            target = reroute_music_tool(name, self._last_user_text)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("realtime music tool reroute skipped: %s", exc)
+            return name, arguments
+        if target == name or target not in self._descriptors:
+            return name, arguments
+        log.info(
+            "realtime music tool rerouted %s -> %s",
+            name,
+            target,
+        )
+        args = arguments if isinstance(arguments, dict) else {}
+        try:
+            adapted = adapt_music_arguments(
+                self._last_user_text, source=name, target=target, args=args
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("realtime music arg adapt skipped: %s", exc)
+            adapted = args
+        return target, adapted
 
     def _validate_arguments(
         self,

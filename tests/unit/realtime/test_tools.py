@@ -122,6 +122,48 @@ async def test_available_tool_runs_only_through_tool_executor():
 
 
 @pytest.mark.asyncio
+async def test_vertex_toolset_prefix_resolves_to_the_declared_tool():
+    """Vertex Live prefixes user-declared functions with the tool-set name.
+
+    Live 2026-08-19 16:07: hybrid vertex-live called ``default:run_shell``.
+    The bridge looked that name up verbatim, returned "Tool is not available
+    in this session.", and the model spoke that error. The prefix is a
+    transport artifact; the declared tool must still run.
+    """
+    from jarvis.realtime.tools import canonical_tool_wire_name
+
+    assert canonical_tool_wire_name("default:run_shell") == "run_shell"
+    assert canonical_tool_wire_name("open_app") == "open_app"
+    assert canonical_tool_wire_name("default:jarvis_action") == "jarvis_action"
+
+    bridge, tool, executor = _bridge()
+    await bridge.handle_user_transcript("Open Calculator")
+
+    name, result = await bridge.execute(
+        wire_name="default:open_app", arguments={"app_name": "Calculator"}
+    )
+
+    assert name == "open_app"
+    assert result == {"success": True, "output": "opened", "error": None}
+    assert executor.execute_calls[0][0] is tool
+
+
+@pytest.mark.asyncio
+async def test_vertex_prefix_on_a_hashed_wire_name_still_runs():
+    bridge, tool, executor = _bridge(name="call-contact")
+    wire = bridge.declarations[0]["name"]
+    await bridge.handle_user_transcript("Open Calculator")
+
+    name, result = await bridge.execute(
+        wire_name=f"default:{wire}", arguments={"app_name": "Calculator"}
+    )
+
+    assert name == "call-contact"
+    assert result["success"] is True
+    assert executor.execute_calls[0][0] is tool
+
+
+@pytest.mark.asyncio
 async def test_missing_required_argument_is_denied_before_executor():
     bridge, _tool, executor = _bridge()
     await bridge.handle_user_transcript("Open it")

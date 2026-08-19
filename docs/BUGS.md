@@ -10579,3 +10579,122 @@ repro script AND the bench (3/3 clean runs on the laptop) before it counts.
 **Guards.** None in CI — a crash test cannot run without the native model;
 `scripts/vosk_native_stress.py churn 180` (3 x clean) plus 3/3 clean bench
 runs on the weak laptop are the acceptance test until a fix lands.
+
+## BUG-152: Gemini Live greeting cut off mid-sentence — a stale empty interrupt cancels the speaker drain (CRITICAL, FIXED 2026-08-19)
+
+**Symptom (Windows live forensic, 15:59, `vertex-live` /
+`gemini-live-2.5-flash-native-audio`).** The user said "Hey Hallo, was geht
+ab?". The SAY panel showed the full reply ("Hallo! Mir geht es gut, und ich
+bin bereit für deine nächsten Aufgaben.") but the voice stopped around
+"nächsten". The session then sat silent until the user hung up. <!-- i18n-allow: quoted live German utterance and spoken reply under forensic analysis -->
+
+**Timeline (`data/jarvis_desktop.log`).**
+
+| Time | What happened |
+|---|---|
+| 15:59:07.878 | Steering text sent |
+| 15:59:08.049 | Empty `interrupted` (audio=0) — deferred (RT-09) |
+| 15:59:08.169 | Empty-turn re-ask sent |
+| 15:59:08.331 | Second empty `interrupted` |
+| 15:59:09.521 | First audio of the real 3.6 s / 71-char greeting |
+| 15:59:10.188 | Provider `turn_complete` |
+| 15:59:11.257 | Settle commits the stale interrupt ("silent for 1.0s") |
+| 15:59:11.339 | `JARVIS_SPEAKING → LISTENING` via `tts_cancel` |
+
+Desktop `_send_json(turn_complete)` awaits `playback.finish_turn()`, so the
+pump is blocked on the remaining ~2 s of audio. The settle task treats that
+expected provider silence as "the interrupt won" and cancels the drain.
+
+**Root cause.** Three cooperating defects:
+
+1. Gemini Live emits `interrupted` for our own `send_text` (steering, re-ask)
+   even when nothing is playing. The session deferred that edge as if a
+   reply were being spoken.
+2. Every accepted provider event *refreshed* the 1 s silence timer, including
+   the real reply's `turn_complete`. The timer then started from the
+   boundary, exactly when the surface began draining.
+3. `_clear` of the deferral lived in `_reset_turn_tracking`, which runs
+   *after* the blocking `finish_turn`. Too late.
+
+**Fix.** Ignore `interrupted` when no reply is in flight. Cancel the silence
+backstop on continued production and on any `turn_complete`, and clear the
+deferral at the *start* of `_complete_surface_turn` — before the desktop
+drain. The 1 s commit remains only for a generation that dies at the edge
+with no later boundary. Empty-turn re-ask silence is owned by that
+watchdog, not the barge-in settle.
+
+**Guards.**
+`tests/unit/realtime/test_session_noise_interrupt.py`
+(`test_empty_interrupt_before_a_reply_is_ignored`,
+`test_completed_reply_survives_the_interrupt_silence_window`,
+`test_stale_interrupt_cannot_cancel_speaker_drain`);
+`tests/unit/realtime/test_session.py`
+(`test_empty_turn_reask_reply_survives_speaker_drain`,
+`test_empty_turn_reask_survives_the_interrupt_settle_window`).
+Existing
+`test_unconfirmed_interruption_is_committed_once_the_provider_stops` still
+requires the backstop when the provider really stops.
+
+**Class rule.** A provider VAD edge is not a barge-in, and provider silence
+after a completed generation is not confirmation of that edge. The surface
+drain of an already-rendered reply is not a window in which to cancel it.
+
+**Parity.** Session-level, every realtime transport. Gemini Live is the
+transport that emits the empty `interrupted` artifact; OpenAI's
+`speech_started` stays instant. Desktop is the surface whose
+`turn_complete` blocks on the speaker; browser/headless `send_json` is
+non-blocking but the same cancel would still drop queued PCM.
+
+**Same class, 16:07 the same afternoon.** "Was geht ab?" produced no spoken
+greeting at all: the 1 s settle committed *before* first audio (1.14 s),
+`_drop_provider_output_until_new_response` withheld the 2.9 s native
+reply, and the user heard silence then the canned failure of BUG-153.
+Guard: `test_empty_turn_reask_survives_the_interrupt_settle_window`. <!-- i18n-allow: quoted live German utterance under forensic analysis -->
+
+
+## BUG-153: Vertex Live prefixes native tools with `default:` — every hybrid call answers "tools are not available" (HIGH, FIXED 2026-08-19)
+
+**Symptom (Windows live forensic, 16:07, `vertex-live` /
+`gemini-live-2.5-flash-native-audio`, hybrid tool mode).** After the
+silent greeting of BUG-152 the user said the internet was broken. Jarvis
+spoke "Das hat gerade nicht geklappt." Then, asked why: "Das System
+meldet, dass die Tools nicht verfügbar sind. Ich kann keine Diagnose
+machen, ohne sie zu starten." Tools were up; 110 native tools were
+declared. <!-- i18n-allow: quoted live German utterances and spoken replies under forensic analysis -->
+
+**Timeline (`data/jarvis_desktop.log`).**
+
+| Time | What happened |
+|---|---|
+| 16:07:26.665 | `gemini-live: function call(s) default:run_shell` |
+| 16:07:26.669 | tool response sent for `default:run_shell` |
+| 16:07:26.674 | direct-tool turn without output; retry speech from the result |
+| 16:07:27.377 | second `default:run_shell` |
+| 16:07:27.566 | surface TTS fallback of the canned failure (30 chars) |
+
+**Root cause.** Vertex Live groups `function_declarations` under an
+unnamed Tool and reports calls as `{toolset}:{function}`
+(`default:run_shell`). AI Studio and OpenAI send the bare declared name.
+`RealtimeToolBridge.execute` looked up the prefixed name in
+`_wire_to_name`, missed, and returned `"Tool is not available in this
+session."` The live model read that error back. The original name must
+still be echoed on `send_tool_result` or Vertex rejects the response.
+
+**Fix.** `canonical_tool_wire_name` strips an identifier tool-set prefix
+when the suffix is a legal wire name. Lookup tries the name as sent, then
+the suffix, then the hashed form. Session special-cases (`jarvis_action`,
+`end_call`) use the canonical name; the function response uses the
+original.
+
+**Guards.** `tests/unit/realtime/test_tools.py`
+(`test_vertex_toolset_prefix_resolves_to_the_declared_tool`,
+`test_vertex_prefix_on_a_hashed_wire_name_still_runs`);
+`tests/unit/realtime/test_session.py`
+(`test_vertex_prefixed_native_tool_call_echoes_the_original_wire_name`).
+
+**Class rule.** A transport-specific tool-name spelling is not a missing
+tool. Resolve at lookup; echo on the wire what the provider emitted.
+
+**Parity.** Lookup is session/bridge-level, every realtime transport.
+Only Vertex Live is known to emit the `default:` prefix; OpenAI and
+Gemini AI Studio send the declared name and hit the exact-match path.

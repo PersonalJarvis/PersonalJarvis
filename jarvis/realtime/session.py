@@ -64,6 +64,7 @@ from jarvis.core.turn_language import (
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig, RealtimeUnavailableError
 from jarvis.realtime.scrub_gate import ScrubHoldGate
+from jarvis.realtime.tools import canonical_tool_wire_name
 from jarvis.sessions.constants import (
     HANGUP_CLIENT_STOP,
     HANGUP_DESKTOP_FALLBACK,
@@ -174,12 +175,13 @@ _UNBACKED_CLAIM_SETTLE_POLL_S = 0.05
 # Gemini's server VAD reports a cough, a closing door and a real barge-in with
 # the same flag. WORDS are the proof, and they arrive moments later as the
 # final input transcript that already splits the turn. This is the bounded
-# escape hatch for the edge that no words ever confirm: while the provider
-# keeps producing, the edge demonstrably cut nothing and the answer runs on;
-# once the provider has been silent this long the generation really did end
-# there, and the interruption is committed exactly as it always was — late
-# enough that room noise no longer truncates a live answer. It is also the
-# hard cap on the extra overlap a genuine barge-in can cost.
+# escape hatch for the edge that no words ever confirm: production after the
+# edge (audio, transcript, or a ``turn_complete`` boundary) cancels it,
+# because the generation continued or ended as a normal turn. Only total
+# silence with no later boundary commits it — late enough that room noise no
+# longer truncates a live answer, and never while the surface is still
+# draining the speaker queue (BUG-152). It is also the hard cap on the extra
+# overlap a genuine barge-in can cost.
 _INTERRUPTION_CONFIRM_WINDOW_S = 1.0
 _INTERRUPTION_SETTLE_POLL_S = 0.1
 # Withheld provider output used to leave no trace anywhere (AP-30): a turn could
@@ -2198,9 +2200,8 @@ class RealtimeVoiceSession:
         self._user_speech_active = False
         self._deferred_provider_speech_start = False
         # An ``interrupted`` edge awaiting the user's words (RT-09). Non-zero
-        # while a deferral is live, and refreshed by every accepted provider
-        # event, so the settle task measures provider SILENCE since the edge
-        # rather than wall time since it.
+        # while a deferral is live. Continued production or a turn boundary
+        # cancels it; only total silence with no later boundary commits it.
         self._interruption_deferred_at = 0.0
         self._interruption_settle_task: asyncio.Task[None] | None = None
         self._unconfirmed_interruptions = 0
@@ -4031,13 +4032,18 @@ class RealtimeVoiceSession:
                 self._note_turn_activity()
                 if not await self._accept_provider_response_event(event):
                     continue
-                if self._interruption_deferred_at:
-                    # Accepted provider traffic proves a deferred ``interrupted``
-                    # edge cut nothing: the response is still being produced.
-                    # Measured HERE and not from ``_turn_activity_at``, which the
-                    # stall watchdog keeps refreshing on its own while the gate
-                    # holds PCM — the settle backstop would then never fire.
-                    self._interruption_deferred_at = time.monotonic()
+                if self._interruption_deferred_at and event.type in {
+                    "audio_delta",
+                    "output_transcript_delta",
+                }:
+                    # The generation kept producing after the edge, so the
+                    # edge cut nothing. Drop the silence backstop; do not
+                    # refresh it. Refreshing kept the deferral alive until
+                    # ``turn_complete``, after which the expected provider
+                    # silence committed the stale edge and cancelled the
+                    # speaker drain mid-sentence (BUG-152). The deferred
+                    # flag stays so the user's own words can still confirm.
+                    self._cancel_interruption_settle()
                 if event.type in {
                     "audio_delta",
                     "output_transcript_delta",
@@ -5084,6 +5090,7 @@ class RealtimeVoiceSession:
                 elif event.type in {"speech_started", "interrupted"} and (
                     self._pending_delegate_needs_endpoint_protection()
                     or self._delegate_readback_awaits_first_audio()
+                    or self._empty_turn_reask_owns_turn(self._turn_id)
                 ):
                     # Gemini has no separate speech-start edge: its server VAD
                     # reports noise blips and real barge-ins alike as
@@ -5094,8 +5101,11 @@ class RealtimeVoiceSession:
                     # closed the turn with the trusted reply recorded but
                     # never spoken, and the barge-in drop flag then swallowed
                     # the injected readback (live forensic 2026-07-16 10:26).
-                    # Defer it; a real utterance confirms itself through its
-                    # final input transcript moments later.
+                    # The empty-turn re-ask owns the same kind of silence
+                    # (live 2026-08-19 16:07: Vertex closed the re-ask text
+                    # empty, the 1s settle committed, native audio 0.1s later
+                    # was withheld). Defer it; a real utterance confirms
+                    # itself through its final input transcript moments later.
                     if not self._deferred_provider_speech_start:
                         log.info(
                             "realtime[%s] deferred an unconfirmed provider "
@@ -5103,10 +5113,10 @@ class RealtimeVoiceSession:
                             self.session_id,
                             event.type,
                         )
-                    # No settle task here: this window is owned by the delegate,
-                    # whose own budget and readback watchdog decide when it is
-                    # over. A silence timer would abandon exactly the turn this
-                    # branch exists to protect.
+                    # No settle task here: this window is owned by the
+                    # delegate or the re-ask watchdog, whose own budget
+                    # decides when it is over. A silence timer would abandon
+                    # exactly the turn this branch exists to protect.
                     self._deferred_provider_speech_start = True
                 elif event.type == "interrupted":
                     # The SAME ambiguity, now while a reply is actually being
@@ -5123,16 +5133,27 @@ class RealtimeVoiceSession:
                     # ``speech_started`` is deliberately NOT deferred here: the
                     # transports that emit it (OpenAI) mean it literally, and
                     # their barge-in must stay instant.
-                    if not self._deferred_provider_speech_start:
-                        self._unconfirmed_interruptions += 1
+                    if not self._reply_is_in_flight():
+                        # Gemini Live emits ``interrupted`` for our own
+                        # send_text (steering, empty-turn re-ask) even when
+                        # nothing is playing. Deferring that arms a silence
+                        # backstop that later cuts the real reply (BUG-152).
                         log.info(
-                            "realtime[%s] deferred an unconfirmed provider "
-                            "interruption; waiting for the user's own words "
-                            "before cutting the reply",
+                            "realtime[%s] ignored a provider interruption "
+                            "with no reply in flight",
                             self.session_id,
                         )
-                    self._deferred_provider_speech_start = True
-                    self._arm_interruption_settle()
+                    else:
+                        if not self._deferred_provider_speech_start:
+                            self._unconfirmed_interruptions += 1
+                            log.info(
+                                "realtime[%s] deferred an unconfirmed provider "
+                                "interruption; waiting for the user's own words "
+                                "before cutting the reply",
+                                self.session_id,
+                            )
+                        self._deferred_provider_speech_start = True
+                        self._arm_interruption_settle()
                 elif (
                     event.type == "speech_started"
                     and self._turn_held_for_pause()
@@ -5211,6 +5232,10 @@ class RealtimeVoiceSession:
                         # result may deliver now that the wire is quiet.
                         self._schedule_late_delegate_flush()
                         continue
+                    # A provider boundary — empty or not — means this
+                    # generation ended. The silence backstop is only for the
+                    # case where no boundary ever comes (BUG-152).
+                    self._cancel_interruption_settle()
                     if self._output_language_retry_pending:
                         if not self._output_language_retry_requested:
                             await self._request_output_language_retry()
@@ -5986,6 +6011,7 @@ class RealtimeVoiceSession:
         # 1008 right as turn 21's reply drained; the rebuild succeeded in
         # ~2 s but the user spoke into a swallowed microphone for 20 s).
         try:
+            self._clear_deferred_interruption()
             await self._send_json({"type": "turn_complete"})
         except Exception:  # noqa: BLE001, S110 — surface mirror is best-effort
             pass
@@ -6622,6 +6648,20 @@ class RealtimeVoiceSession:
         )
         return True
 
+    def _reply_is_in_flight(self) -> bool:
+        """True when an assistant reply is audible, buffered, or transcribing."""
+        return bool(
+            self._output_active
+            or self._output_samples_sent > 0
+            or self._gate.pending_audio_ms > 0
+            or "".join(self._output_transcript).strip()
+        )
+
+    def _clear_deferred_interruption(self) -> None:
+        """Drop a deferred VAD edge: it did not cut this generation."""
+        self._deferred_provider_speech_start = False
+        self._cancel_interruption_settle()
+
     def _cancel_interruption_settle(self) -> None:
         self._interruption_deferred_at = 0.0
         task = self._interruption_settle_task
@@ -6634,12 +6674,15 @@ class RealtimeVoiceSession:
 
         Deferring is free while the answer keeps arriving — the edge cut
         nothing and the reply runs on. It is not free when the generation
-        really did end there: the gate's held PCM makes the 20 s stall
-        watchdog excuse the silence forever, so the turn would wait for a
-        boundary that is never coming. This task closes exactly that gap by
-        committing the interruption unchanged once the provider has been
-        silent for ``_INTERRUPTION_CONFIRM_WINDOW_S``. Re-armed per deferral
-        and cancelled with the turn (AP-19).
+        really did end there with no later boundary: the gate's held PCM
+        makes the 20 s stall watchdog excuse the silence forever, so the
+        turn would wait for a boundary that is never coming. This task
+        closes exactly that gap by committing the interruption unchanged
+        once the provider has been silent for
+        ``_INTERRUPTION_CONFIRM_WINDOW_S``. Continued production and any
+        ``turn_complete`` cancel it instead, so expected silence after a
+        finished reply cannot cut the speaker drain (BUG-152). Re-armed
+        per deferral and cancelled with the turn (AP-19).
         """
         self._interruption_deferred_at = time.monotonic()
         task = self._interruption_settle_task
@@ -6676,6 +6719,11 @@ class RealtimeVoiceSession:
                     # reply is recorded but not yet spoken — the 2026-07-16
                     # forensic the delegate-window branch above exists for.
                     return
+                if self._empty_turn_reask_owns_turn(turn_id):
+                    # The re-ask is still waiting for native audio. Provider
+                    # silence here is the interrupt artifact of our own text,
+                    # not proof the generation ended.
+                    continue
                 if time.monotonic() - self._interruption_deferred_at < (
                     _INTERRUPTION_CONFIRM_WINDOW_S
                 ):
@@ -7671,6 +7719,10 @@ class RealtimeVoiceSession:
             return False
         self._empty_turn_reask_turn_id = turn_id
         self._drop_provider_output_until_new_response = False
+        # The empty ``interrupted`` of the steering/re-ask text itself often
+        # armed the RT-09 settle ~1s earlier. That timer must not close this
+        # turn while we wait for native audio (live 2026-08-19 16:07).
+        self._clear_deferred_interruption()
         try:
             await send_text(
                 _empty_turn_reask_prompt(
@@ -7722,6 +7774,7 @@ class RealtimeVoiceSession:
                     or self._output_samples_sent > 0
                     or "".join(self._output_transcript).strip()
                 ):
+                    self._clear_deferred_interruption()
                     return
                 if time.monotonic() >= deadline:
                     break
@@ -8048,6 +8101,12 @@ class RealtimeVoiceSession:
         Publishing needs a turn id; RESETTING never does (see
         ``_reset_output_state``).
         """
+        # Drop any deferred VAD edge first. On the desktop
+        # ``_send_json(turn_complete)`` blocks until the speaker queue
+        # drains, and that silence is exactly what the settle task used
+        # to treat as "the interrupt won" — it sent ``tts_cancel``
+        # mid-drain (BUG-152).
+        self._clear_deferred_interruption()
         if self._turn_id:
             await self._send_json({"type": "turn_complete"})
             await self._publish_turn_completed()
@@ -9567,10 +9626,11 @@ class RealtimeVoiceSession:
             return
         call_id = str(getattr(event, "call_id", "") or "")
         wire_name = str(getattr(event, "tool_name", "") or "")
+        declared_name = canonical_tool_wire_name(wire_name)
         arguments = getattr(event, "tool_args", None)
         if not isinstance(arguments, dict):
             arguments = {}
-        if self._external_update is not None and wire_name != "end_call":
+        if self._external_update is not None and declared_name != "end_call":
             # Background summaries are untrusted data for wording only. Even if
             # their content contains a prompt injection, they cannot act.
             await self._session.send_tool_result(
@@ -9585,7 +9645,7 @@ class RealtimeVoiceSession:
         if (
             self._delegate_enabled
             and call_id
-            and wire_name == str(_DELEGATE_DECLARATION["name"])
+            and declared_name == str(_DELEGATE_DECLARATION["name"])
         ):
             provider_request = str(arguments.get("request", "") or "").strip()
             local_plan = self._plan_turn(self._last_user_text)
@@ -9708,7 +9768,9 @@ class RealtimeVoiceSession:
         # arrives, so a slow one gets the instant-ack treatment — one line
         # after the short grace, at most once per turn.
         ack_task = asyncio.create_task(
-            self._native_tool_ack_after_grace(self._turn_id, wire_name),
+            self._native_tool_ack_after_grace(
+                self._turn_id, declared_name or wire_name
+            ),
             name=f"rt-native-tool-ack-{self.session_id}",
         )
         try:
@@ -10769,6 +10831,7 @@ class RealtimeVoiceSession:
                 # close the turn locally so the surface leaves PROCESSING
                 # (same local-boundary pattern as the held-turn_complete and
                 # rebuild paths).
+                self._clear_deferred_interruption()
                 await self._send_json({"type": "turn_complete"})
                 await self._publish_turn_completed()
             return
