@@ -10928,3 +10928,61 @@ pipeline and every OS.
 `test_smalltalk_is_not_music_connected_data`);
 `tests/unit/brain/test_factory_supervisor_gateway.py`
 (`test_catalog_carries_the_per_args_risk_tier_hook`).
+
+
+## BUG-157: asking for a song during a realtime call is aborted as "took too long" — the stall watchdog treats an in-flight native play as a dead transport (HIGH, FIXED 2026-08-19)
+
+**Symptom (Windows live forensic, 18:17, `vertex-live` /
+`gemini-live-2.5-flash-native-audio`, hybrid).** The user asked for a
+modern 2026 track. Jarvis said it would take a moment, then 20 s later
+spoke "Das hat zu lange gedauert, also habe ich abgebrochen." The song  <!-- i18n-allow: quoted live German reply under forensic analysis -->
+never started. The UI error was
+`RealtimeTurnStalled`: "The realtime provider produced nothing for 20s
+on an open turn; the turn was closed locally."
+
+**Timeline (`data/jarvis_desktop.log` + flight recorder, session
+`128fbac6-d7ae-4fef-9810-4de3179f9889`).**
+
+| Time | What happened |
+|---|---|
+| 18:17:22 | Wake `nova`. Handshake 10.4 s |
+| 18:17:49 | Final: play a cool modern 2026 song. Native `youtube_music` `play` / `aktuelle Hits 2026` |
+| 18:17:52 | Instant ack on the surface channel ("still a moment") |
+| 18:17:53 | YouTube search HTTP 200 — the tool is still running |
+| 18:18:09 | Stall watchdog: 20.3 s since the last provider event (the function call itself). `ActionExecuted` never published |
+| 18:18:16 | Spoken timeout. User hangup |
+
+Earlier the same evening, `youtube_music` play took 17.9 s and 21.2 s
+and succeeded. 21 s is already longer than `_TURN_STALL_TIMEOUT_S`.
+
+**Root cause.** BUG-154 taught the *empty-turn* recovery that
+`_native_tools_in_flight` is evidence. The *stall* watchdog did not
+learn it. `_turn_stall_is_excusable` allowed only delegate holds, user
+speech, and provider audio. A native function call blocks the live
+model (ADR-0034): Vertex Live emits nothing until `send_tool_result`.
+The last `_note_turn_activity` was the `tool_call` event. Twenty
+seconds later the watchdog closed the turn, spoke the timeout, and
+left the still-running play with no turn to finish — the track is
+cut off / never starts.
+
+The surface instant-ack does not increment `_output_samples_sent`, so
+it does not excuse the stall either.
+
+**Fix.** `_turn_stall_is_excusable` (and a race guard in
+`_recover_stalled_turn`) treat `_native_tools_in_flight` the same way
+the empty-turn nets already do. The 20 s clock starts after the tool
+returns, when the provider actually owes audio again.
+
+**Class rule.** Provider silence during a native execute is the
+function-call block, not a dead socket. An in-flight tool already owns
+the turn. Do not abort the user's song (or any other native action) to
+reopen the microphone.
+
+**Parity.** Session-level stall watchdog, every realtime transport
+(`openai-realtime` / `gemini-live` / `vertex-live`). Direct and
+delegate already excuse a pending Brain turn via
+`_turn_has_pending_delegate`. Classic pipeline has its own stall
+guard and does not use this watchdog.
+
+**Guards.** `tests/unit/realtime/test_stall_native_tool.py`
+(`test_in_flight_native_tool_is_not_a_stalled_turn`).

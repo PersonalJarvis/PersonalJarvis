@@ -2946,6 +2946,12 @@ class RealtimeVoiceSession:
             voice = active_voice() or voice
         except Exception as exc:  # noqa: BLE001 - a voice preference never costs a session
             log.debug("Mode voice not applied to the realtime session: %s", exc)
+        # An empty pin used to leave ``_active_voice`` blank. Surface TTS then
+        # fell through to Charon while the live socket used Google's
+        # undocumented default — a second, often different-gender speaker
+        # on every progress / fallback line (BUG-155). The adapter's
+        # declared default is the same name both paths will speak.
+        voice = voice or str(getattr(provider, "default_voice", "") or "")
         return model, voice
 
     @staticmethod
@@ -7019,6 +7025,12 @@ class RealtimeVoiceSession:
             or self._output_active
             or self._output_samples_sent > 0
             or self._gate.pending_audio_ms > 0
+            # A native tool call blocks the live model (ADR-0034). The
+            # transport emits nothing until send_tool_result. youtube_music
+            # play regularly takes 18-28 s — longer than
+            # _TURN_STALL_TIMEOUT_S — so this silence is work, not a wedge
+            # (live 2026-08-19 18:17, session 128fbac6, BUG-157).
+            or self._native_tools_in_flight
         )
 
     async def _watch_turn_for_stall(self, turn_id: str) -> None:
@@ -7057,6 +7069,12 @@ class RealtimeVoiceSession:
     async def _recover_stalled_turn(self, turn_id: str, silent_s: float) -> None:
         """Close a wedged turn honestly: say what happened, then reopen the mic."""
         from jarvis.voice.action_phrases import action_phrase  # noqa: PLC0415
+
+        # Race: the poll saw a quiet turn, then a native execute started.
+        # Aborting now would cut the action the user is still waiting for.
+        if self._native_tools_in_flight:
+            self._note_turn_activity()
+            return
 
         pending_update = self._external_update
         log.warning(
