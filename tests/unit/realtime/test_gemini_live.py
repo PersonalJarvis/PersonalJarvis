@@ -719,6 +719,26 @@ async def test_an_sdk_without_the_enum_still_opens_a_session(
 
 
 @pytest.mark.asyncio
+async def test_open_session_pins_the_adapter_default_voice_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-155: an empty card pin used to omit voice_config, so the Live
+    socket used Google's undocumented default while surface TTS spoke
+    Charon. The adapter default is always sent so both paths share it."""
+    holder = _patch_genai_client(monkeypatch)
+    session = await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    _selected, config = holder["client"].aio.live.connect_calls[0]
+    assert (
+        config.speech_config.voice_config.prebuilt_voice_config.voice_name
+        == GeminiLiveProvider.default_voice
+        == "Kore"
+    )
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_open_session_uses_current_default_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

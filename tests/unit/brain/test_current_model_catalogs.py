@@ -155,6 +155,10 @@ def test_current_realtime_models_and_voices() -> None:
         "gemini-2.5-flash-native-audio-preview-12-2025",
     } == _ids(REALTIME_MODELS["gemini-live"])
     assert len(_ids(REALTIME_VOICES["gemini-live"])) == 30
+    assert _ids(REALTIME_MODELS["vertex-live"]) == {
+        "gemini-live-2.5-flash-native-audio",
+    }
+    assert _ids(REALTIME_VOICES["vertex-live"]) == _ids(REALTIME_VOICES["gemini-live"])
     # grok-realtime was removed 2026-07-16 (BUG-064 deaf-session wedge);
     # neither catalog may resurrect it.
     assert "grok-realtime" not in REALTIME_MODELS
@@ -173,6 +177,7 @@ def test_gemini_voice_roster_is_identical_across_runtime_and_pickers() -> None:
 
     assert len(GEMINI_VOICES) == 30
     assert set(GEMINI_VOICES) == picker == realtime == allowed
+    assert _ids(REALTIME_VOICES["vertex-live"]) == realtime
 
 
 def test_xai_voice_roster_is_identical_across_runtime_and_picker() -> None:

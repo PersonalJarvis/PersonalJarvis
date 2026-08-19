@@ -3252,8 +3252,8 @@ async def set_cu_model(provider_id: str, body: CuModelBody, request: Request) ->
 
 # ── GET/PUT /providers/{id}/realtime-options ───────────────────────────────
 # Selectable Realtime model + voice, per realtime provider (openai-realtime /
-# gemini-live). Realtime needs BOTH per provider, so this is a small dedicated
-# endpoint rather than reusing GET/PUT /providers/{id}/model.
+# gemini-live / vertex-live). Realtime needs BOTH per provider, so this is a
+# small dedicated endpoint rather than reusing GET/PUT /providers/{id}/model.
 
 
 def _require_realtime_provider(provider_id: str) -> ProviderSpec:
@@ -3465,6 +3465,36 @@ async def _gemini_live_voice_sample(
     return bytes(pcm), sample_rate
 
 
+async def _vertex_live_voice_sample(
+    api_key: str, *, model: str, voice: str, text: str, language: str
+) -> tuple[bytes, int]:
+    """Sample a Vertex Live voice via the Vertex TTS sibling.
+
+    Same 30-voice roster as Gemini Live; the Cloud project path (ADC or
+    Vertex key) must speak it, never the AI Studio key (provider parity,
+    BUG-155). ``model`` is the LIVE model and is unused here.
+    """
+    del model
+    from jarvis.plugins.tts.gemini_flash_tts import GEMINI_TTS_SAMPLE_RATE, VertexTTS
+
+    tts = VertexTTS(
+        api_key=api_key or None,
+        chunk_by_sentence=False,
+        allow_sapi5_fallback=False,
+    )
+    pcm = bytearray()
+    sample_rate = GEMINI_TTS_SAMPLE_RATE
+    async for chunk in tts.synthesize(
+        text, voice=voice, language_code=_REALTIME_PREVIEW_LANG_CODES.get(language)
+    ):
+        pcm += bytes(chunk.pcm)
+        sample_rate = chunk.sample_rate
+    return bytes(pcm), sample_rate
+
+
+_vertex_live_voice_sample.requires_api_key = False  # type: ignore[attr-defined]
+
+
 async def _openai_realtime_voice_sample(
     api_key: str, *, model: str, voice: str, text: str, language: str
 ) -> tuple[bytes, int]:
@@ -3559,6 +3589,7 @@ async def _openai_realtime_voice_sample(
 # ``preview_available`` keeps the UI from rendering a button that cannot work.
 _REALTIME_PREVIEW_SAMPLERS: dict[str, Any] = {
     "gemini-live": _gemini_live_voice_sample,
+    "vertex-live": _vertex_live_voice_sample,
     "openai-realtime": _openai_realtime_voice_sample,
 }
 
@@ -3573,7 +3604,9 @@ class RealtimeVoicePreviewBody(BaseModel):
 
 
 @router.post("/providers/{provider_id}/realtime-voice-preview")
-async def realtime_voice_preview(provider_id: str, body: RealtimeVoicePreviewBody) -> Response:
+async def realtime_voice_preview(
+    provider_id: str, body: RealtimeVoicePreviewBody, request: Request
+) -> Response:
     """Speak a SHORT sample with one of a realtime provider's voices.
 
     Returns ``audio/wav`` (24 kHz mono s16le in a WAV container) so the voice
@@ -3582,7 +3615,7 @@ async def realtime_voice_preview(provider_id: str, body: RealtimeVoicePreviewBod
     for THIS provider. Any failure (no key / quota / transport) is a clean
     4xx/5xx JSON error the picker can toast — never a page-breaking 500.
     """
-    _require_realtime_provider(provider_id)
+    spec = _require_realtime_provider(provider_id)
     from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
 
     voice = body.voice.strip()
@@ -3609,12 +3642,22 @@ async def realtime_voice_preview(provider_id: str, body: RealtimeVoicePreviewBod
         )
 
     requires_api_key = bool(getattr(sampler, "requires_api_key", True))
-    api_key = cfg_mod.get_provider_secret(provider_id) if requires_api_key else ""
-    if requires_api_key and not api_key:
+    api_key = cfg_mod.get_provider_secret(provider_id) or ""
+    if requires_api_key:
+        if not api_key:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Provider '{provider_id}' has no configured credentials. "
+                    "Add its API key first."
+                ),
+            )
+    elif not await _provider_credential_present_async(spec, request):
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Provider '{provider_id}' has no configured credentials. Add its API key first."
+                f"Provider '{provider_id}' has no configured credentials. "
+                "Connect or configure this provider first."
             ),
         )
 

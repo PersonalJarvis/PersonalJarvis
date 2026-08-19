@@ -10832,8 +10832,9 @@ surface path did not.
   `_active_voice`, so the live socket and the surface sibling name the
   same voice. A per-card pin still overrides it.
 - `build_realtime_surface_tts(..., session_voice=)` takes the live
-  session's voice first. The desktop `error_spoken` path passes the hint
-  into the builder, not only into `synthesize`.
+  session's voice first. `_surface_speech_message` already carries
+  `_active_voice` as a synthesize hint; the builder default now matches
+  that name instead of falling through to Charon.
 
 **Class rule.** A progress / fallback line mid-call is not a second
 assistant. If the live model cannot speak it, the surface sibling must

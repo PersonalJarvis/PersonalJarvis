@@ -838,6 +838,13 @@ class GeminiLiveProvider:
     #: module constant, because the AI Studio and Vertex catalogues do NOT share
     #: their Live ids — see VertexLiveProvider.
     default_model = _MODEL
+    #: Prebuilt voice used when the card pins none. Always sent as
+    #: ``PrebuiltVoiceConfig`` so the Live socket and the same-family
+    #: surface TTS share one identity. Google's unpinned native-audio
+    #: default is undocumented; leaving the field empty made every
+    #: progress / fallback line speak Charon (BUG-155). Kore is the
+    #: current Live API example voice. A per-card pin still overrides it.
+    default_voice = "Kore"
     # Optional provider capability consumed by the shared session fallback.
     # Every adapter that draws from the same account quota must expose the
     # same value so a terminal billing/auth failure is not retried through an
@@ -905,7 +912,15 @@ class GeminiLiveProvider:
         from google.genai import types  # lazy (AP-26)
 
         client = await self._build_client()
-        voice = str(getattr(cfg, "voice", "") or "").strip()
+        voice = str(getattr(cfg, "voice", "") or "").strip() or str(
+            getattr(self, "default_voice", "") or ""
+        ).strip()
+        if not str(getattr(cfg, "voice", "") or "").strip() and voice:
+            log.info(
+                "%s: no card voice pinned; using adapter default %r",
+                self.name,
+                voice,
+            )
         speech_config: dict[str, Any] = {}
         if voice:
             speech_config["voice_config"] = types.VoiceConfig(

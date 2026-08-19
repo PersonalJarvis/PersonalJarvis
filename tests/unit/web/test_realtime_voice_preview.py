@@ -43,6 +43,10 @@ def test_every_preview_sampler_has_a_cataloged_realtime_provider() -> None:
     from jarvis.brain.model_catalog import REALTIME_VOICES
 
     assert set(provider_routes._REALTIME_PREVIEW_SAMPLERS) <= set(REALTIME_VOICES)
+    assert "vertex-live" in provider_routes._REALTIME_PREVIEW_SAMPLERS
+    assert provider_routes._REALTIME_PREVIEW_SAMPLERS["vertex-live"] is (
+        provider_routes._vertex_live_voice_sample
+    )
 
 
 def test_unknown_provider_is_404() -> None:

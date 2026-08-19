@@ -205,6 +205,18 @@ def test_vertex_live_without_any_credential_yields_no_surface_tts(
         assert build_realtime_surface_tts(_cfg(), "vertex-live") is None
 
 
+def test_session_voice_override_wins_over_empty_config() -> None:
+    """BUG-155: the live socket's voice, not the empty card pin, must speak
+    the progress line. An empty [brain.providers.vertex-live].voice used to
+    hard-default the sibling to Charon."""
+    with override_provider_secrets({"vertex-live": "rt-vertex-key"}):
+        tts = build_realtime_surface_tts(
+            _cfg(voice=""), "vertex-live", session_voice="Kore"
+        )
+    assert isinstance(tts, VertexTTS)
+    assert tts._default_voice == "Kore"
+
+
 def test_keyless_realtime_provider_yields_no_surface_tts() -> None:
     with override_provider_secrets({"gemini-live": None}):
         assert build_realtime_surface_tts(_cfg(), "gemini-live") is None

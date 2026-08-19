@@ -325,6 +325,18 @@ def test_get_realtime_options_gemini_live_voices(monkeypatch):
     assert body["models"][0]["id"] == "gemini-3.1-flash-live-preview"
 
 
+def test_get_realtime_options_vertex_live_shares_the_gemini_voice_roster(monkeypatch):
+    """BUG-155: vertex-live had no REALTIME_VOICES entry, so the picker was
+    empty and every progress line spoke Charon."""
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "vertex-test")
+    client = TestClient(_app())
+    gemini = client.get("/api/providers/gemini-live/realtime-options").json()
+    vertex = client.get("/api/providers/vertex-live/realtime-options").json()
+    assert {v["id"] for v in vertex["voices"]} == {v["id"] for v in gemini["voices"]}
+    assert vertex["models"][0]["id"] == "gemini-live-2.5-flash-native-audio"
+    assert vertex["preview_available"] is True
+
+
 def test_get_realtime_options_removed_grok_is_unknown(monkeypatch) -> None:
     """grok-realtime was removed 2026-07-16 (BUG-064 deaf-session wedge); its
     realtime-options endpoint must answer like any unknown provider."""

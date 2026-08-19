@@ -475,8 +475,8 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 }
 
 # Realtime catalogs — REALTIME_MODELS + REALTIME_VOICES, keyed by realtime
-# provider id (``codex-subscription-realtime`` / ``openai-realtime`` /
-# ``gemini-live``).
+# provider id (``openai-realtime`` / ``gemini-live`` / ``vertex-live`` /
+# ``local-realtime``).
 # Realtime needs BOTH a
 # model AND a voice selection per provider (unlike every other picker, which
 # serves ONE selection), so these two dicts are looked up directly by the
@@ -536,6 +536,18 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
             ),
         ]
     ),
+    # Vertex publishes its OWN Live model ids — the AI Studio ids above 404
+    # on a Cloud project (VertexLiveProvider.default_model, live 2026-08-17).
+    # Only the verified adapter default is listed; a per-card pin still
+    # overrides it.
+    "vertex-live": _curated(
+        [
+            (
+                "gemini-live-2.5-flash-native-audio",
+                "Gemini 2.5 Flash Native Audio (default)",
+            ),
+        ]
+    ),
     # grok-realtime (xAI Voice Agent API) was REMOVED 2026-07-16: the xAI
     # server drops the session contract after any response cancel, ignores
     # the configured VAD silence window, swallows response.done, and spams
@@ -546,8 +558,9 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
 # Realtime voice catalogs — stable prebuilt-voice names (curated, not live).
 # openai-realtime: verified 2026-07-10 against the official Realtime
 # conversations guide — ten current voices, including Marin and Cedar.
-# gemini-live: verified 2026-07-10 against the Live API capabilities guide,
-# which now permits the complete 30-voice Gemini prebuilt roster.
+# gemini-live / vertex-live: verified 2026-07-10 against the Live API
+# capabilities guide, which now permits the complete 30-voice Gemini
+# prebuilt roster. Same names on both sockets (AI Studio vs Cloud project).
 REALTIME_VOICES: dict[str, list[ModelInfo]] = {
     # A self-hosted server ships whatever voices its operator installed, and a
     # list of OpenAI voice names would be a guess the server then rejects. One
@@ -602,9 +615,8 @@ REALTIME_VOICES: dict[str, list[ModelInfo]] = {
             "Sulafat",
         ]
     ),
-    # Live roster verified through xAI's authenticated /v1/tts/voices endpoint.
-    # Eve leads because it is xAI's current Voice Agent default.
 }
+REALTIME_VOICES["vertex-live"] = REALTIME_VOICES["gemini-live"]
 
 
 # STT model catalogs (the ``[stt] model`` is a single global value).

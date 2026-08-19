@@ -821,6 +821,15 @@ class TestRealtimeCatalog:
         assert ids[0] == "gemini-3.1-flash-live-preview"
         assert len(ids) == len(set(ids))
 
+    def test_vertex_live_models_lead_with_the_hardcoded_default(self) -> None:
+        from jarvis.brain.model_catalog import REALTIME_MODELS
+        from jarvis.plugins.realtime.gemini_live import VertexLiveProvider
+
+        ids = [m.id for m in REALTIME_MODELS["vertex-live"]]
+        assert ids[0] == VertexLiveProvider.default_model
+        assert ids[0] == "gemini-live-2.5-flash-native-audio"
+        assert len(ids) == len(set(ids))
+
     def test_openai_realtime_voices_match_the_ga_voice_set(self) -> None:
         from jarvis.brain.model_catalog import REALTIME_VOICES
 
@@ -854,6 +863,17 @@ class TestRealtimeCatalog:
             "Zephyr",
             "Sulafat",
         } <= ids
+        assert REALTIME_VOICES["vertex-live"] == REALTIME_VOICES["gemini-live"]
+
+    def test_every_realtime_card_has_a_voice_catalog(self) -> None:
+        """BUG-155: vertex-live had no catalog, so the picker was empty and
+        every surface-TTS progress line fell through to Charon."""
+        from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+        from jarvis.ui.web.provider_spec import PROVIDERS
+
+        realtime_ids = {spec.id for spec in PROVIDERS if spec.tier == "realtime"}
+        assert realtime_ids <= set(REALTIME_VOICES)
+        assert realtime_ids <= set(REALTIME_MODELS)
 
     def test_realtime_catalogs_are_not_in_the_single_selection_catalog(self) -> None:
         # Realtime is served by its own endpoint (GET/PUT /realtime-options),
@@ -862,4 +882,5 @@ class TestRealtimeCatalog:
         # single-selection response that can't express model+voice together).
         assert catalog_spec("openai-realtime") is None
         assert catalog_spec("gemini-live") is None
+        assert catalog_spec("vertex-live") is None
         assert catalog_spec("codex-subscription-realtime") is None

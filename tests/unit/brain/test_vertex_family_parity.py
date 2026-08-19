@@ -80,9 +80,19 @@ def test_every_tier_has_a_selectable_card(tier: str, provider_id: str) -> None:
 
 @pytest.mark.parametrize(("tier", "provider_id"), sorted(VERTEX_IDS_BY_TIER.items()))
 def test_every_card_has_a_picker_catalog(tier: str, provider_id: str) -> None:
-    """Realtime has no picker; the other three would 400 without a catalog."""
+    """Realtime uses the dedicated /realtime-options catalog; the other three
+    would 400 without a catalog_spec entry."""
     if tier == "realtime":
-        pytest.skip("the realtime tier has no model/voice picker")
+        from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+
+        assert REALTIME_MODELS.get(provider_id), (
+            f"{provider_id!r} has no REALTIME_MODELS entry — the picker is empty"
+        )
+        assert REALTIME_VOICES.get(provider_id), (
+            f"{provider_id!r} has no REALTIME_VOICES entry — progress lines "
+            "cannot match the live session voice"
+        )
+        return
     spec = catalog_spec(provider_id)
     assert spec is not None and spec.tier == tier
     assert spec.curated, f"{provider_id!r} would open an empty picker"
@@ -230,6 +240,7 @@ def test_realtime_declares_a_distinct_credential_family() -> None:
     assert VertexLiveProvider.credential_family != GeminiLiveProvider.credential_family
     assert VertexLiveProvider.supports_realtime is True
     assert issubclass(VertexLiveProvider, GeminiLiveProvider)
+    assert VertexLiveProvider.default_voice == GeminiLiveProvider.default_voice == "Kore"
 
 
 def test_realtime_is_eligible_on_a_keyless_cloud_project(

@@ -6811,6 +6811,62 @@ async def test_scrub_cancel_fallback_carries_the_active_voice_hint():
     await sess.end(reason="test")
 
 
+def test_active_provider_selection_falls_back_to_adapter_default_voice(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """BUG-155: an empty card pin must still resolve a named live voice so
+    surface TTS cannot fall through to Charon while the socket speaks Kore."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("jarvis.brain.modes.active_voice", lambda: "")
+    sess = RealtimeVoiceSession(
+        session_id="voice-default",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _m: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(),
+        surface="desktop",
+    )
+    _model, voice = sess._active_provider_selection(
+        SimpleNamespace(name="vertex-live", default_voice="Kore")
+    )
+    assert voice == "Kore"
+    pinned = RealtimeVoiceSession(
+        session_id="voice-pinned",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _m: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(providers={"vertex-live": SimpleNamespace(voice="Fenrir")}),
+        surface="desktop",
+    )
+    _model, voice = pinned._active_provider_selection(
+        SimpleNamespace(name="vertex-live", default_voice="Kore")
+    )
+    assert voice == "Fenrir"
+
+
+def test_progress_line_carries_the_active_voice_hint():
+    """Native-tool 'still on it' lines ride error_spoken; without the session
+    voice they spoke Charon (live 2026-08-19 17:46)."""
+    from jarvis.sessions.constants import SPOKEN_KIND_PROGRESS
+
+    sess = RealtimeVoiceSession(
+        session_id="progress-voice-hint",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _m: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(),
+        surface="desktop",
+    )
+    sess._active_voice = "Kore"
+    message = sess._surface_speech_message(
+        "I'm still working on it.", spoken_kind=SPOKEN_KIND_PROGRESS
+    )
+    assert message["type"] == "error_spoken"
+    assert message["voice"] == "Kore"
+    assert message["spoken_kind"] == SPOKEN_KIND_PROGRESS
+
+
 # ---------------------------------------------------------------------------
 # User agent-instructions (the Ruben.md-equivalent file) in the realtime path
 # ---------------------------------------------------------------------------

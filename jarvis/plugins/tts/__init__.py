@@ -304,16 +304,26 @@ _REALTIME_SURFACE_TTS_FAMILY: dict[str, str] = {
 }
 
 
-def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
+def build_realtime_surface_tts(
+    cfg: Any,
+    realtime_provider: str,
+    *,
+    session_voice: str = "",
+) -> Any | None:
     """TTS for re-rendering a REALTIME turn locally (the surface fallback).
 
     STRICT mode separation (maintainer mandate 2026-07-17): the emergency
     voice is a TTS of the SAME provider family as the active realtime
     session — keyed through the realtime credential slots
     (``PROVIDER_SECRET_CANDIDATES[<realtime id>]``, dedicated realtime slot
-    first) and speaking the session's configured voice. Realtime and
+    first) and speaking the session's live voice. Realtime and
     pipeline are independent modes: each must work with only its own keys,
     so the pipeline ``[tts]`` chain is NEVER a candidate here.
+
+    ``session_voice`` is the voice the live socket is actually speaking
+    (the card pin, else the adapter default). It wins over the config
+    field so a progress line cannot fall through to Charon while the
+    call is using Kore (BUG-155).
 
     Returns ``None`` when the realtime family has no TTS sibling or no
     usable key — the caller then keeps the turn text-only with an honest
@@ -349,7 +359,18 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
         provider_cfg = (
             providers.get(provider_id) if isinstance(providers, dict) else None
         )
-        session_voice = str(getattr(provider_cfg, "voice", "") or "").strip()
+        config_voice = str(getattr(provider_cfg, "voice", "") or "").strip()
+        mode_voice = ""
+        try:
+            from jarvis.brain.modes import active_voice
+
+            mode_voice = str(active_voice() or "").strip()
+        except Exception as exc:  # noqa: BLE001 — a mode voice never blocks the fallback
+            log.debug("Mode voice not applied to the realtime surface TTS: %s", exc)
+            mode_voice = ""
+        session_voice = (
+            str(session_voice or "").strip() or mode_voice or config_voice
+        )
         tts_cfg = getattr(cfg, "tts", None)
 
         if family in {"gemini-flash-tts", "vertex-tts"}:
