@@ -47,7 +47,6 @@ from jarvis.brain.turn_planner import (
     TurnPath,
     TurnPlan,
     TurnReason,
-    is_public_fact_question,
     plan_turn,
 )
 from jarvis.core.protocols import AudioChunk, BrainMessage
@@ -9162,19 +9161,18 @@ class RealtimeVoiceSession:
                 not self._delegate_required_for_turn
                 and not local_plan.requires_orchestrator
                 and not provider_plan.requires_orchestrator
-                and is_public_fact_question(self._last_user_text)
-                and is_public_fact_question(
-                    provider_request or self._last_user_text
-                )
             ):
                 # Provider prompt compliance is not a correctness boundary.
-                # Gemini called jarvis_action for ordinary public-knowledge
-                # questions in the 2026-07-20 live run, consuming ~96k Tool
-                # Model input tokens before the shared Google cap stopped the
-                # call. Reject the unnecessary action and keep the answer in
-                # the already-open realtime model. A provider that adds real
-                # private/current/local intent to its normalized request still
-                # reaches the orchestrator (the vague-Wiki gate-miss path).
+                # The live model calls jarvis_action for greetings, smalltalk,
+                # opinions and calendar trivia even after the discouraged
+                # turn-mode line (live 2026-08-18/19: "Was geht ab?" 10 s,
+                # "Okay." 7 s, music recommendations 17 s, "was morgen für
+                # ein Tag" 14 s into google_calendar). Each hop is a full
+                # Tool Model generate. Reject ANY native/native pair and keep
+                # the answer on the already-open realtime model. A provider
+                # that adds real private/current/local/action intent to its
+                # request still reaches the orchestrator (the vague-Wiki
+                # gate-miss path in test_gate_miss_lets_the_model_reach_the_wiki).
                 log.info(
                     "realtime[%s] rejected unnecessary delegate call for a "
                     "native realtime turn",
@@ -9187,8 +9185,7 @@ class RealtimeVoiceSession:
                         "success": False,
                         "error": (
                             "No Jarvis action is needed. Answer the user's "
-                            "general-knowledge request directly in this "
-                            "realtime response."
+                            "request directly in this realtime response."
                         ),
                     },
                 )

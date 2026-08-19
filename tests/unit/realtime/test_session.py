@@ -5156,6 +5156,65 @@ async def test_native_knowledge_turn_rejects_unnecessary_jarvis_action():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Was geht ab?",  # i18n-allow: live 2026-08-18 smalltalk, 10 s hop
+        "Okay.",
+        "Hallo, was geht ab?",  # i18n-allow: live greeting
+        "Kannst du mir mal sagen, was du für Musik empfehlen würdest?",  # i18n-allow
+        "Kannst mal bitte gucken, was morgen für ein Tag ist?",  # i18n-allow: date trivia
+        "Ich habe das Premium Abo demnächst",  # i18n-allow
+    ],
+)
+async def test_native_conversation_turn_rejects_unnecessary_jarvis_action(
+    utterance: str,
+) -> None:
+    """Smalltalk and opinions must not pay a Tool Model round trip.
+
+    The public-fact-only reject (2026-07-20) left these shapes through:
+    the planner already marks them native, but Gemini Live still called
+    ``jarvis_action`` and the hop ran a full generate (5–18 s of silence).
+    """
+    from jarvis.brain.turn_planner import plan_turn
+
+    assert plan_turn(utterance).requires_orchestrator is False
+
+    brain = FakeBrain(replies=("This must not be called.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=utterance,
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-native-chat",
+                tool_name="jarvis_action",
+                tool_args={"request": utterance},
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="Alles klar.",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert brain.calls == []
+    result = provider.session.tool_results[0][2]
+    assert result["success"] is False
+    assert "Answer" in result["error"]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_provider_down_apology_is_not_reported_as_delegate_success():
     """A non-empty Brain outage phrase is still a failed Tool Model turn."""
     brain = FakeBrain(replies=("The model connection is unavailable.",))
