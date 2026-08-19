@@ -561,6 +561,16 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
         if _inflight >= MAX_CONCURRENT:
             return
         try:
+            from .prompt_composer import compose_busy
+
+            if compose_busy():
+                # A spoken brief is on the clock. Recaps that walk OpenRouter →
+                # Codex → Gemini → Claude CLI steal the same writers (live
+                # 2026-08-19 18:10: 22 s prompt while recaps spawned the CLI).
+                return
+        except Exception:  # noqa: BLE001 - recap never blocks a composition
+            logger.debug("Agentic IDE recap: compose-busy check failed", exc_info=True)
+        try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # No event loop — a synchronous caller (a CLI state dump, a test).
@@ -918,6 +928,14 @@ async def summarize_with_model(
     first_failure: Exception | None = None
     for brain in brains:
         try:
+            from .prompt_composer import compose_busy
+
+            if compose_busy():
+                logger.info("Agentic IDE recap: standing down, a brief is being written")
+                break
+        except Exception:  # noqa: BLE001 - a missed pause never costs the brief
+            logger.debug("Agentic IDE recap: compose-busy check failed", exc_info=True)
+        try:
             return await _summarize_on(brain, term, rows, folder=folder)
         except Exception as exc:  # noqa: BLE001 - the next family is the handling
             first_failure = first_failure or exc
@@ -926,7 +944,8 @@ async def summarize_with_model(
                 getattr(brain, "model", "") or getattr(brain, "name", "") or type(brain).__name__,
                 type(exc).__name__,
             )
-    assert first_failure is not None  # noqa: S101 - the loop above ran at least once
+    if first_failure is None:
+        return None
     raise first_failure
 
 

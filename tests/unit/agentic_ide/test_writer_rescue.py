@@ -8,6 +8,7 @@ was a key whose prepayment credits were gone, so every composition for days
 ended on the raw spoken sentence while a signed-in subscription sat unused.
 That is the single-provider brick AP-22 forbids.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -47,6 +48,21 @@ def test_the_rung_that_died_is_never_retried(monkeypatch: pytest.MonkeyPatch) ->
 
     assert brain == "api-brain"
     assert source == "api"
+
+
+def test_rescue_can_skip_the_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spoken compose never pays a CLI cold start as insurance."""
+    monkeypatch.setattr(writer, "_load_config", lambda: _cfg())
+    monkeypatch.setattr(writer, "_tool_model", lambda cfg: "tool-brain")
+    monkeypatch.setattr(writer, "_subscription", lambda cfg, timeout: SimpleNamespace(name="codex"))
+    monkeypatch.setattr(writer, "_quality", lambda cfg: "api-brain")
+
+    brain, source = writer.resolve_rescue_writer(
+        exclude=("tool_model:grok", "api"), allow_subscription=False
+    )
+
+    assert brain is None
+    assert source == ""
 
 
 def test_the_subscription_is_the_last_rescue(monkeypatch: pytest.MonkeyPatch) -> None:

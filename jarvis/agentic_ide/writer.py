@@ -239,7 +239,10 @@ def _fastest_writer(config: Any, cli_timeout_s: float | None) -> tuple[Any | Non
 
 
 def resolve_rescue_writer(
-    *, cli_timeout_s: float | None = None, exclude: Sequence[str] = ()
+    *,
+    cli_timeout_s: float | None = None,
+    exclude: Sequence[str] = (),
+    allow_subscription: bool = True,
 ) -> tuple[Any | None, str]:
     """The next writer to try after one accepted the job and failed inside it.
 
@@ -247,6 +250,11 @@ def resolve_rescue_writer(
     shape ``resolve_writer`` returns; only the rung part is compared, because
     re-probing the same tier with a different model name would just spend the
     same dead credential twice.
+
+    ``allow_subscription=False`` skips the coding CLI. The spoken path uses
+    that: a CLI cold start is 10-20 s, which is the wait the fast budget
+    exists to cut, so a dead Flash writer becomes the deterministic brief
+    rather than a subscription spawn.
 
     Returns ``(None, "")`` when nothing is left, and the caller then uses its
     deterministic layer. Only reached AFTER a real failure — an unhonourable
@@ -265,6 +273,8 @@ def resolve_rescue_writer(
 
     for rung in _AUTO_ORDER:
         if rung in tried:
+            continue
+        if rung == "subscription" and not allow_subscription:
             continue
         brain, source = _writer_for_rung(rung, config, cli_timeout_s)
         if brain is not None:

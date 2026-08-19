@@ -6,6 +6,7 @@ words reach the terminal — just phrased less well. So the tests here are mostl
 about the unhappy paths: they are the ones that decide whether the feature works
 for an arbitrary downloader (§3) or only on a machine like the maintainer's.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -257,13 +258,16 @@ async def test_the_writer_gets_the_rules_for_the_detected_kind(
     assert "IMPLEMENTATION task" not in seen["system"]
 
 
-async def test_the_writer_is_shown_an_outline_of_the_candidate_files(
+async def test_the_writer_gets_candidate_paths_not_file_bodies(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without the outline the prompt can only describe code, not name it."""
-    provider = (
-        Path(workspace.folder) / "jarvis" / "plugins" / "wake" / "vosk_kws_provider.py"
-    )
+    """The tree index names the files; the agent opens them.
+
+    Sending AST outlines made the writer prompt thousands of characters and
+    looked like reading the repo. The wait was the model, not the disk, but
+    the bodies still have no place on a 1 s path.
+    """
+    provider = Path(workspace.folder) / "jarvis" / "plugins" / "wake" / "vosk_kws_provider.py"
     provider.write_text(
         '"""Vosk keyword spotting."""\n\n\n'
         "def candidate_shape_ok(span: float) -> bool:\n    return True\n",
@@ -282,17 +286,69 @@ async def test_the_writer_is_shown_an_outline_of_the_candidate_files(
         "review the vosk wake provider", session=workspace, terminal_name="Kai"
     )
 
-    assert "candidate_shape_ok" in seen["user"]
-    assert "Vosk keyword spotting." in seen["user"]
-    # House rules stay out: the receiving agent already has them. Re-loading
-    # the 1200-char dump would go green without this pin.
+    assert "jarvis/plugins/wake/vosk_kws_provider.py" in seen["user"]
+    assert "FILE OUTLINES" not in seen["user"]
+    assert "candidate_shape_ok" not in seen["user"]
+    # House rules stay out: the receiving agent already has them.
     assert "HOUSE RULES" not in seen["user"]
 
 
-def test_the_outline_budget_stays_slim() -> None:
-    """Five files at 34 k was most of the input tokens on every call."""
-    assert prompt_composer._OUTLINE_FILES == 3  # noqa: SLF001
-    assert prompt_composer._OUTLINE_CHARS == 1800  # noqa: SLF001
+def test_the_writer_does_not_read_file_bodies() -> None:
+    """Bodies were the over-sync. Paths come from the in-memory tree."""
+    assert prompt_composer._OUTLINE_FILES == 0  # noqa: SLF001
+    assert prompt_composer._OUTLINE_CHARS == 0  # noqa: SLF001
+
+
+async def test_a_slow_writer_ships_the_plain_brief_inside_the_fast_budget(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spoken delivery must not wait out a coding CLI. Live 2026-08-19 18:10
+    Flash sat 8 s, then Claude CLI wrote 376 chars in 9.9 s — 22 s total."""
+    _prime(workspace)
+
+    async def _hang(**_kwargs: object) -> str:
+        import asyncio
+
+        await asyncio.sleep(60)
+        return "## Task\nNever."
+
+    monkeypatch.setattr(prompt_composer, "FAST_BUDGET_S", 0.05)
+    monkeypatch.setattr(prompt_composer, "COMPOSE_TIMEOUT_S", 90.0)
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _hang)
+
+    result = await prompt_composer.compose(
+        "review the vosk wake provider", session=workspace, terminal_name="Kai"
+    )
+    assert result.composed_by == "fallback"
+    assert "timed out" in result.note
+    assert "vosk" in result.text.lower()
+
+
+def test_the_spoken_budget_is_about_a_second() -> None:
+    """BridgeVoice lands a transcript in ~1 s. That is the cap, not a goal
+    the CLI rescue is allowed to overshoot."""
+    assert prompt_composer.FAST_BUDGET_S <= 1.5
+    assert prompt_composer.HEDGE_AFTER_API_S <= prompt_composer.FAST_BUDGET_S
+
+
+async def test_compose_busy_is_true_while_a_writer_runs(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recaps read this flag so they do not spawn a CLI mid-brief."""
+    _prime(workspace)
+    seen: list[bool] = []
+
+    async def _capture(**_kwargs: object) -> str:
+        seen.append(prompt_composer.compose_busy())
+        return "## Task\nDo it."
+
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _capture)
+    assert prompt_composer.compose_busy() is False
+    await prompt_composer.compose(
+        "review the vosk wake provider", session=workspace, terminal_name="Kai"
+    )
+    assert seen == [True]
+    assert prompt_composer.compose_busy() is False
 
 
 async def test_no_quality_writer_degrades_openly(
@@ -318,10 +374,7 @@ async def test_a_prompt_ending_on_a_reference_is_repaired(
     _prime(workspace)
 
     async def _trailing(**_kwargs: object) -> str:
-        return (
-            "## Task\nReview it.\n\n"
-            "## Key files\n- `@jarvis/plugins/wake/vosk_kws_provider.py`"
-        )
+        return "## Task\nReview it.\n\n## Key files\n- `@jarvis/plugins/wake/vosk_kws_provider.py`"
 
     monkeypatch.setattr(prompt_composer, "_llm_compose", _trailing)
 
@@ -351,9 +404,7 @@ async def test_an_explicitly_pinned_brain_is_used(
         prompt_composer, "_resolve_writer", lambda: pytest.fail("should not resolve")
     )
 
-    await prompt_composer.compose(
-        "review it", session=workspace, terminal_name="Kai", brain=pinned
-    )
+    await prompt_composer.compose("review it", session=workspace, terminal_name="Kai", brain=pinned)
 
     assert seen["brain"] is pinned
 

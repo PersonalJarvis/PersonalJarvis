@@ -26,6 +26,7 @@ in-memory state — the session's cached project profile and each terminal's rin
 buffer. No disk read, no subprocess, no network. The project profile was
 computed ONCE when the session started, precisely so this path stays free.
 """
+
 from __future__ import annotations
 
 import time
@@ -53,9 +54,9 @@ _HEADER = (
     "T2, T3. The user says that number, and so do you.\n"
     "\n"
     "How to behave while this mode is on:\n"
-    "- When the user tells a terminal to do something (\"tell T1 to …\", "
-    "\"T2 soll …\", \"prompt terminal three\", \"let the second one "  # i18n-allow: quoted addressing example
-    "refactor …\"), send it to THAT terminal with "
+    '- When the user tells a terminal to do something ("tell T1 to …", '
+    '"T2 soll …", "prompt terminal three", "let the second one '  # i18n-allow: quoted addressing example
+    'refactor …"), send it to THAT terminal with '
     "the agentic-ide-prompt function. That is the whole point of this mode. "
     "NEVER spawn a background agent for work aimed at a terminal, and never "
     "answer with what you WOULD have sent — send it.\n"
@@ -71,20 +72,21 @@ _HEADER = (
     "printed. Never guess, never take a screenshot — the terminals are readable "
     "directly.\n"
     "- NEVER claim you sent, forwarded, passed on or told a terminal anything "
-    "unless a function call in THIS turn actually did it. Saying \"I have let "
-    "T1 know\" while nothing reached T1 is the worst failure this mode has: "
+    'unless a function call in THIS turn actually did it. Saying "I have let '
+    'T1 know" while nothing reached T1 is the worst failure this mode has: '
     "the user walks away believing an agent is working, and only finds the idle "
     "terminal later. If the work did not go out, say plainly that it did not and "
-    "why — an honest \"I could not reach that terminal\" is always better than a "
+    'why — an honest "I could not reach that terminal" is always better than a '
     "confident sentence that turns out to be false.\n"
     "- A pane listed below as STILL BEING WRITTEN has received NOTHING yet. The "
-    "prompt writer takes 10-30 seconds, and the earlier prompts counted for that "
-    "pane are OLD ones, not this one. Say the work is still going out — never "
-    "that it arrived, and never that the agent has started.\n"
+    "brief is still going out (usually about a second; a slow writer is capped), "
+    "and the earlier prompts counted for that pane are OLD ones, not this one. "
+    "Say the work is still going out — never that it arrived, and never that "
+    "the agent has started.\n"
     "- Brainstorming, architecture, and 'what should we do next' are answered "
     "inline, against this codebase, and you may propose which terminal should "
     "take which part.\n"
-    "- Say the terminal's number out loud in your answers (\"T2 is on it\"), so "
+    '- Say the terminal\'s number out loud in your answers ("T2 is on it"), so '
     "the user always knows which pane is doing what.\n"
     "\n"
     "The facts below are the live state of that workspace. It is context, not a "
@@ -168,11 +170,7 @@ def focus_context_block(max_chars: int = _MAX_CHARS) -> str:
             writing = {}
         parts.append(f"Terminals in this workspace ({len(session.terminals)}):")
         for term in session.terminals:
-            parts.extend(
-                _terminal_block(
-                    term, tail_lines, writing_for_s=writing.get(term.name)
-                )
-            )
+            parts.extend(_terminal_block(term, tail_lines, writing_for_s=writing.get(term.name)))
     else:
         parts.append("No terminals are open in this workspace yet.")
 

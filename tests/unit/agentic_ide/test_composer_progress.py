@@ -1,9 +1,10 @@
 """The composer says what it is doing while it does it.
 
-Writing a brief takes 10-27 s — a quality-tier model reading file outlines,
-and on a subscription CLI a cold process start before it thinks at all. For all
-of that the terminal used to show nothing, which makes a working composer and a
-wedged one look identical, and makes the wait feel longer than it is.
+Writing a brief is capped at about a second — a Flash rewrite of the spoken
+sentence plus tree ``@files``, or the deterministic brief if that misses.
+For that wait the terminal used to show nothing, which makes a working
+composer and a wedged one look identical, and makes the wait feel longer
+than it is.
 
 So the beats are part of the contract now, and these guards pin the three
 properties that make them worth printing rather than noise: they arrive in
@@ -11,6 +12,7 @@ order, every line names the pane it belongs to (a fleet composes at once, and
 an unattributed line is worse than none), and none of them can ever cost the
 prompt itself.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -44,9 +46,7 @@ def _writer_available(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _session(tmp_path) -> object:  # noqa: ANN001 - pytest tmp_path
-    profile = SimpleNamespace(
-        instruction_files=[], summary_lines=lambda: ["Test workspace"]
-    )
+    profile = SimpleNamespace(instruction_files=[], summary_lines=lambda: ["Test workspace"])
     return SimpleNamespace(folder=str(tmp_path), profile=profile)
 
 
@@ -101,9 +101,11 @@ async def test_the_first_token_says_the_model_started_writing(
     # It lands between "thinking" and "ready", and only once however many
     # deltas arrive.
     assert stages.count(prompt_composer.STAGE_DRAFTING) == 1
-    assert stages.index(prompt_composer.STAGE_THINKING) < stages.index(
-        prompt_composer.STAGE_DRAFTING
-    ) < stages.index(prompt_composer.STAGE_READY)
+    assert (
+        stages.index(prompt_composer.STAGE_THINKING)
+        < stages.index(prompt_composer.STAGE_DRAFTING)
+        < stages.index(prompt_composer.STAGE_READY)
+    )
 
 
 async def test_the_opening_line_follows_the_instruction(
@@ -123,9 +125,7 @@ async def test_the_opening_line_follows_the_instruction(
         await prompt_composer.compose(
             spoken, session=session, terminal_name="Kate", on_progress=seen.append
         )
-        opening = next(
-            n.message for n in seen if n.stage == prompt_composer.STAGE_START
-        )
+        opening = next(n.message for n in seen if n.stage == prompt_composer.STAGE_START)
         lines.append(opening)
         # The user's own words come back, so a misheard instruction is visible
         # before the model has spent 20 s on it.
@@ -226,9 +226,7 @@ async def test_the_closing_line_keeps_typed_and_started_apart(
     """A prompt sitting in an input box looks exactly like a running task."""
     seen: list[prompt_composer.ComposeNotice] = []
 
-    prompt_composer.announce_delivery(
-        "Kate", delivered=True, submitted=submitted, sink=seen.append
-    )
+    prompt_composer.announce_delivery("Kate", delivered=True, submitted=submitted, sink=seen.append)
 
     assert len(seen) == 1
     assert seen[0].stage == prompt_composer.STAGE_SENT
@@ -240,7 +238,9 @@ async def test_an_undelivered_pane_says_why() -> None:
     seen: list[prompt_composer.ComposeNotice] = []
 
     prompt_composer.announce_delivery(
-        "Kate", delivered=False, reason="its agent is exited, not running",
+        "Kate",
+        delivered=False,
+        reason="its agent is exited, not running",
         sink=seen.append,
     )
 

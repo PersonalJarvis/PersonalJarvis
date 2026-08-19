@@ -51,25 +51,22 @@ API key at all (§3):
 The composer is honest about which layer produced the result (``composed_by``),
 because the readback the user hears should not claim more than happened.
 
-**On latency (maintainer decision 2026-08-18, supersedes 2026-07-25).** The
-2026-07-25 trade sent this through a thinking model and asked for a 1400-2400
-character specification of the code. Live that was 10-30 s of writing for a
-job that is: clean the spoken sentence, attach the neighbouring ``@files``.
-A competitor Flash call did the same job in about a second, at comparable
-quality. The tolerance is therefore 1-5 s. Thinking is off
-(``reasoning_effort="none"``), the brief is lean (see ``prompt_blueprint``),
-and house rules stay out of the writer prompt because the receiving agent
-already has them. What must still never happen is a silent demotion to a
-weaker *quality tier* — a fast Flash/Tool-Model writer is the intended
-rung, not a fallback.
+**On latency (maintainer decision 2026-08-19, supersedes 2026-08-18).** The
+job is: clean the spoken sentence, point at the neighbouring ``@files`` from
+the in-memory tree index. BridgeVoice lands that in about a second by pasting
+the transcript; we do the same, with a bounded Flash rewrite in front when it
+fits the budget. Live 2026-08-19 18:10 the previous chain did not: Flash sat
+through an 8 s hedge, OpenRouter failed (no key), then a coding CLI wrote a
+376-character brief in 9.9 s — 22 s end to end, while recap jobs were spawning
+the same CLI. File *bodies* were never the wait, but sending AST outlines
+plus a CLI rescue made the wait look like "reading the repo".
 
-Preparation still overlaps: resolving the writer and reading a slim outline
-of the top files run together so the model call starts as soon as the
-slowest single piece is done.
-
-A slow writer is still hedged after ``HEDGE_AFTER_S`` / ``HEDGE_AFTER_API_S``
-and the first valid brief wins. The hedge is insurance against a hang, not
-the path to a 1 s brief.
+The spoken budget is therefore ``FAST_BUDGET_S`` (about a second). Thinking
+is off. The writer sees candidate *paths* from the tree, not file contents —
+the receiving agent opens those files. A coding CLI is not a rescue on this
+path: if Flash is not done when the budget expires, the deterministic brief
+ships. What must still never happen is a silent demotion to a weaker
+*quality tier* while the user waits.
 
 **On the silence.** The beats below (``start`` → ``thinking``/``drafting`` →
 ``ready``, and ``sent`` once the pane took it) are printed as they happen,
@@ -119,7 +116,16 @@ from .task_kind import (
 # 10-12 s for a trivial prompt and 26.6 s for a real structured brief on the
 # fastest model. At 45 s a slower model or a loaded machine would have expired
 # routinely, and every expiry buys the regex prompt — never a faster good one.
+#
+# Spoken deliveries no longer wait this out — see ``FAST_BUDGET_S``. This
+# ceiling remains for tests and for a caller that patches it.
 COMPOSE_TIMEOUT_S = 90.0
+
+# Hard cap the user actually waits. BridgeVoice lands a transcript in ~1 s;
+# a Flash rewrite of the same sentence plus tree ``@files`` either beats that
+# or we ship the deterministic brief. Measured live 2026-08-19 18:10: the
+# 90 s ceiling plus an 8 s API hedge plus a CLI rescue was 22 s of silence.
+FAST_BUDGET_S = 1.2
 
 # How many files may be attached. Enough to point the agent at a feature's
 # surface; few enough that the agent's context is not flooded with guesses.
@@ -155,10 +161,11 @@ HEDGE_AFTER_S = 30.0
 # healthy band, so the double spend stays as rare as it is for the CLI.
 #
 # Since 2026-08-18 the CEILING for an API writer — see ``_hedge_after_s``.
-# Tightened 20 → 8 s the same day: a no-thinking Flash/Tool-Model brief is
-# supposed to land inside 5 s, so a 20 s first-boot ceiling let a hung
-# writer sit four times the tolerance before insurance even started.
-HEDGE_AFTER_API_S = 8.0
+# Tightened 20 → 8 s (2026-08-18) then 8 → 1 s: a no-thinking Flash brief
+# is supposed to land inside the spoken budget, so an 8 s first-boot
+# ceiling let a hung writer sit through the whole wait before anyone else
+# was allowed to start — and the next rung was a coding CLI.
+HEDGE_AFTER_API_S = 1.0
 
 # The insurance threshold calibrates itself to the writer actually in use.
 #
@@ -403,7 +410,7 @@ _START_PHRASES: dict[str, tuple[str, ...]] = {
 
 _THINKING_PHRASES = (
     "Thinking {name}'s brief through - {context}.",
-    "Reading the code before {name} is briefed - {context}.",
+    "Matching files from the tree for {name} - {context}.",
     "Working out what {name} needs to know - {context}.",
 )
 
@@ -427,15 +434,15 @@ def _start_message(kind: str, instruction: str, terminal_name: str) -> str:
 
 
 def _thinking_message(
-    instruction: str, terminal_name: str, *, outlines: int, writer_label: str
+    instruction: str, terminal_name: str, *, files: int, writer_label: str
 ) -> str:
     """The line that stands while the model works — with what it was handed."""
-    if outlines == 1:
-        context = "one file outline to go on"
-    elif outlines:
-        context = f"{outlines} file outlines to go on"
+    if files == 1:
+        context = "one starting file from the tree"
+    elif files:
+        context = f"{files} starting files from the tree"
     else:
-        context = "no matching files, so your words alone"
+        context = "your words alone"
     if writer_label:
         context = f"{context}, via {writer_label}"
     return _variant(_THINKING_PHRASES, instruction).format(name=terminal_name, context=context)
@@ -616,19 +623,36 @@ def _resolve_writer():  # noqa: ANN202 - (Brain | None, str), avoid an import cy
 
 
 def _rescue_writer(tried: Sequence[str]):  # noqa: ANN202 - (Brain | None, str)
-    """The next writer to try after one accepted the job and failed inside it."""
+    """The next writer to try after one accepted the job and failed inside it.
+
+    A coding CLI is not a rescue here: its cold start is the 10-20 s wait
+    the spoken path exists to avoid. Flash or the API tier, or the
+    deterministic brief — never a subscription process on the user's clock.
+    """
     from .writer import resolve_rescue_writer
 
-    return resolve_rescue_writer(cli_timeout_s=COMPOSE_TIMEOUT_S, exclude=tuple(tried))
+    return resolve_rescue_writer(
+        cli_timeout_s=COMPOSE_TIMEOUT_S,
+        exclude=tuple(tried),
+        allow_subscription=False,
+    )
 
 
-# Slim outlines only. The receiving agent opens the @files itself; a handful
-# of signatures is enough for the writer to name a real symbol. The previous
-# 5 × 9 k / 34 k budget (plus a 1200-char house-rules dump) was most of the
-# input tokens on every call, and house rules already live in the agent's
-# own system prompt.
-_OUTLINE_FILES = 3
-_OUTLINE_CHARS = 1_800
+# No file bodies. The tree index already named the candidates; the receiving
+# agent opens those @files. Sending AST outlines made the writer prompt
+# thousands of characters and looked like "reading the repo" while the wait
+# was the model. Paths stay in the candidate list.
+_OUTLINE_FILES = 0
+_OUTLINE_CHARS = 0
+
+# Spoken compositions currently in ``compose()``. Recap jobs read this so
+# they do not spawn a coding CLI on the same machine the user is waiting on.
+_live_composes = 0
+
+
+def compose_busy() -> bool:
+    """True while a brief is being written. Cheap, in-memory (AP-9)."""
+    return _live_composes > 0
 
 
 async def _llm_compose(
@@ -678,23 +702,14 @@ async def _read_context(
     session,  # noqa: ANN001 - Session, avoid an import cycle
     candidates: list[str],
 ) -> tuple[dict[str, str], str]:
-    """Slim file outlines for the writer. House rules are not included.
+    """No file bodies. Candidate paths travel separately in the user block.
 
-    The receiving agent already has the repository's instruction files in its
-    own prompt; pasting them here cost tokens and thinking time without
-    changing what the pane does. Outlines stay, tightly bounded, so the
-    writer can name a real symbol in ``## Key files``.
+    Kept as an awaitable so cancellation still reaps a sibling task, and so
+    tests can patch this hook. Production reads nothing: the tree index
+    already picked the paths, and the agent opens them.
     """
-    from .code_skeleton import skeletons as read_skeletons
-
-    outlines = await asyncio.to_thread(
-        read_skeletons,
-        session.folder,
-        candidates,
-        max_files=_OUTLINE_FILES,
-        max_total=_OUTLINE_CHARS,
-    )
-    return outlines, ""
+    del session, candidates
+    return {}, ""
 
 
 async def _compose_once(
@@ -728,7 +743,7 @@ async def _compose_once(
         _thinking_message(
             base_instruction or said,
             terminal_name,
-            outlines=len(outlines),
+            files=len(candidates),
             writer_label=_writer_label(brain),
         ),
     )
@@ -874,6 +889,48 @@ async def compose(
     started = time.monotonic()
     notify(STAGE_START, _start_message(kind, subject, terminal_name))
 
+    global _live_composes
+    _live_composes += 1
+    try:
+        return await _compose_after_start(
+            said=said,
+            base_instruction=base_instruction,
+            subject=subject,
+            kind=kind,
+            session=session,
+            terminal_name=terminal_name,
+            agent_display=agent_display,
+            max_files=max_files,
+            brain=brain,
+            attached=attached,
+            spoken_before=spoken_before,
+            notify=notify,
+            deterministic=_deterministic,
+            started=started,
+        )
+    finally:
+        _live_composes -= 1
+
+
+async def _compose_after_start(
+    *,
+    said: str,
+    base_instruction: str,
+    subject: str,
+    kind: str,
+    session: object,
+    terminal_name: str,
+    agent_display: str,
+    max_files: int,
+    brain: object,
+    attached: list,
+    spoken_before: tuple,
+    notify: Callable[[str, str], None],
+    deterministic: Callable[..., ComposedPrompt],
+    started: float,
+) -> ComposedPrompt:
+    from . import prompt_blueprint as blueprint
+
     # The writer probe goes first and runs on its own: it is the one piece of
     # preparation that can take seconds (a config load plus a sign-in probe per
     # subscription CLI), it needs nothing from the disk work below, and running
@@ -895,10 +952,9 @@ async def compose(
 
     def degrade(note: str) -> ComposedPrompt:
         notify(STAGE_FALLBACK, f"{terminal_name} gets the plain brief instead: {note}.")
-        return _deterministic("fallback", note, candidates=candidates)
+        return deterministic("fallback", note, candidates=candidates)
 
-    # Reading the outlines starts NOW, not once the writer is known — on a cold
-    # subscription CLI the probe is the longer of the two.
+    # Candidate paths are enough; file bodies stay out (see `_read_context`).
     context_task = asyncio.create_task(_read_context(session, candidates))
 
     try:
@@ -936,7 +992,8 @@ async def compose(
     # All attempts share ONE budget. The user is waiting through the whole
     # sequence, and three full timeouts in a row is not a rescue — it is the
     # same fallback three times slower.
-    deadline = started + COMPOSE_TIMEOUT_S
+    budget_s = min(COMPOSE_TIMEOUT_S, FAST_BUDGET_S)
+    deadline = started + budget_s
     tried: list[str] = [writer_source] if writer_source else []
     attempts: dict[asyncio.Task[str], str] = {}
     spawned_at: dict[asyncio.Task[str], float] = {}
@@ -945,11 +1002,19 @@ async def compose(
     hedged = not may_substitute
     composed = ""
     reason = ""
+    spawned = 0
 
     def _spawn_attempt(brn, source: str) -> bool:  # noqa: ANN001 - Brain
         """Start one writer on the brief, unless the budget says otherwise."""
+        nonlocal spawned
         remaining = deadline - time.monotonic()
-        if remaining < _MIN_ATTEMPT_S:
+        # The first attempt always starts: `_MIN_ATTEMPT_S` is sized for a
+        # coding CLI rescue (20 s), and a 1.2 s spoken budget would otherwise
+        # skip Flash entirely. Later attempts still need a CLI-sized window
+        # or they become the wait we are cutting.
+        if remaining <= 0:
+            return False
+        if spawned and remaining < _MIN_ATTEMPT_S:
             return False
         task = asyncio.create_task(
             asyncio.wait_for(
@@ -972,6 +1037,7 @@ async def compose(
         )
         attempts[task] = source
         spawned_at[task] = time.monotonic()
+        spawned += 1
         return True
 
     def _cancel_attempts() -> None:
@@ -981,7 +1047,7 @@ async def compose(
 
     if not _spawn_attempt(writer, writer_source):
         _discard(context_task)
-        return degrade(f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
+        return degrade(f"composer timed out after {budget_s:g}s")
 
     try:
         while attempts and not composed:
@@ -1023,7 +1089,7 @@ async def compose(
                 try:
                     candidate = _strip_wrapper(task.result())
                 except (TimeoutError, asyncio.CancelledError):
-                    reason = f"composer timed out after {COMPOSE_TIMEOUT_S:g}s"
+                    reason = f"composer timed out after {budget_s:g}s"
                 except Exception as exc:  # noqa: BLE001 - any failure crosses over
                     logger.info(
                         "Agentic IDE prompt composer failed on {}: {}",
@@ -1096,7 +1162,7 @@ async def compose(
     _cancel_attempts()
     if not composed:
         _discard(context_task)
-        return degrade(reason or f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
+        return degrade(reason or f"composer timed out after {budget_s:g}s")
 
     # Keep only the references that survive an existence check — the model may
     # echo a candidate that was renamed, or invent one outright. A dead @path
@@ -1130,6 +1196,7 @@ async def compose(
 
 __all__ = [
     "COMPOSE_TIMEOUT_S",
+    "FAST_BUDGET_S",
     "HEDGE_AFTER_API_S",
     "HEDGE_AFTER_S",
     "MAX_FILE_REFERENCES",
@@ -1146,5 +1213,6 @@ __all__ = [
     "ProgressSink",
     "announce_delivery",
     "compose",
+    "compose_busy",
     "print_notice",
 ]

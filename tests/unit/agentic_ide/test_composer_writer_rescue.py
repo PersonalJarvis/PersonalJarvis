@@ -8,6 +8,7 @@ handed the agent the raw spoken sentence for days while a signed-in
 subscription sat unused. One dead credential must not brick the feature when
 another provider is right there (AP-22).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -16,6 +17,14 @@ from pathlib import Path
 import pytest
 
 from jarvis.agentic_ide import file_index, prompt_composer
+
+
+@pytest.fixture(autouse=True)
+def _spoken_budget_does_not_clip_rescue_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rescue tests need a window wider than `_MIN_ATTEMPT_S` after the first
+    writer dies. The spoken 1.2 s cap would skip the second writer entirely."""
+    monkeypatch.setattr(prompt_composer, "FAST_BUDGET_S", 90.0)
+
 
 BRIEF = "## Task\nMake the wake path faster.\n\n## Done when\n- It is faster."
 
@@ -50,9 +59,7 @@ def workspace(tmp_path: Path) -> _Session:
     return _Session(folder=str(tmp_path))
 
 
-def _writers(
-    monkeypatch: pytest.MonkeyPatch, first: str, rescue: tuple[object, str]
-) -> list[str]:
+def _writers(monkeypatch: pytest.MonkeyPatch, first: str, rescue: tuple[object, str]) -> list[str]:
     """Wire a first writer and what the rescue offers. Returns the calls made."""
     used: list[str] = []
     monkeypatch.setattr(
@@ -147,9 +154,7 @@ async def test_the_dead_rung_is_named_so_it_is_not_retried(
     async def _boom(**_kwargs: object) -> str:
         raise RuntimeError("429 RESOURCE_EXHAUSTED")
 
-    monkeypatch.setattr(
-        prompt_composer, "_resolve_writer", lambda: (_Writer("depleted"), "api")
-    )
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: (_Writer("depleted"), "api"))
     monkeypatch.setattr(
         prompt_composer,
         "_rescue_writer",

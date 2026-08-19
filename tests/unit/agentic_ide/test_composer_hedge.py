@@ -18,6 +18,14 @@ import pytest
 
 from jarvis.agentic_ide import file_index, prompt_composer
 
+
+@pytest.fixture(autouse=True)
+def _spoken_budget_does_not_clip_hedge_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hedge tests need a long enough ceiling that a 1.2 s spoken cap would
+    cancel the primary before the second writer is allowed to start."""
+    monkeypatch.setattr(prompt_composer, "FAST_BUDGET_S", 90.0)
+
+
 BRIEF = "## Task\nMake the wake path faster.\n\n## Done when\n- It is faster."
 HEDGE_BRIEF = "## Task\nMake the wake path quick.\n\n## Done when\n- It is quick."
 
@@ -362,11 +370,11 @@ async def test_the_hedge_respects_the_shared_budget(
 # ---------------------------------------------------------------------------
 
 
-def test_the_api_first_boot_ceiling_is_eight_seconds() -> None:
-    """A no-thinking Flash brief is supposed to land inside 5 s. The old
-    20 s first-boot ceiling let a hung writer sit four times the tolerance
-    before insurance started. Behaviour tests below still monkeypatch."""
-    assert prompt_composer.HEDGE_AFTER_API_S == 8.0
+def test_the_api_first_boot_ceiling_is_one_second() -> None:
+    """A no-thinking Flash brief is supposed to land inside the spoken
+    budget. The old 8 s first-boot ceiling let a hung writer sit through
+    the whole wait before insurance started, and the next rung was a CLI."""
+    assert prompt_composer.HEDGE_AFTER_API_S == 1.0
 
 
 def test_without_history_the_ceilings_apply(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -395,7 +403,12 @@ def test_the_floor_keeps_one_quick_brief_from_arming_a_hair_trigger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One 0.8 s rewrite must not insure the next, bigger brief at 2 s: a brief
-    that reads five outlines legitimately takes longer than a plain rewrite."""
+    that reads five outlines legitimately takes longer than a plain rewrite.
+
+    The spoken ceiling (1 s) would hide this floor; lift it so the floor is
+    the binding constraint, which is what this test names.
+    """
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 20.0)
     monkeypatch.setattr(prompt_composer, "_HEDGE_FLOOR_S", 6.0)
     prompt_composer._remember_writer_seconds("api", 0.8)  # noqa: SLF001
 
@@ -603,9 +616,11 @@ async def test_a_healthy_hedge_recruits_nobody_else(
     monkeypatch.setattr(
         prompt_composer,
         "_rescue_writer",
-        lambda tried: (_Writer("hedge"), "api")
-        if len(tried) == 1
-        else pytest.fail("recruited a third writer while the hedge was alive"),
+        lambda tried: (
+            (_Writer("hedge"), "api")
+            if len(tried) == 1
+            else pytest.fail("recruited a third writer while the hedge was alive")
+        ),
     )
     monkeypatch.setattr(prompt_composer, "_llm_compose", _compose)
 
