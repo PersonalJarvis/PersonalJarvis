@@ -28,6 +28,11 @@ from jarvis.brain.tool_use_loop import (
     _is_stt_hallucinated,
     _should_block_action_as_research,
 )
+from jarvis.brain.turn_planner import (
+    is_action_order,
+    is_assistant_tasking,
+    plan_turn,
+)
 from jarvis.core import runtime_refs
 from jarvis.core.protocols import (
     RiskTier,
@@ -56,10 +61,18 @@ CHARS_PER_TOKEN = 4
 # lowest-priority family goes first, longest declaration first inside it.
 # Dropped tools stay reachable through ``jarvis_action``. Families are
 # matched on the tool name; anything unmatched is the last to go.
+#
+# Order (live lesson 2026-08-19 12:50, the first hybrid session): one freshly
+# installed MCP plugin contributed ~80 namespaced tools and the budget then
+# dropped the ENTIRE coding-workspace family (agentic-ide-*) while dozens of
+# that plugin's tools stayed declared. Namespaced plugin/MCP tools go first —
+# they are the most numerous, the most domain-specific, and each is gated at
+# execute time on the user naming its service anyway — then connected CLIs,
+# then the coding workspace, then everything else.
 _BUDGET_DROP_FAMILIES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("agentic-ide", re.compile(r"^agentic[-_]ide[-_]")),
-    ("cli", re.compile(r"^cli_")),
     ("mcp", re.compile(r"^mcp__|/")),
+    ("cli", re.compile(r"^cli_")),
+    ("agentic-ide", re.compile(r"^agentic[-_]ide[-_]")),
 )
 
 log = logging.getLogger(__name__)
@@ -125,6 +138,83 @@ def _compact_schema(schema: Any, parameter_description_limit: int) -> Any:
     if isinstance(schema, list):
         return [_compact_schema(item, parameter_description_limit) for item in schema]
     return schema
+
+
+def _plugin_id_of(name: str) -> str:
+    """``"<plugin>/<tool>"`` → ``"<plugin>"``; ``""`` for native tools."""
+    pid, sep, _rest = str(name or "").partition("/")
+    return pid if sep else ""
+
+
+def _turn_shape_refusal(descriptor: SupervisorToolDescriptor, name: str, user_text: str) -> str:
+    """Refuse a native call whose tool the user's words cannot have asked for.
+
+    The live model holds the whole catalog (ADR-0035) and, on a garbled or
+    conversational turn, picks SOMETHING: in the first hybrid session
+    (2026-08-19 12:50) "Was genau, wie ist mein X-Shield?" called a
+    freshly installed plugin's balance tool, and "Was oh mein Gott, wieso lag
+    es so rum?" called app-restart — an ``ask``-tier tool whose two-turn
+    confirmation the very next utterance could have answered. Prompt
+    compliance is not a correctness boundary (BUG-047 class rule); the
+    boundary is here, at execute time, on the user's own words:  # i18n-allow: quoted utterances
+
+    * a namespaced plugin/MCP tool runs only when the turn names that plugin
+      (its id, its usage-card keywords, or a noun of its own tools) — the same
+      relevance rule the router brain applies before it even sees them;
+    * an ``ask``-tier tool runs only on a turn that ORDERS an action (an
+      action verb); a question, an exclamation, or a greeting never does;
+    * any other non-``safe`` tool runs only on a turn that orders, tasks, or
+      asks for the user's world (a planner reason) — a turn with none of
+      those ("Was geht ab?", "Okay.") gets no side effect.  # i18n-allow: quoted utterances
+
+    Read-only ``safe`` tools are never refused here. An empty utterance
+    (non-conversational launch routes) fails open. Returns the model-facing
+    refusal text, or ``""`` to allow.
+    """
+    text = str(user_text or "").strip()
+    if not text:
+        return ""
+    plugin_id = _plugin_id_of(name)
+    if plugin_id:
+        try:
+            from jarvis.marketplace.plugin_relevance import plugin_is_relevant
+
+            relevant = plugin_is_relevant(text, plugin_id, [descriptor])
+        except Exception:  # noqa: BLE001 — a relevance fault must not brick the plugin
+            relevant = True
+        if not relevant:
+            return (
+                f"{name} was not run: the user did not mention the {plugin_id} "
+                "service, so its functions are not what this request asks for. "
+                "Answer the user's actual request; call a plugin function only "
+                "when the user names that service or clearly asks for it."
+            )
+    tier = str(getattr(descriptor, "risk_tier", "monitor") or "monitor")
+    if tier == "safe":
+        return ""
+    orders = is_action_order(text)
+    if tier in {"ask", "block"} or _is_side_effect_tool(descriptor):
+        if orders:
+            return ""
+        return (
+            f"{name} was not run: the user's words do not order an action — "
+            "they are a question, a remark, or a greeting. Never start a "
+            "consequential action from such a turn. Answer the user directly, "
+            "or ask what they want done."
+        )
+    if orders or is_assistant_tasking(text):
+        return ""
+    try:
+        has_world_reason = bool(plan_turn(text).reasons)
+    except Exception:  # noqa: BLE001 — the planner must not brick a tool call
+        has_world_reason = True
+    if has_world_reason:
+        return ""
+    return (
+        f"{name} was not run: nothing in the user's words asks for it — no "
+        "action, no request about their data or services. Answer the user "
+        "directly; if you are unsure what they want, ask."
+    )
 
 
 def _declaration_size(declaration: dict[str, Any]) -> int:
@@ -612,10 +702,33 @@ class RealtimeToolBridge:
             "",
         ):
             message = "This sounds like research, not an action on a connected system."
-        else:
+        elif self._answers_a_pending_question(name, user_text):
+            # The second half of an order the model already asked about
+            # (a two-turn confirmation, a confirmed delegation offer) is not
+            # a fresh turn to shape-check: "Yes." orders nothing by itself.
             return ""
+        else:
+            message = _turn_shape_refusal(descriptor, name, user_text)
+            if not message:
+                return ""
         await self._publish_denied(name, message)
         return message
+
+    def _answers_a_pending_question(self, name: str, user_text: str) -> bool:
+        pending = self._pending
+        if pending is not None and pending.tool_name == name:
+            return True
+        # A SHORT affirmative ("Ja.", "Yes, go ahead.") answers an offer the
+        # model made in its own words (the confirmed-delegation unlock). Long
+        # sentences are not confirmations even when they contain an
+        # affirmative token — "Was genau, wie ist mein X-Shield?" carries
+        # "genau" and is a question (live 2026-08-19).  # i18n-allow: quoted utterance
+        if len(str(user_text or "").split()) > 4:
+            return False
+        try:
+            return classify_response(user_text, language=self._language) == "confirm"
+        except Exception:  # noqa: BLE001 — the classifier must not brick a call
+            return False
 
     async def _publish_denied(self, name: str, reason: str) -> None:
         publisher = getattr(

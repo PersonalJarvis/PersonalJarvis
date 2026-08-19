@@ -285,6 +285,10 @@ _ACTION_FALLBACK_RE = re.compile(
     r"stell\w*|spiel\w*|merk(?!wuerdig)\w*|notier\w*|trag(?!isch|oedi)\w*|"
     r"leg(?:e|st|t|en)?\b|anleg\w*|setz\w*|pausier\w*|aktivier\w*|deaktivier\w*|"
     r"erinner\w*|dreh\w*|mach\w*|nutz\w*|benutz\w*|verwend\w*|"
+    # German prefixed verbs ("anmachen", "einschalten", "ausstellen",
+    # "aufdrehen"): the bare stems above never see them, because the prefix
+    # sits before the stem inside one word.  # i18n-allow: names the German verb forms
+    r"(?:an|aus|ein|auf|zu|um|ab)(?:mach|schalt|stell|dreh)\w*|"
     r"sprich\w*|sprech\w*|brich|brech\w*|abbrech\w*|lauter|leiser|"  # i18n-allow: speech input
     r"abre\w*|cierra\w*|inicia\w*|crea\w*|escrib\w*|guarda\w*|"
     r"cambia\w*|instala\w*|conecta\w*|elimina\w*|envia\w*|"
@@ -660,6 +664,33 @@ def is_lookup_shape(text: str) -> bool:
     return bool(
         _LOOKUP_SHAPE_RE.search(normalized) or _RECALL_QUESTION_RE.search(normalized)
     )
+
+
+def is_action_order(text: str) -> bool:
+    """Whether ``text`` orders an action: an action verb outside the
+    conversational idioms.
+
+    The execute-side guard for native realtime tool calls (ADR-0035) uses it:
+    an ``ask``-tier tool may run only on a turn that orders something. Pure
+    regex over the idiom-stripped utterance — the same weak-scan text
+    ``plan_turn`` feeds its action detector.
+    """
+    normalized = _normalize(text).strip()
+    if not normalized:
+        return False
+    weak_scan_text = _ASSISTANT_DAYPLAN_RE.sub(" ", normalized)
+    weak_scan_text = _DATE_TRIVIA_RE.sub(" ", weak_scan_text)
+    weak_scan_text = _GERMAN_NONCOMMAND_ACTION_SPAN_RE.sub(" ", weak_scan_text)
+    weak_scan_text = _TALK_TO_ME_RE.sub(" ", weak_scan_text)
+    weak_scan_text = _WELLBEING_RE.sub(" ", weak_scan_text)
+    return bool(_ACTION_FALLBACK_RE.search(weak_scan_text))
+
+
+def is_assistant_tasking(text: str) -> bool:
+    """Whether ``text`` explicitly tasks the assistant ("kannst du", "please",
+    "dass du") — weaker than an action verb, stronger than a bare question."""
+    normalized = _normalize(text).strip()
+    return bool(normalized and _ASSISTANT_TASKING_RE.search(normalized))
 
 
 def is_public_fact_question(text: str) -> bool:
@@ -1061,6 +1092,8 @@ __all__ = [
     "TurnPath",
     "TurnPlan",
     "TurnReason",
+    "is_action_order",
+    "is_assistant_tasking",
     "is_contextual_follow_up",
     "is_public_fact_question",
     "plan_turn",

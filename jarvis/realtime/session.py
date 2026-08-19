@@ -793,14 +793,22 @@ _HYBRID_ROLE_DIRECTIVE = (
     "conversation language, without reading JSON. For some turns the Jarvis "
     "orchestrator takes over and injects a trusted result on its own; a "
     "separate instruction tells you when, and only then do you wait instead "
-    "of calling. Use end_call only when the user says goodbye."
+    "of calling. Plugin and MCP functions — the ones carrying a service name "
+    "— are for requests that name or clearly mean that service; never reach "
+    "for one because it is merely available. A function whose purpose does "
+    "not match the request is never a substitute for a matching one: when the "
+    "request is unclear, garbled, or no function fits, do not guess a "
+    "function — answer what you can or ask one short question back. Use "
+    "end_call only when the user says goodbye."
 )
 _HYBRID_TOOLS_EXPECTED_DIRECTIVE = (
-    "This current turn needs the user's own world (their data, settings, "
-    "connected services, or an action on their behalf). Call the matching "
-    "function of your own NOW, in this response, and answer from its result; "
-    "do not answer from guesswork and do not merely announce a lookup. Use "
-    "jarvis_action only if no function of yours covers it."
+    "This current turn looks like it needs the user's own world (their data, "
+    "settings, connected services, or an action on their behalf). If one of "
+    "your functions clearly matches the request, call it NOW, in this "
+    "response, and answer from its result; do not answer from guesswork and "
+    "do not merely announce a lookup. If no function clearly matches, do not "
+    "call one at random — ask one short question back instead. Use "
+    "jarvis_action only if no function of yours covers a clear request."
 )
 _HYBRID_DISCOURAGED_DIRECTIVE = (
     "This current turn looks like general world knowledge or ordinary "

@@ -186,7 +186,7 @@ async def test_hybrid_leaves_planner_action_turns_to_the_live_model(
     joined = "\n".join(
         str(update["instructions"] or "") for update in provider.session.session_updates
     )
-    assert "Call the matching function of your own NOW" in joined
+    assert "call it NOW, in this response" in joined
     await sess.end(reason="test")
 
 
@@ -265,22 +265,33 @@ def test_declaration_budget_drops_deterministically_and_keeps_the_rest() -> None
         ("wiki-recall", {"name": "wiki-recall", "description": "w" * 200}),
         ("search_web", {"name": "search_web", "description": "s" * 100}),
     ]
+    rendered.insert(
+        0, ("higgsfield/balance", {"name": "higgsfield_balance", "description": "h" * 50})
+    )
     total = sum(len(str(d)) for _n, d in rendered)
     kept, dropped = _apply_declaration_budget(rendered, total - 1)
-    # The lowest-priority family first, the longest member of it first.
-    assert dropped == ["agentic-ide-fanout"]
+    # The lowest-priority family first (namespaced plugin/MCP tools), then
+    # connected CLIs, then the coding workspace — longest member first.
+    assert dropped == ["higgsfield/balance"]
+    kept, dropped = _apply_declaration_budget(rendered, total - 100)
+    assert dropped == ["higgsfield/balance", "cli_gcloud"]
     assert [name for name, _d in kept] == [
+        "agentic-ide-fanout",
         "agentic-ide-focus",
-        "cli_gcloud",
         "wiki-recall",
         "search_web",
     ]
     kept, dropped = _apply_declaration_budget(rendered, 50)
-    assert dropped[:3] == ["agentic-ide-fanout", "agentic-ide-focus", "cli_gcloud"]
+    assert dropped[:4] == [
+        "higgsfield/balance",
+        "cli_gcloud",
+        "agentic-ide-fanout",
+        "agentic-ide-focus",
+    ]
     assert kept == [] or all(name in {"wiki-recall", "search_web"} for name, _d in kept)
     # No budget keeps everything.
     kept, dropped = _apply_declaration_budget(rendered, 0)
-    assert dropped == [] and len(kept) == 5
+    assert dropped == [] and len(kept) == 6
 
 
 def test_bridge_budget_hides_dropped_tools_and_reports_them() -> None:
@@ -313,10 +324,10 @@ def test_router_catalog_renders_for_every_realtime_wire() -> None:
     """ADR-0035 §8: every router tool survives the compact rendering, the
     wire-name rule, the Gemini schema sanitizer, and the default budget."""
     from jarvis.brain.factory import _load_tools_for_tier
-    from jarvis.core.config import JarvisConfig, VoiceConfig
     from jarvis.core.bus import EventBus
+    from jarvis.core.config import JarvisConfig, VoiceConfig
     from jarvis.plugins.realtime.gemini_live import _sanitize_declarations
-    from jarvis.realtime.tools import CHARS_PER_TOKEN, _VALID_WIRE_NAME
+    from jarvis.realtime.tools import _VALID_WIRE_NAME, CHARS_PER_TOKEN
 
     tools = _load_tools_for_tier(
         "router",
@@ -354,3 +365,104 @@ def test_router_catalog_renders_for_every_realtime_wire() -> None:
         properties = params.get("properties") or {}
         for required in params.get("required") or ():
             assert required in properties, (entry["name"], required)
+
+
+# --- Execute-side turn-shape guards (live lesson 2026-08-19 12:50) ----------
+
+
+def _descriptor_with_tier(name: str, tier: str) -> SupervisorToolDescriptor:
+    return SupervisorToolDescriptor(
+        name=name,
+        description=f"{name} tool",
+        input_schema={"type": "object", "properties": {}},
+        risk_tier=tier,  # type: ignore[arg-type]
+        is_action_tool=False,
+    )
+
+
+class _RecordingGateway:
+    def __init__(self, descriptors):
+        self._items = tuple(descriptors)
+        self.executed: list[str] = []
+
+    def catalog(self):
+        return self._items
+
+    async def execute(self, name, _arguments, _request):
+        self.executed.append(name)
+        return ToolResult(success=True, output="ok")
+
+    async def publish_guard_denied(self, *_a, **_k):
+        return None
+
+
+def _guarded_bridge():
+    gateway = _RecordingGateway(
+        [
+            _descriptor_with_tier("app-restart", "ask"),
+            _descriptor_with_tier("higgsfield/balance", "monitor"),
+            _descriptor_with_tier("google_calendar", "monitor"),
+            _descriptor_with_tier("spotify", "monitor"),
+            _descriptor_with_tier("search_web", "safe"),
+        ]
+    )
+    bridge = RealtimeToolBridge(gateway=gateway, language="de", compact=True)
+    return gateway, bridge
+
+
+async def _call(bridge, wire_name, user_text):
+    await bridge.handle_user_transcript(user_text)
+    _name, result = await bridge.execute(wire_name=wire_name, arguments={})
+    return result
+
+
+@pytest.mark.asyncio
+async def test_ask_tier_tool_needs_an_action_order():
+    gateway, bridge = _guarded_bridge()
+    # The live incident: a remark/question must never start app-restart.
+    wire = "app_restart_" + _wire_suffix("app-restart")
+    remark = "Was oh mein Gott, wieso lag es so rum?"  # i18n-allow: live utterance
+    result = await _call(bridge, wire, remark)
+    assert result["success"] is False and "was not run" in result["error"]
+    assert gateway.executed == []
+    # An order does.
+    result = await _call(bridge, wire, "Starte die App neu.")  # i18n-allow: German fixture
+    assert result["success"] is True
+    assert gateway.executed == ["app-restart"]
+
+
+@pytest.mark.asyncio
+async def test_plugin_tool_needs_its_service_named():
+    gateway, bridge = _guarded_bridge()
+    wire = "higgsfield_balance_" + _wire_suffix("higgsfield/balance")
+    result = await _call(bridge, wire, "Was genau, wie ist mein X-Shield?")  # i18n-allow: live
+    assert result["success"] is False and "did not mention the higgsfield" in result["error"]
+    assert gateway.executed == []
+    result = await _call(bridge, wire, "Wie ist mein Guthaben bei Higgsfield?")  # i18n-allow
+    assert result["success"] is True
+    assert gateway.executed == ["higgsfield/balance"]
+
+
+@pytest.mark.asyncio
+async def test_monitor_tool_needs_an_order_a_tasking_or_a_world_request():
+    gateway, bridge = _guarded_bridge()
+    # Smalltalk: no side effect.
+    result = await _call(bridge, "spotify", "Was geht ab?")  # i18n-allow: German fixture
+    assert result["success"] is False and "was not run" in result["error"]
+    # A data request about the user's world is allowed on a monitor tool.
+    calendar_question = "Was steht heute in meinem Kalender?"  # i18n-allow: German fixture
+    result = await _call(bridge, "google_calendar", calendar_question)
+    assert result["success"] is True
+    # An order is allowed.
+    result = await _call(bridge, "spotify", "Spiel mir was von Ed Sheeran.")  # i18n-allow: fixture
+    assert result["success"] is True
+    # Safe tools are never refused by the shape guard.
+    result = await _call(bridge, "search_web", "Was geht ab?")  # i18n-allow: German fixture
+    assert result["success"] is True
+    assert gateway.executed == ["google_calendar", "spotify", "search_web"]
+
+
+def _wire_suffix(name: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()[:10]

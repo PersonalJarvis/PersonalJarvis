@@ -87,6 +87,32 @@ now"*. A delegation is still forced for exactly these classes:
 Everything else — Wiki, settings, connected data, media, skills, missions,
 coding panes, files, CLI/MCP/plugin tools — is the live model's own call.
 
+**Execute-side turn-shape guard (live lesson, first hybrid session
+2026-08-19 12:50).** Prompt compliance is not a correctness boundary: on
+garbled or conversational turns the live model picked *something* — "Was
+genau, wie ist mein X-Shield?" called a freshly installed plugin's balance
+tool, "Was oh mein Gott, wieso lag es so rum?" called `app-restart` (an
+`ask`-tier tool whose two-turn confirmation the next utterance could have
+answered).  <!-- i18n-allow: quoted live utterances --> The bridge therefore
+refuses, on the user's own words (`RealtimeToolBridge._guard` →
+`_turn_shape_refusal`, same vocabulary as the planner):
+
+- a namespaced plugin/MCP tool unless the turn names that plugin (id,
+  usage-card keywords, or a noun of its tools — `plugin_is_relevant`, the
+  rule the router brain already applies before it sees plugin tools);
+- an `ask`-tier (or side-effect) tool unless the turn ORDERS an action
+  (`turn_planner.is_action_order`: an action verb outside the
+  conversational idioms, now including German prefixed verbs "anmachen",
+  "einschalten");  <!-- i18n-allow: quoted German verbs -->
+- any other non-`safe` tool unless the turn orders, tasks ("kannst du",
+  "please"), or asks for the user's world (a planner reason).
+
+A two-turn confirmation resume or a short affirmative (≤ 4 words, the
+echo-confirmation classifier) is the second half of an order and is not
+shape-checked. `safe` read-only tools are never refused here. The refusal
+text tells the model to answer or ask back, and counts as
+`native_tool_denied`.
+
 ### 3. Slow native calls get the instant ack
 
 A native function call is blocking on every current transport (ADR-0034 §2:
@@ -110,9 +136,11 @@ descriptions capped (default 120 characters), schema otherwise intact.
 `[voice].realtime_tool_declaration_budget_tokens` (default 20 000; estimate
 = characters / 4) bounds the whole set. Over budget, tools are dropped in a
 deterministic priority order until the set fits — longest declaration first
-within the lowest-priority family (`agentic-ide-*` when no workspace is
-open, then `cli_*`, then the rest) — and **every dropped name is logged at
-session start**. A dropped tool is not lost: it is reachable through
+within the lowest-priority family: namespaced plugin/MCP tools first (the
+most numerous and the most domain-specific; a freshly installed MCP plugin
+alone added ~80 on 2026-08-19 and would otherwise have pushed the coding
+workspace out), then `cli_*`, then `agentic-ide-*`, then the rest — and
+**every dropped name is logged at session start**. A dropped tool is not lost: it is reachable through
 `jarvis_action` (§1.2c), whose delegate keeps the full catalog.
 
 A provider may declare `tool_declaration_budget_tokens` (capability, AP-21)
