@@ -116,9 +116,30 @@ describe("MissionDeckView — the three acts", () => {
     render(<MissionDeckView />);
     act(() => useDeckStore.getState().ingest("WakeWordDetected", { keyword: "nova" }, Date.now()));
     expect(screen.getByTestId("deck-board")).toBeTruthy();
-    // Arrived from the standby on this screen: the instruments reveal.
-    expect(screen.getByTestId("deck-slot-left-top").getAttribute("data-reveal")).toBe("true");
-    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 3000 });
+    // Arrived from the standby on this screen: the instruments reveal, each
+    // one wiping away from the orb, with the targeting frame drawn ahead.
+    const left = screen.getByTestId("deck-slot-left-top");
+    expect(left.getAttribute("data-reveal")).toBe("true");
+    expect(left.getAttribute("data-wipe")).toBe("left");
+    expect(screen.getByTestId("deck-slot-right-top").getAttribute("data-wipe")).toBe("right");
+    expect(screen.getByTestId("deck-slot-centre-top").getAttribute("data-wipe")).toBe("down");
+    expect(left.querySelector('[data-testid="deck-reveal-frame"]')).toBeTruthy();
+    // The cards themselves mount one beat each, not in the click's own task
+    // (the launch must not freeze on the board's mount): the slot is there,
+    // its card is not yet, and the slot is not powered until its frame fades.
+    expect(screen.queryByText("log")).toBeNull();
+    expect(left.getAttribute("data-powered")).toBe("false");
+    // The orb lands with a ring; the board ends with one scan.
+    expect(screen.getByTestId("deck-orb-landing")).toBeTruthy();
+    expect(screen.getByTestId("deck-board-sweep")).toBeTruthy();
+    // The standby is still on stage for its launch — and knows it is leaving —
+    // then it is gone.
+    const standby = screen.getByTestId("deck-standby");
+    await waitFor(() => expect(standby.getAttribute("data-leaving")).toBe("true"));
+    expect(standby.querySelector('[data-testid="deck-handoff-wave"]')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("log")).toBeTruthy(), { timeout: 3000 });
+    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(left.getAttribute("data-powered")).toBe("true"), { timeout: 4000 });
   });
 
   test("'Open the board' opens it by hand and it stays open", async () => {
@@ -146,6 +167,10 @@ describe("MissionDeckView — the three acts", () => {
     render(<MissionDeckView />);
     expect(screen.getByTestId("deck-board")).toBeTruthy();
     expect(screen.queryByTestId("deck-standby")).toBeNull();
-    expect(screen.getByTestId("deck-slot-left-top").getAttribute("data-reveal")).toBe("false");
+    const left = screen.getByTestId("deck-slot-left-top");
+    expect(left.getAttribute("data-reveal")).toBe("false");
+    // … cards and all, powered from the first render.
+    expect(screen.getByText("log")).toBeTruthy();
+    expect(left.getAttribute("data-powered")).toBe("true");
   });
 });

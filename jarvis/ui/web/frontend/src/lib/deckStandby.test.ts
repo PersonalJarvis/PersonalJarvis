@@ -6,8 +6,12 @@ import {
   resolvePhase,
   reticleSizeFor,
   revealDelayMs,
+  revealWipeFor,
   ringSizeFor,
   ringTicks,
+  CARD_POWER_ON,
+  HANDOFF,
+  type BoardSlot,
   type GateInput,
   type PhaseInput,
 } from "@/lib/deckStandby";
@@ -163,5 +167,65 @@ describe("sizing", () => {
     expect(revealDelayMs("centre-bottom")).toBeLessThan(revealDelayMs("left-top"));
     expect(revealDelayMs("left-top")).toBe(revealDelayMs("right-top"));
     expect(revealDelayMs("left-bottom")).toBeGreaterThan(revealDelayMs("right-top"));
+  });
+
+  test("every card wipes in away from the orb", () => {
+    expect(revealWipeFor("centre-top")).toBe("down");
+    expect(revealWipeFor("centre-bottom")).toBe("down");
+    expect(revealWipeFor("left-top")).toBe("left");
+    expect(revealWipeFor("left-bottom")).toBe("left");
+    expect(revealWipeFor("right-top")).toBe("right");
+    expect(revealWipeFor("right-bottom")).toBe("right");
+  });
+});
+
+describe("the hand-off is one launch on one clock", () => {
+  const SLOTS: BoardSlot[] = [
+    "centre-top",
+    "centre-bottom",
+    "left-top",
+    "right-top",
+    "left-bottom",
+    "right-bottom",
+  ];
+
+  test("the burst leads, the orb travels through it, the cards follow the wave", () => {
+    // The first card's frame starts drawing inside the flare's light, and the
+    // flare and the ring are both out before that card has filled in.
+    const firstCard = revealDelayMs("centre-top") / 1000;
+    const firstCardIn = firstCard + CARD_POWER_ON.wipeLeadS + CARD_POWER_ON.wipeS;
+    expect(firstCard).toBeLessThan(HANDOFF.flareS);
+    expect(HANDOFF.flareS).toBeLessThanOrEqual(firstCardIn);
+    expect(HANDOFF.ringS).toBeLessThanOrEqual(firstCardIn);
+    // The orb leaves a beat after the flare starts and is on the board before
+    // the standby layer has faded — no moment with two orbs or none.
+    expect(HANDOFF.travelDelayS).toBeGreaterThan(0);
+    expect(HANDOFF.travelDelayS + HANDOFF.travelS).toBeLessThanOrEqual(
+      HANDOFF.stageFadeDelayS + HANDOFF.stageFadeS,
+    );
+    // The landing ring fires as the orb arrives, the headline after it.
+    expect(HANDOFF.landDelayS).toBeGreaterThanOrEqual(HANDOFF.travelDelayS + HANDOFF.travelS - 0.1);
+    expect(HANDOFF.headlineDelayS).toBeGreaterThan(HANDOFF.landDelayS);
+    // The wave is still out when the cards start — they appear as it passes.
+    expect(HANDOFF.waveS).toBeGreaterThan(firstCard);
+  });
+
+  test("the final scan runs once every card has locked", () => {
+    const lastLock = Math.max(
+      ...SLOTS.map(
+        (slot) =>
+          revealDelayMs(slot) / 1000 + CARD_POWER_ON.wipeLeadS + CARD_POWER_ON.wipeS + CARD_POWER_ON.lockS,
+      ),
+    );
+    expect(HANDOFF.boardSweepDelayS).toBeGreaterThanOrEqual(lastLock - 0.4);
+    // The whole launch is over in under two seconds: one of these plays on
+    // every first turn of a session, and it has to thrill, not delay.
+    expect(HANDOFF.boardSweepDelayS + HANDOFF.boardSweepS).toBeLessThan(2);
+  });
+
+  test("a card's frame draws ahead of its content, and its ghost outlives the lock", () => {
+    expect(CARD_POWER_ON.wipeLeadS).toBeGreaterThan(0);
+    expect(CARD_POWER_ON.frameS).toBeGreaterThan(CARD_POWER_ON.wipeLeadS);
+    expect(CARD_POWER_ON.ghostFadeDelayS).toBeGreaterThan(CARD_POWER_ON.wipeLeadS + CARD_POWER_ON.wipeS);
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useIsPresent, useReducedMotion } from "framer-motion";
 import { useEventStore } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import type { WakeWordConfig } from "@/hooks/useWakeWord";
@@ -13,6 +13,7 @@ import {
   ringTicks,
   GATE_ARC_CENTRE,
   GATE_ARC_SPAN,
+  HANDOFF,
   SETTLE_MS,
   type Gate,
   type GateId,
@@ -50,12 +51,26 @@ import { useT } from "@/i18n";
  * standby has to be calm enough to sit next to for an hour.
  *
  * The board is one press away at all times (`onOpenBoard`), and takes over
- * on its own the moment a turn opens — that hand-off is MissionDeckView's,
- * with this stage's exit choreographed through framer variants (`exit`).
+ * on its own the moment a turn opens — that hand-off is MissionDeckView's.
+ * This stage's part of it is the LAUNCH (`lib/deckStandby.ts::HANDOFF`):
+ * the orb flares and two shockwaves leave it, the stage flashes, the ring
+ * draws breath and bursts past the camera turning while its ticks flare
+ * clockwise and the sweep spins up, the cue and the corners get out of the
+ * way, and only then does the layer fade — over the board assembling
+ * underneath. `useIsPresent` flips `data-leaving`, and the burst — flash,
+ * flare, waves, the ring's breath-and-burst, the tick flare, the sweep
+ * spin-up — is pure CSS keyed on it (index.css), so it runs on the
+ * compositor whatever the main thread is doing while the board mounts; the
+ * framer `exit` variants carry only the corners, the cue and the layer's own
+ * fade. The maintainer's brief (2026-08-19): a hard switch is ridiculous;
+ * this has to be cinematic, Stark-grade, fun to watch.
  */
 
 /** How the orb travels between this ring and its place on the board. */
-export const ORB_TRAVEL = { layout: { duration: 0.62, ease: [0.2, 0.8, 0.2, 1] } } as const;
+export const ORB_TRAVEL = {
+  layout: { duration: HANDOFF.travelS, delay: HANDOFF.travelDelayS, ease: [0.22, 0.85, 0.2, 1] },
+} as const;
+
 /** The ring is labelled at the compass points only when there is room. */
 const LABELS_MIN_RING = 520;
 /** The corner blocks leave the ring's sides alone from this stage width. */
@@ -88,6 +103,10 @@ export function DeckStandby({
 }) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
+  // The stage is on its way out — AnimatePresence keeps it mounted for the
+  // exit, and this is how the ring's CSS learns to flare and spin up.
+  const present = useIsPresent();
+  const leaving = !present && !reduced;
   const connected = useEventStore((s) => s.connected);
   const voiceReady = useEventStore((s) => s.voiceReady);
   const voiceState = useEventStore((s) => s.voiceState);
@@ -206,38 +225,77 @@ export function DeckStandby({
     <div className={cn("absolute z-10", extra)}>{children}</div>
   );
 
+  // The shockwave has to clear the stage's far corner: scale the reticle-sized
+  // ring up to the stage's diagonal, and a little past it.
+  const waveScale =
+    stage.w && stage.h ? (Math.hypot(stage.w, stage.h) / reticle) * 1.05 : 6;
+
   return (
     <motion.div
       ref={stageRef}
       data-testid="deck-standby"
       data-phase={phase}
+      data-leaving={leaving ? "true" : "false"}
       className={cn("relative overflow-hidden", className)}
-      variants={{ hidden: {}, show: { opacity: 1 }, exit: { opacity: 0, transition: { duration: 0.32, delay: 0.08 } } }}
+      variants={{
+        hidden: {},
+        show: { opacity: 1 },
+        // The layer itself goes LAST: the burst plays out over the board
+        // assembling underneath, then the remains fade.
+        exit: { opacity: 0, transition: { duration: HANDOFF.stageFadeS, delay: HANDOFF.stageFadeDelayS } },
+      }}
       initial={ignite && !reduced ? "hidden" : "show"}
       animate="show"
       exit="exit"
     >
       <HudFrameOverlay variant="bracket" w={stage.w} h={stage.h} live={phase === "standby"} />
 
+      {/* The launch: the whole stage flashes gold for a blink (CSS, on leaving). */}
+      <div aria-hidden className="deck-launch-flash pointer-events-none absolute inset-0 bg-primary" />
+
       {/* The instrument: the ring with the orb in it, centred on the stage. */}
       <div className={cn("absolute inset-0 grid", wide ? "place-items-center" : "place-items-start justify-items-center pt-3")}>
         <div className="relative" style={{ width: ring, height: ring }}>
-          {/* On the hand-off the ring folds into the orb while the corners slide out. */}
-          <motion.div
-            className="absolute inset-0"
-            variants={{ exit: { scale: 0.62, opacity: 0, transition: { duration: 0.45, ease: "easeIn" } } }}
-          >
+          {/* On the hand-off the ring draws breath, then bursts past the
+              camera, turning (CSS, on leaving) — while the corners slide out
+              of the way. */}
+          <div className="deck-launch-ring absolute inset-0">
             <StandbyRing
               size={ring}
               gates={gates}
               fresh={pendingAtMount}
               ignite={ignite}
+              leaving={leaving}
               sweep={Boolean(listening) && !reduced}
               ping={ignite && readyAt !== null && !reduced ? readyAt : null}
               labels={ring >= LABELS_MIN_RING ? (id) => t(`deck.boot_gate_${id}`) : undefined}
               reticle={reticle}
             />
-          </motion.div>
+          </div>
+
+          {/* The burst: the orb's flare and two shockwaves, from the orb's
+              centre, over everything on the stage. Invisible at rest; on
+              leaving they fire once (CSS), and the layer fades before they
+              are done. `--wave-scale` takes a wave past the stage's corner. */}
+          <div
+            className="pointer-events-none absolute inset-0 grid place-items-center"
+            aria-hidden
+            style={{ "--wave-scale": waveScale.toFixed(2) } as CSSProperties}
+          >
+            <div
+              className="deck-handoff-flare absolute rounded-full"
+              style={{ width: reticle * 1.2, height: reticle * 1.2 }}
+            />
+            <div
+              className="deck-handoff-wave absolute rounded-full"
+              data-testid="deck-handoff-wave"
+              style={{ width: reticle, height: reticle }}
+            />
+            <div
+              className="deck-handoff-wave deck-handoff-wave-echo absolute rounded-full"
+              style={{ width: reticle, height: reticle }}
+            />
+          </div>
 
           <div className="absolute inset-0 grid place-items-center">
             <motion.div
@@ -267,14 +325,20 @@ export function DeckStandby({
             style={{ top: ring / 2 + reticle / 2 + 12 }}
           >
             {phase === "boot" ? (
-              <BootTitle text={t("deck.boot_title")} animate={!reduced} />
+              <motion.div
+                key="boot-title"
+                variants={{ exit: { opacity: 0, y: -10, scale: 0.9, transition: { duration: 0.22, ease: "easeIn" } } }}
+              >
+                <BootTitle text={t("deck.boot_title")} animate={!reduced} />
+              </motion.div>
             ) : (
               <motion.div
                 key="cue"
                 variants={{
                   hidden: { opacity: 0, y: 6 },
                   show: { opacity: 1, y: 0, transition: { duration: 0.5, delay: 0.3 } },
-                  exit: { opacity: 0, y: 6, transition: { duration: 0.2 } },
+                  // The cue is pulled into the orb as it launches.
+                  exit: { opacity: 0, y: -10, scale: 0.9, transition: { duration: 0.22, ease: "easeIn" } },
                 }}
                 className="flex flex-col items-center gap-1"
               >
@@ -300,7 +364,7 @@ export function DeckStandby({
       {corner(
         wide ? "left-5 top-4" : "left-4 top-3",
         <motion.div
-          variants={{ exit: { opacity: 0, x: -14, transition: { duration: 0.25 } } }}
+          variants={{ exit: { opacity: 0, x: -36, transition: { duration: HANDOFF.cornerS, ease: "easeIn" } } }}
           className="flex flex-col gap-0.5"
         >
           <span
@@ -327,7 +391,7 @@ export function DeckStandby({
       {corner(
         wide ? "bottom-4 left-5 max-w-[320px]" : "inset-x-4 bottom-14",
         <motion.div
-          variants={{ exit: { opacity: 0, x: -14, transition: { duration: 0.25 } } }}
+          variants={{ exit: { opacity: 0, x: -36, transition: { duration: HANDOFF.cornerS, ease: "easeIn" } } }}
           className="font-mono text-[10.5px] leading-[1.6]"
           data-testid="deck-boot-console"
         >
@@ -403,7 +467,7 @@ export function DeckStandby({
       {corner(
         wide ? "bottom-4 right-5 text-right" : "bottom-3 right-4 text-right",
         <motion.div
-          variants={{ exit: { opacity: 0, x: 14, transition: { duration: 0.25 } } }}
+          variants={{ exit: { opacity: 0, x: 36, transition: { duration: HANDOFF.cornerS, ease: "easeIn" } } }}
           className="flex flex-col items-end gap-1.5"
         >
           <button
@@ -469,6 +533,7 @@ function StandbyRing({
   gates,
   fresh,
   ignite,
+  leaving,
   sweep,
   ping,
   labels,
@@ -479,6 +544,11 @@ function StandbyRing({
   /** Gates that were pending when the stage mounted — their arcs draw in. */
   fresh: Set<GateId>;
   ignite: boolean;
+  /**
+   * The stage is on its way out: the ticks flare clockwise on the CSS
+   * cascade (`--tick-i`), so the ignition's own per-tick delay steps aside.
+   */
+  leaving: boolean;
   sweep: boolean;
   /** Timestamp of the boot's completion, or null — keys the one-shot ping. */
   ping: number | null;
@@ -536,8 +606,9 @@ function StandbyRing({
               style={
                 {
                   "--tick-opacity": tickOpacity[tk.weight],
+                  "--tick-i": i,
                   opacity: "var(--tick-opacity)",
-                  animationDelay: ignite ? `${i * 9}ms` : undefined,
+                  animationDelay: ignite && !leaving ? `${i * 9}ms` : undefined,
                 } as CSSProperties
               }
             />

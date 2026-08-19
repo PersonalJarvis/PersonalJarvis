@@ -8,6 +8,7 @@ import { useDeckStore } from "@/store/deck";
 import { fetchWikiTree } from "@/lib/wikiApi";
 import { toGraphData, type RenderEdge, type RenderNode, type WikiGraphPayload } from "@/lib/wikiGraph";
 import { detectWebgl } from "@/lib/graphDimension";
+import { useDeckSlotPowered } from "@/components/deck/DeckReveal";
 import { edgeDetails, escapeTooltipText, nodeDetails } from "@/components/wiki/WikiGraph";
 import { DeckCard, DeckIconButton } from "@/components/deck/DeckCard";
 import { HudLamp, useElementSize } from "@/components/deck/HudFrame";
@@ -31,9 +32,26 @@ import { useT } from "@/i18n";
  * Only ONE scene is ever mounted: while the expanded overlay is open, the card
  * shows a placeholder, so there is one WebGL context and one orbit.
  */
-const WikiGraph3D = lazy(() =>
-  import("@/components/wiki/WikiGraph3D").then((m) => ({ default: m.WikiGraph3D })),
-);
+const loadWikiGraph3D = () => import("@/components/wiki/WikiGraph3D");
+const WikiGraph3D = lazy(() => loadWikiGraph3D().then((m) => ({ default: m.WikiGraph3D })));
+
+/**
+ * Get the scene's heavy parts ready while nothing is happening — the deck
+ * calls this from the standby's idle time, so that when the board takes
+ * over, the WebGL probe is a cache hit and the 3D chunk is already parsed.
+ * Measured 2026-08-19: done on the board's mount instead, the probe alone
+ * held the main thread for half a second, in the middle of the launch.
+ */
+export function warmWikiScene(): void {
+  try {
+    detectWebgl();
+  } catch {
+    /* the probe answers false on its own when WebGL is missing */
+  }
+  void loadWikiGraph3D().catch(() => {
+    /* a chunk that fails to preload simply loads later, as it always did */
+  });
+}
 const WikiGraph2D = lazy(() =>
   import("@/components/wiki/WikiGraph").then((m) => ({ default: m.WikiGraph })),
 );
@@ -84,7 +102,10 @@ function DeckWikiScene({
     [titles],
   );
 
-  const ready = size.w > 20 && size.h > 20;
+  // The scene mounts once the card's slot has powered on — during the
+  // launch the WebGL init would stall the very beats it sits under.
+  const powered = useDeckSlotPowered();
+  const ready = powered && size.w > 20 && size.h > 20;
 
   return (
     <div ref={ref} className={cn("relative h-full w-full overflow-hidden", className)}>

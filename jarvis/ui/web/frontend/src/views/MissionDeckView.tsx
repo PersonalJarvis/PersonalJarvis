@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { AnimatePresence, MotionConfig, motion } from "framer-motion";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
@@ -19,13 +19,13 @@ import {
 import { ApiStatsCard, CaptureCard, LiveCounter } from "@/components/deck/DeckSignalCards";
 import { LogCard } from "@/components/deck/DeckLogCard";
 import { TurnCard } from "@/components/deck/DeckTurnCard";
-import { WikiCard } from "@/components/deck/DeckWiki";
+import { WikiCard, warmWikiScene } from "@/components/deck/DeckWiki";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useElementSize } from "@/hooks/useElementSize";
 import { orbSizeFor, stageVignette } from "@/lib/deckStage";
-import { resolvePhase } from "@/lib/deckStandby";
+import { HANDOFF, resolvePhase } from "@/lib/deckStandby";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -63,10 +63,15 @@ import { useT } from "@/i18n";
  * the stage is `DeckStandby` — the boot sequence while the app comes up,
  * then the listening ring — and the board takes over the moment a turn
  * opens or the person asks for it (`lib/deckStandby.ts::resolvePhase`,
- * forward only). The hand-off is choreographed: the standby's ring and
- * console leave, the orb travels from the ring's centre to its place on the
- * board (one `layoutId` on both stages), and the instruments power on from
- * the centre outward (`DeckReveal`).
+ * forward only). The hand-off is a LAUNCH, on one clock
+ * (`lib/deckStandby.ts::HANDOFF`): the orb flares and a shockwave leaves
+ * it, the standby's ring bursts past the camera and its console gets out of
+ * the way (`DeckStandby`), the orb travels from the ring's centre to its
+ * place on the board (one `layoutId` on both stages) and lands with a ring,
+ * the instruments assemble from the centre outward as the wave reaches them
+ * (`DeckReveal`), and one scan runs down the whole board. The maintainer's
+ * verdict on a fade-and-wipe (2026-08-19): a hard switch, ridiculous — this
+ * has to be cinematic.
  *
  * The frames differ on purpose (HudFrame.tsx): brackets for pictures and the
  * map, chamfers for readouts, rails for streams — a deck of instruments, not
@@ -130,6 +135,23 @@ export function MissionDeckView({
   // the first render so the wrappers never remount because the flag moved.
   const mountedInto = useRef(phase);
   const revealBoard = mountedInto.current !== "board";
+  // While the stage waits for the first word, the board's heaviest part gets
+  // ready in the idle time: the WebGL probe and the 3D map's chunk. Measured
+  // 2026-08-19: done in the click's own task they froze the launch for half
+  // a second, and every JS-driven beat of it — the orb's travel — jumped.
+  useEffect(() => {
+    if (phase === "board") return;
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (w.requestIdleCallback && w.cancelIdleCallback) {
+      const id = w.requestIdleCallback(() => warmWikiScene(), { timeout: 4000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(() => warmWikiScene(), 1500);
+    return () => window.clearTimeout(id);
+  }, [phase]);
 
   const running = useMemo(
     () => thinkingSteps.filter((s) => s.status === "active"),
@@ -259,10 +281,10 @@ export function MissionDeckView({
           {phase === "board" && (
             <div
               data-testid="deck-board"
-              className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden"
+              className="relative grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden"
             >
               {/* LEFT top: the log — the terminal of the session */}
-              <DeckReveal slot="left-top" reveal={revealBoard} className="flex min-h-0 flex-col">
+              <DeckReveal slot="left-top" reveal={revealBoard} bodyClassName="flex min-h-0 flex-col">
                 <LogCard className="min-h-0 flex-1" />
               </DeckReveal>
 
@@ -271,7 +293,8 @@ export function MissionDeckView({
                 <DeckReveal
                   slot="centre-top"
                   reveal={revealBoard}
-                  className="grid shrink-0 grid-cols-2 gap-3"
+                  className="shrink-0"
+                  bodyClassName="grid grid-cols-2 gap-3"
                   style={{ height: "36%" }}
                 >
                   <TurnCard className="min-h-0" />
@@ -291,12 +314,17 @@ export function MissionDeckView({
               </div>
 
               {/* RIGHT top: the wiki, in space, tall */}
-              <DeckReveal slot="right-top" reveal={revealBoard} className="flex min-h-0 flex-col">
+              <DeckReveal slot="right-top" reveal={revealBoard} bodyClassName="flex min-h-0 flex-col">
                 <WikiCard className="min-h-0 flex-1" />
               </DeckReveal>
 
               {/* LEFT bottom: outputs and runs */}
-              <DeckReveal slot="left-bottom" reveal={revealBoard} className="grid min-h-[8rem] grid-cols-2 gap-3">
+              <DeckReveal
+                slot="left-bottom"
+                reveal={revealBoard}
+                className="min-h-[8rem]"
+                bodyClassName="grid grid-cols-2 gap-3"
+              >
                 <OutputsCard className="min-h-0" />
                 <RunsCard className="min-h-0" />
               </DeckReveal>
@@ -305,16 +333,25 @@ export function MissionDeckView({
               <DeckReveal
                 slot="centre-bottom"
                 reveal={revealBoard}
-                className="flex min-h-[8rem] items-stretch justify-center"
+                className="min-h-[8rem]"
+                bodyClassName="flex items-stretch justify-center"
               >
                 <CaptureCard className="w-full max-w-[28rem]" />
               </DeckReveal>
 
               {/* RIGHT bottom: terminals and the coding workspace */}
-              <DeckReveal slot="right-bottom" reveal={revealBoard} className="grid min-h-[8rem] grid-cols-2 gap-3">
+              <DeckReveal
+                slot="right-bottom"
+                reveal={revealBoard}
+                className="min-h-[8rem]"
+                bodyClassName="grid grid-cols-2 gap-3"
+              >
                 <TerminalsCard className="min-h-0" />
                 <IdeGridCard className="min-h-0" />
               </DeckReveal>
+
+              {/* The launch's last beat: one scan down the whole board. */}
+              {revealBoard && <BoardSweep />}
             </div>
           )}
 
@@ -383,6 +420,9 @@ function BoardCentre({
   const stageRef = useRef<HTMLDivElement>(null);
   const stage = useElementSize(stageRef);
   const orbSize = orbSizeFor(stage.width, stage.height);
+  const reduced = useReducedMotion() ?? false;
+  // The landing ring fires once and leaves the DOM.
+  const [landed, setLanded] = useState(false);
   return (
     <div
       ref={stageRef}
@@ -390,22 +430,35 @@ function BoardCentre({
       style={{ backgroundImage: stageVignette(orbSize) }}
     >
       {/* The same layoutId as the standby's orb: when the board takes over,
-          the orb travels here instead of blinking. */}
-      <motion.div layoutId="deck-orb" layoutDependency={orbSize} transition={ORB_TRAVEL}>
-        <DeckOrb
-          steps={steps}
-          busy={busy}
-          size={orbSize}
-          readouts={readouts}
-          onPress={onPress}
-          pressLabel={pressLabel}
-          pressDisabled={pressDisabled}
-        />
-      </motion.div>
+          the orb travels here instead of blinking — and lands with a ring. */}
+      <div className="relative">
+        <motion.div layoutId="deck-orb" layoutDependency={orbSize} transition={ORB_TRAVEL}>
+          <DeckOrb
+            steps={steps}
+            busy={busy}
+            size={orbSize}
+            readouts={readouts}
+            onPress={onPress}
+            pressLabel={pressLabel}
+            pressDisabled={pressDisabled}
+          />
+        </motion.div>
+        {reveal && !reduced && !landed && (
+          <motion.div
+            aria-hidden
+            data-testid="deck-orb-landing"
+            className="deck-handoff-wave pointer-events-none absolute inset-0 rounded-full"
+            initial={{ opacity: 0, transform: "scale(0.7)" }}
+            animate={{ opacity: [0, 0.85, 0], transform: ["scale(0.7)", "scale(1.05)", "scale(1.35)"] }}
+            transition={{ delay: HANDOFF.landDelayS, duration: HANDOFF.landS, times: [0, 0.15, 1], ease: "easeOut" }}
+            onAnimationComplete={() => setLanded(true)}
+          />
+        )}
+      </div>
       <motion.p
-        initial={reveal ? { opacity: 0 } : false}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.45, duration: 0.4 }}
+        initial={reveal ? { opacity: 0, y: 6 } : false}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: HANDOFF.headlineDelayS, duration: 0.4 }}
         className={cn(
           "max-w-[44ch] text-pretty text-sm leading-relaxed",
           headlineIsAnswer ? "text-foreground" : "text-muted-foreground",
@@ -414,6 +467,40 @@ function BoardCentre({
         {headline}
       </motion.p>
     </div>
+  );
+}
+
+/**
+ * The launch's last beat: once the instruments are in, one scan line runs
+ * down the whole board and is gone — the deck is live. Mounted only for a
+ * board that took over from the standby on this screen; unmounts itself.
+ */
+function BoardSweep() {
+  const reduced = useReducedMotion() ?? false;
+  const [done, setDone] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  // The board's height, once: the bar travels it as a transform (off the
+  // main thread), not as `top`.
+  const [travel, setTravel] = useState(0);
+  useLayoutEffect(() => {
+    const parent = ref.current?.parentElement;
+    if (parent) setTravel(parent.clientHeight);
+  }, []);
+  if (reduced || done) return null;
+  return (
+    <motion.div
+      ref={ref}
+      aria-hidden
+      data-testid="deck-board-sweep"
+      className="deck-scan-bar deck-scan-bar-h deck-board-sweep"
+      initial={{ transform: "translateY(0px)", opacity: 0 }}
+      animate={{ transform: `translateY(${travel}px)`, opacity: [0, 1, 1, 0] }}
+      transition={{
+        transform: { delay: HANDOFF.boardSweepDelayS, duration: HANDOFF.boardSweepS, ease: [0.3, 0, 0.2, 1] },
+        opacity: { delay: HANDOFF.boardSweepDelayS, duration: HANDOFF.boardSweepS, times: [0, 0.1, 0.8, 1] },
+      }}
+      onAnimationComplete={() => setDone(true)}
+    />
   );
 }
 

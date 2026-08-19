@@ -2326,9 +2326,202 @@
       transform: none;
     }
   }
-  /* the scan bar riding the wipe front when a board card powers on */
+  /* ===========================================================
+     The hand-off — the standby's launch and the board's power-on
+     (lib/deckStandby.ts::HANDOFF; DeckStandby, DeckReveal,
+     MissionDeckView). The standby's whole burst lives HERE, keyed
+     on `data-leaving`: the stage flash, the orb's flare, the two
+     shockwaves, the ring's breath-and-burst, the ticks flaring
+     clockwise and the sweep spinning up. CSS on purpose — transform
+     and opacity run on the compositor, so the launch plays even
+     while the main thread is busy mounting the board (the framer
+     beats froze and jumped there, seen 2026-08-19). The timings
+     mirror HANDOFF: flare 0.6 s, wave 0.95 s (+0.14 s echo), ring
+     0.62 s. Gold from the theme tokens on both grounds.
+     =========================================================== */
+  /* the stage flashes gold for a blink */
+  .deck-launch-flash {
+    opacity: 0;
+  }
+  [data-leaving="true"] .deck-launch-flash {
+    animation: deck-launch-flash 500ms ease-out both;
+  }
+  @keyframes deck-launch-flash {
+    0% {
+      opacity: 0;
+    }
+    20% {
+      opacity: 0.14;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  /* the ring draws breath, then bursts past the camera, turning */
+  .deck-launch-ring {
+    transform-origin: 50% 50%;
+  }
+  [data-leaving="true"] .deck-launch-ring {
+    animation: deck-launch-ring 620ms cubic-bezier(0.35, 0, 0.15, 1) both;
+    will-change: transform, opacity;
+  }
+  @keyframes deck-launch-ring {
+    0% {
+      transform: scale(1) rotate(0deg);
+      opacity: 1;
+    }
+    22% {
+      transform: scale(0.95) rotate(-4deg);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1.42) rotate(14deg);
+      opacity: 0;
+    }
+  }
+  /* the orb's flare: a burst of light from the centre */
+  .deck-handoff-flare {
+    background: radial-gradient(
+      circle,
+      hsl(var(--primary) / 0.95) 0%,
+      hsl(var(--primary) / 0.55) 28%,
+      hsl(var(--primary) / 0.18) 52%,
+      hsl(var(--primary) / 0) 70%
+    );
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  [data-leaving="true"] .deck-handoff-flare {
+    animation: deck-handoff-flare 600ms ease-out both;
+    will-change: transform, opacity;
+  }
+  @keyframes deck-handoff-flare {
+    0% {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    18% {
+      opacity: 0.95;
+      transform: scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(2.6);
+    }
+  }
+  /* a shockwave: a bright hairline ring with a glow on both sides. Also
+     the orb's landing ring on the board (framer drives that one). */
+  .deck-handoff-wave {
+    border: 2px solid hsl(var(--primary) / 0.95);
+    box-shadow:
+      0 0 14px 2px hsl(var(--primary) / 0.55),
+      inset 0 0 14px 2px hsl(var(--primary) / 0.35);
+  }
+  .deck-handoff-wave-echo {
+    border-width: 1px;
+    box-shadow:
+      0 0 8px 1px hsl(var(--primary) / 0.4),
+      inset 0 0 8px 1px hsl(var(--primary) / 0.25);
+  }
+  /* a wave rests invisible (framer's inline values win for the landing
+     ring) and fires on leaving; `--wave-scale` (set inline from the
+     measured stage) takes it past the far corner */
+  .deck-handoff-wave {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  [data-leaving="true"] .deck-handoff-wave {
+    animation: deck-handoff-wave 950ms cubic-bezier(0.1, 0.7, 0.2, 1) both;
+    will-change: transform, opacity;
+  }
+  [data-leaving="true"] .deck-handoff-wave-echo {
+    animation-name: deck-handoff-wave-echo;
+    animation-delay: 140ms;
+  }
+  @keyframes deck-handoff-wave {
+    0% {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    10% {
+      opacity: 0.9;
+      transform: scale(1.2);
+    }
+    55% {
+      opacity: 0.5;
+      transform: scale(calc(var(--wave-scale, 6) * 0.7));
+    }
+    100% {
+      opacity: 0;
+      transform: scale(var(--wave-scale, 6));
+    }
+  }
+  @keyframes deck-handoff-wave-echo {
+    0% {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    10% {
+      opacity: 0.6;
+      transform: scale(1.1);
+    }
+    55% {
+      opacity: 0.3;
+      transform: scale(calc(var(--wave-scale, 6) * 0.65));
+    }
+    100% {
+      opacity: 0;
+      transform: scale(var(--wave-scale, 6));
+    }
+  }
+  /* the stage is leaving: every tick flares bright, clockwise, in 0.3 s */
+  [data-leaving="true"] .deck-ring-tick {
+    animation: deck-ring-flare 360ms ease-out both;
+    animation-delay: calc(var(--tick-i, 0) * 2.5ms);
+  }
+  @keyframes deck-ring-flare {
+    0% {
+      opacity: var(--tick-opacity, 0.4);
+    }
+    30% {
+      opacity: 1;
+    }
+    100% {
+      opacity: var(--tick-opacity, 0.4);
+    }
+  }
+  /* … the sweep spins up from one turn in 14 s to one in 0.5 s … */
+  [data-leaving="true"] .deck-ring-sweep {
+    animation-duration: 0.5s;
+  }
+  /* … and the gate arcs flash once, thick and bright */
+  [data-leaving="true"] .deck-gate-arc[data-state="ok"] {
+    animation: deck-arc-flash 480ms ease-out both;
+  }
+  @keyframes deck-arc-flash {
+    0% {
+      opacity: 0.95;
+      stroke-width: 2.5;
+    }
+    25% {
+      opacity: 1;
+      stroke-width: 5;
+    }
+    100% {
+      opacity: 0.95;
+      stroke-width: 2.5;
+    }
+  }
+
+  /* the scan bar riding the wipe front when a board card powers on —
+     horizontal for a top-down wipe, vertical for a sideways one */
   .deck-scan-bar {
     position: absolute;
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  .deck-scan-bar-h {
+    top: 0;
     left: 0;
     right: 0;
     height: 2px;
@@ -2340,7 +2533,47 @@
       hsl(var(--primary) / 0)
     );
     box-shadow: 0 0 10px 1px hsl(var(--primary) / 0.45);
-    pointer-events: none;
+  }
+  .deck-scan-bar-v {
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(
+      180deg,
+      hsl(var(--primary) / 0),
+      hsl(var(--primary) / 0.9) 20%,
+      hsl(var(--primary) / 0.9) 80%,
+      hsl(var(--primary) / 0)
+    );
+    box-shadow: 0 0 10px 1px hsl(var(--primary) / 0.45);
+  }
+  /* the launch's last beat: one scan down the whole board, brighter */
+  .deck-board-sweep {
+    height: 3px;
+    z-index: 5;
+    box-shadow: 0 0 18px 2px hsl(var(--primary) / 0.55);
+  }
+  /* the targeting frame's corner brackets, before a card fills in */
+  .deck-reveal-bracket {
+    border: 0 solid hsl(var(--primary));
+    filter: drop-shadow(0 0 3px hsl(var(--primary) / 0.6));
+  }
+  .deck-reveal-bracket[data-corner="tl"] {
+    border-top-width: 1.5px;
+    border-left-width: 1.5px;
+  }
+  .deck-reveal-bracket[data-corner="tr"] {
+    border-top-width: 1.5px;
+    border-right-width: 1.5px;
+  }
+  .deck-reveal-bracket[data-corner="bl"] {
+    border-bottom-width: 1.5px;
+    border-left-width: 1.5px;
+  }
+  .deck-reveal-bracket[data-corner="br"] {
+    border-bottom-width: 1.5px;
+    border-right-width: 1.5px;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -2353,7 +2586,13 @@
     .deck-boot-line,
     .deck-boot-caret,
     .deck-boot-dots span,
-    .deck-boot-letter {
+    .deck-boot-letter,
+    [data-leaving="true"] .deck-ring-tick,
+    [data-leaving="true"] .deck-gate-arc,
+    .deck-launch-flash,
+    .deck-launch-ring,
+    .deck-handoff-flare,
+    .deck-handoff-wave {
       animation: none !important;
     }
     .deck-ring-tick[data-ignite="true"] {

@@ -205,10 +205,87 @@ export function reticleSizeFor(ring: number): number {
   return Math.max(RETICLE_MIN, Math.min(RETICLE_MAX, Math.round(ring * RETICLE_OF_RING)));
 }
 
+/* ------------------------------------------------------------------ */
+/* The hand-off — the standby's last second and the board's first        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The choreography the moment the board takes over, as ONE timeline in
+ * seconds from the hand-off (the phase flipping to "board"). The maintainer's
+ * verdict on the first cut (2026-08-19): a fade and a wipe read as a hard
+ * switch — "ridiculous". The deck is a mission deck; the hand-off has to be
+ * a launch. So:
+ *
+ *   0.00  the orb flares and a shockwave leaves it; the stage flashes gold
+ *   0.00  the ring draws breath (shrinks a touch), then bursts past the
+ *         camera, turning; its ticks flare clockwise, the sweep spins up
+ *   0.12  the orb travels from the ring's centre to its place on the board
+ *   0.40  the instruments assemble as the wave passes — centre first, then
+ *         outward: a targeting frame draws itself, the card fills in from
+ *         the centre's side with a scan bar on the front, and locks with a
+ *         flash
+ *   0.80  the orb lands: one ring leaves it and dies
+ *   0.95  the standby stage is gone
+ *   1.25  one scan runs down the whole board — the deck is live
+ *
+ * Every figure lives here so the stage (DeckStandby), the cards
+ * (DeckReveal) and the view (MissionDeckView) keep one clock, and the tests
+ * can pin the order without reading three components. The standby's burst
+ * itself (flash, flare, waves, the ring's breath-and-burst) is CSS keyed on
+ * `data-leaving` — index.css mirrors the flare, wave, echo and ring figures
+ * below, so it runs on the compositor whatever the main thread is doing.
+ */
+export const HANDOFF = {
+  /** The orb's flare: a burst of light, gone by the time the wave is out. */
+  flareS: 0.6,
+  /** The shockwave's travel from the orb to past the stage's edge. */
+  waveS: 0.95,
+  /** The second, fainter wave follows the first by this much. */
+  waveEchoDelayS: 0.14,
+  /** The ring: breath in, then burst outward — and how far the breath goes. */
+  ringS: 0.62,
+  ringBreathAt: 0.22,
+  ringBreathScale: 0.95,
+  ringBurstScale: 1.42,
+  ringBurstRotateDeg: 14,
+  /** The corners and the cue leave in this long. */
+  cornerS: 0.3,
+  /** The orb's travel to the board: starts a beat after the flare, takes this long. */
+  travelDelayS: 0.12,
+  travelS: 0.72,
+  /** The standby layer's final fade starts here, so the burst plays out first. */
+  stageFadeDelayS: 0.85,
+  stageFadeS: 0.25,
+  /** The orb's landing ring on the board. */
+  landDelayS: 0.8,
+  landS: 0.55,
+  /** The board's headline fades in once the orb has landed. */
+  headlineDelayS: 1.0,
+  /** The final scan down the whole board. */
+  boardSweepDelayS: 1.25,
+  boardSweepS: 0.5,
+} as const;
+
+/**
+ * How one board instrument powers on (DeckReveal), relative to its slot's
+ * `revealDelayMs`: the targeting frame draws in, the card's content wipes
+ * in a beat later, the lock flash fires as the wipe lands, and the frame
+ * ghost fades once the real frame underneath is there.
+ */
+export const CARD_POWER_ON = {
+  frameS: 0.34,
+  wipeLeadS: 0.16,
+  wipeS: 0.42,
+  lockS: 0.22,
+  ghostFadeDelayS: 0.7,
+  ghostFadeS: 0.3,
+} as const;
+
 /**
  * The reveal order of the board's cards when the board takes over — the
- * centre first, then outward — as a delay in milliseconds for each slot.
- * Slots are named so the view cannot mis-number them.
+ * centre first, then outward, as the shockwave from the orb reaches each
+ * slot — as a delay in milliseconds for each slot. Slots are named so the
+ * view cannot mis-number them.
  */
 export type BoardSlot =
   | "centre-top"
@@ -218,8 +295,8 @@ export type BoardSlot =
   | "left-bottom"
   | "right-bottom";
 
-const REVEAL_BASE_MS = 140;
-const REVEAL_STEP_MS = 90;
+const REVEAL_BASE_MS = 400;
+const REVEAL_STEP_MS = 130;
 const REVEAL_ORDER: Record<BoardSlot, number> = {
   "centre-top": 0,
   "centre-bottom": 1,
@@ -231,4 +308,18 @@ const REVEAL_ORDER: Record<BoardSlot, number> = {
 
 export function revealDelayMs(slot: BoardSlot): number {
   return REVEAL_BASE_MS + REVEAL_ORDER[slot] * REVEAL_STEP_MS;
+}
+
+/**
+ * Which way a slot's content wipes in: away from the orb. The wave comes
+ * from the centre, so a card on the left fills from its right edge leftward,
+ * a card on the right from its left edge rightward, and the centre column
+ * top-down.
+ */
+export type WipeDirection = "down" | "left" | "right";
+
+export function revealWipeFor(slot: BoardSlot): WipeDirection {
+  if (slot.startsWith("left")) return "left";
+  if (slot.startsWith("right")) return "right";
+  return "down";
 }
