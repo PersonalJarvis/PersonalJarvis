@@ -10433,3 +10433,149 @@ window is the bound; a single discarded event is not.
 `test_finishing_a_drop_keeps_the_watch_armed`; the original
 `test_second_generation_after_readback_is_discarded_whole` now asserts the
 watch stays armed).
+
+## BUG-150: on a weak CPU the wake bar appears 1-3 s after "Hey Nova" and the phrase has to be repeated — the confirm re-decoded the whole ring after the tail, stalled its own intake until the fanout dropped audio, and three language models streamed stage 1 on every chunk (HIGH, FIXED 2026-08-19)
+
+**Symptom.** Maintainer report from a second machine (i7-10510U, 4 cores /
+15 W, Windows 11): "the wake word spawns delayed, maybe a second", "on the
+main machine it never does". Live log of that box: `early_shown=0` in every
+heartbeat, `oww_q=19` (the 0.6 s fanout queue FULL) at every candidate, five
+"verify SUPPRESSED — re-score did not re-hear 'Hey Nova' (heard '')" inside
+two minutes while the user was repeating the phrase, and an accepted wake
+whose bar arrived ~1 s after the phrase.
+
+**Measured on that box** (synthetic "Hey Nova", real de/en/es small models,
+scratch timeline bench, idle CPU): stage-1 partial at −0.2 s before speech
+end (fine); fixed 0.6 s confirm tail; then the from-scratch confirm
+(grammar re-score + free decode over the 3 s ring) took **0.4-0.9 s** —
+free decode alone 300-700 ms (0.14-0.2x realtime) — so the bar came at
+**+1.0-1.6 s** after speech end, **+2.9 s** with four busy threads (the
+box runs OBS, WebView, Discord, the dictation preview Whisper). Three
+models' stage 1 cost 25-30 ms per 32 ms chunk during speech (~0.8x of one
+core; p95 75 ms = 2.3x under load, i.e. the detector fell behind). During
+the confirm the detect loop consumed nothing, so the 19-chunk queue filled
+and dropped the OLDEST frames — holes inside the very audio the re-score
+then judged ("heard ''"). On a desktop CPU the same path costs ~0.1-0.2 s
+and is perceived as instant.
+
+**Fixes (`jarvis/plugins/wake/vosk_kws_provider.py`, `jarvis/speech/pipeline.py`).**
+
+1. *Streamed confirm.* A partial candidate's authoritative confirm now takes
+   its grammar + free recognizers at PARTIAL time, feeds them the ring
+   immediately and every tail chunk as it lands (`_StreamingVerify`: one
+   single-worker executor per recognizer for the feeds — AP-24, never two
+   callers on one native recognizer — and the two finals sequentially on
+   the finishing thread, see BUG-151); at tail end only `FinalResult` + the
+   unchanged judgement run (`_finish_streaming_verify` → `_judge_decoded`). Same
+   audio, same recognizers, same thresholds — Kaldi's `AcceptWaveform`
+   already slices any buffer into 0.2 s steps internally, so the chunking
+   cannot change the decode. The from-scratch path remains for finals,
+   latched retries, the sibling rescue and the early check, and is the
+   fallback when streaming errors (never a blind accept). Bench
+   (`scripts/vosk_wake_bench.py`, 64 files × 2 phrases): decision-identical
+   to the baseline, file by file. Timeline on the weak box (quiet): bar at
+   **+0.40-0.48 s** after speech end (idle and busy ×4), finish 20-70 ms;
+   on the same box at 100 % load from other apps the finish still took
+   only 0.2-0.3 s where the from-scratch confirm took 1.3 s.
+2. *Intake budget as time, honoured only with batching.* The detector
+   declares `coalesce_catchup_s = 1.0` and `intake_backlog_s = 3.0` (the
+   ring length); `_wake_catchup_budget` turns both into capture blocks
+   (the old `coalesce_catchup_chunks = 10` was chosen for 100 ms blocks and
+   silently became 320 ms when the block shrank to 32 ms). A detector that
+   cannot catch up keeps the generic 0.6 s queue — a deeper queue without
+   batching is just a later wake.
+3. *Stage-1 CPU budget.* Stage 1 demotes the LAST secondary model when its
+   own decode cost proves it cannot keep up (`_STAGE1_SLOW_RT` = 2.0x on 4
+   of the last 8 calls); the demoted model stays loaded for the verify and
+   the sibling rescue; the primary is never demoted; the set is restored on
+   the next `detect()` session so a transient load costs nothing lasting.
+   Silence decodes (~0.03x) and a desktop CPU (~0.1x per model) never trip
+   it.
+
+**Not changed (checked).** The recognizer-stock replenish after a fire does
+NOT collide with the realtime session build: the pipeline closes the
+detector generator on the first yield, so the post-fire `_fresh_recs()`
+never runs; the replenish happens at the start of the next wake session.
+The analysis note claiming a burst during session assembly was wrong.
+
+**Frontier.** A wake spoken in one breath with the command still loses the
+~0.4 s between phrase end and the fire unless the early candidate armed the
+preroll — the pipeline's confirmed-wake handoff seeds from the candidate
+preroll only. The `es` model on a `de` box with an English-looking name is
+pure cost until demotion; a vocabulary-aware model set is the cleaner fix.
+
+**Class rule.** An always-on ear must never pay a multi-hundred-ms native
+decode on the fire path that it could have paid during the wait it is
+already sitting out — and it must never stop consuming its own intake
+while it deliberates; bound the work, not the listening.
+
+**Guards.** `tests/unit/plugins/wake/test_vosk_kws_provider.py`
+(`test_partial_candidate_confirm_is_streamed_during_the_tail`,
+`test_final_candidates_confirm_from_scratch`,
+`test_streamed_confirm_error_falls_back_to_from_scratch`,
+`test_positive_early_check_discards_the_streamed_confirm`,
+`test_stage1_budget_demotes_the_last_secondary_and_never_the_primary`,
+`test_detect_demotes_a_slow_secondary_but_keeps_it_for_the_rescue`,
+`test_stage1_demotion_is_reset_per_detect_session`,
+`test_provider_advertises_catchup_coalescing`);
+`tests/unit/speech/test_wake_queue_coalesce.py`
+(`test_catchup_budget_resolves_seconds_to_capture_blocks`,
+`test_catchup_budget_defaults_without_the_capability`,
+`test_catchup_budget_ignores_garbage_values`,
+`test_vosk_provider_declares_both_budgets`).
+
+## BUG-151: libvosk crashes the whole process under concurrent recognizer churn — the wake engine's parallel verify design hits it (HIGH, OPEN 2026-08-19)
+
+**Symptom.** `scripts/vosk_wake_bench.py --phrase "Hey Jarvis" --language de`
+dies with exit 139 ("Windows fatal exception: access violation", via
+`python -X faulthandler`) part-way through the corpus — at HEAD before the
+BUG-150 change 3 of 3 runs on the 4-core laptop that afternoon, 2 of 4 runs
+after it (one baseline run in the morning passed). The crash thread is
+always inside a native recognizer call: stage-1 `AcceptWaveform`
+(`_grammar_hit`) or the stock prewarm's `FinalResult` (`_build_verify_rec`
+in the replenish thread), with other threads decoding concurrently. The
+same libvosk runs inside the desktop process, so in production this is an
+app crash, not a log line. Plausibly the same memory-corruption class as
+the macOS "malformed JSON from `Result()`" glitch already guarded by
+`_parse_recognizer_json`.
+
+**Minimal repro (`scripts/vosk_native_stress.py`, vosk 0.3.44, Windows
+11, Python 3.13, one shared `Model`).** Five threads each looping
+`KaldiRecognizer(model) → AcceptWaveform(0.1-0.3 s) → FinalResult() →
+drop`, plus one thread streaming 3 s of noise through its own recognizer:
+access violation after 5-50 s. Variants that SURVIVED 60-180 s: six
+long-lived recognizers decoding + `FinalResult`/`Reset` concurrently (no
+churn); create/free churn WITHOUT decoding (280 k recognizers) next to a
+decoder; churn with `AcceptWaveform` only or `AcceptWaveform + PartialResult`
+(~80 k); `FinalResult` without audio (165 k); every native call behind ONE
+global lock. Variants that CRASHED: churn with `AcceptWaveform +
+FinalResult` on 0.1 s silence / 0.3 s silence / 0.3 s noise; the same with
+finals serialised among themselves; finals exclusive vs decodes (RW); finals
++ constructions exclusive (1 of 2 runs). So: many concurrent short
+decode-and-finalise cycles are unsafe in this build, and no cheap partial
+lock protocol found so far is reliably sufficient.
+
+**Why the engine hits it.** Every candidate runs the early check
+(grammar + free decode in two threads), the authoritative confirm (two
+more), optionally N sibling rescues (two each, concurrently), the
+competition pass, AND the replenish thread's prewarm
+(`AcceptWaveform(0.3 s silence) + FinalResult + Reset`) — all short
+decode-and-finalise cycles, exactly the repro pattern, on top of stage 1.
+BUG-150 deliberately adds only ONE native thread (single-worker
+`_StreamingVerify`), but does not reduce the pre-existing churn.
+
+**Mitigation options (not done here).** (a) Serialise every native
+recognizer call process-wide behind one lock — proven safe, but it
+re-serialises the grammar/free pair and the sibling rescues (the 2026-07-10
+spawn-latency win) and stalls stage 1 during every verify; with the
+BUG-150 streamed confirm the fire-path cost of that is small, the early
+check and rescues pay it. (b) Drop the prewarm's `FinalResult` (keep
+`AcceptWaveform(silence) + Reset` — measure that the lazy-init saving
+survives and decisions stay identical, per the 2026-07-11 parity method).
+(c) Move all Vosk work into ONE dedicated native thread with a queue. (d)
+Upgrade/patch libvosk. Whichever is chosen must be re-measured with the
+repro script AND the bench (3/3 clean runs on the laptop) before it counts.
+
+**Guards.** None in CI — a crash test cannot run without the native model;
+`scripts/vosk_native_stress.py churn 180` (3 x clean) plus 3/3 clean bench
+runs on the weak laptop are the acceptance test until a fix lands.

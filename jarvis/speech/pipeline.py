@@ -1842,6 +1842,42 @@ def _looks_like_complete_smalltalk(text: str) -> bool:
     )
 
 
+def _wake_catchup_budget(detector: Any) -> tuple[int, int]:
+    """Resolve a wake detector's fanout budgets: (coalesce chunks, queue depth).
+
+    Both are TIME budgets the detector declares in seconds and this turns into
+    capture blocks — ``capture_chunks_for_duration`` is the one place that
+    knows the block size, so a block-size change can never silently shrink a
+    "1 s batch" to 320 ms again (that is exactly what happened when the block
+    went from 100 ms to 32 ms under a chunk-count attribute).
+
+    * ``coalesce_catchup_s`` > 0: the detector can consume variable buffer
+      sizes, so a backlog may be drained as ONE batch covering that much
+      audio (see ``_queue_iter``). Absent/0 → no coalescing (1).
+    * ``intake_backlog_s``: how far behind live audio the detector may fall
+      before the fanout drops its oldest frame. Honoured ONLY for a detector
+      that coalesces — one that cannot catch up must stay near-present on the
+      generic ``REALTIME_QUEUE_CHUNKS`` budget, or a deeper queue would only
+      mean a later wake. Floored at the generic budget.
+    """
+    coalesce = 1
+    try:
+        coalesce_s = float(getattr(detector, "coalesce_catchup_s", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        coalesce_s = 0.0
+    if coalesce_s > 0.0:
+        coalesce = max(2, capture_chunks_for_duration(coalesce_s))
+    depth = REALTIME_QUEUE_CHUNKS
+    if coalesce > 1:
+        try:
+            backlog_s = float(getattr(detector, "intake_backlog_s", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            backlog_s = 0.0
+        if backlog_s > 0.0:
+            depth = max(REALTIME_QUEUE_CHUNKS, capture_chunks_for_duration(backlog_s))
+    return coalesce, depth
+
+
 async def _queue_iter(
     q: asyncio.Queue, *, coalesce_max_chunks: int = 1
 ) -> AsyncIterator[AudioChunk]:
@@ -1857,9 +1893,9 @@ async def _queue_iter(
     grinding through stale audio at the same rate it arrives. When the
     consumer is keeping up the queue is empty and every chunk passes through
     untouched, so the caught-up hot path is byte-identical to before. Only a
-    detector that declares the capability (``coalesce_catchup_chunks``) gets
-    batches — a provider with fixed frame-size expectations keeps the
-    per-chunk contract.
+    detector that declares the capability (``coalesce_catchup_s``, resolved by
+    ``_wake_catchup_budget``) gets batches — a provider with fixed frame-size
+    expectations keeps the per-chunk contract.
     """
     while True:
         chunk = await q.get()
@@ -7479,7 +7515,19 @@ class SpeechPipeline:
         # Keep OWW within ~0.6 s and the slower Whisper consumer within ~1.2 s;
         # both queues drop oldest on overflow, so an overloaded host evaluates
         # recent audio instead of a wake word heard several seconds ago.
-        oww_queue: asyncio.Queue = asyncio.Queue(maxsize=REALTIME_QUEUE_CHUNKS)
+        #
+        # A detector that can CATCH UP in batches (``coalesce_catchup_s``, see
+        # ``_wake_catchup_budget``) may declare a deeper ``intake_backlog_s``:
+        # its confirm pass blocks its own consumption for 0.4-0.9 s on a weak
+        # CPU, which overflowed the 0.6 s queue at every candidate (live
+        # 2026-08-19, ``oww_q=19``) and dropped frames INSIDE the audio it
+        # was about to verify — the re-score then heard '' and the user had to
+        # repeat. With batching it drains a deeper backlog in one or two
+        # decodes, so nothing it could still use is ever dropped; a detector
+        # without batching keeps the shallow budget, because for it a deeper
+        # queue would only mean a later wake.
+        coalesce, intake_chunks = _wake_catchup_budget(self._wake)
+        oww_queue: asyncio.Queue = asyncio.Queue(maxsize=intake_chunks)
         whisper_queue: asyncio.Queue = asyncio.Queue(
             maxsize=REALTIME_QUEUE_CHUNKS * 2
         )
@@ -7597,13 +7645,11 @@ class SpeechPipeline:
 
         async def _run_oww() -> str:
             # Capability-gated catch-up: a detector that can consume variable
-            # chunk sizes (vosk_kws) advertises how many backlogged capture
-            # blocks may be coalesced into one catch-up batch, so a busy CPU
-            # never leaves it grinding through seconds-stale audio (the
-            # inconsistent multi-second wake delay, live 2026-07-21).
-            coalesce = max(
-                1, int(getattr(self._wake, "coalesce_catchup_chunks", 1) or 1)
-            )
+            # chunk sizes (vosk_kws) advertises how much backlogged audio may
+            # be coalesced into one catch-up batch, so a busy CPU never leaves
+            # it grinding through seconds-stale audio (the inconsistent
+            # multi-second wake delay, live 2026-07-21). ``coalesce`` comes
+            # from the same resolver that sized the queue above.
             async for kw in self._wake.detect(
                 _queue_iter(oww_queue, coalesce_max_chunks=coalesce)
             ):

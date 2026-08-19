@@ -215,16 +215,22 @@ class _FakeModel:
 def fake_vosk(monkeypatch):
     mod = types.ModuleType("vosk")
     # "model" = the most recently built model (single-model tests);
-    # "models" = every model by path (multi-model tests).
-    state = {"model": None, "models": {}}
+    # "models" = every model by path (multi-model tests);
+    # "recs" = every recognizer built, in order (streaming-confirm tests).
+    state = {"model": None, "models": {}, "recs": []}
 
     def _model_factory(path):  # noqa: ANN001
         state["model"] = _FakeModel(path)
         state["models"][path] = state["model"]
         return state["model"]
 
+    def _rec_factory(model, rate, grammar=None):  # noqa: ANN001
+        rec = _FakeRecognizer(model, rate, grammar)
+        state["recs"].append(rec)
+        return rec
+
     mod.Model = _model_factory
-    mod.KaldiRecognizer = _FakeRecognizer
+    mod.KaldiRecognizer = _rec_factory
     mod.SetLogLevel = lambda *_a: None
     monkeypatch.setitem(sys.modules, "vosk", mod)
     return state
@@ -426,7 +432,12 @@ async def test_verified_candidate_prefix_cannot_be_revoked_by_following_speech(
 async def test_rejected_truncated_prefix_still_uses_full_window_fallback(
     fake_vosk, monkeypatch
 ) -> None:
-    """A too-early negative never eats a wake completed during the tail."""
+    """A too-early negative never eats a wake completed during the tail.
+
+    The tail-end confirm is the STREAMED one (its decode ran during the tail,
+    ``_finish_streaming_verify``); the from-scratch ``_verify_candidate`` is
+    only its error fallback. Exactly one tail-end confirm must run and it
+    must decide — never the early negative."""
     events: list[bool] = []
     fallback_calls = 0
 
@@ -449,7 +460,9 @@ async def test_rejected_truncated_prefix_still_uses_full_window_fallback(
 
     assert fired == ["nova"]
     assert events == []
-    assert fallback_calls == 1
+    assert p.stats()["verify_streamed"] == 1
+    assert fallback_calls == 0  # the streamed confirm decided; no re-decode
+    assert p.stats()["verify_stream_fallback"] == 0
 
 
 def test_early_check_fails_closed_on_infra_error(fake_vosk, monkeypatch) -> None:
@@ -763,8 +776,14 @@ async def test_sibling_rescue_verifies_siblings_concurrently(
 def test_provider_advertises_catchup_coalescing() -> None:
     """The pipeline's ``_queue_iter`` catch-up batching is capability-gated on
     this attribute — losing it silently reverts the wake path to grinding
-    through seconds-stale audio 100 ms at a time on a busy CPU."""
-    assert VoskKwsProvider.coalesce_catchup_chunks > 1
+    through seconds-stale audio one block at a time on a busy CPU. It is a
+    TIME budget (seconds), resolved to capture blocks by the pipeline, so a
+    capture block-size change can never shrink the batch again."""
+    assert VoskKwsProvider.coalesce_catchup_s >= 0.5
+    # The deeper intake budget is only meaningful together with batching and
+    # must cover the confirm ring — a frame dropped inside the ring is a hole
+    # the re-score hears as ''.
+    assert VoskKwsProvider.intake_backlog_s >= 2.0
 
 
 # --- prewarmed verify-recognizer stock ------------------------------------------
@@ -865,3 +884,223 @@ def test_verify_candidate_runs_grammar_and_free_decode_concurrently(monkeypatch)
         "SEQUENTIALLY, not concurrently"
     )
     assert result is True
+
+
+# --- weak-CPU spawn latency: streamed confirm ---------------------------------
+# Live forensic 2026-08-19 (4-core 15 W laptop): the authoritative confirm
+# re-decoded the whole 3 s ring AFTER the tail (0.4-0.9 s there). A partial
+# candidate's confirm now decodes DURING the tail — same recognizers, same
+# audio, same judgement; only its timing moved. These pin that contract.
+
+
+async def test_partial_candidate_confirm_is_streamed_during_the_tail(
+    fake_vosk, monkeypatch
+) -> None:
+    """The confirm's grammar + free recognizers are taken at PARTIAL time and
+    fed the ring plus every tail chunk; at tail end only the finalize runs.
+    Observable: the fire is a STREAMED verify, no from-scratch decode ran,
+    and the free recognizer that decided saw more than one feed (the ring,
+    then the tail chunks one by one). The early check is held negative so
+    the tail-end confirm — not the early verdict — is what fires."""
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
+    monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: False)
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == ["nova"]
+    assert p.stats()["verify_streamed"] == 1
+    assert p.stats()["verify_scratch"] == 0
+    assert p.stats()["verify_stream_fallback"] == 0
+    # The early check also builds a free recognizer (one feed: the truncated
+    # ring); the streamed confirm's free recognizer is the one fed repeatedly.
+    free_feeds = sorted(
+        r._chunks for r in fake_vosk["recs"] if r._grammar is None  # noqa: SLF001
+    )
+    assert free_feeds, "no free recognizer was built"
+    # partial at chunk 3 + 0.6 s tail = 6 tail chunks -> ring + 6 feeds
+    assert free_feeds[-1] >= 1 + 6
+
+
+async def test_final_candidates_confirm_from_scratch(fake_vosk) -> None:
+    """No tail, nothing to stream: ``confirm_tail_s=0`` verifies the ring at
+    once with the from-scratch decode (the path finals and latched retries
+    take)."""
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova", confirm_tail_s=0.0)
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == ["nova"]
+    assert p.stats()["verify_scratch"] == 1
+    assert p.stats()["verify_streamed"] == 0
+
+
+async def test_streamed_confirm_error_falls_back_to_from_scratch(
+    fake_vosk, monkeypatch
+) -> None:
+    """A broken streamed decode must not accept blindly NOR eat the wake: it
+    re-runs yesterday's from-scratch confirm over the ring (which keeps the
+    usual fail-open polarity)."""
+    from jarvis.plugins.wake import vosk_kws_provider as mod
+
+    def _broken_finish(self):  # noqa: ANN001
+        raise RuntimeError("native finalize glitch")
+
+    monkeypatch.setattr(mod._StreamingVerify, "finish", _broken_finish)  # noqa: SLF001
+    scratch_calls = 0
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova")
+    # Hold the early check negative so the tail-end confirm is what decides.
+    monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: False)
+    original = p._verify_candidate  # noqa: SLF001
+
+    def _counting(window, model_path=None):  # noqa: ANN001
+        nonlocal scratch_calls
+        scratch_calls += 1
+        return original(window, model_path)
+
+    monkeypatch.setattr(p, "_verify_candidate", _counting)
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == ["nova"]
+    assert scratch_calls == 1
+    assert p.stats()["verify_stream_fallback"] == 1
+    assert p.stats()["verify_streamed"] == 0
+
+
+async def test_positive_early_check_discards_the_streamed_confirm(
+    fake_vosk, monkeypatch
+) -> None:
+    """An early-confirmed wake fires on the early verdict alone; the streamed
+    confirm it no longer needs is dropped, never finalized (no duplicate
+    decode, no second judgement that could contradict the verdict)."""
+    p = VoskKwsProvider("Hey Nova", model_path="fake", keyword="nova", confirm_tail_s=600.0)
+    monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: True)
+
+    fired: list[str] = []
+
+    async def _drive() -> None:
+        async def _iter() -> AsyncIterator[AudioChunk]:
+            for _ in range(12):
+                await asyncio.sleep(0.02)
+                yield _chunk()
+
+        async for kw in p.detect(_iter()):
+            fired.append(kw)
+
+    await asyncio.wait_for(_drive(), timeout=5.0)
+    assert fired == ["nova"]
+    assert p.stats()["verify_streamed"] == 0
+    assert p.stats()["verify_scratch"] == 0
+
+
+# --- weak-CPU spawn latency: stage-1 CPU budget -------------------------------
+# Three language models streamed stage 1 on every chunk; on the same laptop
+# that was ~0.8x realtime of a core during speech and >2x under desktop load,
+# so the detector fell seconds behind. The provider now demotes the LAST
+# secondary model when its own decode cost proves it cannot keep up.
+
+
+def test_stage1_budget_demotes_the_last_secondary_and_never_the_primary() -> None:
+    from jarvis.plugins.wake import vosk_kws_provider as mod
+
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="primary",
+        model_paths=["primary", "sib-a", "sib-b"],
+        keyword="nova",
+    )
+    # Keeping up (0.8x) never demotes, however long it lasts.
+    for _ in range(3 * mod._STAGE1_RT_WINDOW):  # noqa: SLF001
+        assert p._note_stage1_cost(0.8 * 0.032, 0.032) is False  # noqa: SLF001
+    assert p._stage1_paths == ["primary", "sib-a", "sib-b"]  # noqa: SLF001
+    # A few slow calls alone do not trip it (one GC pause, one scheduler hiccup).
+    for _ in range(mod._STAGE1_SLOW_CALLS - 1):  # noqa: SLF001
+        assert p._note_stage1_cost(3.0 * 0.032, 0.032) is False  # noqa: SLF001
+    # ...but a sustained run does: last secondary goes first.
+    demoted = False
+    for _ in range(mod._STAGE1_RT_WINDOW):  # noqa: SLF001
+        demoted = demoted or p._note_stage1_cost(3.0 * 0.032, 0.032)  # noqa: SLF001
+    assert demoted is True
+    assert p._stage1_paths == ["primary", "sib-a"]  # noqa: SLF001
+    assert p.stats()["stage1_demoted"] == 1
+    assert p.stats()["stage1_models"] == 2
+    # The window restarts after a demotion — the next one needs fresh evidence.
+    for _ in range(mod._STAGE1_RT_WINDOW):  # noqa: SLF001
+        p._note_stage1_cost(3.0 * 0.032, 0.032)  # noqa: SLF001
+    assert p._stage1_paths == ["primary"]  # noqa: SLF001
+    # The primary is never demoted, no matter how slow the box is.
+    for _ in range(3 * mod._STAGE1_RT_WINDOW):  # noqa: SLF001
+        assert p._note_stage1_cost(10.0 * 0.032, 0.032) is False  # noqa: SLF001
+    assert p._stage1_paths == ["primary"]  # noqa: SLF001
+    assert p.stats()["stage1_demoted"] == 2
+    # Zero-length audio (a patched/skipped stage 1) is not evidence.
+    assert p._note_stage1_cost(1.0, 0.0) is False  # noqa: SLF001
+
+
+def _force_slow_stage1(p: VoskKwsProvider, monkeypatch, rt: float) -> None:
+    """Make every stage-1 call report ``rt`` x realtime (decision input only)."""
+    original = p._grammar_hit_all  # noqa: SLF001
+
+    def _slow(recs, pcm):  # noqa: ANN001
+        found = original(recs, pcm)
+        audio_s = len(pcm) / (2.0 * 16000)
+        p._last_stage1_cost = (rt * audio_s, audio_s)  # noqa: SLF001
+        return found
+
+    monkeypatch.setattr(p, "_grammar_hit_all", _slow)
+
+
+async def test_detect_demotes_a_slow_secondary_but_keeps_it_for_the_rescue(
+    fake_vosk, monkeypatch
+) -> None:
+    """In the loop: a sustained over-budget stage 1 drops the sibling from the
+    streaming set (its recognizer set is rebuilt without it), yet the sibling
+    still rescues a candidate the primary cannot verify — demotion trades
+    stage-1 CPU, never the union's verify ear."""
+    from jarvis.plugins.wake import vosk_kws_provider as mod
+
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="primary",
+        model_paths=["primary", "sibling"],
+        keyword="nova",
+        confirm_tail_s=0.0,
+    )
+    p._ensure_model("primary")  # noqa: SLF001
+    p._ensure_model("sibling")  # noqa: SLF001
+    # The primary hears the candidate but its free ear contradicts it; the
+    # sibling's free ear confirms. The sibling never stage-1-hits itself.
+    fake_vosk["models"]["primary"].free_text = "das ist ganz anders"  # i18n-allow: test utterance
+    # The demotion (after _STAGE1_RT_WINDOW slow calls) rebuilds the primary's
+    # streaming recognizer, whose hit counter restarts — so the first hit lands
+    # AFTER the sibling was demoted, which is the case under test.
+    fake_vosk["models"]["primary"].fire_after = mod._STAGE1_RT_WINDOW + 1  # noqa: SLF001
+    fake_vosk["models"]["sibling"].fire_after = 10**9
+    _force_slow_stage1(p, monkeypatch, rt=3.0)
+
+    fired = await _run_detect(p, [_chunk() for _ in range(2 * mod._STAGE1_RT_WINDOW + 4)])  # noqa: SLF001
+
+    assert p.stats()["stage1_demoted"] == 1
+    assert p.stats()["stage1_models"] == 1
+    assert fired == ["nova"]  # primary rejected -> demoted sibling rescued
+    assert p.stats()["suppressed_confirm"] == 0
+
+
+async def test_stage1_demotion_is_reset_per_detect_session(fake_vosk, monkeypatch) -> None:
+    """A transient load (a build, a dictation) must not cost the box a model
+    for the rest of the process: every ``detect()`` session starts with the
+    full set again and re-measures."""
+    from jarvis.plugins.wake import vosk_kws_provider as mod
+
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="primary",
+        model_paths=["primary", "sibling"],
+        keyword="nova",
+    )
+    p._ensure_model("primary")  # noqa: SLF001
+    p._ensure_model("sibling")  # noqa: SLF001
+    for m in fake_vosk["models"].values():
+        m.fire_after = 10**9  # silence: nothing ever hits
+    _force_slow_stage1(p, monkeypatch, rt=3.0)
+    await _run_detect(p, [_silent_chunk() for _ in range(mod._STAGE1_RT_WINDOW + 2)])  # noqa: SLF001
+    assert p.stats()["stage1_models"] == 1
+    # Second session on a box that keeps up now: full set, no demotion.
+    _force_slow_stage1(p, monkeypatch, rt=0.3)
+    await _run_detect(p, [_silent_chunk() for _ in range(mod._STAGE1_RT_WINDOW + 2)])  # noqa: SLF001
+    assert p.stats()["stage1_models"] == 2
+    assert p.stats()["stage1_demoted"] == 1  # the earlier one, unchanged

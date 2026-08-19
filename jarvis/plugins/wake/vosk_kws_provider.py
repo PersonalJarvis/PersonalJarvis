@@ -55,6 +55,46 @@ mini-verify leaks 0/2500 ("hey jarvis") and 1-2/2500 (worst-case single
 word) while early-confirming ~a third of eventual fires. Infrastructure errors
 fail CLOSED in the prefix check — the opposite polarity of the fallback
 full-window confirm, which fails open so it can never eat a real wake.
+
+**Weak-CPU spawn latency (measured 2026-08-19 on a 4-core 15 W laptop).**
+Three costs made the bar arrive 1-3 s after the phrase there where a desktop
+CPU shows it ~0.5 s after:
+
+* The authoritative confirm re-decoded the whole 3 s ring from scratch AFTER
+  the confirm tail (0.4-0.9 s on that CPU vs ~0.1-0.2 s on a fast one). The
+  confirm is now STREAMED: its grammar + free recognizers are taken at
+  PARTIAL time, fed the ring immediately and then every tail chunk as it
+  lands, so at tail end only ``FinalResult`` remains (~0.1 s). Same audio,
+  same recognizers, same judgement — only *when* the decode runs moved
+  (``_StreamingVerify``). The from-scratch path stays for finals, latched
+  retries and the sibling rescue, and is the fallback when streaming errors.
+* While the loop awaited that confirm it consumed no audio; the fanout
+  queue (0.6 s) overflowed and DROPPED the oldest frames (live: ``oww_q=19``
+  at every candidate) — the ring then had holes and the re-score heard ''
+  ("say it twice"). The detector now declares a deeper intake budget
+  (``intake_backlog_s``) and a 1 s catch-up batch (``coalesce_catchup_s``);
+  the pipeline honours both only for detectors that can catch up in batches.
+* Every installed language model streamed stage 1 on every chunk (three
+  models ~0.8x realtime of one core during speech on that CPU; >2x under
+  desktop load — the detector fell seconds behind). Stage 1 now DEMOTES the
+  last secondary model when its own decode cost proves it cannot keep up
+  (``_STAGE1_SLOW_RT`` on several recent calls); demoted models stay
+  loaded for verify/rescue and return on the next ``detect()`` session. The
+  primary model is never demoted.
+
+**Native concurrency limit (found 2026-08-19, PRE-EXISTING, open).** libvosk
+0.3.44 is safe for many recognizers DECODING concurrently on one Model, but
+under a high rate of concurrent recognizer construction + short decode +
+``FinalResult`` it crashes the process with an access violation (Windows,
+reproduced in ~5-50 s with five threads; the real-model bench
+``scripts/vosk_wake_bench.py`` hit it 3/3 at HEAD before this change and
+2/4 after). No partial lock protocol tried (finals only; finals exclusive
+vs decodes; finals + constructions exclusive) was reliably enough; full
+serialisation of every native call survives. This module therefore adds no
+new concurrent decode-and-finalise cycle (the streamed confirm decodes in
+parallel but finalises sequentially on one thread) and keeps the rest of
+the pre-existing design; the fix proper is tracked in docs/BUGS.md
+(BUG-151).
 """
 from __future__ import annotations
 
@@ -336,6 +376,23 @@ _REJECTED_CANDIDATE_BACKOFF_S = 2.0
 # passed).
 _CONFIRM_TAIL_S = 0.6
 
+# --- stage-1 CPU budget (weak-CPU forensic 2026-08-19) -----------------------
+# Stage 1 runs one streaming grammar per installed model on EVERY chunk. Its
+# cost is the acoustic model's forward pass per model (~0.3x realtime per small
+# model on a 15 W laptop core, ~0.1x on a desktop core); three models plus a
+# busy desktop pushed that above realtime, the fanout backlog grew and every
+# wake was heard late. A call whose decode took longer than this multiple of
+# the audio it covered is "losing ground"; when that happens on
+# ``_STAGE1_SLOW_CALLS`` of the last ``_STAGE1_RT_WINDOW`` calls the LAST
+# secondary model is demoted from stage 1 (it stays loaded for the verify and
+# sibling rescue). 2.0 separates the regimes measured on that laptop: three
+# models keeping up sat at ~0.8x (p95) during speech, the overloaded box at
+# 2.3x and above. Silence decodes are cheap (~0.03x), so a quiet room never
+# trips it, and a desktop CPU never reaches it at all.
+_STAGE1_SLOW_RT = 2.0
+_STAGE1_SLOW_CALLS = 4
+_STAGE1_RT_WINDOW = 8
+
 def _folded(text: str) -> str:
     return " ".join(sound_fold(t) for t in normalize_phrase_for_match(text))
 
@@ -571,6 +628,108 @@ def candidate_shape_ok(
     ) == SHAPE_WAKE
 
 
+class _StreamingVerify:
+    """The authoritative confirm's decode, paid DURING the confirm tail.
+
+    Why: the confirm used to run only after the tail had landed, re-decoding
+    the whole 3 s ring from scratch — 0.4-0.9 s on a 15 W laptop core, i.e.
+    most of the spawn latency there. Kaldi recognizers are streaming decoders,
+    so the SAME two one-shot recognizers (grammar re-score + free ear) can
+    start on the ring the moment the partial fires and then eat each tail
+    chunk as it arrives; at tail end only ``FinalResult`` is left. Audio,
+    recognizers and every downstream threshold are unchanged — only the moment
+    the decode runs moved, which is why this is a latency change and not a
+    decision change. (``AcceptWaveform`` slices any buffer into 0.2 s steps
+    internally, so feeding the ring and then 32 ms chunks decodes exactly what
+    one 3.6 s buffer would.)
+
+    Threading, chosen against the libvosk limits measured 2026-08-19 (module
+    note, BUG-151): FEEDS run on one single-worker executor per recognizer —
+    ordered, never overlapping on one native recognizer (AP-24), and the two
+    recognizers decode concurrently, which is the proven-safe pattern (many
+    recognizers decoding at once on one Model). The two FINALS run
+    sequentially on the finishing thread after every feed has landed — the
+    concurrent short-decode-and-finalise cycle is the one that crashes that
+    build, so this class never adds one. The window and the normalised pcm are
+    accumulated here so the judgement sees exactly what the recognizers
+    decoded. Peak normalisation uses the gain measured over the ring at
+    partial time; the tail keeps that gain (clipped), which is the one place
+    this differs from the from-scratch path — the phrase itself, the part the
+    re-score and the span RMS judge, is the ring.
+    """
+
+    def __init__(
+        self,
+        model_path: str | None,
+        grammar_rec: Any,
+        free_rec: Any,
+        ring: np.ndarray,
+        *,
+        target_peak: float,
+        max_gain: float,
+    ) -> None:
+        self.model_path = model_path
+        self._grammar = grammar_rec
+        self._free = free_rec
+        peak = float(np.max(np.abs(ring))) if len(ring) else 0.0
+        self._gain = min(target_peak / peak, max_gain) if peak > 1e-6 else 1.0
+        self._parts: list[np.ndarray] = []
+        self._pcm_parts: list[bytes] = []
+        self._g_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="vosk-verify-grammar"
+        )
+        self._f_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="vosk-verify-free"
+        )
+        self._pending: list[Any] = []
+        self.feed(ring)
+
+    def _normalise(self, audio: np.ndarray) -> tuple[np.ndarray, bytes]:
+        window = np.clip(audio * self._gain, -1.0, 1.0)
+        return window, (window * 32767.0).astype(np.int16).tobytes()
+
+    def feed(self, audio: np.ndarray) -> None:
+        """Queue more audio (float32 [-1, 1]) for both recognizers, in order."""
+        if not len(audio):
+            return
+        window, pcm = self._normalise(audio)
+        self._parts.append(window)
+        self._pcm_parts.append(pcm)
+        # A failed feed is surfaced by finish() through the stored futures,
+        # never raised into the detect loop.
+        self._pending.append(self._g_pool.submit(self._grammar.AcceptWaveform, pcm))
+        self._pending.append(self._f_pool.submit(self._free.AcceptWaveform, pcm))
+
+    def finish(self) -> tuple[np.ndarray, bytes, dict, dict]:
+        """Finalize both decodes; returns (window, pcm, grammar_json, free_json).
+
+        Blocking (worker thread). Raises if any feed or final failed — the
+        caller then falls back to the from-scratch confirm. Both finals run
+        HERE, one after the other, once every queued feed has completed (so
+        no executor thread touches either recognizer any more).
+        """
+        try:
+            for fut in self._pending:
+                fut.result()
+            self._g_pool.shutdown(wait=True)
+            self._f_pool.shutdown(wait=True)
+            gres = _parse_recognizer_json(
+                self._grammar.FinalResult(), where="verify.grammar_final"
+            )
+            fres = _parse_recognizer_json(
+                self._free.FinalResult(), where="verify.free_final"
+            )
+        finally:
+            self.close()
+        window = np.concatenate(self._parts) if self._parts else np.zeros(0, np.float32)
+        return window, b"".join(self._pcm_parts), gres, fres
+
+    def close(self) -> None:
+        """Discard (early fire, superseded candidate, teardown)."""
+        self._g_pool.shutdown(wait=False, cancel_futures=True)
+        self._f_pool.shutdown(wait=False, cancel_futures=True)
+
+
 class VoskKwsProvider:
     """Any-word wake detector — structurally compatible with `WakeWordProvider`.
 
@@ -585,11 +744,25 @@ class VoskKwsProvider:
     # streams arbitrary buffer sizes, so when this detector falls behind live
     # audio (busy desktop CPU — live forensic 2026-07-21: the fanout queue sat
     # pinned at 50 x 100 ms chunks and every wake was heard ~5 s late), the
-    # pipeline may coalesce up to this many backlogged chunks into ONE
-    # AudioChunk. The per-chunk state machine below is byte-based
-    # (``pending_tail``, ring) and decision-identical either way; batches only
-    # ever form while catching up, never on the caught-up hot path.
-    coalesce_catchup_chunks = 10
+    # pipeline may coalesce the backlog into ONE AudioChunk covering up to this
+    # much audio. A TIME budget, not a chunk count: the capture block shrank
+    # from 100 ms to 32 ms after the count was chosen and silently turned "1 s
+    # per batch" into 320 ms (queue bounds are time budgets — capture.py). The
+    # per-chunk state machine below is byte-based (``pending_tail``, ring) and
+    # decision-identical either way; batches only ever form while catching up,
+    # never on the caught-up hot path.
+    coalesce_catchup_s = 1.0
+    # How far behind live audio the fanout may let this detector fall before
+    # it drops the OLDEST frames. The generic detector budget is 0.6 s (a
+    # detector that cannot catch up must stay near-present); this one catches
+    # up in batches, so its budget is the ring length: anything older could
+    # not reach a verify anyway, and a frame dropped INSIDE the ring leaves
+    # a hole the re-score hears as '' (live 2026-08-19: every candidate's
+    # 0.4-0.9 s confirm overflowed the 0.6 s queue on a 4-core laptop and
+    # genuine retries were eaten). Honoured by the pipeline ONLY together with
+    # the catch-up capability above — a deeper queue without batching would
+    # just be a later wake.
+    intake_backlog_s = _RING_SECONDS
 
     def __init__(
         self,
@@ -714,6 +887,19 @@ class VoskKwsProvider:
         self._stat_early_shown = 0
         self._stat_early_retracted = 0
         self._stat_suppressed_shape_competition = 0
+        # Verify path accounting: how many confirms ran streamed (decode paid
+        # during the tail) vs from scratch (finals, latched retries, fallback).
+        self._stat_verify_streamed = 0
+        self._stat_verify_scratch = 0
+        self._stat_verify_stream_fallback = 0
+        # Stage-1 CPU budget: the model paths currently streaming stage 1
+        # (primary first; secondaries are demoted from the END when the
+        # decode proves it cannot keep up) and the recent per-call realtime
+        # factors the rule reads. Reset per detect() session.
+        self._stage1_paths: list[str] = list(self._model_paths)
+        self._stage1_rt: deque[float] = deque(maxlen=_STAGE1_RT_WINDOW)
+        self._last_stage1_cost: tuple[float, float] = (0.0, 0.0)
+        self._stat_stage1_demoted = 0
         # Rate limiter for the verify-suppression log. Every rejection used to
         # be DEBUG-only, so a dropped GENUINE wake left no production trace at
         # all: the log could not tell "never heard" from "heard, verified,
@@ -847,17 +1033,19 @@ class VoskKwsProvider:
             )
 
     def _fresh_recs(self) -> dict[str, Any]:
-        """One streaming grammar recognizer per LOADABLE model path.
+        """One streaming grammar recognizer per ACTIVE stage-1 model path.
 
         Taken from the prewarmed stock when available: a rebuilt streaming
         recognizer otherwise pays Kaldi's ~400ms lazy first-decode init
         INLINE in the detect loop (it decodes chunks on the event loop) —
         after every candidate reset, per model. A corrupt/missing model dir
         must never brick the working ones — it is skipped with a warning and
-        detection continues on the rest.
+        detection continues on the rest. A model demoted by the stage-1 CPU
+        budget (``_note_stage1_cost``) gets no streaming recognizer; it is
+        still loaded for the verify and the sibling rescue.
         """
         recs: dict[str, Any] = {}
-        for path in self._model_paths:
+        for path in self._stage1_paths:
             try:
                 recs[path] = self._take_verify_rec(path, "grammar")
             except Exception as exc:  # noqa: BLE001 — isolate a broken model
@@ -951,7 +1139,52 @@ class VoskKwsProvider:
             "suppressed_shape_competition": (
                 self._stat_suppressed_shape_competition
             ),
+            "verify_streamed": self._stat_verify_streamed,
+            "verify_scratch": self._stat_verify_scratch,
+            "verify_stream_fallback": self._stat_verify_stream_fallback,
+            "stage1_models": len(self._stage1_paths),
+            "stage1_demoted": self._stat_stage1_demoted,
         }
+
+    # -- stage-1 CPU budget ----------------------------------------------------
+
+    def _note_stage1_cost(self, decode_s: float, audio_s: float) -> bool:
+        """Record one stage-1 call's realtime factor; True when a model was demoted.
+
+        The rule reads only the detector's OWN decode time against the audio
+        it covered — never wall-clock queue depth (which the provider cannot
+        see) and never transcript content (AP-27). Demotion removes the LAST
+        active secondary (plan order puts the speaker-language model first);
+        the primary is never demoted, so a phrase's own language keeps
+        listening even on the weakest box. Reset per ``detect()`` session, so
+        a transient load (a build, a dictation) does not cost the box a model
+        for the rest of the process.
+        """
+        if audio_s <= 0.0:
+            return False
+        self._stage1_rt.append(decode_s / audio_s)
+        if len(self._stage1_paths) <= 1:
+            return False
+        if len(self._stage1_rt) < _STAGE1_RT_WINDOW:
+            return False
+        slow = sum(1 for rt in self._stage1_rt if rt > _STAGE1_SLOW_RT)
+        if slow < _STAGE1_SLOW_CALLS:
+            return False
+        demoted = self._stage1_paths.pop()
+        self._stage1_rt.clear()
+        self._stat_stage1_demoted += 1
+        log.warning(
+            "vosk-kws: stage-1 cannot keep up on this CPU (%d of the last %d "
+            "decodes ran slower than %.1fx realtime) — demoting %s from the "
+            "streaming stage; %d model(s) keep listening, the demoted one "
+            "stays available for verify. Restored on the next wake session.",
+            slow,
+            _STAGE1_RT_WINDOW,
+            _STAGE1_SLOW_RT,
+            demoted,
+            len(self._stage1_paths),
+        )
+        return True
 
     # -- early candidate (visual-only) ----------------------------------------
 
@@ -1077,16 +1310,42 @@ class VoskKwsProvider:
         AP-24-safe: the caller awaits this hop, so each recognizer still has
         exactly one caller at a time — this is serialised work moved off the
         loop, never a shared engine called concurrently.
+
+        Records the call's decode cost in ``_last_stage1_cost`` (decode
+        seconds, audio seconds) for the stage-1 CPU budget; the loop turns
+        that into a demotion decision on its own thread.
         """
+        t0 = time.perf_counter()
         hit: tuple[bool, float] | None = None
         hit_path = ""
         for path, rec in recs.items():
             found = self._grammar_hit(rec, pcm)
             if found is not None and hit is None:
                 hit, hit_path = found, path
+        self._last_stage1_cost = (
+            time.perf_counter() - t0,
+            len(pcm) / (2.0 * self._sample_rate),
+        )
         if hit is None:
             return None
         return (hit[0], hit[1], hit_path)
+
+    async def _stage1(
+        self,
+        recs: dict[str, Any],
+        pcm: bytes,
+        _in_pool: Callable[..., Awaitable[Any]],
+    ) -> tuple[tuple[bool, float, str] | None, dict[str, Any]]:
+        """Feed one chunk to stage 1 off the loop and apply the CPU budget.
+
+        Returns the hit (if any) and the recognizer set to continue with —
+        rebuilt without the demoted model when the budget rule fired.
+        """
+        self._last_stage1_cost = (0.0, 0.0)
+        found = await _in_pool(self._grammar_hit_all, recs, pcm)
+        if self._note_stage1_cost(*self._last_stage1_cost):
+            recs = self._fresh_recs()
+        return found, recs
 
     def _verify_candidate(
         self, window: np.ndarray, model_path: str | None = None
@@ -1096,6 +1355,7 @@ class VoskKwsProvider:
         ``model_path`` selects the model that HEARD the candidate; the verify
         must use the same acoustics that produced the hit, never a sibling.
         """
+        self._stat_verify_scratch += 1
         return self._verify_window(window, fail_open=True, model_path=model_path)
 
     def _early_check(
@@ -1112,6 +1372,58 @@ class VoskKwsProvider:
             )
         except Exception:  # noqa: BLE001 — belt and braces for the UI path
             return False
+
+    def _start_streaming_verify(
+        self, ring: np.ndarray, model_path: str | None
+    ) -> _StreamingVerify | None:
+        """Begin the authoritative confirm's decode at PARTIAL time.
+
+        Takes this candidate's grammar + free recognizers (prewarmed stock,
+        cold build otherwise) and starts them on the ring; the loop then
+        feeds every tail chunk. None when the recognizers cannot be built —
+        the loop falls back to the from-scratch confirm at tail end, exactly
+        the pre-streaming behaviour.
+        """
+        try:
+            grammar = self._take_verify_rec(model_path, "grammar")
+            free = self._take_verify_rec(model_path, "free")
+            return _StreamingVerify(
+                model_path,
+                grammar,
+                free,
+                ring,
+                target_peak=self._target_peak,
+                max_gain=self._max_gain,
+            )
+        except Exception as exc:  # noqa: BLE001 — fall back to from-scratch
+            log.debug("vosk-kws: streaming verify unavailable (%s)", exc)
+            return None
+
+    def _finish_streaming_verify(
+        self, streaming: _StreamingVerify, fallback_window: np.ndarray
+    ) -> bool:
+        """Authoritative confirm over the streamed decode — fails OPEN.
+
+        Blocking (worker thread). A streaming infrastructure error (a failed
+        feed, a broken final) does NOT accept blindly: it re-runs the
+        from-scratch confirm over ``fallback_window`` (the ring as it stands),
+        which carries the usual fail-open polarity — so a broken extra
+        optimisation degrades to yesterday's path, never to a blind yes.
+        """
+        try:
+            decoded = streaming.finish()
+        except Exception as exc:  # noqa: BLE001 — degrade to from-scratch
+            self._stat_verify_stream_fallback += 1
+            log.warning(
+                "vosk-kws: streamed confirm failed (%s) — re-running the "
+                "from-scratch confirm.",
+                exc,
+            )
+            return self._verify_candidate(fallback_window, streaming.model_path)
+        self._stat_verify_streamed += 1
+        return self._judge_decoded(
+            decoded, fail_open=True, model_path=streaming.model_path
+        )
 
     def _verify_window(
         self,
@@ -1171,42 +1483,77 @@ class VoskKwsProvider:
         recognizer). This changes only wall-clock time, never the decision:
         both passes decode the identical ``pcm`` and every downstream
         threshold/comparison is untouched.
+
+        Two entry shapes share the judgement below (``_judge_decoded``): this
+        from-scratch decode (finals, latched retries, sibling rescue, early
+        check) and the STREAMED decode a partial candidate pays during its
+        confirm tail (``_StreamingVerify`` → ``_finish_streaming_verify``).
         """
         try:
-            peak = float(np.max(np.abs(window))) if len(window) else 0.0
-            if peak > 1e-6:
-                window = np.clip(
-                    window * min(self._target_peak / peak, self._max_gain), -1.0, 1.0
-                )
-            pcm = (window * 32767.0).astype(np.int16).tobytes()
+            decoded = self._decode_window(window, model_path)
+        except Exception as exc:  # noqa: BLE001 — polarity via fail_open
+            log.warning(
+                "vosk-kws: verify failed (%s) — %s.",
+                exc,
+                "accepting" if fail_open else "rejecting (visual-only)",
+            )
+            return fail_open
+        return self._judge_decoded(decoded, fail_open=fail_open, model_path=model_path)
 
-            # 1) grammar re-score (real confidence + time span) and
-            # 3) free decode (unconstrained) run CONCURRENTLY — see the
-            # latency note above. One attempt each over the full ring,
-            # deliberately: a second grammar try over a shorter cut
-            # measurably HELPED room speech more than genuine calls (FA
-            # matrix 3 -> 7 with a last-1.8 s retry), because the grammar
-            # happily forces any short speech snippet onto the phrase.
-            def _grammar_pass() -> dict:
-                g = self._take_verify_rec(model_path, "grammar")
-                g.AcceptWaveform(pcm)
-                return _parse_recognizer_json(
-                    g.FinalResult(), where="verify.grammar_final"
-                )
+    def _decode_window(
+        self, window: np.ndarray, model_path: str | None
+    ) -> tuple[np.ndarray, bytes, dict, dict]:
+        """Peak-normalise ``window`` and run the grammar + free passes over it.
 
-            def _free_pass() -> dict:
-                f = self._take_verify_rec(model_path, "free")
-                f.AcceptWaveform(pcm)
-                return _parse_recognizer_json(
-                    f.FinalResult(), where="verify.free_final"
-                )
+        Returns ``(window, pcm, grammar_json, free_json)`` — the normalised
+        float window, its int16 bytes, and the two decodes. Raises on
+        infrastructure errors; the caller picks the fail polarity.
+        """
+        peak = float(np.max(np.abs(window))) if len(window) else 0.0
+        if peak > 1e-6:
+            window = np.clip(
+                window * min(self._target_peak / peak, self._max_gain), -1.0, 1.0
+            )
+        pcm = (window * 32767.0).astype(np.int16).tobytes()
 
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                grammar_future = pool.submit(_grammar_pass)
-                free_future = pool.submit(_free_pass)
-                gres = grammar_future.result()
-                fres = free_future.result()
+        # 1) grammar re-score (real confidence + time span) and
+        # 3) free decode (unconstrained) run CONCURRENTLY — see the
+        # latency note above. One attempt each over the full ring,
+        # deliberately: a second grammar try over a shorter cut
+        # measurably HELPED room speech more than genuine calls (FA
+        # matrix 3 -> 7 with a last-1.8 s retry), because the grammar
+        # happily forces any short speech snippet onto the phrase.
+        def _grammar_pass() -> dict:
+            g = self._take_verify_rec(model_path, "grammar")
+            g.AcceptWaveform(pcm)
+            return _parse_recognizer_json(
+                g.FinalResult(), where="verify.grammar_final"
+            )
 
+        def _free_pass() -> dict:
+            f = self._take_verify_rec(model_path, "free")
+            f.AcceptWaveform(pcm)
+            return _parse_recognizer_json(
+                f.FinalResult(), where="verify.free_final"
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            grammar_future = pool.submit(_grammar_pass)
+            free_future = pool.submit(_free_pass)
+            gres = grammar_future.result()
+            fres = free_future.result()
+        return window, pcm, gres, fres
+
+    def _judge_decoded(
+        self,
+        decoded: tuple[np.ndarray, bytes, dict, dict],
+        *,
+        fail_open: bool,
+        model_path: str | None,
+    ) -> bool:
+        """Checks 1-4 of ``_verify_window`` over an already-decoded window."""
+        window, pcm, gres, fres = decoded
+        try:
             def _rescored(res: dict, offset_s: float) -> tuple[list[dict], float] | None:
                 """The best CONSECUTIVE phrase-token run in a grammar decode.
 
@@ -1557,7 +1904,11 @@ class VoskKwsProvider:
                 log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
         # One streaming grammar per installed model — a phrase whose language
         # differs from the speaker's still has a model that can spell it
-        # (union recall measured +38% on the fixture corpus, 2026-07-11).
+        # (union recall measured +38% on the fixture corpus, 2026-07-11). The
+        # stage-1 CPU budget starts every session with the full set; a model
+        # demoted in an earlier session gets its chance again here.
+        self._stage1_paths = list(self._model_paths)
+        self._stage1_rt.clear()
         recs = self._fresh_recs()
         last_fire_t = 0.0
         verify_not_before = 0.0
@@ -1569,210 +1920,253 @@ class VoskKwsProvider:
         # same acoustics, never a sibling model.
         pending: tuple[bool, float, str] | None = None
         pending_tail = 0
-        async for chunk in chunks:
-            self._stat_chunks += 1
-            pcm = chunk.pcm
-            self._ring_push(pcm)
-            # Full verification remains rate-limited after a clean rejection,
-            # but the cheap streaming grammar must keep listening.  Completely
-            # pausing stage one made this a deaf period: a genuine immediate
-            # retry was discarded before it could ever reach the verifier.
-            # During the window we latch at most one candidate, stop stage-one
-            # work once latched, and verify it only when the same deadline
-            # expires.  This preserves the BUG-045 load bound without dropping
-            # a user's retry.
-            now_mono = self._monotonic()
-            backpressure_active = now_mono < verify_not_before
-            if backpressure_active:
-                self._stat_backpressure_chunks += 1
-            if not recs:
-                recs = self._fresh_recs()
-            if pending is not None:
-                pending_tail += len(pcm)
-                # Keep every model's stream fed during the tail/backoff wait so
-                # their decode state stays aligned with the ring.
-                found = await _in_pool(self._grammar_hit_all, recs, pcm)
+        # The authoritative confirm of the pending PARTIAL, decoding during
+        # the tail (see _StreamingVerify). None for finals and for candidates
+        # latched under backpressure — those run the from-scratch confirm.
+        streaming: _StreamingVerify | None = None
+
+        def _drop_streaming() -> None:
+            nonlocal streaming
+            if streaming is not None:
+                streaming.close()
+                streaming = None
+
+        try:
+            async for chunk in chunks:
+                self._stat_chunks += 1
+                pcm = chunk.pcm
+                self._ring_push(pcm)
+                # Full verification remains rate-limited after a clean rejection,
+                # but the cheap streaming grammar must keep listening.  Completely
+                # pausing stage one made this a deaf period: a genuine immediate
+                # retry was discarded before it could ever reach the verifier.
+                # During the window we latch at most one candidate, stop stage-one
+                # work once latched, and verify it only when the same deadline
+                # expires.  This preserves the BUG-045 load bound without dropping
+                # a user's retry.
+                now_mono = self._monotonic()
+                backpressure_active = now_mono < verify_not_before
                 if backpressure_active:
-                    if found is not None:
-                        # A NEWER hit refreshes the latch. The old behaviour
-                        # kept the first latched candidate and went deaf for
-                        # anything after it, so room speech rejected moments
-                        # earlier could hold the slot while the user's real
-                        # wake landed in it unheard ("say it twice"). Still
-                        # exactly ONE verify runs, at the same deadline — the
-                        # BUG-045 load bound is untouched.
-                        is_final_new, _conf_new, _path_new = found
-                        pending = found
-                        pending_tail = (
-                            self._confirm_tail_bytes if is_final_new else 0
-                        )
-                    continue
-                # A POSITIVE early check is already authoritative for this
-                # candidate (later audio belongs to the session and cannot
-                # revoke it — see _run_early_check). Waiting out the rest of
-                # the confirm tail after that verdict is pure dead time on
-                # every early-confirmed wake (~0.3-0.5 s of perceived spawn
-                # latency), so fire as soon as the verdict lands. A pending,
-                # failed, or negative early task changes nothing: the normal
-                # tail wait + full-window verify below still decide.
-                early_positive = (
-                    self._early_task is not None
-                    and self._early_task.done()
-                    and not self._early_task.cancelled()
-                    and self._early_task.exception() is None
-                    and self._early_task.result() is True
-                )
-                if pending_tail < self._confirm_tail_bytes and not early_positive:
-                    continue
-                is_final, conf, hit_path = pending
-                pending = None
-            else:
-                # Feed EVERY model; first hit wins the candidate slot. One
-                # thread hop for all N models keeps the loop free to drain the
-                # microphone fan-out (see _grammar_hit_all).
-                found = await _in_pool(self._grammar_hit_all, recs, pcm)
-                if found is None:
-                    continue
-                is_final, conf, hit_path = found
-                now = time.time()
-                if now - last_fire_t < self._cooldown_s:
-                    self._stat_suppressed_cooldown += 1
+                    self._stat_backpressure_chunks += 1
+                if not recs:
                     recs = self._fresh_recs()
-                    continue
-                self._stat_candidates += 1
-                if backpressure_active:
-                    # One user retry (or one more room-speech candidate) is
-                    # retained without launching any expensive decode.  A
-                    # final already includes its endpoint; a partial keeps
-                    # accumulating the normal confirmation tail in the ring.
-                    pending = (is_final, conf, hit_path)
-                    pending_tail = self._confirm_tail_bytes if is_final else 0
-                    continue
-                if is_final and conf < self._min_final_conf:
+                if pending is not None:
+                    pending_tail += len(pcm)
+                    if streaming is not None:
+                        # The tail belongs to the candidate's confirm: hand it
+                        # to the streaming decoders NOW instead of re-decoding
+                        # the whole ring at tail end.
+                        streaming.feed(
+                            np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                            / 32768.0
+                        )
+                    # Keep every model's stream fed during the tail/backoff wait so
+                    # their decode state stays aligned with the ring.
+                    found, recs = await self._stage1(recs, pcm, _in_pool)
+                    if backpressure_active:
+                        if found is not None:
+                            # A NEWER hit refreshes the latch. The old behaviour
+                            # kept the first latched candidate and went deaf for
+                            # anything after it, so room speech rejected moments
+                            # earlier could hold the slot while the user's real
+                            # wake landed in it unheard ("say it twice"). Still
+                            # exactly ONE verify runs, at the same deadline — the
+                            # BUG-045 load bound is untouched.
+                            is_final_new, _conf_new, _path_new = found
+                            pending = found
+                            pending_tail = (
+                                self._confirm_tail_bytes if is_final_new else 0
+                            )
+                            _drop_streaming()  # belonged to the superseded one
+                        continue
+                    # A POSITIVE early check is already authoritative for this
+                    # candidate (later audio belongs to the session and cannot
+                    # revoke it — see _run_early_check). Waiting out the rest of
+                    # the confirm tail after that verdict is pure dead time on
+                    # every early-confirmed wake (~0.3-0.5 s of perceived spawn
+                    # latency), so fire as soon as the verdict lands. A pending,
+                    # failed, or negative early task changes nothing: the normal
+                    # tail wait + full-window verify below still decide.
+                    early_positive = (
+                        self._early_task is not None
+                        and self._early_task.done()
+                        and not self._early_task.cancelled()
+                        and self._early_task.exception() is None
+                        and self._early_task.result() is True
+                    )
+                    if pending_tail < self._confirm_tail_bytes and not early_positive:
+                        continue
+                    is_final, conf, hit_path = pending
+                    pending = None
+                else:
+                    # Feed EVERY active model; first hit wins the candidate
+                    # slot. One thread hop for all N models keeps the loop free
+                    # to drain the microphone fan-out (see _grammar_hit_all).
+                    found, recs = await self._stage1(recs, pcm, _in_pool)
+                    if found is None:
+                        continue
+                    is_final, conf, hit_path = found
+                    now = time.time()
+                    if now - last_fire_t < self._cooldown_s:
+                        self._stat_suppressed_cooldown += 1
+                        recs = self._fresh_recs()
+                        continue
+                    self._stat_candidates += 1
+                    if backpressure_active:
+                        # One user retry (or one more room-speech candidate) is
+                        # retained without launching any expensive decode.  A
+                        # final already includes its endpoint; a partial keeps
+                        # accumulating the normal confirmation tail in the ring.
+                        pending = (is_final, conf, hit_path)
+                        pending_tail = self._confirm_tail_bytes if is_final else 0
+                        continue
+                    if is_final and conf < self._min_final_conf:
+                        self._stat_backpressure_windows += 1
+                        verify_not_before = (
+                            self._monotonic() + self._rejected_candidate_backoff_s
+                        )
+                        recs = self._fresh_recs()
+                        continue
+                    if not is_final and self._confirm_tail_bytes > 0:
+                        pending = (is_final, conf, hit_path)
+                        pending_tail = 0
+                        ring_now = self._ring_window()
+                        # Start the authoritative confirm's decode on the ring
+                        # right away — it takes its (prewarmed) recognizers
+                        # BEFORE the visual-only early check so the path that
+                        # decides is the warm one when stock is short. Built off
+                        # the loop: a cold free recognizer costs ~0.3 s.
+                        streaming = await _in_pool(
+                            self._start_streaming_verify, ring_now, hit_path
+                        )
+                        # Strictly verify the audio heard SO FAR in a worker thread
+                        # while the confirm tail keeps accumulating. A positive is
+                        # enough to confirm this candidate and may reveal the bar;
+                        # a negative still falls through to the later full window.
+                        self._pending_gen += 1
+                        self._early_task = asyncio.create_task(
+                            self._run_early_check(ring_now, self._pending_gen, hit_path)
+                        )
+                        continue
+                # The candidate-prefix check and fallback decision must not fan out
+                # two decoder pairs at once on a weak CPU. The 0.6 s tail normally
+                # lets the prefix check finish already, so this is a no-cost
+                # ordering guard in the common path. Most importantly, a positive
+                # prefix verdict is monotonic: the newly captured tail belongs to
+                # the user's command and cannot turn a verified wake back off.
+                early_confirmed = False
+                if self._early_task is not None:
+                    try:
+                        early_confirmed = bool(await self._early_task)
+                    except Exception as exc:  # noqa: BLE001 — fallback verify remains
+                        log.debug(
+                            "candidate-prefix task failed; using full-window fallback: %s",
+                            exc,
+                        )
+                    finally:
+                        self._early_task = None
+                now = time.time()
+                window = self._ring_window()
+                fired_path = hit_path
+                if early_confirmed:
+                    confirmed = True
+                    _drop_streaming()
+                    log.info(
+                        "vosk-kws: retaining verified candidate prefix for %r; "
+                        "following audio belongs to the voice session",
+                        self._phrase,
+                    )
+                elif streaming is not None:
+                    # The decode already ran during the tail; this is the
+                    # finalize + judgement (~0.1 s) — the spawn-latency win.
+                    finishing, streaming = streaming, None
+                    confirmed = await asyncio.to_thread(
+                        self._finish_streaming_verify, finishing, window
+                    )
+                else:
+                    confirmed = await asyncio.to_thread(
+                        self._verify_candidate, window, hit_path
+                    )
+                if not confirmed:
+                    # Sibling rescue: the model that HEARD the candidate could not
+                    # verify it, but the ring still holds the phrase — let every
+                    # other model try (union recall, measured +38%: 'Hey Jarvis'
+                    # de-spoken garbles on the de model yet verifies on en).
+                    # Fail-CLOSED via _early_check: an opportunistic rescue must
+                    # never fire off a broken sibling (the fail-open contract
+                    # protects only the primary confirm). The siblings verify
+                    # CONCURRENTLY — each owns its fresh one-shot recognizers
+                    # (AP-24-safe: nothing mutable is shared), and the sequential
+                    # form paid the SUM of two full verifies right on the fire
+                    # path of exactly the phrases the primary model garbles. The
+                    # decision is unchanged: the first sibling in configured
+                    # order that verifies still wins. Every LOADED sibling takes
+                    # part — including one the stage-1 CPU budget demoted, whose
+                    # ear is exactly as good for this one-off as before.
+                    others = [
+                        other
+                        for other in self._model_paths
+                        if other != hit_path and other in self._models
+                    ]
+                    if others:
+                        rescues = await asyncio.gather(
+                            *(
+                                asyncio.to_thread(self._early_check, window, other)
+                                for other in others
+                            )
+                        )
+                        for other, rescued in zip(others, rescues, strict=True):
+                            if rescued:
+                                confirmed = True
+                                fired_path = other
+                                break
+                if not confirmed:
+                    self._stat_suppressed_confirm += 1
+                    # Invalidate this generation and defensively retract any stale
+                    # visual state. A positive prefix task cannot reach this branch;
+                    # it was consumed as the monotonic verdict above.
+                    self._pending_gen += 1
+                    await self._notify_early(False)
                     self._stat_backpressure_windows += 1
                     verify_not_before = (
                         self._monotonic() + self._rejected_candidate_backoff_s
                     )
+                    if (
+                        self._stat_backpressure_windows == 1
+                        or self._stat_backpressure_windows % 25 == 0
+                    ):
+                        log.warning(
+                            "vosk-kws: rejected-candidate backpressure active "
+                            "(pause %.1fs, windows=%d, skipped_chunks=%d) — "
+                            "protecting desktop responsiveness.",
+                            self._rejected_candidate_backoff_s,
+                            self._stat_backpressure_windows,
+                            self._stat_backpressure_chunks,
+                        )
+                    # Re-arm one cheap streaming recognizer set now.  It may latch
+                    # one retry during backpressure, but no second full verify can
+                    # run before the deadline above.
                     recs = self._fresh_recs()
                     continue
-                if not is_final and self._confirm_tail_bytes > 0:
-                    pending = (is_final, conf, hit_path)
-                    pending_tail = 0
-                    # Strictly verify the audio heard SO FAR in a worker thread
-                    # while the confirm tail keeps accumulating. A positive is
-                    # enough to confirm this candidate and may reveal the bar;
-                    # a negative still falls through to the later full window.
-                    self._pending_gen += 1
-                    self._early_task = asyncio.create_task(
-                        self._run_early_check(
-                            self._ring_window(), self._pending_gen, hit_path
-                        )
-                    )
-                    continue
-            # The candidate-prefix check and fallback decision must not fan out
-            # two decoder pairs at once on a weak CPU. The 0.6 s tail normally
-            # lets the prefix check finish already, so this is a no-cost
-            # ordering guard in the common path. Most importantly, a positive
-            # prefix verdict is monotonic: the newly captured tail belongs to
-            # the user's command and cannot turn a verified wake back off.
-            early_confirmed = False
-            if self._early_task is not None:
-                try:
-                    early_confirmed = bool(await self._early_task)
-                except Exception as exc:  # noqa: BLE001 — fallback verify remains
-                    log.debug(
-                        "candidate-prefix task failed; using full-window fallback: %s",
-                        exc,
-                    )
-                finally:
-                    self._early_task = None
-            now = time.time()
-            window = self._ring_window()
-            fired_path = hit_path
-            if early_confirmed:
-                confirmed = True
-                log.info(
-                    "vosk-kws: retaining verified candidate prefix for %r; "
-                    "following audio belongs to the voice session",
-                    self._phrase,
-                )
-            else:
-                confirmed = await asyncio.to_thread(
-                    self._verify_candidate, window, hit_path
-                )
-            if not confirmed:
-                # Sibling rescue: the model that HEARD the candidate could not
-                # verify it, but the ring still holds the phrase — let every
-                # other model try (union recall, measured +38%: 'Hey Jarvis'
-                # de-spoken garbles on the de model yet verifies on en).
-                # Fail-CLOSED via _early_check: an opportunistic rescue must
-                # never fire off a broken sibling (the fail-open contract
-                # protects only the primary confirm). The siblings verify
-                # CONCURRENTLY — each owns its fresh one-shot recognizers
-                # (AP-24-safe: nothing mutable is shared), and the sequential
-                # form paid the SUM of two full verifies right on the fire
-                # path of exactly the phrases the primary model garbles. The
-                # decision is unchanged: the first sibling in configured
-                # order that verifies still wins.
-                others = [
-                    other
-                    for other in self._model_paths
-                    if other != hit_path and other in recs
-                ]
-                if others:
-                    rescues = await asyncio.gather(
-                        *(
-                            asyncio.to_thread(self._early_check, window, other)
-                            for other in others
-                        )
-                    )
-                    for other, rescued in zip(others, rescues, strict=True):
-                        if rescued:
-                            confirmed = True
-                            fired_path = other
-                            break
-            if not confirmed:
-                self._stat_suppressed_confirm += 1
-                # Invalidate this generation and defensively retract any stale
-                # visual state. A positive prefix task cannot reach this branch;
-                # it was consumed as the monotonic verdict above.
+                # The shown flag stays set for the pipeline to CONSUME: it must know
+                # the bar is visible when it silently drops this wake (echo lock)
+                # and retract it.
                 self._pending_gen += 1
-                await self._notify_early(False)
-                self._stat_backpressure_windows += 1
-                verify_not_before = (
-                    self._monotonic() + self._rejected_candidate_backoff_s
+                self._stat_fired += 1
+                last_fire_t = now
+                log.info(
+                    "vosk-kws: WAKE fired for %r (%s candidate, model %s)",
+                    self._phrase,
+                    "final" if is_final else "partial",
+                    fired_path,
                 )
-                if (
-                    self._stat_backpressure_windows == 1
-                    or self._stat_backpressure_windows % 25 == 0
-                ):
-                    log.warning(
-                        "vosk-kws: rejected-candidate backpressure active "
-                        "(pause %.1fs, windows=%d, skipped_chunks=%d) — "
-                        "protecting desktop responsiveness.",
-                        self._rejected_candidate_backoff_s,
-                        self._stat_backpressure_windows,
-                        self._stat_backpressure_chunks,
-                    )
-                # Re-arm one cheap streaming recognizer set now.  It may latch
-                # one retry during backpressure, but no second full verify can
-                # run before the deadline above.
+                yield self._keyword
                 recs = self._fresh_recs()
-                continue
-            # The shown flag stays set for the pipeline to CONSUME: it must know
-            # the bar is visible when it silently drops this wake (echo lock)
-            # and retract it.
-            self._pending_gen += 1
-            self._stat_fired += 1
-            last_fire_t = now
-            log.info(
-                "vosk-kws: WAKE fired for %r (%s candidate, model %s)",
-                self._phrase,
-                "final" if is_final else "partial",
-                fired_path,
-            )
-            yield self._keyword
-            recs = self._fresh_recs()
+        finally:
+            # A confirm still decoding at teardown (stream ended mid-tail, the
+            # pipeline closed the generator on a fire) must not keep its
+            # worker threads or recognizers alive.
+            _drop_streaming()
 
 
 def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:

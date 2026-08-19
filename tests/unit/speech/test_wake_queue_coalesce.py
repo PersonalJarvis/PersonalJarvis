@@ -5,8 +5,9 @@ vosk_kws detector consumed its fanout queue slower than real time, the queue
 sat pinned at its 50-chunk cap, and every wake was heard ~5 seconds after it
 was spoken — the "inconsistent huge spawn delay". The fix lets a detector
 that can consume variable buffer sizes (capability attribute
-``coalesce_catchup_chunks``) drain a BACKLOG as one concatenated catch-up
-chunk instead of grinding through it 100 ms at a time. Pinned here:
+``coalesce_catchup_s``, resolved by ``_wake_catchup_budget``) drain a BACKLOG
+as one concatenated catch-up chunk instead of grinding through it one block
+at a time. Pinned here:
 
 - backlog is coalesced up to the cap, byte-for-byte in order;
 - an empty/keeping-up queue passes chunks through untouched (hot path is
@@ -95,3 +96,74 @@ async def test_sentinel_mid_drain_flushes_and_terminates() -> None:
 
     assert len(out) == 1
     assert len(out[0].pcm) == 3 * _CHUNK_BYTES
+
+
+# --- capability resolver: time budgets -> capture blocks ------------------------
+# The batch cap used to be a CHUNK COUNT on the detector; when the capture
+# block shrank from 100 ms to 32 ms it silently turned "1 s per batch" into
+# 320 ms. Both budgets are seconds now and only the pipeline (which knows the
+# block size) turns them into blocks. The deeper intake budget is honoured
+# only together with batching (live 2026-08-19: the vosk confirm blocked its
+# own consumption for 0.4-0.9 s on a weak CPU, the 0.6 s queue overflowed and
+# frames inside the audio about to be verified were dropped).
+
+
+class _Detector:
+    def __init__(self, **attrs):  # noqa: ANN003
+        self.__dict__.update(attrs)
+
+
+def test_catchup_budget_resolves_seconds_to_capture_blocks() -> None:
+    from jarvis.audio.capture import capture_chunks_for_duration
+    from jarvis.speech.pipeline import _wake_catchup_budget
+
+    coalesce, depth = _wake_catchup_budget(
+        _Detector(coalesce_catchup_s=1.0, intake_backlog_s=3.0)
+    )
+    assert coalesce == capture_chunks_for_duration(1.0)
+    assert coalesce > 10  # the old 100 ms-era count would under-batch 32 ms blocks
+    assert depth == capture_chunks_for_duration(3.0)
+
+
+def test_catchup_budget_defaults_without_the_capability() -> None:
+    from jarvis.audio.capture import REALTIME_QUEUE_CHUNKS
+    from jarvis.speech.pipeline import _wake_catchup_budget
+
+    assert _wake_catchup_budget(_Detector()) == (1, REALTIME_QUEUE_CHUNKS)
+    # A deeper backlog WITHOUT batching is refused: a detector that cannot
+    # catch up must stay near-present, or a deeper queue is just a later wake.
+    assert _wake_catchup_budget(_Detector(intake_backlog_s=5.0)) == (
+        1,
+        REALTIME_QUEUE_CHUNKS,
+    )
+    # The intake budget never drops below the generic one.
+    coalesce, depth = _wake_catchup_budget(
+        _Detector(coalesce_catchup_s=1.0, intake_backlog_s=0.1)
+    )
+    assert coalesce > 1
+    assert depth == REALTIME_QUEUE_CHUNKS
+
+
+def test_catchup_budget_ignores_garbage_values() -> None:
+    from jarvis.audio.capture import REALTIME_QUEUE_CHUNKS
+    from jarvis.speech.pipeline import _wake_catchup_budget
+
+    assert _wake_catchup_budget(
+        _Detector(coalesce_catchup_s="soon", intake_backlog_s=None)
+    ) == (1, REALTIME_QUEUE_CHUNKS)
+    coalesce, depth = _wake_catchup_budget(
+        _Detector(coalesce_catchup_s=1.0, intake_backlog_s="lots")
+    )
+    assert coalesce > 1
+    assert depth == REALTIME_QUEUE_CHUNKS
+
+
+def test_vosk_provider_declares_both_budgets() -> None:
+    """The live detector is the reason the resolver exists; pin the wiring."""
+    from jarvis.audio.capture import REALTIME_QUEUE_CHUNKS
+    from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+    from jarvis.speech.pipeline import _wake_catchup_budget
+
+    coalesce, depth = _wake_catchup_budget(VoskKwsProvider)
+    assert coalesce > 1
+    assert depth > REALTIME_QUEUE_CHUNKS
