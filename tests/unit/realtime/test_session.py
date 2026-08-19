@@ -4885,12 +4885,81 @@ async def test_empty_provider_turn_is_reasked_natively_before_any_brain_call():
 
 
 @pytest.mark.asyncio
-async def test_direct_mode_recovers_provider_turn_that_has_no_output():
+async def test_empty_turn_reask_keeps_native_audio_after_a_second_empty_boundary():
+    """A second empty boundary after re-ask is the interrupt, not a mute.
+
+    Live 2026-08-19 (vertex-live): every greeting sent a steering delta, the
+    provider closed empty, the re-ask went out, and 0.14 s later another
+    empty ``interrupted``+``turn_complete`` fired. Brain recovery started
+    immediately and withheld the native 2.1 s reply that arrived 0.65 s
+    after the re-ask. "Hallo" then took 15 s to first audio. The watchdog
+    owns that wait; native audio that still comes must be spoken.
+    """
+    user_text = "Hello there."
+    native_reply = "Hello. I am ready."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    brain = FakeBrain(replies=("never spoken",))
+    provider = ScriptedTextTurnsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        [
+            RealtimeEvent(type="interrupted"),
+            RealtimeEvent(type="turn_complete"),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=native_reply,
+                is_final=True,
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ],
+    )
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_mode="direct",
+        jsons=jsons,
+        binaries=binaries,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert brain.calls == [], "the second empty must not start the Brain chain"
+    assert len(provider.session.text_inputs) == 1
+    assert "without any spoken answer" in provider.session.text_inputs[0]
+    assert binaries == [spoken_audio.pcm]
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == native_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_direct_mode_recovers_provider_turn_that_has_no_output(monkeypatch):
     """A substantive user turn must never complete as successful silence.
 
-    The provider drops the turn, ignores the re-ask with a second empty
-    boundary, and only then does the Brain chain run — exactly once.
+    The provider drops the turn and the re-ask stays mute (a second empty
+    boundary, then nothing). The watchdog — not that second boundary —
+    starts the Brain chain, exactly once.
     """
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_DELEGATE_READBACK_WAIT_S", 0.1)
     user_text = "Tell me a joke about penguins."
     recovered_reply = "We could build a tiny game together."
     spoken_audio = AudioChunk(
@@ -4908,7 +4977,8 @@ async def test_direct_mode_recovers_provider_turn_that_has_no_output():
             ),
             RealtimeEvent(type="turn_complete"),
         ],
-        # The re-ask is answered with a second empty boundary ...
+        # The re-ask is answered with a second empty boundary and then
+        # stays mute; the watchdog, not this edge, owns the Brain fallback.
         [RealtimeEvent(type="turn_complete")],
         # ... and the delegate result is then rendered natively.
         [
@@ -4934,7 +5004,7 @@ async def test_direct_mode_recovers_provider_turn_that_has_no_output():
     )
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
-    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+    await asyncio.wait_for(sess.wait_finished(), timeout=3)
 
     assert [call[0] for call in brain.calls] == [user_text]
     assert len(provider.session.text_inputs) == 2

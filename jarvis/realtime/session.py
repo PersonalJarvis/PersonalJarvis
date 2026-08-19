@@ -7479,7 +7479,9 @@ class RealtimeVoiceSession:
         A direct-tool turn is retried only from its retained result; the user
         request is never replayed because that could repeat a side effect.
         Delegate-owned turns already have their own result lifecycle and are
-        likewise never redispatched.
+        likewise never redispatched. A second empty ``turn_complete`` while
+        the re-ask watchdog is live is not a mute — Vertex Live emits that
+        edge for the re-ask text itself and still speaks afterwards.
         """
         turn_id = self._turn_id
         if (
@@ -7603,12 +7605,30 @@ class RealtimeVoiceSession:
 
         # First net: ask the live model itself (a native turn the planner left
         # native has nothing the Brain chain could add except latency). The
-        # Brain chain is the second net — on a second empty boundary, or when
-        # the re-ask never produces a response at all.
+        # Brain chain is the second net — when the re-ask watchdog expires
+        # with the provider still mute. A second empty boundary while that
+        # watchdog is live is the Gemini Live interrupt artifact of our own
+        # text (live 2026-08-19: native audio arrived 0.65 s later and was
+        # discarded because Brain recovery started at 0.14 s).
         if await self._reask_provider_for_empty_turn(turn_id):
+            return True
+        if self._empty_turn_reask_owns_turn(turn_id):
+            log.info(
+                "realtime[%s] empty boundary after re-ask is owned by the "
+                "watchdog (turn %s) — not recovering through the Brain chain yet",
+                self.session_id,
+                turn_id,
+            )
             return True
         self._recover_empty_turn_via_brain(turn_id)
         return True
+
+    def _empty_turn_reask_owns_turn(self, turn_id: str) -> bool:
+        """True while the empty-turn re-ask watchdog still owns ``turn_id``."""
+        if not turn_id or self._empty_turn_reask_turn_id != turn_id:
+            return False
+        task = self._empty_turn_reask_task
+        return task is not None and not task.done()
 
     async def _reask_provider_for_empty_turn(self, turn_id: str) -> bool:
         """Ask the live model again before paying a Brain-chain recovery.
@@ -7621,7 +7641,9 @@ class RealtimeVoiceSession:
         provider-neutral: a transport without ``send_text`` simply skips to
         the Brain chain. Returns True when the re-ask was sent; the watchdog
         then owns the turn until audio arrives or the readback budget runs
-        out.
+        out. A later empty boundary for the same turn must not short-circuit
+        that wait — Vertex Live interrupts the re-ask text itself ~0.14 s
+        later and still produces the spoken answer after that.
         """
         if not turn_id or self._empty_turn_reask_turn_id == turn_id:
             return False

@@ -327,8 +327,11 @@ async def test_changed_turn_directive_reaches_the_model_as_a_text_turn() -> None
     assert len(sent) == 1
     text = sent[0]["text"]
     assert _TURN_DIRECTIVE in text
-    # A developer message, explicitly not a request to speak.
+    # A developer message, not a new user request — but the user's last
+    # utterance must still be answered (live 2026-08-19: "do not answer it"
+    # closed every greeting as silence).
     assert "silent configuration" in text
+    assert "answer THEM now" in text
     # The rebuilt instruction block never travels; only the delta does.
     assert "x" * 100 not in text
     assert len(text) < 1_000

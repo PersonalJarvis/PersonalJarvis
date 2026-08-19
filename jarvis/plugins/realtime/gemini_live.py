@@ -71,12 +71,16 @@ _STEERING_ORDER = ("language", "turn", "standing")
 # already in this connection's fixed system instruction — declares developer
 # messages silent configuration that the model must never acknowledge, with
 # exactly one opener as the exception. This header deliberately does NOT use
-# that opener, and restates the silence so a model whose connect-time rule has
-# faded still stays quiet.
+# that opener (or the model would speak the configuration). It must still
+# leave the user's last utterance answerable: on Gemini Live the delta
+# travels as a realtime text input at the final-transcript boundary, and
+# "do not answer it" made the model close the whole turn in silence
+# (live 2026-08-19: every greeting recovered through the Brain chain).
 _STEERING_HEADER = (
     "Developer message — silent configuration update. It is NOT something the "
-    "user said and NOT a request to speak. Apply it from now on: do not "
-    "acknowledge it, do not answer it, and do not mention it."
+    "user said. Do not acknowledge this message, do not mention it, and do not "
+    "treat it as a new request. Apply it from now on. If the user has just "
+    "spoken, answer THEM now under these rules."
 )
 
 
