@@ -23,9 +23,10 @@ ONE public repo: `github.com/PersonalJarvis/PersonalJarvis`. **A push is
 sub-agents (review happens when code is written, never at push time). `.gitignore`
 first (data/, .env, jarvis.toml, Vault, keys never tracked); never commit
 credentials; secret scanning ON; whole-tree checks live in CI, never pre-push.
-Default = plain push; Release ONLY when explicitly asked (SemVer + tag +
-CHANGELOG + published GitHub Release; `check_release_completeness.py` before
-and after). Never push unless the maintainer asks.
+Default = after each completed commit on the shared primary checkout, rebase
+onto origin if needed and `git push` (never `--force`; never from a linked
+worktree). Release ONLY when explicitly asked (SemVer + tag + CHANGELOG +
+published GitHub Release; `check_release_completeness.py` before and after).
 
 ## 3. Open-source universality (BINDING)
 Assume an arbitrary downloader, never the maintainer: ANY single key works
@@ -90,8 +91,9 @@ on unpinned libs; signing private keys ONLY in GH Actions secrets; no silent
 
 ## 9. Operational reality & git
 Working tree is SHARED: stage only YOUR files (`git add -p`/pathspec, never
-`git add -A`/`.`); auto-commit each logical step (Conventional Commits); never
-push automatically; never commit secrets. Desktop lifecycle actions are
+`git add -A`/`.`); auto-commit each logical step (Conventional Commits) then
+`git push` (ff-only; `git pull --rebase --ff-only` first if origin moved);
+never from a linked/mission worktree; never commit secrets. Desktop lifecycle actions are
 maintainer-gated: agents may restart, quit, kill, or relaunch the desktop app
 ONLY after the maintainer explicitly authorizes that exact action in the current
 conversation. Generic "fix/finish/verify" approval is insufficient. Verify the

@@ -526,7 +526,7 @@ Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awarenes
 ## 19. Scripts inventory (`scripts/`)
 
 **Cron daemons (production):**
-- `auto-push-eod.ps1` — nightly tag+push safety net. Skips worktrees with active Jarvis-Agent session (`<30 min` modify time).
+- `auto-push-eod.ps1` — nightly tag+push crash-backup (primary path is push-after-commit on the shared checkout). Skips worktrees with active Jarvis-Agent session (`<30 min` modify time).
 - `install-auto-push-task.ps1 -Time "22:00"` — register Task Scheduler job.
 - `drift-guard-daemon.ps1` — 5-min config drift defense. Singleton-locked, hidden, started via `shell:startup` shortcut.
 - `install-config-drift-guard-task.ps1` — install variant.

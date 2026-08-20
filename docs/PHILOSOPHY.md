@@ -91,7 +91,7 @@ These are explicitly **maintainer-only**, will never become part of the open-sou
 - `scripts/preflight.ps1` — worktree drift recovery (BUG-006 / BUG-014 / BUG-015 defense).
 - `scripts/check-working-tree.ps1` — pre-boot drift restore invoked by `run.bat`.
 - `scripts/drift-guard-daemon.ps1` — `jarvis.toml` self-healing daemon (BUG-010 triple defense).
-- `scripts/auto-push-eod.ps1` + `scripts/install-auto-push-task.ps1` — nightly tag-and-push safety net.
+- `scripts/auto-push-eod.ps1` + `scripts/install-auto-push-task.ps1` — nightly tag-and-push crash-backup (primary path is push-after-commit on the shared checkout).
 - `scripts/jarvis-config-drift-guard.ps1` — config drift defense.
 - The maintainer's private GitHub CI bot integration (runs only on the maintainer's own private repositories).
 - The `~/.claude/` private configuration directory (memory, plans, brand guidelines).

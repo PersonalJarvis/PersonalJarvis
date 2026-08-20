@@ -2,9 +2,9 @@
 
 ## What does it do?
 
-The script **automatically mirrors all local Git branches to GitHub every evening**. Before each push a **backup tag** is set (`safety/eod-<branchname>-<timestamp>`), so that even destructive follow-up actions stay reversible. If your laptop were to die tomorrow — all your work is on GitHub anyway.
+The **primary** path is live: after each completed commit on the shared primary checkout, agents `git push` (see `docs/agent-contract.md` §2 / §9). This script is the **crash-backup**. It mirrors remaining local branches to GitHub every evening and sets a **backup tag** (`safety/eod-<branchname>-<timestamp>`) first, so a session that died between commit and push still lands, and even destructive follow-up actions stay reversible.
 
-Background: On 2026-05-01 a restore went well only because you instinctively set backup tags. This automation now does both (tag + push) every evening, without you having to think about it.
+Background: On 2026-05-01 a restore went well only because you instinctively set backup tags. This automation still does both (tag + push) every evening as the backstop, without you having to think about it.
 
 ---
 
@@ -113,12 +113,10 @@ If you still have uncommitted changes, **the script aborts** (log entry `SKIP: W
 
 ---
 
-## Clarification: relationship to the Jarvis-Agent DENY rule
+## Clarification: who pushes, and when
 
-In `~/.claude/settings.json` there is a `Bash(git push *)` DENY rule that prevents Jarvis-Agent worker agents from pushing at runtime. **This rule does NOT affect the auto-push script**, because:
+Coding agents on the **shared primary checkout** push after each completed commit (`git pull --rebase --ff-only` if origin moved, then `git push`). Never `--force`, never `--no-verify`.
 
-- The Task Scheduler starts the script as a standalone Windows program (`powershell.exe`).
-- It does not run inside the Jarvis-Agent worker harness, but as a normal user process.
-- The DENY rule only filters Bash tool calls of the LLM, not external scripts.
+**Linked worktrees do not push** — mission workers and isolated agent worktrees commit locally; the parent on the primary checkout lands that work. The evening script is the backstop for a crash between commit and push, and for any branch the live path did not reach.
 
-So you keep **full control**: agents still cannot push on their own, but your own scheduled job mirrors your repo to GitHub every evening.
+The Task Scheduler starts this script as a standalone Windows program (`powershell.exe`), not inside a worker harness, so a worker-tool deny on `git push` does not block the backup.

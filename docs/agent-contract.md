@@ -138,10 +138,17 @@ When ambiguous, update. **Pre-tag gate:** run
 with `--verify-release` after publishing — a pushed tag without a *published*
 GitHub Release updates no managed install.
 
-**Do not PUSH unless the maintainer asks** (local auto-commit per §9).
-Releases are cut from the dev-machine line; a session on another machine
-ports its work back to `main` instead of cutting its own releases. Doctrine:
-[`CLOUD.md`](../CLOUD.md).
+**Finished work ships.** On the shared primary checkout (`.git` is a
+directory, not a linked worktree), after each completed logical step is
+committed, land it: `git pull --rebase --ff-only` if `origin` has moved,
+then `git push`. That is the standing authorization — do not wait for a
+separate "push" utterance. Linked worktrees (mission workers, isolated
+agent worktrees) commit locally and do not push; the parent on the
+primary checkout lands that work. Never `--force`, never `--no-verify`.
+Maintainer phrases "push" / "sichere den Stand" remain valid for anything
+still local (crash before push). Releases stay explicit-only (volumes
+above). Doctrine: [`CLOUD.md`](../CLOUD.md).
+<!-- i18n-allow: quoted German maintainer trigger phrase -->
 
 ---
 
@@ -622,8 +629,9 @@ every contributor and agent follows it.)*
   (sweeps another session's in-flight, possibly secret-bearing work in).
 - **Conventional-Commit messages** (`feat:`, `fix:`, `refactor:`, `docs:`,
   `chore:`).
-- **Never push automatically** — only when the maintainer explicitly says so
-  (still honoring §2).
+- **Then push** from the primary shared checkout (`git pull --rebase
+  --ff-only` if origin moved, then `git push`). Linked/mission worktrees
+  do not push. Never `--force`.
 - **Never commit secrets / `.env` / keys / tokens.** If any appear
   untracked: stop, flag, don't commit.
 - **Pushing is one command.** `git push <remote> <branch>` — nothing is built,
