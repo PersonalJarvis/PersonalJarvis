@@ -886,6 +886,11 @@ def _is_speakable_observation(text: str | None) -> bool:
 #: regex table, not a translator (AP-11: no LLM on this path). An unknown
 #: reason — any third-party plugin's own text — is passed through verbatim,
 #: because a foreign-language cause still beats no cause at all.
+#: Sentence boundary for a merged cause. Splits only on a full stop that is
+#: followed by whitespace, so a dotted token inside one cause (a file name,
+#: a skill id) stays whole.
+_REASON_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+
 _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
     (
         re.compile(
@@ -958,8 +963,43 @@ def localize_failure_reason(reason: str | None, language: str) -> str:
     if not text:
         return ""
     lang = str(language or "").strip().lower()
+    # A merged failure carries ONE sentence per broken tool, so the families
+    # are matched sentence by sentence. Run whole, the first family's trailing
+    # ``.*`` swallows every later cause and the user hears one of the two
+    # things that broke — the exact opposite of the standing rule that a
+    # failure names its cause.
+    #
+    # That trailing ``.*`` still earns its keep WITHIN one cause: a family
+    # sentence often drags a machine tail behind it ("Installed skills: a, b,
+    # c"), and none of that is speakable. So once a family has matched, a
+    # following sentence is kept only if it is a cause in its own right.
+    # Before the first match nothing is dropped: an unrecognized reason is a
+    # third party's own wording and still beats no cause at all.
+    spoken: list[str] = []
+    matched = False
+    for sentence in _REASON_SENTENCE_RE.split(text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        localized = _localize_one_reason(sentence, lang)
+        if localized is None:
+            if not matched:
+                spoken.append(sentence)
+            continue
+        matched = True
+        spoken.append(localized)
+    return " ".join(spoken)
+
+
+def _localize_one_reason(sentence: str, lang: str) -> str | None:
+    """Map ONE reported cause onto its localized wording.
+
+    Returns ``None`` when no family owns the sentence — the caller decides
+    whether an unrecognized sentence is a cause of its own or the machine tail
+    of the cause before it.
+    """
     for pattern, templates in _REASON_FAMILIES:
-        match = pattern.match(text)
+        match = pattern.match(sentence)
         if match is None:
             continue
         # Same language resolution as ``action_phrase``: an unknown code falls
@@ -969,7 +1009,7 @@ def localize_failure_reason(reason: str | None, language: str) -> str:
         if not subject:
             continue
         return template.format(subject=subject)
-    return text
+    return None
 
 
 def extract_speakable_reason(error: str | None, output: object = None) -> str | None:

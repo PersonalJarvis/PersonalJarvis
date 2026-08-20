@@ -115,3 +115,26 @@ def test_the_localized_cause_fits_the_failure_phrase() -> None:
     )
     assert "is not connected" not in spoken, "no English clause left in a German line"
     assert "Plugins" in spoken, "the actionable part survives"
+
+
+def test_every_cause_of_a_merged_failure_is_localized() -> None:
+    """Two tools broke, so the user hears two causes — not the first one.
+
+    ``_merged_failure`` folds one sentence per broken tool into a single
+    reason. Matching that blob as a whole let the first family's trailing
+    ``.*`` eat every later cause.
+    """
+    spoken = localize_failure_reason(
+        "Google Calendar is not connected. Gmail is not connected.", "de"
+    )
+    assert "Google Calendar" in spoken
+    assert "Gmail" in spoken
+    assert "is not connected" not in spoken, "both causes speak German"
+
+
+def test_a_second_cause_survives_an_unrecognized_first_one() -> None:
+    spoken = localize_failure_reason(
+        "The printer jammed. Gmail is not connected.", "de"
+    )
+    assert "The printer jammed." in spoken, "a foreign cause is passed through"
+    assert "Gmail" in spoken and "Plugins" in spoken
