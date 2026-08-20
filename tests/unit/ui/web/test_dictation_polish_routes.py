@@ -641,3 +641,66 @@ def test_failed_translation_save_is_not_applied_only_until_restart(
     assert response.status_code == 500
     assert "could not be saved" in response.json()["detail"]
     assert app.state.config.dictation.translate is True
+
+
+# --------------------------------------------------------------------------
+# Which provider the settings screen may NAME
+# --------------------------------------------------------------------------
+# The card that offers to fix a missing key has to name the provider the next
+# dictation will really reach. That answer belongs to ``resolve_polish_chain``
+# — it depends on the credentials this host holds and on the privacy rule that
+# pins an on-device recognizer to on-device models — so the route serves it
+# rather than letting the frontend re-derive an order it cannot see (AP-4).
+
+
+def test_the_settings_route_names_the_provider_that_will_answer(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core import config as jarvis_config
+    from jarvis.dictation.polish import reset_polish_state
+    from jarvis.dictation.polish_client import POLISH_FAMILIES
+
+    reset_polish_state()
+    family = POLISH_FAMILIES[0]
+    slot = family.secret_candidates[0]
+    monkeypatch.setattr(
+        jarvis_config,
+        "get_secret",
+        lambda key, env_fallback=None: "k" if key == slot else None,
+    )
+
+    block = client.get("/api/dictation/settings").json()["wording_provider"]
+    reset_polish_state()
+
+    assert block["family"] == family.id
+    assert block["ready"] is True
+    # The PRIMARY slot only: the rest are read-only fallbacks the runtime
+    # resolves itself, and a second input box would ask for a key nobody holds.
+    assert block["secret_key"] == slot
+    assert block["spec_id"].endswith("-polish")
+
+
+def test_a_host_with_no_key_still_gets_a_key_to_paste(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The AP-23 state, made actionable instead of merely honest.
+
+    A fresh clone holds no credential anywhere, so the chain is empty and
+    nothing is translated. Reporting only "not ready" would leave the user with
+    a switch that reads as on and a card with nothing to do; naming a slot they
+    can fill turns the dead end into the one next step.
+    """
+    from jarvis.core import config as jarvis_config
+    from jarvis.dictation.polish import reset_polish_state
+
+    reset_polish_state()
+    monkeypatch.setattr(
+        jarvis_config, "get_secret", lambda key, env_fallback=None: None
+    )
+
+    block = client.get("/api/dictation/settings").json()["wording_provider"]
+    reset_polish_state()
+
+    assert block["ready"] is False
+    assert block["secret_key"]
+    assert block["needs_key"] is True

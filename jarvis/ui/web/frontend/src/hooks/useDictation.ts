@@ -339,6 +339,32 @@ export interface DictationSettings {
   translate_drift_max_growth: number;
 }
 
+/**
+ * Which provider the wording/translate pass will REALLY reach on this host,
+ * resolved by the backend's own chain.
+ *
+ * Served rather than derived, because the order the `auto` chain walks depends
+ * on which credentials exist here and on the privacy rule that pins an
+ * on-device recognizer to on-device models. A frontend that re-derived it
+ * would name one provider on the card while the dictation used another — the
+ * AP-4 drift trap, with nobody able to tell which of the two was lying.
+ *
+ * `ready: false` with a `secret_key` is the actionable state: nothing will
+ * answer, and this is the key to paste. Optional so an older backend parses.
+ */
+export interface DictationWordingProvider {
+  /** Polish family id, e.g. `"groq"`; `""` when nothing could be suggested. */
+  family: string;
+  label: string;
+  /** Provider-card id for this family, e.g. `"groq-polish"`. */
+  spec_id: string;
+  /** The family's PRIMARY credential slot; `""` for a keyless family. */
+  secret_key: string;
+  needs_key: boolean;
+  /** Whether the chain came back non-empty — i.e. something will answer. */
+  ready: boolean;
+}
+
 export interface DictationChoices {
   mode: string[];
   target: string[];
@@ -440,6 +466,8 @@ export function useDictation() {
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [settings, setSettings] = useState<DictationSettings | null>(null);
   const [choices, setChoices] = useState<DictationChoices | null>(null);
+  const [wordingProvider, setWordingProvider] =
+    useState<DictationWordingProvider | null>(null);
   const [custom, setCustom] = useState<DictationCustom | null>(null);
   const [entries, setEntries] = useState<DictationEntry[]>([]);
   const [stats, setStats] = useState<DictationStats | null>(null);
@@ -491,10 +519,12 @@ export function useDictation() {
         settings: DictationSettings;
         choices: DictationChoices;
         custom?: DictationCustom;
+        wording_provider?: DictationWordingProvider;
       }>(await fetch("/api/dictation/settings"));
       setSettings(data.settings);
       setChoices(data.choices);
       setCustom(data.custom ?? null);
+      setWordingProvider(data.wording_provider ?? null);
       await Promise.all([refetchStatus(), refetchHistory(), refetchStats()]);
     } catch (e) {
       setError((e as Error).message);
@@ -610,6 +640,7 @@ export function useDictation() {
     status,
     settings,
     choices,
+    wordingProvider,
     custom,
     entries,
     stats,

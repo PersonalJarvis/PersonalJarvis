@@ -422,7 +422,10 @@
       "sends_text": "Translating happens in the same step as the wording clean-up, so it costs no extra wait, and it runs at the provider you picked above — on that provider's strongest fast model rather than its quickest, because rewriting a sentence in another language asks more than punctuating it. If no model answers in time, your words arrive in the language you spoke them.",
       "target_label": "Write my dictation in",
       "target_hint": "Everything you dictate comes out in this language, whichever one you speak. Dictations you already speak in it are simply tidied up.",
-      "same_language_notice": "This is the language you have pinned for dictation, so nothing will be translated. Pick a different one, or set the dictation language above back to automatic."
+      "same_language_notice": "This is the language you have pinned for dictation, so nothing will be translated. Pick a different one, or set the dictation language above back to automatic.",
+      "answers_label": "Answers right now",
+      "no_provider": "No provider can answer yet, so nothing is translated — your words arrive as you spoke them. Paste a key below and it starts working.",
+      "key_saved_hint": "Stored on this computer only, in your system keychain."
     },
     "api_keys": {
       "title": "Voice input",

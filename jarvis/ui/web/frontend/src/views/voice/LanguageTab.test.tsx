@@ -124,6 +124,41 @@ const POLISH_TEST = {
   sample_out: "I think we should ship the report on Wednesday.",
 };
 
+// What GET /api/dictation/settings adds for the translate card: the family the
+// backend's own chain resolved. Served rather than derived — see
+// `DictationWordingProvider`.
+const WORDING_READY = {
+  family: "groq",
+  label: "Groq",
+  spec_id: "groq-polish",
+  secret_key: "groq_api_key",
+  needs_key: true,
+  ready: true,
+};
+
+const WORDING_UNSET = { ...WORDING_READY, ready: false };
+
+/** One dictation provider card, as GET /api/providers serves it. */
+const PROVIDERS = {
+  providers: [
+    {
+      id: "groq-polish",
+      label: "Groq: dictation polish",
+      tier: "dictation",
+      auth_mode: "api_key",
+      secret_keys: ["groq_api_key"],
+      secrets_set: { groq_api_key: false },
+      dashboard_url: "https://console.groq.com/keys",
+      login_cli: null,
+      install_hint: null,
+      credential_path_hint: null,
+      configured: false,
+      active: true,
+      credential_help: "The Groq key that tidies up your dictation.",
+    },
+  ],
+};
+
 const STATUS = {
   available: true,
   active: false,
@@ -139,8 +174,13 @@ function routes(extra: Record<string, () => RouteResult> = {}) {
   return {
     "GET /api/dictation/status": () => ({ body: STATUS }),
     "GET /api/dictation/settings": () => ({
-      body: { settings: SETTINGS, choices: CHOICES },
+      body: {
+        settings: SETTINGS,
+        choices: CHOICES,
+        wording_provider: WORDING_READY,
+      },
     }),
+    "GET /api/providers": () => ({ body: PROVIDERS }),
     "GET /api/dictation/history": () => ({ body: { entries: [], count: 0 } }),
     "GET /api/dictation/stats": () => ({ status: 404, body: { detail: "none" } }),
     "PUT /api/settings/ui-language": () => ({ body: { ok: true } }),
@@ -736,4 +776,104 @@ describe("LanguageTab — the wording pass", () => {
     );
     expect(screen.queryByTestId("dictation-translate-same-language")).toBeNull();
   });
+
+  // ------------------------------------------------------------------
+  // The translate card's own provider + credential block
+  // ------------------------------------------------------------------
+  // Translation runs even with the formatter switched OFF, but the only
+  // provider picker used to live inside the formatter's block. So a user could
+  // turn translation on, see a switch that read as enabled, and have no way at
+  // all to choose a provider or supply the key it needs — the switch that saves
+  // and does nothing (AP-31).
+
+  it("names the provider that will actually answer a translation", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: {
+            settings: { ...SETTINGS, translate: true },
+            choices: CHOICES,
+            wording_provider: WORDING_READY,
+          },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    const name = await waitFor(() =>
+      screen.getByTestId("dictation-translate-provider-name"),
+    );
+    expect(name.textContent).toContain("Groq");
+    // Nothing to fix, so nothing is asked for.
+    expect(screen.queryByTestId("dictation-translate-key")).toBeNull();
+  });
+
+  it("asks for the key right here when nothing can answer", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: {
+            settings: { ...SETTINGS, translate: true, polish: false },
+            choices: CHOICES,
+            wording_provider: WORDING_UNSET,
+          },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    // The honest sentence first: the switch is on and nothing is translated.
+    const notice = await waitFor(() =>
+      screen.getByTestId("dictation-translate-no-provider"),
+    );
+    expect(notice.textContent).toBeTruthy();
+    // And the field that fixes it, on the same card.
+    expect(screen.getByTestId("dictation-translate-key")).toBeTruthy();
+  });
+
+  it("offers the provider picker on the card when the formatter is off", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: {
+            settings: { ...SETTINGS, translate: true, polish: false },
+            choices: CHOICES,
+            wording_provider: WORDING_UNSET,
+          },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    expect(
+      await waitFor(() =>
+        screen.getByTestId("dictation-translate-polish-provider"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("does not show a second picker when the formatter already has one", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: {
+            settings: { ...SETTINGS, translate: true, polish: true },
+            choices: CHOICES,
+            wording_provider: WORDING_READY,
+          },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    // The formatter's own picker is on screen...
+    expect(
+      await waitFor(() => screen.getByTestId("dictation-polish-provider")),
+    ).toBeTruthy();
+    // ...so the translate card does not repeat it as a second setting.
+    expect(
+      screen.queryByTestId("dictation-translate-polish-provider"),
+    ).toBeNull();
+  });
+
 });

@@ -21,6 +21,8 @@ import {
 } from "@/hooks/useDictation";
 import { Combobox } from "@/components/ui/combobox";
 import { LanguageSelect } from "@/components/ui/language-select";
+import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { useProviders } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
@@ -77,7 +79,12 @@ export interface LanguageTabProps {
  */
 export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   const t = useT();
-  const { settings, choices, loading, error, saveSettings } = useDictation();
+  const { settings, choices, wordingProvider, loading, error, saveSettings } =
+    useDictation();
+  // Only for the credential half of the translate card: the dashboard link and
+  // the "which key is this" line live on the provider catalog, and copying
+  // them into this view would be a second source of truth for both.
+  const { providers, refetch: refetchProviders } = useProviders();
   const pushToast = useEventStore((s) => s.pushToast);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<DictationPolishTest | null>(null);
@@ -199,6 +206,32 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   // so this is said rather than prevented: silently ignoring one of two switches
   // the user set is the failure mode worth avoiding.
   const targetEqualsSource = value !== "auto" && value === translateTarget;
+
+  // The credential half of the translate card.
+  //
+  // Which family answers is the BACKEND's answer (`wordingProvider`), never a
+  // re-derivation from the list above: the `auto` order depends on the keys
+  // this host holds and on the privacy rule that pins an on-device recognizer
+  // to on-device models, and a second implementation of it here would let the
+  // card name one provider while the dictation used another (AP-4).
+  //
+  // What the card still needs from the provider catalog is the human half —
+  // the dashboard link and the "which key is this" sentence — so those are
+  // looked up by the spec id the backend handed over rather than copied.
+  const wordingCard = wordingProvider?.spec_id
+    ? (providers.find((entry) => entry.id === wordingProvider.spec_id) ?? null)
+    : null;
+  // Asked whenever the resolved provider still needs a key. Deliberately NOT
+  // gated on `polish`: a translation runs with the formatter switched off, so
+  // hiding the only place to fix it there would leave the switch reading as on
+  // with the feature dead and nothing on screen explaining it (AP-31).
+  const wordingNeedsKey = Boolean(
+    wordingProvider && !wordingProvider.ready && wordingProvider.secret_key,
+  );
+  // The formatter block already renders this dropdown when it is open. A second
+  // identical one a few rows below would read as two settings, so this one
+  // appears only where there is otherwise nowhere to choose.
+  const showTranslateProvider = !polishOn;
 
   return (
     <div className="flex h-full flex-col">
@@ -523,6 +556,85 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
 
             {translateOn && (
               <>
+                {/* Which provider will really answer, and — when none can —
+                    the one field that fixes it, right here. Before this, a
+                    user who turned translation on with the formatter switched
+                    off had nowhere to choose a provider or add a key at all:
+                    the only picker lived inside the formatter's own block. */}
+                <div
+                  className="mt-3 rounded-md border border-border/60 bg-background/40 p-3"
+                  data-testid="dictation-translate-provider"
+                >
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {t("voice.translate.answers_label")}
+                  </span>
+                  {wordingProvider?.ready ? (
+                    <p
+                      className="mt-1 text-xs font-medium"
+                      data-testid="dictation-translate-provider-name"
+                    >
+                      {POLISH_PROVIDER_LABELS[wordingProvider.family] ??
+                        wordingProvider.label ??
+                        wordingProvider.family}
+                    </p>
+                  ) : (
+                    <p
+                      className="mt-1 text-[11px] text-muted-foreground"
+                      data-testid="dictation-translate-no-provider"
+                    >
+                      {t("voice.translate.no_provider")}
+                    </p>
+                  )}
+
+                  {showTranslateProvider && (
+                    <div className="mt-3 flex max-w-xs flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        {t("voice.polish.provider_label")}
+                      </span>
+                      <Combobox
+                        value={polishProvider}
+                        ariaLabel={t("voice.polish.provider_label")}
+                        onChange={(id) => void onPickPolishProvider(id)}
+                        testId="dictation-translate-polish-provider"
+                        groups={[
+                          {
+                            id: "providers",
+                            options: polishProviders.map((id) => ({
+                              value: id,
+                              label:
+                                id === "auto"
+                                  ? t("voice.polish.provider_auto")
+                                  : (POLISH_PROVIDER_LABELS[id] ?? id),
+                            })),
+                          },
+                        ]}
+                      />
+                    </div>
+                  )}
+
+                  {wordingNeedsKey && wordingProvider && (
+                    <div className="mt-3" data-testid="dictation-translate-key">
+                      <ApiKeyForm
+                        secretKey={wordingProvider.secret_key}
+                        dashboardUrl={wordingCard?.dashboard_url ?? null}
+                        configured={Boolean(
+                          wordingCard?.secrets_set?.[wordingProvider.secret_key],
+                        )}
+                        credentialHelp={wordingCard?.credential_help ?? null}
+                        sharedWith={
+                          wordingCard?.secret_shared_with?.[
+                            wordingProvider.secret_key
+                          ]
+                        }
+                        onChanged={() => void refetchProviders()}
+                      />
+                      <p className="mt-1.5 text-[10px] text-muted-foreground">
+                        {t("voice.translate.key_saved_hint")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="mt-3 flex max-w-xs flex-col gap-1">
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                     {t("voice.translate.target_label")}

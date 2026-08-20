@@ -422,7 +422,10 @@
       "sends_text": "Das Übersetzen passiert im selben Schritt wie das Aufräumen der Formulierung — keine zusätzliche Wartezeit, und es läuft bei dem Anbieter, den du oben gewählt hast. Dort nimmt es dessen stärkstes schnelles Modell, denn übersetzen verlangt mehr als Kommas setzen. Antwortet kein Modell rechtzeitig, kommt dein Text in der Sprache an, in der du ihn gesprochen hast.",
       "target_label": "Diktat schreiben in",
       "target_hint": "Alles, was du diktierst, kommt in dieser Sprache heraus — egal, welche du sprichst. Diktate, die schon in dieser Sprache sind, werden einfach nur aufgeräumt.",
-      "same_language_notice": "Das ist die Sprache, auf die du dein Diktat festgelegt hast — es wird also nichts übersetzt. Wähle eine andere, oder stell die Diktatsprache oben wieder auf automatisch."
+      "same_language_notice": "Das ist die Sprache, auf die du dein Diktat festgelegt hast — es wird also nichts übersetzt. Wähle eine andere, oder stell die Diktatsprache oben wieder auf automatisch.",
+      "answers_label": "Antwortet gerade",
+      "no_provider": "Es kann noch kein Anbieter antworten, also wird nichts übersetzt — dein Text kommt so an, wie du ihn gesprochen hast. Trag unten einen Schlüssel ein, dann läuft es.",
+      "key_saved_hint": "Wird nur auf diesem Rechner gespeichert, im Schlüsselbund des Systems."
     },
     "api_keys": {
       "title": "Spracheingabe",

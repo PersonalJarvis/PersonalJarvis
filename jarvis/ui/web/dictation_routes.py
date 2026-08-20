@@ -951,6 +951,66 @@ def delete_history_entry(entry_id: str) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 
 
+async def _wording_provider_block(dictation: Any) -> dict[str, Any]:
+    """Which family will actually answer the wording pass, and what it needs.
+
+    The settings screen can list every provider and whether each holds a key,
+    but not which one the ``auto`` chain will REACH — that is decided by
+    :func:`~jarvis.dictation.polish_client.resolve_polish_chain` from the
+    credentials on this host, and the privacy rule on top of it. A frontend
+    that re-derived the order would be the AP-4 drift trap: the card would name
+    one provider while the dictation used another, and neither the user nor a
+    bug report could tell which was lying.
+
+    So the answer comes from the resolver itself, and carries the one thing a
+    user can act on — the credential slot to fill when the chain came back
+    EMPTY. An empty chain is the honest "nothing will answer" state, and it is
+    what a fresh clone with no key looks like (AP-23).
+
+    Off the event loop: the resolver reads up to seven credential slots, and a
+    locked keyring blocks for seconds. That is the same reason the pass itself
+    runs it in a worker thread.
+    """
+    from jarvis.dictation.polish_client import (
+        POLISH_FAMILIES,
+        family_has_key,
+        resolve_polish_chain,
+    )
+    from jarvis.ui.web.provider_spec import dictation_spec_id
+
+    def _resolve() -> dict[str, Any]:
+        chain = resolve_polish_chain(dictation)
+        # The first family that would be DIALLED, or — when nothing is
+        # reachable — the first that could be, so the card has a concrete
+        # credential to ask for instead of a shrug.
+        family = chain[0] if chain else None
+        candidates = [f for f in POLISH_FAMILIES if f.needs_key and not family_has_key(f)]
+        suggestion = family or (candidates[0] if candidates else None)
+        if suggestion is None:
+            return {"family": "", "label": "", "spec_id": "", "secret_key": "",
+                    "needs_key": False, "ready": bool(chain)}
+        return {
+            "family": suggestion.id,
+            "label": suggestion.label,
+            "spec_id": dictation_spec_id(suggestion.id),
+            # The PRIMARY slot only. The rest are read-only fallbacks the
+            # runtime resolves on its own, and offering them as a second input
+            # box would ask for a key nobody has to hold.
+            "secret_key": suggestion.secret_candidates[0]
+            if suggestion.secret_candidates
+            else "",
+            "needs_key": suggestion.needs_key,
+            "ready": bool(chain),
+        }
+
+    try:
+        return await asyncio.to_thread(_resolve)
+    except Exception as exc:  # noqa: BLE001 — a settings screen must still render
+        log.debug("wording provider resolution failed: %s", exc)
+        return {"family": "", "label": "", "spec_id": "", "secret_key": "",
+                "needs_key": False, "ready": False}
+
+
 @router.get("/settings")
 async def get_settings(request: Request) -> dict[str, Any]:
     """The live ``[dictation]`` block plus the accepted values per key.
@@ -985,6 +1045,9 @@ async def get_settings(request: Request) -> dict[str, Any]:
     values = {key: getattr(dictation, key, None) for key in DICTATION_SETTING_KEYS}
     return {
         "settings": values,
+        # Which provider the wording/translate pass will really reach, resolved
+        # by the chain itself rather than guessed from the list below.
+        "wording_provider": await _wording_provider_block(dictation),
         "choices": {
             "mode": ["hold", "toggle"],
             "target": ["auto", "insert", "chat"],
