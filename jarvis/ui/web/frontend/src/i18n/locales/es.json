@@ -4365,7 +4365,7 @@
     "running": "En marcha",
     "thinking_now": "Pensando",
     "thinking_starting": "Empezando…",
-    "idle_headline": "Di «{0}» — o haz clic en el orbe.",
+    "idle_headline": "Di «{0}» — o haz clic en la mascota.",
     "orb_call": "Empieza a hablar — igual que decir «{0}».",
     "orb_hangup": "Terminar la conversación.",
     "warming": "Arrancando. Hablar funcionará enseguida.",
@@ -4506,7 +4506,7 @@
     "boot_brain_off": "sin cerebro configurado — abre las claves API",
     "boot_wake_pending": "armando la palabra de activación",
     "boot_wake_ok": "escuchando «{0}»",
-    "boot_wake_off": "palabra de activación apagada — el orbe o el atajo inician la charla",
+    "boot_wake_off": "palabra de activación apagada — la mascota o el atajo inician la charla",
     "standby_since": "desde {0}",
     "open_board": "Abrir el tablero"
   },

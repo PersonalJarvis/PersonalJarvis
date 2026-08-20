@@ -8,30 +8,27 @@ import { driveTarget, isOnset, orbDriveFor, smoothOrbLevel } from "@/lib/orbLeve
 import { cn } from "@/lib/utils";
 
 /**
- * The centre of the deck: the Jarvis orb in a reticle — a dial ring, corner
- * brackets, one bright arc per running step, and four small readouts at the
- * compass points.
+ * The centre of the deck: the mascot in a reticle — one hairline bezel, one
+ * bright arc per running step, the voice meter, and four small readouts at
+ * the corners.
  *
- * The orb is the product's own artwork (`JarvisOrb`: the sphere cut out of
- * `hero-orb.png`), moved a little by the real voice state, with a soft gold
- * glow carrying it past its own edge. The maintainer asked for the picture
- * itself in the middle (2026-08-18) after the procedural cloud with a dark
- * mascot on it read as a blob. A mascot later rode in the core for a day
- * and came back out (2026-08-19): two ghosts on one stage. The reticle is
- * the deck's addition, and every part of it carries information: the arcs
- * are parallel work made visible, the sweep turns only while something
- * runs, the readouts are live values the caller sources.
+ * The middle is Gigi itself (`JarvisOrb`), moved by the real voice state,
+ * with a soft gold glow throwing the dark silhouette forward. It was a PNG
+ * of a glowing sphere until 2026-08-20; the maintainer had asked repeatedly
+ * for that picture to go and for the mascot to carry the product, and the
+ * picture had earned it — its baked-in white halo read as a grey box on the
+ * dark deck, and this reticle sliced that box off at the ring.
  *
- * And it is ALIVE at rest (maintainer, 2026-08-19: the still reticle looked
- * boring on both stages): the inner scale turns slowly one way, a sparse
- * orbit the other, a satellite rides the bezel, the glow breathes, and while
- * the assistant is idle a faint ping leaves the orb every few seconds — the
- * listening heartbeat. Calm, not busy: slow periods, low opacities, nothing
- * that competes with a real signal (the satellite steps aside for the busy
- * sweep). Each living part is its own small layer — a root `<svg>` or a div
- * with a CSS transform/opacity animation (index.css) — so the browser turns
- * it on the compositor and the main thread never hears of it; the halo
- * filter stays on the still reticle. Reduced motion stops all of it.
+ * The reticle is now INSTRUMENTS ONLY, and every part of it carries
+ * information: the arcs are parallel work made visible, the sweep turns only
+ * while something runs, the meter is the voice, the readouts are live values
+ * the caller sources. What went with the PNG was the scenery that measured
+ * nothing — 72 dial ticks, corner brackets, two counter-turning orbits, a
+ * satellite riding the bezel and an idle ping (maintainer, 2026-08-20:
+ * instruments that show nothing are a stage set). The deck does not need
+ * them to look alive: the living thing in the middle blinks, its pupils
+ * drift and it waves, so the instruments can hold still until they have
+ * something to say. Reduced motion stops what is left.
  *
  * And it MOVES WITH THE VOICE, all of it (maintainer, 2026-08-19: "when you
  * speak the sun moved — that, on the next level; not just the core, all of
@@ -99,7 +96,11 @@ export function DeckOrb({
   }, [busy, reduced]);
 
   const R = size / 2;
-  const orbSize = Math.round(size * 0.78);
+  // The sphere sat at 0.78 of the reticle and left a ring of nothing around
+  // it. Gigi carries a lot of air inside its own 256 viewBox — the figure is
+  // roughly two thirds of it — so at 0.78 it read as a small toy in a big
+  // dial. At 0.96 the figure fills the bezel the way the sphere used to.
+  const orbSize = Math.round(size * 0.96);
   const point = (deg: number, r: number): [number, number] => {
     const rad = ((deg - 90) * Math.PI) / 180;
     return [R + r * Math.cos(rad), R + r * Math.sin(rad)];
@@ -120,7 +121,6 @@ export function DeckOrb({
 
   const [sx, sy] = point(sweep, R * 0.94);
   const [ex, ey] = point(sweep + 36, R * 0.94);
-  const B = 16; // bracket arm
   const haloId = useId();
 
   // The level loop: one number for everything that moves with the voice,
@@ -171,47 +171,8 @@ export function DeckOrb({
       <svg viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 h-full w-full" aria-hidden>
         <HudHaloDefs id={haloId} />
         <g filter={`url(#${haloId})`}>
-        {/* corner brackets — the reticle's bounds */}
-        {[
-          `M 0.5 ${B} V 0.5 H ${B}`,
-          `M ${size - B} 0.5 H ${size - 0.5} V ${B}`,
-          `M ${size - 0.5} ${size - B} V ${size - 0.5} H ${size - B}`,
-          `M ${B} ${size - 0.5} H 0.5 V ${size - B}`,
-        ].map((d) => (
-          <path key={d} d={d} fill="none" stroke="hsl(var(--primary))" strokeWidth={1.25} opacity={0.8} />
-        ))}
-
-        {/* bezel — the hairline the ticks hang from */}
-        <circle cx={R} cy={R} r={R * 0.94} fill="none" stroke="hsl(var(--primary))" strokeWidth={1} opacity={0.5} />
-
-        {/* outer dial: 72 ticks, long every 15° */}
-        {Array.from({ length: 72 }, (_, i) => {
-          const deg = i * 5;
-          const long = i % 3 === 0;
-          const [ax, ay] = point(deg, R * 0.94);
-          const [bx, by] = point(deg, R * (long ? 0.885 : 0.91));
-          return (
-            <line
-              key={deg}
-              x1={ax}
-              y1={ay}
-              x2={bx}
-              y2={by}
-              stroke="hsl(var(--primary))"
-              strokeWidth={1}
-              opacity={long ? 0.78 : 0.42}
-            />
-          );
-        })}
-        {/* crosshair ticks at the compass points, outside the dial */}
-        {[0, 90, 180, 270].map((deg) => {
-          const [ax, ay] = point(deg, R * 0.96);
-          const [bx, by] = point(deg, R * 1.0);
-          return <line key={deg} x1={ax} y1={ay} x2={bx} y2={by} stroke="hsl(var(--primary))" strokeWidth={1.5} opacity={0.9} />;
-        })}
-
-        {/* inner scale ring around the orb (the dashed scale inside it turns — see below) */}
-        <circle cx={R} cy={R} r={R * 0.84} fill="none" stroke="hsl(var(--primary))" strokeWidth={1} opacity={0.5} />
+        {/* bezel — the one hairline the meter and the arcs are read against */}
+        <circle cx={R} cy={R} r={R * 0.94} fill="none" stroke="hsl(var(--primary))" strokeWidth={1} opacity={0.4} />
 
         {arcs.map((a) => (
           <path
@@ -236,39 +197,6 @@ export function DeckOrb({
         )}
         </g>
       </svg>
-
-      {/* The living parts, each its own layer (CSS, index.css): the dashed
-          inner scale turning one way, a sparse orbit the other, a satellite
-          on the bezel while nothing runs, and the idle ping. The rings sit
-          in one wrapper that swells and brightens with the level. */}
-      <div className="deck-orb-rings pointer-events-none absolute inset-0" aria-hidden>
-        <OrbitLayer size={size} r={R * 0.66} className="deck-orb-orbit-a" dash="2 6" opacity={0.55} />
-        <OrbitLayer size={size} r={R * 0.76} className="deck-orb-orbit-b" dash="18 54" opacity={0.32} />
-        {!busy && (
-          <svg
-            viewBox={`0 0 ${size} ${size}`}
-            className="deck-orb-satellite pointer-events-none absolute inset-0 h-full w-full"
-            data-testid="deck-orb-satellite"
-          >
-            <path
-              d={`M ${point(-16, R * 0.94)[0]} ${point(-16, R * 0.94)[1]} A ${R * 0.94} ${R * 0.94} 0 0 1 ${R} ${R - R * 0.94}`}
-              fill="none"
-              stroke="hsl(var(--primary))"
-              strokeWidth={1.5}
-              opacity={0.45}
-            />
-            <circle cx={R} cy={R - R * 0.94} r={2.2} fill="hsl(var(--primary))" />
-          </svg>
-        )}
-      </div>
-      {voiceState === "idle" && (
-        <div
-          aria-hidden
-          data-testid="deck-orb-ping"
-          className="deck-orb-ping pointer-events-none absolute rounded-full"
-          style={{ inset: size * 0.08 }}
-        />
-      )}
 
       {/* The level arc on the bezel: grows from the top down both sides with
           the voice — a meter, reading `--orb-level` (CSS). */}
@@ -350,10 +278,13 @@ export function DeckOrb({
  * The orb — the part of the centre a press lands on.
  *
  * Back to front: a soft gold glow wider than the sphere (`.deck-orb-glow`,
- * keyed on the voice state), then the artwork itself (`JarvisOrb`).
+ * keyed on the voice state), then the mascot itself (`JarvisOrb`).
  */
 function OrbFace({ voiceState, orbSize }: { voiceState: VoiceState; orbSize: number }) {
-  const glow = Math.round(orbSize * 1.35);
+  // The light behind the figure, a little wider than it so the silhouette
+  // stands IN it rather than on it. It followed a smaller orb at 1.35; with
+  // the figure nearly filling the bezel that would spill across the cards.
+  const glow = Math.round(orbSize * 1.05);
   return (
     <>
       <div
@@ -377,45 +308,6 @@ function spawnRipple(host: HTMLDivElement | null): void {
   el.className = "deck-orb-ripple rounded-full";
   el.addEventListener("animationend", () => el.remove(), { once: true });
   host.appendChild(el);
-}
-
-/**
- * One turning ring of the reticle: a dashed circle in its own root `<svg>`,
- * so its CSS rotation is a compositor transform (a transform on a group
- * INSIDE an svg repaints the whole svg every frame).
- */
-function OrbitLayer({
-  size,
-  r,
-  className,
-  dash,
-  opacity,
-}: {
-  size: number;
-  r: number;
-  className: string;
-  dash: string;
-  opacity: number;
-}) {
-  const c = size / 2;
-  return (
-    <svg
-      viewBox={`0 0 ${size} ${size}`}
-      className={cn("pointer-events-none absolute inset-0 h-full w-full", className)}
-      aria-hidden
-    >
-      <circle
-        cx={c}
-        cy={c}
-        r={r}
-        fill="none"
-        stroke="hsl(var(--primary))"
-        strokeWidth={1}
-        strokeDasharray={dash}
-        opacity={opacity}
-      />
-    </svg>
-  );
 }
 
 function Readout({

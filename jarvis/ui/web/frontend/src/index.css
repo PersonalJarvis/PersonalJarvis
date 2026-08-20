@@ -2083,69 +2083,6 @@
     }
   }
 
-  /* ===========================================================
-     Deck orb — the mask inside the orb.
-     `.deck-core` is the dark core with the glowing eyes and mouth
-     (components/deck/OrbCore.tsx); `.deck-orb-glow` is the soft gold
-     halo behind the sphere. The face reuses the mascot's keyframes
-     (auto-blink, pupil drift, mouth breathing, ear-prick, speak,
-     thinking tilt) and reacts to the real voice state through
-     `data-voice`. Reduced motion stops all of it.
-     =========================================================== */
-  .deck-core {
-    display: block;
-    overflow: visible;
-    /* sunk into the aura: a soft shadow where the core meets the weather */
-    filter: drop-shadow(0 0 7px rgba(0, 0, 0, 0.55));
-  }
-  .deck-core .deck-core-face {
-    transform-box: fill-box;
-    transform-origin: 50% 50%;
-  }
-  .deck-core .deck-core-eyes {
-    transform-box: fill-box;
-    transform-origin: 50% 50%;
-    animation: gigi-auto-blink 7s ease-in-out infinite;
-  }
-  .deck-core .deck-core-pupils {
-    transform-box: fill-box;
-    transform-origin: 50% 50%;
-    animation: gigi-pupil-drift 11s ease-in-out infinite;
-  }
-  .deck-core .deck-core-mouth {
-    transform-box: fill-box;
-    transform-origin: 50% 50%;
-    animation: gigi-mouth-idle 5.8s ease-in-out infinite;
-  }
-  /* listening: the eyes prick up */
-  .deck-core[data-voice="listening"] .deck-core-eyes {
-    animation: gigi-ear-prick 1.2s ease-in-out infinite;
-  }
-  /* thinking: the head cocks and the eyes wander */
-  .deck-core[data-voice="thinking"] .deck-core-face {
-    animation: gigi-thinking-tilt 2.4s ease-in-out infinite;
-  }
-  .deck-core[data-voice="thinking"] .deck-core-pupils {
-    animation: deck-core-scan 2.4s ease-in-out infinite;
-  }
-  @keyframes deck-core-scan {
-    0%,
-    100% {
-      transform: translate(-6px, -2px);
-    }
-    50% {
-      transform: translate(6px, -2px);
-    }
-  }
-  /* speaking: the mouth moves */
-  .deck-core[data-voice="speaking"] .deck-core-mouth {
-    animation: gigi-speak 0.35s ease-in-out infinite alternate;
-  }
-  /* error: the gold turns hot */
-  .deck-core[data-voice="error"] {
-    filter: drop-shadow(0 0 7px rgba(0, 0, 0, 0.55)) hue-rotate(-40deg) saturate(1.4);
-  }
-
   /* -----------------------------------------------------------
      The orb moves with the voice (DeckOrb.tsx, JarvisOrb.tsx).
      `--orb-level` is ONE number, 0..1, on the orb's root — the real
@@ -2197,12 +2134,6 @@
     animation: deck-orb-turn 30s linear infinite;
     will-change: transform, opacity;
   }
-  /* the rings swell and brighten a little with it */
-  .deck-orb-rings {
-    transform: scale(calc(1 + var(--orb-level, 0) * 0.035));
-    opacity: calc(0.75 + var(--orb-level, 0) * 0.25);
-    will-change: transform, opacity;
-  }
   /* the level arc on the bezel: two half-circles from the top, drawn as far
      as the level goes; nothing at 0 */
   .deck-orb-vu path {
@@ -2243,33 +2174,20 @@
   }
 
   /* -----------------------------------------------------------
-     The reticle's living parts (DeckOrb.tsx). Each is a root
-     <svg> or a div of its own, so these transforms and opacities
-     are compositor work: the dashed inner scale turns one way,
-     a sparse orbit the other, a satellite rides the bezel, and
-     while the assistant is idle a faint ping leaves the orb every
-     seven seconds. The standby's big ring turns its inner scale
-     the same way (.deck-ring-orbit). Slow on purpose.
+     The standby's big ring turns its inner scale slowly
+     (DeckStandby.tsx). It is a root <svg> of its own, so the CSS
+     rotation is compositor work. The deck orb's reticle used to
+     have scenery of the same kind — two counter-turning orbits, a
+     satellite on the bezel, an idle ping — and lost it with the
+     orb PNG (2026-08-20): the mascot in the middle is the living
+     thing now, the instruments hold still until they measure
+     something.
      ----------------------------------------------------------- */
-  .deck-orb-orbit-a,
-  .deck-orb-orbit-b,
-  .deck-orb-satellite,
   .deck-ring-orbit {
     transform-origin: 50% 50%;
     will-change: transform;
     /* the same readability halo the still reticle gets from its SVG filter */
     filter: drop-shadow(0 0 1.2px hsl(var(--background) / 0.85));
-  }
-  .deck-orb-orbit-a {
-    animation: deck-orb-turn 48s linear infinite;
-  }
-  .deck-orb-orbit-b {
-    animation: deck-orb-turn 36s linear infinite reverse;
-  }
-  .deck-orb-satellite {
-    animation: deck-orb-turn 18s linear infinite;
-  }
-  .deck-ring-orbit {
     animation: deck-orb-turn 90s linear infinite reverse;
   }
   @keyframes deck-orb-turn {
@@ -2277,46 +2195,14 @@
       transform: rotate(360deg);
     }
   }
-  .deck-orb-ping {
-    border: 1px solid hsl(var(--primary) / 0.9);
-    box-shadow: 0 0 6px hsl(var(--primary) / 0.35);
-    opacity: 0;
-    transform: scale(0.88);
-    will-change: transform, opacity;
-    animation: deck-orb-ping 7s ease-out infinite;
-  }
-  @keyframes deck-orb-ping {
-    0% {
-      opacity: 0;
-      transform: scale(0.88);
-    }
-    3% {
-      opacity: 0.55;
-    }
-    22% {
-      opacity: 0;
-      transform: scale(1.12);
-    }
-    100% {
-      opacity: 0;
-      transform: scale(1.12);
-    }
-  }
 
   @media (prefers-reduced-motion: reduce) {
-    .deck-core,
-    .deck-core *,
     .deck-orb-glow,
-    .deck-orb-orbit-a,
-    .deck-orb-orbit-b,
-    .deck-orb-satellite,
-    .deck-orb-ping,
     .deck-orb-corona,
     .deck-orb-ripple,
     .deck-ring-orbit {
       animation: none !important;
     }
-    .deck-orb-ping,
     .deck-orb-corona,
     .deck-orb-ripple {
       display: none;

@@ -4365,7 +4365,7 @@
     "running": "Running now",
     "thinking_now": "Thinking",
     "thinking_starting": "Starting…",
-    "idle_headline": "Say “{0}” — or click the orb.",
+    "idle_headline": "Say “{0}” — or click the mascot.",
     "orb_call": "Start talking — the same as saying “{0}”.",
     "orb_hangup": "End the conversation.",
     "warming": "Starting up. Speaking works in a moment.",
@@ -4506,7 +4506,7 @@
     "boot_brain_off": "no brain configured — open API keys",
     "boot_wake_pending": "arming the wake word",
     "boot_wake_ok": "listening for “{0}”",
-    "boot_wake_off": "wake word off — the orb or the hotkey starts a talk",
+    "boot_wake_off": "wake word off — the mascot or the hotkey starts a talk",
     "standby_since": "since {0}",
     "open_board": "Open the board"
   },

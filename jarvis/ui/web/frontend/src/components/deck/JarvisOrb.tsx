@@ -1,31 +1,36 @@
 import { motion, useReducedMotion, type TargetAndTransition } from "framer-motion";
+import { MascotGigi } from "@/components/MascotGigi";
 import type { VoiceState } from "@/store/events";
 import { cn } from "@/lib/utils";
 
 /**
- * The Jarvis orb — the product's own artwork, in the middle of the deck.
+ * The centre of the deck: the mascot itself.
  *
- * `/deck-orb.png` is the sphere cut out of `hero-orb.png` (the marketing
- * render: dark glass, a golden plasma core, ring echoes and sparks) with the
- * black plate keyed to transparency and a radial mask on the rest, so it sits
- * on the wallpaper as a thing, not as a picture of a thing. The maintainer
- * asked for exactly this on 2026-08-18: the orb IS a PNG, so bring the PNG.
+ * It used to be `/deck-orb.png` — a sphere cut out of the marketing render.
+ * A picture of a light, not a light: its halo was baked in as milky white
+ * pixels, so on the dark deck it read as a grey box, and the reticle around
+ * it sliced that box off at the ring. The maintainer asked repeatedly for the
+ * PNG to go and for the mascot to carry the product instead (2026-08-20), so
+ * both PNGs are gone from the tree and the middle is Gigi, drawn as vectors:
+ * sharp at any size, no edge to cut, no bitmap to ship.
  *
- * The core carries NO mascot. It did for a day (a silhouette on the gold,
- * 2026-08-18); with the live mascot on the wallpaper that made two ghosts on
- * one stage, and the maintainer took it out (2026-08-19): the orb is the orb.
+ * The staging is a dark figure standing in golden light. The glow behind it
+ * (`.deck-orb-glow`, DeckOrb.tsx) throws the silhouette forward; the corona's
+ * slow rays come up behind it in the voice. Gigi brings its own life — it
+ * blinks, the pupils drift, it waves now and then, and with `reactToVoice` it
+ * listens, thinks and speaks along. That is why the reticle around it no
+ * longer needs to dance: the living thing is alive, the instruments stay
+ * still until they have something to show.
  *
- * Voice moves it, honestly and cheaply. At rest a slow breath (framer, a
- * gentle loop). While something is happening, the VOICE itself: the deck orb
- * (DeckOrb.tsx) computes one level — the real microphone while listening, a
+ * Voice moves the whole figure, honestly and cheaply. At rest a slow breath
+ * (framer, a gentle loop). While something is happening, the VOICE itself:
+ * the deck orb computes one level — the real microphone while listening, a
  * speech-shaped envelope while the assistant speaks, a heartbeat while it
  * thinks — and writes it to `--orb-level`; the reactor wrapper here scales
- * and brightens the sun with it, and the corona behind it — slow-turning
- * rays — comes up in the light of it (CSS, index.css). The framer loops for
- * those states are therefore tiny: the level is the motion. Nothing in the
- * picture turns — a rotating highlight on a glass sphere reads as a broken
- * image; the corona turns BEHIND it. Dimmed and drained on an error.
- * `prefers-reduced-motion` gets the still picture.
+ * and brightens Gigi with it, and the corona behind it comes up in that same
+ * light (CSS, index.css). The framer loops are therefore tiny: the level is
+ * the motion. Dimmed and drained on an error. `prefers-reduced-motion` gets
+ * the still figure.
  */
 const MOTION: Record<VoiceState, { animate: TargetAndTransition; duration: number }> = {
   idle: {
@@ -78,15 +83,12 @@ export function JarvisOrb({
       className={cn("relative select-none", className)}
       style={{ width: size, height: size }}
     >
-      {/* the corona: slow-turning rays behind the sun, lit by the level */}
+      {/* the corona: slow-turning rays behind the mascot, lit by the level */}
       <div aria-hidden className="deck-orb-corona pointer-events-none absolute rounded-full" />
-      {/* the reactor: the sun, sized and lit by the level */}
+      {/* the reactor: the figure, sized and lit by the level */}
       <div className="deck-orb-reactor absolute inset-0">
-        <motion.img
-          src="/deck-orb.png"
-          alt=""
-          draggable={false}
-          className="absolute inset-0 h-full w-full"
+        <motion.div
+          className="grid h-full w-full place-items-center"
           animate={reduced ? undefined : spec.animate}
           transition={
             reduced
@@ -95,7 +97,9 @@ export function JarvisOrb({
                 ? { duration: spec.duration, repeat: Infinity, ease: "easeInOut" }
                 : { duration: 0.4 }
           }
-        />
+        >
+          <MascotGigi size={size} reactToVoice enableComments={false} />
+        </motion.div>
       </div>
     </div>
   );

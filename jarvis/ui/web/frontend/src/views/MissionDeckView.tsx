@@ -28,7 +28,7 @@ import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useElementSize } from "@/hooks/useElementSize";
-import { orbSizeFor, stageVignette } from "@/lib/deckStage";
+import { orbSizeFor, stageVignette, stageWashSize } from "@/lib/deckStage";
 import { HANDOFF, autoLaunchAfterMs, resolvePhase } from "@/lib/deckStandby";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
@@ -460,11 +460,24 @@ function BoardCentre({
     <div
       ref={stageRef}
       className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-2 text-center"
-      style={{ backgroundImage: stageVignette(orbSize) }}
     >
       {/* The same layoutId as the standby's orb: when the board takes over,
           the orb travels here instead of blinking — and lands with a ring. */}
-      <div className="relative">
+      <div className="relative isolate">
+        {/* The wash that lifts the centre off the wallpaper. It rides on the
+            orb, on a square of its own, because it used to be a background
+            on the column above — where the column's straight top and bottom
+            cut the circle while it was still opaque (deckStage.ts). */}
+        <div
+          aria-hidden
+          data-testid="deck-stage-wash"
+          className="pointer-events-none absolute left-1/2 top-1/2 -z-10 -translate-x-1/2 -translate-y-1/2 rounded-full"
+          style={{
+            width: stageWashSize(orbSize),
+            height: stageWashSize(orbSize),
+            backgroundImage: stageVignette(orbSize),
+          }}
+        />
         <motion.div layoutId="deck-orb" layoutDependency={orbSize} transition={ORB_TRAVEL}>
           <DeckOrb
             steps={steps}

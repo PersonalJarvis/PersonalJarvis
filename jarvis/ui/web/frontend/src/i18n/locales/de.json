@@ -4365,7 +4365,7 @@
     "running": "Läuft gerade",
     "thinking_now": "Denkt gerade",
     "thinking_starting": "Startet…",
-    "idle_headline": "Sag „{0}“ – oder klick auf den Orb.",
+    "idle_headline": "Sag „{0}“ – oder klick aufs Maskottchen.",
     "orb_call": "Losreden – so, als hättest du „{0}“ gesagt.",
     "orb_hangup": "Gespräch beenden.",
     "warming": "Startet gerade. Sprechen geht gleich.",
@@ -4506,7 +4506,7 @@
     "boot_brain_off": "kein Brain eingerichtet – API-Keys öffnen",
     "boot_wake_pending": "schärfe das Wake-Word",
     "boot_wake_ok": "höre auf „{0}“",
-    "boot_wake_off": "Wake-Word aus – der Orb oder der Hotkey startet ein Gespräch",
+    "boot_wake_off": "Wake-Word aus – das Maskottchen oder der Hotkey startet ein Gespräch",
     "standby_since": "seit {0}",
     "open_board": "Board öffnen"
   },
