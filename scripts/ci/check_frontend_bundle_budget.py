@@ -19,9 +19,20 @@ hashed chunks from earlier builds), plus the stylesheet it loads. Lazy chunks
 are deliberately NOT counted: they are the fix, and they load off the critical
 path.
 
-Budget: ``JARVIS_BUNDLE_BUDGET_ENTRY_KB`` (default 1200). The measured entry
-after the code-splitting fix is ~700 KB, so the budget leaves generous headroom
-for normal feature work while still blocking a relapse toward 2.8 MB.
+Budget: ``JARVIS_BUNDLE_BUDGET_ENTRY_KB`` (default 1350). Set from what the
+first screen genuinely needs, re-measured 2026-08-20: the entry is ~1320 KB,
+and roughly 300 KB of that is framer-motion, whose layout-projection engine the
+mission deck uses in its FIRST frame — the orb travels from the standby stage
+to the board on a shared ``layoutId``. That weight cannot be split off without
+giving up the hand-off itself, so a 1200 KB line could only ever be red.
+
+A gate that is permanently red reports nothing, which is how ~200 KB of genuine
+accident survived in the startup path until this was re-measured: the wiki
+graph library, the agentic-IDE API client and two shell hooks were all being
+parsed before the first paint by screens that never touch them. Those are gone
+(1528 -> ~1320 KB). The 30 KB of headroom above today's number is deliberately
+tight: normal feature work belongs in a lazy chunk, and the next thing that
+lands here should have to argue for itself.
 
 Exit codes: 0 = within budget, 1 = budget exceeded, 78 = skipped (no build
 present) so callers can treat "could not measure" as neutral rather than red.
@@ -40,7 +51,7 @@ INDEX_HTML = DIST / "index.html"
 
 SKIP_EXIT = 78  # "could not measure" — neutral, not a failure
 
-DEFAULT_ENTRY_BUDGET_KB = 1200.0
+DEFAULT_ENTRY_BUDGET_KB = 1350.0
 
 # The entry is the module script Vite injects; the stylesheet rides the same
 # critical path. Both are matched off index.html so a stale sibling chunk in
