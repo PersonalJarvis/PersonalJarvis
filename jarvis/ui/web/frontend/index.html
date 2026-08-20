@@ -149,6 +149,167 @@
         });
       })();
     </script>
+    <script>
+      // The last line of defence against a window that shows NOTHING.
+      //
+      // Seen on 2026-08-20: a rebuild while the desktop window was open left
+      // the app mounted but with an empty #root — no error card, no splash,
+      // just the ground colour. src/lib/preloadRecovery.ts spends exactly one
+      // reload on a missing lazy chunk and then hands the failure to a view's
+      // error boundary; a failure ABOVE that boundary has no card to land in,
+      // and src/lib/bundleWatch.ts cannot help either — it lives in the bundle
+      // that is not running. So this watchdog lives in the HTML, where it runs
+      // whatever the bundle does.
+      //
+      // Two clocks, because the two failures look different: an #root emptied
+      // by a crash is a fact within a frame, while a splash that is still
+      // spinning may just be a large bundle on a cold cache. One automatic
+      // reload per incident, released again as soon as the app is up, so a
+      // later rebuild in the same session still heals itself. When the reload
+      // has been spent, the window says what happened instead of staying dark
+      // — a screen with no explanation is the bug, not the crash behind it.
+      (function () {
+        var CRASH_GRACE_MS = 2500;
+        var LOAD_GRACE_MS = 20000;
+        var POLL_MS = 500;
+        var KEY = "jarvis:blank-reloaded";
+        var started = Date.now();
+        var lastError = "";
+
+        window.addEventListener(
+          "error",
+          function (e) {
+            lastError = (e && (e.message || (e.error && e.error.message))) || lastError;
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e && e.reason;
+          lastError = (r && (r.message || String(r))) || lastError;
+        });
+
+        function state() {
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount === 0) return "empty";
+          if (
+            root.childElementCount === 1 &&
+            root.firstElementChild &&
+            root.firstElementChild.id === "jarvis-boot-splash"
+          ) {
+            return "splash";
+          }
+          return "up";
+        }
+
+        function texts() {
+          var lang = (navigator.language || "en").slice(0, 2);
+          if (lang === "de") {
+            return {
+              title: "Die Oberfläche wurde nicht geladen.", // i18n-allow
+              why: "Grund: ", // i18n-allow
+              unknown: "Kein Grund gemeldet.", // i18n-allow
+              hint: "Das passiert, wenn die Oberfläche neu gebaut wird, während das Fenster offen ist.", // i18n-allow
+              button: "Neu laden", // i18n-allow
+            };
+          }
+          if (lang === "es") {
+            return {
+              title: "La interfaz no se cargó.", // i18n-allow
+              why: "Motivo: ", // i18n-allow
+              unknown: "No se informó ningún motivo.", // i18n-allow
+              hint: "Ocurre cuando la interfaz se reconstruye con la ventana abierta.", // i18n-allow
+              button: "Recargar", // i18n-allow
+            };
+          }
+          return {
+            title: "The interface did not load.",
+            why: "Reason: ",
+            unknown: "No reason was reported.",
+            hint: "This happens when the interface is rebuilt while the window is open.",
+            button: "Reload",
+          };
+        }
+
+        function report() {
+          var root = document.getElementById("root");
+          if (!root) return;
+          var t = texts();
+          root.innerHTML = "";
+          var box = document.createElement("div");
+          box.id = "jarvis-boot-splash";
+          var h = document.createElement("div");
+          h.className = "name";
+          h.textContent = t.title;
+          var why = document.createElement("div");
+          why.className = "sub";
+          why.style.textTransform = "none";
+          why.style.maxWidth = "60ch";
+          why.style.textAlign = "center";
+          why.textContent = lastError ? t.why + lastError : t.unknown;
+          var hint = document.createElement("div");
+          hint.className = "sub";
+          hint.style.textTransform = "none";
+          hint.style.maxWidth = "60ch";
+          hint.style.textAlign = "center";
+          hint.textContent = t.hint;
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = t.button;
+          btn.style.cssText =
+            "margin-top:6px;padding:7px 16px;font:inherit;font-size:13px;cursor:pointer;" +
+            "color:var(--jbs-accent);background:transparent;border:1px solid var(--jbs-ring);border-radius:4px";
+          btn.onclick = function () {
+            try {
+              sessionStorage.removeItem(KEY);
+            } catch (e) {
+              /* storage blocked — the reload still happens */
+            }
+            location.reload();
+          };
+          box.appendChild(h);
+          box.appendChild(why);
+          box.appendChild(hint);
+          box.appendChild(btn);
+          root.appendChild(box);
+        }
+
+        var timer = setInterval(function () {
+          var now = state();
+          if (now === "up") {
+            clearInterval(timer);
+            // The page is healthy: give the next incident its own reload.
+            try {
+              sessionStorage.removeItem(KEY);
+            } catch (e) {
+              /* storage blocked — nothing to release */
+            }
+            return;
+          }
+          var waited = Date.now() - started;
+          if (waited < (now === "empty" ? CRASH_GRACE_MS : LOAD_GRACE_MS)) return;
+          clearInterval(timer);
+          var spent = null;
+          try {
+            spent = sessionStorage.getItem(KEY);
+          } catch (e) {
+            // A storage that cannot be read cannot bound a reload loop, so no
+            // reload is started: the window explains itself instead.
+            spent = "1";
+          }
+          if (!spent) {
+            try {
+              sessionStorage.setItem(KEY, "1");
+            } catch (e) {
+              report();
+              return;
+            }
+            location.reload();
+            return;
+          }
+          report();
+        }, POLL_MS);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

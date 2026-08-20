@@ -11,6 +11,17 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **A question about your own machine gets an answer, not a refusal.**
+  Asking whether the PC is overheating or overloaded matched none of the
+  planner's question rules — such a sentence carries no question word and
+  no possessive — so the turn was never allowed to read the machine, and
+  the execute guard judged the model's shell call by the worst command
+  that tool could ever carry. Jarvis answered "I can't run actions right
+  now", twice in a row. The planner now knows the machine's own
+  vocabulary and the indirect question that hides a lookup inside a
+  statement, a call whose arguments only read passes the guard, and a
+  turn whose every call was gated says what actually happened instead of
+  claiming the assistant is broken.
 - **Dictation translation reads like the target language now.** The
   translate pass ran on the same tiny model the formatter uses, which
   punctuates well and translates flatly — measured on real German
@@ -52,6 +63,17 @@ versioning per [SemVer](https://semver.org/).
   short "I'll play that" ack it used to look ready even though YouTube
   Music was still running. Progress speech now returns to thinking until
   the result is spoken.
+- **A window that shows nothing now says why, and heals itself.** Rebuilding
+  the frontend while the desktop window is open could leave it empty — the
+  ground colour and nothing else, until the app was killed. The single
+  automatic reload the app spends on a missing chunk hands the failure to a
+  view's error card, and a failure above that has no card to land in; the
+  bundle watch that would have picked up the fresh build lives in the bundle
+  that is not running. `index.html` now carries a watchdog that runs whatever
+  the bundle does: an emptied page reloads once within seconds, a splash that
+  never becomes an app after twenty, and a second failure paints what went
+  wrong plus a Reload button instead of staying dark. The guard is released as
+  soon as the app is up, so a later rebuild in the same session still heals.
 - **The deck opens on the board, and the waiting screen is gone.** Starting
   the app left you on a standby ring under a big "Say 'Hey Nova'", with
   nothing to look at until you spoke. That screen has been cut. The start is
