@@ -573,19 +573,32 @@ class SkillCreatorService:
         draft — the deterministic skeleton is never committed from here (see
         the module docstring). Raises :class:`SkillAuthoringError` when the
         writer refuses (bad name, dead body, disk error). A name collision is
-        resolved by suffixing " 2", " 3", … — the user asked for the skill and
+        resolved by suffixing "-2", "-3", … — the user asked for the skill and
         gets it, under a name the answer reports.
+
+        The committed name is SLUGGED. ``name`` is the registry key, and the
+        authoring prompt asks the model for a Title Case display name, so this
+        path used to write keys like ``Morning Routine 2`` into a registry
+        whose builtins are keyed ``morning-routine``. Two naming conventions in
+        one key space is what made ``run-skill`` unable to find a skill by any
+        name a human would say (live 2026-08-20). One convention, everywhere.
         """
         result = await self._draft_or_refine(inp)
         if not result.brain_used:
             raise SkillCreatorUnavailable(
                 "no brain could author the skill right now — nothing was written"
             )
+        from jarvis.skills.authoring.service import slugify
+
         draft = dict(result.draft)
-        base_name = str(draft.get("name", "")).strip()
+        raw_name = str(draft.get("name", "")).strip()
+        # Fall back to the raw name only when it has no slugable characters at
+        # all (a name in a non-Latin script); the writer then rejects it with a
+        # clear message instead of this method inventing one.
+        base_name = slugify(raw_name) or raw_name
         last_error: SkillAuthoringError | None = None
         for attempt in range(1, 6):
-            draft["name"] = base_name if attempt == 1 else f"{base_name} {attempt}"
+            draft["name"] = base_name if attempt == 1 else f"{base_name}-{attempt}"
             try:
                 skill = await self.commit(draft)
             except SkillAuthoringError as exc:
@@ -593,8 +606,6 @@ class SkillCreatorService:
                     raise
                 last_error = exc
                 continue
-            from jarvis.skills.authoring.service import slugify
-
             return AuthoredSkill(
                 skill=skill,
                 result=SkillCreatorResult(

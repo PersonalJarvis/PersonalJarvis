@@ -923,13 +923,22 @@ def plan_turn(
         try:
             ranking = skill_index.rank(text, limit=1)
             winner = ranking.top
-            if (
-                winner is not None
-                and winner.score >= ranking.fire_threshold
-                and ranking.clear_winner
-            ):
+            if winner is not None and winner.score >= ranking.fire_threshold:
+                # A FIRE-band hit makes this a SKILL turn even when two
+                # installed skills tie for it. Requiring a clear winner here
+                # conflated two different questions — "is this about a skill?"
+                # and "which one?" — and answered the first with the second.
+                # Live 2026-08-20: an authored near-duplicate of the builtin
+                # morning routine put both at FIRE band, killed the clear
+                # winner, and so removed TurnReason.SKILL from every
+                # "Morgenroutine" turn. Installing a second skill silently
+                # disabled routing for the first one.
                 reasons.add(TurnReason.SKILL)
-                required = tuple(sorted({*required, f"skill:{winner.name}"}))
+                if ranking.clear_winner:
+                    # Only a clear winner may PIN the skill. Ambiguity travels
+                    # to the orchestrator, which has the trigger channel and
+                    # the user to disambiguate with; the planner does not.
+                    required = tuple(sorted({*required, f"skill:{winner.name}"}))
         except Exception:  # noqa: BLE001
             # Silent by design: this module has no logger and must stay free of
             # side effects, and a scorer fault simply means the static

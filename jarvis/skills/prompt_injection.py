@@ -192,3 +192,77 @@ def render_available_skills_section(
         "full description — never `run-skill`, and never a worker."
     )
     return f"{header}\n{intro}\n{body}{outro}"
+
+
+#: Per-entry description budget for the realtime roster. The block is re-sent
+#: with every per-turn session update, so it buys names first and prose second.
+_REALTIME_DESC_CHARS = 70
+
+
+def render_realtime_skills_directive(
+    registry: SkillRegistry,
+    *,
+    compact: bool = False,
+    budget_chars: int = 4000,
+) -> str:
+    """Render the installed-skill roster for a live voice session.
+
+    The realtime engine was skill-blind in a way no listing test caught: the
+    session instructions carried the ``run-skill`` tool but never one skill
+    NAME, so the model had to invent the argument from the user's words. It
+    invented "Morning Routine"; the registry key was ``morning-routine``; the
+    turn died on ``Unknown skill`` (live 2026-08-20). Same shape as the
+    workspace roster next to it — the model cannot route a name it has never
+    heard of — and it binds every realtime transport alike, because they all
+    share one instruction builder.
+
+    Names outrank prose here. When the roster does not fit ``budget_chars``
+    the descriptions are dropped and every name is kept, never the other way
+    round: a described skill that is missing from the list is uncallable,
+    while a bare name is still enough for ``run-skill`` to resolve. ``compact``
+    (small self-hosted brains) goes straight to the names-only form.
+
+    Returns ``""`` when no skill is invocable, so the caller can drop the
+    block from the instruction assembly entirely.
+    """
+    try:
+        active = registry.list_active()
+    except Exception:  # noqa: BLE001 — a roster fault must never break a call
+        return ""
+    entries: list[tuple[str, str, bool]] = []  # (name, description, is_builtin)
+    for skill in active:
+        fm = getattr(skill, "frontmatter", None)
+        if fm is None:
+            continue
+        name = str(skill.name)
+        if not name:
+            continue
+        desc = " ".join((getattr(fm, "description", "") or "").split())
+        if len(desc) > _REALTIME_DESC_CHARS:
+            desc = desc[: _REALTIME_DESC_CHARS - 1].rstrip() + "…"
+        entries.append((name, desc, _is_builtin(skill)))
+    if not entries:
+        return ""
+
+    # User-authored skills first — same attention argument as the brain listing.
+    entries.sort(key=lambda e: (e[2], e[0]))
+    names_only = ", ".join(name for name, _, _ in entries)
+
+    header = "[Installed skills — the user's saved way of doing these tasks]\n"
+    rule = (
+        "\nTo run one, call the run-skill tool with the name EXACTLY as spelled "
+        "above — copy it character for character, never re-word it and never "
+        "invent one that is not listed. If the user names a skill that is not "
+        "on this list, say so instead of guessing. A matching skill always "
+        "beats answering from scratch. A plain question that merely mentions "
+        "the topic is not a match."
+    )
+    if not compact:
+        listed = "\n".join(
+            f"- {name} — {desc}" if desc else f"- {name}"
+            for name, desc, _ in entries
+        )
+        block = f"{header}{listed}{rule}"
+        if len(block) <= budget_chars:
+            return block
+    return f"{header}{names_only}{rule}"

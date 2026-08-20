@@ -1,0 +1,119 @@
+"""Speech-tolerant skill lookup — ``SkillRegistry.resolve``.
+
+Live forensic 2026-08-20: the realtime model called ``run-skill`` with
+``skill_name="Morning Routine"`` while the registry key was
+``morning-routine``. ``get`` is an exact dict read, so the tool answered
+``Unknown skill`` and the user heard "I could not find that skill" on three
+consecutive turns — for a skill that was installed, validated and matched
+every trigger it declared.
+
+Two naming conventions share one key space: builtins ship kebab-case slugs,
+the skill creator writes Title Case display names. ``resolve`` is the bridge
+for names that arrive from a model or a human; ``get`` stays exact for callers
+that hold a real key.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from jarvis.skills.registry import SkillRegistry
+
+_SKILL = """\
+---
+schema_version: "1"
+name: {name}
+version: "1.0.0"
+description: Test skill.
+category: productivity
+---
+
+# {name}
+
+Do the thing.
+"""
+
+
+def _write(root: Path, slug: str, name: str) -> None:
+    folder = root / slug
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "SKILL.md").write_text(_SKILL.format(name=name), encoding="utf-8")
+
+
+@pytest.fixture
+def registry(tmp_path: Path) -> SkillRegistry:
+    _write(tmp_path, "morning-routine", "morning-routine")
+    _write(tmp_path, "plugin-gmail", "plugin-gmail")
+    _write(tmp_path, "focus", "focus")
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+    return reg
+
+
+@pytest.mark.parametrize(
+    "spoken",
+    [
+        "morning-routine",   # the exact key
+        "Morning Routine",   # what the realtime model actually sent
+        "morning routine",
+        "MORNING_ROUTINE",
+        "  Morning-Routine  ",
+    ],
+)
+def test_resolve_finds_the_skill_however_the_name_is_written(
+    registry: SkillRegistry, spoken: str
+) -> None:
+    assert registry.resolve(spoken).name == "morning-routine"
+
+
+def test_resolve_drops_a_namespace_prefix(registry: SkillRegistry) -> None:
+    """Nobody asks for "the plugin-gmail skill"."""
+    assert registry.resolve("Gmail").name == "plugin-gmail"
+    assert registry.resolve("gmail").name == "plugin-gmail"
+
+
+def test_resolve_raises_for_an_unknown_name(registry: SkillRegistry) -> None:
+    with pytest.raises(KeyError):
+        registry.resolve("a skill that was never installed")
+
+
+def test_resolve_rejects_an_empty_name(registry: SkillRegistry) -> None:
+    with pytest.raises(KeyError):
+        registry.resolve("   ")
+
+
+def test_resolve_does_not_match_a_mere_prefix(registry: SkillRegistry) -> None:
+    """"focus pro" must not land on the skill called "focus"."""
+    with pytest.raises(KeyError):
+        registry.resolve("focus pro")
+
+
+def test_get_stays_exact(registry: SkillRegistry) -> None:
+    """``get`` must NOT gain the tolerance — a caller holding a real registry
+    key has to fail loudly rather than land on a neighbouring skill."""
+    assert registry.get("morning-routine").name == "morning-routine"
+    with pytest.raises(KeyError):
+        registry.get("Morning Routine")
+
+
+def test_resolve_finds_a_skill_by_its_directory_slug(tmp_path: Path) -> None:
+    """The CLI and the UI show the folder name, so that has to resolve too."""
+    _write(tmp_path, "morning-routine-2", "Morning Routine 2")
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+
+    assert reg.resolve("morning-routine-2").name == "Morning Routine 2"
+    assert reg.resolve("Morning Routine 2").name == "Morning Routine 2"
+
+
+def test_resolve_is_deterministic_under_an_ambiguous_name(tmp_path: Path) -> None:
+    """Two skills folding to the same tokens always resolve to the same one,
+    never to whichever the dict happened to yield first."""
+    _write(tmp_path, "a-thing", "Focus Mode")
+    _write(tmp_path, "b-thing", "focus-mode")
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+
+    first = reg.resolve("focus mode").name
+    assert all(reg.resolve("focus mode").name == first for _ in range(20))

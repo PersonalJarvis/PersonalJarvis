@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from jarvis.skills.prompt_injection import render_available_skills_section
+from jarvis.skills.prompt_injection import (
+    render_available_skills_section,
+    render_realtime_skills_directive,
+)
 
 
 @dataclass
@@ -381,3 +384,83 @@ def test_budget_eviction_prefers_builtins_over_user_skills() -> None:
     assert "- `morning-routine` — " not in out
     tail = next(ln for ln in out.splitlines() if ln.startswith("- …"))
     assert "`morning-routine`" in tail
+
+
+# ----------------------------------------------------------------------
+# Realtime roster (2026-08-20 skill-blindness fix)
+# ----------------------------------------------------------------------
+
+
+def test_realtime_directive_names_every_installed_skill() -> None:
+    """The roster's whole job: the live model can NAME what is installed.
+
+    The realtime instructions carried the ``run-skill`` tool and not one skill
+    name, so the model invented the argument from the user's words — "Morning
+    Routine" against a registry keyed ``morning-routine`` — and the turn died
+    on ``Unknown skill`` three times in a row.
+    """
+    registry = _FakeRegistry(skills=[
+        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
+            description="Day overview: mail, calendar, weather.")),
+        _FakeSkill(name="deep-work-mode", frontmatter=_FakeFrontmatter(
+            description="DND, mute Slack, start pomodoro.")),
+    ])
+
+    out = render_realtime_skills_directive(registry)  # type: ignore[arg-type]
+
+    assert "morning-routine" in out
+    assert "deep-work-mode" in out
+    assert "run-skill" in out
+    assert registry.calls == ["list_active"]
+
+
+def test_realtime_directive_is_empty_without_skills() -> None:
+    """No invocable skill → no block, so the caller drops it from the prompt."""
+    assert render_realtime_skills_directive(_FakeRegistry(skills=[])) == ""  # type: ignore[arg-type]
+
+
+def test_realtime_directive_drops_descriptions_before_names() -> None:
+    """Over budget, every NAME survives and the prose goes.
+
+    A described skill missing from the roster is uncallable; a bare name still
+    resolves. So the budget may never be paid for with a name.
+    """
+    skills = [
+        _FakeSkill(name=f"skill-{i:03d}", frontmatter=_FakeFrontmatter(
+            description="A deliberately long description " * 6))
+        for i in range(40)
+    ]
+    out = render_realtime_skills_directive(
+        _FakeRegistry(skills=skills), budget_chars=1200,  # type: ignore[arg-type]
+    )
+
+    for i in range(40):
+        assert f"skill-{i:03d}" in out
+    assert "A deliberately long description" not in out
+
+
+def test_realtime_directive_compact_profile_is_names_only() -> None:
+    """Small self-hosted brains get the names without paying for the prose."""
+    registry = _FakeRegistry(skills=[
+        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
+            description="Day overview: mail, calendar, weather.")),
+    ])
+
+    out = render_realtime_skills_directive(registry, compact=True)  # type: ignore[arg-type]
+
+    assert "morning-routine" in out
+    assert "Day overview" not in out
+
+
+def test_realtime_directive_skips_skills_without_frontmatter() -> None:
+    """A broken entry is skipped, never crashes the instruction build."""
+    registry = _FakeRegistry(skills=[
+        _FakeSkill(name="broken", frontmatter=None),
+        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
+            description="Day overview.")),
+    ])
+
+    out = render_realtime_skills_directive(registry)  # type: ignore[arg-type]
+
+    assert "morning-routine" in out
+    assert "broken" not in out

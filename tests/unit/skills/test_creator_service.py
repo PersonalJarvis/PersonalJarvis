@@ -376,7 +376,10 @@ async def test_author_commits_the_brain_draft_as_a_draft_skill(registry, skills_
         brain=_FakeBrain(_ROUTINE_BRAIN_JSON), registry=registry, user_skills_root=skills_root
     )
     authored = await svc.author(SkillCreatorInput(intent="morgenroutine", schedule_hint="0 6 * * *"))  # i18n-allow: test input
-    assert authored.name == "Morgenroutine"
+    # The committed name is the SLUG, not the model's Title Case display name:
+    # ``name`` is the registry key, and a key like "Morning Routine 2" is one
+    # ``run-skill`` cannot find by any name a human would say (live 2026-08-20).
+    assert authored.name == "morgenroutine"
     assert authored.slug == "morgenroutine"
     assert authored.skill.state == SkillLifecycleState.DRAFT  # AP-15
     on_disk = (skills_root / "morgenroutine" / "SKILL.md").read_text(encoding="utf-8")
@@ -404,6 +407,9 @@ async def test_author_suffixes_the_name_on_a_collision(registry, skills_root) ->
     )
     first = await svc.author(SkillCreatorInput(intent="a"))
     second = await svc.author(SkillCreatorInput(intent="a"))
-    assert first.name == "Morgenroutine"
-    assert second.name == "Morgenroutine 2"
+    assert first.name == "morgenroutine"
+    # "-2", not " 2": the collision suffix must keep the name a slug, or the
+    # second skill lands in the registry under a key with a space in it.
+    assert second.name == "morgenroutine-2"
     assert (skills_root / "morgenroutine-2" / "SKILL.md").exists()
+    assert second.slug == "morgenroutine-2"

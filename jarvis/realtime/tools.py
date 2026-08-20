@@ -201,6 +201,26 @@ def _is_music_plugin(name: str) -> bool:
     return name in MUSIC_PLUGIN_IDS
 
 
+def _skill_match_index() -> Any | None:
+    """The deterministic skill index, or ``None`` when unavailable.
+
+    Mirrors ``RealtimeSession._skill_match_index`` — an O(1) cache read keyed
+    on the registry's reload counter, never a build on the hot path (AP-26).
+    Both the routing decision and this execute-time guard must plan a turn
+    against the SAME vocabulary, or they disagree about the same sentence.
+    """
+    try:
+        from jarvis.skills.relevance import get_index
+        from jarvis.skills.skill_context import try_get_skill_context
+
+        context = try_get_skill_context()
+        if context is None:
+            return None
+        return get_index(context.registry)
+    except Exception:  # noqa: BLE001 — planning keeps its static fallbacks
+        return None
+
+
 def _turn_shape_refusal(
     descriptor: SupervisorToolDescriptor,
     name: str,
@@ -277,7 +297,16 @@ def _turn_shape_refusal(
             "or ask what they want done."
         )
     try:
-        has_world_reason = bool(plan_turn(text).reasons)
+        # The skill index has to travel with the text, exactly as it does in
+        # the session's own routing call. Without it the planner's vocabulary
+        # only knows the literal word "skill", so an utterance that NAMES an
+        # installed skill scores no reason here — and this guard refused
+        # ``run-skill`` on a turn the router had already routed with
+        # ``reasons=skill`` moments earlier (live 2026-08-20, "Morgenroutine").
+        # One planner asked two ways is not a guard, it is a coin flip.
+        has_world_reason = bool(
+            plan_turn(text, skill_index=_skill_match_index()).reasons
+        )
     except Exception:  # noqa: BLE001 — the planner must not brick a tool call
         has_world_reason = True
     if has_world_reason:

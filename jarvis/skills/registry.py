@@ -62,6 +62,10 @@ def _rewrite_state_in_frontmatter(text: str, new_state: str) -> str:
 
 log = logging.getLogger(__name__)
 
+#: Namespace prefixes a speaker or a model naturally drops ("the gmail skill").
+#: Mirrors ``jarvis.skills.explicit_request._DROPPABLE_NAME_PREFIXES``.
+_DROPPABLE_NAME_PREFIXES = frozenset({"plugin", "cli"})
+
 
 class SkillRegistry:
     """Holds all known skills + provides lookup by name/trigger type.
@@ -116,6 +120,75 @@ class SkillRegistry:
         if name not in self._skills:
             raise KeyError(f"Skill '{name}' not in registry")
         return self._skills[name]
+
+    def resolve(self, name: str) -> Skill:
+        """Look up a skill by a name that came from a model or a human.
+
+        ``get`` stays an exact-key read: a caller holding a real registry key
+        must never silently land on a neighbour. This is the lookup for the
+        other case, where the exact key is precisely what is missing. The
+        realtime model asked for ``Morning Routine`` while the key was
+        ``morning-routine`` and the resulting ``Unknown skill`` ended three
+        live turns in a row (2026-08-20) — the skill was installed, active and
+        matched every trigger it had.
+
+        First hit wins:
+
+        1. the exact registry key;
+        2. the directory slug, which is what the CLI and the UI display;
+        3. the normalized token tuple — case, spacing, hyphens, underscores
+           and umlauts all fold away;
+        4. the same tuple with a ``plugin-`` / ``cli-`` namespace prefix
+           dropped, because nobody asks for "the plugin-gmail skill".
+
+        Steps 2 to 4 iterate in sorted name order, so an ambiguous name always
+        resolves to the same skill instead of depending on dict order. Raises
+        ``KeyError`` when nothing matches.
+        """
+        key = str(name or "").strip()
+        if not key:
+            raise KeyError("Skill name must not be empty")
+        with self._thread_lock:
+            snapshot = dict(self._skills)
+        if key in snapshot:
+            return snapshot[key]
+
+        ordered = sorted(snapshot.values(), key=lambda s: str(s.name))
+
+        def _slug_of(skill: Skill) -> str:
+            try:
+                return str(skill.path.parent.name)
+            except Exception:  # noqa: BLE001 — a pathless test double is fine
+                return ""
+
+        for skill in ordered:
+            if _slug_of(skill) == key:
+                return skill
+
+        from .relevance import skill_name_tokens
+
+        wanted = skill_name_tokens(key)
+        if not wanted:
+            raise KeyError(f"Skill '{name}' not in registry")
+
+        def _forms(skill: Skill) -> list[tuple[str, ...]]:
+            """Token tuples this skill answers to, widest last."""
+            out: list[tuple[str, ...]] = []
+            for raw in (str(skill.name), _slug_of(skill)):
+                tokens = skill_name_tokens(raw) if raw else ()
+                if not tokens or tokens in out:
+                    continue
+                out.append(tokens)
+                if len(tokens) > 1 and tokens[0] in _DROPPABLE_NAME_PREFIXES:
+                    shortened = tokens[1:]
+                    if shortened not in out:
+                        out.append(shortened)
+            return out
+
+        for skill in ordered:
+            if wanted in _forms(skill):
+                return skill
+        raise KeyError(f"Skill '{name}' not in registry")
 
     def list(self) -> list[Skill]:
         return list(self._skills.values())

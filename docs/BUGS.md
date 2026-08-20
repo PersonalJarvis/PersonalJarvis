@@ -11013,3 +11013,96 @@ guard and does not use this watchdog.
 
 **Guards.** `tests/unit/realtime/test_stall_native_tool.py`
 (`test_in_flight_native_tool_is_not_a_stalled_turn`).
+
+## BUG-158: no skill can be started by voice in a realtime call — the live model is never told a single skill name (CRITICAL, FIXED 2026-08-20)
+
+**Symptom (Windows live forensic, 10:52 and 11:01, `vertex-live` /
+`gemini-live-2.5-flash-native-audio`, hybrid).** The user asked three
+times, three ways, for the morning routine. Three different failures,
+none of them "the skill ran":
+
+| Time | Utterance | What Jarvis said | What actually happened |
+|---|---|---|---|
+| 10:52:04 | "Morning-Routine" | "\"Morning Routine\" ist gestartet." | `tool_calls: []` — **nothing ran, and the user was told it had** |
+| 11:01:28 | "Morgenroutine" | "Was genau meinst du mit Morgenroutine?" | `ActionDenied run-skill` |
+| 11:01:37 | "Skills-Morgenroutine" | "ich erreiche meinen Anbieter gerade nicht" | no provider fault occurred |
+| 11:02:05 | "Okay, kannst du bitte mal ein Skill Morning Routine starten?" | "Den Skill \"Morning Routine\" habe ich nicht gefunden." | `ActionExecuted run-skill error="Unknown skill: Morning Routine"` |
+
+<!-- i18n-allow: quoted live German utterances and replies under forensic analysis -->
+
+`morning-routine` was installed, `validated`, switched on, and its own
+voice-trigger regex matches every one of those four utterances.
+
+**Root cause — five independent defects on one path.** Measured, not
+inferred: `_session_instructions` built a 17 488-character prompt
+containing the word "skill" **zero** times.
+
+1. **No roster.** `render_available_skills_section` is called only from
+   `jarvis/brain/manager.py`. The realtime session carried the
+   `run-skill` tool and no catalogue, so the argument was always a
+   guess from the user's words.
+2. **Exact-key lookup.** `SkillRegistry.get` is a plain dict read.
+   `"Morning Routine"` ≠ `"morning-routine"` → `Unknown skill`.
+3. **Two naming conventions in one key space.** Builtins ship
+   kebab-case slugs; `creator_service.author` wrote the model's Title
+   Case display name into `name:`, and resolved collisions by
+   appending `" 2"` — producing the registry key `Morning Routine 2`.
+4. **A tie erased the skill reason.** The planner required
+   `ranking.clear_winner` before adding `TurnReason.SKILL`. The
+   authored near-duplicate put both morning routines at FIRE band, so
+   installing the second skill **silently disabled routing for the
+   first**. A/B measured: with the duplicate, `clear_winner=False` on
+   every "Morgenroutine" variant; without it, `True`.
+5. **The guard planned the same sentence differently.** The session
+   passes `skill_index=` to `plan_turn`; `_tool_intent_refusal` called
+   it bare. So the router routed a turn with `reasons=skill` and the
+   execute-time guard refused the same turn for having no reason.
+
+A sixth, structural: `_skill_directive` returns `""` for anything it
+cannot inline, and `""` meant "no skill". Both installed morning
+routines fail its conditions — `morning-routine` at 1656 chars over the
+1500 cap and on the tool-word regex, `Morning Routine 2` as
+`tool_backed` — so a FIRE match was dropped on the floor every time.
+
+**Why no test caught it.** `tests/integration/test_skill_listing_in_prompt.py`
+asserts the roster reaches the prompt — the *BrainManager* prompt. No
+test ever asked the realtime instructions the same question.
+
+**Fix.**
+- `SkillRegistry.resolve()` — exact key, then directory slug, then
+  normalized token tuple, then namespace-prefix drop. `get` stays exact.
+- `render_realtime_skills_directive()` + `RealtimeVoiceSession._skills_directive`,
+  wired into all three `_session_instructions` call sites. Over budget it
+  drops descriptions and keeps every NAME — a listed name is callable, a
+  folded one is not.
+- `run-skill` resolves instead of reading, reports the *resolved* name
+  downstream, and names the installed skills in its error so the model
+  can correct itself inside the turn.
+- `turn_planner`: a FIRE hit adds `TurnReason.SKILL` even without a clear
+  winner; only the `skill:<name>` pin still requires one.
+- `_tool_intent_refusal` plans with the same `skill_index` the router uses.
+- `RealtimeVoiceSession._note_skill_for_delegate` hands a non-inlinable
+  FIRE match to the brain via the existing `note_skill_trigger` contract
+  (AD-S4), so a matched skill is inlined here or executed there, never
+  neither.
+- `creator_service.author` commits a slugged name and suffixes `-2`.
+
+**Class rule.** A tool whose argument is a name from a catalogue is
+half a feature until the catalogue is in the prompt — shipping the tool
+without the names guarantees a guess. And two questions must not share
+one answer: "is this about a skill?" is not "which skill?", so ambiguity
+may cost the pin, never the route.
+
+**Parity.** `_session_instructions` is one function shared by every
+realtime transport, so `openai-realtime`, `gemini-live`, `vertex-live`,
+the tool-less handoff and the self-hosted local server were equally
+skill-blind and are equally fixed; the compact profile gets a names-only
+roster rather than none (CLAUDE.md §3). The classic pipeline and the
+chat hook already ran the `TriggerMatcher` and were never affected.
+
+**Guards.** `tests/unit/skills/test_registry_resolve.py`,
+`tests/unit/realtime/test_session_skills_roster.py`,
+`tests/unit/brain/test_turn_planner_skill_ambiguity.py`,
+`tests/unit/skills/test_prompt_injection.py`
+(`test_realtime_directive_*`), `tests/unit/brain/test_run_skill_tool.py`
+(`test_run_skill_resolves_a_display_name_to_the_installed_slug`).

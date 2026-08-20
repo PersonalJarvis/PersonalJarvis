@@ -240,6 +240,21 @@ def normalize_text(text: str) -> str:
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
+_NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def skill_name_tokens(name: str) -> tuple[str, ...]:
+    """Fold a skill name to the token tuple used to compare names.
+
+    ``morning-routine``, ``Morning Routine`` and ``MORNING_ROUTINE`` all fold
+    to ``("morning", "routine")``. Two naming conventions live in one registry
+    keyed by this field — builtins ship kebab-case slugs while the skill
+    creator writes Title Case display names — so every name comparison outside
+    an exact-key read has to go through this.
+    """
+    return tuple(_NAME_TOKEN_RE.findall(normalize_text(name)))
+
+
 _STOPWORDS: frozenset[str] | None = None
 
 

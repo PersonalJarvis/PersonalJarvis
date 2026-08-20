@@ -367,3 +367,90 @@ async def test_unregistered_resource_rejected(tmp_path: Path) -> None:
 
     assert result.success is False
     assert "resource" in (result.error or "").lower()
+
+
+# ----------------------------------------------------------------------
+# Speech-tolerant name resolution (live regression 2026-08-20)
+# ----------------------------------------------------------------------
+
+
+class _ResolvingRegistry(_FakeRegistry):
+    """A registry with the real ``resolve`` + ``list_active`` surface.
+
+    ``_FakeRegistry`` above predates ``resolve`` on purpose — it proves the
+    tool still works against a registry that has only ``get`` (mock and
+    headless boots). This one carries the real thing.
+    """
+
+    def resolve(self, name: str) -> Skill:
+        from jarvis.skills.relevance import skill_name_tokens
+
+        key = str(name or "").strip()
+        if key in self._skills:
+            return self._skills[key]
+        wanted = skill_name_tokens(key)
+        if wanted:
+            for candidate in sorted(self._skills.values(), key=lambda s: s.name):
+                if skill_name_tokens(str(candidate.name)) == wanted:
+                    return candidate
+        raise KeyError(f"Skill '{name}' not in registry")
+
+    def list_active(self) -> list[Skill]:
+        return list(self._skills.values())
+
+
+@pytest.mark.asyncio
+async def test_run_skill_resolves_a_display_name_to_the_installed_slug() -> None:
+    """The live failure, verbatim: the realtime model sent "Morning Routine"
+    while the registry key was "morning-routine", and the user was told the
+    skill did not exist three turns running."""
+    skill = _make_skill(name="morning-routine")
+    registry = _ResolvingRegistry({"morning-routine": skill})
+    runner = _FakeRunner()
+    set_skill_context(SkillContext(registry=registry, runner=runner))  # type: ignore[arg-type]
+
+    result = await RunSkillTool().execute({"skill_name": "Morning Routine"}, _ctx())
+
+    assert result.success is True
+    assert result.output["skill_name"] == "morning-routine"
+
+
+@pytest.mark.asyncio
+async def test_run_skill_reports_the_resolved_name_not_the_guess() -> None:
+    """Everything downstream — the spoken answer, the SkillInvoked event —
+    must name the skill that ran, never the string that led to it."""
+    skill = _make_skill(name="morning-routine")
+    registry = _ResolvingRegistry({"morning-routine": skill})
+    set_skill_context(SkillContext(registry=registry, runner=_FakeRunner()))  # type: ignore[arg-type]
+
+    result = await RunSkillTool().execute({"skill_name": "MORNING ROUTINE"}, _ctx())
+
+    assert result.output["skill_name"] == "morning-routine"
+
+
+@pytest.mark.asyncio
+async def test_run_skill_unknown_name_lists_what_is_installed() -> None:
+    """A bare dead end ends the turn; naming the alternatives lets the model
+    correct itself before the user hears anything."""
+    registry = _ResolvingRegistry({"morning-routine": _make_skill(name="morning-routine")})
+    set_skill_context(SkillContext(registry=registry, runner=_FakeRunner()))  # type: ignore[arg-type]
+
+    result = await RunSkillTool().execute({"skill_name": "brew coffee"}, _ctx())
+
+    assert result.success is False
+    assert "Unknown skill: brew coffee" in result.error
+    assert "morning-routine" in result.error
+
+
+@pytest.mark.asyncio
+async def test_run_skill_still_works_on_a_registry_without_resolve() -> None:
+    """Mock and headless boots ship a reduced registry; the tool must not
+    require the newer method to function."""
+    skill = _make_skill(name="demo_skill")
+    set_skill_context(
+        SkillContext(registry=_FakeRegistry({"demo_skill": skill}), runner=_FakeRunner())  # type: ignore[arg-type]
+    )
+
+    result = await RunSkillTool().execute({"skill_name": "demo_skill"}, _ctx())
+
+    assert result.success is True

@@ -131,15 +131,34 @@ class RunSkillTool:
                 error="Skill subsystem not initialized",
             )
 
-        # Step 3 — resolve skill
+        # Step 3 — resolve skill.
+        # ``resolve`` rather than ``get``: this name was written by a model, so
+        # it arrives in whatever shape the conversation had it. Live 2026-08-20,
+        # three turns in a row died on ``Unknown skill: Morning Routine`` while
+        # ``morning-routine`` sat installed and active. ``get`` stays exact for
+        # callers that hold a real key.
+        registry = skill_ctx.registry
+        resolver = getattr(registry, "resolve", None)
         try:
-            skill = skill_ctx.registry.get(skill_name)
+            skill = (
+                resolver(skill_name) if callable(resolver) else registry.get(skill_name)
+            )
         except KeyError:
+            # Name the alternatives instead of a bare dead end: the model can
+            # correct itself inside the same turn, and the user hears an answer
+            # rather than "I could not find that skill".
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"Unknown skill: {skill_name}",
+                error=(
+                    f"Unknown skill: {skill_name}. "
+                    f"Installed skills: {self._installed_names(registry)}"
+                ),
             )
+        # Everything downstream — the rendered output, the SkillInvoked event,
+        # the DRAFT/DISABLED refusals — must speak about the skill that was
+        # actually found, never the guess that led here.
+        skill_name = str(getattr(skill, "name", skill_name) or skill_name)
 
         # Step 4 — AP-1/AP-15 enforcement: refuse DRAFT/DISABLED skills
         if skill.state == SkillLifecycleState.DRAFT:
@@ -224,6 +243,19 @@ class RunSkillTool:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _installed_names(registry: Any, *, limit: int = 40) -> str:
+        """Comma-joined names of the invocable skills, for a recovery hint."""
+        try:
+            names = sorted(str(s.name) for s in registry.list_active())
+        except Exception:  # noqa: BLE001 — a hint must never mask the real error
+            return "(unavailable)"
+        if not names:
+            return "(none installed)"
+        if len(names) > limit:
+            return ", ".join(names[:limit]) + f", … and {len(names) - limit} more"
+        return ", ".join(names)
 
     def _read_resource(self, skill: Any, resource_rel: str) -> ToolResult:
         """Serve a bundled skill file (L3). Fails closed on traversal."""

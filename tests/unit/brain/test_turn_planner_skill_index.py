@@ -125,8 +125,20 @@ def test_only_a_fire_band_hit_counts() -> None:
     assert TurnReason.SKILL not in plan.reasons
 
 
-def test_an_ambiguous_winner_does_not_count() -> None:
-    """Two near-tied skills are ambiguity, not a decision."""
+def test_an_ambiguous_winner_does_not_pin_a_skill() -> None:
+    """Two near-tied skills are ambiguity about WHICH, not about WHETHER.
+
+    This assertion used to read ``TurnReason.SKILL not in plan.reasons`` — a
+    tie removed the reason altogether. That answered "is this about a skill?"
+    with the answer to "which skill?", and it cost a live feature: a
+    voice-authored near-duplicate of the bundled morning routine put both at
+    FIRE band, so every "Morgenroutine" turn lost its skill reason and routed
+    native. Installing a second skill disabled the first (BUG-158).
+
+    The tie still costs the pin — the planner must not name a winner it does
+    not have — but the turn goes to the orchestrator, which has the trigger
+    channel and the user to disambiguate with.
+    """
 
     class _TiedIndex:
         def rank(self, text: str, *, limit: int = 5) -> RelevanceRanking:
@@ -141,7 +153,10 @@ def test_an_ambiguous_winner_does_not_count() -> None:
             )
 
     plan = plan_turn("schick eine nachricht", skill_index=_TiedIndex())  # i18n-allow
-    assert TurnReason.SKILL not in plan.reasons
+
+    assert TurnReason.SKILL in plan.reasons
+    assert plan.requires_orchestrator is True
+    assert not [c for c in plan.required_capabilities if str(c).startswith("skill:")]
 
 
 # ---------------------------------------------------------------------------
