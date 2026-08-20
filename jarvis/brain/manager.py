@@ -5982,14 +5982,14 @@ class BrainManager:
         if conditional is not None:
             return conditional
 
-        lines = [f"- `{getattr(s, 'name', '')}` — {b}" for _, s, b in scored]
-        return (
-            "[Skill candidates] The user's request scored against these "
-            "installed skills. If one genuinely fits, call the `run-skill` tool "
-            "with that name FIRST and follow the returned instructions. If none "
-            "fits, ignore this block entirely and answer normally — these are "
-            "ranked suggestions, not a verdict.\n" + "\n".join(lines)
-        )
+        # Shared with the realtime session's own candidate hint — one wording,
+        # so the suggestion does not change shape depending on which engine is
+        # answering (jarvis/skills/prompt_injection.py).
+        from jarvis.skills.prompt_injection import render_skill_candidate_hint
+
+        return render_skill_candidate_hint(
+            [(str(getattr(s, "name", "")), b) for _, s, b in scored]
+        ) or None
 
     def _render_conditional_narrow_injection(
         self,

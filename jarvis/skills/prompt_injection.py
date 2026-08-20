@@ -19,6 +19,8 @@ Design constraints:
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from jarvis.skills.registry import SkillRegistry
 
 # Per-entry cap on the rendered description+when_to_use text (mirrors the
@@ -194,8 +196,44 @@ def render_available_skills_section(
     return f"{header}\n{intro}\n{body}{outro}"
 
 
-#: Per-entry description budget for the realtime roster. The block is re-sent
-#: with every per-turn session update, so it buys names first and prose second.
+def render_skill_candidate_hint(entries: Sequence[tuple[str, str]]) -> str:
+    """The "these scored, you decide" block for a turn nothing captured.
+
+    One home for this wording on purpose. The brain path has shipped it since
+    the 2026-08-12 rework and the realtime path had nothing at all, so a NARROW
+    match — the scorer found the right skill but not strongly enough to take
+    the turn over — was simply discarded in a live call. Two renderers would
+    drift, and a hint that says something different depending on which engine
+    is running is worse than one that is merely imperfect.
+
+    ``entries`` is ``(skill_name, blurb)``, best first and already truncated by
+    the caller. Returns ``""`` for an empty list so callers can append blindly.
+
+    The decision explicitly stays with the model: a wrong candidate is ignored,
+    never executed. That is what makes this block safe to show on a merely
+    plausible match, where an automatic capture would not be.
+    """
+    lines = [f"- `{name}` — {blurb}" if blurb else f"- `{name}`" for name, blurb in entries]
+    if not lines:
+        return ""
+    return (
+        "[Skill candidates] The user's request scored against these "
+        "installed skills. If one genuinely fits, call the `run-skill` tool "
+        "with that name FIRST and follow the returned instructions. If none "
+        "fits, ignore this block entirely and answer normally — these are "
+        "ranked suggestions, not a verdict.\n" + "\n".join(lines)
+    )
+
+
+#: Per-entry budget for the RICH realtime tier: description + when_to_use.
+#: ``when_to_use`` is the field that says when a skill applies, in the words
+#: people actually use — it is what lets a model match "wie sieht mein Tag aus"
+#: to a skill triggered on "Morgenroutine". The first realtime roster shipped
+#: description-only at 70 chars and cut exactly that text off, which left the
+#: live model with a topic label instead of a matching rule.
+_REALTIME_RICH_CHARS = 300
+
+#: Per-entry budget for the SHORT tier — description only, no matching rule.
 _REALTIME_DESC_CHARS = 70
 
 
@@ -203,7 +241,7 @@ def render_realtime_skills_directive(
     registry: SkillRegistry,
     *,
     compact: bool = False,
-    budget_chars: int = 4000,
+    budget_chars: int = 9000,
 ) -> str:
     """Render the installed-skill roster for a live voice session.
 
@@ -216,11 +254,17 @@ def render_realtime_skills_directive(
     heard of — and it binds every realtime transport alike, because they all
     share one instruction builder.
 
-    Names outrank prose here. When the roster does not fit ``budget_chars``
-    the descriptions are dropped and every name is kept, never the other way
-    round: a described skill that is missing from the list is uncallable,
-    while a bare name is still enough for ``run-skill`` to resolve. ``compact``
-    (small self-hosted brains) goes straight to the names-only form.
+    Degrades in three steps, richest first, and never below the names:
+
+    1. name + description + ``when_to_use`` — the matching rule, so the model
+       can recognise a paraphrase the author's trigger regex never predicted.
+       This is the tier that makes recognition work like Claude Code's;
+    2. name + short description — the topic, without the matching rule;
+    3. names only.
+
+    Names outrank prose at every step: a described skill that is missing from
+    the list is uncallable, while a bare name is still enough for ``run-skill``
+    to resolve. ``compact`` (small self-hosted brains) goes straight to step 3.
 
     Returns ``""`` when no skill is invocable, so the caller can drop the
     block from the instruction assembly entirely.
@@ -229,7 +273,8 @@ def render_realtime_skills_directive(
         active = registry.list_active()
     except Exception:  # noqa: BLE001 — a roster fault must never break a call
         return ""
-    entries: list[tuple[str, str, bool]] = []  # (name, description, is_builtin)
+    # (name, rich blurb, short blurb, is_builtin)
+    entries: list[tuple[str, str, str, bool]] = []
     for skill in active:
         fm = getattr(skill, "frontmatter", None)
         if fm is None:
@@ -238,31 +283,42 @@ def render_realtime_skills_directive(
         if not name:
             continue
         desc = " ".join((getattr(fm, "description", "") or "").split())
-        if len(desc) > _REALTIME_DESC_CHARS:
-            desc = desc[: _REALTIME_DESC_CHARS - 1].rstrip() + "…"
-        entries.append((name, desc, _is_builtin(skill)))
+        when = " ".join((getattr(fm, "when_to_use", "") or "").split())
+        rich = f"{desc} {when}".strip()
+        if len(rich) > _REALTIME_RICH_CHARS:
+            rich = rich[: _REALTIME_RICH_CHARS - 1].rstrip() + "…"
+        short = desc
+        if len(short) > _REALTIME_DESC_CHARS:
+            short = short[: _REALTIME_DESC_CHARS - 1].rstrip() + "…"
+        entries.append((name, rich, short, _is_builtin(skill)))
     if not entries:
         return ""
 
     # User-authored skills first — same attention argument as the brain listing.
-    entries.sort(key=lambda e: (e[2], e[0]))
-    names_only = ", ".join(name for name, _, _ in entries)
+    entries.sort(key=lambda e: (e[3], e[0]))
 
     header = "[Installed skills — the user's saved way of doing these tasks]\n"
     rule = (
-        "\nTo run one, call the run-skill tool with the name EXACTLY as spelled "
-        "above — copy it character for character, never re-word it and never "
-        "invent one that is not listed. If the user names a skill that is not "
-        "on this list, say so instead of guessing. A matching skill always "
-        "beats answering from scratch. A plain question that merely mentions "
-        "the topic is not a match."
+        "\nEach line says what a skill is for and when it applies. Match on "
+        "MEANING, not on wording: the user will not repeat these words, so a "
+        "request that asks for the same outcome is a match even when it shares "
+        "no vocabulary with the line. To run one, call the run-skill tool with "
+        "the name EXACTLY as spelled above — copy it character for character, "
+        "never re-word it and never invent one that is not listed. If the user "
+        "names a skill that is not on this list, say so instead of guessing. A "
+        "matching skill always beats answering from scratch. A plain question "
+        "that merely mentions the topic is not a match."
     )
+
     if not compact:
-        listed = "\n".join(
-            f"- {name} — {desc}" if desc else f"- {name}"
-            for name, desc, _ in entries
-        )
-        block = f"{header}{listed}{rule}"
-        if len(block) <= budget_chars:
-            return block
+        for index in (1, 2):  # 1 = rich blurb, 2 = short blurb
+            listed = "\n".join(
+                f"- {name} — {entry[index]}" if entry[index] else f"- {name}"
+                for entry in entries
+                for name in (entry[0],)
+            )
+            block = f"{header}{listed}{rule}"
+            if len(block) <= budget_chars:
+                return block
+    names_only = ", ".join(name for name, _, _, _ in entries)
     return f"{header}{names_only}{rule}"

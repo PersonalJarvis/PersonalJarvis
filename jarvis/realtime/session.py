@@ -2744,6 +2744,79 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001 — never cost the turn its answer
             log.debug("Realtime skill handoff skipped", exc_info=True)
 
+    def _skill_candidates_directive(self, text: str) -> str:
+        """Skills that scored on this turn but not strongly enough to take it.
+
+        The scorer routinely finds the right skill for a paraphrase and lands
+        in the NARROW band, which never captures — a matched skill is a
+        TAKEOVER (it strips ``run-skill``, stands down computer-use and the
+        evidence gate), so the floor sits at FIRE for good reason. Measured on
+        the shipped corpus: of ten natural requests carrying no trigger phrase,
+        the scorer identified the right skill six times and fired three.
+
+        The brain path already turns that surplus into a suggestion the model
+        may ignore. Realtime discarded it. This closes that gap, at NARROW
+        only: a FIRE match is already inlined by ``_skill_directive`` or handed
+        to the brain by ``_note_skill_for_delegate``, and showing it here too
+        would put two instruction sets on one turn.
+
+        Never raises — a suggestion must not be able to cost a live call.
+        """
+        utterance = str(text or "").strip()
+        if not utterance:
+            return ""
+        try:
+            from jarvis.skills.match_eval import BAND_NARROW, evaluate_match
+            from jarvis.skills.prompt_injection import render_skill_candidate_hint
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            context = try_get_skill_context()
+            if context is None:
+                return ""
+            limit = max(1, int(getattr(self._skills_cfg(), "narrow_candidates", 3)))
+            decision = evaluate_match(context.registry, utterance, limit=limit + 2)
+            if decision.band != BAND_NARROW:
+                return ""
+            entries: list[tuple[str, str]] = []
+            for candidate in decision.candidates or ():
+                if len(entries) >= limit:
+                    break
+                if getattr(candidate, "band", "") != BAND_NARROW:
+                    continue
+                try:
+                    skill = context.registry.get(candidate.skill_name)
+                except Exception:  # noqa: BLE001
+                    # The index ranked a name the registry no longer holds —
+                    # a hot reload between ranking and rendering. Skip that
+                    # candidate, keep the rest of the hint.
+                    log.debug(
+                        "skill candidate %r vanished between rank and render",
+                        candidate.skill_name,
+                        exc_info=True,
+                    )
+                    continue
+                frontmatter = getattr(skill, "frontmatter", None)
+                if frontmatter is None:
+                    continue
+                blurb = " ".join(
+                    f"{getattr(frontmatter, 'description', '') or ''} "
+                    f"{getattr(frontmatter, 'when_to_use', '') or ''}".split()
+                )[:400]
+                entries.append((str(skill.name), blurb))
+            return render_skill_candidate_hint(entries)
+        except Exception:  # noqa: BLE001 — a hint must never end a call
+            log.debug("Realtime skill candidate hint unavailable", exc_info=True)
+            return ""
+
+    def _skills_cfg(self) -> Any:
+        """The ``[skills]`` config section, or defaults."""
+        section = getattr(self._config, "skills", None)
+        if section is not None:
+            return section
+        from jarvis.core.config import SkillsConfig
+
+        return SkillsConfig()
+
     def _skills_directive(self, *, compact: bool | None = None) -> str:
         """The installed-skill roster for this session's instructions.
 
@@ -4647,8 +4720,16 @@ class RealtimeVoiceSession:
                                 # fires on every final transcript, so a
                                 # qualifying skill rides along instead of paying
                                 # the delegate boundary wait.
-                                skill_directive=self._skill_directive(
-                                    self._last_user_text or ""
+                                # Captured skill, else the ranked suggestion —
+                                # mutually exclusive by construction (one is
+                                # FIRE-only, the other NARROW-only), and the
+                                # same either/or the brain path uses, so a turn
+                                # never carries two instruction sets.
+                                skill_directive=(
+                                    self._skill_directive(self._last_user_text or "")
+                                    or self._skill_candidates_directive(
+                                        self._last_user_text or ""
+                                    )
                                 ),
                                 skills_directive=self._skills_directive(),
                                 # Rebuilt per turn: panes open and close mid

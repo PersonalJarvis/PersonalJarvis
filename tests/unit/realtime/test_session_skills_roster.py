@@ -51,7 +51,13 @@ class _Session:
     )
 
 
-def _write_skill(root: Path, name: str, *, description: str = "test skill") -> None:
+def _write_skill(
+    root: Path,
+    name: str,
+    *,
+    description: str = "test skill",
+    tags: str = "",
+) -> None:
     folder = root / name
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "SKILL.md").write_text(
@@ -61,6 +67,7 @@ def _write_skill(root: Path, name: str, *, description: str = "test skill") -> N
                 'schema_version: "1"',
                 f"name: {name}",
                 f"description: {description}",
+                *([f"tags: {tags}"] if tags else []),
                 "---",
                 "",
                 "## Body",
@@ -213,3 +220,97 @@ def test_a_brain_without_the_hook_is_tolerated(skills_root: Path) -> None:
     _install(skills_root)
 
     _Session(brain=object())._note_skill_for_delegate("morning-routine")
+
+
+# ---------------------------------------------------------------------------
+# NARROW candidates become a suggestion instead of silence
+# ---------------------------------------------------------------------------
+
+
+class _CfgSession(_Session):
+    """Adds the config surface the candidate hint reads."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self._config = None
+
+    def _has_pending_delegate_from_earlier_turn(self) -> bool:
+        return False
+
+    _skill_candidates_directive = (
+        session_module.RealtimeVoiceSession._skill_candidates_directive
+    )
+    _skills_cfg = session_module.RealtimeVoiceSession._skills_cfg
+    _skill_directive = session_module.RealtimeVoiceSession._skill_directive
+
+
+#: Scores 0.756 against the fixture below, between its HINT floor (0.330) and
+#: its FIRE floor (1.019) — i.e. exactly the band this feature is about.
+NARROW_UTTERANCE = "ich brauche konzentration"  # i18n-allow: test input
+
+
+def _narrow_root(tmp_path: Path) -> Path:
+    """A corpus where a paraphrase scores but does not reach FIRE."""
+    root = tmp_path / "skills"
+    root.mkdir()
+    _write_skill(
+        root,
+        "deep-work-mode",
+        description=(
+            "Activates a distraction-free focus sprint with a pomodoro timer."
+        ),
+        tags="[pomodoro, fokus, konzentration, ruhe]",  # i18n-allow: fixture data
+    )
+    for index in range(8):
+        _write_skill(root, f"filler-{index}", description=f"unrelated topic {index}")
+    return root
+
+
+def test_a_narrow_match_is_offered_to_the_model(tmp_path: Path) -> None:
+    """The scorer finds the right skill for a paraphrase far more often than it
+    fires — measured six of ten on the shipped corpus, three fired. The brain
+    path already turned that surplus into a suggestion; realtime discarded it."""
+    _install(_narrow_root(tmp_path))
+
+    hint = _CfgSession()._skill_candidates_directive(NARROW_UTTERANCE)
+
+    assert "deep-work-mode" in hint
+    assert "not a verdict" in hint
+
+
+def test_an_empty_utterance_offers_nothing(tmp_path: Path) -> None:
+    _install(_narrow_root(tmp_path))
+
+    assert _CfgSession()._skill_candidates_directive("   ") == ""
+
+
+def test_an_unrelated_turn_offers_nothing(tmp_path: Path) -> None:
+    """Silence is the common case and must stay free."""
+    _install(_narrow_root(tmp_path))
+
+    assert _CfgSession()._skill_candidates_directive("danke dir") == ""  # i18n-allow
+
+
+def test_a_fire_match_is_not_also_offered_as_a_candidate(
+    skills_root: Path,
+) -> None:
+    """A FIRE match is inlined or handed to the brain. Adding the hint on top
+    would put two instruction sets on one turn."""
+    _install(skills_root)
+    session = _CfgSession()
+
+    # The builtin's own trigger vocabulary — a FIRE-band hit, not a paraphrase.
+    assert session._skill_candidates_directive("morning-routine") == ""
+
+
+def test_a_registry_fault_never_breaks_the_hint(skills_root: Path) -> None:
+    class _Exploding:
+        def list_active(self):  # noqa: ANN202
+            raise RuntimeError("registry is on fire")
+
+        def get(self, name):  # noqa: ANN202
+            raise RuntimeError("registry is on fire")
+
+    set_skill_context(SkillContext(registry=_Exploding(), runner=_StubRunner()))  # type: ignore[arg-type]
+
+    assert _CfgSession()._skill_candidates_directive("anything at all") == ""

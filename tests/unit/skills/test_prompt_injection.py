@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from jarvis.skills.prompt_injection import (
     render_available_skills_section,
     render_realtime_skills_directive,
+    render_skill_candidate_hint,
 )
 
 
@@ -464,3 +465,64 @@ def test_realtime_directive_skips_skills_without_frontmatter() -> None:
 
     assert "morning-routine" in out
     assert "broken" not in out
+
+
+def test_realtime_directive_carries_the_when_to_use_matching_rule() -> None:
+    """``when_to_use`` is the field that says WHEN a skill applies, in the
+    words people actually use. The first realtime roster shipped
+    description-only at 70 chars and cut it off, leaving the live model a topic
+    label where it needed a matching rule."""
+    registry = _FakeRegistry(skills=[
+        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
+            description="Delivers the user's spoken morning briefing.",
+            when_to_use='Use when the user asks "wie sieht mein Tag aus".')),
+    ])
+
+    out = render_realtime_skills_directive(registry)  # type: ignore[arg-type]
+
+    assert "wie sieht mein Tag aus" in out
+    assert "MEANING" in out  # the paraphrase instruction
+
+
+def test_realtime_directive_degrades_rich_then_short_then_names() -> None:
+    """Three tiers, richest first, and never below the names."""
+    skills = [
+        _FakeSkill(name=f"skill-{i:02d}", frontmatter=_FakeFrontmatter(
+            description=f"Does thing {i}. " + "padding " * 12,
+            when_to_use="Use when " + "more padding " * 12))
+        for i in range(12)
+    ]
+    registry = _FakeRegistry(skills=skills)
+
+    rich = render_realtime_skills_directive(registry, budget_chars=99_000)  # type: ignore[arg-type]
+    short = render_realtime_skills_directive(registry, budget_chars=1_800)  # type: ignore[arg-type]
+    names = render_realtime_skills_directive(registry, budget_chars=900)  # type: ignore[arg-type]
+
+    assert "Use when" in rich
+    assert "Use when" not in short and "Does thing 0" in short
+    assert "Does thing 0" not in names
+    # The one invariant every tier keeps: no skill loses its name.
+    for out in (rich, short, names):
+        for i in range(12):
+            assert f"skill-{i:02d}" in out
+
+
+# ----------------------------------------------------------------------
+# The shared candidate hint
+# ----------------------------------------------------------------------
+
+
+def test_candidate_hint_names_the_skills_and_leaves_the_choice_open() -> None:
+    out = render_skill_candidate_hint(
+        [("morning-routine", "Your day at a glance."), ("deep-work-mode", "")]
+    )
+
+    assert "`morning-routine` — Your day at a glance." in out
+    assert "`deep-work-mode`" in out
+    assert "run-skill" in out
+    # The safety argument for showing a merely plausible match at all.
+    assert "not a verdict" in out
+
+
+def test_candidate_hint_is_empty_without_candidates() -> None:
+    assert render_skill_candidate_hint([]) == ""
