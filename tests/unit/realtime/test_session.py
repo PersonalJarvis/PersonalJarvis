@@ -7551,6 +7551,128 @@ async def test_terminal_account_failure_without_alternate_does_not_reconnect():
     await sess.end(reason="test")
 
 
+_VERTEX_LIVE_RESOURCE_EXHAUSTED = (
+    "1011 None. Resource exhausted. Please try again later. Please refer to "
+    "https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/"
+    "gemini-live"
+)
+
+
+@pytest.mark.asyncio
+async def test_live_resource_exhausted_does_not_reconnect_the_same_provider():
+    """Vertex Live 1011 Resource exhausted is a throttle, not a 1006.
+
+    Live 2026-08-20 21:15: the socket closed three times in 21 s, each
+    reconnect was silent, then the deck went back to listening. Immediate
+    same-provider rebuild is the storm; one honest failure is the fix.
+    """
+    vertex = RebuildingProvider(
+        [lambda: DyingSession([], error=_VERTEX_LIVE_RESOURCE_EXHAUSTED)]
+    )
+    vertex.name = "vertex-live"
+    vertex.credential_family = "vertex"
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="vertex-resource-exhausted-no-retry",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=vertex,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert sess.failed
+    assert vertex.open_calls == 1
+    assert len([m for m in jsons if m.get("type") == "provider_error"]) == 1
+    assert [m for m in jsons if m.get("type") == "error_spoken"] == []
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_live_resource_exhausted_mid_call_is_spoken():
+    """Once a turn has run, classic fallback is refused — the user must hear why."""
+    vertex = RebuildingProvider(
+        [
+            lambda: DyingSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript",
+                        text="spiel etwas entspannendes",  # i18n-allow: live forensic
+                        is_final=True,
+                    ),
+                ],
+                error=_VERTEX_LIVE_RESOURCE_EXHAUSTED,
+            )
+        ]
+    )
+    vertex.name = "vertex-live"
+    vertex.credential_family = "vertex"
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="vertex-resource-exhausted-spoken",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=vertex,
+        config=_cfg(reply_language="de"),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert sess.failed
+    assert vertex.open_calls == 1
+    spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    assert spoken, "a committed turn that dies of a throttle must be spoken"
+    texts = " ".join(str(m.get("text") or "") for m in spoken)
+    assert "überlastet" in texts  # i18n-allow: spoken DE fixture
+    assert any(m.get("language") == "de" for m in spoken)
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_live_resource_exhausted_crosses_family_without_retrying():
+    """A capacity throttle on one Live family must still cross to another."""
+    vertex = RebuildingProvider(
+        [lambda: DyingSession([], error=_VERTEX_LIVE_RESOURCE_EXHAUSTED)]
+    )
+    vertex.name = "vertex-live"
+    vertex.credential_family = "vertex"
+    openai = RebuildingProvider([lambda: StayOpenSession([])])
+    openai.name = "openai-realtime"
+    openai.credential_family = "openai"
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="vertex-resource-exhausted-cross-family",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        providers=[vertex, openai],
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    try:
+        await _wait_until(lambda: sess.active_provider == "openai-realtime")
+
+        assert vertex.open_calls == 1
+        assert openai.open_calls == 1
+        assert not sess.failed
+        assert [m for m in jsons if m.get("type") == "provider_error"] == []
+        fallback = next(
+            m
+            for m in jsons
+            if m.get("type") == "provider_fallback"
+            and m.get("provider") == "vertex-live"
+        )
+        assert fallback["status"] == "rate_limited"
+    finally:
+        await sess.end(reason="test")
+
+
 @pytest.mark.asyncio
 async def test_audio_send_timeout_rebuilds_without_ending_the_call(monkeypatch):
     """A write-only stall and a later stale timeout preserve the live call."""
@@ -8951,6 +9073,27 @@ async def test_the_handshake_notice_names_the_cause_it_actually_hit():
     )
     await timeout_sess.end(reason="test")
     await other_sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_handshake_resource_exhausted_says_busy_not_unreachable():
+    """Vertex Live 1011 at open is a throttle, not a generic outage."""
+    jsons = []
+    sess = _no_metered_fallback_session(
+        _UnreachableProvider(
+            RuntimeError(
+                "1011 None. Resource exhausted. Please try again later."
+            )
+        ),
+        jsons=jsons,
+        language_cfg="en",
+    )
+    with pytest.raises(RuntimeError):
+        await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    notice = next(m for m in jsons if m.get("type") == "error_spoken")
+    assert "busy" in notice["text"].lower()
+    await sess.end(reason="test")
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ Error strings below are VERBATIM from live probes against the real providers
 (Anthropic 401, an OpenAI-compatible 403 out-of-credits, OpenAI missing-key
 RuntimeError).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -109,6 +110,32 @@ def test_openai_insufficient_quota_429_is_no_credits() -> None:
 def test_gemini_monthly_spending_cap_is_no_credits(msg: str) -> None:
     """REST 429 and Live 1011 are the same terminal account state."""
     assert classify_provider_error(msg) == "no_credits"
+
+
+@pytest.mark.parametrize(
+    "msg",
+    (
+        (
+            "1011 None. Resource exhausted. Please try again later. Please "
+            "refer to https://cloud.google.com/vertex-ai/generative-ai/docs/"
+            "model-reference/gemini-live"
+        ),
+        "APIError: 1011 None. Resource exhausted. Please try again later.",
+        'ClientError: status: "RESOURCE_EXHAUSTED"',
+    ),
+)
+def test_google_live_resource_exhausted_without_billing_is_rate_limited(
+    msg: str,
+) -> None:
+    """Vertex/Gemini Live 1011 capacity throttle is not a spending cap.
+
+    Live 2026-08-20 21:15: vertex-live closed three times with this exact
+    wording, the classifier returned ``error``, and the rebuild-capable
+    transport treated it as a 1006-style wire death — silent reconnect
+    storm, then listening, nothing said. Billing markers must still win
+    when the same gRPC status carries a spending cap.
+    """
+    assert classify_provider_error(msg) == "rate_limited"
 
 
 def test_plain_429_rate_limit_is_rate_limited() -> None:

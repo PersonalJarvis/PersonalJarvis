@@ -473,6 +473,22 @@ _CREDENTIAL_TERMINAL_STATUSES = frozenset(
 _PROVIDER_FAILOVER_STATUSES = frozenset(
     {MODEL_UNAVAILABLE, RATE_LIMITED, UNREACHABLE}
 )
+# A throttle clears by itself, but NOT on the socket that just closed
+# with it. Immediate same-provider rebuild is the live 1011 "Resource
+# exhausted" reconnect storm: three silent retries, then listening as
+# if nothing happened. Cross to another family if one is ready; otherwise
+# end the call honestly (and speak, if classic voice cannot continue it).
+_NO_SAME_PROVIDER_RETRY_STATUSES = frozenset({RATE_LIMITED})
+
+
+def _retrying_this_provider_cannot_recover(status: str) -> bool:
+    """True when reopening the same adapter cannot clear ``status``."""
+    return (
+        status in _CREDENTIAL_TERMINAL_STATUSES
+        or status in _NO_SAME_PROVIDER_RETRY_STATUSES
+    )
+
+
 def _pcm16_peak(pcm: bytes) -> int:
     """Peak absolute amplitude of little-endian int16 PCM (C-speed, no numpy)."""
     usable = len(pcm) - (len(pcm) % 2)
@@ -1554,6 +1570,39 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
             "No pude establecer la conexión de voz ahora mismo."
         ),
     },
+    "rate_limited": {
+        "de": (  # i18n-allow: localized runtime voice output
+            "Die Sprachverbindung ist gerade überlastet. "  # i18n-allow
+            "Bitte versuch es gleich noch einmal."  # i18n-allow
+        ),
+        "en": (
+            "The voice connection is busy right now. "
+            "Please try again in a moment."
+        ),
+        "es": (  # i18n-allow: localized runtime voice output
+            "La conexión de voz está saturada ahora mismo. "
+            "Inténtalo de nuevo en un momento."
+        ),
+    },
+    "no_credits": {
+        "de": (  # i18n-allow: localized runtime voice output
+            "Das Sprachkontingent ist aufgebraucht, "  # i18n-allow
+            "deshalb musste ich das Gespräch beenden."  # i18n-allow
+        ),
+        "en": "The voice quota is used up, so I had to end the call.",
+        "es": (  # i18n-allow: localized runtime voice output
+            "Se agotó la cuota de voz, así que tuve que terminar la llamada."
+        ),
+    },
+    "dropped": {
+        "de": (  # i18n-allow: localized runtime voice output
+            "Die Sprachverbindung ist abgebrochen."  # i18n-allow
+        ),
+        "en": "The voice connection dropped.",
+        "es": (  # i18n-allow: localized runtime voice output
+            "Se cortó la conexión de voz."
+        ),
+    },
 }
 
 
@@ -1562,6 +1611,15 @@ def _handshake_failure_message(cause: str, language: str) -> str:
         cause, _HANDSHAKE_FAILURE_MESSAGES["unavailable"]
     )
     return variants.get(language) or variants["en"]
+
+
+def _live_call_failure_cause(status: str) -> str:
+    """Map a classified provider status to a spoken live-call ending."""
+    if status == RATE_LIMITED:
+        return "rate_limited"
+    if status == NO_CREDITS:
+        return "no_credits"
+    return "dropped"
 
 
 def _delegate_bridge_texts(language: str) -> tuple[str, ...]:
@@ -2546,6 +2604,11 @@ class RealtimeVoiceSession:
         #: item REPLACES its entry instead of double-booking the utterance.
         self._user_transcript_parts: list[tuple[str, str]] = []
         self._input_turn_observed = False
+        # Sticky for the whole call. Per-turn flags reset at every boundary;
+        # classic fallback is refused once ANY turn has run, so a later 1011
+        # on idle-listen must still be spoken.
+        self._call_had_semantic_turn = False
+        self._failure_already_spoken = False
         self._output_transcript: list[str] = []
         # BUG-089: text-level self-echo backstop. The realtime path's acoustic
         # gates leak on open speakers next to a built-in mic (macOS), so every
@@ -2714,6 +2777,8 @@ class RealtimeVoiceSession:
         self._last_user_text = " ".join(
             t for _, t in self._user_transcript_parts
         ).strip()
+        if self._last_user_text:
+            self._call_had_semantic_turn = True
         # The turn has real text now; the live caption served its purpose.
         self._last_user_text_preview = ""
         if not self._first_final_monotonic:
@@ -3452,9 +3517,13 @@ class RealtimeVoiceSession:
             self._blocked_credential_families.add(
                 self._credential_family(provider)
             )
-        elif terminal or (
-            status in _PROVIDER_FAILOVER_STATUSES
-            and self._has_viable_alternate(provider)
+        elif (
+            status in _NO_SAME_PROVIDER_RETRY_STATUSES
+            or terminal
+            or (
+                status in _PROVIDER_FAILOVER_STATUSES
+                and self._has_viable_alternate(provider)
+            )
         ):
             self._blocked_provider_ids.add(self._provider_id(provider))
         else:
@@ -3680,16 +3749,21 @@ class RealtimeVoiceSession:
         if self.allow_classic_fallback:
             return
         lowered = summary.lower()
-        cause = (
-            "timeout"
-            if (
-                "timeouterror" in lowered
-                or "budget" in lowered
-                or "in time" in lowered
-            )
-            else "unavailable"
-        )
+        status = classify_provider_error(summary)
+        if status == RATE_LIMITED:
+            cause = "rate_limited"
+        elif status == NO_CREDITS:
+            cause = "no_credits"
+        elif (
+            "timeouterror" in lowered
+            or "budget" in lowered
+            or "in time" in lowered
+        ):
+            cause = "timeout"
+        else:
+            cause = "unavailable"
         spoken = _handshake_failure_message(cause, self._language)
+        self._failure_already_spoken = True
         log.warning(
             "realtime[%s] no voice engine could be opened and metered "
             "fallback is refused — ending the call with a spoken reason "
@@ -3704,6 +3778,56 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001 — the handshake failure still propagates
             log.warning(
                 "realtime[%s] could not voice the handshake failure notice",
+                self.session_id,
+                exc_info=True,
+            )
+
+    def _call_has_committed_turn(self) -> bool:
+        """True when classic replay of this call would duplicate work.
+
+        The desktop pipeline refuses classic fallback once a user or assistant
+        turn has already happened. A failure in that window must be spoken:
+        the call is ending, not continuing elsewhere. Per-turn flags reset at
+        every boundary, so this is sticky for the whole call.
+        """
+        return bool(
+            self._call_had_semantic_turn
+            or self._input_turn_observed
+            or str(self._last_user_text or "").strip()
+            or self._user_transcript_parts
+            or self._output_transcript
+            or self._output_samples_sent > 0
+            or self._surface_spoke_this_turn
+        )
+
+    async def _announce_live_call_failure(self, status: str) -> None:
+        """Say why a live call is ending, when nobody else will.
+
+        Silent when the classic pipeline can still pick the same call up
+        (no committed turn, usage-billed fallback allowed) — announcing a
+        failure there would be false. Once a turn has run, classic replay
+        is refused and a silent hangup is the live 1011 Resource-exhausted
+        defect: ERROR lines in the log, then listening, nothing said.
+        """
+        if self._failure_already_spoken:
+            return
+        if self.allow_classic_fallback and not self._call_has_committed_turn():
+            return
+        cause = _live_call_failure_cause(status)
+        spoken = _handshake_failure_message(cause, self._language)
+        self._failure_already_spoken = True
+        log.warning(
+            "realtime[%s] live call ending with a spoken reason "
+            "(cause=%s status=%s)",
+            self.session_id,
+            cause,
+            status,
+        )
+        try:
+            await self._send_json(self._surface_speech_message(spoken))
+        except Exception:  # noqa: BLE001 — the call still ends
+            log.warning(
+                "realtime[%s] could not voice the live-call failure notice",
                 self.session_id,
                 exc_info=True,
             )
@@ -6056,11 +6180,12 @@ class RealtimeVoiceSession:
                     status = classify_provider_error(message)
                     # A provider may label a failed response as recoverable
                     # even though its account says there is no money/quota or
-                    # the key is invalid. Retrying that same credential family
-                    # cannot recover and caused the live 1011 reconnect storm.
+                    # the key is invalid — or the Live socket just closed
+                    # with 1011 Resource exhausted. Retrying that same
+                    # adapter cannot recover and caused the reconnect storm.
                     recoverable = (
                         declared_recoverable
-                        and status not in _CREDENTIAL_TERMINAL_STATUSES
+                        and not _retrying_this_provider_cannot_recover(status)
                     )
                     failover_ready = False
                     if not recoverable:
@@ -6133,6 +6258,7 @@ class RealtimeVoiceSession:
                         )
                     self._failure_detail = message
                     self._failed.set()
+                    await self._announce_live_call_failure(status)
                     await self._send_json(
                         {"type": "provider_error", "error": message}
                     )
@@ -6253,9 +6379,9 @@ class RealtimeVoiceSession:
                 message,
                 terminal=not same_provider_rebuild,
             )
-            credential_terminal = status in _CREDENTIAL_TERMINAL_STATUSES
+            retry_is_futile = _retrying_this_provider_cannot_recover(status)
             can_recover = failover_ready or (
-                same_provider_rebuild and not credential_terminal
+                same_provider_rebuild and not retry_is_futile
             )
             await self._publish_error(
                 type(exc).__name__,
@@ -6282,10 +6408,11 @@ class RealtimeVoiceSession:
                     f"{provider_id} transport failed ({status}); "
                     "switching realtime provider"
                 )
-            if same_provider_rebuild and not credential_terminal:
+            if same_provider_rebuild and not retry_is_futile:
                 return message
             self._failure_detail = message
             self._failed.set()
+            await self._announce_live_call_failure(status)
             try:
                 await self._send_json(
                     {"type": "provider_error", "error": message}
@@ -6564,9 +6691,11 @@ class RealtimeVoiceSession:
         self._failure_detail = message
         self._failed.set()
         log.warning("realtime[%s] %s", self.session_id, message)
+        status = classify_provider_error(message)
         await self._publish_error(
             "RealtimeTransportDead", message, recoverable=False
         )
+        await self._announce_live_call_failure(status)
         try:
             await self._send_json({"type": "provider_error", "error": message})
         except Exception:  # noqa: BLE001, S110 — surface may already be gone
@@ -12318,6 +12447,8 @@ class RealtimeVoiceSession:
                     self.active_provider,
                 )
         self._output_samples_sent += len(pcm) // 2
+        if self._output_samples_sent > 0:
+            self._call_had_semantic_turn = True
         rate = max(1, int(getattr(chunk, "sample_rate", 0) or 24_000))
         if audible:
             # Real audible provider audio: advance the echo guard's playback

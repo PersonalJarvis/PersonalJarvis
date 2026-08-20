@@ -31,6 +31,8 @@ from jarvis.brain.provider_test import (
         "Codex app-server rejected thread/realtime/start: rate_limit_exceeded",
         "{'error': {'type': 'rate_limit_exceeded'}}",
         "Too many requests",
+        "1011 None. Resource exhausted. Please try again later.",
+        "status: RESOURCE_EXHAUSTED",
     ],
 )
 def test_throttle_token_without_an_http_status_is_rate_limited(message: str) -> None:
@@ -73,8 +75,6 @@ def test_no_throttle_token_can_dead_list_a_funded_account() -> None:
 def test_an_unrecognised_redacted_refusal_stays_an_honest_error() -> None:
     """No token, no guess: the classifier must not invent an account state."""
     assert (
-        classify_provider_error(
-            "Codex app-server rejected thread/realtime/start (code -32603)."
-        )
+        classify_provider_error("Codex app-server rejected thread/realtime/start (code -32603).")
         == "error"
     )

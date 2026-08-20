@@ -113,6 +113,14 @@ _RATE_LIMIT_TOKEN_MARKERS = (
     "rate_limit_exceeded",
     "rate limit exceeded",
     "too many requests",
+    # Google Live / Vertex close the WebSocket with 1011 and this gRPC
+    # status when the region is at capacity or the per-minute quota is
+    # spent — "Please try again later", not a billing wall. The spending-
+    # cap twin still matches BILLING_LIMIT_MARKERS first ("spending cap")
+    # and stays no_credits. Reconnecting the same Live socket immediately
+    # is the 1011 storm this marker exists to stop.
+    "resource exhausted",
+    "resource_exhausted",
 )
 
 # Back-compat alias (anything importing the old private name keeps working).
