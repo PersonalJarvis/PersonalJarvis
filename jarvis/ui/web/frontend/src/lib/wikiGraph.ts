@@ -325,3 +325,48 @@ export function toGraphData(payload: WikiGraphPayload): {
 
   return { nodes, links };
 }
+
+
+/**
+ * Tooltip text for one node, one edge, and the HTML escape both need.
+ *
+ * These live here, beside the data they describe, rather than in
+ * `components/wiki/WikiGraph` where they were written. The deck's wiki card
+ * needs exactly these three strings and nothing else from that component — and
+ * importing them from there pulled `react-force-graph-2d` with its whole d3
+ * stack into the STARTUP chunk, roughly 150 KB parsed before the first paint,
+ * for three pure string functions. This module imports nothing, so the graph
+ * library now travels only in the chunk that actually draws a graph.
+ */
+export function escapeTooltipText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function nodeDetails(node: RenderNode, t: (key: string) => string): string {
+  const backlinks = node.backlinkCount ?? 0;
+  const suffix = t(
+    backlinks === 1 ? "wiki_graph.backlink_one" : "wiki_graph.backlink_many",
+  );
+  return t("wiki_graph.node_details")
+    .replace("{0}", node.title)
+    .replace("{1}", node.kind)
+    .replace("{2}", String(backlinks))
+    .replace("{3}", suffix);
+}
+
+export function edgeDetails(
+  edge: RenderEdge,
+  titles: ReadonlyMap<string, string>,
+): string {
+  const sourceId = endpointId(edge.source);
+  const targetId = endpointId(edge.target);
+  const source = titles.get(sourceId) ?? sourceId;
+  const target = titles.get(targetId) ?? targetId;
+  const relationship = edge.context.trim();
+  return `${source} → ${target}${relationship ? ` · ${relationship}` : ""}`;
+}

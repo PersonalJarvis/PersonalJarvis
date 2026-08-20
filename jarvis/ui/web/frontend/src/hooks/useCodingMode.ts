@@ -1,7 +1,17 @@
 import { useEffect } from "react";
 
 import { useEventStore } from "@/store/events";
-import { fetchWorkspaces } from "@/lib/agenticIdeApi";
+
+/**
+ * Loaded on demand rather than imported.
+ *
+ * This hook runs in the app shell, so a static import would link the agentic
+ * IDE's entire API client into the STARTUP chunk to call one light endpoint.
+ * Every call site here already awaits a network round trip; the module arrives
+ * in the same tick the request would have started.
+ */
+const fetchWorkspaces = async () =>
+  (await import("@/lib/agenticIdeApi")).fetchWorkspaces();
 
 /**
  * Keeps the app-wide "coding mode" indicator in sync with the backend.

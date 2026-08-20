@@ -10,7 +10,18 @@ import { useEventStore } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import { useRuns } from "@/hooks/useRuns";
 import { useOutputsList, type OutputSummary } from "@/hooks/useOutputs";
-import { fetchIdeState, fetchTerminalActivity, type IdeState, type ActivityResponse } from "@/lib/agenticIdeApi";
+// Type-only, plus two loaders that pull the module in when the card first
+// asks. The agentic-IDE API module is the workspace's whole client surface;
+// importing two functions from it statically linked all of it into the STARTUP
+// chunk for a card that fetches over the network anyway. The dynamic import
+// costs one microtask before a request that takes milliseconds.
+import type { IdeState, ActivityResponse } from "@/lib/agenticIdeApi";
+
+const fetchIdeState = async (): Promise<IdeState> =>
+  (await import("@/lib/agenticIdeApi")).fetchIdeState();
+
+const fetchTerminalActivity = async (id: string | undefined): Promise<ActivityResponse> =>
+  (await import("@/lib/agenticIdeApi")).fetchTerminalActivity(id);
 import { useCommandActivityStore } from "@/store/commandActivity";
 import type { RunListItem } from "@/components/runs/types";
 import { DeckCard } from "@/components/deck/DeckCard";

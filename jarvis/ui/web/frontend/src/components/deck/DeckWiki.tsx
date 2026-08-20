@@ -6,10 +6,17 @@ import type { NodeObject } from "react-force-graph-3d";
 import { useEventStore } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import { fetchWikiTree } from "@/lib/wikiApi";
-import { toGraphData, type RenderEdge, type RenderNode, type WikiGraphPayload } from "@/lib/wikiGraph";
+import {
+  edgeDetails,
+  escapeTooltipText,
+  nodeDetails,
+  toGraphData,
+  type RenderEdge,
+  type RenderNode,
+  type WikiGraphPayload,
+} from "@/lib/wikiGraph";
 import { detectWebgl } from "@/lib/graphDimension";
 import { useDeckSlotPowered } from "@/components/deck/DeckReveal";
-import { edgeDetails, escapeTooltipText, nodeDetails } from "@/components/wiki/WikiGraph";
 import { DeckCard, DeckIconButton } from "@/components/deck/DeckCard";
 import { HudLamp, useElementSize } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";

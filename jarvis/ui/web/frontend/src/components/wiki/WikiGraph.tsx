@@ -31,7 +31,10 @@ import {
   BROKEN_EDGE_COLOUR,
   clampCenterToView,
   NODE_COLOUR,
+  edgeDetails,
   endpointId,
+  escapeTooltipText,
+  nodeDetails,
   nodeSizeScore,
   sizeChanged,
   toGraphData,
@@ -67,38 +70,11 @@ async function fetchGraph(): Promise<WikiGraphPayload> {
   return res.json();
 }
 
-export function escapeTooltipText(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-export function nodeDetails(node: RenderNode, t: (key: string) => string): string {
-  const backlinks = node.backlinkCount ?? 0;
-  const suffix = t(
-    backlinks === 1 ? "wiki_graph.backlink_one" : "wiki_graph.backlink_many",
-  );
-  return t("wiki_graph.node_details")
-    .replace("{0}", node.title)
-    .replace("{1}", node.kind)
-    .replace("{2}", String(backlinks))
-    .replace("{3}", suffix);
-}
-
-export function edgeDetails(
-  edge: RenderEdge,
-  titles: ReadonlyMap<string, string>,
-): string {
-  const sourceId = endpointId(edge.source);
-  const targetId = endpointId(edge.target);
-  const source = titles.get(sourceId) ?? sourceId;
-  const target = titles.get(targetId) ?? targetId;
-  const relationship = edge.context.trim();
-  return `${source} → ${target}${relationship ? ` · ${relationship}` : ""}`;
-}
+// The tooltip helpers moved to `lib/wikiGraph` — a module that imports
+// nothing — so the deck can use them without dragging this component's graph
+// library into the startup chunk. Re-exported here because this is where every
+// existing caller looks for them.
+export { edgeDetails, escapeTooltipText, nodeDetails } from "@/lib/wikiGraph";
 
 /**
  * Node radius in graph units — shared by the hit area and the label offset.

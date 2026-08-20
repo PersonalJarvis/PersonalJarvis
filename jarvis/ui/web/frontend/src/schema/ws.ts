@@ -1,4 +1,8 @@
-import { z } from "zod";
+// zod v4's core, which the installed zod 3.25 ships alongside v3 under this
+// subpath. Same API for everything below, a fraction of the bytes — and these
+// schemas sit in the STARTUP chunk because the socket opens as the app mounts,
+// so what zod costs here is paid before the first paint.
+import { z } from "zod/v4";
 
 /** Envelope emitted by server over /ws for every bus-event.
  *
@@ -11,7 +15,7 @@ export const WSEventEnvelope = z.object({
   source_layer: z.string().default(""),
   timestamp_ns: z.number(),
   trace_id: z.string(),
-  payload: z.record(z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).default({}),
 });
 export type WSEventEnvelopeT = z.infer<typeof WSEventEnvelope>;
 
@@ -35,7 +39,7 @@ export const WSMessageIn = z.object({
   type: z.literal("message"),
   kind: z.enum(["text", "voice", "system", "action"]),
   content: z.string(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type WSMessageInT = z.infer<typeof WSMessageIn>;
 
@@ -57,7 +61,7 @@ export const WSCommand = z.object({
     // task into the live conversation context.
     "mission.inject",
   ]),
-  payload: z.record(z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).default({}),
 });
 export type WSCommandT = z.infer<typeof WSCommand>;
 
