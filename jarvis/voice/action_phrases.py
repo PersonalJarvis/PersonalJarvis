@@ -307,9 +307,9 @@ _PHRASES: dict[str, dict[str, str]] = {
     # and it named no cause — the standing rule is that a line like this always
     # says WHY. Ends with the one thing the user can act on.
     "actions_not_requested": {
-        "de": "Ich habe dafür nichts ausgeführt — sag mir, was ich tun soll.",  # i18n-allow
-        "en": "I didn't run anything for that — tell me what you want done.",
-        "es": "No ejecuté nada para eso — dime qué quieres que haga.",
+        "de": "Ich habe dafür nichts ausgeführt. Sag mir, was ich tun soll.",  # i18n-allow
+        "en": "I didn't run anything for that. Tell me what you want done.",
+        "es": "No ejecuté nada para eso. Dime qué quieres que haga.",
     },
     # A local action that ran past its short deadline. Replaces the old
     # tool-name-prefixed "X timeout after 3s" machine string (which leaked the
