@@ -928,9 +928,12 @@ describe("Agentic IDE running workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
     await waitFor(() =>
-      // The third argument carries files dropped on the prompt bar — empty
-      // here, because this instruction was typed with nothing attached.
+      // ``compose`` is what makes this the same endpoint the spoken
+      // "prompt Mika …" uses: the backend briefs the instruction and types
+      // THAT into the pane. The third argument also carries files dropped on
+      // the prompt bar — empty here, because nothing was attached.
       expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
+        compose: true,
         attachments: [],
       }),
     );
