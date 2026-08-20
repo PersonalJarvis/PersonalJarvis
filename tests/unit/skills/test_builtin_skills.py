@@ -6,7 +6,6 @@ all trigger payloads are semantically OK, and voice regexes compile.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
