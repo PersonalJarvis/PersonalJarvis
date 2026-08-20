@@ -1407,6 +1407,10 @@ class DesktopApp:
         # _run_backend). The real app is delegated to it once built.
         self._bootstrap: Any = None
         self._window: Any = None
+        # Guards the window against staying blank in silence — a page that never
+        # arrives leaves nothing behind that could report it (see
+        # jarvis/ui/window_watchdog.py). Armed right after create_window.
+        self._blank_watchdog: Any = None
         # Detached solo windows keyed by view id (see DETACHABLE_VIEWS). Only
         # touched from worker threads (route handlers via asyncio.to_thread,
         # pywebview event hooks, the tray bridge) — never from the asyncio
@@ -4352,9 +4356,26 @@ class DesktopApp:
 
     def _window_background(self) -> str:
         """The theme-correct frame color, same derivation as the main window."""
-        from jarvis.ui.theme import configured_theme, window_background
+        from jarvis.ui.theme import window_background
 
-        return window_background(configured_theme(getattr(self, "cfg", None)))
+        return window_background(self._configured_theme())
+
+    def _configured_theme(self) -> str:
+        """The user's ``[ui] theme`` value — may still be ``system``."""
+        from jarvis.ui.theme import configured_theme
+
+        return configured_theme(getattr(self, "cfg", None))
+
+    def _resolved_theme(self) -> str:
+        """``dark`` or ``light`` — ``system`` resolved against the desktop.
+
+        The blank-window explanation page paints itself from this, so it lands
+        inside the native frame as one surface rather than a black rectangle in
+        a paper-white window.
+        """
+        from jarvis.ui.theme import resolve_theme
+
+        return resolve_theme(self._configured_theme())
 
     def open_detached_window(self, view: str) -> dict[str, Any]:
         """Open ``view`` in its own solo window — MUST run on a worker thread.
@@ -4586,6 +4607,12 @@ class DesktopApp:
         """
         self._window = None
         self._window_visible = False
+        # getattr: this hook is also exercised against the minimal fakes the
+        # window-lifecycle tests build, which carry only the attributes the
+        # contract under test needs.
+        watchdog = getattr(self, "_blank_watchdog", None)
+        if watchdog is not None:
+            watchdog.detach()
 
     def _ensure_main_window(self) -> None:
         """Show the main window, recreating it if it was closed — tray thread.
@@ -4608,6 +4635,9 @@ class DesktopApp:
             )
             self._hook_main_window_lifecycle()
             self._window_visible = True
+            # A window reopened from the tray can arrive blank for exactly the
+            # same reasons as the boot one, so it gets the same guard.
+            self._arm_blank_window_watchdog(self._window)
         except Exception:  # noqa: BLE001
             logger.opt(exception=True).warning(
                 "Reopening the main window failed — it stays closed."
@@ -4757,6 +4787,74 @@ class DesktopApp:
             time.sleep(0.25)
         return False
 
+    def _backend_healthy(self) -> bool:
+        """One quick ``/api/health`` probe — is the server answering right now?
+
+        Deliberately single-shot and short: the blank-window watchdog asks once
+        a second and needs the ANSWER, including the honest "no" while the loop
+        is frozen. ``_wait_for_backend``'s poll and the lock holder's four-try
+        probe both mean something else.
+        """
+        try:
+            import httpx
+
+            r = httpx.get(
+                f"http://127.0.0.1:{self.cfg.ui.admin_api_port}/api/health",
+                timeout=1.0,
+            )
+            return bool(r.status_code == 200)
+        except Exception:  # noqa: BLE001 — an unreachable server is the answer
+            return False
+
+    def _backend_thread_alive(self) -> bool:
+        """Is the thread that serves this window still running?
+
+        A dead thread is the one blank-window cause a reload cannot fix (a lost
+        dependency mid-boot killed it on 2026-08-20), so the watchdog needs it
+        told apart from a merely busy one. Unknown counts as alive: guessing
+        "dead" would put a wrong explanation on a window that is only slow.
+        """
+        thread = self._backend_thread
+        return True if thread is None else bool(thread.is_alive())
+
+    def _arm_blank_window_watchdog(self, window: Any) -> None:
+        """Guard *window* against staying blank without a word — never raises.
+
+        Every path that creates the MAIN window funnels through here (boot and
+        the tray's reopen), so both are covered by one guard with one policy.
+        """
+        try:
+            from jarvis.ui.window_watchdog import BlankWindowWatchdog
+
+            if self._blank_watchdog is not None:
+                self._blank_watchdog.attach(window)
+                return
+            self._blank_watchdog = BlankWindowWatchdog(
+                window=window,
+                url=self._url(),
+                health_probe=self._backend_healthy,
+                backend_alive=self._backend_thread_alive,
+                failure_detail=self._blank_window_detail,
+                theme=self._resolved_theme,
+            )
+            self._blank_watchdog.start()
+        except Exception:  # noqa: BLE001
+            from loguru import logger
+
+            logger.opt(exception=True).warning(
+                "Blank-window watchdog could not be armed — the window is "
+                "unguarded for this session."
+            )
+
+    def _blank_window_detail(self) -> str:
+        """The one technical line the explanation page shows, or nothing.
+
+        Only a captured boot exception is worth putting in front of the user;
+        without one, a guessed sentence would be noise on top of a failure.
+        """
+        exc = getattr(self, "_backend_boot_error", None)
+        return f"{type(exc).__name__}: {exc}" if exc is not None else ""
+
     # ---- Main entry point ------------------------------------------------------
 
     def run(self) -> int:
@@ -4881,6 +4979,11 @@ class DesktopApp:
             # backend genuinely cannot start, and behave identically otherwise.
             return self._degrade_to_browser_ui(exc)
         self._window_visible = True
+        # From here the window is the user's only surface. If it never receives
+        # a page — a frozen loop, a dead backend thread, a view that did not
+        # navigate — nothing INSIDE it can report that, because there is no
+        # inside. This guard lives outside and heals or explains it.
+        self._arm_blank_window_watchdog(self._window)
 
         # The X quits (when this is the last window) — see _on_window_closing —
         # and the closed hook nulls the handle so detached windows can outlive
@@ -5431,6 +5534,14 @@ class DesktopApp:
             return 0
         self._shutdown_done = True
         self._window_visible = False
+
+        # A shutting-down backend fails every health probe by design; without
+        # this the guard would read the teardown as a blank-window incident and
+        # paint an explanation over a window that is on its way out.
+        watchdog = getattr(self, "_blank_watchdog", None)
+        if watchdog is not None:
+            with suppress(Exception):
+                watchdog.stop()
 
         # Hide the orb overlay first — the event path (pipeline → supervisor
         # → bus → OrbBridge) doesn't reliably reach the bridge anymore during a

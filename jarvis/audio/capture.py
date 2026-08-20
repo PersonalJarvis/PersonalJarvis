@@ -992,14 +992,11 @@ class MicrophoneCapture:
                 # Close that partial stream so PortAudio/CoreAudio does not keep
                 # a poisoned handle across every subsequent wake-loop retry.
                 if stream is not None:
-                    try:
-                        stream.close()
-                    except Exception as close_exc:  # noqa: BLE001
-                        _log.debug(
-                            "Mic-Open cleanup for device={} ignored ({}).",
-                            attempt,
-                            close_exc,
-                        )
+                    # Off-loop: a half-opened stream on a device that just
+                    # disappeared closes as slowly as any other (see
+                    # _discard_stream_off_loop), and this runs on the loop that
+                    # serves the desktop window.
+                    await self._discard_stream_off_loop(stream)
                 # A failed open means the cached/resolved device may be gone —
                 # force the next construction through a fresh full resolve, and
                 # ask the topology watcher to look NOW rather than at its next
@@ -1072,8 +1069,10 @@ class MicrophoneCapture:
             if old_stream is not None:
                 # A stalled callback stream cannot drain gracefully — see
                 # ``_discard_stream`` (abort-first, CoreAudio ``stop()`` can
-                # block for minutes after an endpoint transition).
-                self._discard_stream(old_stream)
+                # block for minutes after an endpoint transition). Off-loop,
+                # because this watchdog runs on the loop that also serves the
+                # desktop window.
+                await self._discard_stream_off_loop(old_stream)
             try:
                 await self._try_open_stream()
                 _log.info("Mic-Restart #{} succeeded.", self._restart_count)
@@ -1112,6 +1111,42 @@ class MicrophoneCapture:
             time.monotonic() - self._STALL_THRESHOLD_S - 1.0,
         )
 
+    #: How long a coroutine waits for a native stream to shut down before it
+    #: leaves the rest to a worker thread. Long enough that the ordinary close
+    #: (milliseconds) still finishes in order; short enough that a wedged one
+    #: cannot be mistaken for normal work.
+    _DISCARD_GRACE_S = 2.0
+
+    @classmethod
+    async def _discard_stream_off_loop(cls, stream: Any) -> None:
+        """Discard *stream* without ever freezing the event loop.
+
+        ``Pa_CloseStream`` is a synchronous native call, and after an endpoint
+        transition it can sit there for minutes — measured on Windows/WASAPI on
+        2026-08-20: 61.7 s and 188.3 s, both from this watchdog. Every one of
+        those seconds froze the SINGLE asyncio loop this process has, which is
+        also the loop serving the desktop window's HTTP: the socket kept
+        accepting, nothing was answered, and a window opening in that gap stayed
+        blank with no error (see jarvis/ui/window_watchdog.py).
+
+        The dead stream's shutdown is not worth that. It runs in a worker
+        thread; the coroutine waits a short grace so the normal case keeps its
+        ordering, then moves on and lets the thread finish alone.
+        """
+        task = asyncio.create_task(asyncio.to_thread(cls._discard_stream, stream))
+        done, _pending = await asyncio.wait({task}, timeout=cls._DISCARD_GRACE_S)
+        if done:
+            return
+        # Left running on purpose. Consume the eventual result so a failure in
+        # a stream we already gave up on cannot surface as a stray "task
+        # exception was never retrieved".
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        _log.warning(
+            "Mic discard is still blocked after {:.0f}s (native close wedged) — "
+            "continuing without it; the event loop stays responsive.",
+            cls._DISCARD_GRACE_S,
+        )
+
     @staticmethod
     def _discard_stream(stream: Any) -> None:
         """Abort-then-close a (possibly wedged) native stream, never raising.
@@ -1119,6 +1154,9 @@ class MicrophoneCapture:
         Abort discards the dead native stream immediately; CoreAudio can
         leave ``stop()`` blocked for minutes after an endpoint transition.
         The ``stop`` fallback keeps lightweight test doubles compatible.
+
+        Blocking by nature — callers ON the event loop must go through
+        :meth:`_discard_stream_off_loop`.
         """
         discard_method = "abort"
         try:
@@ -1162,18 +1200,18 @@ class MicrophoneCapture:
             except Exception as exc:  # noqa: BLE001
                 _log.debug("Mic-Watchdog cleanup swallow: {}", exc)
         if self._stream is not None:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception as exc:  # noqa: BLE001
-                _log.debug("Mic close swallow: {}", exc)
-            finally:
-                self._stream = None
-                _log.info(
-                    "Mic closed (drops={}, restarts={}).",
-                    self._drops,
-                    self._restart_count,
-                )
+            stream, self._stream = self._stream, None
+            # Same reason as the watchdog path: closing a microphone is a
+            # native call that can wedge, and every capture teardown runs on
+            # the loop that serves the window. The handover happens between
+            # wake and session on every single turn, so a freeze here is felt
+            # more often than anywhere else.
+            await self._discard_stream_off_loop(stream)
+            _log.info(
+                "Mic closed (drops={}, restarts={}).",
+                self._drops,
+                self._restart_count,
+            )
 
     async def stream(self) -> AsyncIterator[AudioChunk]:
         """Yield audio chunks until __aexit__ is called.
