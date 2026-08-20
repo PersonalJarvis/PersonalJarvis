@@ -263,6 +263,43 @@ _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
 # under one second after a tool result.
 _DELEGATE_READBACK_WAIT_S = 2.5
 _DELEGATE_READBACK_POLL_S = 0.1
+# A failure line is composed on the live path, so it gets a tighter deadline
+# than the Brain's 1.5 s default — between the contextual ack budget (700 ms)
+# and that default. A slower composer costs exactly this before the canned
+# line (which already carries the reason) is spoken.
+_FAILURE_READBACK_BUDGET_MS = 900
+# Upper bound for a spoken failure cause. A tool reason can be a paragraph
+# ("Unknown skill: X. Installed skills: a, b, c, …"); one sentence's worth is
+# what a person can act on, the rest is a wall of speech.
+_FAILURE_REASON_MAX_CHARS = 160
+# A delegated turn fails for a handful of KNOWN internal reasons, and the raw
+# internal strings are engineering vocabulary ("No configured Tool Model
+# completed the delegated turn.") that must never be spoken. Each cause maps to
+# its own localized phrase key plus the English situation line the contextual
+# composer rephrases — so the user hears WHY, in this turn's words, instead of
+# the stock "that didn't work" the cause used to be replaced by (live forensic
+# 2026-08-20 13:25).
+_DELEGATE_FAILURE_SITUATIONS: dict[str, str] = {
+    "delegate_no_brain": (
+        "The user's request was handed to the orchestrator and none of the "
+        "configured models answered it. Nothing was done."
+    ),
+    "delegate_no_result": (
+        "The user's request was handed to the orchestrator and it came back "
+        "without a usable result. Nothing was done."
+    ),
+    "action_timeout": (
+        "The user's request ran past its deadline and was stopped, so it did "
+        "not finish."
+    ),
+    "delegate_failed_internal": (
+        "The user's request hit an internal error and was stopped safely, so "
+        "it did not happen."
+    ),
+    "action_failed_generic": (
+        "The user's request did not go through and no cause was reported."
+    ),
+}
 # Stale-generation guard after a delivered readback (live forensic 2026-08-18
 # 14:25, session 7b20e182, turns 4/5 and 6/7 — BUG-143). On a transport that
 # creates responses on its own VAD, ONE Jarvis turn can carry TWO turn-ending
@@ -1243,6 +1280,45 @@ def _delegate_result_prompt(
         f"{text}\n"
         "</trusted_action_result>"
     )
+
+
+def _speakable_failure_reason(result: object) -> str:
+    """Pull the human WHY out of a failed realtime result, or ``""``.
+
+    The realtime adapter in front of
+    :func:`jarvis.voice.action_phrases.extract_speakable_reason`: a realtime
+    result is the bounded dict ``RealtimeToolBridge`` builds (``success`` /
+    ``output`` / ``error``) or the delegate dict this module builds, so the
+    cause can sit on ``error`` (``"Gmail is not connected — connect it in the
+    Plugins view."``), inside a harness ``output`` (``stderr`` / ``stdout``),
+    or on a nested ``output`` field a tool filled instead.
+
+    Everything the shared gate rejects stays rejected — a bare ``exit N``, a
+    purely numeric token, diagnostic/telemetry noise, a leaked path — so this
+    can only ever ADD a cause, never leak a machine token into speech. The
+    result is whitespace-collapsed and capped at
+    :data:`_FAILURE_REASON_MAX_CHARS`. Pure string work, no LLM (AP-11).
+    """
+    from jarvis.voice.action_phrases import extract_speakable_reason
+
+    if not isinstance(result, dict):
+        return ""
+    output = result.get("output")
+    reason = extract_speakable_reason(result.get("error"), output)
+    if not reason and isinstance(output, dict):
+        for field in ("error", "reason", "detail", "message"):
+            candidate = str(output.get(field) or "").strip()
+            if candidate and (found := extract_speakable_reason(candidate, None)):
+                reason = found
+                break
+    collapsed = " ".join(str(reason or "").split())
+    if len(collapsed) <= _FAILURE_REASON_MAX_CHARS:
+        return collapsed
+    cut = collapsed[:_FAILURE_REASON_MAX_CHARS].rstrip()
+    boundary = max(cut.rfind(". "), cut.rfind("; "), cut.rfind(", "))
+    if boundary >= _FAILURE_REASON_MAX_CHARS // 2:
+        cut = cut[:boundary]
+    return cut.rstrip(" ,;.") + "…"
 
 
 def _direct_tool_result_retry_prompt(*, language: str) -> str:
@@ -7842,7 +7918,7 @@ class RealtimeVoiceSession:
             return False
 
         if self._direct_tool_results:
-            fallback_text, succeeded = self._direct_tool_fallback_text()
+            fallback_text, succeeded = await self._direct_tool_fallback_text()
             self._delegate_required_for_turn = True
             turn_state = _DelegateTurnState(
                 last_reply=fallback_text,
@@ -8084,8 +8160,18 @@ class RealtimeVoiceSession:
         )
         self._start_deterministic_delegate(self._last_user_text)
 
-    def _direct_tool_fallback_text(self) -> tuple[str, bool]:
-        """Return one speakable result without serializing raw tool payloads."""
+    async def _direct_tool_fallback_text(self) -> tuple[str, bool]:
+        """Return one speakable result without serializing raw tool payloads.
+
+        A FAILED tool never degrades to the bare stock line here: the failure
+        branch goes through :meth:`_failure_line`, which names the cause the
+        tool reported ("Gmail is not connected …", "Unknown skill: …"). Live
+        forensic 2026-08-20 13:25:35 — a ``gmail`` call failed with exactly
+        that connection reason sitting in ``result["error"]`` and the user
+        heard the 30-character generic phrase instead, so the follow-up "what
+        was the problem?" had nothing left to answer from and the live model
+        invented a connection error of its own.
+        """
         from jarvis.voice.action_phrases import action_phrase
 
         _name, result = self._direct_tool_results[-1]
@@ -8113,8 +8199,80 @@ class RealtimeVoiceSession:
             cleaned = scrubbed.cleaned.strip()
             if cleaned:
                 return cleaned, succeeded
-        phrase_key = "cu_done" if succeeded else "action_failed_generic"
-        return action_phrase(phrase_key, self._language), succeeded
+        if succeeded:
+            return action_phrase("cu_done", self._language), True
+        return (
+            await self._failure_line(
+                result,
+                situation=(
+                    "A tool the user asked for ran and reported a failure. "
+                    "Tell the user it did not happen and why."
+                ),
+            ),
+            False,
+        )
+
+    async def _failure_line(
+        self,
+        result: dict[str, Any] | None,
+        *,
+        situation: str,
+        generic_key: str = "action_failed_generic",
+        language: str | None = None,
+    ) -> str:
+        """Say WHY something failed — never the bare stock "that didn't work".
+
+        The realtime sibling of ``BrainManager._honest_failure_readback``, and
+        the ONE place every realtime failure line is built (direct tool,
+        deterministic delegate, provider-requested delegate). The maintainer's
+        standing rule (2026-08-20): a failure the user hears always names its
+        cause, so a follow-up "what was the problem?" is answerable from what
+        was actually said instead of invented by the live model.
+
+        Resolution mirrors the Brain path exactly:
+
+        1. ``_speakable_failure_reason`` pulls a human cause out of the result
+           (``error`` / ``output.stderr`` / …) — a bare ``exit N``, a numeric
+           token or diagnostic noise yields nothing.
+        2. The context-aware composer rephrases that ONE fact for this
+           situation (bounded flash call, breaker-guarded, AP-11 safe), so the
+           line is not a table entry read aloud.
+        3. The localized canned phrase is the floor — the ``{reason}`` variant
+           when a cause exists, ``generic_key`` when the tool genuinely gave
+           none. Never empty, never a hardcoded German string on an en/es turn.
+        """
+        from jarvis.voice.action_phrases import action_phrase
+        from jarvis.voice.contextual_readback import render_readback
+
+        language = language or self._language
+        reason = _speakable_failure_reason(result)
+        if reason:
+            instruction = f"{situation} The reason reported was: {reason}"
+            facts: dict[str, object] | None = {"reason": reason}
+            canned = lambda: action_phrase(  # noqa: E731
+                "action_failed_reason", language, reason=reason
+            )
+        else:
+            instruction = situation
+            facts = None
+            canned = lambda: action_phrase(generic_key, language)  # noqa: E731
+        try:
+            line = await render_readback(
+                getattr(self._brain, "_readback_composer", None),
+                instruction=instruction,
+                language=language,
+                canned=canned,
+                facts=facts,
+                latency_budget_ms=_FAILURE_READBACK_BUDGET_MS,
+            )
+        except Exception:  # noqa: BLE001 — a readback must never break the call
+            log.debug(
+                "realtime[%s] failure readback composition failed",
+                self.session_id,
+                exc_info=True,
+            )
+            line = ""
+        return (line or "").strip() or canned()
 
     async def _begin_user_speech_turn(self) -> None:
         """Close an interrupted reply before the next transcript opens a turn.
@@ -11014,6 +11172,8 @@ class RealtimeVoiceSession:
         turn_state: _DelegateTurnState,
     ) -> None:
         turn_language = str(turn_state.language or self._language)
+        # Which known cause this turn failed for; drives the spoken line below.
+        failure_key = "action_failed_generic"
         try:
             if bool(
                 getattr(self._session, "creates_responses_automatically", False)
@@ -11088,6 +11248,11 @@ class RealtimeVoiceSession:
                     }
                     succeeded = True
                 else:
+                    failure_key = (
+                        "delegate_no_brain"
+                        if brain_chain_failed
+                        else "delegate_no_result"
+                    )
                     result = {
                         "success": False,
                         "error": (
@@ -11098,6 +11263,7 @@ class RealtimeVoiceSession:
                     }
                     succeeded = False
         except TimeoutError:
+            failure_key = "action_timeout"
             result = {
                 "success": False,
                 "error": "The delegated action did not finish in time.",
@@ -11116,6 +11282,7 @@ class RealtimeVoiceSession:
                 "Deterministic delegated brain turn failed",
                 recoverable=True,
             )
+            failure_key = "delegate_failed_internal"
             result = {
                 "success": False,
                 "error": "The delegated action failed safely.",
@@ -11123,10 +11290,14 @@ class RealtimeVoiceSession:
             succeeded = False
 
         if not succeeded and not turn_state.requires_public_fact_grounding:
-            from jarvis.voice.action_phrases import action_phrase
-
-            turn_state.last_reply = action_phrase(
-                "action_failed_generic", turn_language
+            # The internal ``result["error"]`` is engineering vocabulary, so the
+            # KNOWN cause is spoken from its own localized phrase instead of
+            # being dropped for the stock line.
+            turn_state.last_reply = await self._failure_line(
+                None,
+                situation=_DELEGATE_FAILURE_SITUATIONS[failure_key],
+                generic_key=failure_key,
+                language=turn_language,
             )
             result["spoken_reply"] = turn_state.last_reply
         turn_state.result_complete = True
@@ -11173,12 +11344,19 @@ class RealtimeVoiceSession:
         turn_state.delivery_started = True
         trusted_reply = self._scrubbed_trusted_reply(turn_state)
         if not trusted_reply:
-            from jarvis.voice.action_phrases import action_phrase
+            if succeeded:
+                from jarvis.voice.action_phrases import action_phrase
 
-            trusted_reply = action_phrase(
-                "cu_done" if succeeded else "action_failed_generic",
-                turn_language,
-            )
+                trusted_reply = action_phrase("cu_done", turn_language)
+            else:
+                # Name the KNOWN cause instead of the stock line; the phrase is
+                # curated, so it needs no second scrub pass (ADR-0010).
+                trusted_reply = await self._failure_line(
+                    None,
+                    situation=_DELEGATE_FAILURE_SITUATIONS[failure_key],
+                    generic_key=failure_key,
+                    language=turn_language,
+                )
         # From this point onward every speech and persistence fallback must use
         # the regex-scrubbed value (ADR-0010). The raw Brain answer must never
         # reach appendSpeech, which synthesizes before our audio gate can help.
@@ -11378,6 +11556,8 @@ class RealtimeVoiceSession:
     ) -> None:
         turn_language = str(turn_state.language or self._language)
         succeeded = False
+        # Which known cause this turn failed for; drives the spoken line below.
+        failure_key = "action_failed_generic"
         # Before the brain answers, not after: ``note_skill_trigger`` is read by
         # the generate() call below, so a late hand-off is the same as none.
         self._note_skill_for_delegate(turn_state.user_text)
@@ -11400,6 +11580,11 @@ class RealtimeVoiceSession:
                 result: dict[str, Any] = {"success": True, "spoken_reply": reply}
                 succeeded = True
             else:
+                failure_key = (
+                    "delegate_no_brain"
+                    if brain_chain_failed
+                    else "delegate_no_result"
+                )
                 result = {
                     "success": False,
                     "error": (
@@ -11414,6 +11599,7 @@ class RealtimeVoiceSession:
                         str(_DELEGATE_DECLARATION["name"])
                     )
         except TimeoutError:
+            failure_key = "action_timeout"
             result = {
                 "success": False,
                 "error": (
@@ -11430,15 +11616,20 @@ class RealtimeVoiceSession:
             await self._publish_error(
                 "RealtimeDelegateError", "Delegated brain turn failed", recoverable=True
             )
+            failure_key = "delegate_failed_internal"
             result = {
                 "success": False,
                 "error": "The action failed safely and was not completed.",
             }
         if not succeeded:
-            from jarvis.voice.action_phrases import action_phrase
-
-            turn_state.last_reply = action_phrase(
-                "action_failed_generic", turn_language
+            # The internal ``result["error"]`` is engineering vocabulary, so the
+            # KNOWN cause is spoken from its own localized phrase instead of
+            # being dropped for the stock line.
+            turn_state.last_reply = await self._failure_line(
+                None,
+                situation=_DELEGATE_FAILURE_SITUATIONS[failure_key],
+                generic_key=failure_key,
+                language=turn_language,
             )
             result["spoken_reply"] = turn_state.last_reply
         turn_state.result_complete = True

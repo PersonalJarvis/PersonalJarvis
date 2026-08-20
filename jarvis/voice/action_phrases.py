@@ -266,6 +266,27 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "That didn't work: {reason}",
         "es": "Eso no funcionó: {reason}",
     },
+    # Delegated-turn failures with a KNOWN internal cause. The raw internal
+    # strings ("No configured Tool Model completed the delegated turn.") are
+    # engineering vocabulary and must not be spoken, but the failure still has
+    # a cause the user is entitled to hear — the maintainer's standing rule
+    # (2026-08-20): a failure line always says WHY, never just "that didn't
+    # work". One plain sentence per distinct cause, all supported languages.
+    "delegate_no_brain": {
+        "de": "Keins meiner Modelle hat auf diese Anfrage geantwortet.",  # i18n-allow
+        "en": "None of my models answered this request.",
+        "es": "Ninguno de mis modelos respondió a esta petición.",
+    },
+    "delegate_no_result": {
+        "de": "Ich habe dazu kein belastbares Ergebnis zurückbekommen.",  # i18n-allow
+        "en": "I got no grounded result back for that.",
+        "es": "No recibí ningún resultado sólido para eso.",
+    },
+    "delegate_failed_internal": {
+        "de": "Dabei ist intern etwas schiefgelaufen, ich habe sicher abgebrochen.",  # i18n-allow
+        "en": "Something went wrong internally, so I stopped safely.",
+        "es": "Algo falló internamente, así que me detuve de forma segura.",
+    },
     # The realtime provider yielded control for an action, but this session has
     # no executor to hand it to (no callable supervisor brain, or the request
     # carried no recognizable user text). Transports that cannot declare tools
