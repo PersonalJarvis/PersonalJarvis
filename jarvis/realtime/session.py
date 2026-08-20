@@ -937,6 +937,17 @@ _HANDOVER_END_REASONS = frozenset({HANGUP_DESKTOP_FALLBACK, HANGUP_REALTIME_FALL
 # owner prevents garbage collection from cancelling that user-visible debt.
 _DETACHED_DELEGATE_TASKS: set[asyncio.Task[None]] = set()
 
+_LOCAL_OUTPUT_FAILURE: dict[str, str] = {
+    "de": "Ich konnte das gerade nicht abspielen. Der Lautsprecher war weg.",  # i18n-allow
+    "en": "I couldn't play that just now. The speaker disappeared.",
+    "es": "No pude reproducirlo ahora. El altavoz desapareció.",  # i18n-allow
+}
+_HISTORY_LOST_INSTRUCTION = (
+    "The previous realtime connection dropped and this is a FRESH session. "
+    "You have no memory of earlier turns in this call. Do not invent, recall, "
+    "or assert any prior topic, name, or request. Wait for the user's next "
+    "words and treat them as the start of the conversation."
+)
 _OUTPUT_LANGUAGE_FAILURE: dict[str, str] = {
     "de": "Ich konnte gerade keine sichere Antwort auf Deutsch erzeugen.",  # i18n-allow
     "en": "I couldn't produce a safe answer in English just now.",
@@ -1748,8 +1759,10 @@ def _session_instructions(
     tool_directive: str = "",
     preferences: str = "",
     skill_directive: str = "",
+    skills_directive: str = "",
     workspace_directive: str = "",
     compact: bool = False,
+    history_lost: bool = False,
 ) -> str:
     """Assemble the session instructions; ``compact`` is the small-brain profile.
 
@@ -1880,6 +1893,7 @@ def _session_instructions(
         "answer from this runtime identity exactly; do not describe the "
         "classic text brain configuration."
     )
+    history_lost_line = _HISTORY_LOST_INSTRUCTION if history_lost else ""
     if compact:
         # Static-first / dynamic-last: everything that is identical from turn
         # to turn forms one stable prefix, so Ollama's KV prefix cache skips
@@ -1894,7 +1908,9 @@ def _session_instructions(
             freshness_line,
             precision_line,
             identity_line,
+            history_lost_line,
             workspace_directive,
+            skills_directive,
             skill_directive,
             input_directive,
             clock_line,
@@ -1915,6 +1931,11 @@ def _session_instructions(
         # that must always reach the action function instead of the model's own
         # knowledge.
         workspace_directive,
+        # The installed-skill roster, for the same reason the workspace roster
+        # is here: a name the model has never seen is a name it cannot call.
+        # Without it the model guessed the run-skill argument from the user's
+        # words and lost three live turns to "Unknown skill" (2026-08-20).
+        skills_directive,
         # A matched skill's own instructions, when the turn qualified for direct
         # injection. Placed AFTER the tool directive and BEFORE the safety
         # appendix on purpose: the skill refines HOW to answer this turn, and
@@ -1926,6 +1947,7 @@ def _session_instructions(
         freshness_line,
         precision_line,
         identity_line,
+        history_lost_line,
         language_directive,
     ]
     return "\n\n".join(part for part in parts if part)
@@ -2301,6 +2323,10 @@ class RealtimeVoiceSession:
         self._turn_index = 0
         self._current_turn_index = -1
         self._last_user_text = ""
+        #: ``(utterance, skill_name)`` of the last skill injected INLINE by
+        #: ``_skill_directive``. The delegate reads it to avoid handing the
+        #: brain a skill this session already put in front of the model.
+        self._skill_inlined_for: tuple[str, str] | None = None
         # Live caption of the CURRENT unfinished utterance. Surfaces render
         # it; persistence never does unless the promotion path says so
         # explicitly (a mid-word partial silently recorded as the turn's
@@ -2666,6 +2692,93 @@ class RealtimeVoiceSession:
             "that the work went out, say what you actually did instead."
         )
 
+    def _note_skill_for_delegate(self, text: str) -> None:
+        """Hand a FIRE-band skill match to the brain before it answers.
+
+        The realtime session can only run a skill itself when the skill is
+        instruction-only, inline, short enough and tool-free
+        (``_skill_directive``). Everything else — the tool-backed skills, the
+        long ones, the mission ones — used to be dropped silently, so a skill
+        the user installed for exactly this sentence produced a plain
+        conversational answer and no trace anywhere.
+
+        This is the other half: the same deterministic match, handed to the
+        BrainManager through the pre-existing ``note_skill_trigger`` contract
+        (AD-S4) that the classic pipeline and the chat hook already use. The
+        brain injects the rendered instructions into the turn it is about to
+        run, so a matched skill is either inlined here or executed there —
+        never neither.
+
+        Best-effort by design: a skill fault must not cost the delegated turn,
+        which is the user's actual answer.
+        """
+        utterance = str(text or "").strip()
+        if not utterance:
+            return
+        note = getattr(self._brain, "note_skill_trigger", None)
+        if not callable(note):
+            return
+        inlined = self._skill_inlined_for
+        if inlined is not None and inlined[0] == utterance:
+            # This session already put the skill in front of the model.
+            return
+        try:
+            from jarvis.skills.match_eval import BAND_FIRE, evaluate_match
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            context = try_get_skill_context()
+            if context is None:
+                return
+            decision = evaluate_match(context.registry, utterance, limit=2)
+            if decision.band != BAND_FIRE or decision.top is None:
+                return
+            skill_name = str(decision.top.skill_name)
+            note(skill_name, content="", source="realtime_match")
+            log.info(
+                "realtime[%s] skill %r matched (%s band) — handed to the "
+                "delegated brain turn",
+                self.session_id,
+                skill_name,
+                decision.band,
+            )
+        except Exception:  # noqa: BLE001 — never cost the turn its answer
+            log.debug("Realtime skill handoff skipped", exc_info=True)
+
+    def _skills_directive(self, *, compact: bool | None = None) -> str:
+        """The installed-skill roster for this session's instructions.
+
+        Belt to the planner's braces, exactly like ``_workspace_directive``:
+        the planner routes a skill turn deterministically, and this makes the
+        model able to NAME the skill once it gets there. Before it existed the
+        live instructions carried the ``run-skill`` tool and not one skill
+        name, so the argument was always a guess.
+
+        Rebuilt per turn because skills hot-reload mid-call, and cheap enough
+        to do so: ``list_active`` is an in-memory read. Any fault answers "no
+        roster" — a missing block costs a skill call, a raised exception costs
+        the whole call.
+
+        ``compact`` is passed explicitly by the connect path, which knows the
+        provider capability before ``_compact_instructions`` is set on self.
+        """
+        if compact is None:
+            compact = bool(getattr(self, "_compact_instructions", False))
+        try:
+            from jarvis.skills.prompt_injection import (
+                render_realtime_skills_directive,
+            )
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            context = try_get_skill_context()
+            if context is None:
+                return ""
+            return render_realtime_skills_directive(
+                context.registry, compact=bool(compact)
+            )
+        except Exception:  # noqa: BLE001 — a roster fault must never end a call
+            log.debug("Realtime skills roster unavailable", exc_info=True)
+            return ""
+
     def _skill_directive(self, text: str) -> str:
         """A matched skill's instructions, injected straight into this turn.
 
@@ -2690,6 +2803,14 @@ class RealtimeVoiceSession:
           competing instruction sets guarantee an incoherent reply.
 
         Returns "" whenever anything does not hold, which is the common case.
+        A "" here means "not inline" and never "no skill": every condition
+        below is about whether this SESSION can run the skill itself, not
+        about whether the skill matched. The delegate re-derives the match and
+        hands it to the brain (``_note_skill_for_delegate``), because the
+        version of this method that just returned "" dropped both installed
+        morning routines on the floor for every single utterance — one over
+        the body cap, one tool-backed — while the match said FIRE every time
+        (live 2026-08-20).
         """
         if not text:
             return ""
@@ -2765,6 +2886,10 @@ class RealtimeVoiceSession:
                 )
             except Exception:  # noqa: BLE001
                 log.debug("SkillInvoked publish failed", exc_info=True)
+
+        # Claim the turn so the delegate does not hand the brain the same skill
+        # a second time — one instruction set per turn, whichever path wins.
+        self._skill_inlined_for = (text, str(skill.name))
 
         # Wrapped the way trusted external content is wrapped elsewhere in this
         # module: the model treats it as its own instructions for this turn, and
@@ -3049,12 +3174,18 @@ class RealtimeVoiceSession:
                     tool_directive=self._tool_directive(provider=provider),
                     preferences=_preferences_block(self._config),
                     workspace_directive=self._workspace_directive(),
+                    skills_directive=self._skills_directive(
+                        compact=bool(
+                            getattr(provider, "prefers_compact_instructions", False)
+                        )
+                    ),
                     # Capability, never a provider-name check (AP-21): a small
                     # self-hosted brain asks for the compact profile so it is
                     # not prefilling 24k chars per turn.
                     compact=bool(
                         getattr(provider, "prefers_compact_instructions", False)
                     ),
+                    history_lost=self._suppress_history_seed,
                 ),
                 language=self._language,
                 input_language=self._input_language,
@@ -4519,6 +4650,7 @@ class RealtimeVoiceSession:
                                 skill_directive=self._skill_directive(
                                     self._last_user_text or ""
                                 ),
+                                skills_directive=self._skills_directive(),
                                 # Rebuilt per turn: panes open and close mid
                                 # call, and a roster naming a terminal that is
                                 # gone is worse than none.
@@ -4526,6 +4658,7 @@ class RealtimeVoiceSession:
                                 compact=getattr(
                                     self, "_compact_instructions", False
                                 ),
+                                history_lost=self._suppress_history_seed,
                             ),
                             "language": new_language,
                             # For append-only transports: ONLY the turn-scoped
@@ -5772,6 +5905,16 @@ class RealtimeVoiceSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — AP-20: never re-read a dead transport
+            from jarvis.audio.player import is_local_output_error
+
+            if is_local_output_error(exc):
+                # Speaker death must not consume the rebuild budget or drop
+                # the in-call seed (BUG-108). The provider is still alive;
+                # finish this pump pass as a local failure, not a transport
+                # death. Returning None would hang up; returning a rebuild
+                # detail would reopen the websocket into the same dead sink.
+                await self._handle_local_output_failure(exc)
+                return None
             message = safe_preview(exc, max_chars=800) or "Realtime receive loop ended"
             log.warning("realtime[%s] pump ended", self.session_id, exc_info=True)
             same_provider_rebuild = self._transport_death_is_rebuildable()
@@ -6344,7 +6487,9 @@ class RealtimeVoiceSession:
                     ),
                     preferences=_preferences_block(self._config),
                     workspace_directive=self._workspace_directive(),
+                    skills_directive=self._skills_directive(),
                     compact=getattr(self, "_compact_instructions", False),
+                    history_lost=self._suppress_history_seed,
                 ),
                 language=self._language,
             )
@@ -8036,9 +8181,12 @@ class RealtimeVoiceSession:
                                 language=self._language,
                                 spoken_kind=SPOKEN_KIND_REPLY,
                                 # The session itself rendered this audio (guard
-                                # above) — its handshake voice is the speaker.
+                                # above). Native generative audio is the PIN,
+                                # not evidence the heard speaker matched it
+                                # (BUG-086).
                                 voice=self._active_voice or None,
                                 voice_provider=self.active_provider,
+                                voice_verified=False,
                             )
                         )
                     await self._bus.publish(
@@ -8139,6 +8287,50 @@ class RealtimeVoiceSession:
         self._half_duplex_muted_since = None
         self._half_duplex_mute_reported = 0.0
 
+    async def _handle_local_output_failure(self, exc: BaseException) -> None:
+        """A dead speaker is not a dead provider (BUG-108).
+
+        Zero the heard-sample counter so this turn is not reported healthy,
+        ask the surface to recover onto another output device, and speak an
+        honest apology. Never rebuild the realtime websocket for this.
+        """
+        log.warning(
+            "realtime[%s] local speaker died (%s) — keeping the live provider",
+            self.session_id,
+            safe_preview(exc, max_chars=200),
+        )
+        self._output_samples_sent = 0
+        self._output_active = False
+        await self._publish_error(
+            "RealtimeLocalOutputError",
+            safe_preview(exc, max_chars=400) or "local speaker died",
+            recoverable=True,
+        )
+        try:
+            await self._send_json({"type": "output_recover"})
+        except Exception:  # noqa: BLE001, S110 — recovery is best-effort
+            pass
+        phrase = _LOCAL_OUTPUT_FAILURE.get(
+            self._language, _LOCAL_OUTPUT_FAILURE["en"]
+        )
+        try:
+            await self._send_json(
+                self._surface_speech_message(
+                    phrase,
+                    spoken_kind=SPOKEN_KIND_REPLY,
+                    detail=safe_preview(exc, max_chars=200),
+                )
+            )
+        except Exception as speak_exc:  # noqa: BLE001
+            from jarvis.audio.player import is_local_output_error
+
+            if not is_local_output_error(speak_exc):
+                log.warning(
+                    "realtime[%s] speaker-failure apology failed: %s",
+                    self.session_id,
+                    safe_preview(speak_exc, max_chars=200),
+                )
+
     async def _complete_surface_turn(self) -> None:
         """Publish one idempotent surface boundary and reset turn state.
 
@@ -8152,7 +8344,14 @@ class RealtimeVoiceSession:
         # mid-drain (BUG-152).
         self._clear_deferred_interruption()
         if self._turn_id:
-            await self._send_json({"type": "turn_complete"})
+            try:
+                await self._send_json({"type": "turn_complete"})
+            except Exception as exc:  # noqa: BLE001 — speaker death is not transport death
+                from jarvis.audio.player import is_local_output_error
+
+                if not is_local_output_error(exc):
+                    raise
+                await self._handle_local_output_failure(exc)
             await self._publish_turn_completed()
         self._reset_output_state(reason="surface turn boundary")
         self._turn_final_text = ""
@@ -11098,6 +11297,9 @@ class RealtimeVoiceSession:
     ) -> None:
         turn_language = str(turn_state.language or self._language)
         succeeded = False
+        # Before the brain answers, not after: ``note_skill_trigger`` is read by
+        # the generate() call below, so a late hand-off is the same as none.
+        self._note_skill_for_delegate(turn_state.user_text)
         try:
             reply = (
                 await asyncio.wait_for(
@@ -11421,7 +11623,15 @@ class RealtimeVoiceSession:
             # Real audible provider audio: advance the echo guard's playback
             # horizon by this chunk's duration (BUG-089).
             self._advance_echo_horizon((len(pcm) / 2) / rate)
-        await self._send_binary(pcm)
+        try:
+            await self._send_binary(pcm)
+        except Exception as exc:  # noqa: BLE001 — speaker death is not transport death
+            from jarvis.audio.player import is_local_output_error
+
+            if not is_local_output_error(exc):
+                raise
+            await self._handle_local_output_failure(exc)
+            return
         if audible:
             delegate_state = self._delegate_turns.get(self._turn_id)
             if delegate_state is not None and delegate_state.delivery_started:

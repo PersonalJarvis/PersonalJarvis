@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS voice_turns (
     -- added via _apply_migrations for pre-existing DBs.
     voice_name         TEXT NOT NULL DEFAULT '',
     voice_provider     TEXT NOT NULL DEFAULT '',
+    -- 1 when voice_name is a verified TTS render; 0 when it is only the
+    -- requested pin of a generative native-audio renderer (BUG-086).
+    voice_verified     INTEGER NOT NULL DEFAULT 1,
     tool_calls_json    TEXT NOT NULL DEFAULT '[]'  -- JSON array of tool-name strings
 );
 

@@ -8882,6 +8882,10 @@ class SpeechPipeline:
                 semantic_turn_committed = True
                 _close_output_segment(preserve_echo_tail=False)
                 await _cancel_output_playback()
+            elif kind == "output_recover":
+                recover = getattr(self._player, "recover_output_device", None)
+                if callable(recover):
+                    recover()
             elif kind == "turn_complete":
                 semantic_turn_committed = True
                 await playback.finish_turn()

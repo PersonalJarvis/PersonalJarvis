@@ -180,6 +180,7 @@ class _TurnState:
     # authoritative SpeechSpoken track; VoiceTurnCompleted only fills a blank.
     voice_name: str = ""
     voice_provider: str = ""
+    voice_verified: bool = True
     # Stage boundaries for think/speak latency calculation. The first thinking
     # segment begins at TranscriptFinal (classic) or final TranscriptionUpdate
     # (Realtime); later THINKING transitions reuse transcript_final_ms as the
@@ -393,12 +394,16 @@ class SessionRecorder:
                 late.voice_provider = str(
                     getattr(event, "voice_provider", None) or ""
                 )
+                late.voice_verified = bool(
+                    getattr(event, "voice_verified", True)
+                )
                 # The turn row was already written by finalize_turn — persist
                 # the honest label explicitly.
                 self._store.update_turn_voice(
                     turn_id=late.turn_id,
                     voice_name=late.voice_name,
                     voice_provider=late.voice_provider,
+                    voice_verified=late.voice_verified,
                 )
                 return
         t = self._state.current_turn
@@ -407,6 +412,7 @@ class SessionRecorder:
         if event.spoken_kind == SPOKEN_KIND_REPLY or not t.voice_name:
             t.voice_name = str(voice)
             t.voice_provider = str(getattr(event, "voice_provider", None) or "")
+            t.voice_verified = bool(getattr(event, "voice_verified", True))
 
     def _late_reply_target(self, event: SpeechSpoken) -> _TurnState | None:
         """Finalized turn a late reply-kind ``SpeechSpoken`` belongs to.
@@ -668,6 +674,7 @@ class SessionRecorder:
             awaiting_confirmation=t.awaiting_confirmation,
             voice_name=t.voice_name,
             voice_provider=t.voice_provider,
+            voice_verified=t.voice_verified,
         )
         # Bump aggregates
         self._state.turn_count += 1

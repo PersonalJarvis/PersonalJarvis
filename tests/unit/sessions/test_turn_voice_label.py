@@ -480,7 +480,7 @@ def test_markdown_export_prints_the_voice_note() -> None:
         voice_provider="gemini-live",
     )
     md = format_session_markdown(session, [turn])
-    assert "Stimme: `Fenrir @ gemini-live`" in md  # i18n-allow: localized export label under test
+    assert "Voice: `Fenrir @ gemini-live`" in md
 
 
 def test_markdown_export_omits_the_note_when_voice_unknown() -> None:

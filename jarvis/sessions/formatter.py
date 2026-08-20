@@ -223,7 +223,12 @@ def format_session_markdown(
                 spoken_by = t.voice_name
                 if getattr(t, "voice_provider", ""):
                     spoken_by += f" @ {t.voice_provider}"
-                voice_note = f" · _Stimme: `{spoken_by}`_"
+                if getattr(t, "voice_verified", True):
+                    voice_note = f" · _Voice: `{spoken_by}`_"
+                else:
+                    voice_note = (
+                        f" · _Voice (requested, not verified): `{spoken_by}`_"
+                    )
             lines.append(f"**🔊 Jarvis sagte** _(de={t.jarvis_lang})_{voice_note}")
             lines.append("")
             for output in outputs:

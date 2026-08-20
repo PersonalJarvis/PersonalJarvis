@@ -125,6 +125,9 @@ export interface VoiceTurnRow {
   // provider, e.g. a surface-TTS readback inside a realtime turn).
   voice_name: string;
   voice_provider: string;
+  // False when voice_name is only the requested pin of a generative
+  // native-audio renderer (BUG-086). Missing/true = verified (classic TTS).
+  voice_verified?: boolean;
 }
 
 export interface VoiceSessionRow {

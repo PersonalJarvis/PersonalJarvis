@@ -162,6 +162,12 @@ class SessionStore:
                 "ADD COLUMN voice_provider TEXT NOT NULL DEFAULT ''"
             )
             log.info("SessionStore migration: added voice_turns.voice_provider")
+        if "voice_verified" not in existing:
+            self._conn.execute(
+                "ALTER TABLE voice_turns "
+                "ADD COLUMN voice_verified INTEGER NOT NULL DEFAULT 1"
+            )
+            log.info("SessionStore migration: added voice_turns.voice_verified")
         if "user_text_polished" not in existing:
             # A NEW column rather than a rewrite of ``user_text``, and that is
             # the whole point: the transcript of what was actually said is the
@@ -318,6 +324,7 @@ class SessionStore:
         awaiting_confirmation: bool = False,
         voice_name: str = "",
         voice_provider: str = "",
+        voice_verified: bool = True,
     ) -> None:
         with self._lock:
             self._c.execute(
@@ -340,6 +347,7 @@ class SessionStore:
                     awaiting_confirmation = ?,
                     voice_name            = ?,
                     voice_provider        = ?,
+                    voice_verified        = ?,
                     tool_calls_json       = ?
                 WHERE id = ?
                 """,
@@ -361,6 +369,7 @@ class SessionStore:
                     1 if awaiting_confirmation else 0,
                     voice_name,
                     voice_provider,
+                    1 if voice_verified else 0,
                     json.dumps(tool_calls),
                     turn_id,
                 ),
@@ -392,6 +401,7 @@ class SessionStore:
         turn_id: str,
         voice_name: str,
         voice_provider: str,
+        voice_verified: bool = True,
     ) -> None:
         """Late voice-label update for an already-finalized turn (BUG-090).
 
@@ -402,9 +412,9 @@ class SessionStore:
         """
         with self._lock:
             self._c.execute(
-                "UPDATE voice_turns SET voice_name = ?, voice_provider = ? "
-                "WHERE id = ?",
-                (voice_name, voice_provider, turn_id),
+                "UPDATE voice_turns SET voice_name = ?, voice_provider = ?, "
+                "voice_verified = ? WHERE id = ?",
+                (voice_name, voice_provider, 1 if voice_verified else 0, turn_id),
             )
 
     # --- Events -------------------------------------------------------
@@ -846,6 +856,7 @@ def _row_to_turn(r: sqlite3.Row) -> VoiceTurnRow:
         awaiting_confirmation=bool(_safe_col(r, "awaiting_confirmation", 0)),
         voice_name=_safe_text_col(r, "voice_name"),
         voice_provider=_safe_text_col(r, "voice_provider"),
+        voice_verified=bool(_safe_col(r, "voice_verified", 1)),
         tool_calls=json.loads(r["tool_calls_json"] or "[]"),
     )
 

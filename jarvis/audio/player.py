@@ -42,6 +42,33 @@ log = logging.getLogger("jarvis.audio.player")
 # even without sounddevice (H4 review).
 _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else OSError
 
+# Markers that the LOCAL output sink died (BUG-108). Sample-rate refusals
+# (-9997) are handled by the rate cascade, not by device fallback.
+_LOCAL_OUTPUT_DEAD_MARKERS: tuple[str, ...] = (
+    "-9986",
+    "-9996",
+    "Internal PortAudio error",
+    "Invalid device",
+    "Device unavailable",
+    "Error opening OutputStream",
+)
+
+
+def is_local_output_error(exc: BaseException) -> bool:
+    """True when playback failed because the local speaker died.
+
+    A PortAudio error raised from the output path is a LOCAL audio problem.
+    Rebuilding the realtime provider websocket cannot heal it (BUG-108).
+    Invalid-sample-rate refusals are the rate cascade's job, not this
+    classifier — they stay False so the existing walk can try the next rate.
+    """
+    text = str(exc)
+    if "-9997" in text or "Invalid sample rate" in text:
+        return False
+    if isinstance(exc, _PortAudioError):
+        return True
+    return any(marker in text for marker in _LOCAL_OUTPUT_DEAD_MARKERS)
+
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 # Start playout as soon as a small, click-safe prefix is available. Later writes
 # stay larger to preserve low CPU overhead and underrun resistance. With a
@@ -353,6 +380,35 @@ def _resolve_output_device(
         )
         # Fall through to the auto-headset heuristic below.
 
+    candidates, hostapis = _collect_output_candidates(priority)
+    if candidates:
+        idx, device_info = candidates[0]
+        _log_auto_headset_pick(idx, device_info, hostapis)
+        return idx
+
+    log.warning("auto-headset found no matching device — using system default.")
+    return None
+
+
+def _sorted_output_candidates(
+    priority: Sequence[str] | None = None,
+) -> list[tuple[int, dict]]:
+    """Usable output devices in auto-headset order (BUG-108 fallback)."""
+    candidates, _hostapis = _collect_output_candidates(priority)
+    return candidates
+
+
+def _ranked_output_device_indices(
+    priority: Sequence[str] | None = None,
+) -> list[int]:
+    """Output device indices in auto-headset order, excluding dead sinks."""
+    return [idx for idx, _dev in _sorted_output_candidates(priority)]
+
+
+def _collect_output_candidates(
+    priority: Sequence[str] | None = None,
+) -> tuple[list[tuple[int, dict]], Any]:
+    """Enumerate, filter, and rank output devices. Shared by resolve + fallback."""
     user_priority = tuple(p for p in (priority or ()) if p)
 
     try:
@@ -360,25 +416,14 @@ def _resolve_output_device(
         hostapis = sd.query_hostapis()
     except Exception as exc:  # noqa: BLE001
         log.warning("Device query failed, using system default: %s", exc)
-        return None
+        return [], None
 
-    # "Your device first": prefer the user's OS-selected default OUTPUT device
-    # over the generic headset guesses, UNLESS it is a device auto-headset exists
-    # to bypass (monitor/HDMI, SPDIF, the localized virtual mapper) — then fall
-    # back to the heuristic below so playback never lands on a wrong/dead sink.
-    # Injected as a NAME so the candidate sort still picks its best host-API twin
-    # (WASAPI) and skips WDM-KS. Ranks BELOW an explicit output_device_priority.
     os_default_name = _os_default_output_name(devices, hostapis)
     effective_priority = (
         (*user_priority, os_default_name) if os_default_name else user_priority
     )
 
-    # Candidates: real output devices that are not on the blocklist.
-    # WDM-KS is filtered when the same device (same name) is available on
-    # another host API — otherwise, for example, the only Realtek Speakers
-    # device lands on WDM-KS and crashes later at OutputStream open with
-    # -9999 'Blocking API not supported yet'.
-    raw_candidates: list[tuple[int, dict, str]] = []  # (idx, dev, hostapi_name)
+    raw_candidates: list[tuple[int, dict, str]] = []
     for idx, d in enumerate(devices):
         if d.get("max_output_channels", 0) <= 0:
             continue
@@ -386,8 +431,6 @@ def _resolve_output_device(
         low = name.lower()
         if any(blocked.lower() in low for blocked in _BLOCKED_OUTPUT_SUBSTRINGS):
             continue
-        # Locale-independent skip of the MME "Sound Mapper" / DirectSound
-        # "Primary Sound Driver" virtual router (translated display name).
         if is_legacy_primary_mapper(idx, hostapis, devices, output=True):
             continue
         hostapi_idx = d.get("hostapi", -1)
@@ -397,15 +440,6 @@ def _resolve_output_device(
         )
         raw_candidates.append((idx, d, hostapi_name))
 
-    # WDM-KS crashes on OutputStream open (-9999 'Blocking API not supported
-    # yet'). As long as ANY safe output device exists, we NEVER choose a
-    # WDM-KS device. Important — and the bugfix versus the old same-name
-    # logic: not even when a device name exists ONLY on WDM-KS (e.g.
-    # "Speakers (Realtek HD Audio output)" has no MME/WASAPI twin).
-    # The previously used same-name filter let exactly such WDM-KS-only
-    # devices through; they won on name rank and crashed on playback
-    # (BUG-014 recurrence 2026-05-24: Brain+TTS ok, user hears nothing).
-    # Only when ALL candidates are WDM-KS do we take one as a last resort.
     safe_exists = any(
         ha not in _FORBIDDEN_OUTPUT_HOSTAPIS for _, _, ha in raw_candidates
     )
@@ -424,11 +458,6 @@ def _resolve_output_device(
 
     def _name_rank(entry: tuple[int, dict]) -> int:
         low = entry[1].get("name", "").lower()
-        # Precedence: explicit user priority, then the OS-selected default device
-        # (both carried in ``effective_priority``), then the generic headset list.
-        # Each block keeps "earlier entry = stronger"; the generic block is offset
-        # by len(effective_priority) so a generic hit can never tie or beat a
-        # user / OS-default hit.
         for rank, sub in enumerate(effective_priority):
             if sub.lower() in low:
                 return rank
@@ -437,24 +466,25 @@ def _resolve_output_device(
                 return len(effective_priority) + rank
         return len(effective_priority) + len(_HEADSET_PRIORITY)
 
-    # Primary sort key: name match; secondary: host API preference. Without a
-    # name match the original order (system default) is preserved.
     candidates.sort(key=lambda e: (_name_rank(e), _hostapi_rank(e)))
-    if candidates:
-        idx, d = candidates[0]
-        hostapi_idx = d.get("hostapi", -1)
-        hostapi_name = (
-            hostapis[hostapi_idx].get("name", "?")
-            if 0 <= hostapi_idx < len(hostapis) else "?"
-        )
-        log.info(
-            "auto-headset → %s (idx=%d, ch=%s, hostapi=%s)",
-            d.get("name"), idx, d.get("max_output_channels"), hostapi_name,
-        )
-        return idx
+    return candidates, hostapis
 
-    log.warning("auto-headset found no matching device — using system default.")
-    return None
+
+def _log_auto_headset_pick(
+    idx: int,
+    device: dict,
+    hostapis: Any,
+) -> None:
+    hostapi_idx = device.get("hostapi", -1)
+    hostapi_name = (
+        hostapis[hostapi_idx].get("name", "?")
+        if hostapis is not None and 0 <= hostapi_idx < len(hostapis)
+        else "?"
+    )
+    log.info(
+        "auto-headset → %s (idx=%d, ch=%s, hostapi=%s)",
+        device.get("name"), idx, device.get("max_output_channels"), hostapi_name,
+    )
 
 
 class AudioPlayer:
@@ -479,6 +509,9 @@ class AudioPlayer:
         # Resolve "auto-headset" / similar strings to the actual device index.
         # Integer values are not resolved — the user specifies those explicitly.
         self._device = _resolve_output_device(device, self._device_priority)
+        # Indices that already died this session (BUG-108). recover_output_device
+        # skips them so a vanished Bluetooth sink cannot be re-picked.
+        self._output_failed_devices: set[int | None] = set()
         self._sample_rate = sample_rate
         self._channels = channels
         # Master output volume knob in [0.0, 1.0]. Applied in _write_samples via
@@ -714,7 +747,50 @@ class AudioPlayer:
             return  # no-op; avoid needless cache flush
         self._device = new_device
         self._device_logged = False  # re-log the new device on next play
+        self._output_failed_devices = set()
         self.invalidate_device_cache()
+
+    def recover_output_device(self) -> bool:
+        """Pick a different output after the current sink died (BUG-108).
+
+        Mirrors the capture-side candidate fallback: skip the dead index and
+        walk auto-headset order. Returns True when a different device was
+        selected so the caller can retry the open. A pin (explicit int) is
+        still abandoned when that index is gone — silence is worse than
+        speakers.
+        """
+        dead = getattr(self, "_device", None)
+        failed = set(getattr(self, "_output_failed_devices", set()))
+        if isinstance(dead, int):
+            failed.add(dead)
+        else:
+            try:
+                default = sd.default.device[1] if sd is not None else None
+            except Exception:  # noqa: BLE001 — default query is best-effort
+                default = None
+            if isinstance(default, int):
+                failed.add(default)
+            failed.add(None)
+        self._output_failed_devices = failed
+        self.invalidate_device_cache()
+        for idx in _ranked_output_device_indices(
+            getattr(self, "_device_priority", ())
+        ):
+            if idx in failed:
+                continue
+            log.warning(
+                "AudioPlayer recovered onto output device %r (skipped dead %s)",
+                idx,
+                failed,
+            )
+            self._device = idx
+            self._device_logged = False
+            return True
+        log.error(
+            "AudioPlayer has no remaining output device after %s died",
+            dead,
+        )
+        return False
 
     def set_volume(self, volume: float) -> None:
         """Live-apply a new master output volume (0.0–1.0) — no stream restart.
@@ -997,6 +1073,8 @@ class AudioPlayer:
             except _PortAudioError as exc:
                 last_exc = exc
                 if "-9997" not in str(exc) and "Invalid sample rate" not in str(exc):
+                    if is_local_output_error(exc) and self.recover_output_device():
+                        return self._open_output_stream(source_rate)
                     raise
                 # Remember the refusal so no later walk in this player's life
                 # retries it (the per-turn "@ 24000Hz failed" log storm).
@@ -1350,14 +1428,29 @@ class AudioPlayer:
                 # with Jarvis's voice across the whole sentence, not one coarse
                 # level per flush). Nothing to feed here.
                 self.last_write_owner_task_id = owner_task_id
-                await asyncio.to_thread(
-                    self._write_samples,
-                    stm,
-                    arr,
-                    pending_rate,
-                    dev_rate,
-                    playback_generation=playback_generation,
-                )
+                try:
+                    await asyncio.to_thread(
+                        self._write_samples,
+                        stm,
+                        arr,
+                        pending_rate,
+                        dev_rate,
+                        playback_generation=playback_generation,
+                    )
+                except _PortAudioError as exc:
+                    if not is_local_output_error(exc) or not self.recover_output_device():
+                        raise
+                    stm, dev_rate = await asyncio.to_thread(
+                        _ensure_stream, pending_rate
+                    )
+                    await asyncio.to_thread(
+                        self._write_samples,
+                        stm,
+                        arr,
+                        pending_rate,
+                        dev_rate,
+                        playback_generation=playback_generation,
+                    )
                 if arr.size:
                     wrote_audio = True
                 with stream_state_lock:

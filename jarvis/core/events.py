@@ -584,6 +584,11 @@ class SpeechSpoken(Event):
     # e.g. a surface-TTS readback inside a realtime session).
     voice: str | None = None
     voice_provider: str | None = None
+    # True when a classic TTS engine actually rendered this voice (verified
+    # by construction). False when the label is only the pin we REQUESTED
+    # from a generative native-audio renderer (BUG-086) — the heard speaker
+    # can drift. Default True so existing classic publishers stay honest.
+    voice_verified: bool = True
 
 
 @dataclass(frozen=True, slots=True)

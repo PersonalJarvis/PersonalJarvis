@@ -143,6 +143,9 @@ class VoiceTurnRow(BaseModel):
     # brain provider, e.g. a surface-TTS readback inside a realtime session).
     voice_name: str = ""
     voice_provider: str = ""
+    # False when ``voice_name`` is only the requested pin of a generative
+    # native-audio renderer (BUG-086). Default True: classic TTS is verified.
+    voice_verified: bool = True
 
 
 class VoiceSessionRow(BaseModel):

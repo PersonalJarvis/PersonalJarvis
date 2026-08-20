@@ -289,13 +289,20 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
                   variant="outline"
                   className="ml-1 font-mono text-[9px] normal-case text-muted-foreground"
                   title={
-                    turn.voice_provider
-                      ? `Voice: ${turn.voice_name} (${turn.voice_provider})`
-                      : `Voice: ${turn.voice_name}`
+                    turn.voice_verified === false
+                      ? `Requested voice (native audio is not a verified speaker): ${
+                          turn.voice_provider
+                            ? `${turn.voice_name} (${turn.voice_provider})`
+                            : turn.voice_name
+                        }`
+                      : turn.voice_provider
+                        ? `Voice: ${turn.voice_name} (${turn.voice_provider})`
+                        : `Voice: ${turn.voice_name}`
                   }
                 >
                   {turn.voice_name}
                   {turn.voice_provider ? ` · ${turn.voice_provider}` : ""}
+                  {turn.voice_verified === false ? " · requested" : ""}
                 </Badge>
               )}
               {turn.awaiting_confirmation && (

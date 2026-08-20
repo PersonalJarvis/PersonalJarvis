@@ -284,6 +284,20 @@ describe("TurnCard spoken track", () => {
     expect(screen.getByText("Fenrir · gemini-live")).toBeTruthy();
   });
 
+  it("marks a generative native pin as requested, not heard", () => {
+    render(
+      <TurnCard
+        turn={turn({
+          jarvis_text: "Servus!", // i18n-allow: German voice fixture
+          voice_name: "Fenrir",
+          voice_provider: "gemini-live",
+          voice_verified: false,
+        })}
+      />,
+    );
+    expect(screen.getByText("Fenrir · gemini-live · requested")).toBeTruthy();
+  });
+
   it("shows no voice badge when the speaking voice is unknown", () => {
     render(<TurnCard turn={turn({ jarvis_text: "Hallo." })} />); // i18n-allow: German voice fixture
     expect(screen.queryByText(/gemini-live/)).toBeNull();

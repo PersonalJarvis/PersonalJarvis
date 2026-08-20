@@ -5996,15 +5996,17 @@ deterministic wrong voice is worse than an occasional drift. Guards:
 `::test_generative_voice_provider_mute_still_falls_back_to_surface_tts`,
 `::test_generative_voice_provider_keeps_native_readback_on_the_browser_surface`.
 
+**Label honesty FIXED 2026-08-20.** `SpeechSpoken.voice_verified` is False
+for native generative audio (the pin we requested, not a heard speaker)
+and True for classic TTS. The recorder, the markdown export, and the
+Transcription badge say "requested" when it is only a pin.
+
 **Still OPEN.**
 
 - Plain (non-delegate) native turns can still drift despite the standing
   session clause — inherent to a generative renderer; a full fix would
-  abandon native audio entirely.
-- Label honesty: `voice_name` should distinguish "requested" from
-  "verified" (classic TTS engines are verified by construction; native
-  realtime audio is only ever requested). Until then, treat realtime
-  `voice_name` as the pin, not as evidence.
+  abandon native audio entirely. Do not re-add an immediate surface claim
+  — a deterministic wrong voice is worse than an occasional drift.
 
 **Class rule.** A generative native-audio renderer holds its voice only as
 firmly as EVERY text it is told to speak reminds it to. Any new prompt
@@ -7424,7 +7426,7 @@ browser, phone, telephony) needs a deterministic explicit-ask gate, not
 just prompt discouragement — the model reaches for the most concrete tool
 it sees, and a question must never be answered by performing.
 
-## BUG-108: local speaker death (PortAudio -9986) is misclassified as provider transport death — three answers voiced into a dead output, all reported healthy (CRITICAL, OPEN 2026-07-21)
+## BUG-108: local speaker death (PortAudio -9986) is misclassified as provider transport death — three answers voiced into a dead output, all reported healthy (CRITICAL, FIXED 2026-08-20)
 
 **Symptom (live 2026-07-21 11:53, session `290b610c`, first call after the
 1b191b88 deploy/restart at 11:52).** The user asked for the best private
@@ -7485,6 +7487,22 @@ The user hung up via hotkey at 11:55:11.
    a valid last resort (BUG-104), but the model must then be told the
    context was lost — otherwise it invents one ("Bora Bora") and asserts
    it as shared history, which is worse than admitting the gap.
+
+**Fix (2026-08-20).**
+
+1. `is_local_output_error` classifies PortAudio device death. The pump
+   does not rebuild the provider for it. `_complete_surface_turn` and
+   `_emit_audio` catch it, zero the heard-sample counter, and speak an
+   honest "speaker disappeared" line.
+2. `AudioPlayer.recover_output_device` walks auto-headset order skipping
+   the dead index; `_open_output_stream` retries on that device so the
+   current turn can land on built-in speakers.
+3. A turn whose playback wrote nothing no longer publishes SpeechSpoken.
+4. A seed-less rebuild (`history_lost=True`) injects a standing order:
+   this is a fresh session, do not invent prior topics.
+
+**Guards.** `tests/unit/audio/test_player_output_fallback.py`,
+`tests/unit/realtime/test_local_output.py`.
 
 Related: BUG-102 (topology refresh), BUG-104 (rebuild seed), BUG-106
 (the answer itself also missed the Gulfstream G800, in service since
@@ -10524,7 +10542,7 @@ while it deliberates; bound the work, not the listening.
 `test_catchup_budget_ignores_garbage_values`,
 `test_vosk_provider_declares_both_budgets`).
 
-## BUG-151: libvosk crashes the whole process under concurrent recognizer churn — the wake engine's parallel verify design hits it (HIGH, OPEN 2026-08-19)
+## BUG-151: libvosk crashes the whole process under concurrent recognizer churn — the wake engine's parallel verify design hits it (HIGH, FIXED 2026-08-20)
 
 **Symptom.** `scripts/vosk_wake_bench.py --phrase "Hey Jarvis" --language de`
 dies with exit 139 ("Windows fatal exception: access violation", via
@@ -10576,9 +10594,17 @@ survives and decisions stay identical, per the 2026-07-11 parity method).
 Upgrade/patch libvosk. Whichever is chosen must be re-measured with the
 repro script AND the bench (3/3 clean runs on the laptop) before it counts.
 
-**Guards.** None in CI — a crash test cannot run without the native model;
-`scripts/vosk_native_stress.py churn 180` (3 x clean) plus 3/3 clean bench
-runs on the weak laptop are the acceptance test until a fix lands.
+**Fix (2026-08-20).** Every native constructor and method now goes through
+`jarvis/plugins/wake/vosk_native.py`: one process-wide lock, the protocol
+that survived the repro. Python-level grammar/free submit still uses two
+threads (the 2026-07-10 spawn-latency shape); the lock serialises the
+native calls themselves. Test doubles are not wrapped, so the concurrent
+barrier unit test still proves the submit shape.
+
+**Guards.** `tests/unit/plugins/wake/test_vosk_native.py`. Native acceptance
+remains `scripts/vosk_native_stress.py churn 180` (3 x clean) plus 3/3 clean
+bench runs on the weak laptop — a crash test cannot run in CI without the
+model.
 
 ## BUG-152: Gemini Live greeting cut off mid-sentence — a stale empty interrupt cancels the speaker drain (CRITICAL, FIXED 2026-08-19)
 
