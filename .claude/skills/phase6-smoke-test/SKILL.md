@@ -28,7 +28,8 @@ This skill runs a fast end-to-end smoke test against the Phase-6 pipeline. It is
    ```
    If a script is missing — mark it as `MISSING` in the report and continue.
 
-3. **Test run** with the `jarvis-test-runner` subagent against `tests/missions/`:
+3. **Test run** with the `test-runner` subagent against `tests/missions/`, asking
+   it for the JSON body:
    ```
    pytest tests/missions/ -v --tb=short --no-header --maxfail=15
    ```
