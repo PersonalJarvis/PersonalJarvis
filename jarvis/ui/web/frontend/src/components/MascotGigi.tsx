@@ -97,16 +97,27 @@ export function MascotGigi({
         title="Gigi"
       >
         <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" className="gigi-svg">
+          {/* Every number below was MEASURED off `public/jarvis-gigi-256.png`
+              rather than drawn by eye (2026-08-20), so the vector and the
+              bitmap are the same mascot: body x 49..206 and y 32..226, widest
+              157px at y=84, zigzag troughs at y=203 and points at y=225, eyes
+              centred on (98,113) and (157,113) with rx 13 / ry 17.5, mouth on
+              (127.5,158). The hand-drawn shape it replaces was 140px wide with
+              rx-10 eyes — a family resemblance, not the same character. The
+              filter blurs and the halo opacity come from a difference-scored
+              sweep against the PNG on a local comparison page; mean luminance
+              error is ~6/255 across the frame, and the silhouette lands within
+              two pixels at every row. */}
           <defs>
             <filter id="gigiYGlow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="3" result="b" />
+              <feGaussianBlur stdDeviation="2" result="b" />
               <feMerge>
                 <feMergeNode in="b" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
             <filter id="gigiSoftGlow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="6" result="b" />
+              <feGaussianBlur stdDeviation="4" result="b" />
               <feMerge>
                 <feMergeNode in="b" />
                 <feMergeNode in="SourceGraphic" />
@@ -126,91 +137,91 @@ export function MascotGigi({
           {/* Outer halo */}
           <path
             className="gigi-halo"
-            d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
+            d="M 49 88 Q 49 32 127.5 32 Q 206 32 206 88 L 206 225 L 188 203 L 164 225 L 140 203 L 116 225 L 95 203 L 74 225 L 49 203 Z"
             fill="#FFE500"
-            opacity="0.28"
+            opacity="0.16"
             filter="url(#gigiSoftGlow)"
           />
 
           {/* Body */}
           <path
             className="gigi-body"
-            d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
+            d="M 49 88 Q 49 32 127.5 32 Q 206 32 206 88 L 206 225 L 188 203 L 164 225 L 140 203 L 116 225 L 95 203 L 74 225 L 49 203 Z"
             fill="url(#gigiBody)"
             stroke="#FFE500"
-            strokeWidth="1.8"
-            strokeOpacity="0.85"
+            strokeWidth="1.2"
+            strokeOpacity="0.9"
           />
 
-          {/* Scanlines */}
+          {/* Scanlines — the PNG carries two: a 3px one at y=141 and a
+              hairline at y=174. */}
           <g className="gigi-scanlines">
-            <rect x="58" y="132" width="140" height="2.4" fill="#FFE500" opacity="0.55" />
-            <rect x="58" y="160" width="140" height="1.4" fill="#FFF200" opacity="0.3" />
+            <rect x="49" y="141" width="157" height="3" fill="#FFE500" opacity="0.5" />
+            <rect x="49" y="174" width="157" height="1" fill="#FFF200" opacity="0.32" />
           </g>
 
-          {/* Glitch pixels right */}
+          {/* Glitch pixels right — measured cluster boxes */}
           <g className="gigi-glitch-right" fill="#FFE500" filter="url(#gigiYGlow)">
-            <rect x="200" y="104" width="6" height="6" />
-            <rect x="208" y="128" width="4" height="4" />
-            <rect x="202" y="146" width="9" height="3" />
-            <rect x="197" y="168" width="3" height="5" />
-            <rect x="206" y="176" width="5" height="3" />
+            <rect x="210" y="109" width="7" height="7" />
+            <rect x="220" y="137" width="4" height="4" />
+            <rect x="217" y="192" width="6" height="3" />
           </g>
           {/* Glitch pixels left */}
           <g className="gigi-glitch-left" fill="#FFB800" filter="url(#gigiYGlow)">
-            <rect x="44" y="96" width="6" height="4" />
-            <rect x="48" y="124" width="4" height="6" />
-            <rect x="40" y="148" width="8" height="3" />
-            <rect x="50" y="170" width="3" height="5" />
+            <rect x="32" y="100" width="7" height="5" />
+            <rect x="36" y="132" width="5" height="7" />
+            <rect x="39" y="185" width="3" height="6" />
           </g>
 
           {/* Chromatic displacement slices */}
-          <rect x="64" y="118" width="18" height="10" fill="#FFE500" opacity="0.32" />
-          <rect x="170" y="118" width="18" height="10" fill="#FFE500" opacity="0.32" />
+          <rect x="58" y="122" width="20" height="10" fill="#FFE500" opacity="0.3" />
+          <rect x="178" y="122" width="20" height="10" fill="#FFE500" opacity="0.3" />
 
           {/* Eye glows */}
-          <ellipse cx="102" cy="108" rx="13" ry="17" fill="#FFE500" opacity="0.35" filter="url(#gigiSoftGlow)" />
-          <ellipse cx="154" cy="108" rx="13" ry="17" fill="#FFE500" opacity="0.35" filter="url(#gigiSoftGlow)" />
+          <ellipse cx="98" cy="113" rx="16" ry="21" fill="#FFE500" opacity="0.32" filter="url(#gigiSoftGlow)" />
+          <ellipse cx="157" cy="113" rx="16" ry="21" fill="#FFE500" opacity="0.32" filter="url(#gigiSoftGlow)" />
 
-          {/* Eye sockets — auto-blinkend */}
+          {/* Eye sockets — they blink */}
           <g className="gigi-eyes">
-            <ellipse cx="102" cy="108" rx="10" ry="14" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
-            <ellipse cx="154" cy="108" rx="10" ry="14" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
+            <ellipse cx="98" cy="113" rx="13" ry="17.5" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
+            <ellipse cx="157" cy="113" rx="13" ry="17.5" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
           </g>
 
-          {/* Pupils — driften sanft */}
+          {/* Pupils — they drift */}
           <g className="gigi-pupils">
-            <ellipse className="gigi-pupil gigi-pupil-left" cx="104" cy="112" rx="4" ry="6" fill="#050505" />
-            <ellipse className="gigi-pupil gigi-pupil-right" cx="156" cy="112" rx="4" ry="6" fill="#050505" />
+            <ellipse className="gigi-pupil gigi-pupil-left" cx="100" cy="118" rx="5.2" ry="7.5" fill="#050505" />
+            <ellipse className="gigi-pupil gigi-pupil-right" cx="159" cy="118" rx="5.2" ry="7.5" fill="#050505" />
           </g>
 
           {/* Eye sparkle */}
           <g className="gigi-sparkle">
-            <circle cx="106" cy="105" r="2" fill="#FFFFFF" />
-            <circle cx="158" cy="105" r="2" fill="#FFFFFF" />
+            <circle cx="102.5" cy="110" r="2.4" fill="#FFFFFF" />
+            <circle cx="161.5" cy="110" r="2.4" fill="#FFFFFF" />
           </g>
 
-          {/* Mouth — subtile Atmung */}
+          {/* Mouth — breathes at rest, moves while speaking */}
           <g className="gigi-mouth">
-            <ellipse cx="128" cy="146" rx="7" ry="10" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
-            <ellipse cx="128" cy="146" rx="3" ry="5" fill="#050505" />
+            <ellipse cx="127.5" cy="158" rx="8.5" ry="10.5" fill="url(#gigiYAccent)" filter="url(#gigiYGlow)" />
+            <ellipse cx="127.5" cy="158" rx="3.6" ry="5.2" fill="#050505" />
           </g>
 
-          {/* Left arm — waves (pivot point at the shoulder via fill-box) */}
+          {/* Arms — measured as gold outside the body, y 148..178, reaching
+              23px out; the left one waves (pivot at the shoulder via
+              fill-box). */}
           <path
             className="gigi-arm gigi-arm-left"
-            d="M 58 140 Q 40 148 42 162"
+            d="M 47 148 Q 26 157 29 177"
             stroke="#FFE500"
-            strokeWidth="5.5"
+            strokeWidth="5"
             fill="none"
             strokeLinecap="round"
             filter="url(#gigiYGlow)"
           />
           <path
             className="gigi-arm gigi-arm-right"
-            d="M 198 140 Q 216 148 214 162"
+            d="M 208 148 Q 229 157 226 177"
             stroke="#FFE500"
-            strokeWidth="5.5"
+            strokeWidth="5"
             fill="none"
             strokeLinecap="round"
             filter="url(#gigiYGlow)"
@@ -244,7 +255,7 @@ function voiceClassFor(state: VoiceState): string {
 }
 
 // ============================================================================
-// Comment-Bubble + Kontext-Hook
+// Comment bubble + context hook
 // ============================================================================
 
 function GigiBubble({

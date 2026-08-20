@@ -2166,11 +2166,37 @@
     will-change: transform, opacity;
   }
 
-  /* 3. The figure: bigger and brighter with the voice. */
+  /* 3. The figure: bigger and brighter with the voice.
+
+     And SEATED, not pasted. A hard-edged vector dropped onto a photographic
+     wallpaper reads as a sticker (maintainer, 2026-08-20: it must not look
+     "reingeklatscht"), so on this stage the mascot behaves like what it is —
+     a ghost. Its body lets the wallpaper through, which puts the figure IN
+     the picture instead of on it, and the warm stage light behind it comes
+     through with it. Every gold part stays solid, so the character is still
+     the sharpest thing on screen. One drop shadow under the whole figure
+     grounds it; it is on the root <svg>, not on the parts, so the browser
+     rasterises the shadow once.
+
+     Only here. The mascot is opaque everywhere else it appears — the dock,
+     the onboarding, the overlay — where it sits on a flat surface and has
+     nothing to sink into. */
   .deck-orb-reactor {
     transform: scale(calc(1 + var(--orb-level, 0) * 0.07));
     filter: brightness(calc(1 + var(--orb-level, 0) * 0.5));
     will-change: transform, filter;
+  }
+  .deck-orb-reactor .gigi-body {
+    opacity: 0.8;
+  }
+  .deck-orb-reactor .gigi-svg {
+    filter: drop-shadow(0 10px 18px hsl(var(--background) / 0.75));
+  }
+  /* The voice lifts it out of the wallpaper: the louder it gets, the more the
+     body closes up, so speaking reads as the ghost becoming present. */
+  .deck-orb-root[data-voice="speaking"] .deck-orb-reactor .gigi-body,
+  .deck-orb-root[data-voice="listening"] .deck-orb-reactor .gigi-body {
+    opacity: calc(0.8 + var(--orb-level, 0) * 0.2);
   }
 
   /* 4. The wave: the meter, in the shape a voice has. Flat when there is
