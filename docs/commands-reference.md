@@ -66,7 +66,7 @@ Select the Ollama brain and speech model for the managed local realtime server, 
 Switch the dedicated Computer-Use planner provider (screen control), decoupled from the main brain.
 
 - **Endpoint:** `POST /api/computer-use/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter, vertex; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, grok-build, local-openai, nvidia, ollama, openai, openrouter, vertex; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the computer use provider to gemini"
@@ -76,7 +76,7 @@ Switch the dedicated Computer-Use planner provider (screen control), decoupled f
 Switch the provider used for new missions (e.g. codex to openai). The next mission uses the new provider.
 
 - **Endpoint:** `POST /api/jarvis-agent/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter, vertex; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, claude-cli, codex, gemini, grok, grok-build, local-openai, nvidia, ollama, openai, openrouter, vertex; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "switch the agent provider to openai"
@@ -96,7 +96,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"
