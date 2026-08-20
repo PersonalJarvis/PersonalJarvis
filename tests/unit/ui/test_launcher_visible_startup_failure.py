@@ -53,6 +53,35 @@ class TestWindowToolkitProbe:
         assert launcher._missing_window_toolkit() is not None
 
 
+class TestBackendServerProbe:
+    def test_none_when_uvicorn_imports(self) -> None:
+        assert launcher._missing_backend_server() is None
+
+    def test_names_the_missing_package_and_the_interpreter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _boom() -> None:
+            raise ModuleNotFoundError("No module named 'click'", name="click")
+
+        monkeypatch.setattr(launcher, "_import_backend_server", _boom)
+        msg = launcher._missing_backend_server()
+        assert msg is not None
+        assert "click" in msg, "the user must learn WHAT is missing"
+        assert "pip install -r requirements.txt" in msg
+        assert sys.executable in msg
+
+    def test_falls_back_to_uvicorn_when_the_exception_has_no_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _boom() -> None:
+            raise ModuleNotFoundError("broken install")
+
+        monkeypatch.setattr(launcher, "_import_backend_server", _boom)
+        msg = launcher._missing_backend_server()
+        assert msg is not None
+        assert "uvicorn" in msg
+
+
 @pytest.fixture
 def dialogs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     """Intercept the modal box.
@@ -288,10 +317,16 @@ class TestLauncherRefusesEarly:
 
         src = inspect.getsource(launcher.main)
         gate_at = src.index("_missing_window_toolkit")
+        server_at = src.index("_missing_backend_server")
         for later in ("load_config()", "ensure_control_key", "_run_desktop("):
-            assert gate_at < src.index(later), (
+            later_at = src.index(later)
+            assert gate_at < later_at, (
                 f"the window check must run before {later}; otherwise the user "
                 "pays the full boot for an error that was knowable up front"
+            )
+            assert server_at < later_at, (
+                f"the uvicorn/click check must run before {later}; a missing "
+                "click is the same mute Start-Menu click as a missing pywebview"
             )
 
     def test_refusal_reports_a_failing_exit_code(
@@ -306,3 +341,17 @@ class TestLauncherRefusesEarly:
         rc = launcher.main([])
         assert rc == 4, "a start that never happened must not report success"
         assert "pywebview is missing" in capsys.readouterr().err
+
+    def test_missing_backend_dep_refuses_before_the_window(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        dialogs: list[tuple[str, str]],
+    ) -> None:
+        monkeypatch.setattr(launcher, "_missing_window_toolkit", lambda: None)
+        monkeypatch.setattr(
+            launcher, "_missing_backend_server", lambda: "the package 'click' is missing"
+        )
+        rc = launcher.main([])
+        assert rc == 4
+        assert "click" in capsys.readouterr().err

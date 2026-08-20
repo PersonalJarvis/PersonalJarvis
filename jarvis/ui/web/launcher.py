@@ -919,6 +919,36 @@ def _missing_window_toolkit() -> str | None:
     )
 
 
+def _import_backend_server() -> None:
+    # Import, do not find_spec: uvicorn's import is what loads click, and a
+    # venv that lost click is a Start-Menu click that opens nothing.
+    import uvicorn as _uvicorn  # noqa: F401
+
+
+def _missing_backend_server() -> str | None:
+    """Explain a missing uvicorn/click, or ``None`` when the backend can bind.
+
+    The window never appears until ``/api/health`` answers, and that bind is
+    ``import uvicorn`` — which itself ``import click``s. ``find_spec('uvicorn')``
+    stays green while click is gone, so the Start-Menu launch sits on a 45 s
+    health poll, writes the traceback into pythonw's null stderr, and exits.
+    Same shape as :func:`_missing_window_toolkit`; checked up front so the
+    reason is a dialog, not silence.
+    """
+    try:
+        _import_backend_server()
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "uvicorn"
+        return (
+            f"{APP_DISPLAY_NAME} cannot start: the package '{missing}' is "
+            f"missing from this Python install.\n\n"
+            f"Python: {sys.executable}\n\n"
+            f"The window needs this package to serve its UI. Restore it with:\n"
+            f"    {sys.executable} -m pip install -r requirements.txt"
+        )
+    return None
+
+
 def _run_desktop(cfg, use_lock: bool) -> int:
     """Full desktop app with a pywebview window.
 
@@ -1242,6 +1272,14 @@ def main(argv: list[str] | None = None) -> int:
         if _no_window is not None:
             _report_startup_failure(_no_window)
             return 4
+
+    # uvicorn (and its import-time click) — every mode, because headless also
+    # binds through FastBootstrap. Checked here so a missing dep is a sentence
+    # instead of a 45 s mute Start-Menu click.
+    _no_server = _missing_backend_server()
+    if _no_server is not None:
+        _report_startup_failure(_no_server)
+        return 4
 
     # Drop administrator rights BEFORE booting, not after.
     #

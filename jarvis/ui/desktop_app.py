@@ -1389,6 +1389,10 @@ class DesktopApp:
 
         self._backend_thread: threading.Thread | None = None
         self._backend_loop: asyncio.AbstractEventLoop | None = None
+        # Set if the backend thread dies during bind (missing click, port
+        # collision, …). ``_wait_for_backend`` reads it so the main thread can
+        # name the reason instead of sitting on a 45 s health poll.
+        self._backend_boot_error: BaseException | None = None
         # Monotonic stamp of the moment the backend loop began serving, and a
         # one-shot latch — together they gate the automatic recovery in
         # _note_backend_stopped so a crash-on-boot can never become a
@@ -1561,9 +1565,13 @@ class DesktopApp:
                 session_token=self.session_token,
                 vite_dev_url=(self.cfg.ui.vite_dev_url if self.cfg.ui.dev_mode else None),
             )
-            loop.run_until_complete(
-                bootstrap.serve("127.0.0.1", self.cfg.ui.admin_api_port)
-            )
+            try:
+                loop.run_until_complete(
+                    bootstrap.serve("127.0.0.1", self.cfg.ui.admin_api_port)
+                )
+            except Exception as exc:
+                self._backend_boot_error = exc
+                raise
             self._bootstrap = bootstrap
             _db_boot_ready()  # /api/health is servable now → window can appear
 
@@ -4695,11 +4703,38 @@ class DesktopApp:
 
     # ---- Backend-ready check --------------------------------------------------
 
+    def _format_backend_boot_failure(self) -> str:
+        """A sentence the user can act on when the window never appears."""
+        exc = getattr(self, "_backend_boot_error", None)
+        python = sys.executable
+        if isinstance(exc, ModuleNotFoundError):
+            missing = exc.name or str(exc)
+            return (
+                f"{WINDOW_TITLE} cannot start: the package '{missing}' is "
+                f"missing from this Python install.\n\n"
+                f"Python: {python}\n\n"
+                f"Restore it with:\n"
+                f"    {python} -m pip install -r requirements.txt"
+            )
+        if exc is not None:
+            return (
+                f"{WINDOW_TITLE} cannot start: {type(exc).__name__}: {exc}\n\n"
+                f"Python: {python}"
+            )
+        return (
+            f"{WINDOW_TITLE} cannot start: the backend did not become ready.\n\n"
+            f"Python: {python}"
+        )
+
     def _wait_for_backend(self, timeout_s: float = 45.0) -> bool:
         """Polls ``/api/health`` until it returns 200 or the timeout expires.
 
         45s default — Whisper/VAD models are loaded on first initialization
         and block the event loop synchronously for up to ~20s.
+
+        If the backend thread has already died (missing import, bind error),
+        return immediately — waiting out the timeout just hides the reason
+        under pythonw for 45 seconds.
         """
         import httpx
 
@@ -4708,6 +4743,9 @@ class DesktopApp:
         # 100 ms startup buffer so the thread can set up the loop.
         time.sleep(0.05)
         while time.monotonic() - start < timeout_s:
+            thread = self._backend_thread
+            if thread is not None and not thread.is_alive():
+                return False
             try:
                 r = httpx.get(url, timeout=0.5)
                 if r.status_code == 200:
@@ -4810,7 +4848,17 @@ class DesktopApp:
             )
 
         if not self._wait_for_backend():
-            sys.stderr.write("Backend did not start within 45s — aborting.\n")
+            detail = self._format_backend_boot_failure()
+            reported = False
+            try:
+                from jarvis.ui.web.launcher import _report_startup_failure
+
+                _report_startup_failure(detail)
+                reported = True
+            except Exception:  # noqa: BLE001, S110 — dialog is best-effort
+                pass
+            if not reported:
+                sys.stderr.write(detail + "\n")
             return self.shutdown() or 2
 
         # The frame is painted before the web view has loaded a single byte, so

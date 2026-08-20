@@ -18,9 +18,11 @@ Two holes made that possible, and these tests pin both shut:
 
 from __future__ import annotations
 
+import inspect
 import sys
 import threading
 import time
+import types
 from typing import Any
 
 import pytest
@@ -269,3 +271,50 @@ def test_installing_twice_does_not_stack_hooks(monkeypatch: pytest.MonkeyPatch) 
     desktop_app._install_crash_hooks()
 
     assert threading.excepthook is first
+
+
+# --- boot that never binds -------------------------------------------------
+
+
+def test_wait_stops_when_the_backend_thread_is_already_dead() -> None:
+    """A missing click used to sit on the 45 s health poll, then write the
+    reason into pythonw's null stderr — Start-Menu click, nothing happens."""
+    dead = threading.Thread(target=lambda: None)
+    dead.start()
+    dead.join()
+
+    class _Stub:
+        cfg = types.SimpleNamespace(ui=types.SimpleNamespace(admin_api_port=9))
+        _backend_thread = dead
+
+    started = time.monotonic()
+    assert DesktopApp._wait_for_backend(_Stub(), timeout_s=45.0) is False  # type: ignore[arg-type]
+    assert time.monotonic() - started < 2.0
+
+
+def test_boot_failure_names_a_missing_package() -> None:
+    app = _FakeApp(_backend_boot_error=ModuleNotFoundError("No module named 'click'", name="click"))
+    msg = DesktopApp._format_backend_boot_failure(app)  # type: ignore[arg-type]
+    assert "click" in msg
+    assert sys.executable in msg
+    assert "pip install -r requirements.txt" in msg
+
+
+def test_boot_failure_names_a_generic_exception() -> None:
+    app = _FakeApp(_backend_boot_error=OSError(10048, "address already in use"))
+    msg = DesktopApp._format_backend_boot_failure(app)  # type: ignore[arg-type]
+    assert "OSError" in msg
+    assert sys.executable in msg
+
+
+def test_boot_failure_without_a_stored_exception_still_names_the_interpreter() -> None:
+    app = _FakeApp()
+    msg = DesktopApp._format_backend_boot_failure(app)  # type: ignore[arg-type]
+    assert "did not become ready" in msg
+    assert sys.executable in msg
+
+
+def test_a_backend_that_never_binds_reports_visibly() -> None:
+    src = inspect.getsource(DesktopApp.run_window_only)
+    assert "_report_startup_failure" in src
+    assert "_format_backend_boot_failure" in src

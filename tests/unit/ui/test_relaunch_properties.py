@@ -24,6 +24,18 @@ def test_relaunch_properties_api_is_importable() -> None:
     assert callable(icon_utils.set_window_relaunch_properties)
 
 
+def test_relaunch_command_uses_the_shortcut_target() -> None:
+    """The Start recently-used list and a taskbar re-click use RelaunchCommand, not the .lnk.
+
+    Pointing it at pythonw.exe is the generic-host launch Windows will not
+    treat as an app — the same class of bug as the Start-Menu shortcut that
+    used to target pythonw (BUG-138).
+    """
+    src = inspect.getsource(icon_utils.set_window_relaunch_properties)
+    assert "_shortcut_launch_target" in src
+    assert "_PID_RELAUNCH_COMMAND" in src
+
+
 def test_apply_icon_chokepoint_stamps_relaunch_properties() -> None:
     """Every icon path funnels through ``_apply_icon_to_hwnd`` — it must stamp
     the relaunch properties, or MS-Store-Python installs regress to the Python

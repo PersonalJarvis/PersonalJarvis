@@ -11,6 +11,13 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **A Start-Menu click that cannot boot now says why.** A missing `click`
+  (uvicorn's import-time dependency) killed the backend thread, the window
+  waited 45 s for `/api/health`, and pythonw swallowed the traceback — so
+  Personal Jarvis in the Start recently-used list looked dead. The
+  launcher now refuses up front, a dead backend thread no longer waits
+  out the timeout, and the window's relaunch command points at
+  `PersonalJarvis.exe` like the shortcut.
 - **A Gemini Live greeting no longer dies mid-sentence.** Vertex Live fires
   an empty `interrupted` for our own steering text, then speaks the real
   reply. The session used to treat the quiet after that reply's

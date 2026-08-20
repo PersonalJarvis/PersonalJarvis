@@ -1041,11 +1041,14 @@ def set_window_relaunch_properties(
         store.SetValue(
             (fmtid, _PID_RELAUNCH_NAME), propsys.PROPVARIANTType(display_name)
         )
-        pythonw = _pythonw_executable()
-        if pythonw is not None:
+        # Same target as the Start-Menu shortcut. Pointing this at pythonw.exe
+        # made the Start recently-used list / a taskbar re-click a generic-host
+        # launch: Windows either refuses it or pythonw dies with nowhere to print.
+        target = _shortcut_launch_target()
+        if target is not None:
             store.SetValue(
                 (fmtid, _PID_RELAUNCH_COMMAND),
-                propsys.PROPVARIANTType(f'"{pythonw}" -m {_LAUNCHER_MODULE}'),
+                propsys.PROPVARIANTType(f'"{target}" -m {_LAUNCHER_MODULE}'),
             )
         store.Commit()
         _RELAUNCH_STAMPED.add(hwnd)
