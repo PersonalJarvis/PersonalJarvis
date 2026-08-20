@@ -37,7 +37,7 @@ const WikiGraph3D = lazy(() => loadWikiGraph3D().then((m) => ({ default: m.WikiG
 
 /**
  * Get the scene's heavy parts ready while nothing is happening — the deck
- * calls this from the standby's idle time, so that when the board takes
+ * calls this from the boot's idle time, so that when the board takes
  * over, the WebGL probe is a cache hit and the 3D chunk is already parsed.
  * Measured 2026-08-19: done on the board's mount instead, the probe alone
  * held the main thread for half a second, in the middle of the launch.

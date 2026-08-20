@@ -7,10 +7,15 @@ import { useDeckStore } from "@/store/deck";
 import { useEventStore } from "@/store/events";
 
 /**
- * The deck before the first word (2026-08-18): a boot console that lights
- * the four gates as they turn true, then a listening ring — with the board
- * one press away. Rendered against the real stores so what is asserted is
- * what a person sees while the app comes up.
+ * The deck before the board (2026-08-18): a boot console that lights the
+ * four gates as they turn true, on a ring that sweeps once the wake word is
+ * really being listened for — with the board one press away. Rendered
+ * against the real stores so what is asserted is what a person sees while
+ * the app comes up.
+ *
+ * There is no waiting screen any more (maintainer, 2026-08-20): the stage
+ * never asks to be spoken to, it launches into the board on its own
+ * (`lib/deckStandby.ts::AUTO_LAUNCH`, driven by MissionDeckView).
  */
 
 const WAKE: WakeWordConfig = {
@@ -27,15 +32,11 @@ const WAKE: WakeWordConfig = {
 
 const READOUTS = { nw: "ready", ne: "0 steps", sw: "—", se: "0 words" };
 
-function renderStage(
-  phase: "boot" | "standby",
-  extra: Partial<Parameters<typeof DeckStandby>[0]> = {},
-) {
+function renderStage(extra: Partial<Parameters<typeof DeckStandby>[0]> = {}) {
   const onOpenBoard = vi.fn();
   const onPressOrb = vi.fn();
   const utils = render(
     <DeckStandby
-      phase={phase}
       steps={[]}
       busy={false}
       readouts={READOUTS}
@@ -54,7 +55,7 @@ function console_() {
   return within(screen.getByTestId("deck-boot-console"));
 }
 
-describe("DeckStandby — boot", () => {
+describe("DeckStandby — the app coming up", () => {
   beforeEach(() => {
     useDeckStore.getState().resetDeck();
     useEventStore.setState({
@@ -71,21 +72,21 @@ describe("DeckStandby — boot", () => {
   afterEach(() => cleanup());
 
   test("names the act, the assistant, and waits on the link first", () => {
-    renderStage("boot");
-    expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("boot");
+    renderStage();
     expect(screen.getByText("boot sequence")).toBeTruthy();
     expect(screen.getByTestId("deck-boot-title").getAttribute("aria-label")).toBe("Nova starting");
     // The console: the first gate only, pending — later lines wait their turn.
     const c = console_();
     expect(c.getByText("connecting to the assistant")).toBeTruthy();
     expect(c.queryByText("voice stack starting")).toBeNull();
-    // No board yet, so no idle headline; but the board is one press away.
+    // The stage never asks to be spoken to; the board is one press away.
     expect(screen.queryByText(/Say “Hey Nova”/)).toBeNull();
+    expect(screen.queryByTestId("deck-standby-cue")).toBeNull();
     expect(screen.getByRole("button", { name: "Open the board" })).toBeTruthy();
   });
 
   test("lights the gates in order as they turn true, and the arcs follow", () => {
-    const { rerender } = renderStage("boot");
+    const { rerender } = renderStage();
     act(() => useEventStore.setState({ connected: true }));
     let c = console_();
     expect(c.getByText("connected")).toBeTruthy();
@@ -95,7 +96,6 @@ describe("DeckStandby — boot", () => {
     act(() => useEventStore.setState({ voiceReady: true, brainProvider: "openrouter", brainModel: "claude-sonnet-5" }));
     rerender(
       <DeckStandby
-        phase="standby"
         steps={[]}
         busy={false}
         readouts={READOUTS}
@@ -122,7 +122,7 @@ describe("DeckStandby — boot", () => {
 
   test("the orb press and the board button reach the parent", () => {
     act(() => useEventStore.setState({ connected: true }));
-    const { onOpenBoard, onPressOrb } = renderStage("boot");
+    const { onOpenBoard, onPressOrb } = renderStage();
     fireEvent.click(screen.getByRole("button", { name: "Open the board" }));
     expect(onOpenBoard).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Start talking" }));
@@ -130,7 +130,7 @@ describe("DeckStandby — boot", () => {
   });
 });
 
-describe("DeckStandby — standby", () => {
+describe("DeckStandby — every gate up", () => {
   beforeEach(() => {
     useDeckStore.getState().resetDeck();
     useEventStore.setState({
@@ -149,13 +149,14 @@ describe("DeckStandby — standby", () => {
     vi.useRealTimers();
   });
 
-  test("names the phrase to say, listens on the ring, and shows the four gates standing", () => {
-    renderStage("standby");
-    expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("standby");
-    expect(screen.getByText("standby")).toBeTruthy();
-    // The cue: big, and it names the phrase.
-    expect(screen.getByTestId("deck-standby-cue").textContent).toBe("Say “Hey Nova”");
-    expect(screen.getByText(/or click the orb\. The board opens the moment you speak\./)).toBeTruthy();
+  test("listens on the ring and shows the four gates standing — and asks for nothing", () => {
+    renderStage();
+    // The act is the boot to the last frame: no standby, no cue, no line
+    // telling anybody to speak (cut 2026-08-20).
+    expect(screen.getByText("boot sequence")).toBeTruthy();
+    expect(screen.queryByText("standby")).toBeNull();
+    expect(screen.queryByTestId("deck-standby-cue")).toBeNull();
+    expect(screen.queryByText(/The board opens the moment you speak/)).toBeNull();
     // The wake word is on and the voice is idle: the ring sweeps.
     expect(screen.getByTestId("deck-standby-ring").getAttribute("data-sweep")).toBe("true");
     expect(screen.getByTestId("deck-ring-sweep")).toBeTruthy();
@@ -164,24 +165,24 @@ describe("DeckStandby — standby", () => {
     const c = console_();
     expect(c.getByText("connected")).toBeTruthy();
     expect(c.getByText("groq")).toBeTruthy();
-    expect(c.getByText("listening for the wake word")).toBeTruthy();
+    expect(c.getByText("listening for “Hey Nova”")).toBeTruthy();
     expect(c.queryByText(/ ms$| s$/)).toBeNull();
+    // The console ends with the gates. The standby's live cursor line — the
+    // one that sat there counting how long you had been quiet — is gone.
+    expect(c.queryByText("listening for the wake word")).toBeNull();
   });
 
-  test("a wake word that is off is said so, the cue points at the orb, and the ring stays still", () => {
-    renderStage("standby", { wakeConfig: { ...WAKE, enabled: false } });
+  test("a wake word that is off is said so, and the ring stays still", () => {
+    renderStage({ wakeConfig: { ...WAKE, enabled: false } });
     expect(console_().getByText(/wake word off/)).toBeTruthy();
-    expect(screen.getByTestId("deck-standby-cue").textContent).toBe("Click the orb");
-    expect(screen.getByText(/or press the hotkey/)).toBeTruthy();
     expect(screen.getByTestId("deck-standby-ring").getAttribute("data-sweep")).toBe("false");
     expect(screen.queryByTestId("deck-ring-sweep")).toBeNull();
-    expect(console_().getByText("voice idle")).toBeTruthy();
   });
 
   test("a brain that never shows up is called absent once the dust settles, and the line opens the keys", () => {
     vi.useFakeTimers();
     useEventStore.setState({ brainProvider: "" });
-    renderStage("standby");
+    renderStage();
     let c = console_();
     expect(c.getByText("reading the brain")).toBeTruthy();
     act(() => {
@@ -197,8 +198,7 @@ describe("DeckStandby — standby", () => {
 
   test("keeps the sweep off while the voice reports trouble", () => {
     useEventStore.setState({ voiceState: "error" });
-    renderStage("standby");
+    renderStage();
     expect(screen.getByTestId("deck-standby-ring").getAttribute("data-sweep")).toBe("false");
-    expect(console_().getByText(/voice reported an error/)).toBeTruthy();
   });
 });

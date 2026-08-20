@@ -13,20 +13,19 @@ import {
   AUTO_LAUNCH,
   CARD_POWER_ON,
   HANDOFF,
-  STANDBY_CUE_DELAY_S,
   type BoardSlot,
   type GateInput,
   type PhaseInput,
 } from "@/lib/deckStandby";
 
 /**
- * The deck's opening act (2026-08-18): boot while the app comes up, standby
- * until somebody speaks, the board from the first turn on — forward only.
+ * The deck's opening act (2026-08-18): the boot sequence while the app comes
+ * up, then the board — forward only. The standby ring that waited for a
+ * spoken word between them was cut on 2026-08-20; the boot launches itself
+ * (`autoLaunchAfterMs`).
  */
 
 const READY: PhaseInput = {
-  connected: true,
-  voiceReady: true,
   boardOpen: false,
   turnIndex: 0,
   messageCount: 0,
@@ -34,14 +33,8 @@ const READY: PhaseInput = {
 };
 
 describe("resolvePhase", () => {
-  test("boots while the link or the voice stack is still coming up", () => {
-    expect(resolvePhase({ ...READY, connected: false, voiceReady: false })).toBe("boot");
-    expect(resolvePhase({ ...READY, connected: true, voiceReady: false })).toBe("boot");
-    expect(resolvePhase({ ...READY, connected: false, voiceReady: true })).toBe("boot");
-  });
-
-  test("stands by once both are up and nobody has spoken", () => {
-    expect(resolvePhase(READY)).toBe("standby");
+  test("starts on the boot sequence — nothing has happened yet", () => {
+    expect(resolvePhase(READY)).toBe("boot");
   });
 
   test("the first turn opens the board", () => {
@@ -56,35 +49,31 @@ describe("resolvePhase", () => {
     expect(resolvePhase({ ...READY, voiceEngaged: true })).toBe("board");
   });
 
-  test("opening the board by hand wins, even mid-boot", () => {
-    expect(resolvePhase({ ...READY, connected: false, voiceReady: false, boardOpen: true })).toBe("board");
+  test("opening the board by hand wins", () => {
+    expect(resolvePhase({ ...READY, boardOpen: true })).toBe("board");
   });
 
   test("a person mid-conversation is never sent back to the start screen", () => {
-    // The link dropped for a moment: the board holds.
-    expect(resolvePhase({ ...READY, connected: false, turnIndex: 3 })).toBe("board");
+    expect(resolvePhase({ ...READY, turnIndex: 3 })).toBe("board");
   });
 });
 
 describe("autoLaunchAfterMs", () => {
-  test("the standby is one beat, then the board takes over on its own", () => {
-    expect(autoLaunchAfterMs("standby", true)).toBe(AUTO_LAUNCH.standbyMs);
+  test("the gates are up: the board takes over a blink later, on its own", () => {
+    expect(autoLaunchAfterMs({ connected: true, voiceReady: true })).toBe(AUTO_LAUNCH.readyMs);
   });
 
   test("a voice stack that never reports does not hold the board hostage", () => {
-    expect(autoLaunchAfterMs("boot", true)).toBe(AUTO_LAUNCH.bootMs);
+    expect(autoLaunchAfterMs({ connected: true, voiceReady: false })).toBe(AUTO_LAUNCH.bootMs);
   });
 
   test("without a link there is nothing to launch into", () => {
-    expect(autoLaunchAfterMs("boot", false)).toBeNull();
+    expect(autoLaunchAfterMs({ connected: false, voiceReady: true })).toBeNull();
+    expect(autoLaunchAfterMs({ connected: false, voiceReady: false })).toBeNull();
   });
 
-  test("a board that is already up is not launched again", () => {
-    expect(autoLaunchAfterMs("board", true)).toBeNull();
-  });
-
-  test("the cue fades in only after the launch would have fired", () => {
-    expect(STANDBY_CUE_DELAY_S).toBeGreaterThan(AUTO_LAUNCH.standbyMs / 1000);
+  test("the launch is a blink, not a screen to read", () => {
+    expect(AUTO_LAUNCH.readyMs).toBeLessThan(1_000);
   });
 });
 

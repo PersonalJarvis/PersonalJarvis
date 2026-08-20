@@ -62,18 +62,17 @@ import { useT } from "@/i18n";
  * its title jumps there. The dock on the left is the ONLY place the sections
  * are listed — the sidebar steps aside while the deck is up (App.tsx).
  *
- * The board is the deck's THIRD act (maintainer, 2026-08-18: a fresh start
- * showed nine instruments all saying "nothing yet"). Before the first word
- * the stage is `DeckStandby` — the boot sequence while the app comes up,
- * then the listening ring — and the board takes over the moment a turn
- * opens or the person asks for it (`lib/deckStandby.ts::resolvePhase`,
- * forward only). It also takes over ON ITS OWN, one beat after the ring
- * reports ready (maintainer, 2026-08-20: opening the app must land you on
- * the board, not on a screen that waits to be answered —
+ * The board is the deck's SECOND act (maintainer, 2026-08-18: a fresh start
+ * showed nine instruments all saying "nothing yet"). While the app comes up
+ * the stage is `DeckStandby` — the boot sequence — and the board takes over
+ * the moment a turn opens or the person asks for it
+ * (`lib/deckStandby.ts::resolvePhase`, forward only). It also takes over ON
+ * ITS OWN, a blink after the gates are up (maintainer, 2026-08-20: opening the app must land you on the board,
+ * never on a screen that asks you to speak first —
  * `lib/deckStandby.ts::AUTO_LAUNCH`). The start plays out in full either
  * way; only the trigger changed. The hand-off is a LAUNCH, on one clock
  * (`lib/deckStandby.ts::HANDOFF`): the orb flares and a shockwave leaves
- * it, the standby's ring bursts past the camera and its console gets out of
+ * it, the boot's ring bursts past the camera and its console gets out of
  * the way (`DeckStandby`), the orb travels from the ring's centre to its
  * place on the board (one `layoutId` on both stages) and lands with a ring,
  * the instruments assemble from the centre outward as the wave reaches them
@@ -122,10 +121,8 @@ export function MissionDeckView({
   const { config: wakeConfig } = useWakeWord();
   const wakePhrase = wakeConfig?.phrase.trim() || assistantName;
 
-  // Which act: boot, standby, or the board — forward only for the session.
+  // Which act: the start sequence or the board — forward only for the session.
   const phase = resolvePhase({
-    connected,
-    voiceReady,
     boardOpen,
     turnIndex,
     messageCount: messages.length,
@@ -133,25 +130,26 @@ export function MissionDeckView({
   });
   // Forward only, for real: a transient reason for the board (a call being
   // set up, a voice state that came and went without a turn) must not let the
-  // standby come back over a stage that already handed off — an interrupted
+  // start sequence come back over a stage that already handed off — an interrupted
   // hand-off leaves the orb's shared-layout crossfade half-way, with the ring
   // back and nothing in it (seen 2026-08-19). So the first board render
   // latches the store's sticky flag.
   useEffect(() => {
     if (phase === "board") openBoard();
   }, [phase, openBoard]);
-  // The start screen launches itself. Nobody who opens the app wants a lobby
-  // they have to answer (maintainer, 2026-08-20) — so the boot lights its
-  // gates, the ring reports ready, and one beat later the SAME hand-off a
-  // spoken word triggers plays on its own (`lib/deckStandby.ts::AUTO_LAUNCH`).
-  // Any real trigger arriving first simply wins: the phase is already board
-  // and this timer never fires.
+  // The start sequence launches itself. Nobody who opens the app wants a
+  // screen that asks to be spoken to first (maintainer, 2026-08-20) — so the
+  // boot lights its gates and a blink later the SAME hand-off a spoken word
+  // triggers plays on its own (`lib/deckStandby.ts::AUTO_LAUNCH`). Any real
+  // trigger arriving first simply wins: the phase is already board and this
+  // timer never fires.
   useEffect(() => {
-    const after = autoLaunchAfterMs(phase, connected);
+    if (phase === "board") return;
+    const after = autoLaunchAfterMs({ connected, voiceReady });
     if (after === null) return;
     const id = window.setTimeout(() => openBoard(), after);
     return () => window.clearTimeout(id);
-  }, [phase, connected, openBoard]);
+  }, [phase, connected, voiceReady, openBoard]);
   // The board powers on with its choreography ONLY when it takes over from
   // the standby on this very screen. A deck that mounts straight into a
   // running session (a section change and back) is simply there. Fixed on
@@ -392,15 +390,13 @@ export function MissionDeckView({
             </div>
           )}
 
-          {/* Before the first word: the boot sequence, then the listening
-              ring. Absolute over the stage so its exit plays over the board
-              powering on underneath. */}
+          {/* Before the board: the start sequence. Absolute over the stage
+              so its exit plays over the board powering on underneath. */}
           <AnimatePresence>
             {phase !== "board" && (
               <DeckStandby
                 key="standby"
                 className="absolute inset-0 z-10"
-                phase={phase}
                 steps={running}
                 busy={busy}
                 readouts={readouts}

@@ -2384,19 +2384,6 @@
     transform-origin: 50% 50%;
     animation: deck-ring-ping 1100ms cubic-bezier(0.1, 0.6, 0.3, 1) forwards;
   }
-  /* the cue under the orb breathes slowly: it is waiting for the person */
-  .deck-standby-cue {
-    animation: deck-standby-cue 3.2s ease-in-out infinite;
-  }
-  @keyframes deck-standby-cue {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.62;
-    }
-  }
   @keyframes deck-ring-ping {
     0% {
       transform: scale(0.35);
@@ -2720,7 +2707,6 @@
     .deck-gate-arc,
     .deck-ring-sweep,
     .deck-ring-ping,
-    .deck-standby-cue,
     .deck-boot-line,
     .deck-boot-caret,
     .deck-boot-dots span,

@@ -52,15 +52,17 @@ versioning per [SemVer](https://semver.org/).
   short "I'll play that" ack it used to look ready even though YouTube
   Music was still running. Progress speech now returns to thinking until
   the result is spoken.
-- **The deck opens on the board, not on a start screen.** Starting the app
-  left you on the standby ring, waiting for a word before anything to look
-  at appeared. The start now plays out on its own: the boot lights its
-  gates, the ring reports ready, and one beat later the SAME launch a
-  spoken word triggers hands over to the board — orb travel, shockwave,
-  instruments assembling, the lot. Speaking, the hotkey or a press on the
-  orb still gets there sooner, and an install whose voice stack never
-  reports (no microphone, voice off, a headless box) is no longer held on
-  the boot screen: with the link up the board opens anyway.
+- **The deck opens on the board, and the waiting screen is gone.** Starting
+  the app left you on a standby ring under a big "Say 'Hey Nova'", with
+  nothing to look at until you spoke. That screen has been cut. The start is
+  now the boot sequence and its launch: the four gates light as they turn
+  true, and a blink later the SAME hand-off a spoken word triggers hands over
+  to the board — orb travel, shockwave, instruments assembling, the scan.
+  Speaking, the hotkey or a press on the orb still gets there sooner, and an
+  install whose voice stack never reports (no microphone, voice off, a
+  headless box) is no longer held on the start screen: with the link up the
+  board opens anyway. The wake phrase still greets you — on the board's own
+  headline, where it does not block the view.
 
 ## [1.4.0] — 2026-08-18
 

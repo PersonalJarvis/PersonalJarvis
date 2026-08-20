@@ -2,12 +2,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 /**
- * The deck's three acts (2026-08-18): the boot sequence while the app comes
- * up, the standby ring for one beat, the board from there on — and never
- * back. Since 2026-08-20 the last hand-off needs no word: the stage launches
- * itself on the clock, and a spoken turn only gets there sooner. The
- * instruments themselves are stubbed (each has its own tests); what is under
- * test is WHICH stage is on, and how the board is reached.
+ * The deck's two acts (2026-08-18): the boot sequence while the app comes up,
+ * the board from there on — and never back. The standby ring that waited for
+ * a spoken word between them was cut on 2026-08-20: the stage launches itself
+ * on the clock, and a spoken turn only gets there sooner. The instruments
+ * themselves are stubbed (each has its own tests); what is under test is
+ * WHICH stage is on, and how the board is reached.
  */
 vi.mock("@/components/layout/DockRail", () => ({ DockRail: () => <nav data-testid="dock" /> }));
 vi.mock("@/components/deck/DeckWiki", () => ({
@@ -113,21 +113,17 @@ describe("MissionDeckView — the three acts", { timeout: 15_000 }, () => {
   });
   afterEach(() => cleanup());
 
-  test("boots while the app is still coming up — no board", () => {
+  test("boots while the app is still coming up — no board, and nothing to answer", () => {
     useEventStore.setState({ connected: false, voiceReady: false, wsWarming: true });
     render(<MissionDeckView />);
-    expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("boot");
+    expect(screen.getByTestId("deck-standby")).toBeTruthy();
     expect(screen.queryByTestId("deck-board")).toBeNull();
+    // No link, so nothing launches — and no screen asks to be spoken to.
+    expect(screen.queryByTestId("deck-standby-cue")).toBeNull();
+    expect(screen.queryByText(/Say “Hey Nova”/)).toBeNull();
   });
 
-  test("stands by once everything is up and nobody has spoken", () => {
-    render(<MissionDeckView />);
-    expect(screen.getByTestId("deck-standby").getAttribute("data-phase")).toBe("standby");
-    expect(screen.queryByTestId("deck-board")).toBeNull();
-    expect(screen.getByTestId("deck-standby-cue").textContent).toBe("Say “Hey Nova”");
-  });
-
-  test("the standby is one beat: the board takes over on its own, with the launch", async () => {
+  test("the boot launches itself into the board, with the full hand-off", async () => {
     render(<MissionDeckView />);
     expect(screen.queryByTestId("deck-board")).toBeNull();
     // Nobody speaks, nobody clicks — the stage launches itself.

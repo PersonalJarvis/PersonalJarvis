@@ -1,31 +1,35 @@
 /**
- * The deck's opening — boot, standby, and the moment the board takes over.
+ * The deck's opening — the boot sequence and the moment the board takes over.
  *
  * Before the first turn the mission deck used to show the full board: nine
  * instruments, most of them saying "nothing yet". The maintainer's verdict
  * (2026-08-18): boring, and worse at the very start, when the app is still
- * coming up. So the deck now has THREE phases and one honest rule for moving
- * between them:
+ * coming up. So the deck opens on a start sequence and launches into the
+ * board — TWO phases, forward only:
  *
- *   boot     — the link or the voice stack is not up yet. The stage shows
- *              the start sequence: the four gates a voice turn needs (link,
- *              voice, brain, wake), each one lighting up the moment it is
- *              really true, with the time it took.
- *   standby  — everything is up, nobody has spoken. The stage is the big
- *              instrument: the orb in a ring that listens, and the same four
- *              gates as standing readouts.
- *   board    — the mission control board. Reached the moment a turn opens
- *              (a wake word, a hotkey, a typed message, a press on the orb),
- *              or when the person opens it by hand — and then it STAYS: the
- *              phases only ever move forward within a session, because a
- *              stage that flips back and forth is a stage nobody can read.
+ *   boot   — the app is coming up. The stage shows the four gates a voice
+ *            turn needs (link, voice, brain, wake), each lighting up the
+ *            moment it is really true, with the time it took.
+ *   board  — the mission control board. Reached the moment a turn opens (a
+ *            wake word, a hotkey, a typed message, a press on the orb), when
+ *            the person opens it by hand — and otherwise ON ITS OWN, the
+ *            beat after the gates are up (`autoLaunchAfterMs`). Then it
+ *            STAYS: the phases only ever move forward within a session,
+ *            because a stage that flips back and forth is a stage nobody can
+ *            read.
+ *
+ * There used to be a third phase between them — a standby ring that waited
+ * for somebody to say the wake word. The maintainer had it cut on
+ * 2026-08-20: opening the app must land you on the board, not on a screen
+ * that asks you to speak first. The launch it used to play is now the boot's
+ * own ending, so nothing about the choreography was lost — only the waiting.
  *
  * Nothing here is invented: every gate is a store field the header lamps
  * already show, and the durations are measured on this very screen. Pure
  * module — no React, no timers — so deckStandby.test.ts can pin all of it.
  */
 
-export type DeckPhase = "boot" | "standby" | "board";
+export type DeckPhase = "boot" | "board";
 
 export type GateId = "link" | "voice" | "brain" | "wake";
 
@@ -90,8 +94,6 @@ export function gatesFor(input: GateInput): Gate[] {
 }
 
 export interface PhaseInput {
-  connected: boolean;
-  voiceReady: boolean;
   /** The person (or the deck itself) opened the board — sticky for the session. */
   boardOpen: boolean;
   /** Turns opened this session (deck store); 0 before the first. */
@@ -108,14 +110,13 @@ export interface PhaseInput {
  * Forward only: any sign of a conversation — a turn, a message, a live call,
  * or the explicit "open the board" — is the board, whatever the boot says
  * (a person mid-conversation must never be sent back to a start screen).
- * Without any of that, the boot holds until link and voice are both up, and
- * then the standby holds until somebody speaks.
+ * Without any of that the deck is still starting, and `autoLaunchAfterMs`
+ * decides when the boot hands over.
  */
 export function resolvePhase(input: PhaseInput): DeckPhase {
-  if (input.boardOpen || input.turnIndex > 0 || input.messageCount > 0 || input.voiceEngaged) {
-    return "board";
-  }
-  return input.connected && input.voiceReady ? "standby" : "boot";
+  return input.boardOpen || input.turnIndex > 0 || input.messageCount > 0 || input.voiceEngaged
+    ? "board"
+    : "boot";
 }
 
 /**
@@ -125,47 +126,35 @@ export function resolvePhase(input: PhaseInput): DeckPhase {
 export const SETTLE_MS = 3_000;
 
 /**
- * The stage launches ITSELF (maintainer, 2026-08-20: the start screen sat
- * there waiting; a person who opens the app wants the board, not a lobby).
- * The standby is no longer a waiting room — it is one beat of the start:
- * the boot lights its gates, the ring reports ready, and then the same
- * hand-off a spoken word would trigger plays on its own. The launch stays
- * exactly as it was; only the trigger is now the clock.
+ * The boot launches ITSELF into the board (maintainer, 2026-08-20: the start
+ * screen sat there asking to be spoken to; a person who opens the app wants
+ * the board). The gates light, and a beat later the SAME hand-off a spoken
+ * word triggers plays on its own. The launch is unchanged; only the trigger
+ * is now the clock.
  *
- *   standby — the beat between "ready" and the launch. Long enough for the
- *             ring's ready ping to land, short enough that nobody reads it
- *             as a screen they have to answer.
- *   boot    — the link is up but the voice stack has not reported. It may
- *             never (no microphone, voice switched off, a headless box):
- *             the board works without it, so the boot gets this much
- *             patience and then hands off anyway.
+ *   readyMs — after link and voice are both up: a blink, so the last gate is
+ *             seen landing and nothing reads as a screen to answer.
+ *   bootMs  — the link is up but the voice stack has not reported, and may
+ *             never (no microphone, voice switched off, a headless box). The
+ *             board works without it, so the boot gets this much patience and
+ *             then hands over anyway.
  *
  * Without a link there is no launch: the board would have nothing to show,
  * and the boot console is already saying so.
  */
 export const AUTO_LAUNCH = {
-  standbyMs: 700,
+  readyMs: 400,
   bootMs: 6_000,
 } as const;
 
-/** How long this phase holds before the board takes over, or null to wait. */
-export function autoLaunchAfterMs(phase: DeckPhase, connected: boolean): number | null {
-  if (phase === "board") return null;
-  if (phase === "standby") return AUTO_LAUNCH.standbyMs;
-  return connected ? AUTO_LAUNCH.bootMs : null;
+/** How long the boot holds before the board takes over, or null to wait. */
+export function autoLaunchAfterMs(input: { connected: boolean; voiceReady: boolean }): number | null {
+  if (!input.connected) return null;
+  return input.voiceReady ? AUTO_LAUNCH.readyMs : AUTO_LAUNCH.bootMs;
 }
 
-/**
- * When the standby's cue ("Say ‘Hey Nova’") fades in — AFTER the auto-launch
- * would have fired. The cue asks for a word that the launch no longer waits
- * for, so it is the fallback, not the greeting: it appears only if the beat
- * passed without a hand-off. The board's own headline carries the wake
- * phrase from there on.
- */
-export const STANDBY_CUE_DELAY_S = AUTO_LAUNCH.standbyMs / 1000 + 0.35;
-
 /* ------------------------------------------------------------------ */
-/* Ring geometry — the big instrument the standby stage draws           */
+/* Ring geometry — the big instrument the boot stage draws              */
 /* ------------------------------------------------------------------ */
 
 /** A point on a circle, 0° at twelve o'clock, clockwise (screen coordinates). */
@@ -246,7 +235,7 @@ export function reticleSizeFor(ring: number): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* The hand-off — the standby's last second and the board's first        */
+/* The hand-off — the start's last second and the board's first          */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -265,12 +254,12 @@ export function reticleSizeFor(ring: number): number {
  *         the centre's side with a scan bar on the front, and locks with a
  *         flash
  *   0.80  the orb lands: one ring leaves it and dies
- *   0.95  the standby stage is gone
+ *   0.95  the start stage is gone
  *   1.25  one scan runs down the whole board — the deck is live
  *
  * Every figure lives here so the stage (DeckStandby), the cards
  * (DeckReveal) and the view (MissionDeckView) keep one clock, and the tests
- * can pin the order without reading three components. The standby's burst
+ * can pin the order without reading three components. The stage's burst
  * itself (flash, flare, waves, the ring's breath-and-burst) is CSS keyed on
  * `data-leaving` — index.css mirrors the flare, wave, echo and ring figures
  * below, so it runs on the compositor whatever the main thread is doing.
@@ -293,7 +282,7 @@ export const HANDOFF = {
   /** The orb's travel to the board: starts a beat after the flare, takes this long. */
   travelDelayS: 0.12,
   travelS: 0.72,
-  /** The standby layer's final fade starts here, so the burst plays out first. */
+  /** The start layer's final fade starts here, so the burst plays out first. */
   stageFadeDelayS: 0.85,
   stageFadeS: 0.25,
   /** The orb's landing ring on the board. */

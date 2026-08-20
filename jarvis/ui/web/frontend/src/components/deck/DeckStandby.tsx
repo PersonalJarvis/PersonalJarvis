@@ -1,7 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { motion, useIsPresent, useReducedMotion } from "framer-motion";
 import { useEventStore } from "@/store/events";
-import { useDeckStore } from "@/store/deck";
 import type { WakeWordConfig } from "@/hooks/useWakeWord";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import {
@@ -15,60 +14,56 @@ import {
   GATE_ARC_SPAN,
   HANDOFF,
   SETTLE_MS,
-  STANDBY_CUE_DELAY_S,
   type Gate,
   type GateId,
   type GateState,
 } from "@/lib/deckStandby";
 import { DeckOrb, type OrbReadouts } from "@/components/deck/DeckOrb";
 import { HudFrameOverlay, HudHaloDefs, useElementSize } from "@/components/deck/HudFrame";
-import { fmtClock, fmtMs, fmtQuiet } from "@/components/deck/DeckLogCard";
+import { fmtClock, fmtMs } from "@/components/deck/DeckLogCard";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 /**
- * The deck before the first word — the boot sequence and the standby stage.
+ * The deck before the board — the start sequence.
  *
  * What the maintainer asked for (2026-08-18): the board is good once things
  * happen, but a fresh start showed nine instruments all saying "nothing yet".
- * So until somebody speaks the stage is ONE instrument: the orb inside a big
- * ring, the four gates a voice turn needs drawn on that ring, and a small
- * console in the corner that reads like a boot log. Everything on it is a
- * fact from the stores the header lamps already show; the durations are
- * measured on this very screen (`okAt` against `mountedAt`) and appear only
- * for gates this screen watched turn true.
+ * So the app opens on ONE instrument: the orb inside a big ring, the four
+ * gates a voice turn needs drawn on that ring, and a small console in the
+ * corner that reads like a boot log. Everything on it is a fact from the
+ * stores the header lamps already show; the durations are measured on this
+ * very screen (`okAt` against `mountedAt`) and appear only for gates this
+ * screen watched turn true.
  *
- * Boot: the ring's ticks ignite clockwise, the bezel draws itself, and each
- * gate's arc draws in the moment that gate is really true — link, voice,
- * brain, wake — while its console line types in with the clock time. When
- * link and voice are both up, one ping leaves the orb and dies at the bezel:
- * the boot is done.
+ * The ring's ticks ignite clockwise, the bezel draws itself, and each gate's
+ * arc draws in the moment that gate is really true — link, voice, brain,
+ * wake — while its console line types in with the clock time. The sweep
+ * turns once the wake word is really being listened for, and stays still
+ * when it is not (hotkey-only setups, a link that dropped). When link and
+ * voice are both up, one ping leaves the orb and dies at the bezel: the boot
+ * is done, and a blink later the stage launches into the board.
  *
- * Standby: the sweep turns on the ring while the wake word is actually being
- * listened for (and stays still when it is not — hotkey-only setups, a link
- * that dropped), the clock and the "quiet for" figure tick, the orb breathes.
- * It lasts ONE BEAT (maintainer, 2026-08-20: the start screen sat there
- * waiting for a word instead of showing the board) — the stage launches
- * itself on the clock, so this is the pause before the hand-off, not a room
- * to wait in. The cue under the orb names the phrase to say and comes in
- * AFTER that beat (`STANDBY_CUE_DELAY_S`): it is the fallback for a launch
- * that did not come, never a greeting that flashes up and is torn away.
+ * This stage NEVER waits for a word. It used to: a standby ring under a big
+ * "Say ‘Hey Nova’" sat there until somebody spoke. The maintainer had it cut
+ * on 2026-08-20 — opening the app must land you on the board. The board's
+ * own headline carries the wake phrase from there on.
  *
- * The board is one press away at all times (`onOpenBoard`), takes over on
- * its own the moment a turn opens, and otherwise on the beat — that hand-off
- * is MissionDeckView's (`lib/deckStandby.ts::AUTO_LAUNCH`).
- * This stage's part of it is the LAUNCH (`lib/deckStandby.ts::HANDOFF`):
- * the orb flares and two shockwaves leave it, the stage flashes, the ring
- * draws breath and bursts past the camera turning while its ticks flare
- * clockwise and the sweep spins up, the cue and the corners get out of the
- * way, and only then does the layer fade — over the board assembling
- * underneath. `useIsPresent` flips `data-leaving`, and the burst — flash,
- * flare, waves, the ring's breath-and-burst, the tick flare, the sweep
- * spin-up — is pure CSS keyed on it (index.css), so it runs on the
- * compositor whatever the main thread is doing while the board mounts; the
- * framer `exit` variants carry only the corners, the cue and the layer's own
- * fade. The maintainer's brief (2026-08-19): a hard switch is ridiculous;
- * this has to be cinematic, Stark-grade, fun to watch.
+ * The board is one press away at all times (`onOpenBoard`), takes over the
+ * moment a turn opens, and otherwise on the clock — that hand-off is
+ * MissionDeckView's (`lib/deckStandby.ts::AUTO_LAUNCH`). This stage's part
+ * of it is the LAUNCH (`lib/deckStandby.ts::HANDOFF`): the orb flares and
+ * two shockwaves leave it, the stage flashes, the ring draws breath and
+ * bursts past the camera turning while its ticks flare clockwise and the
+ * sweep spins up, the title and the corners get out of the way, and only
+ * then does the layer fade — over the board assembling underneath.
+ * `useIsPresent` flips `data-leaving`, and the burst — flash, flare, waves,
+ * the ring's breath-and-burst, the tick flare, the sweep spin-up — is pure
+ * CSS keyed on it (index.css), so it runs on the compositor whatever the
+ * main thread is doing while the board mounts; the framer `exit` variants
+ * carry only the corners, the title and the layer's own fade. The
+ * maintainer's brief (2026-08-19): a hard switch is ridiculous; this has to
+ * be cinematic, Stark-grade, fun to watch.
  */
 
 /** How the orb travels between this ring and its place on the board. */
@@ -81,10 +76,7 @@ const LABELS_MIN_RING = 520;
 /** The corner blocks leave the ring's sides alone from this stage width. */
 const WIDE_STAGE = 1040;
 
-export type StandbyPhase = "boot" | "standby";
-
 export function DeckStandby({
-  phase,
   steps,
   busy,
   readouts,
@@ -95,7 +87,6 @@ export function DeckStandby({
   onOpenBoard,
   className,
 }: {
-  phase: StandbyPhase;
   steps: ThinkingStep[];
   busy: boolean;
   readouts: OrbReadouts;
@@ -119,10 +110,9 @@ export function DeckStandby({
   const brainModel = useEventStore((s) => s.brainModel);
   const assistantName = useEventStore((s) => s.assistantName);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const journal = useDeckStore((s) => s.journal);
 
-  // One clock for the stage: the corner clock, "quiet for", and the settle
-  // timer all read it, so the stage ticks as one thing.
+  // One clock for the stage: the corner clock and the settle timer both
+  // read it, so the stage ticks as one thing.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
@@ -135,9 +125,6 @@ export function DeckStandby({
   const mountedAt = useRef(Date.now());
   const [okAt, setOkAt] = useState<Partial<Record<GateId, number>>>({});
   const [readyAt, setReadyAt] = useState<number | null>(null);
-  // Whether the boot played on this screen — the ignition and the ping fire
-  // only then; a stage that mounts already-ready is simply on.
-  const ignite = useRef(phase === "boot").current;
 
   const settled = readyAt !== null && now - readyAt >= SETTLE_MS;
   const gates = useMemo(
@@ -180,16 +167,13 @@ export function DeckStandby({
   const reticle = reticleSizeFor(ring);
 
   const wakePhrase = wakeConfig?.phrase.trim() || assistantName;
+  // The sweep turns only while the wake word is REALLY being listened for —
+  // a hotkey-only setup, a dropped link or a voice error leaves it still.
   const listening =
-    phase === "standby" &&
     connected &&
     voiceReady &&
     voiceState === "idle" &&
     gates.find((g) => g.id === "wake")?.state === "ok";
-
-  const lastJournalTs = journal.length > 0 ? journal[journal.length - 1].ts : null;
-  const quietSince = lastJournalTs ?? readyAt ?? mountedAt.current;
-  const quiet = now - quietSince;
 
   const gateText = (g: Gate): { text: string; onClick?: () => void } => {
     switch (g.id) {
@@ -221,11 +205,6 @@ export function DeckStandby({
     return out;
   }, [gates]);
 
-  // The cue under the orb: what to do so something happens. Big, because a
-  // person who has never used the app must read it from across the room
-  // (maintainer, 2026-08-19: "you have to see that you must say something").
-  const wakeOn = gates.find((g) => g.id === "wake")?.state === "ok";
-
   const corner = (extra: string, children: ReactNode) => (
     <div className={cn("absolute z-10", extra)}>{children}</div>
   );
@@ -239,7 +218,6 @@ export function DeckStandby({
     <motion.div
       ref={stageRef}
       data-testid="deck-standby"
-      data-phase={phase}
       data-leaving={leaving ? "true" : "false"}
       className={cn("relative overflow-hidden", className)}
       variants={{
@@ -249,11 +227,11 @@ export function DeckStandby({
         // assembling underneath, then the remains fade.
         exit: { opacity: 0, transition: { duration: HANDOFF.stageFadeS, delay: HANDOFF.stageFadeDelayS } },
       }}
-      initial={ignite && !reduced ? "hidden" : "show"}
+      initial={reduced ? "show" : "hidden"}
       animate="show"
       exit="exit"
     >
-      <HudFrameOverlay variant="bracket" w={stage.w} h={stage.h} live={phase === "standby"} />
+      <HudFrameOverlay variant="bracket" w={stage.w} h={stage.h} live />
 
       {/* The launch: the whole stage flashes gold for a blink (CSS, on leaving). */}
       <div aria-hidden className="deck-launch-flash pointer-events-none absolute inset-0 bg-primary" />
@@ -269,10 +247,9 @@ export function DeckStandby({
               size={ring}
               gates={gates}
               fresh={pendingAtMount}
-              ignite={ignite}
               leaving={leaving}
               sweep={Boolean(listening) && !reduced}
-              ping={ignite && readyAt !== null && !reduced ? readyAt : null}
+              ping={readyAt !== null && !reduced ? readyAt : null}
               labels={ring >= LABELS_MIN_RING ? (id) => t(`deck.boot_gate_${id}`) : undefined}
               reticle={reticle}
             />
@@ -324,53 +301,16 @@ export function DeckStandby({
             </motion.div>
           </div>
 
-          {/* Under the reticle, inside the ring: the boot title, then the cue. */}
+          {/* Under the reticle, inside the ring: what is starting up. */}
           <div
             className="absolute inset-x-0 flex justify-center px-6 text-center"
             style={{ top: ring / 2 + reticle / 2 + 12 }}
           >
-            {phase === "boot" ? (
-              <motion.div
-                key="boot-title"
-                variants={{ exit: { opacity: 0, y: -10, scale: 0.9, transition: { duration: 0.22, ease: "easeIn" } } }}
-              >
-                <BootTitle text={t("deck.boot_title")} animate={!reduced} />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="cue"
-                // Its own start state, so the delay below really runs even
-                // when the stage mounted straight into standby (no boot to
-                // inherit "hidden" from). No `animate` — that would cut the
-                // element out of the parent's variant tree and its exit with
-                // it (framer-motion: a child with `animate` stops inheriting).
-                initial="hidden"
-                variants={{
-                  hidden: { opacity: 0, y: 6 },
-                  // Later than the auto-launch (`STANDBY_CUE_DELAY_S`): the
-                  // board now opens on its own, so the cue is the fallback
-                  // for a beat that passed without a hand-off, not a
-                  // greeting that flashes up and is torn away again.
-                  show: { opacity: 1, y: 0, transition: { duration: 0.5, delay: STANDBY_CUE_DELAY_S } },
-                  // The cue is pulled into the orb as it launches.
-                  exit: { opacity: 0, y: -10, scale: 0.9, transition: { duration: 0.22, ease: "easeIn" } },
-                }}
-                className="flex flex-col items-center gap-1"
-              >
-                <p
-                  className={cn(
-                    "font-display text-lg font-bold uppercase tracking-[0.26em] text-primary sm:text-xl",
-                    !reduced && "deck-standby-cue",
-                  )}
-                  data-testid="deck-standby-cue"
-                >
-                  {wakeOn ? t("deck.standby_cue").replace("{0}", wakePhrase) : t("deck.standby_cue_off")}
-                </p>
-                <p className="max-w-[62ch] text-pretty text-xs leading-relaxed text-muted-foreground">
-                  {t(wakeOn ? "deck.standby_cue_sub" : "deck.standby_cue_sub_off")}
-                </p>
-              </motion.div>
-            )}
+            <motion.div
+              variants={{ exit: { opacity: 0, y: -10, scale: 0.9, transition: { duration: 0.22, ease: "easeIn" } } }}
+            >
+              <BootTitle text={t("deck.boot_title")} animate={!reduced} />
+            </motion.div>
           </div>
         </div>
       </div>
@@ -382,14 +322,9 @@ export function DeckStandby({
           variants={{ exit: { opacity: 0, x: -36, transition: { duration: HANDOFF.cornerS, ease: "easeIn" } } }}
           className="flex flex-col gap-0.5"
         >
-          <span
-            className={cn(
-              "font-mono text-[10px] uppercase tracking-[0.22em]",
-              phase === "boot" ? "text-muted-foreground" : "text-primary",
-            )}
-          >
-            {t(phase === "boot" ? "deck.boot_phase" : "deck.standby_phase")}
-            {phase === "boot" && <span className="deck-boot-caret ml-1 inline-block h-[1em] w-[0.5em] translate-y-[2px] bg-current" aria-hidden />}
+          <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+            {t("deck.boot_phase")}
+            <span className="deck-boot-caret ml-1 inline-block h-[1em] w-[0.5em] translate-y-[2px] bg-current" aria-hidden />
           </span>
           <span className="font-mono text-3xl font-semibold tabular-nums leading-none text-foreground" data-testid="deck-standby-clock">
             {fmtClock(now)}
@@ -452,29 +387,6 @@ export function DeckStandby({
               </div>
             );
           })}
-          {phase === "standby" && (
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="shrink-0 tabular-nums text-muted-foreground/70">{fmtClock(now)}</span>
-              <span className="inline-block h-[1.1em] w-[0.55em] shrink-0 self-center bg-foreground/60 motion-safe:animate-pulse" aria-hidden />
-              <span className="min-w-0 text-foreground/80">
-                {t(
-                  listening
-                    ? "deck.log_now_idle"
-                    : !connected
-                      ? "deck.log_now_offline"
-                      : voiceState === "error"
-                        ? "deck.standby_error"
-                        : "deck.standby_still",
-                )}
-                {quiet > 5_000 && (
-                  <span className="text-muted-foreground/70">
-                    {" · "}
-                    {t("deck.log_quiet_for").replace("{0}", fmtQuiet(quiet))}
-                  </span>
-                )}
-              </span>
-            </div>
-          )}
         </motion.div>,
       )}
 
@@ -547,7 +459,6 @@ function StandbyRing({
   size,
   gates,
   fresh,
-  ignite,
   leaving,
   sweep,
   ping,
@@ -558,7 +469,6 @@ function StandbyRing({
   gates: Gate[];
   /** Gates that were pending when the stage mounted — their arcs draw in. */
   fresh: Set<GateId>;
-  ignite: boolean;
   /**
    * The stage is on its way out: the ticks flare clockwise on the CSS
    * cascade (`--tick-i`), so the ignition's own per-tick delay steps aside.
@@ -593,7 +503,7 @@ function StandbyRing({
         {/* bezel */}
         <circle
           className="deck-ring-bezel"
-          data-ignite={ignite ? "true" : "false"}
+          data-ignite="true"
           cx={C}
           cy={C}
           r={R * 0.985}
@@ -614,7 +524,7 @@ function StandbyRing({
             <line
               key={tk.deg}
               className="deck-ring-tick"
-              data-ignite={ignite ? "true" : "false"}
+              data-ignite="true"
               x1={ax}
               y1={ay}
               x2={bx}
@@ -626,7 +536,7 @@ function StandbyRing({
                   "--tick-opacity": tickOpacity[tk.weight],
                   "--tick-i": i,
                   opacity: "var(--tick-opacity)",
-                  animationDelay: ignite && !leaving ? `${i * 9}ms` : undefined,
+                  animationDelay: leaving ? undefined : `${i * 9}ms`,
                 } as CSSProperties
               }
             />

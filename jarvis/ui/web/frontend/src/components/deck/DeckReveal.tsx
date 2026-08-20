@@ -19,7 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * How a board instrument powers on when the board takes over from the standby
+ * How a board instrument powers on when the board takes over from the start
  * stage — one beat of the launch (`lib/deckStandby.ts::HANDOFF`), timed from
  * the centre outward (`revealDelayMs`) so the board assembles around the orb
  * as the shockwave reaches each slot:
