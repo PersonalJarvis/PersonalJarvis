@@ -272,6 +272,12 @@ _FAILURE_READBACK_BUDGET_MS = 900
 # ("Unknown skill: X. Installed skills: a, b, c, …"); one sentence's worth is
 # what a person can act on, the rest is a wall of speech.
 _FAILURE_REASON_MAX_CHARS = 160
+# Ground truth handed to the composer that answers from a lookup nobody spoke
+# (``_lookup_facts``). Three search variants return up to fifteen rows between
+# them; the answer to a spoken question lives in the first few, and everything
+# past that is prompt weight paid on the turn-critical path for nothing.
+_LOOKUP_FACT_MAX_ITEMS = 5
+_LOOKUP_FACT_MAX_CHARS = 320
 # A delegated turn fails for a handful of KNOWN internal reasons, and the raw
 # internal strings are engineering vocabulary ("No configured Tool Model
 # completed the delegated turn.") that must never be spoken. Each cause maps to
@@ -1319,6 +1325,76 @@ def _speakable_failure_reason(result: object) -> str:
     if boundary >= _FAILURE_REASON_MAX_CHARS // 2:
         cut = cut[:boundary]
     return cut.rstrip(" ,;.") + "…"
+
+
+def _lookup_facts(
+    lookups: list[tuple[str, dict[str, Any]]],
+) -> dict[str, object]:
+    """The retrieved content of a turn, bounded and voice-shaped.
+
+    Ground truth for the honesty-bound composer in
+    :meth:`RealtimeVoiceSession._wordless_success_line`: the model may rephrase
+    ONLY what is in here, so this must carry the answer and nothing else. Every
+    retrieval tool in the tree returns its hits as ``{"title", "snippet",
+    "url"}`` rows under ``output["results"]`` (web search, the weather branch,
+    the DDG instant-answer box), which is the shape read first; a tool that
+    answers with a plain string or a ``text`` / ``summary`` / ``content`` field
+    is read next.
+
+    URLs never travel — they are unspeakable and the scrubber would strip them
+    anyway. A raw ``str(dict)`` of an unknown payload never travels either:
+    that is exactly the data-structure dump the output filter exists to catch,
+    and feeding one to a composer only moves the leak one step upstream. An
+    unrecognized shape simply yields nothing, and the caller speaks its honest
+    canned floor instead. Pure string work, no LLM (AP-11).
+    """
+    items: list[str] = []
+    for _name, result in lookups:
+        output = result.get("output")
+        rows = output.get("results") if isinstance(output, dict) else None
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                title = " ".join(str(row.get("title") or "").split())
+                snippet = " ".join(str(row.get("snippet") or "").split())
+                text = f"{title}: {snippet}" if title and snippet else title or snippet
+                if text:
+                    items.append(text[:_LOOKUP_FACT_MAX_CHARS])
+            continue
+        if isinstance(output, str):
+            if text := " ".join(output.split()):
+                items.append(text[:_LOOKUP_FACT_MAX_CHARS])
+            continue
+        if isinstance(output, dict):
+            for field in ("summary", "text", "content", "answer"):
+                if text := " ".join(str(output.get(field) or "").split()):
+                    items.append(text[:_LOOKUP_FACT_MAX_CHARS])
+                    break
+    if not items:
+        return {}
+    return {"retrieved": items[:_LOOKUP_FACT_MAX_ITEMS]}
+
+
+def _reported_empty_results(
+    lookups: list[tuple[str, dict[str, Any]]],
+) -> bool:
+    """True when a lookup explicitly came back with an empty result set.
+
+    The difference between "I found nothing" and "there was nothing to find
+    out": a payload that CARRIES a ``results`` collection and left it empty has
+    searched and come up dry, while a payload with no collection at all is a
+    receipt that was never about content. Only the first may be reported as an
+    empty answer — guessing on the second would invent a search that never ran.
+    """
+    for _name, result in lookups:
+        output = result.get("output")
+        if not isinstance(output, dict) or "results" not in output:
+            continue
+        rows = output.get("results")
+        if isinstance(rows, list | tuple) and not rows:
+            return True
+    return False
 
 
 def _direct_tool_result_retry_prompt(
@@ -8314,6 +8390,129 @@ class RealtimeVoiceSession:
                 return cleaned
         return ""
 
+    def _result_is_informational(self, name: str, result: dict[str, Any]) -> bool:
+        """True when the result is CONTENT the user is still owed, not a receipt.
+
+        ``cu_done`` — "Erledigt." / "Done." / "Listo." — is a CLAIM: the thing
+        you asked for has been carried out. That is honest for a tool that ACTED
+        (an app was opened, a message was sent) and a lie for a tool that LOOKED
+        SOMETHING UP, where the user asked a question and the answer is sitting
+        unspoken in the payload. Live forensic 2026-08-20 19:32:41: a
+        ``search_web`` call about Y Combinator succeeded, the live model went
+        quiet, and the recovery spoke "Erledigt." — a completion report for a
+        job the maintainer never gave, with the retrieved answer dropped on the
+        floor.
+
+        Two independent signals, either one sufficient, so the rule covers the
+        CLASS rather than the one shipped search tool:
+
+        * the payload carries ``answer_instruction`` — the explicit "turn this
+          data into the answer yourself" marker a retrieval tool sets for the
+          model, which is by definition an answer nobody has spoken yet; and
+        * the tool's activity class is SEARCH or READ, the same coarse
+          name-based classification the progress lines already run on, which
+          reaches any registry's ``*_search`` / ``*_list`` / ``*_get`` /
+          ``*_lookup`` tool, MCP servers and plugins included.
+
+        Deterministic, no LLM (AP-11).
+        """
+        from jarvis.voice.instant_ack import ToolActivity, classify_tool_activity
+
+        output = result.get("output")
+        if isinstance(output, dict) and output.get("answer_instruction"):
+            return True
+        return classify_tool_activity(name) in (
+            ToolActivity.SEARCH,
+            ToolActivity.READ,
+        )
+
+    async def _wordless_success_line(
+        self, succeeded: list[tuple[str, dict[str, Any]]]
+    ) -> str:
+        """The spoken line for tools that worked but handed back no sentence.
+
+        An ACTION that ran is reported with ``cu_done``; that is what the phrase
+        is for and it stays untouched here. A LOOKUP that ran is not: the user
+        asked a question, the answer is in the payload, and "Erledigt." both
+        claims a job that was never given and throws the answer away.
+
+        So the retrieved facts go through the same composer every other readback
+        uses — honesty-bound, so it may only rephrase what the tool actually
+        returned, bounded by the live-path budget, breaker-guarded. The floor
+        under it is not the completion claim but a line that says WHY the answer
+        is missing and offers the retry (the maintainer's standing rule: a
+        failure the user hears always names its cause). A mixed turn counts as a
+        lookup: one unspoken answer outweighs any number of silent receipts.
+
+        The decision runs on EVIDENCE, not on the tool's name alone, because a
+        name is genuinely ambiguous — ``gmail`` sends mail and lists it, and
+        only one of those is a question waiting on an answer. So a lookup-class
+        tool diverts from ``cu_done`` only once its payload shows something the
+        user has not heard:
+
+        * content came back -> answer the question from it;
+        * the tool reported an EMPTY result set -> say nothing was found, which
+          is the honest answer to the question and not a completion claim;
+        * the payload carried nothing at all (``{}``, a bare receipt) -> there
+          is no withheld answer, so ``cu_done`` stands.
+        """
+        from jarvis.voice.action_phrases import action_phrase
+        from jarvis.voice.contextual_readback import render_readback
+
+        language = self._language
+        lookups = [
+            (name, result)
+            for name, result in succeeded
+            if self._result_is_informational(name, result)
+        ]
+        if not lookups:
+            # Everything that ran ACTED. "Erledigt." is the honest report.
+            return action_phrase("cu_done", language)
+
+        canned = lambda: action_phrase("lookup_unspoken", language)  # noqa: E731
+        facts = _lookup_facts(lookups)
+        if not facts:
+            if _reported_empty_results(lookups):
+                # The lookup ran and came back with nothing. "Erledigt." would
+                # report a finished job; the user asked a question and the
+                # honest answer to it is that there was no hit.
+                return action_phrase("lookup_empty", language)
+            # A bare receipt with no payload: nothing was withheld from the
+            # user, so the ordinary completion line is the truthful one.
+            return action_phrase("cu_done", language)
+        try:
+            line = await render_readback(
+                getattr(self._brain, "_readback_composer", None),
+                instruction=(
+                    "The user asked a question, the lookup that answers it "
+                    "succeeded, and the live model never spoke the answer. "
+                    "Answer the question in one or two short spoken sentences "
+                    "using ONLY the retrieved facts."
+                ),
+                language=language,
+                canned=canned,
+                facts=facts,
+                honesty_bound=True,
+                latency_budget_ms=_FAILURE_READBACK_BUDGET_MS,
+            )
+        except Exception:  # noqa: BLE001 — a readback must never break the call
+            log.debug(
+                "realtime[%s] lookup readback composition failed",
+                self.session_id,
+                exc_info=True,
+            )
+            line = ""
+        line = (line or "").strip()
+        if not line:
+            return canned()
+        # This text is built from web-retrieved prose, so it takes the same
+        # regex scrub as every other direct-to-surface line (ADR-0010, AP-11)
+        # rather than trusting the consumer to do it.
+        scrubbed = scrub_for_voice(line, language=language)
+        if is_harmless_scrub_residue(scrubbed):
+            return canned()
+        return scrubbed.cleaned.strip() or canned()
+
     async def _direct_tool_fallback_text(self) -> tuple[str, bool]:
         """Return one speakable line for EVERY tool the turn ran.
 
@@ -8338,9 +8537,15 @@ class RealtimeVoiceSession:
         """
         from jarvis.voice.action_phrases import action_phrase
 
-        results = [dict(result) for _name, result in self._direct_tool_results]
+        # Pairs, not bare payloads: the tool's NAME is half the evidence for
+        # whether its silent success may be reported as "Erledigt."
+        # (:meth:`_result_is_informational`).
+        results = [
+            (str(name or ""), dict(result))
+            for name, result in self._direct_tool_results
+        ]
         # Rule 1: policy blocks carry model instructions, not user-facing text.
-        speakable = [r for r in results if not r.get("blocked")]
+        speakable = [pair for pair in results if not pair[1].get("blocked")]
         if not speakable:
             # Every call the model made was gated away. Nothing ran, nothing
             # broke — and nothing is missing either, which is why this is NOT
@@ -8353,26 +8558,26 @@ class RealtimeVoiceSession:
             # turn answered inline.
             return action_phrase("actions_not_requested", self._language), False
 
-        succeeded = [r for r in speakable if r.get("success")]
-        failed = [r for r in speakable if not r.get("success")]
+        succeeded = [pair for pair in speakable if pair[1].get("success")]
+        failed = [pair[1] for pair in speakable if not pair[1].get("success")]
 
         # A confirmation question owns the turn — it is the one line that still
         # needs an answer from the user, so it outranks any status summary.
-        for result in speakable:
+        for _name, result in speakable:
             if result.get("confirmation_required"):
                 if text := self._speakable_result_text(result):
                     return text, bool(result.get("success"))
 
         spoken_parts = [
             text
-            for result in succeeded
+            for _name, result in succeeded
             if (text := self._speakable_result_text(result))
         ]
 
         if succeeded and not failed:
             if spoken_parts:
                 return " ".join(spoken_parts), True
-            return action_phrase("cu_done", self._language), True
+            return await self._wordless_success_line(succeeded), True
 
         if not succeeded:
             # Rule 3: nothing worked. Name every cause the tools reported.
@@ -8389,7 +8594,9 @@ class RealtimeVoiceSession:
 
         # Rule 2: partial success. Say what happened, then what did not — the
         # turn is NOT reported as a failure, because work was actually done.
-        done = " ".join(spoken_parts) or action_phrase("cu_done", self._language)
+        done = " ".join(spoken_parts) or await self._wordless_success_line(
+            succeeded
+        )
         shortfall = await self._failure_line(
             failed[0] if len(failed) == 1 else self._merged_failure(failed),
             situation=(

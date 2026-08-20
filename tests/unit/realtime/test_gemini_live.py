@@ -900,6 +900,139 @@ async def test_tool_call_suppresses_intermediate_turn_complete() -> None:
     assert receive_calls == 3
 
 
+@pytest.mark.asyncio
+async def test_tool_call_suppresses_turn_complete_from_a_later_message() -> None:
+    """The live wire splits the tool call and its boundary across messages.
+
+    The sibling test above packs both into ONE message, which is the only
+    shape the per-message check ever caught — so the suppression looked
+    covered while never firing against a real server. Vertex/Gemini Live sends
+    ``toolCall`` first and ``turnComplete`` in a message of its own moments
+    later (live 2026-08-20 19:32:41.399: 39 boundaries emitted, 0 withheld).
+    The session took each of those for a mute provider and spoke "Erledigt."
+    over the user's question while the real answer was thrown away.
+    """
+    sdk_turns = [
+        [
+            _fake_message(
+                tool_call=SimpleNamespace(
+                    function_calls=[
+                        SimpleNamespace(id="call-1", name="search_web", args={})
+                    ]
+                )
+            ),
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=None,
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                )
+            ),
+        ],
+        [
+            # The generation that carries the spoken answer, once the tool
+            # result has travelled. THIS boundary is the turn's real end.
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=SimpleNamespace(text="Aqua Security …"),
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                )
+            )
+        ],
+    ]
+    receive_calls = 0
+
+    async def fake_receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        turn_index = receive_calls - 1
+        if turn_index < len(sdk_turns):
+            for message in sdk_turns[turn_index]:
+                yield message
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(receive=fake_receive),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="split-tool-turn",
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "tool_call",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_real_mute_after_a_tool_still_reaches_the_session() -> None:
+    """Suppression covers the tool-call boundary only, never a genuine mute.
+
+    The counterweight to the two tests above. What the session does with an
+    empty boundary — retry the speech from the retained tool result, and
+    failing that speak it itself — is the recovery for a model that takes a
+    tool result and says nothing. Withholding THAT boundary too would trade a
+    wrong answer for a twenty-second silence (the turn-stall watchdog), so the
+    generation AFTER the tool result must still close the turn when it produced
+    nothing at all.
+    """
+    sdk_turns = [
+        [
+            _fake_message(
+                tool_call=SimpleNamespace(
+                    function_calls=[
+                        SimpleNamespace(id="call-1", name="search_web", args={})
+                    ]
+                )
+            ),
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=None,
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                )
+            ),
+        ],
+        [
+            # The tool result travelled and the model produced NOTHING.
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=None,
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                )
+            )
+        ],
+    ]
+    receive_calls = 0
+
+    async def fake_receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        turn_index = receive_calls - 1
+        if turn_index < len(sdk_turns):
+            for message in sdk_turns[turn_index]:
+                yield message
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(receive=fake_receive),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="mute-after-tool",
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["tool_call", "turn_complete"]
+
+
 # --- BUG-088: conversation-history seeding into a fresh session -------------
 
 

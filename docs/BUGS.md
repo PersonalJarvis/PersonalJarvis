@@ -11201,3 +11201,73 @@ fake no longer pretends the frozen preflight updates in-process.
 rebuild remains a new app to TCC. A Developer-ID signing identity is the
 structural fix; until then a rebuild costs the user one round of re-granting,
 now visible in the log and explained in the UI.
+
+---
+
+## BUG-160: a spoken question is answered with "Erledigt." and the real answer is thrown away — every Gemini/Vertex Live tool call fakes a mute provider (CRITICAL, FIXED 2026-08-20)
+
+**Symptom (maintainer, reported 2026-08-20).** In a live call, questions came
+back as the single word "Erledigt." — a completion report for a job that was
+never given. The maintainer had asked something, not ordered anything, and had
+no idea what was supposed to have been completed. The answer he did ask for was
+never spoken.
+
+**Root causes (two independent defects, one on top of the other).**
+
+1. *The Gemini/Vertex Live adapter never withheld a tool-call turn boundary.*
+   Gemini closes its generation when it hands out a function call, then opens a
+   NEW generation carrying the spoken answer once the tool result arrives. The
+   adapter has always meant to swallow that intermediate boundary, but the
+   check read the PER-MESSAGE `function_calls` — and the server sends the tool
+   call and the boundary in SEPARATE messages. The guard therefore never fired
+   once: in one day's desktop log, 39 boundaries emitted, 0 withheld. The
+   session took every one of them for a provider that had gone mute, ran its
+   empty-turn recovery, sent a "say the tool result out loud" retry prompt
+   (which on its own caused duplicate searches), and then spoke its own
+   fallback line over the answer that was still being rendered. The OpenAI
+   adapter has always done this correctly with a response-scoped flag; the two
+   transports were simply not on the same contract.
+
+2. *The direct-tool recovery reported a finished LOOKUP as a finished JOB.*
+   `_direct_tool_fallback_text` reads each result for a speakable line.
+   `search_web` has none by design — its whole point is that the model
+   synthesizes the answer from the hits — so a successful search fell through
+   to `action_phrase("cu_done")`, which is "Erledigt." / "Done." / "Listo.".
+   Two lies in nine characters: nothing was completed, and the retrieved
+   answer was dropped on the floor. Live evidence 2026-08-20 19:32:41:
+   `transcript=9 chars` on the surface-TTS fallback, followed 2.1 s later by
+   the model's real 6.5 s answer being withheld as a duplicate. In one day:
+   20 spurious retries, 15 spoken fallbacks, 25 discarded answers.
+
+**Fixes.**
+
+1. `jarvis/plugins/realtime/gemini_live.py` decides the withhold on the
+   per-GENERATION function-call counter, read before the boundary logger
+   resets it. A generation that produced NOTHING after the tool result still
+   emits its boundary, so the genuine-mute recovery is untouched; if the model
+   never generates again, the session's own turn-stall watchdog closes the turn
+   honestly rather than the adapter faking a boundary.
+2. `jarvis/realtime/session.py` decides "done" on EVIDENCE, not on the tool's
+   name, because a name is ambiguous (`gmail` sends mail and lists it). A
+   lookup-class result diverts from `cu_done` only once its payload shows
+   something the user has not heard: content came back → the facts go to the
+   honesty-bound readback composer and answer the question, with
+   `lookup_unspoken` ("I have the information but couldn't read it out just
+   now") as the floor; an explicitly EMPTY result set → `lookup_empty`
+   ("I didn't find anything on that"); a bare receipt with no payload →
+   `cu_done` stands, unchanged.
+
+**Class rule.** "Done." is a CLAIM about work, and a question is not work. Any
+recovery line that a retrieval tool can reach must be able to tell an answer
+from a receipt, and must never trade the user's answer for a status word. The
+second half of the rule is older and was broken here too: a boundary a
+transport emits for its own protocol reasons is not evidence about what the
+user heard.
+
+**Guards.** `tests/unit/realtime/test_gemini_live.py::test_tool_call_suppresses_turn_complete_from_a_later_message`
+(the live message split the old per-message check could never see),
+`::test_a_real_mute_after_a_tool_still_reaches_the_session` (the
+counterweight — suppression must not cost the mute recovery), and
+`tests/unit/realtime/test_lookup_never_reports_done.py` (a finished search is
+never "Erledigt."; an empty one says so; a wordless ACTION still reports done;
+the facts handed to the composer carry the content and never the URLs).

@@ -47,6 +47,33 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "Done.",
         "es": "Listo.",
     },
+    # The lookup ran, its answer never got spoken, and nothing could be built
+    # from what it returned. The floor under ``_wordless_success_line`` — and
+    # deliberately NOT ``cu_done``: the user asked a QUESTION, so reporting a
+    # completed job would claim work he never ordered and bury the fact that
+    # his answer is missing (live 2026-08-20 19:32, "Erledigt." spoken over a
+    # finished web search). Names the cause and offers the one way forward.
+    "lookup_unspoken": {
+        "de": (  # i18n-allow
+            "Ich habe die Infos, konnte sie aber gerade nicht vorlesen. "
+            "Soll ich es nochmal versuchen?"
+        ),
+        "en": (
+            "I have the information but couldn't read it out just now. "
+            "Want me to try again?"
+        ),
+        "es": (  # i18n-allow
+            "Tengo la información, pero no pude leerla en voz alta. "
+            "¿Lo intento otra vez?"
+        ),
+    },
+    # The lookup ran and came back empty. The honest answer to a question with
+    # no hit — never ``cu_done``, which would report a finished job instead.
+    "lookup_empty": {
+        "de": "Dazu habe ich nichts gefunden.",  # i18n-allow
+        "en": "I didn't find anything on that.",
+        "es": "No encontré nada sobre eso.",  # i18n-allow
+    },
     # Success WITH the verifier's on-screen observation forwarded (the SUCCESS
     # sibling of cu_failed_reason). Lets an informational request actually be
     # answered — "open the browser and check my tabs" reads back the observed

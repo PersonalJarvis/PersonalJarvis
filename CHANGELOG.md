@@ -11,6 +11,24 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **A question is no longer answered with "Erledigt."** In a live call, asking
+  something could come back as that one word — a report that a job was
+  finished, for a job nobody had given, while the actual answer was thrown
+  away seconds later. Two faults stacked up. Gemini and Vertex Live end their
+  generation when they hand out a tool call and start a fresh one for the
+  spoken answer; the adapter meant to swallow that in-between marker but
+  looked for the tool call in the wrong message, so it never once did — 39 of
+  those markers in a single day's log, every one of them read as "the provider
+  has gone silent". On top of that, the recovery for a silent provider treated
+  a finished web search like a finished errand: the search carries no sentence
+  to say, only the material for one, and the recovery said "done" and dropped
+  the material. Now the adapter waits for the generation that actually speaks,
+  and a lookup that came back with something says what it found instead of
+  reporting a completed task — with "I have the information but couldn't read
+  it out just now" as the honest floor, and "I didn't find anything on that"
+  when the search really was empty. A wordless action still reports done, as
+  it should.
+
 - **A window that never received a page is caught too.** The blank-window
   watchdog shipped in 1.5.0 lives in `index.html`, so it can only act once a
   page has arrived — and the window the maintainer kept seeing had none: a

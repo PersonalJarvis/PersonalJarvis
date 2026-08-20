@@ -468,16 +468,40 @@ class _GeminiLiveSession:
                                 type="usage", usage=self._pending_usage
                             )
                             self._pending_usage = None
+                        # A generation that handed out a function call has NOT
+                        # finished the turn: Gemini closes it so the tool result
+                        # can travel, then opens a NEW generation carrying the
+                        # spoken answer. The withhold below has stood since the
+                        # adapter was written, but it read the PER-MESSAGE
+                        # ``function_calls`` — and the server sends the tool call
+                        # and this boundary in SEPARATE messages, so it never
+                        # once fired (live 2026-08-20: 39 boundaries emitted, 0
+                        # withheld). The session took every one of them for a
+                        # mute provider, spoke the direct-tool fallback line
+                        # ("Erledigt.") over the user's question, and then
+                        # withheld the real answer that arrived two seconds
+                        # later. The per-GENERATION counter is the evidence that
+                        # survives the message split; it is read here because
+                        # ``_log_generation_boundary`` resets it. The OpenAI
+                        # adapter has always done this correctly with its
+                        # response-scoped ``_response_had_tool_calls`` flag —
+                        # this brings Gemini/Vertex Live to the same contract.
+                        # If the model never generates again, the session's own
+                        # turn-stall watchdog closes the turn honestly; it is
+                        # not this adapter's job to fake a boundary.
+                        tool_generation = bool(function_calls) or (
+                            self._gen_function_calls > 0
+                        )
                         self._log_generation_boundary(
                             kind=(
                                 "turn complete (function call, boundary "
                                 "withheld)"
-                                if function_calls
+                                if tool_generation
                                 else "turn complete"
                             ),
                             reason=reason_name,
                         )
-                        if not function_calls:
+                        if not tool_generation:
                             yield _ProviderEvent(type="turn_complete")
 
                 go_away = getattr(message, "go_away", None)
