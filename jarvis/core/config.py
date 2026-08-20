@@ -2680,16 +2680,11 @@ class VoiceConfig(BaseModel):
     # own turn are untouched. False = pre-2026-08-18 behaviour (the transport
     # waits for the result). Read per event by the realtime session.
     realtime_unblock_pending_tool_calls: bool = True
-    # ADR-0034 (2026-08-18). Classic pipeline: a heavy turn (one the
-    # deterministic planner routes to the orchestrator / tool model) runs in
-    # the background and the microphone stays open — the user keeps talking,
-    # ordinary utterances are answered meanwhile, and the heavy answer is
-    # spoken at the next quiet turn boundary, tied back to the request. False
-    # = the pre-2026-08-18 inline wait (speech during the wait cancels and
-    # recombines). Read per turn by the pipeline once the classic-pipeline
-    # half of ADR-0034 lands (in flight at 1.4.0 — the realtime half shipped
-    # first); until then the switch is declared and not yet read.
-    background_heavy_turns: bool = True
+    # ADR-0034's classic-pipeline half (background heavy turns, mic stays
+    # open) is NOT built yet, so its ``background_heavy_turns`` switch is not
+    # declared here. A declared switch nobody reads lets a downloader set
+    # something that does nothing (AP-31) — it comes back in the change that
+    # actually reads it, never before.
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
     # budget — every continuation resets the timer. Bumped from 8 s to 15 s
