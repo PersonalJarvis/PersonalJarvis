@@ -298,7 +298,8 @@ export default function App() {
       <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
         <DesktopWallpaper hideMascot={hideMascot} />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
-        <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+        {/* No z-index on the stage column — see the shell below. */}
+        <main className="relative flex min-w-0 flex-1 flex-col">
           <SectionStage visualization={visualizationActive}>
             <MainView />
           </SectionStage>
@@ -334,7 +335,23 @@ export default function App() {
         </>
       )}
 
-      <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+      {/*
+        The stage column carries NO z-index, and must not get one back.
+
+        A positive z-index here makes <main> its own stacking context, and
+        then every full-screen overlay a section renders inside it — the
+        wallpaper preview, the view dialogs, their scrims — is trapped at
+        THAT level however high its own z-index climbs. The nav column
+        beside it (z-20) then paints over the overlay: the sidebar logo,
+        the assistant name and the voice state landed on top of the
+        wallpaper preview's own header, one line of text over the other.
+
+        `relative` alone is all the column needs: it stays above the
+        wallpaper layer because that one is negative (-z-10), and the
+        overlays inside reach the app's real dialog levels. Guarded by
+        components/layout/overlay-stacking.test.ts.
+      */}
+      <main className="relative flex min-w-0 flex-1 flex-col">
         {/* App-wide macOS permission alert — topmost so a missing grant is
             impossible to miss on any view. No-op on other platforms. */}
         <PermissionsAlertBanner />

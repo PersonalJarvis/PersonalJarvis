@@ -187,9 +187,12 @@ export function Sidebar({
   return (
     // No right border: the draggable seam beside it draws that line now, and
     // two 1px lines three pixels apart read as a rendering fault.
-    // z-20: above the main area (z-10). The rail's hover label flies out past
-    // the sidebar's edge, and it must paint over the page rather than under it;
-    // the app-wide layers (toasts, docks, dialogs) all sit at z-40 and above.
+    // z-20: above the stage column, which carries no z-index of its own so
+    // that the overlays inside it are not trapped below this one (App.tsx).
+    // The rail's hover label flies out past the sidebar's edge, and it must
+    // paint over the page rather than under it; the app-wide layers (toasts,
+    // docks, dialogs) all sit at z-40 and above and now really do cover this
+    // column.
     <aside
       style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
       data-testid="sidebar"
