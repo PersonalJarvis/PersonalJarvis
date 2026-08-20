@@ -156,8 +156,9 @@ jobs:
 
   # Prove the RAW installer path a real downloader runs, end to end, then boot
   # the headless server and confirm it actually answers on its real admin port.
+  # No explicit `name:` — see the dragdrop job in ci.yml: an unevaluated
+  # ${{ matrix.os }} renders raw in the check list whenever the job is skipped.
   fresh-install:
-    name: fresh install (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.run-fresh == 'true'
     strategy:

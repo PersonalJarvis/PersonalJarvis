@@ -802,8 +802,12 @@ jobs:
   # Gated by `configure`'s git-diff path check, because a workflow-level
   # `paths:` filter cannot apply to a single job. macOS (~10x cost) rides the
   # same dispatch-only rule as the rest of this file.
+  # No explicit `name:`. A matrix job whose name interpolates ${{ matrix.os }}
+  # renders that expression RAW in the check list when the job is SKIPPED — the
+  # matrix is never evaluated, so a contributor reads a literal
+  # "drag-drop (${{ matrix.os }})". Falling back to the job id gives
+  # "dragdrop (ubuntu-latest)" when it runs and a clean "dragdrop" when it does not.
   dragdrop:
-    name: drag-drop (${{ matrix.os }})
     needs: configure
     if: needs.configure.outputs.run-dragdrop == 'true'
     strategy:
