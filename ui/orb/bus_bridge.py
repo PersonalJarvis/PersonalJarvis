@@ -868,7 +868,7 @@ class OrbBusBridge:
             # SPEAKING before the first audio sample actually leaves the
             # speaker (0.5–2 s lead time). From the user's perspective that
             # silent lead time is still "processing", so the overlay stays on
-            # the THINKING wave and only switches to the SPEAKING bars once
+            # the THINKING look and only switches to the SPEAKING bars once
             # there is real sound — driven by the AudioOutFirst event (see
             # _on_audio_out_first). The mouth + the "nod" hang off the
             # AudioOutFirst event for the same reason. The bubble already shows

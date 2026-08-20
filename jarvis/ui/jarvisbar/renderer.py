@@ -8,12 +8,12 @@ State → look:
 - ``idle``   → muted grey dots in a collapsed pill
 - ``listen`` → gold equalizer bars, height driven by the live mic level
 - ``speak``  → gold equalizer bars, height driven by the live TTS level
-- ``think``  → the "orbital core": a breathing gold core with two comet
-               sparks counter-orbiting on tilted ellipses (synthetic,
-               ignores level). Replaced the old travelling sine wave,
-               which read as a generic-AI visual.
+- ``think``  → the SWEEP: the same row of strokes, with one soft highlight
+               travelling along it (synthetic, ignores level). It is the
+               mission deck header bar's "working" look, brought over here so
+               the two bars read as one product.
 - ``dictate``              → the equalizer, driven by the dictation mic level.
-- ``dictate_transcribing`` → the orbital core: recording has stopped and the
+- ``dictate_transcribing`` → the sweep: recording has stopped and the
                transcription is running, so there IS something to represent.
 - ``notice``  → a breathing red cross in an opened pill: something the user
                asked for did not happen. The bar carries no text, so this look
@@ -578,8 +578,8 @@ def visual_mode(
     SPEAKING transition; continue-listening flips back to LISTENING mid-playback
     while Jarvis is still talking). So:
 
-    The orbital core (the animated "indicator") belongs ONLY to active
-    thinking. Three distinct looks:
+    The sweep (the animated "indicator") belongs ONLY to active thinking.
+    Three distinct looks:
 
     - ``idle`` → ``idle`` (the standby pill). Silence here is not "thinking".
     - Real sound — ``playback_active`` (TTS audio on the device right now) OR a
@@ -590,7 +590,7 @@ def visual_mode(
       blocks for the whole multi-second playback with no further level.
     - Silent + ``coarse_mode == "think"`` (the THINKING state, and the silent
       TTS-synthesis lead-in which the bridge also shows as ``"think"``) → the
-      orbital core. This is the only place an indicator animates.
+      sweep. This is the only place an indicator animates.
     - Silent + any OTHER active state (``"listen"`` — waiting after "Hey Jarvis"
       with no speech) → ``"speak"`` too, but with no level the equalizer renders
       flat and STILL: bars that just stand there, no indicator. "When nothing
@@ -604,11 +604,11 @@ def visual_mode(
     be overruled by a stale level sample:
 
     - ``dictate`` (the user is speaking into the dictation mic) always renders
-      as the equalizer. A SPEAKING dictation must never show the thinking core:
+      as the equalizer. A SPEAKING dictation must never show the sweep:
       the mic level is being fed, so a silent pause mid-sentence shows still
       bars rather than falling through and pretending to think.
     - ``dictate_transcribing`` (the key was released, the transcription is
-      running) renders as the orbital core. Here there genuinely IS work in
+      running) renders as the sweep. Here there genuinely IS work in
       flight to represent, and the mic feed has stopped — showing the equalizer
       would claim the bar is still listening when it is not.
 
@@ -651,158 +651,97 @@ def bar_heights(
     return out
 
 
-# --- thinking: the "orbital core" --------------------------------------------
-# A breathing gold core with two thought-sparks counter-orbiting on tilted
-# ellipses. The periods are deliberately incommensurate so the composite
-# figure never visibly repeats — it reads as churning thought, not a loop.
-# Sparks carry a depth value: on the far half of their orbit they render
-# smaller/dimmer and BEHIND the core, on the near half bigger/brighter and in
-# front — a pseudo-3D gyroscope inside a 34 px pill.
+# --- thinking: the travelling sweep ------------------------------------------
+# One soft highlight runs along the equalizer row, over and over: the strokes
+# under it rise and brighten, the rest stay low and dim, and the highlight
+# leaves on the right to re-enter on the left, so the motion never visibly
+# restarts.
+#
+# Why a sweep and not an indicator of its own. The bar has exactly ONE graphic
+# vocabulary — a row of strokes — and thinking is the one active state with no
+# measured signal behind it. A sweep promises MOTION and nothing else, which is
+# the honest claim here: work is in flight, and none of it is a microphone
+# reading. Everything measured (your voice, Jarvis's voice) drives the same row
+# by level instead, so the two can never be read as each other: level-driven
+# bars jitter in place, the sweep travels.
+#
+# This is the look the mission deck's header bar already uses for its "working"
+# phase (``frontend/src/components/overlay/voiceBars.ts::sweepGain``); the
+# numbers below are that surface's, converted to this pill's fractions, so the
+# two bars read as one product. Changing one means changing the other.
+#
+# It replaced the "orbital core" (a breathing sphere with counter-orbiting comet
+# sparks, 2026-06 → 2026-08): maintainer verdict — the deck's sweep reads better,
+# and the core was also the most expensive frame the bar drew (a 3x supersampled
+# RGBA layer + LANCZOS downscale, ~30 ms measured while hovered) in the one state
+# that runs for seconds at a time.
+
+THINK_SWEEP_PERIOD_S = 1.05  # seconds for one pass across the row
+THINK_SWEEP_WIDTH = 0.16     # gaussian half-width, in row fractions
+THINK_BASE_V = 0.21          # bar level away from the highlight (0..1)
+THINK_PEAK_V = 0.93          # bar level right under it
+THINK_DIM = 0.30             # bar brightness away from the highlight (0..1)
+# Bars in the narrow row drawn while the controls are up. More than the
+# equalizer's five, because a sweep needs samples to read as travelling rather
+# than hopping — and unlike the equalizer they carry no level, so a denser row
+# costs nothing in legibility.
+THINK_HOVER_BARS = 7
 
 
-@dataclass(frozen=True)
-class OrbitSpec:
-    period_s: float  # seconds per revolution; the sign is the spin direction
-    rx_frac: float   # ellipse semi-axis (own x) / pill width
-    ry_frac: float   # ellipse semi-axis (own y) / pill height
-    tilt_rad: float  # rotation of the ellipse within the pill plane
-    phase: float     # angular offset so the sparks never start aligned
+def sweep_phase(t: float, period_s: float = THINK_SWEEP_PERIOD_S) -> float:
+    """Position of the highlight along the row, wrapped to ``[0, 1)``."""
+    if period_s <= 0.0:
+        return 0.0
+    return (t / period_s) % 1.0
 
 
-ORBITS: tuple[OrbitSpec, ...] = (
-    OrbitSpec(period_s=3.1, rx_frac=0.40, ry_frac=0.34, tilt_rad=-0.26, phase=0.7),
-    OrbitSpec(period_s=-1.95, rx_frac=0.43, ry_frac=0.24, tilt_rad=0.42, phase=2.4),
-)
+def sweep_gain(
+    index: int, count: int, phase: float, width: float = THINK_SWEEP_WIDTH
+) -> float:
+    """Brightness of bar ``index`` under a highlight sitting at ``phase``.
 
-TRAIL_N = 12        # samples per comet tail
-TRAIL_SPAN_S = 0.50  # how far back in time the tail reaches
-
-_CORE_R_FRAC = 0.115      # core radius / pill height (slimmer: the ring needs room)
-_CORE_BREATH = 0.20       # breathing amplitude as a fraction of the base radius
-_CORE_BREATH_RAD_S = 3.2  # breathing speed (rad/s ≈ one breath every 2 s)
-_CORE_BREATH2 = 0.07      # slower second breath layered in — kills the metronome feel
-_CORE_BREATH2_RAD_S = 1.3
-
-# The whole reactor FLOATS: the core (and with it the ring, highlight and the
-# spark orbits) drifts on a slow two-frequency Lissajous path plus a faint
-# faster wobble. A position-pinned core read as "starr" — twice — even with
-# the ring glint; motion of the body itself is what reads as alive.
-DRIFT_AX_FRAC = 0.062     # max |dx| / pill width  (incl. the micro wobble)
-DRIFT_AY_FRAC = 0.090     # max |dy| / pill height
-_DRIFT_WX = 0.80          # rad/s — horizontal float
-_DRIFT_WY = 1.27          # rad/s — vertical float (incommensurate with WX)
-_DRIFT_W_MICRO = 1.9      # rad/s — faint quick wobble on top
-_DRIFT_MICRO_FRAC = 0.012  # micro wobble amplitude / pill width
-_SPARK_R_FRAC = 0.058     # spark radius / pill height (clearly below the core)
-_SPARK_DEPTH_SIZE = 0.30  # spark size swing between far and near orbit half
-
-# The core's saturn ring: a perspective-flattened ellipse hugging the sphere,
-# with a glint of light travelling around it. This is what keeps the centre
-# alive — a bare static dot read as dead (user feedback 2026-06-10).
-_RING_RX = 2.05           # ring semi-axis x / core radius
-_RING_RY = 0.62           # ring semi-axis y / core radius (perspective squash)
-_RING_TILT_RAD = -0.18    # slight tilt so the ring reads as 3D, not as an "0"
-_RING_N = 28              # polyline samples around the ring
-_RING_GLINT_RAD_S = 3.0   # how fast the light runs around the ring (rad/s)
-_HILITE_SWING_RAD_S = 0.9  # specular drift speed — a slowly turning sphere
-
-
-def core_radius(t: float, ph: float) -> float:
-    """Breathing radius of the thinking core — always well inside the pill.
-
-    Two layered sine rhythms so the pulse feels organic, not metronomic.
+    The distance is measured around a ring, so the highlight leaves on the
+    right and re-enters on the left without a visible jump. Direct mirror of
+    the web surface's ``sweepGain``.
     """
-    base = ph * _CORE_R_FRAC
-    breath = _CORE_BREATH * math.sin(t * _CORE_BREATH_RAD_S)
-    breath += _CORE_BREATH2 * math.sin(t * _CORE_BREATH2_RAD_S)
-    return base * (1.0 + breath)
+    if count <= 1:
+        return 1.0
+    pos = index / (count - 1)
+    wrapped = phase - math.floor(phase)
+    d = abs(pos - wrapped)
+    if d > 0.5:
+        d = 1.0 - d
+    return math.exp(-(d * d) / (2.0 * width * width))
 
 
-def core_drift(t: float, pw: float, ph: float) -> tuple[float, float]:
-    """Floating offset of the whole reactor relative to the pill centre.
-
-    Slow two-frequency Lissajous plus a faint quicker wobble — visible
-    within a ~3 s thinking phase, bounded by DRIFT_A*_FRAC, never looping.
-    """
-    main = (DRIFT_AX_FRAC - _DRIFT_MICRO_FRAC) * pw
-    dx = math.sin(t * _DRIFT_WX) * main
-    dx += math.sin(t * _DRIFT_W_MICRO + 0.8) * _DRIFT_MICRO_FRAC * pw
-    dy = math.sin(t * _DRIFT_WY + 1.1) * DRIFT_AY_FRAC * ph
-    return (dx, dy)
-
-
-def core_ring_points(
-    t: float, r: float, n: int = _RING_N
-) -> list[tuple[float, float, float, float]]:
-    """Saturn-ring samples around the core: ``(dx, dy, depth, glint)``.
-
-    ``depth`` < 0 marks the half that passes BEHIND the sphere; ``glint`` is
-    the 0..1 brightness of the travelling light at that point. Coordinates
-    are relative to the core centre.
-    """
-    ct, st = math.cos(_RING_TILT_RAD), math.sin(_RING_TILT_RAD)
-    rx, ry = r * _RING_RX, r * _RING_RY
-    out: list[tuple[float, float, float, float]] = []
-    for k in range(n):
-        a = 2.0 * math.pi * k / n
-        ex, ey = math.cos(a) * rx, math.sin(a) * ry
-        # Light position runs around the ring; cosine falloff either side.
-        glint = 0.5 + 0.5 * math.cos(a - t * _RING_GLINT_RAD_S)
-        out.append((ex * ct - ey * st, ex * st + ey * ct, math.sin(a), glint**2))
-    return out
-
-
-def core_highlight_offset(t: float, r: float) -> tuple[float, float]:
-    """Specular highlight position on the sphere — drifts slowly sideways so
-    the core reads as a turning ball instead of a flat disc."""
-    return (math.sin(t * _HILITE_SWING_RAD_S) * 0.32 * r, -0.30 * r)
-
-
-def _spark_margin(ph: float) -> float:
-    """Clearance a spark needs from the pill edge (its core + glow halo)."""
-    return max(2.5, ph * _SPARK_R_FRAC * 2.2 + 1.0)
-
-
-def orbit_point(
-    t: float, spec: OrbitSpec, pw: float, ph: float
-) -> tuple[float, float, float]:
-    """One spark's ``(dx, dy, depth)`` relative to the pill centre.
-
-    ``depth`` runs -1..+1 over the revolution: negative = far half (drawn
-    behind the core, smaller/dimmer), positive = near half. The tilted
-    ellipse is uniformly scaled down so the spark INCLUDING its glow stays
-    inside every pill size the ease-in passes through.
-    """
-    a = 2.0 * math.pi * (t / spec.period_s) + spec.phase
-    rx = spec.rx_frac * pw
-    ry = spec.ry_frac * ph
-    ct, st = math.cos(spec.tilt_rad), math.sin(spec.tilt_rad)
-    # Extremes of the rotated ellipse, then one shared scale factor so the
-    # orbit shape is preserved while honouring both axis budgets.
-    max_x = math.hypot(rx * ct, ry * st)
-    max_y = math.hypot(rx * st, ry * ct)
-    # Reserve room for the reactor's float so orbit + drift can never poke
-    # outside the pill (the orbits ride on the drifting core).
-    m = _spark_margin(ph)
-    bx = max(1.0, pw / 2.0 - m - pw * DRIFT_AX_FRAC)
-    by = max(1.0, ph / 2.0 - m - ph * DRIFT_AY_FRAC)
-    s = min(1.0, bx / max_x if max_x > 0 else 1.0, by / max_y if max_y > 0 else 1.0)
-    ex = math.cos(a) * rx * s
-    ey = math.sin(a) * ry * s
-    return (ex * ct - ey * st, ex * st + ey * ct, math.sin(a))
-
-
-def orbit_trail(
+def sweep_gains(
     t: float,
-    spec: OrbitSpec,
-    pw: float,
-    ph: float,
-    n: int = TRAIL_N,
-    span_s: float = TRAIL_SPAN_S,
-) -> list[tuple[float, float, float]]:
-    """Comet-tail positions for one spark — head (current position) first."""
-    dt = span_s / n
-    return [orbit_point(t - k * dt, spec, pw, ph) for k in range(n + 1)]
+    n: int,
+    *,
+    period_s: float = THINK_SWEEP_PERIOD_S,
+    width: float = THINK_SWEEP_WIDTH,
+) -> list[float]:
+    """The whole row's brightness at time ``t`` — one 0..1 value per bar."""
+    phase = sweep_phase(t, period_s)
+    return [sweep_gain(i, n, phase, width) for i in range(n)]
+
+
+def sweep_bar_heights(
+    gains: list[float], *, max_h: float, min_h: float
+) -> list[float]:
+    """Bar heights for a row of sweep gains, bounded by ``[min_h, max_h]``.
+
+    Deterministic in the gains alone, so the height curve is testable without
+    a clock. ``THINK_BASE_V`` keeps the unlit strokes visibly present — a row
+    that collapses to the resting height between passes reads as a bar that
+    died, not one that is working.
+    """
+    span = max_h - min_h
+    out: list[float] = []
+    for g in gains:
+        u = 0.0 if g < 0.0 else 1.0 if g > 1.0 else g
+        out.append(min_h + span * (THINK_BASE_V + (THINK_PEAK_V - THINK_BASE_V) * u))
+    return out
 
 
 @dataclass
@@ -932,11 +871,20 @@ class JarvisBarRenderer:
             # in the centre so you can see the voice is live, controls flanking.
             if mode in ("listen", "speak"):
                 self._draw_bars(d, t, cx, cy, pw, ph, span=bars_span_for(pw) * 0.5, n=5)
+            elif mode == "think":
+                # Thinking keeps its indicator while the controls are up, for
+                # the same reason the equalizer does: reaching for the close-X
+                # must not make the bar look like nothing is running.
+                self._draw_thinking(
+                    d, t, cx, cy, pw, ph,
+                    span=bars_span_for(pw) * 0.5,
+                    n=THINK_HOVER_BARS,
+                )
             if active_sess:
                 self._draw_close_x(d, x_left, cy, ph)
             self._draw_mic(img, x_right, cy, ph, muted)
         elif mode == "think":
-            self._draw_thinking(img, t, cx, cy, pw, ph)
+            self._draw_thinking(d, t, cx, cy, pw, ph)
         elif mode in ("listen", "speak"):
             self._draw_bars(d, t, cx, cy, pw, ph)
         elif muted:
@@ -1104,104 +1052,41 @@ class JarvisBarRenderer:
 
     def _draw_thinking(
         self,
-        img: Image.Image,
+        d: ImageDraw.ImageDraw,
         t: float,
         cx: float,
         cy: float,
         pw: float,
         ph: float,
+        span: float | None = None,
+        n: int | None = None,
     ) -> None:
-        """Render the orbital core (THINKING) onto the frame.
+        """Render the travelling sweep (THINKING) onto the frame.
 
-        Drawn at 3x on an RGBA layer and LANCZOS-downscaled (same trick as
-        the standby dots) — at 34 px pill height, direct drawing aliases
-        badly. ImageDraw on RGBA REPLACES pixels rather than compositing, so
-        everything is painted strictly back-to-front: trails, far sparks,
-        core (glow → body → highlight), near sparks.
+        Drawn exactly like the equalizer — same row, same span, same stroke
+        width, same rounded caps — so the bar keeps one vocabulary and the
+        hand-off between thinking and speaking is a change of MOTION, not a
+        change of object. Only the heights and the brightness come from the
+        sweep instead of a level.
+
+        No supersampled layer here (unlike the standby dots or the drop glyph):
+        these are axis-aligned rounded rectangles, which ImageDraw renders
+        cleanly at this size — and thinking is the state that runs for seconds
+        at a stretch, so it has to be among the CHEAPEST frames the bar draws
+        rather than the dearest.
         """
-        ss = 3
-        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer)
-        accent = self._accent
-        bright = _lerp_rgb(accent, (255, 255, 255), 0.40)
-        spark_r = max(1.1, ph * _SPARK_R_FRAC)
-
-        # The whole reactor floats: core, ring, highlight AND the spark
-        # orbits all ride on this drifting centre.
-        ddx, ddy = core_drift(t, pw, ph)
-        ccx, ccy = cx + ddx, cy + ddy
-
-        def dot(dx: float, dy: float, r: float, color: tuple[int, int, int], alpha: int) -> None:
-            x, y = (ccx + dx) * ss, (ccy + dy) * ss
-            rr = r * ss
-            ld.ellipse([x - rr, y - rr, x + rr, y + rr], fill=(*color, alpha))
-
-        # 1. Comet trails — fade and thin toward the past.
-        trails = [orbit_trail(t, spec, pw, ph) for spec in ORBITS]
-        for trail in trails:
-            for k in range(len(trail) - 1):
-                u = k / (len(trail) - 1)  # 0 at the head → 1 at the tail tip
-                alpha = int(150 * (1.0 - u) ** 1.3)
-                if alpha <= 4:
-                    continue
-                x0, y0, _ = trail[k]
-                x1, y1, _ = trail[k + 1]
-                w = max(1, round(spark_r * ss * (1.0 - 0.65 * u)))
-                ld.line(
-                    [((ccx + x0) * ss, (ccy + y0) * ss), ((ccx + x1) * ss, (ccy + y1) * ss)],
-                    fill=(*accent, alpha),
-                    width=w,
-                )
-
-        def spark(dx: float, dy: float, depth: float) -> None:
-            r = spark_r * (1.0 + _SPARK_DEPTH_SIZE * depth)
-            dot(dx, dy, r * 1.6, accent, max(0, int(45 + 25 * depth)))
-            dot(dx, dy, r, bright, min(255, int(195 + 60 * depth)))
-
-        heads = [trail[0] for trail in trails]
-
-        # 2. Far-half sparks pass BEHIND the core.
-        for dx, dy, depth in heads:
-            if depth < 0:
-                spark(dx, dy, depth)
-
-        # 3. The breathing core "reactor": pulsing halo → back ring arc →
-        #    sphere body → drifting specular highlight → front ring arc.
-        #    The saturn ring with its travelling glint is what keeps the
-        #    centre alive — a bare static dot read as dead.
-        r = core_radius(t, ph)
-        breath = math.sin(t * _CORE_BREATH_RAD_S)  # in step with the radius
-        ring = core_ring_points(t, r)
-
-        def ring_arc(front: bool) -> None:
-            w = max(1, round(r * 0.22 * ss))
-            for k in range(len(ring)):
-                x0, y0, d0, g0 = ring[k]
-                x1, y1, d1, g1 = ring[(k + 1) % len(ring)]
-                mid_depth = (d0 + d1) / 2.0
-                if (mid_depth >= 0) != front:
-                    continue
-                g = (g0 + g1) / 2.0
-                alpha = int(80 + 160 * g)
-                color = _lerp_rgb(accent, bright, g)
-                ld.line(
-                    [((ccx + x0) * ss, (ccy + y0) * ss), ((ccx + x1) * ss, (ccy + y1) * ss)],
-                    fill=(*color, min(255, alpha)),
-                    width=w,
-                )
-
-        dot(0, 0, r * 2.3, accent, int(34 + 16 * breath))  # halo breathes visibly
-        dot(0, 0, r * 1.5, accent, 70)  # kept soft so the ring doesn't drown
-        ring_arc(front=False)  # the half passing behind the sphere
-        dot(0, 0, r, accent, 255)
-        hx, hy = core_highlight_offset(t, r)
-        dot(hx, hy, r * 0.40, _lerp_rgb(accent, (255, 255, 255), 0.65), 235)
-        ring_arc(front=True)  # the half passing in front
-
-        # 4. Near-half sparks pass IN FRONT of the core.
-        for dx, dy, depth in heads:
-            if depth >= 0:
-                spark(dx, dy, depth)
-
-        small = layer.resize(img.size, Image.Resampling.LANCZOS)
-        img.paste(small, (0, 0), small)
+        n = n or N_BARS
+        span = bars_span_for(pw) if span is None else span
+        half_w = bar_half_w_for(pw)
+        gains = sweep_gains(t, n)
+        hs = sweep_bar_heights(gains, max_h=bar_max_for(ph), min_h=bar_min_for(ph))
+        for x, h, g in zip(evenly_spaced(cx, span, n), hs, gains, strict=True):
+            # This frame is RGB (the color key needs it), so there is no alpha
+            # to fade with: mixing toward the pill's own background is what an
+            # opacity would look like over it anyway, and it costs one lerp.
+            color = _lerp_rgb(PILL_BG, self._accent, THINK_DIM + (1.0 - THINK_DIM) * g)
+            d.rounded_rectangle(
+                [x - half_w, cy - h / 2, x + half_w, cy + h / 2],
+                radius=half_w,
+                fill=color,
+            )

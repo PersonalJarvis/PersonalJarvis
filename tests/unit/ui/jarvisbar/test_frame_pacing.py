@@ -215,7 +215,7 @@ def test_hover_flip_while_idle_forces_an_immediate_render():
 
 def test_active_mode_never_skips_render():
     """listen/speak/think are always animating (level-driven bars or the
-    orbital core) — the settle counter must never suppress their render()."""
+    travelling sweep) — the settle counter must never suppress their render()."""
     renderer_obj = _CountingRenderer()
     bar, _root, _canvas = _bare_bar(renderer_obj, mode="think")
 

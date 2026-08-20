@@ -10,7 +10,7 @@ Signals:
   ``OrbBusBridge`` forwards it to this surface without opening a second mic.
 - SPEAKING: the audio player publishes its output RMS via ``level_tap``, which
   this surface subscribes to on ``start()``.
-- THINKING: the renderer generates a synthetic wave (no external signal).
+- THINKING: the renderer sweeps a highlight along the row (no external signal).
 
 Threading mirrors the orb: a daemon thread runs the Tk mainloop; all Tk
 mutations from the bus-subscriber thread go through ``_enqueue_ui`` → a queue
@@ -82,12 +82,12 @@ _WIN32_TOPMOST_FLAGS = _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE | _SWP_NOOWNE
 
 # Sound-driven look. The bar shows the speaking equalizer (bars) ONLY while real
 # audio is present — mic input while you speak, or TTS output while Jarvis speaks
-# — and the thinking wave during silence (brain thinking AND the silent
+# — and the thinking sweep during silence (brain thinking AND the silent
 # TTS-synthesis lead-in). This tracks actual sound instead of the supervisor
 # state, which is unreliable here (continue-listening flips SPEAKING→LISTENING
 # mid-playback). AUDIBLE_LEVEL is the normalized 0..1 level above which a
 # set_level() counts as "sound now"; AUDIBLE_HOLD_S keeps the bars up across the
-# short word/sentence gaps so they don't flap back to the wave on every pause.
+# short word/sentence gaps so they don't flap back to the sweep on every pause.
 AUDIBLE_LEVEL = 0.06
 AUDIBLE_HOLD_S = 0.5
 
@@ -130,8 +130,12 @@ FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 #    pure GIL contention, so it is deliberately NOT used). What this loop CAN
 #    do is shrink its own contribution to that contention — the idle-skip
 #    above is the main lever, and adaptive pacing (below) prevents an
-#    occasional slow render (measured up to ~30ms in "think"+hovered mode)
-#    from compounding into an even longer visible gap.
+#    occasional slow render (measured up to ~30ms in "think"+hovered mode,
+#    back when thinking drew a supersampled orbital core; the travelling
+#    sweep that replaced it costs the same as the equalizer — 3.2x less than
+#    the core, measured 2026-08-20 — so the pacing now has far less to
+#    absorb, but the states it protects are unchanged) from compounding into
+#    an even longer visible gap.
 #
 # Idle-static skip: EVERY branch renderer.render() can reach while the coarse
 # mode is "idle" is time-independent (the empty resting pill, the hovered
@@ -394,8 +398,8 @@ class JarvisBarOverlay:
         self._mode = "idle"
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
-        # (>= AUDIBLE_LEVEL). Drives the wave↔bars choice in _schedule_frame.
-        # 0.0 = "long ago" → starts on the wave, not the bars.
+        # (>= AUDIBLE_LEVEL). Drives the sweep↔bars choice in _schedule_frame.
+        # 0.0 = "long ago" → starts on the sweep, not the bars.
         self._last_audible_t = 0.0
         # perf_counter() of the last set_level() of ANY value. The frame loop
         # renders _ext_level only while fresh (renderer.LEVEL_STALE_S): a feed
@@ -535,7 +539,7 @@ class JarvisBarOverlay:
         self._last_level_rx_t = time.perf_counter()
         # Remember WHEN real sound last arrived (mic or TTS, both feed here via
         # their level taps). _schedule_frame uses this to show bars while sound
-        # is present and the wave during silence. Atomic float write, like
+        # is present and the sweep during silence. Atomic float write, like
         # _ext_level — safe from the audio/VAD threads with no lock.
         if lv >= AUDIBLE_LEVEL:
             self._last_audible_t = self._last_level_rx_t

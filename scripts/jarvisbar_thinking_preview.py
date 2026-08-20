@@ -1,4 +1,4 @@
-"""Headless preview of the jarvis-bar THINKING animation (orbital core).
+"""Headless preview of the jarvis-bar THINKING animation (travelling sweep).
 
 Renders frames straight from the pure renderer (no Tk, no app) and writes:
 - ``screenshots/jarvisbar-thinking-sheet.png`` — 8 frames, 4x upscaled,
@@ -39,6 +39,10 @@ def _frame(rnd: R.JarvisBarRenderer, t: float) -> Image.Image:
 
 def main() -> None:
     out = screenshots_dir()
+    # screenshots_dir() deliberately does not create the folder (see its
+    # docstring), and a fresh clone has none — without this the script died on
+    # PIL's save() with a bare FileNotFoundError.
+    out.mkdir(parents=True, exist_ok=True)
     rnd = R.JarvisBarRenderer()
     for _ in range(80):  # settle the pill ease at ACTIVE size
         rnd.render(0.0, "think", 0.0)

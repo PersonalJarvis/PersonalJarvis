@@ -49,143 +49,106 @@ def test_display_level_snaps_to_exact_zero_after_silence():
     assert k <= 8  # ≤ ~150 ms at 60 fps
 
 
-# --- thinking: "orbital core" (replaces the old generic sine wave) -----------
+# --- thinking: the travelling sweep ------------------------------------------
+# The look the mission deck's header bar uses for "working", brought onto the
+# desktop bar (maintainer, 2026-08-20). It replaced the "orbital core", which
+# replaced a travelling sine wave before that — so the guards below pin what
+# each of those was rejected FOR, not just the current shape.
 
 
-def test_sine_wave_is_gone():
-    # The travelling sine was explicitly rejected as a generic-AI visual.
-    # Guard against a future session resurrecting it.
-    assert not hasattr(R, "wave_points")
-    assert not hasattr(R, "wave_width_for")
+def test_rejected_thinking_looks_stay_gone():
+    # The travelling sine was rejected as a generic-AI visual; the orbital
+    # core was rejected on looks and on cost. Guard against a future session
+    # resurrecting either by name.
+    for gone in (
+        "wave_points",
+        "wave_width_for",
+        "orbit_point",
+        "orbit_trail",
+        "core_radius",
+        "core_drift",
+        "core_ring_points",
+        "ORBITS",
+    ):
+        assert not hasattr(R, gone), f"{gone} is back"
 
 
-def test_orbit_points_bounded_inside_pill():
-    # Sparks (incl. their glow margin) must stay inside every pill size the
-    # ease-in passes through — COLLAPSED (tiny) up to ACTIVE.
-    sizes = [
-        (R.ACTIVE_W, R.ACTIVE_H),
-        (R.OPEN_W, R.OPEN_H),
-        (R.COLLAPSED_W, R.COLLAPSED_H),
-    ]
-    for pw, ph in sizes:
-        for spec in R.ORBITS:
-            for k in range(80):
-                t = k * 7.0 / 80.0
-                dx, dy, _depth = R.orbit_point(t, spec, pw, ph)
-                assert abs(dx) <= pw / 2.0, (pw, ph, t)
-                assert abs(dy) <= ph / 2.0, (pw, ph, t)
+def test_sweep_peak_sits_where_the_phase_points():
+    # phase 0 → the highlight is on the first bar, phase 1/2 → the middle.
+    gains = [R.sweep_gain(i, 9, 0.0) for i in range(9)]
+    assert gains.index(max(gains)) == 0
+    gains = [R.sweep_gain(i, 9, 0.5) for i in range(9)]
+    assert gains.index(max(gains)) == 4
 
 
-def test_orbit_trail_head_matches_current_position():
-    spec = R.ORBITS[0]
-    trail = R.orbit_trail(1.3, spec, R.ACTIVE_W, R.ACTIVE_H)
-    assert len(trail) == R.TRAIL_N + 1
-    head = R.orbit_point(1.3, spec, R.ACTIVE_W, R.ACTIVE_H)
-    assert trail[0] == head
+def test_sweep_gain_is_bounded_and_falls_off():
+    for count in (5, 7, 10, 14):
+        for phase in (0.0, 0.2, 0.5, 0.83, 0.999):
+            gains = [R.sweep_gain(i, count, phase) for i in range(count)]
+            assert all(0.0 <= g <= 1.0 for g in gains)
+            assert max(gains) > 0.5, "the highlight vanished between bars"
+            assert min(gains) < 0.3, "the whole row lit up — no highlight to see"
 
 
-def test_orbit_sparks_move_over_time():
-    spec = R.ORBITS[0]
-    a = R.orbit_point(0.0, spec, R.ACTIVE_W, R.ACTIVE_H)
-    b = R.orbit_point(0.25, spec, R.ACTIVE_W, R.ACTIVE_H)
-    assert (a[0], a[1]) != (b[0], b[1])
+def test_sweep_wraps_around_the_row():
+    # The highlight must leave on the right and re-enter on the left without a
+    # jump: just before the wrap the LAST bar is brightest, just after it the
+    # first — and the two rows are near-identical mirror images.
+    before = [R.sweep_gain(i, 10, 0.995) for i in range(10)]
+    after = [R.sweep_gain(i, 10, 0.005) for i in range(10)]
+    assert before[-1] > 0.9 and after[0] > 0.9
+    assert max(abs(a - b) for a, b in zip(before, reversed(after), strict=True)) < 0.05
 
 
-def test_orbits_counter_rotate_and_never_sync():
-    # Opposite spin directions → gyroscope feel; incommensurate periods → the
-    # composite figure never visibly loops.
-    assert R.ORBITS[0].period_s * R.ORBITS[1].period_s < 0
-    ratio = abs(R.ORBITS[0].period_s / R.ORBITS[1].period_s)
-    frac = ratio - int(ratio)
-    assert 0.05 < frac < 0.95
+def test_sweep_travels_over_time():
+    peak_at = []
+    for k in range(6):
+        gains = R.sweep_gains(k * R.THINK_SWEEP_PERIOD_S / 6.0, 10)
+        peak_at.append(gains.index(max(gains)))
+    assert len(set(peak_at)) >= 4, f"the sweep barely moved: {peak_at}"
 
 
-def test_core_radius_breathes_within_bounds():
-    ph = float(R.ACTIVE_H)
-    radii = [R.core_radius(k * 0.05, ph) for k in range(200)]
-    assert max(radii) < ph / 2.0
-    assert min(radii) > 0.0
-    assert max(radii) > min(radii)  # it actually breathes
+def test_sweep_period_completes_one_pass():
+    a = R.sweep_gains(1.0, 10)
+    b = R.sweep_gains(1.0 + R.THINK_SWEEP_PERIOD_S, 10)
+    assert max(abs(x - y) for x, y in zip(a, b, strict=True)) < 1e-9
 
 
-def test_core_drifts_instead_of_being_pinned():
-    # The user called a position-fixed core "starr" twice — the whole reactor
-    # must float. The drift has to be clearly visible within a short thinking
-    # phase (~3 s). Visibility is RELATIVE to the pill (the drift amplitude is
-    # a fraction of the pill size), so the floor scales with the pill width
-    # instead of pinning the absolute pixels of one historical geometry.
-    pw, ph = float(R.ACTIVE_W), float(R.ACTIVE_H)
-    points = [R.core_drift(t, pw, ph) for t in (0.0, 1.0, 2.0, 3.0)]
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
-    assert max(xs) - min(xs) >= 0.02 * pw  # visibly moves horizontally in 3 s
-    assert max(ys) - min(ys) >= 0.8  # and vertically
+def test_sweep_phase_wraps_to_unit_range():
+    for t in (0.0, 0.4, 1.05, 7.3, 123.456):
+        assert 0.0 <= R.sweep_phase(t) < 1.0
+    # A degenerate period must not divide by zero — it just stops moving.
+    assert R.sweep_phase(3.0, 0.0) == 0.0
 
 
-def test_core_drift_is_bounded_and_organic():
-    pw, ph = float(R.ACTIVE_W), float(R.ACTIVE_H)
-    for k in range(400):
-        dx, dy = R.core_drift(k * 0.1, pw, ph)
-        assert abs(dx) <= pw * R.DRIFT_AX_FRAC + 1e-6
-        assert abs(dy) <= ph * R.DRIFT_AY_FRAC + 1e-6
-    # Non-synchronised frequencies → the float never settles into a loop.
-    ratio = R._DRIFT_WX / R._DRIFT_WY
-    frac = ratio - int(ratio)
-    assert 0.05 < frac < 0.95
+def test_sweep_bar_heights_stay_inside_the_pill():
+    for phase in (0.0, 0.25, 0.5, 0.75):
+        gains = [R.sweep_gain(i, 10, phase) for i in range(10)]
+        hs = R.sweep_bar_heights(gains, max_h=40.0, min_h=4.0)
+        assert all(4.0 <= h <= 40.0 + 1e-9 for h in hs)
 
 
-def test_sparks_plus_drift_stay_inside_the_pill():
-    # Orbits are clamped with the drift budget reserved — the floating system
-    # as a whole must never poke outside any pill size the ease passes.
-    sizes = [(R.ACTIVE_W, R.ACTIVE_H), (R.OPEN_W, R.OPEN_H), (R.COLLAPSED_W, R.COLLAPSED_H)]
-    for pw, ph in sizes:
-        for k in range(120):
-            t = k * 7.0 / 120.0
-            ddx, ddy = R.core_drift(t, pw, ph)
-            for spec in R.ORBITS:
-                dx, dy, _ = R.orbit_point(t, spec, pw, ph)
-                assert abs(ddx + dx) <= pw / 2.0, (pw, ph, t)
-                assert abs(ddy + dy) <= ph / 2.0, (pw, ph, t)
+def test_sweep_bars_never_collapse_to_the_resting_height():
+    # A row that drops to min_h between passes reads as a dead bar, not a
+    # working one — THINK_BASE_V is what keeps the unlit strokes present.
+    gains = [0.0] * 10
+    hs = R.sweep_bar_heights(gains, max_h=40.0, min_h=4.0)
+    assert all(h > 4.0 + 1.0 for h in hs)
 
 
-def test_core_ring_stays_near_the_core_and_inside_the_pill():
-    # The saturn ring hugs the core — it must never reach the spark orbits
-    # (which start ~0.2*ph further out) nor the pill edge.
-    ph = float(R.ACTIVE_H)
-    r = R.core_radius(0.0, ph)
-    for t in (0.0, 0.7, 1.9, 4.2):
-        for dx, dy, _depth, glint in R.core_ring_points(t, r):
-            assert abs(dx) <= r * 2.4
-            assert abs(dy) <= r * 1.2
-            assert 0.0 <= glint <= 1.0
+def test_sweep_lifts_the_bar_under_the_highlight():
+    gains = [R.sweep_gain(i, 10, 0.5) for i in range(10)]
+    hs = R.sweep_bar_heights(gains, max_h=40.0, min_h=4.0)
+    assert max(hs) > 2.0 * min(hs)
 
 
-def test_core_ring_glint_travels_around_the_ring():
-    # The bright spot must move along the ring over time — a static ring
-    # would just be a bigger static dot, which is what we're replacing.
-    ph = float(R.ACTIVE_H)
-    r = R.core_radius(0.0, ph)
-
-    def brightest_index(t: float) -> int:
-        pts = R.core_ring_points(t, r)
-        return max(range(len(pts)), key=lambda i: pts[i][3])
-
-    indices = {brightest_index(t) for t in (0.0, 0.4, 0.8, 1.2)}
-    assert len(indices) >= 3
-
-
-def test_core_highlight_swings_across_the_sphere():
-    # The specular highlight drifts horizontally (a slowly turning sphere)
-    # and always stays well inside the core body.
-    ph = float(R.ACTIVE_H)
-    r = R.core_radius(0.0, ph)
-    xs = []
-    for t in (0.0, 1.0, 2.0, 3.0, 4.0):
-        hx, hy = R.core_highlight_offset(t, r)
-        xs.append(hx)
-        assert abs(hx) <= r * 0.5
-        assert abs(hy) <= r * 0.5
-    assert max(xs) > min(xs)  # it actually moves
+def test_sweep_matches_the_web_surfaces_numbers():
+    """The deck's header bar draws the SAME motion from
+    ``frontend/src/components/overlay/voiceBars.ts``. If either side's
+    constants move, the two bars stop reading as one product — so they are
+    pinned here, next to a pointer at the file to change with them."""
+    assert R.THINK_SWEEP_WIDTH == 0.16       # SWEEP_WIDTH
+    assert R.THINK_SWEEP_PERIOD_S == 1.05    # SWEEP_PERIOD_S.working
 
 
 def test_render_think_mode_animates_over_time():
@@ -252,7 +215,7 @@ def test_visual_mode_shows_bars_while_sound_is_recent():
 
 
 def test_visual_mode_indicator_only_while_thinking():
-    # The orbital core (the "indicator") appears ONLY while actively
+    # The sweep (the "indicator") appears ONLY while actively
     # thinking/processing — coarse "think" is the THINKING state AND the
     # silent TTS-synthesis lead-in (the bridge shows "think" for SPEAKING
     # too). That is the only place an animated indicator belongs.

@@ -109,7 +109,12 @@ export function smoothLevel(
   return to <= 0 && next < 0.01 ? 0 : clamp01(next);
 }
 
-/** Gaussian width of the travelling activity highlight, in row fractions. */
+/** Gaussian width of the travelling activity highlight, in row fractions.
+ *
+ *  The desktop bar draws the SAME sweep for its thinking state and copies this
+ *  number (``renderer.THINK_SWEEP_WIDTH``, pinned by
+ *  ``tests/unit/ui/jarvisbar/test_renderer.py``). Changing it here without
+ *  changing it there splits the two bars apart. */
 export const SWEEP_WIDTH = 0.16;
 
 /**
@@ -141,7 +146,10 @@ export function sweepGain(
 
 /** Seconds one sweep needs to cross the row, per phase. Each phase gets its
  *  own tempo so the three unmeasured states stay distinguishable at a glance:
- *  a brisk sweep while work is in flight, a calm one while the reply plays. */
+ *  a brisk sweep while work is in flight, a calm one while the reply plays.
+ *
+ *  ``working`` is shared with the desktop bar's thinking look
+ *  (``renderer.THINK_SWEEP_PERIOD_S``) — see SWEEP_WIDTH above. */
 export const SWEEP_PERIOD_S: Record<string, number> = {
   connecting: 1.6,
   working: 1.05,
