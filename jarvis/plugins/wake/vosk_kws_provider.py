@@ -82,19 +82,15 @@ CPU shows it ~0.5 s after:
   loaded for verify/rescue and return on the next ``detect()`` session. The
   primary model is never demoted.
 
-**Native concurrency limit (found 2026-08-19, PRE-EXISTING, open).** libvosk
-0.3.44 is safe for many recognizers DECODING concurrently on one Model, but
-under a high rate of concurrent recognizer construction + short decode +
-``FinalResult`` it crashes the process with an access violation (Windows,
-reproduced in ~5-50 s with five threads; the real-model bench
-``scripts/vosk_wake_bench.py`` hit it 3/3 at HEAD before this change and
-2/4 after). No partial lock protocol tried (finals only; finals exclusive
-vs decodes; finals + constructions exclusive) was reliably enough; full
-serialisation of every native call survives. This module therefore adds no
-new concurrent decode-and-finalise cycle (the streamed confirm decodes in
-parallel but finalises sequentially on one thread) and keeps the rest of
-the pre-existing design; the fix proper is tracked in docs/BUGS.md
-(BUG-151).
+**Native concurrency (BUG-151, fixed 2026-08-20).** libvosk 0.3.44 is safe
+for many recognizers DECODING concurrently on one Model, but concurrent
+construction + short decode + ``FinalResult`` access-violates the process.
+Every native constructor and method now goes through
+``jarvis.plugins.wake.vosk_native`` (one process-wide lock). Python-level
+grammar/free submit still runs on two threads so the 2026-07-10 spawn-latency
+structure stays; the lock serialises the native calls themselves. Test
+doubles are not wrapped, so the concurrent-barrier unit test still proves
+the submit shape.
 """
 from __future__ import annotations
 
@@ -113,6 +109,7 @@ from typing import Any
 import numpy as np
 
 from jarvis.core.protocols import AudioChunk
+from jarvis.plugins.wake.vosk_native import build_recognizer, native_call
 from jarvis.speech.wake_constants import (
     WAKE_PREFIXES,
     normalize_phrase_for_match,
@@ -643,19 +640,18 @@ class _StreamingVerify:
     internally, so feeding the ring and then 32 ms chunks decodes exactly what
     one 3.6 s buffer would.)
 
-    Threading, chosen against the libvosk limits measured 2026-08-19 (module
-    note, BUG-151): FEEDS run on one single-worker executor per recognizer —
-    ordered, never overlapping on one native recognizer (AP-24), and the two
-    recognizers decode concurrently, which is the proven-safe pattern (many
-    recognizers decoding at once on one Model). The two FINALS run
-    sequentially on the finishing thread after every feed has landed — the
-    concurrent short-decode-and-finalise cycle is the one that crashes that
-    build, so this class never adds one. The window and the normalised pcm are
-    accumulated here so the judgement sees exactly what the recognizers
-    decoded. Peak normalisation uses the gain measured over the ring at
-    partial time; the tail keeps that gain (clipped), which is the one place
-    this differs from the from-scratch path — the phrase itself, the part the
-    re-score and the span RMS judge, is the ring.
+    Threading (BUG-151): FEEDS run on one single-worker executor per
+    recognizer — ordered, never overlapping on one native recognizer (AP-24).
+    The two executors still submit in parallel (the 2026-07-10 spawn-latency
+    shape); ``vosk_native.LockedRecognizer`` serialises the native calls so
+    this is not the crashy concurrent short-decode-and-finalise cycle. The two
+    FINALS still run sequentially on the finishing thread after every feed has
+    landed. The window and the normalised pcm are accumulated here so the
+    judgement sees exactly what the recognizers decoded. Peak normalisation
+    uses the gain measured over the ring at partial time; the tail keeps that
+    gain (clipped), which is the one place this differs from the from-scratch
+    path — the phrase itself, the part the re-score and the span RMS judge, is
+    the ring.
     """
 
     def __init__(
@@ -935,12 +931,10 @@ class VoskKwsProvider:
         return model
 
     def _new_grammar_rec(self, path: str | None = None) -> Any:
-        from vosk import KaldiRecognizer
-
         grammar = json.dumps([self._phrase.lower(), "[unk]"])
-        rec = KaldiRecognizer(self._ensure_model(path), self._sample_rate, grammar)
-        rec.SetWords(True)
-        return rec
+        return build_recognizer(
+            self._ensure_model(path), self._sample_rate, grammar
+        )
 
     def _build_verify_rec(self, path: str | None, kind: str, *, prewarm: bool) -> Any:
         """A fresh one-shot verify recognizer; optionally silence-prewarmed.
@@ -948,24 +942,22 @@ class VoskKwsProvider:
         The prewarm decodes 0.3s of silence and Resets — it pre-pays Kaldi's
         lazy first-decode init without touching decisions (parity-measured).
         A prewarm error degrades to the cold recognizer, never fails a verify.
+        Construction and every native method go through ``vosk_native``
+        (BUG-151).
         """
-        from vosk import KaldiRecognizer
-
         if kind == "grammar":
             rec = self._new_grammar_rec(path)
         elif kind == _COMPETITION_KIND:
             if self._competition_grammar is None:  # unprefixed phrase
                 rec = self._new_grammar_rec(path)
             else:
-                rec = KaldiRecognizer(
+                rec = build_recognizer(
                     self._ensure_model(path),
                     self._sample_rate,
                     self._competition_grammar,
                 )
-                rec.SetWords(True)
         else:
-            rec = KaldiRecognizer(self._ensure_model(path), self._sample_rate)
-            rec.SetWords(True)
+            rec = build_recognizer(self._ensure_model(path), self._sample_rate)
         if prewarm:
             try:
                 silence = np.zeros(
@@ -1474,14 +1466,12 @@ class VoskKwsProvider:
         model (data/wake_models/vosk/de/vosk-model-small-de-0.15): the free
         pass costs 3-5x the grammar pass (e.g. 235ms vs 70ms over a 3 s
         window), so running them sequentially pays their SUM even though the
-        wall-clock floor is only their MAX. They run concurrently in two
-        worker threads against ONE shared, read-only ``Model`` — Vosk's
-        documented multi-client pattern (one Model, many independent
-        KaldiRecognizer sessions decoding concurrently), not the AP-24 hazard
-        (that guards a single recognizer's mutable per-call state shared
-        across concurrent callers; here each thread owns its own fresh
-        recognizer). This changes only wall-clock time, never the decision:
-        both passes decode the identical ``pcm`` and every downstream
+        wall-clock floor is only their MAX. They submit concurrently in two
+        worker threads against ONE shared, read-only ``Model``. Each thread
+        owns its own fresh recognizer (AP-24). Native calls serialise on the
+        BUG-151 lock so this is not the crashy concurrent
+        short-decode-and-finalise cycle. Decision is unchanged: both passes
+        decode the identical ``pcm`` and every downstream
         threshold/comparison is untouched.
 
         Two entry shapes share the judgement below (``_judge_decoded``): this
@@ -2201,7 +2191,12 @@ def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:
         tmp = tempfile.TemporaryFile(mode="w+")
         old = os.dup(2)
         os.dup2(tmp.fileno(), 2)
-        KaldiRecognizer(Model(model_path), 16_000, json.dumps([phrase.lower(), "[unk]"]))
+        native_call(
+            KaldiRecognizer,
+            Model(model_path),
+            16_000,
+            json.dumps([phrase.lower(), "[unk]"]),
+        )
     except Exception:  # noqa: BLE001 — probe failure must not reject a real word
         return True
     finally:
