@@ -4,21 +4,45 @@
   </a>
 </p>
 
-<p align="center">
-  <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI: personal-jarvis" src="https://img.shields.io/pypi/v/personal-jarvis?style=for-the-badge&labelColor=242424&color=e7c46e" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
-  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
-  <a href="https://x.com/Ruben_Luetke"><img alt="Follow @Ruben_Luetke on X" src="https://img.shields.io/badge/Follow-%40Ruben__Luetke-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
-  <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
-  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-e7c46e?style=for-the-badge&logo=python&logoColor=e7c46e&labelColor=242424" />
-  <img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-242424?style=for-the-badge&labelColor=242424&color=242424" />
-</p>
-
 <h2 align="center">Your personal AI ecosystem, controlled entirely by voice.</h2>
 
 <p align="center">
   It drives coding agents, runs shell commands, operates your computer, connects anything that speaks MCP, dictates into any app, and remembers everything.<br>
-  Open source, and it can run fully on your own hardware.
+  Open source, and it can run fully on your own hardware &mdash; no cloud account anywhere in the chain.
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
+    <img src="https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/assets/demo/personal-jarvis-demo.gif" alt="Animated demo showing the spoken prompt, Jarvis opening Windows Settings, and switching display mode from dark to light" width="860" />
+  </a>
+</p>
+
+<p align="center">
+  <sub>Real time, not sped up. One spoken command, and it takes the screen and does it.</sub>
+</p>
+
+### Install it in one command
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
+```
+
+**macOS and Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+```
+
+Python 3.11+ and Git, nothing else. The installer asks nothing in the terminal, and the app
+walks you through language, wake word, and keys once. [Full install notes below](#install).
+
+<p align="center">
+  <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI: personal-jarvis" src="https://img.shields.io/pypi/v/personal-jarvis?style=for-the-badge&labelColor=242424&color=e7c46e" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
+  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
+  <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
 </p>
 
 ---
@@ -102,15 +126,9 @@ the table above is genuinely local.
 
 ## Demo
 
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
-    <img src="https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/assets/demo/personal-jarvis-demo.gif" alt="Animated demo showing the spoken prompt, Jarvis opening Windows Settings, and switching display mode from dark to light" width="860" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>One voice command, and the router takes the screen and does it live &middot; <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">watch the full demo on YouTube</a></sub>
-</p>
+The clip at the top is the short version. [Watch the full demo on YouTube](https://www.youtube.com/watch?v=6xoxgNu5fd8),
+where one voice command takes the screen and changes a Windows setting live, or browse the
+[channel](https://www.youtube.com/@PersonalJarvis) for the rest.
 
 ## What it does differently
 
