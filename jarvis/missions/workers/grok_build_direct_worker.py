@@ -373,6 +373,8 @@ class GrokBuildDirectWorker:
                 limit=_STREAM_READLINE_LIMIT,
             )
         except FileNotFoundError as exc:
+            # Not silent: the missing binary is handed back as the run's own
+            # error result, which is what the caller reports to the user.
             yield ClaudeResult(
                 subtype="error_during_execution",
                 is_error=True,
@@ -418,6 +420,9 @@ class GrokBuildDirectWorker:
             try:
                 raw = await asyncio.wait_for(proc.stdout.readline(), timeout=read_cap)
             except TimeoutError:
+                # Expected control flow, not a failure: once output has started
+                # a quiet gap is the agent thinking. A timeout BEFORE the first
+                # line is the real fault and does get a message, below.
                 if got_first_line:
                     continue
                 timed_out = True
@@ -448,6 +453,8 @@ class GrokBuildDirectWorker:
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
+                # The CLI interleaves plain human lines with its JSON stream;
+                # a non-JSON line is normal output, not an error to report.
                 continue
             if not isinstance(obj, dict):
                 continue

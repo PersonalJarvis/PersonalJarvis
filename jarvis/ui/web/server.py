@@ -1351,6 +1351,10 @@ class WebServer:
                     and grok_build_status.mode == "subscription"
                 )
             except Exception:  # noqa: BLE001
+                # A probe that cannot answer means "not connected" on this
+                # overview row, which is the safe reading and one the user can
+                # see. The Agents tab runs the same check and reports the real
+                # cause there; this row must never take the whole page down.
                 grok_build_connected = False
             grok_build_ready = (
                 grok_build_provider_ready(grok_build_status)

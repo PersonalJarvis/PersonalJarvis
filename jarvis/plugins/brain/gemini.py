@@ -142,6 +142,9 @@ def _thinking_config_for(
         try:
             return _genai_types.ThinkingConfig(thinking_budget=value)
         except (TypeError, AttributeError, ValueError):
+            # An installed SDK that does not know this field is a capability
+            # answer, not a fault: None means "no thinking config", and the
+            # request goes out without one (AP-21).
             return None
 
     # A positive or dynamic constructor budget is an explicit cap — keep
@@ -159,6 +162,8 @@ def _thinking_config_for(
         try:
             return _genai_types.ThinkingConfig(thinking_level=level), "level"
         except (TypeError, AttributeError, ValueError):
+            # Same capability probe as above, one field newer. Falling through
+            # tries the older budget shape, which is the point of the ladder.
             pass
 
     if wants_off:
@@ -1218,6 +1223,9 @@ class GeminiBrain:
                                     thinking_budget=0
                                 )
                             except (TypeError, AttributeError, ValueError):
+                                # Last rung of the same ladder, on the retry
+                                # path: no usable config means the request is
+                                # sent without one rather than failing here.
                                 fallback = None
                         if fallback is not None:
                             config_dict["thinking_config"] = fallback

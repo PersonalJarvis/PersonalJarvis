@@ -88,10 +88,14 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, ValueError):
+        # No file, no permission, undecodable bytes: all mean the same thing to
+        # every caller — this login does not exist. Nothing to report.
         return None
     try:
         data = json.loads(raw)
     except (ValueError, json.JSONDecodeError):
+        # A half-written auth.json reads as "not logged in"; the CLI rewrites
+        # it on the next login and the status card already says so.
         return None
     return data if isinstance(data, dict) else None
 
@@ -138,6 +142,8 @@ def _email_from_id_token(token: str | None) -> str | None:
     try:
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
     except (binascii.Error, ValueError, json.JSONDecodeError):
+        # The token is opaque third-party data and the email is a nicety: an
+        # unreadable payload costs the account label, never the connection.
         return None
     email = payload.get("email") if isinstance(payload, dict) else None
     return email if isinstance(email, str) and email else None
@@ -183,6 +189,8 @@ def _latest_login_mtime(home: Path) -> float | None:
         if path.is_file() and path.stat().st_size > 0:
             return path.stat().st_mtime
     except OSError:
+        # An unreadable home means "no login seen here" — the caller compares
+        # timestamps and treats None as "nothing to copy".
         return None
     return None
 
@@ -217,6 +225,8 @@ def prepare_worker_home(
         try:
             previous = float(marker.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
+            # A missing or garbled marker means the isolated home was never
+            # seeded; the copy below then runs, which is the safe direction.
             previous = None
         if previous != mtime:
             for name in _LOGIN_FILES:
@@ -320,6 +330,8 @@ class GrokBuildAuthService:
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
         except (OSError, subprocess.SubprocessError):
+            # The version probe is decoration on the status card. A missing or
+            # broken binary is reported by the connection check itself.
             version = None
         else:
             out = (proc.stdout or proc.stderr or "").strip()
@@ -398,6 +410,8 @@ class GrokBuildAuthService:
         try:
             (self._home_dir() / "auth.json").unlink(missing_ok=True)
         except OSError as exc:
+            # Not silent: the reason travels back to the caller, which puts it
+            # on the card the user is looking at.
             return False, str(exc)
         try:
             prepare_worker_home(src_home=self._home_dir())

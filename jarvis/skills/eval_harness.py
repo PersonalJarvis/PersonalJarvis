@@ -284,6 +284,9 @@ def _is_block_tier(skill: Any) -> bool:
     try:
         return frontmatter.risk_policy.default_tier == "block"
     except Exception:  # noqa: BLE001
+        # A skill whose frontmatter cannot answer is not a blocked skill. This
+        # is the offline eval harness, so a report that reads "not blocked" is
+        # the honest answer and the run keeps scoring the rest of the corpus.
         return False
 
 
@@ -385,6 +388,8 @@ def _decide(registry: Any, text: str, lang: str = "auto") -> tuple[Any, str]:
     try:
         skill = registry.get(decision.top.skill_name)
     except Exception:  # noqa: BLE001
+        # A name the registry will not resolve simply has no guard ladder to
+        # evaluate; the match itself is still reported to the caller.
         return decision, ""
     decision, skill = _prefer_music_service(registry, decision, skill, text)
     ladder = evaluate_guards(
