@@ -79,7 +79,21 @@ _LOOKUP_SHAPE_RE = re.compile(
     r"zeig\w*|lies|lese|list\w*|"
     r"find\w*|such\w*|pruef\w*|fass\w*|habe ich|hab ich|gibt es|"
     r"que|cuando|donde|cual\w*|quien|cuantos|muestra|lee|lista|"
-    r"busca|revisa|resume|tengo|hay)\b"  # i18n-allow: multilingual speech-input matching data
+    r"busca|revisa|resume|tengo|hay)\b|"  # i18n-allow: multilingual speech-input matching data
+    # Indirect questions. Spoken language wraps a lookup in a statement —
+    # "ich möchte fragen, ob mein PC überlastet ist" carries no question word
+    # and no question mark, so every question-word rule above missed it and
+    # the whole sentence scored NO reason at all (live 2026-08-20 15:35: the
+    # user asked twice about his own machine and got "actions don't work right
+    # now" both times). The idiom is what makes it a lookup, not the
+    # punctuation.  # i18n-allow: quoted German utterance
+    r"\b(?:moechte|will|wollte|wuerde gern\w*)\s+(?:mal\s+)?"  # i18n-allow: speech input
+    r"(?:kurz\s+)?(?:fragen|wissen)\b|"  # i18n-allow: speech input
+    r"\bfrage mich\b|\bsag mir\b|\bweisst du\b|"  # i18n-allow: speech input
+    r"\b(?:schau|guck|sieh|pruef)\w*\s+(?:mal\s+)?(?:nach|ob)\b|"  # i18n-allow: speech input
+    r"\bwondering (?:if|whether)\b|\btell me (?:if|whether)\b|"
+    r"\bdo you know (?:if|whether)\b|\blet me know\b|"
+    r"\bme pregunto si\b|\bdime si\b|\bsabes si\b"  # i18n-allow: speech input
 )
 # "what is this/that ..." is deictic (the user points at something live),
 # not a request for a definition — it must stay eligible for delegation.
@@ -264,6 +278,40 @@ _APP_STATE_RE = re.compile(
     r"stimme\w*|lautstaerke\w*|mikrofon\w*|aufgabe\w*|bildschirm\w*|"  # i18n-allow: speech input
     r"mauszeiger\w*|weckwort\w*|"  # i18n-allow: speech input
     r"proveedor\w*|microfono\w*|tarea\w*|pantalla|volumen)\b"  # i18n-allow: speech input
+)
+# The health of the machine Jarvis runs on. Only the local system can answer
+# "is my PC overloaded" — the live model's own knowledge cannot, and before
+# this vocabulary existed such a turn scored NO reason, so it was neither
+# routed to the orchestrator nor allowed to read the machine (live 2026-08-20
+# 15:35). Gated like the app-state nouns above (lookup, action, or ownership)
+# because "computer" and "battery" are ordinary words. "Temperatur" stays out
+# on purpose — it belongs to the weather far more often than to a
+# processor.  # i18n-allow: names the German token left out
+_MACHINE_STATE_RE = re.compile(
+    r"\b(?:cpu\w*|gpu\w*|ram|processor\w*|hard\s?(?:disk|drive)|"
+    r"memory usage|batter(?:y|ies)|"
+    r"pc|computer\w*|laptop\w*|notebook\w*|macbook\w*|desktop machine|"
+    r"prozessor\w*|arbeitsspeicher|festplatte\w*|"  # i18n-allow: speech input
+    r"akku\w*|batterie\w*|luefter|rechner\w*|"  # i18n-allow: speech input
+    # "lagt"/"ruckelt" describe a machine AND a game or a video, and the ASR
+    # homophone "es legt" is a plain remark — so they stay in the GATED half:
+    # they count when the sentence also points at the user or asks something
+    # ("warum ruckelt mein PC"), never on their own.  # i18n-allow: names the German tokens
+    r"lagt|laggt|ruckelt|"  # i18n-allow: speech input
+    r"procesador\w*|memoria|disco duro|bateria|ordenador\w*|"  # i18n-allow: speech input
+    r"ventilador)\b"  # i18n-allow: speech input
+)
+# The SYMPTOM half of the same question, and the reason it needs its own rule:
+# "Ist der Rechner überlastet?" is a yes/no question — no question word, no
+# possessive — so the gating condition above never fires and the sentence
+# scored nothing. A symptom word IS the question; nothing but the local system
+# can answer it. Bare mention, exactly like the other strong-evidence
+# vocabularies. Over-matching a metaphor ("die Diskussion ist überhitzt") costs
+# one delegation; under-matching loses the answer.  # i18n-allow: quoted German utterances
+_MACHINE_SYMPTOM_RE = re.compile(
+    r"\b(?:overheat\w*|overload\w*|disk\s?space|fan speed|uptime|"
+    r"ueberhitz\w*|ueberlast\w*|auslastung|speicherplatz|"  # i18n-allow: speech input
+    r"sobrecalent\w*|sobrecarg\w*|espacio en disco)\b"  # i18n-allow: speech input
 )
 # A person's contact detail is never a definition question, so this rule is
 # deliberately NOT gated on the definition shape ("What is Anna's number?").
@@ -891,6 +939,14 @@ def plan_turn(
         and not definition
         and (lookup or action_intent or private)
     ):
+        reasons.add(TurnReason.LOCAL_STATE)
+    if (
+        _MACHINE_STATE_RE.search(normalized)
+        and not definition
+        and (lookup or action_intent or private)
+    ):
+        reasons.add(TurnReason.LOCAL_STATE)
+    if _MACHINE_SYMPTOM_RE.search(normalized) and not definition:
         reasons.add(TurnReason.LOCAL_STATE)
     # Deliberately not gated on the definition shape: "What is Anna's
     # phone number?" is a contact lookup, never a definition.

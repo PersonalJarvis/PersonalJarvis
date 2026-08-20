@@ -133,3 +133,24 @@ scenarios:
     expect:
       spoken_equals: "Soll ich die Mail wirklich senden?"
       continues_turn: false
+
+  - name: a-gated-call-is-not-a-broken-assistant
+    why: >
+      Live 2026-08-20 15:35 — a plain question about the user's own PC. The
+      shape guard refused the read, and the user heard "Aktionen gehen gerade
+      nicht": an outage that never happened, twice in one call. Nothing was
+      missing; a call his words had not ordered was declined. The line says
+      that, and names the one thing he can do about it.
+    language: de
+    user: "ich möchte fragen, ob mein PC gerade überlastet ist"
+    tools:
+      - name: run_shell
+        outcome: blocked
+        error: >
+          run_shell was not run: the user's words do not order an action —
+          they are a question, a remark, or a greeting.
+    expect:
+      spoken_excludes:
+        - "Aktionen gehen gerade nicht"
+        - "run_shell"
+      continues_turn: true

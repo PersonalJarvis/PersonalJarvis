@@ -195,6 +195,13 @@ class SupervisorToolDescriptor:
     # Catalog build captures it so the hybrid execute guard can treat a
     # ``now_playing`` read as ``safe`` without holding the Tool object.
     risk_tier_for_args: Any = None
+    # Optional per-call impact hook (same contract as ``Tool.describe_args``):
+    # ``{"level": "read" | "modify" | "destructive", ...}``. Captured for the
+    # same reason as the tier hook — the execute guard has to know whether THIS
+    # call only reads. A tool whose consequence depends on its arguments
+    # (``run_shell``: ``systeminfo`` reads, ``rm -rf`` destroys) is otherwise
+    # judged by its worst possible call on every turn.
+    describe_args: Any = None
 
 
 @dataclass(frozen=True, slots=True)

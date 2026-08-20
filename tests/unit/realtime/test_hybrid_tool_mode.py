@@ -628,3 +628,94 @@ def _wire_suffix(name: str) -> str:
     import hashlib
 
     return hashlib.sha256(name.encode("utf-8")).hexdigest()[:10]
+
+
+# --- A read is not an action (live forensic 2026-08-20 15:35) ---------------
+
+
+def _shell_descriptor() -> SupervisorToolDescriptor:
+    """The REAL ``run_shell`` hooks, so this guard cannot drift from the tool."""
+    from jarvis.plugins.tool.run_shell import RunShellTool
+
+    tool = RunShellTool()
+    return SupervisorToolDescriptor(
+        name="run_shell",
+        description="Run a shell command.",
+        input_schema=tool.schema,
+        risk_tier="monitor",
+        risk_tier_for_args=tool.risk_tier_for_args,
+        describe_args=tool.describe_args,
+    )
+
+
+async def _shell_call(bridge, user_text: str, command: str):
+    await bridge.handle_user_transcript(user_text)
+    _name, result = await bridge.execute(
+        wire_name="run_shell", arguments={"command": command}
+    )
+    return result
+
+
+def _shell_bridge():
+    gateway = _RecordingGateway([_shell_descriptor()])
+    return gateway, RealtimeToolBridge(gateway=gateway, language="de", compact=True)
+
+
+@pytest.mark.asyncio
+async def test_a_question_about_the_machine_may_read_the_machine():
+    """The 15:35 transcript verbatim.
+
+    "ob mein PC gerade überhitzt, überlastet ist" is a question, so the shape
+    guard refused ``run_shell`` — judging the call by the worst command that
+    tool could ever carry. The user asked twice and heard "Aktionen gehen
+    gerade nicht" both times. A READ answers the question; it starts nothing.
+    """
+    gateway, bridge = _shell_bridge()
+    asked = (
+        "Nein, ich möchte fragen, ob mein PC gerade irgendwie "  # i18n-allow: live utterance
+        "komplett überhitzt, überlastet ist."  # i18n-allow: live utterance
+    )
+    result = await _shell_call(bridge, asked, "systeminfo")
+    assert result["success"] is True
+
+    again = "Wie sieht es mit meinem PC aus? Lagt er gerade rum?"  # i18n-allow: live utterance
+    result = await _shell_call(
+        bridge, again, "Get-Process | Sort-Object CPU -Descending"
+    )
+    assert result["success"] is True
+    assert gateway.executed == ["run_shell", "run_shell"]
+
+
+@pytest.mark.asyncio
+async def test_a_question_still_starts_nothing_that_changes_the_machine():
+    """The read exemption is per CALL, not per tool: the same question must
+    not carry a command that deletes, moves or pushes anything."""
+    gateway, bridge = _shell_bridge()
+    question = "Ist der Rechner überlastet?"  # i18n-allow: German speech-input fixture
+
+    result = await _shell_call(bridge, question, "Remove-Item C:/temp -Recurse")
+    assert result["success"] is False and "was not run" in result["error"]
+
+    result = await _shell_call(bridge, question, "git push")
+    assert result["success"] is False and "was not run" in result["error"]
+    assert gateway.executed == []
+
+
+@pytest.mark.asyncio
+async def test_smalltalk_still_reads_nothing():
+    """A read needs a reason in the user's words — the imperative is what it
+    no longer needs. "Was geht ab?" asks for neither."""
+    gateway, bridge = _shell_bridge()
+    result = await _shell_call(bridge, "Was geht ab?", "systeminfo")  # i18n-allow
+    assert result["success"] is False and "was not run" in result["error"]
+    assert gateway.executed == []
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_order_still_runs_a_destructive_command():
+    """The order path is untouched — the executor's confirmation owns it."""
+    gateway, bridge = _shell_bridge()
+    order = "Lösch bitte den Ordner Urlaub."  # i18n-allow: German speech-input fixture
+    result = await _shell_call(bridge, order, "Remove-Item C:/Urlaub -Recurse")
+    assert result["success"] is True
+    assert gateway.executed == ["run_shell"]

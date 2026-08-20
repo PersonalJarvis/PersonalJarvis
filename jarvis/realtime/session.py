@@ -8343,10 +8343,15 @@ class RealtimeVoiceSession:
         speakable = [r for r in results if not r.get("blocked")]
         if not speakable:
             # Every call the model made was gated away. Nothing ran, nothing
-            # broke: the honest line says actions were not available, and the
-            # continuation prompt (``_direct_tool_result_retry_prompt``) is what
-            # actually gets the turn answered inline.
-            return action_phrase("actions_unavailable", self._language), False
+            # broke — and nothing is missing either, which is why this is NOT
+            # the ``actions_unavailable`` outage line: that sentence tells the
+            # user his assistant cannot act at all, and he heard it twice in
+            # one call for a plain question about his PC (2026-08-20 15:35).
+            # The gate declined a call his words never ordered; the line says
+            # exactly that, and the continuation prompt
+            # (``_direct_tool_result_retry_prompt``) is what actually gets the
+            # turn answered inline.
+            return action_phrase("actions_not_requested", self._language), False
 
         succeeded = [r for r in speakable if r.get("success")]
         failed = [r for r in speakable if not r.get("success")]

@@ -62,6 +62,7 @@ class BrainSupervisorToolGateway:
                 raw_risk_tier if raw_risk_tier in _VALID_RISK_TIERS else "monitor",
             )
             hook = getattr(tool, "risk_tier_for_args", None)
+            impact = getattr(tool, "describe_args", None)
             descriptors.append(
                 SupervisorToolDescriptor(
                     name=str(name),
@@ -70,6 +71,7 @@ class BrainSupervisorToolGateway:
                     risk_tier=risk_tier,
                     is_action_tool=bool(getattr(tool, "is_action_tool", False)),
                     risk_tier_for_args=hook if callable(hook) else None,
+                    describe_args=impact if callable(impact) else None,
                 )
             )
         return tuple(descriptors)

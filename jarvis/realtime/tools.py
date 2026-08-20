@@ -40,6 +40,7 @@ from jarvis.core.protocols import (
     SupervisorToolGateway,
     SupervisorToolRequest,
 )
+from jarvis.safety.command_impact import READ
 from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
 from jarvis.voice.echo_confirmation import classify_response
 from jarvis.voice.tool_confirmation import format_tool_confirmation
@@ -207,6 +208,38 @@ def _effective_call_tier(
     return static
 
 
+def _call_only_reads(
+    descriptor: SupervisorToolDescriptor,
+    arguments: dict[str, Any] | None,
+) -> bool:
+    """True when THIS call's own arguments make it a pure read.
+
+    Asks the tool's ``describe_args`` hook, whose ``level`` vocabulary is the
+    one in :mod:`jarvis.safety.command_impact` (``read`` / ``modify`` /
+    ``destructive``) — the same deterministic classification the confirmation
+    question already speaks. No hook, no answer: absent evidence a call counts
+    as consequential, never as a read.
+
+    Live forensic 2026-08-20 15:35: "ob mein PC gerade überhitzt, überlastet
+    ist" made the live model call ``run_shell``. The tool is statically a
+    side-effect tool, so the shape gate below judged the call by the worst
+    command ``run_shell`` could ever carry and refused a read of the user's own
+    machine — twice in a row, and the user heard "actions don't work right
+    now". A question about the user's world is exactly the turn a READ answers;
+    the imperative rule exists for commands that CHANGE something.
+    """
+    hook = getattr(descriptor, "describe_args", None)
+    if not callable(hook):
+        return False
+    try:
+        described = hook(arguments if isinstance(arguments, dict) else {})
+    except Exception:  # noqa: BLE001 — a broken hook must not brick the call
+        return False
+    if not isinstance(described, dict):
+        return False
+    return str(described.get("level", "")).strip().lower() == READ
+
+
 def _is_music_plugin(name: str) -> bool:
     try:
         from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
@@ -257,10 +290,14 @@ def _turn_shape_refusal(
       asks for the user's world (a planner reason) — a turn with none of
       those ("Was geht ab?", "Okay.") gets no side effect.  # i18n-allow: quoted utterances
 
-    The effective tier is per-call: ``risk_tier_for_args`` can mark a read
-    such as ``now_playing`` ``safe`` even when the tool is statically
-    ``monitor``. A music *write* (play/pause/skip) still needs an order —
-    "Welches Lied" must not restart the player.  # i18n-allow
+    Both the tier and the consequence are per-call, not per-tool:
+    ``risk_tier_for_args`` can mark a read such as ``now_playing`` ``safe``
+    even when the tool is statically ``monitor``, and ``describe_args`` says
+    whether THIS call's arguments only read. A call that only reads skips the
+    imperative rule and lands on the world-reason rule instead — a question
+    about the user's machine is answered by reading it, not by refusing. A
+    music *write* (play/pause/skip) still needs an order — "Welches Lied" must
+    not restart the player.  # i18n-allow
 
     Read-only ``safe`` tools are never refused here. An empty utterance
     (non-conversational launch routes) fails open. Returns the model-facing
@@ -288,7 +325,8 @@ def _turn_shape_refusal(
     if tier == "safe":
         return ""
     orders = is_action_order(text)
-    if tier in {"ask", "block"} or _is_side_effect_tool(descriptor):
+    reads_only = _call_only_reads(descriptor, arguments)
+    if not reads_only and (tier in {"ask", "block"} or _is_side_effect_tool(descriptor)):
         if orders:
             return ""
         return (
@@ -299,7 +337,7 @@ def _turn_shape_refusal(
         )
     if orders or is_assistant_tasking(text):
         return ""
-    if _is_music_plugin(name):
+    if _is_music_plugin(name) and not reads_only:
         return (
             f"{name} was not run: the user's words do not order an action — "
             "they are a question, a remark, or a greeting. Never start a "

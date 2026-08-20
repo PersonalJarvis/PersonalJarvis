@@ -908,3 +908,58 @@ def test_calendar_evidence_domain_is_connected_not_public(
     assert TurnReason.CONNECTED_DATA in plan.reasons
     assert TurnReason.PUBLIC_FACT not in plan.reasons
     assert plan.requires_public_fact_grounding is False
+
+
+# ---------------------------------------------------------------------------
+# The user's own machine (live forensic 2026-08-20 15:35)
+# ---------------------------------------------------------------------------
+#
+# Two turns in a row asked whether the PC was overloaded. Both scored NO reason
+# at all: the health of the machine Jarvis runs on was nowhere in the planner's
+# vocabulary, and an indirect question ("ich möchte fragen, ob ...") carries
+# neither a question word nor a question mark. So the router sent a question
+# only the local system can answer to a model that cannot, and the execute-time
+# shape guard refused the read it would have taken to answer it.
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Verbatim from the transcript.
+        (
+            "Wie siehst eigentlich mit meinem Akku, wie siehst du "  # i18n-allow: live utterance
+            "mit meinem PC aus? Lagt er gerade komplett rum?"  # i18n-allow: live utterance
+        ),
+        (
+            "Nein, ich möchte fragen, ob mein PC gerade irgendwie "  # i18n-allow: live utterance
+            "komplett überhitzt, überlastet ist."  # i18n-allow: live utterance
+        ),
+        # A yes/no question has no question word and needs no possessive.
+        "Ist der Rechner überlastet?",  # i18n-allow: German speech-input fixture
+        "Wie voll ist meine Festplatte?",  # i18n-allow: German speech-input fixture
+        "Wie viel Speicherplatz habe ich noch?",  # i18n-allow: German speech-input fixture
+        "How is my CPU doing right now?",
+        "Is the laptop overheating?",
+        "¿Está sobrecargado mi ordenador?",  # i18n-allow: Spanish speech-input fixture
+    ],
+)
+def test_a_question_about_the_users_machine_is_local_state(utterance: str) -> None:
+    assert TurnReason.LOCAL_STATE in plan_turn(utterance).reasons
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Smalltalk, gratitude and definitions keep scoring nothing — the
+        # machine vocabulary must not turn conversation into a system probe.
+        "Was geht ab?",  # i18n-allow: German speech-input fixture
+        "Okay.",
+        "Hallo, sprich mal mit mir.",  # i18n-allow: German speech-input fixture
+        "Was ist ein Computer?",  # i18n-allow: German speech-input fixture
+        "Erzähl mir einen Witz.",  # i18n-allow: German speech-input fixture
+        "Danke dir, das war gut.",  # i18n-allow: German speech-input fixture
+        "Wer war Albert Einstein?",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_conversation_scores_no_machine_reason(utterance: str) -> None:
+    assert TurnReason.LOCAL_STATE not in plan_turn(utterance).reasons

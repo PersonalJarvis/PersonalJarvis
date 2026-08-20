@@ -64,3 +64,24 @@ def test_catalog_carries_the_per_args_risk_tier_hook() -> None:
     assert descriptor.risk_tier == "monitor"
     assert descriptor.risk_tier_for_args({"action": "now_playing"}) == "safe"
     assert descriptor.risk_tier_for_args({"action": "play"}) == "monitor"
+
+
+def test_catalog_carries_the_per_args_impact_hook() -> None:
+    """Without this the realtime shape guard cannot tell a read from a write.
+
+    The guard's unit tests build descriptors by hand; only this one proves the
+    hook survives the trip through the live catalog, which is where the
+    2026-08-20 15:35 refusal happened.
+    """
+    from jarvis.plugins.tool.run_shell import RunShellTool
+
+    gateway = BrainSupervisorToolGateway(
+        SimpleNamespace(_tools={"run_shell": RunShellTool()}, _tool_executor=None)
+    )
+    descriptor = gateway.catalog()[0]
+    assert descriptor.name == "run_shell"
+    assert descriptor.describe_args({"command": "systeminfo"})["level"] == "read"
+    assert (
+        descriptor.describe_args({"command": "Remove-Item C:/x -Recurse"})["level"]
+        == "destructive"
+    )

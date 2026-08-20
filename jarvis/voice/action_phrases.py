@@ -298,6 +298,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I can't run actions right now, but we can keep talking.",
         "es": "Ahora mismo no puedo ejecutar acciones, pero podemos seguir hablando.",
     },
+    # Every tool the model reached for was GATED — the user's words did not ask
+    # for it. Distinct from ``actions_unavailable`` above, which claims a
+    # capability outage: nothing was broken or missing here, the guard simply
+    # declined a call nobody ordered. Speaking the outage line for a gated call
+    # told the user his assistant was crippled when it was not (live forensic
+    # 2026-08-20 15:35, twice in one call, on a plain question about his PC),
+    # and it named no cause — the standing rule is that a line like this always
+    # says WHY. Ends with the one thing the user can act on.
+    "actions_not_requested": {
+        "de": "Ich habe dafür nichts ausgeführt — sag mir, was ich tun soll.",  # i18n-allow
+        "en": "I didn't run anything for that — tell me what you want done.",
+        "es": "No ejecuté nada para eso — dime qué quieres que haga.",
+    },
     # A local action that ran past its short deadline. Replaces the old
     # tool-name-prefixed "X timeout after 3s" machine string (which leaked the
     # internal tool name) with a plain, honest sentence.

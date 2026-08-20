@@ -159,7 +159,10 @@ async def test_a_turn_that_only_got_blocked_is_not_reported_as_broken() -> None:
     text, succeeded = await sess._direct_tool_fallback_text()
 
     assert succeeded is False
-    assert text == action_phrase("actions_unavailable", sess._language)
+    # A gated call is not a capability outage: the line names the real cause
+    # instead of telling the user actions do not work at all (2026-08-20 15:35).
+    assert text == action_phrase("actions_not_requested", sess._language)
+    assert text != action_phrase("actions_unavailable", sess._language)
     assert "spawn_worker" not in text
 
 
