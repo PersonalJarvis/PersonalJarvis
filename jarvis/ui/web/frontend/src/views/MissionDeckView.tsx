@@ -29,7 +29,7 @@ import { useWakeWord } from "@/hooks/useWakeWord";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useElementSize } from "@/hooks/useElementSize";
 import { orbSizeFor, stageVignette } from "@/lib/deckStage";
-import { HANDOFF, resolvePhase } from "@/lib/deckStandby";
+import { HANDOFF, autoLaunchAfterMs, resolvePhase } from "@/lib/deckStandby";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -67,7 +67,11 @@ import { useT } from "@/i18n";
  * the stage is `DeckStandby` — the boot sequence while the app comes up,
  * then the listening ring — and the board takes over the moment a turn
  * opens or the person asks for it (`lib/deckStandby.ts::resolvePhase`,
- * forward only). The hand-off is a LAUNCH, on one clock
+ * forward only). It also takes over ON ITS OWN, one beat after the ring
+ * reports ready (maintainer, 2026-08-20: opening the app must land you on
+ * the board, not on a screen that waits to be answered —
+ * `lib/deckStandby.ts::AUTO_LAUNCH`). The start plays out in full either
+ * way; only the trigger changed. The hand-off is a LAUNCH, on one clock
  * (`lib/deckStandby.ts::HANDOFF`): the orb flares and a shockwave leaves
  * it, the standby's ring bursts past the camera and its console gets out of
  * the way (`DeckStandby`), the orb travels from the ring's centre to its
@@ -136,6 +140,18 @@ export function MissionDeckView({
   useEffect(() => {
     if (phase === "board") openBoard();
   }, [phase, openBoard]);
+  // The start screen launches itself. Nobody who opens the app wants a lobby
+  // they have to answer (maintainer, 2026-08-20) — so the boot lights its
+  // gates, the ring reports ready, and one beat later the SAME hand-off a
+  // spoken word triggers plays on its own (`lib/deckStandby.ts::AUTO_LAUNCH`).
+  // Any real trigger arriving first simply wins: the phase is already board
+  // and this timer never fires.
+  useEffect(() => {
+    const after = autoLaunchAfterMs(phase, connected);
+    if (after === null) return;
+    const id = window.setTimeout(() => openBoard(), after);
+    return () => window.clearTimeout(id);
+  }, [phase, connected, openBoard]);
   // The board powers on with its choreography ONLY when it takes over from
   // the standby on this very screen. A deck that mounts straight into a
   // running session (a section change and back) is simply there. Fixed on

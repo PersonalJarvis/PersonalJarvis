@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 /**
  * The deck's three acts (2026-08-18): the boot sequence while the app comes
- * up, the standby ring until somebody speaks, the board from the first turn
- * on — and never back. The instruments themselves are stubbed (each has its
- * own tests); what is under test is WHICH stage is on, and how the board is
- * reached.
+ * up, the standby ring for one beat, the board from there on — and never
+ * back. Since 2026-08-20 the last hand-off needs no word: the stage launches
+ * itself on the clock, and a spoken turn only gets there sooner. The
+ * instruments themselves are stubbed (each has its own tests); what is under
+ * test is WHICH stage is on, and how the board is reached.
  */
 vi.mock("@/components/layout/DockRail", () => ({ DockRail: () => <nav data-testid="dock" /> }));
 vi.mock("@/components/deck/DeckWiki", () => ({
@@ -125,6 +126,20 @@ describe("MissionDeckView — the three acts", { timeout: 15_000 }, () => {
     expect(screen.queryByTestId("deck-board")).toBeNull();
     expect(screen.getByTestId("deck-standby-cue").textContent).toBe("Say “Hey Nova”");
   });
+
+  test("the standby is one beat: the board takes over on its own, with the launch", async () => {
+    render(<MissionDeckView />);
+    expect(screen.queryByTestId("deck-board")).toBeNull();
+    // Nobody speaks, nobody clicks — the stage launches itself.
+    await waitFor(() => expect(screen.getByTestId("deck-board")).toBeTruthy(), { timeout: 4000 });
+    expect(useDeckStore.getState().boardOpen).toBe(true);
+    // And it is the SAME launch a spoken word gets, not a hard switch.
+    const standby = screen.getByTestId("deck-standby");
+    await waitFor(() => expect(standby.getAttribute("data-leaving")).toBe("true"));
+    expect(screen.getByTestId("deck-slot-left-top").getAttribute("data-reveal")).toBe("true");
+    expect(screen.getByTestId("deck-orb-landing")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("deck-standby")).toBeNull(), { timeout: 4000 });
+  }, 12_000);
 
   test("a reason for the board that comes and goes still leaves the board open", async () => {
     render(<MissionDeckView />);

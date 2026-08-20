@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   arcPath,
+  autoLaunchAfterMs,
   gatesFor,
   polar,
   resolvePhase,
@@ -9,8 +10,10 @@ import {
   revealWipeFor,
   ringSizeFor,
   ringTicks,
+  AUTO_LAUNCH,
   CARD_POWER_ON,
   HANDOFF,
+  STANDBY_CUE_DELAY_S,
   type BoardSlot,
   type GateInput,
   type PhaseInput,
@@ -60,6 +63,28 @@ describe("resolvePhase", () => {
   test("a person mid-conversation is never sent back to the start screen", () => {
     // The link dropped for a moment: the board holds.
     expect(resolvePhase({ ...READY, connected: false, turnIndex: 3 })).toBe("board");
+  });
+});
+
+describe("autoLaunchAfterMs", () => {
+  test("the standby is one beat, then the board takes over on its own", () => {
+    expect(autoLaunchAfterMs("standby", true)).toBe(AUTO_LAUNCH.standbyMs);
+  });
+
+  test("a voice stack that never reports does not hold the board hostage", () => {
+    expect(autoLaunchAfterMs("boot", true)).toBe(AUTO_LAUNCH.bootMs);
+  });
+
+  test("without a link there is nothing to launch into", () => {
+    expect(autoLaunchAfterMs("boot", false)).toBeNull();
+  });
+
+  test("a board that is already up is not launched again", () => {
+    expect(autoLaunchAfterMs("board", true)).toBeNull();
+  });
+
+  test("the cue fades in only after the launch would have fired", () => {
+    expect(STANDBY_CUE_DELAY_S).toBeGreaterThan(AUTO_LAUNCH.standbyMs / 1000);
   });
 });
 

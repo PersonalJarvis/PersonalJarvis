@@ -15,6 +15,7 @@ import {
   GATE_ARC_SPAN,
   HANDOFF,
   SETTLE_MS,
+  STANDBY_CUE_DELAY_S,
   type Gate,
   type GateId,
   type GateState,
@@ -46,12 +47,16 @@ import { useT } from "@/i18n";
  * Standby: the sweep turns on the ring while the wake word is actually being
  * listened for (and stays still when it is not — hotkey-only setups, a link
  * that dropped), the clock and the "quiet for" figure tick, the orb breathes.
- * The cue under the orb names the phrase to say — big, breathing slowly,
- * because it is the one thing a newcomer must read. Nothing else moves: the
- * standby has to be calm enough to sit next to for an hour.
+ * It lasts ONE BEAT (maintainer, 2026-08-20: the start screen sat there
+ * waiting for a word instead of showing the board) — the stage launches
+ * itself on the clock, so this is the pause before the hand-off, not a room
+ * to wait in. The cue under the orb names the phrase to say and comes in
+ * AFTER that beat (`STANDBY_CUE_DELAY_S`): it is the fallback for a launch
+ * that did not come, never a greeting that flashes up and is torn away.
  *
- * The board is one press away at all times (`onOpenBoard`), and takes over
- * on its own the moment a turn opens — that hand-off is MissionDeckView's.
+ * The board is one press away at all times (`onOpenBoard`), takes over on
+ * its own the moment a turn opens, and otherwise on the beat — that hand-off
+ * is MissionDeckView's (`lib/deckStandby.ts::AUTO_LAUNCH`).
  * This stage's part of it is the LAUNCH (`lib/deckStandby.ts::HANDOFF`):
  * the orb flares and two shockwaves leave it, the stage flashes, the ring
  * draws breath and bursts past the camera turning while its ticks flare
@@ -334,9 +339,19 @@ export function DeckStandby({
             ) : (
               <motion.div
                 key="cue"
+                // Its own start state, so the delay below really runs even
+                // when the stage mounted straight into standby (no boot to
+                // inherit "hidden" from). No `animate` — that would cut the
+                // element out of the parent's variant tree and its exit with
+                // it (framer-motion: a child with `animate` stops inheriting).
+                initial="hidden"
                 variants={{
                   hidden: { opacity: 0, y: 6 },
-                  show: { opacity: 1, y: 0, transition: { duration: 0.5, delay: 0.3 } },
+                  // Later than the auto-launch (`STANDBY_CUE_DELAY_S`): the
+                  // board now opens on its own, so the cue is the fallback
+                  // for a beat that passed without a hand-off, not a
+                  // greeting that flashes up and is torn away again.
+                  show: { opacity: 1, y: 0, transition: { duration: 0.5, delay: STANDBY_CUE_DELAY_S } },
                   // The cue is pulled into the orb as it launches.
                   exit: { opacity: 0, y: -10, scale: 0.9, transition: { duration: 0.22, ease: "easeIn" } },
                 }}

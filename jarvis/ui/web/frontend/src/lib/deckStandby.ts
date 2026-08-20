@@ -124,6 +124,46 @@ export function resolvePhase(input: PhaseInput): DeckPhase {
  */
 export const SETTLE_MS = 3_000;
 
+/**
+ * The stage launches ITSELF (maintainer, 2026-08-20: the start screen sat
+ * there waiting; a person who opens the app wants the board, not a lobby).
+ * The standby is no longer a waiting room — it is one beat of the start:
+ * the boot lights its gates, the ring reports ready, and then the same
+ * hand-off a spoken word would trigger plays on its own. The launch stays
+ * exactly as it was; only the trigger is now the clock.
+ *
+ *   standby — the beat between "ready" and the launch. Long enough for the
+ *             ring's ready ping to land, short enough that nobody reads it
+ *             as a screen they have to answer.
+ *   boot    — the link is up but the voice stack has not reported. It may
+ *             never (no microphone, voice switched off, a headless box):
+ *             the board works without it, so the boot gets this much
+ *             patience and then hands off anyway.
+ *
+ * Without a link there is no launch: the board would have nothing to show,
+ * and the boot console is already saying so.
+ */
+export const AUTO_LAUNCH = {
+  standbyMs: 700,
+  bootMs: 6_000,
+} as const;
+
+/** How long this phase holds before the board takes over, or null to wait. */
+export function autoLaunchAfterMs(phase: DeckPhase, connected: boolean): number | null {
+  if (phase === "board") return null;
+  if (phase === "standby") return AUTO_LAUNCH.standbyMs;
+  return connected ? AUTO_LAUNCH.bootMs : null;
+}
+
+/**
+ * When the standby's cue ("Say ‘Hey Nova’") fades in — AFTER the auto-launch
+ * would have fired. The cue asks for a word that the launch no longer waits
+ * for, so it is the fallback, not the greeting: it appears only if the beat
+ * passed without a hand-off. The board's own headline carries the wake
+ * phrase from there on.
+ */
+export const STANDBY_CUE_DELAY_S = AUTO_LAUNCH.standbyMs / 1000 + 0.35;
+
 /* ------------------------------------------------------------------ */
 /* Ring geometry — the big instrument the standby stage draws           */
 /* ------------------------------------------------------------------ */
