@@ -107,6 +107,35 @@ def test_resolve_finds_a_skill_by_its_directory_slug(tmp_path: Path) -> None:
     assert reg.resolve("Morning Routine 2").name == "Morning Routine 2"
 
 
+def test_resolve_prefers_the_live_user_skill_over_a_disabled_builtin(
+    tmp_path: Path,
+) -> None:
+    """Voice-authored 'Morning Routine 2' is what the user asked for.
+
+    create-skill suffixes the display name on a collision with the builtin.
+    The model still sends 'Morning Routine'. A disabled bundled skill with
+    the same tokens must not win, and a trailing 'skill' from the model
+    must not miss.
+    """
+    _write(tmp_path, "morning-routine", "morning-routine")
+    folder = tmp_path / "morning-routine"
+    text = (folder / "SKILL.md").read_text(encoding="utf-8")
+    (folder / "SKILL.md").write_text(
+        text.replace(
+            "name: morning-routine\n",
+            "name: morning-routine\nstate: disabled\n",
+        ),
+        encoding="utf-8",
+    )
+    _write(tmp_path, "morning-routine-2", "Morning Routine 2")
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+
+    assert reg.resolve("Morning Routine").name == "Morning Routine 2"
+    assert reg.resolve("morning routine skill").name == "Morning Routine 2"
+    assert reg.resolve("Morning-Routine").name == "Morning Routine 2"
+
+
 def test_resolve_is_deterministic_under_an_ambiguous_name(tmp_path: Path) -> None:
     """Two skills folding to the same tokens always resolve to the same one,
     never to whichever the dict happened to yield first."""

@@ -164,6 +164,32 @@ async def test_vertex_prefix_on_a_hashed_wire_name_still_runs():
 
 
 @pytest.mark.asyncio
+async def test_underscore_alias_runs_a_hyphenated_tool():
+    """Live models drop the hash and call ``run_skill`` for ``run-skill``.
+
+    Live 2026-08-20: that miss was "unknown realtime tool" and the user
+    heard that the skill could not be loaded.
+    """
+    bridge, tool, executor = _bridge(name="run-skill")
+    await bridge.handle_user_transcript("Open Calculator")
+
+    name, result = await bridge.execute(
+        wire_name="run_skill", arguments={"app_name": "Calculator"}
+    )
+
+    assert name == "run-skill"
+    assert result["success"] is True
+    assert executor.execute_calls[0][0] is tool
+
+    name, result = await bridge.execute(
+        wire_name="default:run_skill",
+        arguments={"app_name": "Calculator"},
+    )
+    assert name == "run-skill"
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
 async def test_missing_required_argument_is_denied_before_executor():
     bridge, _tool, executor = _bridge()
     await bridge.handle_user_transcript("Open it")

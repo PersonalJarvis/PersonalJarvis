@@ -65,6 +65,8 @@ log = logging.getLogger(__name__)
 #: Namespace prefixes a speaker or a model naturally drops ("the gmail skill").
 #: Mirrors ``jarvis.skills.explicit_request._DROPPABLE_NAME_PREFIXES``.
 _DROPPABLE_NAME_PREFIXES = frozenset({"plugin", "cli"})
+#: Trailing tokens a model tacks onto a skill name ("the morning routine skill").
+_DROPPABLE_NAME_SUFFIXES = frozenset({"skill", "skills"})
 
 
 class SkillRegistry:
@@ -165,11 +167,15 @@ class SkillRegistry:
             if _slug_of(skill) == key:
                 return skill
 
+        from .builtin import BUILTIN_SKILL_NAMES
         from .relevance import skill_name_tokens
 
         wanted = skill_name_tokens(key)
         if not wanted:
             raise KeyError(f"Skill '{name}' not in registry")
+        wanted_forms = [wanted]
+        if len(wanted) > 1 and wanted[-1] in _DROPPABLE_NAME_SUFFIXES:
+            wanted_forms.append(wanted[:-1])
 
         def _forms(skill: Skill) -> list[tuple[str, ...]]:
             """Token tuples this skill answers to, widest last."""
@@ -183,12 +189,42 @@ class SkillRegistry:
                     shortened = tokens[1:]
                     if shortened not in out:
                         out.append(shortened)
+                # Clash suffix from create-skill ("Morning Routine 2"): the
+                # user still says the name they asked for, without the number.
+                if len(tokens) > 1 and tokens[-1].isdigit():
+                    shortened = tokens[:-1]
+                    if shortened not in out:
+                        out.append(shortened)
             return out
 
-        for skill in ordered:
-            if wanted in _forms(skill):
-                return skill
-        raise KeyError(f"Skill '{name}' not in registry")
+        hits: list[Skill] = []
+        seen: set[str] = set()
+        for form in wanted_forms:
+            for skill in ordered:
+                skill_key = str(skill.name)
+                if skill_key in seen:
+                    continue
+                if form in _forms(skill):
+                    hits.append(skill)
+                    seen.add(skill_key)
+        if not hits:
+            raise KeyError(f"Skill '{name}' not in registry")
+
+        _live = {
+            SkillLifecycleState.ACTIVE,
+            SkillLifecycleState.VALIDATED,
+        }
+
+        def _rank(skill: Skill) -> tuple[int, int, str]:
+            # Prefer a live user skill over a bundled one with the same
+            # tokens. Live 2026-08-20: "Morning Routine" resolved to the
+            # disabled builtin while Morning Routine 2 was the active one.
+            active = 0 if skill.state in _live else 1
+            bundled = 0 if skill.name not in BUILTIN_SKILL_NAMES else 1
+            return (active, bundled, str(skill.name))
+
+        hits.sort(key=_rank)
+        return hits[0]
 
     def list(self) -> list[Skill]:
         return list(self._skills.values())

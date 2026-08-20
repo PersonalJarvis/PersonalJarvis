@@ -89,6 +89,20 @@ def _wire_name(name: str) -> str:
     return f"{normalized[:52]}_{digest}"
 
 
+def _plain_wire_alias(name: str) -> str:
+    """Hyphen-to-underscore form without the uniqueness hash.
+
+    Vertex Live declares hyphenated catalog names as ``run_skill_<digest>``
+    because ``run-skill`` is not a legal identifier. Models routinely drop
+    the digest and call ``run_skill``. Live 2026-08-20: that miss surfaced as
+    "unknown realtime tool" and the user heard that the skill could not load.
+    """
+    alias = re.sub(r"[^A-Za-z0-9_]", "_", str(name or "")).strip("_")
+    if not alias or not _VALID_WIRE_NAME.fullmatch(alias):
+        return ""
+    return alias
+
+
 def canonical_tool_wire_name(name: str) -> str:
     """Strip a Gemini/Vertex tool-set prefix from a function-call name.
 
@@ -511,6 +525,13 @@ class RealtimeToolBridge:
                 continue
             self._wire_to_name[wire] = str(name)
             rendered.append((str(name), self._render_declaration(wire, descriptor)))
+        # Second pass: hyphenated catalog names also answer to the un-hashed
+        # underscore alias the live model actually sends. Never overwrite a
+        # real tool that already owns that identifier.
+        for name in sorted(self._descriptors):
+            alias = _plain_wire_alias(str(name))
+            if alias and alias not in self._wire_to_name:
+                self._wire_to_name[alias] = str(name)
         kept, dropped = _apply_declaration_budget(
             rendered, self._declaration_budget_chars
         )
