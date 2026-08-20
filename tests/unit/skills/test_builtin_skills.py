@@ -96,6 +96,7 @@ def test_expected_builtin_count() -> None:
         "skill-creator",
         "control-api",
         "cli-gcloud",
+        "jarvis-doc-author",
     }
     assert base.issubset(set(BUILTIN_SKILL_NAMES)), (
         f"missing base skill(s): {base - set(BUILTIN_SKILL_NAMES)}"
@@ -116,13 +117,14 @@ def test_every_bundled_plugin_skill_is_shipped() -> None:
     """
     from jarvis.skills.builtin import BUILTIN_SKILLS_DIR
 
-    bundled = {
-        p.parent.name
-        for p in BUILTIN_SKILLS_DIR.glob("plugin-*/SKILL.md")
-    }
+    # EVERY bundled directory, not just ``plugin-*``. The defect is the dead
+    # bundle, and it does not care about the prefix: ``jarvis-doc-author``
+    # shipped unlisted and unloadable for exactly as long as the narrower
+    # version of this assertion was green (2026-08-20).
+    bundled = {p.parent.name for p in BUILTIN_SKILLS_DIR.glob("*/SKILL.md")}
     unlisted = bundled - set(BUILTIN_SKILL_NAMES)
     assert not unlisted, (
-        f"bundled plugin skill(s) missing from BUILTIN_SKILL_NAMES: {unlisted}"
+        f"bundled skill(s) missing from BUILTIN_SKILL_NAMES: {unlisted}"
     )
 
 

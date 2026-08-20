@@ -22,7 +22,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from jarvis.skills.guards import evaluate_guards
+from jarvis.skills.guards import (
+    VETO_AUTHORING_REQUEST,
+    VETO_LIFECYCLE_REQUEST,
+    evaluate_guards,
+)
 from jarvis.skills.match_eval import BAND_NONE, band_at_least, evaluate_match
 
 #: Repo-relative location of the golden set.
@@ -270,8 +274,89 @@ class Report:
         }
 
 
+def _prefer_music_service(
+    registry: Any, decision: Any, skill: Any, text: str
+) -> tuple[Any, Any]:
+    """Mirror ``BrainManager._prefer_music_service`` for the offline eval.
+
+    Spotify and YouTube Music share one domain: the Spotify skill owns the
+    GENERIC music vocabulary on purpose, and the brain then swaps to the
+    service the user actually named or prefers. Without this step the eval
+    scores "spiel meine playlist auf youtube music" as a Spotify capture and
+    calls the shipped, correct routing a false fire.
+
+    Both connectors count as connected here — the eval scores ROUTING, not the
+    maintainer's credential state, and a fixture whose result depends on which
+    plugins happen to be linked is not reproducible in CI.
+    """
+    from dataclasses import replace as _replace
+
+    try:
+        from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
+        from jarvis.core.music_service import resolve_music_service
+
+        frontmatter = getattr(skill, "frontmatter", None)
+        plugin_id = str(getattr(frontmatter, "plugin_id", "") or "").strip()
+        if plugin_id not in MUSIC_PLUGIN_IDS:
+            return decision, skill
+        target = resolve_music_service(
+            text,
+            preferred="auto",
+            connected=list(MUSIC_PLUGIN_IDS),
+            matched=plugin_id,
+        )
+        if not target or target == plugin_id:
+            return decision, skill
+        sibling = registry.get(f"plugin-{target}")
+    except Exception:  # noqa: BLE001 — a routing nicety must never break the eval
+        return decision, skill
+    if sibling is None:
+        return decision, skill
+    top = _replace(decision.top, skill_name=sibling.name)
+    return _replace(decision, top=top, candidates=(top,)), sibling
+
+
 def _decide(registry: Any, text: str, lang: str = "auto") -> tuple[Any, str]:
-    """Run the real matcher + the real guards. Returns (decision, veto_reason)."""
+    """Run the real matcher + the real guards. Returns (decision, veto_reason).
+
+    Mirrors ``BrainManager._match_skill_for_turn`` channel for channel. An
+    earlier version called ``evaluate_match`` alone, so it scored a SHORTER
+    ladder than production runs and then reported production-correct routing as
+    a failure: "erstell mir einen neuen Skill … mit YouTube Music" is resolved
+    by the authoring channel in the brain (BUG-147) and was scored here as the
+    music skill hijacking the turn. An eval that measures a different ladder
+    than the thing it guards is not a guard.
+    """
+    from jarvis.skills.authoring_request import resolve_skill_authoring_request
+    from jarvis.skills.explicit_request import resolve_explicit_skill_request
+
+    # Channel 0 — the user NAMED a skill. Trigger-grade rights.
+    explicit = resolve_explicit_skill_request(text, registry)
+    if explicit is not None:
+        explicit_skill, explicit_decision = explicit
+        ladder = evaluate_guards(
+            explicit_skill, user_text=text, evidence=explicit_decision.top.evidence
+        )
+        return explicit_decision, ladder.vetoed_by
+
+    # Channel 0.5 — the user asked to CREATE or MANAGE a skill. Every service
+    # named inside such a request is CONTENT, never a command to that service,
+    # so no domain skill may capture even when its brand regex matches.
+    authoring = resolve_skill_authoring_request(text, registry)
+    if authoring is not None:
+        if authoring.skill is None or authoring.kind == "lifecycle":
+            veto = (
+                VETO_LIFECYCLE_REQUEST
+                if authoring.kind == "lifecycle"
+                else VETO_AUTHORING_REQUEST
+            )
+            return authoring.decision, veto
+        ladder = evaluate_guards(
+            authoring.skill, user_text=text, evidence=authoring.decision.top.evidence
+        )
+        return authoring.decision, ladder.vetoed_by
+
+    # Channel 1/2 — the author's trigger regex, then the relevance scorer.
     decision = evaluate_match(registry, text, lang=lang)
     if decision.top is None:
         return decision, ""
@@ -279,6 +364,7 @@ def _decide(registry: Any, text: str, lang: str = "auto") -> tuple[Any, str]:
         skill = registry.get(decision.top.skill_name)
     except Exception:  # noqa: BLE001
         return decision, ""
+    decision, skill = _prefer_music_service(registry, decision, skill, text)
     ladder = evaluate_guards(
         skill,
         user_text=text,

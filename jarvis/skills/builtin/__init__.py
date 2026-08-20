@@ -49,6 +49,7 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
     "plugin-home_assistant",
     "plugin-spotify",
     "plugin-youtube_music",
+    "plugin-higgsfield",
 )
 
 BUILTIN_SKILL_NAMES: tuple[str, ...] = (
@@ -65,6 +66,11 @@ BUILTIN_SKILL_NAMES: tuple[str, ...] = (
     # no voice triggers (a trigger would make the router pick run_skill over the
     # cli_gcloud tool — see control-api). Gated by requires_tools=[cli_gcloud].
     "cli-gcloud",
+    # jarvis-doc-author (2026-08-20): Diataxis rules for writing docs/ files.
+    # Shipped on disk since it was authored but never listed, so it was never
+    # copied to the user skills dir and never loaded — the same dead-bundle
+    # defect the plugin list carries its own warning about.
+    "jarvis-doc-author",
 ) + _PLUGIN_PAIRED_SKILLS
 
 

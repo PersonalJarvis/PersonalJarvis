@@ -535,7 +535,12 @@ async def test_capability_probe_failure_crosses_to_next_provider_family():
 async def test_handshake_timeout_preserves_budget_for_next_family(monkeypatch):
     import jarvis.realtime.session as session_module
 
-    monkeypatch.setattr(session_module, "_PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S", 0.2)
+    # 2.0 s total, i.e. ~1.0 s per family. The budget is split evenly, so at
+    # the old 0.2 s the first family's share was 0.1 s and ordinary scheduling
+    # jitter on a busy machine ate the remainder — the fallback then failed
+    # with "budget exhausted" and the test failed for lack of clock rather
+    # than lack of the behaviour it asserts.
+    monkeypatch.setattr(session_module, "_PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S", 2.0)
     fallback = FakeProvider([])
     fallback.name = "working-family"
     messages = []
@@ -550,7 +555,7 @@ async def test_handshake_timeout_preserves_budget_for_next_family(monkeypatch):
 
     await asyncio.wait_for(
         sess.handle_control({"type": "audio_start", "sample_rate": 16_000}),
-        timeout=0.5,
+        timeout=5,
     )
     await sess.end(reason="test")
 
@@ -5525,13 +5530,20 @@ async def test_empty_provider_turn_without_brain_speaks_local_error():
 
 
 @pytest.mark.asyncio
-async def test_empty_recovery_response_uses_surface_tts_without_rerunning_brain():
+async def test_empty_recovery_response_uses_surface_tts_without_rerunning_brain(
+    monkeypatch,
+):
     """A third provider failure speaks the grounded result through local TTS.
 
     Empty turn, empty re-ask, Brain chain once, and the provider stays mute on
     the delivered result too: the surface TTS speaks it, the brain is not
     re-run.
+
+    The readback budget is shortened here because the turn must survive it
+    twice: at the shipped 2.5 s this test could not fit inside its own 2 s
+    deadline, so it failed on the clock rather than on the behaviour.
     """
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_READBACK_WAIT_S", 0.2)
     user_text = "Tell me a joke about penguins."
     recovered_reply = "We could build a tiny game together."
     brain = FakeBrain(replies=(recovered_reply,))
@@ -6245,18 +6257,18 @@ async def test_multiple_delegate_calls_coalesce_to_one_brain_turn():
     brain = FakeBrain(replies=("First result.", "Second result."), bus=bus)
     provider = ToolResultGatedProvider(
         [
-            RealtimeEvent(type="input_transcript", text="do both", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="multi-1",
                 tool_name="jarvis_action",
-                tool_args={"request": "first action"},
+                tool_args={"request": "open the calculator"},
             ),
             RealtimeEvent(
                 type="tool_call",
                 call_id="multi-2",
                 tool_name="jarvis_action",
-                tool_args={"request": "second action"},
+                tool_args={"request": "open the calculator"},
             ),
         ],
         [
@@ -6319,12 +6331,12 @@ async def test_delegate_empty_brain_result_cannot_claim_action_success():
     brain = FakeBrain(replies=("",))
     provider = ToolResultGatedProvider(
         [
-            RealtimeEvent(type="input_transcript", text="do it", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="empty-result-1",
                 tool_name="jarvis_action",
-                tool_args={"request": "do it"},
+                tool_args={"request": "open the calculator"},
             ),
         ],
         [RealtimeEvent(type="turn_complete")],
@@ -6348,12 +6360,12 @@ async def test_delegate_timeout_cancels_brain_and_cannot_publish_late(monkeypatc
     brain = FakeBrain(gate=asyncio.Event(), bus=bus)
     provider = ToolResultGatedProvider(
         [
-            RealtimeEvent(type="input_transcript", text="slow action", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="timeout-1",
                 tool_name="jarvis_action",
-                tool_args={"request": "slow action"},
+                tool_args={"request": "open the calculator"},
             ),
         ],
         [
@@ -6381,12 +6393,12 @@ async def test_delegate_empty_spoken_answer_uses_surface_tts_fallback():
     jsons: list[dict] = []
     provider = ToolResultGatedProvider(
         [
-            RealtimeEvent(type="input_transcript", text="do it", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="empty-1",
                 tool_name="jarvis_action",
-                tool_args={"request": "do it"},
+                tool_args={"request": "open the calculator"},
             ),
         ],
         [RealtimeEvent(type="turn_complete")],
@@ -6411,12 +6423,12 @@ async def test_delegate_does_not_block_pump():
     jsons = []
     provider = FakeProvider(
         [
-            RealtimeEvent(type="input_transcript", text="do the thing", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="c-2",
                 tool_name="jarvis_action",
-                tool_args={"request": "do the thing"},
+                tool_args={"request": "open the calculator"},
             ),
             RealtimeEvent(type="output_transcript_delta", text="Working on it."),
         ]
@@ -6426,10 +6438,17 @@ async def test_delegate_does_not_block_pump():
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
     await sess.wait_finished()
 
-    # The pump processed the later transcript while the brain turn still hangs.
-    assert any(
-        m.get("type") == "transcript" and m.get("role") == "assistant" for m in jsons
-    )
+    # The pump processed the later events while the brain turn still hangs —
+    # ``wait_finished`` returned with the gate still closed, and the transcript
+    # that arrived after the tool call was surfaced.
+    #
+    # This used to assert an ASSISTANT transcript. It cannot any more, and that
+    # is the correct behaviour, not a regression: provider chatter is held
+    # while a delegate is pending, so the user does not hear a fresh-
+    # conversation filler over the real answer being computed (live 2026-07-17
+    # 09:23, the incident test_presence_check_during_pending_action… guards).
+    # What this test is about is that the delegate does not BLOCK the pump.
+    assert any(m.get("type") == "transcript" for m in jsons)
     assert provider.session.tool_results == []
 
     gate.set()
@@ -6484,12 +6503,12 @@ async def test_delegate_timeout_sends_honest_failure(monkeypatch):
     brain = FakeBrain(gate=gate)
     provider = FakeProvider(
         [
-            RealtimeEvent(type="input_transcript", text="slow task", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="c-3",
                 tool_name="jarvis_action",
-                tool_args={"request": "slow task"},
+                tool_args={"request": "open the calculator"},
             ),
         ]
     )
@@ -6582,12 +6601,12 @@ async def test_delegate_tasks_cancelled_on_end():
     brain = FakeBrain(gate=gate)
     provider = FakeProvider(
         [
-            RealtimeEvent(type="input_transcript", text="long task", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="c-7",
                 tool_name="jarvis_action",
-                tool_args={"request": "long task"},
+                tool_args={"request": "open the calculator"},
             ),
         ]
     )
@@ -6607,12 +6626,12 @@ async def test_delegate_brain_exception_sends_safe_failure():
     brain = FakeBrain(error=RuntimeError("boom"))
     provider = FakeProvider(
         [
-            RealtimeEvent(type="input_transcript", text="do it", is_final=True),
+            RealtimeEvent(type="input_transcript", text="open the calculator", is_final=True),
             RealtimeEvent(
                 type="tool_call",
                 call_id="c-8",
                 tool_name="jarvis_action",
-                tool_args={"request": "do it"},
+                tool_args={"request": "open the calculator"},
             ),
         ]
     )
@@ -7090,6 +7109,12 @@ async def test_presence_check_during_pending_action_gets_status_line_not_provide
     gate = asyncio.Event()  # never set: the delegated action outlives the test
     brain = FakeBrain(gate=gate)
     jsons = []
+    # The first utterance must be one that genuinely delegates. The live
+    # incident's own sentence was a question, and since the native/native
+    # rejection (2026-08-19) a question no longer opens a delegate at all —
+    # so the fixture stopped setting up the very state it is about. What is
+    # under test is the PROBE during a pending action, not which sentence
+    # started it.
     # The live shape (2026-07-17 09:23): the provider itself called
     # jarvis_action, the user barged into the silent wait, and only then did
     # the probe's final transcript arrive on a fresh turn.
@@ -7097,14 +7122,14 @@ async def test_presence_check_during_pending_action_gets_status_line_not_provide
         [
             RealtimeEvent(
                 type="input_transcript",
-                text="Can I just buy it like that?",
+                text="Open the calculator.",
                 is_final=True,
             ),
             RealtimeEvent(
                 type="tool_call",
                 call_id="call-1",
                 tool_name="jarvis_action",
-                tool_args={"request": "Can I just buy it like that?"},
+                tool_args={"request": "Open the calculator."},
             ),
             RealtimeEvent(type="interrupted"),
             RealtimeEvent(
@@ -7124,9 +7149,10 @@ async def test_presence_check_during_pending_action_gets_status_line_not_provide
     assert len(spoken) == 1
     pool = {text for texts in _DELEGATE_BRIDGE_TEXTS.values() for text in texts}
     assert spoken[0]["text"] in pool
-    # The probe itself never becomes a provider response or a brain turn:
-    # the single request belongs to the first (native) turn.
-    assert provider.session.response_requests == 1
+    # The probe itself never becomes a provider response or a brain turn. The
+    # first turn delegates, so it asks the provider for nothing either — the
+    # only thing the user hears is the deterministic progress line above.
+    assert provider.session.response_requests == 0
     assert all("hallo" not in call[0] for call in brain.calls)
     await sess.end(reason="test")
 

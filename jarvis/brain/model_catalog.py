@@ -238,12 +238,18 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
             ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
         ]
     ),
-    # Grok 4.3 is the universal default because Grok 4.5 is not yet available
-    # in every region. The authenticated live catalog replaces this fallback.
+    # Grok 4.3 leads because it is the universal default — the newer families
+    # are not available in every region, and this list is only the OFFLINE
+    # fallback, so its head is what a downloader with no live catalog gets.
+    # It must stay in step with ``jarvis.plugins.brain.grok.DEFAULT_MODEL``
+    # (pinned by test_grok_has_authenticated_live_model_catalog): 4.6 was
+    # inserted at the head without moving the default, which offered a model
+    # as the pre-selected one that the client would not actually have used.
+    # The authenticated live catalog replaces this fallback entirely.
     "grok": _curated(
         [
-            ("grok-4.6", "Grok 4.6"),
             ("grok-4.3", "Grok 4.3"),
+            ("grok-4.6", "Grok 4.6"),
             ("grok-4.5", "Grok 4.5"),
         ]
     ),

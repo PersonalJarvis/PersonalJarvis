@@ -439,6 +439,27 @@ skills:
         min_band: narrow
         source: authored
 
+  plugin-higgsfield:
+    positives:
+      - text: "generier mir ein bild mit higgsfield"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "create a video with higgsfield"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "mach mir einen character in higgs field"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist higgsfield eigentlich fuer ein dienst"
+        reason: definitional question about the product, not a request to act
+
   plugin-cal_com:
     positives:
       - text: "wann ist mein naechster termin bei cal com"
@@ -489,15 +510,32 @@ skills:
         lang: de
         min_band: narrow
         source: authored
+      # The generic music capture, moved here from plugin-youtube_music
+      # 2026-08-20: no brand word, so the shared music skill takes the turn and
+      # music_service.reroute_music_tool picks the connected service at execute
+      # time. Pinned so a future trigger edit cannot silently break the doctrine.
+      - text: "play my liked songs"
+        channel: trigger
+        lang: en
+        min_band: fire
+        source: authored
     hard_negatives:
       - text: "was ist spotify eigentlich fuer ein dienst"
         reason: definitional question about the product, not a request to act
 
   plugin-youtube_music:
     positives:
-      - text: "play my liked songs"
-        channel: relevance
-        lang: en
+      # "play my liked songs" moved to plugin-spotify 2026-08-20. It carries no
+      # brand word, and a play-verb next to a music noun is the GENERIC music
+      # capture that plugin-spotify owns by design ("Generic capture lands
+      # here, then music_service swaps to the preferred connected connector" —
+      # plugin-spotify/SKILL.md, jarvis/core/music_service.py §3). Demanding a
+      # brand-only skill win a brand-less sentence asked the matcher to
+      # contradict the shipped routing doctrine; the connector is corrected at
+      # execute time by reroute_music_tool, which is the real boundary.
+      - text: "spiel meine playlist auf youtube music"
+        channel: trigger
+        lang: de
         min_band: fire
         source: authored
       - text: "zeig mir meine likes"
@@ -528,8 +566,12 @@ skills:
         lang: de
         min_band: fire
         source: authored
+      # Channel corrected 2026-08-20: the authoring channel (BrainManager
+      # Channel 0.5) resolves this with trigger-grade rights, and the eval now
+      # runs that same channel. `relevance` described the harness's old,
+      # shorter ladder — not what the brain has actually been doing.
       - text: "turn this workflow into a skill"
-        channel: relevance
+        channel: trigger
         lang: en
         min_band: narrow
         source: authored

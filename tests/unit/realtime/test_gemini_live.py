@@ -770,7 +770,13 @@ async def test_explicit_reply_language_uses_the_session_instruction(
     _model, config = holder["client"].aio.live.connect_calls[0]
 
     assert config.system_instruction == "Reply only in Spanish for this turn."
-    assert config.speech_config is None
+    # An unpinned card still gets an EXPLICIT voice. This used to assert
+    # ``speech_config is None``, which is the state BUG-155 was about: Google's
+    # unpinned native-audio default is undocumented, and leaving the field
+    # empty made every progress and fallback line speak Charon while the
+    # session spoke something else.
+    prebuilt = config.speech_config.voice_config.prebuilt_voice_config
+    assert prebuilt.voice_name == GeminiLiveProvider.default_voice
     # Gemini auto-responds; the required-tool hint remains a compatible no-op.
     await session.request_response(required_tool="jarvis_action")
     await session.close()
