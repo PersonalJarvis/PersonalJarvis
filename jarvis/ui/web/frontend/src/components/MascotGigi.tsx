@@ -96,7 +96,16 @@ export function MascotGigi({
         aria-label={t("mascot_gigi.aria_label")}
         title="Gigi"
       >
-        <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" className="gigi-svg">
+        <svg viewBox="24 26 208 208" xmlns="http://www.w3.org/2000/svg" className="gigi-svg">
+          {/* The frame is the FIGURE, not the bitmap's canvas. Drawn in the
+              PNG's own 256 coordinates (so every measured number below reads
+              straight off it), but shown through a window on what is actually
+              there — x 26..229, y 30..230 including the arms and the glitch
+              pixels, plus a little room for the glow. The full 256 square is
+              a third empty margin, and carrying it meant the mascot rendered
+              at ~61% of whatever box it was given: on the deck stage that was
+              a 130px character in a 200px slot, and it read as lost
+              (2026-08-20). */}
           {/* Every number below was MEASURED off `public/jarvis-gigi-256.png`
               rather than drawn by eye (2026-08-20), so the vector and the
               bitmap are the same mascot: body x 49..206 and y 32..226, widest
