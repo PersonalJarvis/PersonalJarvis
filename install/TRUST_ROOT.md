@@ -756,7 +756,7 @@ Implementation:
   auto-merge); supply-chain pinning discipline requires manual SHA +
   hash validation before merging.
 - **Branch protection** on `main`: required status checks (sign-installer,
-  cross-runner-hash, verify-installer-smoke), required signed commits,
+  cross-runner-hash, installer-smoke), required signed commits,
   no force-push, linear history required. Status documented in
   `docs/supply-chain/wave5-audit-fixes-validation.md`. Any field that
   fails because of GitHub-plan restrictions is documented honestly.

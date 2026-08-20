@@ -68,7 +68,7 @@ Each scenario follows: **pre-condition → action → blast radius → pre-Wave-
 - **Action.** Next workflow run pulls the new commit. Malicious entrypoint exfiltrates `GITHUB_TOKEN`, mints a new release with attacker-crafted `install.sh` + a cosign signature *that legitimately came from our OIDC identity* (because the malicious step runs *inside our trusted workflow*).
 - **Blast radius.** Catastrophic. The cosign signature is genuine — `cosign verify-blob` succeeds; the installer-verifier wrapper accepts and runs the malicious payload.
 - **Pre-Wave-1 mitigation.** **None.** No workflow ever signed any artifact.
-- **Wave-1 mitigation.** **Every Action in `.github/workflows/sign-installer.yml` and `verify-installer-smoke.yml` is pinned by commit SHA, not by tag.** Maintainer must consciously bump SHAs and accept that the new commit's source has been audited. This is the *direct* lesson from the March 2025 `tj-actions/changed-files` incident (CVE-2025-30066).
+- **Wave-1 mitigation.** **Every Action in `.github/workflows/sign-installer.yml` and `installer-smoke.yml` is pinned by commit SHA, not by tag.** Maintainer must consciously bump SHAs and accept that the new commit's source has been audited. This is the *direct* lesson from the March 2025 `tj-actions/changed-files` incident (CVE-2025-30066).
 - **Residual gap.** SHA pinning prevents *future* tag movement but not malicious commits *at the time of initial pinning*. Wave 2 mitigation: subscribe to `dependabot` + manual review of pinned-SHA bumps + comparison against the GitHub Verified-by-author signature on each commit.
 
 ### Scenario C — xz-utils-style long-game maintainer compromise (T5)
@@ -576,10 +576,14 @@ offline-ceremony signing steps and before the GitHub Release upload
 step, consumes the base64-encoded `sha256sum` manifest of the five
 `install/*` artifacts as `base64-subjects`, and uploads
 `personal-jarvis.intoto.jsonl` (and its Sigstore signature) to the
-Release with `upload-assets: true`. The standalone tag-triggered
-`slsa-provenance.yml` (renamed from the `.tmpl` template in the same
-commit) remains in place as a defense in depth and as the integration
-target for SA-3 once the `cross-runner-hash.yml` matrix gate lands.
+Release with `upload-assets: true`. This job in `sign-installer.yml`
+is the ONLY provenance producer. The standalone `slsa-provenance.yml`
+(renamed from the `.tmpl` template) first lost its tag trigger, because
+running it alongside produced a duplicate provenance file under the same
+name and broke the cross-runner-agreement binding; it was then deleted
+outright on 2026-08-20, since the generator pin, the `permissions:`
+block, and the `base64-subjects` contract it documented all live in
+`sign-installer.yml` verbatim.
 
 ## 9. Wave 4 — distribution via package managers + post-quantum migration (FOUNDATION COMPLETE, full integration pending in follow-up sub-agents)
 

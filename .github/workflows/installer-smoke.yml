@@ -1,0 +1,432 @@
+# Installer smoke tests — the two proofs that the paths a real downloader walks
+# still work. Merged 2026-08-20 from fresh-install-smoke.yml and
+# verify-installer-smoke.yml, which triggered on overlapping install/ paths and
+# split one question ("can a stranger install this?") across two check lists.
+#
+#   * job `fresh-install`  — runs the RAW installer (install/installer.py →
+#     editable install → runtime deps), then boots the headless server and
+#     confirms it answers on its real admin port and honours the first-boot
+#     onboarding contract. This is the CI twin of the manual Docker sandbox test.
+#   * job `verify-release` — runs the SIGNED release wrapper (install-verify.sh)
+#     against the latest published tag, proving the signing → publishing →
+#     verifying chain is wired end to end.
+#
+# Neither replaces the other and neither is covered by ci.yml, which runs the
+# dev test suite and never executes installer.py nor boots a server — so a
+# port/boot regression on a fresh machine slips past it.
+#
+# Path gating: GitHub applies `paths:` per WORKFLOW, so the workflow-level list
+# below is the UNION of both jobs' interests, and the `changes` job narrows it
+# again per job with a git diff (git + stdlib, no third-party action —
+# CVE-2025-30066). Both gates fail OPEN: an unresolvable diff base runs the job.
+#
+# Cost policy (mirrors ci.yml): macOS runners bill at ~10x the Linux rate, so
+# the macOS leg of `fresh-install` is OFF for ordinary pushes/PRs and ON only
+# for a manual workflow_dispatch (include_macos, default true).
+
+name: Installer smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "jarvis/__main__.py"
+      - "jarvis/setup/prefetch.py"
+      - "jarvis/setup/model_report.py"
+      - "jarvis/speech/wake_model_fetch.py"
+      - ".github/workflows/sign-installer.yml"
+      - ".github/workflows/installer-smoke.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "install/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "jarvis/__main__.py"
+      - "jarvis/setup/prefetch.py"
+      - "jarvis/setup/model_report.py"
+      - "jarvis/speech/wake_model_fetch.py"
+      - ".github/workflows/sign-installer.yml"
+      - ".github/workflows/installer-smoke.yml"
+  workflow_dispatch:
+    inputs:
+      include_macos:
+        description: "Also run the fresh-install macOS leg (~10x runner cost). On by default for a manual run, since proving macOS is usually the point of dispatching by hand."
+        type: boolean
+        default: true
+      tag:
+        description: "Release tag for the verify-release job (default: latest)"
+        required: false
+        default: ""
+
+# A new push to the same ref cancels the previous in-flight run so a burst of
+# commits doesn't stack billable minutes.
+concurrency:
+  group: installer-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Single source of truth for BOTH the cost-aware OS matrix and the per-job
+  # path narrowing. The workflow-level `paths:` above is the union of what the
+  # two jobs care about; without this step every installer.py change would also
+  # re-run the release-signature check that cannot possibly be affected by it.
+  changes:
+    name: configure (matrix + per-job paths)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      os-matrix: ${{ steps.pick.outputs.os-matrix }}
+      run-fresh: ${{ steps.paths.outputs.run-fresh }}
+      run-verify: ${{ steps.paths.outputs.run-verify }}
+    steps:
+      - name: Checkout (full history — the path gate needs a diff base)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pick OS matrix
+        id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_macos }}" = "true" ]; then
+            echo 'os-matrix=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg INCLUDED (manual dispatch)."
+          else
+            echo 'os-matrix=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg SKIPPED (cheap push/PR run). Dispatch manually to include it."
+          fi
+
+      - name: Per-job path gates
+        id: paths
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run-fresh=true" >> "$GITHUB_OUTPUT"
+            echo "run-verify=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — both smokes RUN."
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base="${{ github.event.before }}"
+          fi
+          # An all-zero "before" means a branch's first push or a rewritten
+          # history; treat it as no base at all.
+          case "$base" in
+            ""|*[!0]*) : ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            # checkout fetches the event's ref only, so origin/main may not exist
+            # locally yet — same fetch ci.yml's privacy-gate job does.
+            git fetch --no-tags origin main:refs/remotes/origin/main 2>/dev/null || true
+            base="$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null || echo "")"
+          fi
+          if [ -z "$base" ]; then
+            echo "run-fresh=true" >> "$GITHUB_OUTPUT"
+            echo "run-verify=true" >> "$GITHUB_OUTPUT"
+            echo "No usable diff base — both smokes RUN (fail open)."
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base" HEAD)"
+          echo "----- changed files since $base -----"
+          echo "$changed"
+          echo "-------------------------------------"
+          if echo "$changed" | grep -qE '^(install/installer\.py|install/install\.sh|pyproject\.toml|requirements\.txt|jarvis/__main__\.py|jarvis/setup/prefetch\.py|jarvis/setup/model_report\.py|jarvis/speech/wake_model_fetch\.py|\.github/workflows/installer-smoke\.yml)$'; then
+            echo "run-fresh=true" >> "$GITHUB_OUTPUT"
+            echo "fresh-install smoke RUNS."
+          else
+            echo "run-fresh=false" >> "$GITHUB_OUTPUT"
+            echo "fresh-install smoke SKIPPED."
+          fi
+          if echo "$changed" | grep -qE '^(install/install-verify\.(sh|ps1)|install/TRUST_ROOT\.md|install/install\.(sh|ps1)|install/installer\.py|\.github/workflows/sign-installer\.yml|\.github/workflows/installer-smoke\.yml)$'; then
+            echo "run-verify=true" >> "$GITHUB_OUTPUT"
+            echo "verify-release smoke RUNS."
+          else
+            echo "run-verify=false" >> "$GITHUB_OUTPUT"
+            echo "verify-release smoke SKIPPED."
+          fi
+
+  # Prove the RAW installer path a real downloader runs, end to end, then boot
+  # the headless server and confirm it actually answers on its real admin port.
+  fresh-install:
+    name: fresh install (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.run-fresh == 'true'
+    strategy:
+      fail-fast: false # we want to see ALL OS legs, not just the first red one
+      matrix:
+        os: ${{ fromJSON(needs.changes.outputs.os-matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Run the REAL installer end-to-end (runner-appropriate profile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Reproduce exactly what install.sh does after the git clone: a venv,
+          # the bootstrap deps, then hand off to installer.py. Ordinary Linux
+          # pushes prove the headless/base floor. A manually-requested macOS leg
+          # proves the advertised desktop [full] profile AND its complete model
+          # prefetch; running that leg headless used to leave this exact install
+          # contract untested. --no-launch keeps the runner from spawning a server
+          # we don't tear down here (a dedicated step below boots + probes it).
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install rich packaging
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            python install/installer.py --with-desktop --no-launch | tee install.log
+          else
+            python install/installer.py --headless --no-launch | tee install.log
+          fi
+          # The installer must never prompt: fail if anything interactive leaked in.
+          if grep -Eiq "input\(|\? \[y/n\]|press enter" install.log; then
+            echo "installer output contains an interactive prompt marker"; exit 8
+          fi
+
+      - name: Import smoke (the package loads on a fresh machine)
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -c "import jarvis; print('import OK ->', jarvis.__file__)"
+
+      - name: Boot the headless server + health probe on the REAL admin port
+        shell: bash
+        run: |
+          set -uo pipefail
+          . .venv/bin/activate
+          # Ask the launcher for the port it will actually bind (no jarvis.toml on
+          # a fresh checkout → the packaged default), so this can never drift the
+          # way the installer's launch hint did.
+          PORT=$(python -c "from jarvis.ui.web.launcher import _fast_admin_port; print(_fast_admin_port())")
+          echo "expected admin port: $PORT"
+          python -m jarvis.ui.web.launcher --headless > boot.log 2>&1 &
+          BOOTPID=$!
+          set +e
+          python - "$PORT" <<'PYEOF'
+          import sys, time, http.client
+          port = int(sys.argv[1])
+          for i in range(80):  # up to ~120 s
+              try:
+                  c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                  c.request("GET", "/")
+                  r = c.getresponse(); r.read()
+                  # 503 = fast-boot bootstrap still holding the request while the
+                  # full app warms up — keep polling until the real app takes over.
+                  if r.status == 503 and i < 79:
+                      time.sleep(1.5); continue
+                  print(f"server UP: HTTP {r.status} after ~{i * 1.5:.0f}s")
+                  sys.exit(0)
+              except Exception:
+                  time.sleep(1.5)
+          print("server NEVER answered on the admin port within ~120 s")
+          sys.exit(7)
+          PYEOF
+          RC=$?
+          set -e
+          echo "----- boot.log (last 40 lines) -----"
+          tail -40 boot.log || true
+          if [ "$RC" -ne 0 ]; then
+            kill "$BOOTPID" 2>/dev/null || true
+            exit $RC
+          fi
+
+          # ---- First-boot onboarding contract (the desktop gate's API) ----
+          # 1) The state must answer 200 FAST (served by the fast-boot path even
+          #    while warming) and report completed=false on a fresh install.
+          # 2) Completing it must persist durably in the same store the real
+          #    app reads.
+          set +e
+          python - "$PORT" <<'PYEOF'
+          import sys, time, json, http.client
+          port = int(sys.argv[1])
+
+          def req(method, path, headers=None):
+              c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+              c.request(method, path, headers=headers or {})
+              r = c.getresponse()
+              return r.status, r.read()
+
+          deadline = time.time() + 15
+          state = None
+          while time.time() < deadline:
+              try:
+                  status, body = req("GET", "/api/onboarding/state")
+                  if status == 200:
+                      state = json.loads(body)
+                      break
+              except Exception:
+                  pass
+              time.sleep(0.5)
+          assert state is not None, "onboarding state did not answer within 15 s of boot"
+          assert state["completed"] is False, f"fresh install must be incomplete: {state}"
+
+          # Completing onboarding may schedule a desktop restart, so the route
+          # demands the same-origin Origin header a real browser click sends
+          # (lifecycle_guard.require_interactive_desktop_action) — a headless
+          # POST without one is refused with 403 by design.
+          status, _ = req(
+              "POST",
+              "/api/onboarding/complete",
+              headers={"Origin": f"http://127.0.0.1:{port}"},
+          )
+          assert status == 200, f"complete failed: {status}"
+          status, body = req("GET", "/api/onboarding/state")
+          assert json.loads(body)["completed"] is True, "completed did not persist"
+          print("onboarding contract OK")
+          sys.exit(0)
+          PYEOF
+          RC=$?
+          set -e
+          kill "$BOOTPID" 2>/dev/null || true
+          if [ "$RC" -ne 0 ]; then
+            echo "----- boot.log (last 40 lines) -----"
+            tail -40 boot.log || true
+            exit $RC
+          fi
+
+          # ---- Restart leg: onboarding must NOT re-arm on a second boot ----
+          sleep 2
+          python -m jarvis.ui.web.launcher --headless > boot2.log 2>&1 &
+          BOOTPID2=$!
+          set +e
+          python - "$PORT" <<'PYEOF'
+          import sys, time, json, http.client
+          port = int(sys.argv[1])
+          for _ in range(30):
+              try:
+                  c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                  c.request("GET", "/api/onboarding/state")
+                  r = c.getresponse()
+                  if r.status == 200:
+                      assert json.loads(r.read())["completed"] is True, \
+                          "onboarding re-armed after restart!"
+                      print("restart contract OK"); sys.exit(0)
+              except AssertionError:
+                  raise
+              except Exception:
+                  pass
+              time.sleep(1)
+          print("second boot never answered the onboarding state")
+          sys.exit(7)
+          PYEOF
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "----- boot2.log (last 40 lines) -----"
+            tail -40 boot2.log || true
+          fi
+          kill "$BOOTPID2" 2>/dev/null || true
+          exit $RC
+
+  # Continuous proof that the verifying installer wrapper still works end-to-end
+  # against the latest signed release: resolve the tag, confirm the signed
+  # assets are attached, then run the RELEASED install-verify.sh (not the
+  # in-repo copy — that is the actual wire format a user runs) in
+  # --dry-run --no-wizard --no-launch mode. Skips gracefully when no signed
+  # release exists yet, which is the state on a bootstrapping commit.
+  verify-release:
+    name: verify signed release wrapper
+    needs: changes
+    if: needs.changes.outputs.run-verify == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout (just for install-verify.sh reference)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve target tag
+        id: tag
+        run: |
+          set -euo pipefail
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+              echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+              echo "Using manually-provided tag: $INPUT_TAG"
+              exit 0
+          fi
+          # Resolve the latest published release. The /latest API
+          # returns 404 if there are no releases yet — we treat that
+          # as a "skip" condition, not a failure.
+          HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+          if [ "$HTTP" = "404" ]; then
+              echo "tag=" >> "$GITHUB_OUTPUT"
+              echo "No releases yet — smoke will skip gracefully."
+              exit 0
+          fi
+          if [ "$HTTP" != "200" ]; then
+              echo "::error::unexpected HTTP $HTTP from GitHub API"
+              cat /tmp/resp.json
+              exit 1
+          fi
+          TAG=$(python3 -c "import json; print(json.load(open('/tmp/resp.json'))['tag_name'])")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest release tag: $TAG"
+
+      - name: Skip when no signed release exists
+        if: steps.tag.outputs.tag == ''
+        run: |
+          echo "::notice::No signed release exists yet; smoke test is a no-op."
+          echo "This is expected on the bootstrapping commit that adds the signing workflow."
+          echo "Once the first v*.*.* tag is pushed and signed, this smoke will run for real."
+
+      - name: Confirm signed assets exist on the release
+        if: steps.tag.outputs.tag != ''
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          REL_BASE="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          for f in install-verify.sh install.sh install.sh.sig install.sh.pem install.sh.bundle; do
+              if ! curl -fsSL -I -o /dev/null "${REL_BASE}/${f}"; then
+                  echo "::error::missing asset on release $TAG: ${f}"
+                  echo "Did the sign-installer.yml workflow run to completion?"
+                  exit 1
+              fi
+          done
+          echo "All signed assets present on release $TAG."
+
+      - name: Run install-verify.sh end-to-end (dry-run, no-wizard, no-launch)
+        if: steps.tag.outputs.tag != ''
+        env:
+          JARVIS_INSTALL_TAG: ${{ steps.tag.outputs.tag }}
+          JARVIS_INSTALL_DIR: /tmp/jarvis-smoke-install
+        run: |
+          set -euo pipefail
+          REL_BASE="https://github.com/${{ github.repository }}/releases/download/${JARVIS_INSTALL_TAG}"
+          # Download the released install-verify.sh (NOT the in-repo copy)
+          # — this is the actual wire-format the user runs.
+          curl -fsSL "${REL_BASE}/install-verify.sh" -o /tmp/install-verify.sh
+          chmod +x /tmp/install-verify.sh
+          echo "----- install-verify.sh first 20 lines -----"
+          head -20 /tmp/install-verify.sh
+          echo "--------------------------------------------"
+          # The verifier honours JARVIS_INSTALL_TAG (set above) so we exercise
+          # the exact release we resolved.
+          bash /tmp/install-verify.sh --dry-run --no-wizard --no-launch

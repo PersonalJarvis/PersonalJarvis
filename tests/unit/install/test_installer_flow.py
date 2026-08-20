@@ -120,7 +120,7 @@ def test_headless_prefetch_keeps_only_configured_wake_language(capsys) -> None:
 
 
 def test_macos_fresh_install_ci_exercises_advertised_full_profile() -> None:
-    workflow = (REPO / ".github" / "workflows" / "fresh-install-smoke.yml").read_text(
+    workflow = (REPO / ".github" / "workflows" / "installer-smoke.yml").read_text(
         encoding="utf-8"
     )
     assert 'if [ "${{ matrix.os }}" = "macos-latest" ]; then' in workflow

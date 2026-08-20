@@ -28,6 +28,21 @@
 #
 # Action SHAs are pinned to 40-char commits already vetted elsewhere in this
 # repo's workflows (CVE-2025-30066 hardening).
+#
+# Consolidation (2026-08-20): three standalone workflows moved in here as jobs,
+# because a contributor opening a PR should read ONE check list, not four. The
+# behaviour each of them gated is unchanged, only its home is:
+#
+#   * frontend.yml            -> job `frontend` (npm test + build + bundle budget)
+#   * realtime-reliability.yml-> jobs `realtime-contract` / `realtime-slim` /
+#     `realtime-soak`. They keep their OWN fixed OS matrix (macOS on every run)
+#     instead of `needs: configure`, exactly as before: the point of that suite
+#     is a small focused macOS proof that does not multiply the full-suite cost.
+#     The one dropped trigger is `push: tags`, because a tag points at a SHA
+#     that main already proved on the push that created it.
+#   * dragdrop-verify.yml     -> job `dragdrop`. GitHub has no per-job `paths:`
+#     filter, so the path gate moved into `configure` as a git diff (stdlib +
+#     git, no third-party action). Unresolvable base => the job RUNS.
 
 name: CI
 
@@ -41,6 +56,10 @@ on:
     inputs:
       include_macos:
         description: "Also run the macOS leg (~10x runner cost). On by default for a manual run, since proving macOS is usually the point of dispatching by hand."
+        type: boolean
+        default: true
+      run_contract_soak:
+        description: "Run the extended synthetic realtime orchestration soak (not release evidence)."
         type: boolean
         default: true
 
@@ -66,17 +85,78 @@ jobs:
     timeout-minutes: 5
     outputs:
       os-matrix: ${{ steps.pick.outputs.os-matrix }}
+      dragdrop-matrix: ${{ steps.pick.outputs.dragdrop-matrix }}
+      run-dragdrop: ${{ steps.paths.outputs.run-dragdrop }}
     steps:
+      - name: Checkout (full history — the path gate needs a diff base)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Pick OS matrix
         id: pick
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_macos }}" = "true" ]; then
             echo 'os-matrix=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'dragdrop-matrix=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
             echo "macOS leg INCLUDED (manual dispatch)."
           else
             echo 'os-matrix=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'dragdrop-matrix=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
             echo "macOS leg SKIPPED (cheap push/PR run). Dispatch manually to include it."
+          fi
+
+      # GitHub offers `paths:` only per WORKFLOW, never per job — so the path
+      # gate that dragdrop-verify.yml got for free as its own file has to be
+      # computed here. git + stdlib only: no third-party action enters the
+      # supply chain for a file-list comparison (CVE-2025-30066).
+      #
+      # Fails OPEN on purpose: a manual dispatch, an unresolvable diff base, or
+      # a first push to a new branch RUNS the job. A missed drag-drop
+      # regression costs a broken overlay on someone else's OS; a redundant run
+      # costs two cheap runner minutes.
+      - name: Path gate for the drag-drop proof
+        id: paths
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run-dragdrop=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — drag-drop proof RUNS."
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base="${{ github.event.before }}"
+          fi
+          # An all-zero "before" means a branch's first push or a rewritten
+          # history; treat it as no base at all.
+          case "$base" in
+            ""|*[!0]*) : ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            # checkout fetches the event's ref only, so origin/main may not exist
+            # locally yet — same fetch the privacy-gate job below does.
+            git fetch --no-tags origin main:refs/remotes/origin/main 2>/dev/null || true
+            base="$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null || echo "")"
+          fi
+          if [ -z "$base" ]; then
+            echo "run-dragdrop=true" >> "$GITHUB_OUTPUT"
+            echo "No usable diff base — drag-drop proof RUNS (fail open)."
+            exit 0
+          fi
+          if git diff --name-only "$base" HEAD -- \
+              jarvis/overlay/drop_target.py \
+              jarvis/overlay/drop_bridge.py \
+              scripts/crossplatform/verify_drop_target.py \
+              .github/workflows/ci.yml | grep -q .; then
+            echo "run-dragdrop=true" >> "$GITHUB_OUTPUT"
+            echo "Drop-path files changed since $base — drag-drop proof RUNS."
+          else
+            echo "run-dragdrop=false" >> "$GITHUB_OUTPUT"
+            echo "No drop-path file changed since $base — drag-drop proof SKIPPED."
           fi
 
   test:
@@ -558,3 +638,214 @@ jobs:
 
       - name: Public reader docs contract (BLOCKING)
         run: python scripts/ci/check_public_docs.py
+
+  # Frontend test + production build (was frontend.yml until 2026-08-20).
+  # Own job rather than a step in `test`: it needs Node, not Python, and a
+  # frontend-only change should get its signal without waiting on the OS matrix.
+  frontend:
+    name: frontend (test + production build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: jarvis/ui/web/frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: jarvis/ui/web/frontend/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build and verify production assets
+        run: npm run build
+
+      # The entry chunk is parsed and executed before the UI paints a single
+      # pixel, so its size IS startup latency. Guarding it here is the frontend
+      # twin of the Python boot budget in .githooks/pre-push: both block the
+      # same regression class, where a statically imported view or library
+      # quietly adds seconds to every launch.
+      - name: Check startup bundle budget
+        working-directory: ${{ github.workspace }}
+        run: python3 scripts/ci/check_frontend_bundle_budget.py
+
+  # Realtime's small, blocking cross-platform contract (was
+  # realtime-reliability.yml until 2026-08-20).
+  #
+  # Deliberately NOT `needs: configure`: this matrix is hard-coded to all three
+  # OSes including macOS on EVERY run. That is the whole reason the suite is
+  # small — it buys a macOS proof on every change without paying the hour-long
+  # full-suite cost, which is why `test` above keeps macOS behind a dispatch.
+  #
+  # No job here owns a microphone, speaker, desktop session, or provider secret.
+  # Physical microphone/acoustic-echo behavior, device hot-plug, and macOS TCC
+  # prompts remain explicit human release sign-offs; a headless runner must never
+  # turn their absence into a fake green result.
+  realtime-contract:
+    name: realtime provider contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install portable base and focused test runner
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+
+      - name: Blocking provider-neutral realtime contract
+        run: >-
+          python -m pytest
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          -q -p no:cacheprovider
+
+  realtime-slim:
+    name: realtime on python:3.11-slim (no PortAudio)
+    runs-on: ubuntu-latest
+    container: python:3.11-slim
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install base without system audio libraries
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+
+      - name: Prove the container really has no usable PortAudio
+        run: |
+          python - <<'PY'
+          try:
+              import sounddevice  # noqa: F401
+          except Exception as exc:
+              print(f"NO_PORTAUDIO: {type(exc).__name__}: {exc}")
+          else:
+              raise SystemExit("python:3.11-slim unexpectedly loaded PortAudio")
+          PY
+
+      - name: Blocking headless realtime degradation contract
+        run: >-
+          python -m pytest
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          -q -p no:cacheprovider
+
+  realtime-soak:
+    name: realtime extended contract soak (not release evidence)
+    # This synthetic orchestration proof must never green-light a tag. A real
+    # release still needs same-SHA target measurements and manual acoustic
+    # sign-off, neither of which a headless GitHub runner can produce.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_contract_soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install portable base
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Run provider-neutral orchestration soak
+        run: python scripts/realtime_reliability_gate.py --contract-soak
+
+  # Cross-platform drag-drop verification (was dragdrop-verify.yml until
+  # 2026-08-20) — proves the overlay drop mechanism (tkdnd load + parse +
+  # register + drop chain) actually EXECUTES on Windows, macOS AND Linux, by
+  # running the same `scripts/crossplatform/verify_drop_target.py` on each.
+  #
+  # Gated by `configure`'s git-diff path check, because a workflow-level
+  # `paths:` filter cannot apply to a single job. macOS (~10x cost) rides the
+  # same dispatch-only rule as the rest of this file.
+  dragdrop:
+    name: drag-drop (${{ matrix.os }})
+    needs: configure
+    if: needs.configure.outputs.run-dragdrop == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.configure.outputs.dragdrop-matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install tkinterdnd2 (+ Linux X11 runtime libs)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # Pin ==0.4.2: from 0.4.4.1 onward the osx-arm64 tkdnd binary is the
+          # Tcl-9 build (libtcl9tkdnd2.9.5.dylib) that fails to load on the
+          # standard Tcl-8.6 Python ("incompatible stubs mechanism"). 0.4.2 is the
+          # highest version whose osx-arm64 binary is the Tcl-8 build
+          # (libtkdnd2.9.3.dylib), which loads on Tcl-8.6 across all three OSes.
+          pip install "tkinterdnd2==0.4.2"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends \
+              python3-tk xvfb libxcursor1 libxrender1 libxext6 \
+              libxft2 libxinerama1 libxi6 libxrandr2
+          fi
+
+      - name: Verify drag-drop executes on ${{ matrix.os }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a python scripts/crossplatform/verify_drop_target.py
+          else
+            python scripts/crossplatform/verify_drop_target.py
+          fi
