@@ -297,6 +297,27 @@ jobs:
             -q -p no:cacheprovider
           python scripts/skill_relevance_calibrate.py
 
+      # The four guards CLAUDE.md §10 names by name, in their OWN blocking step
+      # for the same reason the skill eval has one: the suite above ends in
+      # `|| echo`, so a broken guard costs one passed test against a ~700-test
+      # cushion above the min-passed floor and rides through green. These four
+      # pin contracts that are cheap to break and expensive to notice later —
+      # the router stays a pure dispatcher (ADR-0011), the voice scrubber stays
+      # regex-only (AP-11), a status enum stays in step across all five layers
+      # (AP-4, BUG-008 recurred 4x), and ONE resolver decides a turn's output
+      # language (CLAUDE.md §1). Seconds to run; add a guard here when you add
+      # one there.
+      - name: Contract guards (BLOCKING — router, scrubber, enum parity, language)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          python -m pytest \
+            tests/unit/brain/test_routing.py \
+            tests/unit/brain/test_output_filter.py \
+            tests/unit/sessions/test_hangup_reason_parity.py \
+            tests/unit/core/test_turn_language.py \
+            -q -p no:cacheprovider
+
   # jarvisctl control-CLI unit suite across the three supported desktops.
   # jarvisctl is a thin cross-platform HTTP client (paths via platformdirs,
   # UTF-8 I/O, no Windows APIs); this job proves it imports + its unit tests
@@ -510,6 +531,18 @@ jobs:
       - name: Brand-logo gate (BLOCKING)
         run: python scripts/ci/check_brand_logos.py
 
+      # CLAUDE.md §0 promises the agent-knowledge mirrors are held by "hook +
+      # pre-commit + CI". The CI leg did not exist until 2026-08-20, so a commit
+      # made with hooks uninstalled (`install_git_hooks.py` is a manual step)
+      # could drift the trees with nothing to catch it. Three trees, two
+      # engines: .claude <-> .agents is byte-identical, .codex is a generated
+      # projection. Both are cheap — stdlib and git only.
+      - name: Agent-knowledge mirrors (BLOCKING)
+        run: |
+          python scripts/ci/sync_agents_md.py --check
+          python scripts/ci/sync_agents_dir.py --check
+          python scripts/ci/sync_codex_agents.py --check
+
   # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
   # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight
   # DE->EN translation backlog (pre-existing German) does NOT turn this red - only
@@ -673,10 +706,15 @@ jobs:
         run: npm run build
 
       # The entry chunk is parsed and executed before the UI paints a single
-      # pixel, so its size IS startup latency. Guarding it here is the frontend
-      # twin of the Python boot budget in .githooks/pre-push: both block the
-      # same regression class, where a statically imported view or library
-      # quietly adds seconds to every launch.
+      # pixel, so its size IS startup latency. It guards the same regression
+      # class as the Python boot budget — a statically imported view or library
+      # quietly adding seconds to every launch — but it is the only HALF of that
+      # pair a CI runner can measure. `check_boot_budget.py` boots the whole
+      # application and needs an audio device to reach VOICE_USABLE, so it left
+      # pre-push on 2026-08-05 and has no CI home; it is an on-demand local
+      # command (`python scripts/ci/check_boot_budget.py`) that AP-26 asks you
+      # to run by hand after touching the startup path. Do not read this step as
+      # covering the Python side.
       - name: Check startup bundle budget
         working-directory: ${{ github.workspace }}
         run: python3 scripts/ci/check_frontend_bundle_budget.py

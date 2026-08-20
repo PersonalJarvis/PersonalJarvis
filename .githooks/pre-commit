@@ -64,6 +64,16 @@ if [ -f "$syncdir" ]; then
     fi
 fi
 
+# --- .claude/agents/ -> .codex/agents/ projection ----------------------------
+# The third tree. Not a twin but a generated projection (Markdown -> Codex TOML),
+# so there is no both-sides-edited conflict to resolve: .claude/ always wins and
+# a hand-edit in .codex/ is simply overwritten. Never blocks — worst case the
+# projection is rewritten and staged under the commit that changed its source.
+synccodex="scripts/ci/sync_codex_agents.py"
+if [ -f "$synccodex" ]; then
+    "$PY" "$synccodex" --stage --quiet </dev/null
+fi
+
 # --- LANGUAGE gate (FAIL-CLOSED on confirmed German) --------------------------
 # English-only artifacts (CLAUDE.md rule 1). Checks the STAGED changes so new
 # German is caught at COMMIT time — the real write path (incl. the auto-save

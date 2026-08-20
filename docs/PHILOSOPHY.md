@@ -58,15 +58,33 @@ Concretely:
 
 This document declares the **target**, not the **current state**.
 
-As of 2026-05-18 the codebase still hardcodes several local-hardware assumptions:
+**Status of the original backlog (re-checked 2026-08-20).** The list below was
+written on 2026-05-18. Most of it has since been paid off, and leaving the old
+wording in place did active harm: a paragraph that is *wholly* stale stops being
+read, and a real violation hiding inside it goes unnoticed. Current state:
 
-- `jarvis.toml` defaults STT to `faster-whisper` on `device='cuda'`.
-- `pyproject.toml` lists `faster-whisper`, `openwakeword`, `pywin32`, `sounddevice`, `pywinauto`, `pyautogui`, `global-hotkeys` as **hard** runtime dependencies.
-- `README.md` §1 ("Quick install & first-run") and `CLAUDE.md` §"Windows specifics" assume Windows 11 Pro with a tray, a headset, and an `asInvoker` UAC manifest.
-- ADR-0001 (Named-Pipe HMAC), ADR-0010 (`MsgWaitForMultipleObjects`), ADR-0015 (Obsidian registry probing) bake in Windows APIs without declaring them optional.
-- `scripts/preflight.ps1`, `run.bat`, `scripts/drift-guard-daemon.ps1`, `scripts/check-working-tree.ps1`, `scripts/auto-push-eod.ps1` are PowerShell-only.
+- **Done** — `faster-whisper`, `pywin32`, `pywinauto`, `pyautogui`,
+  `global-hotkeys`, `mss` and `pywebview` all left the base install. The base is
+  torch-free and enforced (`check_requirements_sync.py`,
+  `check_lockfile_universal.py`), the package imports clean on Linux and macOS
+  (`check_import_clean.py`), and CI proves the install across the matrix
+  (`check_portable_install_matrix.py`).
+- **Done differently than planned** — `sounddevice`, `openwakeword`,
+  `onnxruntime`, `vosk` and `aiortc` stayed in the base install but are gated by
+  environment marker and lazy import instead of an extras group. That satisfies
+  the doctrine's actual test (install and boot succeed on `python:3.11-slim`);
+  `CLOUD.md` Rule #1 point 4 now names all three permitted mechanisms rather
+  than a fixed list of package names.
+- **Still open** — the maintainer's operational scripts remain PowerShell-only
+  (`preflight.ps1`, `run.bat`, `drift-guard-daemon.ps1`,
+  `check-working-tree.ps1`, `auto-push-eod.ps1`). That is deliberate and
+  permitted: see §6. The ADRs named in the original list still describe
+  Windows APIs without marking them optional; `docs/os-parity.md` is the live
+  register of what actually degrades where.
 
-**These are not bugs in this document.** They are the **remediation backlog**. This document is the **North Star**; future PRs steer toward it.
+**A stale backlog is a doc bug.** When you pay an item off, strike it here in
+the same change — the value of this section is that a reader can trust it.
+This document remains the **North Star**; future PRs steer toward it.
 
 **Pre-existing code is grandfathered until touched.** A code path that already violates the doctrine does not need to be rewritten in a panic. But any new change from 2026-05-18 forward is evaluated against this doctrine. Any *touch* of a violating code path is an opportunity to migrate it toward the cloud-first default, not extend the violation.
 

@@ -32,11 +32,13 @@ Usage::
 
     python scripts/ci/sync_codex_agents.py            # write the projection
     python scripts/ci/sync_codex_agents.py --check    # fail if it is stale
+    python scripts/ci/sync_codex_agents.py --stage    # write, then `git add` it
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -118,7 +120,32 @@ def render_toml(name: str, description: str, body: str) -> str:
     )
 
 
-def project(check_only: bool) -> int:
+def git_add(paths: list[Path]) -> None:
+    """Stage exactly the files this script touched.
+
+    Scoped to explicit paths on purpose: the working tree is frequently shared
+    with other agent sessions, and a broad ``git add`` sweeps their in-flight
+    work into someone else's commit (CLAUDE.md §9).
+    """
+    if not paths:
+        return
+    try:
+        subprocess.run(
+            ["git", "add", "--", *(str(p) for p in paths)],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        pass  # no git on PATH: the projection is still written, just not staged
+
+
+def project(check_only: bool, stage: bool = False, quiet: bool = False) -> int:
+    def say(message: str) -> None:
+        """Progress output. ``--quiet`` silences it; errors never route here."""
+        if not quiet:
+            print(message)
+
     if not SOURCE_DIR.is_dir():
         print(f"sync_codex_agents: {SOURCE_DIR} does not exist", file=sys.stderr)
         return 1
@@ -129,9 +156,7 @@ def project(check_only: bool) -> int:
     for source in sorted(SOURCE_DIR.glob("*.md")):
         if source.stem in SKIP_STEMS:
             continue
-        fields, body = split_front_matter(
-            source.read_text(encoding="utf-8"), source
-        )
+        fields, body = split_front_matter(source.read_text(encoding="utf-8"), source)
         target = TARGET_DIR / f"{source.stem}.toml"
         expected[target] = render_toml(fields["name"], fields["description"], body)
 
@@ -166,15 +191,21 @@ def project(check_only: bool) -> int:
                 file=sys.stderr,
             )
             return 1
-        print(f"sync_codex_agents: {len(expected)} agents in sync.")
+        say(f"sync_codex_agents: {len(expected)} agents in sync.")
         return 0
 
     for name in stale:
-        print(f"sync_codex_agents: rewrote .codex/agents/{name}")
+        say(f"sync_codex_agents: rewrote .codex/agents/{name}")
     for name in orphaned:
-        print(f"sync_codex_agents: removed .codex/agents/{name}")
+        say(f"sync_codex_agents: removed .codex/agents/{name}")
     if not stale and not orphaned:
-        print(f"sync_codex_agents: {len(expected)} agents already in sync.")
+        say(f"sync_codex_agents: {len(expected)} agents already in sync.")
+
+    if stage:
+        touched = [TARGET_DIR / n for n in stale]
+        touched += [TARGET_DIR / n for n in orphaned]
+        git_add(touched)
+
     return 0
 
 
@@ -185,9 +216,19 @@ def main() -> int:
         action="store_true",
         help="report drift and exit non-zero instead of rewriting",
     )
+    parser.add_argument(
+        "--stage",
+        action="store_true",
+        help="git add the files this run rewrote or removed (for pre-commit)",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the per-file lines (errors still print)",
+    )
     args = parser.parse_args()
     try:
-        return project(check_only=args.check)
+        return project(check_only=args.check, stage=args.stage, quiet=args.quiet)
     except FrontMatterError as exc:
         print(f"sync_codex_agents: {exc}", file=sys.stderr)
         return 1

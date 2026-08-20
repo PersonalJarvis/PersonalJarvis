@@ -8,18 +8,31 @@ one. Section numbers here match the root file's section numbers.
 
 ---
 
-## 0. Mirror rule — CLAUDE.md ≡ AGENTS.md, .claude/ ≡ .agents/ (BINDING)
+## 0. Mirror rule — THREE trees, one source (BINDING)
 
 `CLAUDE.md` is canonical; `AGENTS.md` is its **byte-identical twin** for other
 tools. The same holds for the versioned agent-knowledge trees:
 `.claude/{agents,commands,skills}/` ↔ `.agents/{agents,commands,skills}/` —
 everything in them addresses **every** coding agent (Codex, Gemini CLI, ...),
-never Claude Code alone; write it accordingly. Sync engines
-`scripts/ci/sync_agents_md.py` / `sync_agents_dir.py` run as a live
-`PostToolUse` hook, `.githooks/pre-commit --stage`, and a `--check` CI gate;
-after editing either side, sync before committing. Deletions propagate.
-Gitignored/private entries (e.g. `.claude/skills/security-github/`) stay out
-of the mirror on both sides.
+never Claude Code alone; write it accordingly.
+
+A **third** tree exists: `.codex/agents/*.toml`, the same definitions in the
+shape Codex reads. It is a **generated projection** of `.claude/agents/*.md`,
+not a twin — front matter becomes `name` / `description`, the Markdown body
+becomes `developer_instructions`, and Claude-Code-only fields (`tools`,
+`model`, `must_read`) are dropped rather than invented. **Never hand-edit a
+`.toml` there**; the next run overwrites it. This tree went unnamed in this
+contract and unsynced by any engine until 2026-08-20, and drifted the whole
+time — its `code-reviewer` still demanded a `SUB_TOOLS` set that AP-14 forbids
+while its Markdown source had moved on. A mirror nothing verifies is not a
+mirror.
+
+Sync engines `scripts/ci/sync_agents_md.py`, `sync_agents_dir.py` and
+`sync_codex_agents.py` run as a live `PostToolUse` hook,
+`.githooks/pre-commit --stage`, and a `--check` CI gate (the `repo-hygiene`
+job). After editing the canonical side, sync before committing. Deletions
+propagate. Gitignored/private entries (e.g. `.claude/skills/security-github/`)
+stay out of the mirror on every side.
 
 ---
 

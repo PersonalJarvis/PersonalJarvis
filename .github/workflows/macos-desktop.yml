@@ -6,7 +6,35 @@
 
 name: macOS desktop
 
+# Trigger note (2026-08-20): this ran on `pull_request` only, and the project
+# has no PR flow — 0 merge commits in the last 200 — so the macOS leg had not
+# fired in months while CLOUD.md Rule #1 called macOS a first-class target "in
+# the SAME change". A non-negotiable rule whose proof never runs is a rule on
+# paper. The path filters below keep the cost honest: the expensive runners
+# wake only for a change that can actually break the desktop.
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/macos-desktop.yml"
+      - ".githooks/pre-push"
+      - "install/**"
+      - "jarvis/admin/**"
+      - "jarvis/audio/**"
+      - "jarvis/autostart/**"
+      - "jarvis/cu/**"
+      - "jarvis/platform/**"
+      - "jarvis/setup/**"
+      - "jarvis/trigger/**"
+      - "jarvis/ui/**"
+      - "jarvis/vision/**"
+      - "pyproject.toml"
+      - "scripts/ci/check_boot_budget.py"
+      - "scripts/measure_boot.py"
+      - "scripts/measure_desktop_boot.py"
+      - "tests/**"
+      - "uv.lock"
   pull_request:
     paths:
       - ".github/workflows/macos-desktop.yml"

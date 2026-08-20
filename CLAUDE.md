@@ -5,9 +5,12 @@ numbers, unabridged) is [`docs/agent-contract.md`](docs/agent-contract.md) —
 read it before deep work.
 
 ## 0. Mirror rule (BINDING)
-`CLAUDE.md` ≡ `AGENTS.md` (byte-identical); `.claude/{agents,commands,skills}/`
-≡ `.agents/{...}`. Auto-synced by hook + pre-commit + CI. Write for EVERY
-coding agent, never Claude Code alone.
+THREE trees, one source: `CLAUDE.md` ≡ `AGENTS.md` (byte-identical);
+`.claude/{agents,commands,skills}/` ≡ `.agents/{...}`; `.codex/agents/*.toml`
+is a GENERATED projection of `.claude/agents/*.md` — never hand-edit it.
+Auto-synced by hook + pre-commit + CI (`sync_agents_md.py`,
+`sync_agents_dir.py`, `sync_codex_agents.py`, each with `--check`). Write for
+EVERY coding agent, never Claude Code alone.
 
 ## 1. Language (BINDING, HIGHEST PRIORITY)
 Every committed artifact is ENGLISH. German ONLY on the closed product surface
