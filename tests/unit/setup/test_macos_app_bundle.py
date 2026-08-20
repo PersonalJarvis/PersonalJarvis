@@ -78,16 +78,16 @@ def test_failed_runtime_probe_rebuilds_instead_of_preserving(tmp_path: Path, mon
 
     bundle = _build(tmp_path, monkeypatch)
     monkeypatch.setattr(mab.sys, "platform", "darwin")
-    monkeypatch.setattr(mab, "_codesign_valid", lambda _bundle: True)
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
     monkeypatch.setattr(
         mab,
         "_current_process_identity_valid",
-        lambda _bundle, *, install_root: False,
+        lambda _bundle, *, install_root, diagnostics=None: False,
     )
     monkeypatch.setattr(
         mab,
         "_runtime_identity_valid",
-        lambda _bundle, *, install_root: False,
+        lambda _bundle, *, install_root, diagnostics=None: False,
     )
     rebuilt: list[tuple[Path, Path]] = []
 
@@ -115,11 +115,11 @@ def test_running_canonical_app_skips_second_launchservices_probe(
 
     bundle = _build(tmp_path, monkeypatch)
     monkeypatch.setattr(mab.sys, "platform", "darwin")
-    monkeypatch.setattr(mab, "_codesign_valid", lambda _bundle: True)
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
     monkeypatch.setattr(
         mab,
         "_current_process_identity_valid",
-        lambda _bundle, *, install_root: True,
+        lambda _bundle, *, install_root, diagnostics=None: True,
     )
     monkeypatch.setattr(
         mab,
@@ -278,7 +278,7 @@ def test_codesign_verify_never_uses_strict_or_deep(tmp_path: Path, monkeypatch) 
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(mab.subprocess, "run", _fake_run)
-    assert mab._codesign_valid(tmp_path / APP_DIR_NAME) is True
+    assert mab._codesign_issue(tmp_path / APP_DIR_NAME) is None
     assert len(seen) == 1
     assert seen[0][:2] == ["/usr/bin/codesign", "--verify"]
     assert "--strict" not in seen[0]

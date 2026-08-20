@@ -11106,3 +11106,91 @@ chat hook already ran the `TriggerMatcher` and were never affected.
 `tests/unit/skills/test_prompt_injection.py`
 (`test_realtime_directive_*`), `tests/unit/brain/test_run_skill_tool.py`
 (`test_run_skill_resolves_a_display_name_to_the_installed_slug`).
+
+## BUG-159: macOS permissions read as missing although System Settings shows them enabled — a sticky restart flag, a hidden recovery, and a silent grant-wiping rebuild (HIGH, FIXED 2026-08-20)
+
+**Symptom (maintainer's Mac, reported 2026-08-20).** Every start warned that
+macOS permissions were not enabled. Clicking the warning's button opened
+System Settings, where the permission was already switched ON. Toggling it off
+and on changed nothing: the next start showed the same warning. Restarting the
+app did not help either.
+
+**Root causes (three independent defects, plus the underlying identity churn).**
+
+1. *The pending-restart flag was sticky and self-inflicted.* Any click on
+   "Open Settings" for Screen Recording, Accessibility or Input Monitoring
+   added the permission to `SystemPermissionPort._restart_required` — even
+   when the pane showed it as already granted and the user changed nothing.
+   Nothing ever removed it again except `reset()` or process exit. While set,
+   `snapshot()` reported `restart_required`, every affected feature reported
+   `ready: false`, and `runtime_access_granted()` returned False, so
+   Computer-Use and the global hotkeys were genuinely switched off for the
+   rest of the session although every grant was in place. Reproduced against
+   the project's own fakes: all-granted → one `open_settings()` call →
+   `computer_use`, `global_hotkeys` and `window_control` all flip to
+   `ready: false` and stay there. The old test suite pinned this as intended
+   behaviour (`test_runtime_access_blocks_pending_restart_even_after_native_grant`).
+
+2. *The one recovery control was unreachable on the rows that need it.* An
+   ad-hoc signature change strands the recorded TCC rows (BUG-083): System
+   Settings keeps showing the checkmark while the kernel refuses. The way out
+   is `tccutil reset` for this bundle id, offered as "Ask again" — but the
+   frontend showed that button only for `status === "denied"`, and the boolean
+   preflights behind Screen Recording (`CGPreflightScreenCaptureAccess`) and
+   Accessibility (`AXIsProcessTrusted`) never produce "denied"; a stranded
+   grant reads as plain `not_granted`. The two most frequently stranded rows
+   therefore had no escape hatch at all, and the app-wide alert banner carried
+   no reset button in any state.
+
+3. *A request that macOS swallowed still promised a restart.* When a decision
+   is already on file, `CGRequest*` returns False without showing a dialog.
+   The flow set the restart flag anyway and reported success, so the user
+   restarted into exactly the same state — the dead-button loop BUG-083 set
+   out to end, reintroduced through the flag.
+
+4. *A rebuild that wipes every grant was invisible.* `ensure_desktop_integration()`
+   runs on every app start and rebuilds the bundle whenever an identity probe
+   fails (Python minor-version change, moved checkout, failed signature
+   check). The rebuild changes the ad-hoc signature, so `_reset_stale_tcc_grants()`
+   drops all five TCC rows — correct, but silent: the log said only "failed its
+   runtime/import probe" with no reason, and the UI simply showed everything as
+   missing again, which reads as "the app forgot my permissions".
+
+**Fix (2026-08-20).**
+(a) `_live_state()` retires a pending-restart flag the moment a probe reads the
+grant as ready, and every read path (`state`, `runtime_access_granted`,
+`runtime_feature_ready`, `snapshot`) goes through it. A GRANTED probe IS live
+access — the only per-process-frozen probe, Screen Recording, can go stale
+negative but never falsely positive.
+(b) `open_settings()` flags a restart only for a permission that is actually
+missing, so looking at a granted pane changes nothing.
+(c) New `can_reset` field on every permission row: offered whenever a
+TCC-governed grant is missing under a stable app identity, suppressed only for
+Screen Recording while a restart is pending (its frozen preflight cannot tell a
+missing grant from the one just given, and a reset would discard it). Panel and
+banner both render it, plus a hint naming the stranded-grant case.
+(d) `record_identity_reset()` leaves a marker when a rebuild drops the grants;
+`snapshot()` surfaces it as `identity_reset` and retires it once every TCC row
+is back, so the re-ask is explained instead of looking amnesic.
+(e) `_launchable_issue()` and diagnostics on both identity probes make every
+rebuild log WHY it is rebuilding, at WARNING, naming that it resets permissions.
+
+**Class rule.** A permission flag that outlives the condition it describes is a
+lie the user cannot clear. Anything the UI derives from a probe must die the
+moment the probe contradicts it, and any recovery control must be keyed off an
+explicit backend capability — never off one particular status string, because
+the OS reports the same real condition through several of them.
+
+**Guards.** `tests/unit/platform/test_permissions.py::test_a_pending_restart_dies_the_moment_the_probe_reads_the_grant`,
+`::test_opening_settings_for_a_granted_permission_demands_no_restart`,
+`::test_a_stranded_grant_offers_the_reset_although_it_never_reads_denied`,
+`::test_a_granted_permission_never_offers_the_reset`,
+`::test_a_signature_reset_is_explained_and_retired_once_grants_return`,
+`PermissionsPanel.test.tsx` and `PermissionsAlertBanner.test.tsx`
+(stranded-grant reset + signature-change explanation). The Screen Recording
+fake no longer pretends the frozen preflight updates in-process.
+
+**Still open.** The underlying churn is the ad-hoc signature itself: any forced
+rebuild remains a new app to TCC. A Developer-ID signing identity is the
+structural fix; until then a rebuild costs the user one round of re-granting,
+now visible in the log and explained in the UI.

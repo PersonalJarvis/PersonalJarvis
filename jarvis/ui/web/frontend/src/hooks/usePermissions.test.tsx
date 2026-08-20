@@ -21,6 +21,7 @@ function snapshot(status: "not_determined" | "granted"): PermissionSnapshot {
         required: ["voice"],
         can_request: status === "not_determined",
         can_open_settings: true,
+        can_reset: status !== "granted",
         restart_required: false,
       },
     ],

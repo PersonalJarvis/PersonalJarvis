@@ -79,8 +79,13 @@ def _native_modules(
     ax = {"trusted": True, "prompted": False}
 
     def request_screen() -> bool:
+        # CGPreflightScreenCaptureAccess is frozen for the life of the process:
+        # a grant given in response to this request stays INVISIBLE to the
+        # preflight until the app relaunches. Flipping ``granted`` here would
+        # model a macOS that does not exist and would hide every regression in
+        # the restart handling, so tests that want the post-relaunch view set
+        # ``screen["granted"]`` themselves.
         screen["requested"] = True
-        screen["granted"] = True
         return True
 
     def request_listen() -> bool:
@@ -247,15 +252,61 @@ def test_runtime_access_requires_stable_identity_and_fresh_grant() -> None:
     assert stable.runtime_access_granted(PermissionId.MICROPHONE) is False
 
 
-def test_runtime_access_blocks_pending_restart_even_after_native_grant() -> None:
-    modules, _, _ = _native_modules()
+def test_runtime_access_blocks_a_grant_the_frozen_preflight_cannot_confirm() -> None:
+    modules, screen, _ = _native_modules()
     port = _port(modules)
 
     result = port.request(PermissionId.SCREEN_RECORDING)
 
     assert result.ok is True
-    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
+    # The frozen preflight still reads "no", so access must stay closed.
+    assert screen["granted"] is False
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
     assert port.runtime_access_granted(PermissionId.SCREEN_RECORDING) is False
+
+
+def test_a_pending_restart_dies_the_moment_the_probe_reads_the_grant() -> None:
+    """BUG-159: a live grant ends the restart claim — nothing else clears it.
+
+    Holding the flag past a GRANTED probe is what disabled Computer-Use and
+    hotkeys for the rest of the session after a single settings visit, with
+    no code path left to undo it.
+    """
+    modules, screen, _ = _native_modules()
+    port = _port(modules)
+    port.request(PermissionId.SCREEN_RECORDING)
+    assert port.snapshot()["restart_required"] is True
+
+    # What a relaunch — or simply granting a live-reading permission — looks
+    # like: the probe now sees the grant.
+    screen["granted"] = True
+
+    assert port.runtime_access_granted(PermissionId.SCREEN_RECORDING) is True
+    snapshot = port.snapshot()
+    assert snapshot["restart_required"] is False
+    assert _permission(snapshot, PermissionId.SCREEN_RECORDING)["restart_required"] is False
+    assert snapshot["features"]["computer_use"]["ready"] is True
+
+
+def test_opening_settings_for_a_granted_permission_demands_no_restart() -> None:
+    """BUG-159: looking at an already-granted pane must change nothing.
+
+    The old flow flagged a restart on every open-settings click, which turned
+    a curious glance into "Computer-Use and hotkeys are off until you relaunch".
+    """
+    modules, screen, _ = _native_modules()
+    screen["granted"] = True
+    port = _port(modules, iohid_check=lambda _type: 0)
+    assert port.runtime_feature_ready("computer_use") is True
+
+    result = port.open_settings(PermissionId.ACCESSIBILITY)
+
+    assert result.ok is True
+    assert result.restart_required is False
+    assert result.snapshot["restart_required"] is False
+    assert result.snapshot["features"]["computer_use"]["ready"] is True
+    assert port.runtime_feature_ready("computer_use") is True
+    assert port.runtime_feature_ready("global_hotkeys") is True
 
 
 def test_microphone_status_distinguishes_denied_and_restricted() -> None:
@@ -301,7 +352,10 @@ def test_request_reporting_false_points_at_system_settings() -> None:
     assert result.ok is True
     assert screen["granted"] is False
     assert "System Settings" in result.message
-    assert "If no system dialog appeared" in result.message
+    assert "did not show a dialog" in result.message
+    # The stranded-grant case is the one the message must not leave out: the
+    # checkmark is already set in System Settings, so only a reset helps.
+    assert "Ask again" in result.message
 
 
 def test_request_reporting_true_keeps_the_plain_restart_message() -> None:
@@ -560,6 +614,84 @@ def test_screen_capture_restart_pending_hides_the_dead_allow_button() -> None:
     assert item["restart_required"] is True
     assert item["can_request"] is False
     assert "restart" in (item["detail"] or "").lower()
+    # And it must not offer the reset either: the frozen preflight cannot tell
+    # a missing grant from the one the user just gave, so a reset here would
+    # throw that fresh grant away.
+    assert item["can_reset"] is False
+
+
+def test_a_stranded_grant_offers_the_reset_although_it_never_reads_denied() -> None:
+    """BUG-159: the escape hatch must not hang off ``status == "denied"``.
+
+    An ad-hoc signature change orphans the recorded TCC rows. System Settings
+    keeps showing the checkmark while the boolean preflights report plain
+    "not granted" — never "denied" — so a denial-keyed reset button was
+    invisible on exactly the two rows that needed it.
+    """
+    modules, screen, _ = _native_modules()
+    screen["granted"] = False
+    modules["ApplicationServices"].AXIsProcessTrusted = lambda: False
+    snapshot = _port(modules).snapshot()
+
+    for permission_id in (PermissionId.SCREEN_RECORDING, PermissionId.ACCESSIBILITY):
+        item = _permission(snapshot, permission_id)
+        assert item["status"] == "not_granted", permission_id
+        assert item["can_reset"] is True, permission_id
+
+
+def test_a_granted_permission_never_offers_the_reset() -> None:
+    modules, screen, _ = _native_modules()
+    screen["granted"] = True
+    snapshot = _port(modules, iohid_check=lambda _type: 0).snapshot()
+
+    for item in snapshot["permissions"]:
+        if item["status"] in {"granted", "not_required"}:
+            assert item["can_reset"] is False, item["id"]
+
+
+def test_keychain_has_no_reset_because_it_owns_no_tcc_row() -> None:
+    modules, _, _ = _native_modules()
+    port = _port(modules, credential_backend=lambda: "file")
+
+    item = _permission(port.snapshot(), PermissionId.CREDENTIAL_STORE)
+
+    assert item["status"] == "not_granted"
+    assert item["can_reset"] is False
+
+
+def test_a_signature_reset_is_explained_and_retired_once_grants_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BUG-159: an app that silently forgot every permission reads as broken."""
+    from jarvis.platform import permissions as permissions_module
+
+    monkeypatch.setattr(permissions_module, "user_data_dir", lambda: tmp_path, raising=False)
+    monkeypatch.setattr(
+        permissions_module,
+        "identity_reset_marker_path",
+        lambda: tmp_path / "macos-tcc-reset.json",
+    )
+    permissions_module.record_identity_reset(("ScreenCapture", "Accessibility"))
+
+    # _CaptureDevice.status is class state other tests leave behind; the
+    # marker only retires when EVERY TCC row is back, microphone included.
+    _CaptureDevice.status = 3
+    modules, screen, _ = _native_modules()
+    screen["granted"] = False
+    modules["ApplicationServices"].AXIsProcessTrusted = lambda: False
+    port = _port(modules)
+
+    stranded = port.snapshot()
+    assert stranded["identity_reset"] is not None
+    assert stranded["identity_reset"]["reason"] == "signature-change"
+
+    # Everything granted again: the explanation has done its job and goes away.
+    screen["granted"] = True
+    modules["ApplicationServices"].AXIsProcessTrusted = lambda: True
+    healed = _port(modules, iohid_check=lambda _type: 0).snapshot()
+
+    assert healed["identity_reset"] is None
+    assert not (tmp_path / "macos-tcc-reset.json").exists()
 
 
 def test_missing_framework_reports_unavailable_without_raising() -> None:

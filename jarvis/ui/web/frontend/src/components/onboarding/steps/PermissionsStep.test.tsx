@@ -23,6 +23,7 @@ function macSnapshot(overrides: Partial<PermissionSnapshot> = {}): PermissionSna
       required: [],
       can_request: false,
       can_open_settings: true,
+      can_reset: false,
       restart_required: false,
     })),
     features: {},

@@ -23,8 +23,22 @@ export interface PermissionItem {
   required: string[];
   can_request: boolean;
   can_open_settings: boolean;
+  /**
+   * Whether dropping this app's own TCC record is a sensible next step. Always
+   * read this instead of testing `status === "denied"`: the Screen Recording
+   * and Accessibility preflights report a grant stranded on an older app
+   * signature as plain "not_granted", so the denial test hid the reset from
+   * exactly the two rows that need it most (BUG-159).
+   */
+  can_reset: boolean;
   restart_required: boolean;
   detail?: string | null;
+}
+
+/** Set when a rebuild changed the app signature and macOS discarded the grants. */
+export interface PermissionIdentityReset {
+  reason: string;
+  services: string[];
 }
 
 export interface PermissionFeature {
@@ -47,6 +61,7 @@ export interface PermissionSnapshot {
   };
   permissions: PermissionItem[];
   features: Record<string, PermissionFeature>;
+  identity_reset?: PermissionIdentityReset | null;
   restart_required: boolean;
 }
 
@@ -57,6 +72,7 @@ const EMPTY_SNAPSHOT: PermissionSnapshot = {
   app_identity: {},
   permissions: [],
   features: {},
+  identity_reset: null,
   restart_required: false,
 };
 

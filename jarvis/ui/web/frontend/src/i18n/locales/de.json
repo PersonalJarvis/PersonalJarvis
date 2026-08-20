@@ -1588,7 +1588,9 @@
       "api_keys": "Sichere API-Key-Ablage"
     },
     "restart_deferred": "Neu erteilte Freigaben werden mit dem automatischen Neustart am Ende der Einrichtung aktiv - jetzt ist nichts zu tun.",
-    "ask_again": "Erneut fragen"
+    "ask_again": "Erneut fragen",
+    "stale_grant_hint": "macOS fragt für diesen Zugriff nicht mehr nach. Steht der Haken in den Systemeinstellungen schon, gehört er zu einer älteren Version der App — tippe auf „Erneut fragen“ und erlaube den Zugriff danach neu.",
+    "identity_reset": "macOS sieht Personal Jarvis seit dem letzten Neuaufbau der App als neue App an und hat dabei alle erteilten Zugriffe verworfen. Bitte einmal neu erlauben — danach bleiben sie erhalten."
   },
   "settings_view": {
     "silence_window": {

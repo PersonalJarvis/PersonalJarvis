@@ -31,6 +31,61 @@ log = logging.getLogger(__name__)
 
 _SYSTEM_SETTINGS_BUNDLE_ID = "com.apple.systempreferences"
 
+# Left behind when a bundle rebuild changed this app's ad-hoc signature and
+# the installer therefore dropped its own TCC rows. Without it the user meets
+# an app that has silently forgotten every permission and reads that as the
+# app being broken; with it the UI can say WHY it is asking again.
+_IDENTITY_RESET_FILENAME = "macos-tcc-reset.json"
+
+
+def identity_reset_marker_path() -> Path:
+    """Where the "macOS sees this app as new" note lives."""
+    from jarvis.core.paths import user_data_dir
+
+    return user_data_dir() / _IDENTITY_RESET_FILENAME
+
+
+def record_identity_reset(services: tuple[str, ...] | list[str]) -> None:
+    """Note that a signature change forced this app's TCC grants to be reset.
+
+    Best-effort: a note that cannot be written costs an explanation, never a
+    working install.
+    """
+    import json
+
+    path = identity_reset_marker_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {"reason": "signature-change", "services": list(services)},
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        log.debug("Could not record the macOS TCC reset marker.", exc_info=True)
+
+
+def _read_identity_reset() -> dict[str, Any] | None:
+    import json
+
+    path = identity_reset_marker_path()
+    try:
+        if not path.is_file():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _clear_identity_reset() -> None:
+    try:
+        identity_reset_marker_path().unlink(missing_ok=True)
+    except OSError:
+        log.debug("Could not clear the macOS TCC reset marker.", exc_info=True)
+
 
 class PermissionId(StrEnum):
     """Stable identifiers shared by the API and desktop permission UI."""
@@ -194,6 +249,12 @@ class PermissionStatus:
     required: tuple[str, ...]
     can_request: bool
     can_open_settings: bool
+    # Whether dropping THIS app's own TCC row is a sensible next step. The UI
+    # must never derive it from ``status == "denied"``: the boolean preflights
+    # behind Screen Recording and Accessibility report a stranded grant as
+    # "not_granted", so a denial-only rule hid the one control that recovers
+    # them — the two permissions most often stranded (BUG-159).
+    can_reset: bool
     restart_required: bool
     detail: str | None
 
@@ -438,33 +499,50 @@ class SystemPermissionPort:
         # Accessibility grant and do not expose the separate PostEvent API.
         return ax_state
 
+    def _live_state(self, permission_id: PermissionId) -> PermissionState:
+        """Probe once and retire a pending-restart flag the OS has overtaken.
+
+        A pending restart means exactly one thing: "the grant is not usable in
+        THIS process yet". The moment a live probe reads it as ready that claim
+        is false, so the flag must die right there — no probe can report a
+        grant the process cannot use (the one per-process-frozen probe, Screen
+        Recording, can only stay stale NEGATIVE; it never turns falsely
+        positive). Keeping the flag past that point is what made a single
+        "Open Settings" click disable Computer-Use and hotkeys until relaunch
+        even though every permission was granted, and no code path ever
+        cleared it again (BUG-159).
+        """
+        state = self._state(permission_id)
+        if state in _READY_STATES:
+            self._restart_required.discard(permission_id)
+        return state
+
     def state(self, permission_id: PermissionId | str) -> PermissionState:
         """Probe one permission directly without constructing a full snapshot."""
-        return self._state(PermissionId(permission_id))
+        return self._live_state(PermissionId(permission_id))
 
     def runtime_access_granted(self, permission_id: PermissionId | str) -> bool:
         """Fail closed unless this installed app can use the grant right now."""
         resolved = PermissionId(permission_id)
         if self.platform != "darwin":
-            return self._state(resolved) in _READY_STATES
+            return self._live_state(resolved) in _READY_STATES
         # Only the STATIC identity half gates runtime access — skip the
         # AppKit foreground probe _app_identity() also performs; its result
         # was never consulted here and it costs a window-server round trip.
-        return (
-            self._stable_identity()
-            and resolved not in self._restart_required
-            and self._state(resolved) is PermissionState.GRANTED
-        )
+        # _live_state clears any stale pending-restart flag first, so no
+        # separate check against it remains: a GRANTED probe IS live access.
+        return self._stable_identity() and self._live_state(resolved) is PermissionState.GRANTED
 
     def runtime_feature_ready(self, feature: str) -> bool:
         """Check every live grant for a feature under one stable app identity."""
         requirements = FEATURE_REQUIREMENTS[feature]
         if self.platform != "darwin":
-            return all(self._state(item) in _READY_STATES for item in requirements)
-        return self._stable_identity() and all(
-            item not in self._restart_required and self._state(item) is PermissionState.GRANTED
-            for item in requirements
-        )
+            return all(self._live_state(item) in _READY_STATES for item in requirements)
+        # all() short-circuits, so probe every requirement first: a later
+        # requirement's stale restart flag must heal even when an earlier one
+        # is still missing.
+        states = [self._live_state(item) for item in requirements]
+        return self._stable_identity() and all(state is PermissionState.GRANTED for state in states)
 
     def _requester_available(self, permission_id: PermissionId) -> bool:
         if permission_id is PermissionId.CREDENTIAL_STORE:
@@ -513,7 +591,7 @@ class SystemPermissionPort:
             self.platform == "darwin" and identity.stable and identity.foreground and not headless
         )
         for permission_id in PermissionId:
-            state = self._state(permission_id)
+            state = self._live_state(permission_id)
             states[permission_id] = state
             required = tuple(
                 feature
@@ -548,10 +626,41 @@ class SystemPermissionPort:
                     "local file for now. Allow access to store them encrypted "
                     "in the macOS Keychain."
                 )
+            # Offer the tccutil escape hatch whenever a TCC-governed grant is
+            # missing — NOT only on an explicit "denied". A stranded grant
+            # (the recorded row belongs to a previous ad-hoc signature) reads
+            # as plain "not granted" while System Settings still shows the
+            # checkmark, and no request can ever reach the user because macOS
+            # already has a decision on file.
+            #
+            # The one row that must NOT offer it is Screen Recording with a
+            # restart pending: its preflight is frozen for the life of the
+            # process, so "not granted" there may well be a grant the user
+            # just gave — resetting would throw it away. Every other probe
+            # reads live TCC state, so a missing grant is really missing and
+            # the reset is safe even mid-restart.
+            can_reset = (
+                self.platform == "darwin"
+                and identity.stable
+                and not headless
+                and permission_id in _TCC_RESET_SERVICES
+                and state not in _READY_STATES
+                and not (restart_pending and permission_id is PermissionId.SCREEN_RECORDING)
+            )
             if restart_pending and state not in _READY_STATES:
                 detail = (
                     "Permission changes made in System Settings take effect "
                     "after Personal Jarvis restarts."
+                )
+            elif can_reset and not can_request:
+                # No prompt left and the grant is missing: name the only move
+                # that still works instead of leaving a dead-end row.
+                detail = (
+                    "macOS already has a decision on file for this app and "
+                    "will not ask again. If System Settings shows access as "
+                    "enabled, the recorded grant belongs to an earlier build "
+                    'of the app — use "Ask again" to clear it, then allow '
+                    "access once more."
                 )
             statuses.append(
                 PermissionStatus(
@@ -563,6 +672,7 @@ class SystemPermissionPort:
                     # The Keychain has no System Settings pane; its only
                     # recovery path is the request flow above.
                     can_open_settings=eligible and permission_id in _SETTINGS_URLS,
+                    can_reset=can_reset,
                     restart_required=restart_pending,
                     detail=detail,
                 )
@@ -586,6 +696,16 @@ class SystemPermissionPort:
                 "restart_required": restart_required,
             }
 
+        # A signature change wipes the recorded grants. Surface that as its own
+        # fact so the UI can explain the re-ask instead of looking amnesic, and
+        # retire the note the moment every TCC-governed grant is back.
+        identity_reset = _read_identity_reset() if self.platform == "darwin" else None
+        if identity_reset is not None and all(
+            states[permission_id] in _READY_STATES for permission_id in _TCC_RESET_SERVICES
+        ):
+            _clear_identity_reset()
+            identity_reset = None
+
         return {
             "platform": self.platform,
             "supported": self.platform == "darwin",
@@ -593,6 +713,7 @@ class SystemPermissionPort:
             "app_identity": asdict(identity),
             "permissions": [status.to_dict() for status in statuses],
             "features": features,
+            "identity_reset": identity_reset,
             "restart_required": bool(self._restart_required),
         }
 
@@ -708,26 +829,30 @@ class SystemPermissionPort:
                 f"The native permission request failed: {type(exc).__name__}.",
                 self.snapshot(),
             )
-        restart = permission_id in _RESTART_AFTER_CHANGE
-        if restart:
+        if permission_id in _RESTART_AFTER_CHANGE:
             self._restart_required.add(permission_id)
         after = self.snapshot()
+        # Read the flag back from the snapshot: a permission whose probe reads
+        # live (Accessibility, Input Monitoring) is already granted again by
+        # the time we get here, and _live_state retired the flag. Reporting a
+        # restart the snapshot contradicts is how the banner and the row ended
+        # up disagreeing (BUG-159).
+        restart = permission_id in self._restart_required
         message = (
             "Permission requested. Restart Personal Jarvis after granting access."
             if restart
             else "Permission requested; the status will update after your choice."
         )
         if prompted is False:
-            # macOS prompts each app identity exactly once. A requester that
-            # reports False may have the dialog up right now — or may have
-            # been silently suppressed because a denial is already on record
-            # (the Screen Recording preflight cannot tell those apart).
-            # Promising only a restart in that second case is the dead-button
-            # class of BUG-083: the user restarts forever and is never asked.
-            message += (
-                " If no system dialog appeared, macOS has already recorded an "
-                "earlier decision — enable Personal Jarvis in System Settings "
-                "> Privacy & Security for this permission."
+            # macOS prompts each app identity exactly once. Name both the
+            # Settings route and the reset, because a checkmark that is
+            # already set there means the recorded grant is stranded on an
+            # older signature and only a reset can revive the prompt.
+            message = (
+                "macOS did not show a dialog: it already has a decision on "
+                "file for this app. Enable Personal Jarvis in System Settings "
+                "> Privacy & Security — and if it is already enabled there, "
+                'use "Ask again" to clear the stale record first.'
             )
         return PermissionOperation(
             True,
@@ -778,9 +903,7 @@ class SystemPermissionPort:
         url = foundation.NSURL.URLWithString_(_SETTINGS_URLS[permission_id])
         return bool(appkit.NSWorkspace.sharedWorkspace().openURL_(url))
 
-    def reset(
-        self, permission_id: PermissionId, *, dry_run: bool = False
-    ) -> PermissionOperation:
+    def reset(self, permission_id: PermissionId, *, dry_run: bool = False) -> PermissionOperation:
         """Drop this app's own TCC row so the native prompt can appear again.
 
         The in-app way out of the auto-denied trap: once ANY build of the
@@ -904,7 +1027,14 @@ class SystemPermissionPort:
             opened = self._open_settings(permission_id)
         except Exception:  # noqa: BLE001 - native settings boundary
             opened = False
-        restart = opened and permission_id in _RESTART_AFTER_CHANGE
+        # Only a grant that is actually MISSING can be changed into something
+        # this process must restart for. Flagging a restart merely because the
+        # user looked at an already-granted pane disabled the very features
+        # the pane governs until relaunch (BUG-159).
+        already_granted = next(
+            item for item in before["permissions"] if item["id"] == permission_id.value
+        )["status"] in {PermissionState.GRANTED.value, PermissionState.NOT_REQUIRED.value}
+        restart = opened and permission_id in _RESTART_AFTER_CHANGE and not already_granted
         if restart:
             self._restart_required.add(permission_id)
         after = self.snapshot()

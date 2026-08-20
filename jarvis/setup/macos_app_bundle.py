@@ -173,10 +173,6 @@ def _codesign_issue(bundle: Path) -> str | None:
     return (result.stderr or result.stdout or "unknown codesign error").strip()
 
 
-def _codesign_valid(bundle: Path) -> bool:
-    return _codesign_issue(bundle) is None
-
-
 def _bundle_cdhash(bundle: Path) -> str | None:
     """Return the bundle's code-directory hash — its TCC identity — or ``None``.
 
@@ -236,40 +232,68 @@ def _reset_stale_tcc_grants(runner=subprocess.run) -> None:
         else:
             detail = (result.stderr or result.stdout or "unknown error").strip()
             log.warning("TCC reset for %s failed: %s", service, detail[-300:])
+    # Whether or not every individual reset succeeded, the signature DID
+    # change: from here on the user faces an app macOS treats as a stranger.
+    # Record that so the permissions view explains the re-ask instead of
+    # silently showing everything as missing again (BUG-159).
+    try:
+        from jarvis.platform.permissions import record_identity_reset
+
+        record_identity_reset(_TCC_SERVICES)
+    except Exception:  # noqa: BLE001 - the explanation is never load-bearing
+        log.debug("Could not record the TCC reset marker.", exc_info=True)
+
+
+def _launchable_issue(candidate: Path) -> str | None:
+    """Name the first reason ``candidate`` is not a usable app bundle.
+
+    Every rebuild changes the ad-hoc signature and therefore voids every
+    recorded TCC grant (BUG-083). A rebuild that cannot say WHY it happened is
+    undiagnosable from a user's log — which is exactly the position the
+    "permissions keep resetting" reports left us in (BUG-159).
+    """
+    info_path = candidate / "Contents" / "Info.plist"
+    if candidate.name != APP_DIR_NAME:
+        return f"unexpected bundle directory name: {candidate.name}"
+    if candidate.is_symlink():
+        return "bundle path is a symlink"
+    if not candidate.is_dir():
+        return "bundle directory is missing"
+    if not info_path.is_file():
+        return "Info.plist is missing"
+    try:
+        with info_path.open("rb") as stream:
+            info = plistlib.load(stream)
+    except (OSError, plistlib.InvalidFileException) as exc:
+        return f"Info.plist is unreadable: {exc}"
+    executable_name = info.get("CFBundleExecutable")
+    if not isinstance(executable_name, str) or Path(executable_name).name != executable_name:
+        return f"invalid CFBundleExecutable: {executable_name!r}"
+    if info.get("CFBundleIdentifier") != BUNDLE_ID:
+        return f"bundle id is {info.get('CFBundleIdentifier')!r}, expected {BUNDLE_ID!r}"
+    if info.get("CFBundlePackageType") != "APPL":
+        return f"package type is {info.get('CFBundlePackageType')!r}, expected 'APPL'"
+    if info.get("JarvisBundleFormatVersion") != _BUNDLE_FORMAT_VERSION:
+        return (
+            f"bundle format version is {info.get('JarvisBundleFormatVersion')!r}, "
+            f"expected {_BUNDLE_FORMAT_VERSION}"
+        )
+    executable = candidate / "Contents" / "MacOS" / executable_name
+    if not executable.is_file():
+        return f"executable is missing: {executable.name}"
+    if executable.is_symlink():
+        return "executable is a symlink"
+    if not _is_macho_executable(executable):
+        return "executable is not a Mach-O binary"
+    signature = _codesign_issue(candidate)
+    if signature is not None:
+        return f"code signature is invalid: {signature[-300:]}"
+    return None
 
 
 def macos_app_bundle_is_launchable(bundle: Path | None = None) -> bool:
     """Validate native executable, canonical metadata, and code signature."""
-    candidate = bundle or macos_app_bundle_path()
-    info_path = candidate / "Contents" / "Info.plist"
-    if (
-        candidate.name != APP_DIR_NAME
-        or candidate.is_symlink()
-        or not candidate.is_dir()
-        or not info_path.is_file()
-    ):
-        return False
-    try:
-        with info_path.open("rb") as stream:
-            info = plistlib.load(stream)
-    except (OSError, plistlib.InvalidFileException):
-        return False
-    executable_name = info.get("CFBundleExecutable")
-    if (
-        not isinstance(executable_name, str)
-        or Path(executable_name).name != executable_name
-        or info.get("CFBundleIdentifier") != BUNDLE_ID
-        or info.get("CFBundlePackageType") != "APPL"
-        or info.get("JarvisBundleFormatVersion") != _BUNDLE_FORMAT_VERSION
-    ):
-        return False
-    executable = candidate / "Contents" / "MacOS" / executable_name
-    return (
-        executable.is_file()
-        and not executable.is_symlink()
-        and _is_macho_executable(executable)
-        and _codesign_valid(candidate)
-    )
+    return _launchable_issue(bundle or macos_app_bundle_path()) is None
 
 
 def macos_launch_services_command(
@@ -704,7 +728,12 @@ def _runtime_identity_valid(
         probe.unlink(missing_ok=True)
 
 
-def _current_process_identity_valid(bundle: Path, *, install_root: Path) -> bool:
+def _current_process_identity_valid(
+    bundle: Path,
+    *,
+    install_root: Path,
+    diagnostics: list[str] | None = None,
+) -> bool:
     """Recognize the already-running canonical app without spawning a probe."""
     if sys.platform != "darwin":
         return False
@@ -717,13 +746,22 @@ def _current_process_identity_valid(bundle: Path, *, install_root: Path) -> bool
         current_bundle = Path(str(current.bundlePath() or "")).resolve()
         launcher_file = Path(str(launcher.__file__ or "")).resolve()
         expected_root = install_root.resolve()
-        return (
-            str(current.bundleIdentifier() or "") == BUNDLE_ID
-            and current_bundle == bundle.resolve()
-            and launcher_file.is_file()
-            and launcher_file.is_relative_to(expected_root / "jarvis" / "ui" / "web")
-        )
-    except (ImportError, OSError, TypeError, ValueError):
+        current_id = str(current.bundleIdentifier() or "")
+        reasons: list[str] = []
+        if current_id != BUNDLE_ID:
+            reasons.append(f"running bundle id is {current_id!r}, expected {BUNDLE_ID!r}")
+        if current_bundle != bundle.resolve():
+            reasons.append(f"running from {current_bundle}, expected {bundle.resolve()}")
+        if not launcher_file.is_file():
+            reasons.append(f"launcher module has no file on disk: {launcher_file}")
+        elif not launcher_file.is_relative_to(expected_root / "jarvis" / "ui" / "web"):
+            reasons.append(f"launcher {launcher_file} is outside the checkout {expected_root}")
+        if diagnostics is not None:
+            diagnostics.extend(f"current process: {reason}" for reason in reasons)
+        return not reasons
+    except (ImportError, OSError, TypeError, ValueError) as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"current process: probe failed: {type(exc).__name__}: {exc}")
         return False
 
 
@@ -787,20 +825,30 @@ def ensure_macos_app_bundle(
     try:
         install_root = (install_dir or _default_install_dir()).resolve()
         bundle = macos_app_bundle_path(applications_dir=applications_dir)
-        if macos_app_bundle_is_launchable(bundle):
+        launchable_issue = _launchable_issue(bundle) if bundle.exists() else "bundle not installed"
+        if launchable_issue is None:
+            diagnostics: list[str] = []
             if _current_process_identity_valid(
-                bundle, install_root=install_root
-            ) or _runtime_identity_valid(bundle, install_root=install_root):
+                bundle, install_root=install_root, diagnostics=diagnostics
+            ) or _runtime_identity_valid(
+                bundle, install_root=install_root, diagnostics=diagnostics
+            ):
                 # A healthy bundle is kept byte-for-byte, but LaunchServices may
                 # still not know it — an interrupted earlier run, or a database
                 # rebuilt since. Re-registering is a no-op when it is known, and
                 # repairs "installed but unsearchable" when it is not.
                 register_with_launch_services(bundle)
                 return bundle
-            log.warning(
-                "Existing macOS bundle failed its runtime/import probe; rebuilding: %s",
-                bundle,
-            )
+            launchable_issue = "; ".join(diagnostics) or "identity probe failed without detail"
+        # A rebuild is never routine: it changes the ad-hoc signature and macOS
+        # then discards every permission the user granted. Say why, at WARNING,
+        # so a recurring rebuild is visible in the log instead of showing up as
+        # "the app keeps forgetting my permissions".
+        log.warning(
+            "Rebuilding the macOS app bundle (this resets its macOS permissions) — reason: %s [%s]",
+            launchable_issue,
+            bundle,
+        )
         if sys.platform != "darwin":
             return _write_cross_platform_fixture_bundle(bundle)
         installed = _install_native_bundle(install_root, bundle)

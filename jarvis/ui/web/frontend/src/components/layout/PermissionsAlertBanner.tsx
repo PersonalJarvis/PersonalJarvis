@@ -58,7 +58,7 @@ export function PermissionsAlertBanner() {
   const pushToast = useEventStore((state) => state.pushToast);
   const [collapsed, setCollapsed] = useState(false);
   const [restarting, setRestarting] = useState(false);
-  const { snapshot, pendingId, request, openSettings } = usePermissions();
+  const { snapshot, pendingId, request, openSettings, reset } = usePermissions();
 
   if (!snapshot || snapshot.platform !== "darwin" || snapshot.headless) return null;
 
@@ -148,6 +148,9 @@ export function PermissionsAlertBanner() {
           {snapshot.app_identity.stable === false && (
             <p className="text-xs text-amber-200/90">{t("permissions.identity_warning")}</p>
           )}
+          {snapshot.identity_reset && (
+            <p className="text-xs text-amber-200/90">{t("permissions.identity_reset")}</p>
+          )}
           {missing.map((item) => (
             <MissingPermissionRow
               key={item.id}
@@ -155,6 +158,7 @@ export function PermissionsAlertBanner() {
               busy={pendingId === item.id}
               onRequest={() => void run(() => request(item.id))}
               onOpenSettings={() => void run(() => openSettings(item.id))}
+              onReset={() => void run(() => reset(item.id))}
             />
           ))}
           {snapshot.restart_required && (
@@ -178,11 +182,13 @@ function MissingPermissionRow({
   busy,
   onRequest,
   onOpenSettings,
+  onReset,
 }: {
   item: PermissionItem;
   busy: boolean;
   onRequest: () => void;
   onOpenSettings: () => void;
+  onReset: () => void;
 }) {
   const t = useT();
   // A newer backend may report a permission id this build does not know yet;
@@ -206,6 +212,12 @@ function MissingPermissionRow({
         <p className="mt-0.5 text-xs text-muted-foreground">
           {t(`permissions.items.${item.id}.description`)}
         </p>
+        {/* macOS will not prompt again and the grant is missing: the
+            checkmark in System Settings belongs to an older signature of
+            this app, so toggling it there leads nowhere (BUG-159). */}
+        {item.can_reset && !item.can_request && (
+          <p className="mt-1 text-xs text-amber-200/90">{t("permissions.stale_grant_hint")}</p>
+        )}
       </div>
       <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-amber-500">
         {t(`permissions.status.${statusKey}`)}
@@ -220,6 +232,12 @@ function MissingPermissionRow({
         <Button size="sm" variant="outline" disabled={busy} onClick={onOpenSettings}>
           {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
           {t("permissions.open_settings")}
+        </Button>
+      )}
+      {item.can_reset && (
+        <Button size="sm" variant="ghost" disabled={busy} onClick={onReset}>
+          {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+          {t("permissions.ask_again")}
         </Button>
       )}
     </div>

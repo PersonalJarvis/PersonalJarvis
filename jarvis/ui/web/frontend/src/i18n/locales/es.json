@@ -1588,7 +1588,9 @@
       "api_keys": "Almacenamiento seguro de claves API"
     },
     "restart_deferred": "Los permisos recién concedidos se activan con el reinicio automático al final de la configuración; no hay nada que hacer ahora.",
-    "ask_again": "Preguntar de nuevo"
+    "ask_again": "Preguntar de nuevo",
+    "stale_grant_hint": "macOS ya no volverá a preguntar por este acceso. Si Ajustes del Sistema ya lo muestra activado, ese registro pertenece a una versión anterior de la app: pulsa «Preguntar de nuevo» y concede el acceso otra vez.",
+    "identity_reset": "Desde la última reconstrucción, macOS considera Personal Jarvis una app nueva y descartó todos los accesos concedidos. Vuelve a concederlos una vez; a partir de ahí se mantendrán."
   },
   "settings_view": {
     "silence_window": {

@@ -1588,7 +1588,9 @@
       "api_keys": "Secure API-key storage"
     },
     "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
-    "ask_again": "Ask again"
+    "ask_again": "Ask again",
+    "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
+    "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on."
   },
   "settings_view": {
     "silence_window": {

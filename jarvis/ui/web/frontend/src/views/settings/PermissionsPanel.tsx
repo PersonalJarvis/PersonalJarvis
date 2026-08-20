@@ -124,6 +124,14 @@ export function PermissionRows({
           {t("permissions.identity_warning")}
         </div>
       )}
+      {/* A rebuild changed the app's signature, so macOS discarded every
+          recorded grant. Without this the app just looks amnesic. */}
+      {snapshot?.identity_reset && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-500">
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          {t("permissions.identity_reset")}
+        </div>
+      )}
       {items.map((permission) => (
         <PermissionRow
           key={permission.id}
@@ -179,11 +187,16 @@ function PermissionRow({
   const showSettings = !ready && item.can_open_settings;
   // macOS auto-denies an app that ever created an input listener before the
   // user was asked, and a signature change orphans recorded grants (BUG-083)
-  // — either way the row reads a dead "Denied" and macOS never prompts
-  // again. "Ask again" drops OUR OWN record (tccutil, scoped to this app's
-  // bundle id) so the real system dialog can fire once more. Keychain has
-  // no TCC row, hence the exclusion.
-  const showReset = item.status === "denied" && item.id !== "credential_store";
+  // — either way macOS never prompts again. "Ask again" drops OUR OWN record
+  // (tccutil, scoped to this app's bundle id) so the real system dialog can
+  // fire once more. The backend decides when that helps: keying it off a
+  // "denied" status hid it from Screen Recording and Accessibility, whose
+  // boolean preflights report a stranded grant as "not_granted" (BUG-159).
+  const showReset = item.can_reset;
+  // No prompt left AND the grant is missing: the checkmark the user sees in
+  // System Settings belongs to an older signature of the app. Say so, because
+  // toggling it there is exactly what they will otherwise try forever.
+  const showStaleHint = item.can_reset && !item.can_request;
   // Screen Recording is the one probe macOS freezes per process: after the
   // user grants it in System Settings, the live value stays stale until the
   // app restarts. Show the honest pending label instead of the stale state;
@@ -236,6 +249,9 @@ function PermissionRow({
           </Button>
         )}
       </div>
+      {showStaleHint && (
+        <p className="mt-2 text-xs text-amber-500">{t("permissions.stale_grant_hint")}</p>
+      )}
     </div>
   );
 }

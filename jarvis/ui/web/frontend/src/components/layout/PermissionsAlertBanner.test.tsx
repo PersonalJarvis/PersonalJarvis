@@ -4,6 +4,7 @@ import type { PermissionSnapshot } from "@/hooks/usePermissions";
 
 const request = vi.fn();
 const openSettings = vi.fn();
+const reset = vi.fn();
 
 let mockSnapshot: PermissionSnapshot | null = null;
 
@@ -25,6 +26,7 @@ vi.mock("@/hooks/usePermissions", () => ({
     refetch: vi.fn(),
     request,
     openSettings,
+    reset,
   }),
 }));
 
@@ -43,6 +45,7 @@ function darwinSnapshot(overrides: Partial<PermissionSnapshot> = {}): Permission
         required: ["voice"],
         can_request: false,
         can_open_settings: true,
+        can_reset: false,
         restart_required: false,
       },
     ],
@@ -81,6 +84,7 @@ describe("PermissionsAlertBanner", () => {
           required: ["voice"],
           can_request: true,
           can_open_settings: true,
+          can_reset: false,
           restart_required: false,
         },
       ],
@@ -110,6 +114,7 @@ describe("PermissionsAlertBanner", () => {
           required: ["computer_use"],
           can_request: false,
           can_open_settings: true,
+          can_reset: false,
           restart_required: true,
         },
       ],
@@ -137,6 +142,7 @@ describe("PermissionsAlertBanner", () => {
           required: ["computer_use"],
           can_request: false,
           can_open_settings: true,
+          can_reset: false,
           restart_required: true,
         },
       ],
@@ -171,6 +177,7 @@ describe("PermissionsAlertBanner", () => {
           required: ["voice"],
           can_request: false,
           can_open_settings: true,
+          can_reset: false,
           restart_required: false,
         },
       ],
@@ -184,5 +191,39 @@ describe("PermissionsAlertBanner", () => {
     mockSnapshot = darwinSnapshot({ headless: true });
     render(<PermissionsAlertBanner />);
     expect(screen.queryByTestId("permissions-alert-banner")).toBeNull();
+  });
+
+  it("offers the reset for a stranded grant that never reads 'denied' (BUG-159)", () => {
+    // Screen Recording's preflight reports an orphaned TCC row as plain
+    // "not_granted" while System Settings still shows the checkmark. The
+    // banner used to carry no reset at all, so this row was a dead end.
+    mockSnapshot = darwinSnapshot({
+      permissions: [
+        {
+          id: "screen_recording",
+          status: "not_granted",
+          required: ["computer_use"],
+          can_request: false,
+          can_open_settings: true,
+          can_reset: true,
+          restart_required: false,
+        },
+      ],
+      features: { computer_use: { ready: false, missing: ["screen_recording"] } },
+    });
+    render(<PermissionsAlertBanner />);
+
+    expect(screen.getByText("permissions.stale_grant_hint")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "permissions.ask_again" }));
+    expect(reset).toHaveBeenCalledWith("screen_recording");
+  });
+
+  it("explains a signature change instead of looking amnesic", () => {
+    mockSnapshot = darwinSnapshot({
+      identity_reset: { reason: "signature-change", services: ["ScreenCapture"] },
+    });
+    render(<PermissionsAlertBanner />);
+
+    expect(screen.getByText("permissions.identity_reset")).toBeDefined();
   });
 });
