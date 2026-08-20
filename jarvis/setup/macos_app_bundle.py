@@ -232,16 +232,6 @@ def _reset_stale_tcc_grants(runner=subprocess.run) -> None:
         else:
             detail = (result.stderr or result.stdout or "unknown error").strip()
             log.warning("TCC reset for %s failed: %s", service, detail[-300:])
-    # Whether or not every individual reset succeeded, the signature DID
-    # change: from here on the user faces an app macOS treats as a stranger.
-    # Record that so the permissions view explains the re-ask instead of
-    # silently showing everything as missing again (BUG-159).
-    try:
-        from jarvis.platform.permissions import record_identity_reset
-
-        record_identity_reset(_TCC_SERVICES)
-    except Exception:  # noqa: BLE001 - the explanation is never load-bearing
-        log.debug("Could not record the TCC reset marker.", exc_info=True)
 
 
 def _launchable_issue(candidate: Path) -> str | None:
@@ -797,11 +787,43 @@ def _install_native_bundle(install_root: Path, bundle: Path) -> Path:
             if previous.exists() or previous.is_symlink():
                 previous.rename(bundle)
             raise
-    if _tcc_reset_needed(previous_cdhash, _bundle_cdhash(bundle)):
-        # The rebuild changed the app's TCC identity: every recorded grant is
-        # now orphaned and would read as silently DENIED (BUG-083).
-        _reset_stale_tcc_grants()
+    # The rebuild changed the app's TCC identity: every recorded grant is now
+    # orphaned and would read as silently DENIED (BUG-083).
+    _reset_or_explain(bundle, previous_cdhash)
     return bundle
+
+
+def _reset_or_explain(bundle: Path, previous_cdhash: str | None) -> None:
+    """Reset the orphaned TCC rows once — never in a loop (BUG-159).
+
+    A rebuild that keeps recurring (a failing identity probe, a churning
+    interpreter) would otherwise wipe the user's permissions on every single
+    start: they grant everything, restart, and are asked again. The pending
+    marker says the LAST reset never got them to a working state, so repeating
+    it can only destroy grants. Skip it then and keep the explanation up — the
+    permissions view carries a per-row "Ask again" that resets exactly the row
+    the user chooses.
+    """
+    from jarvis.platform.permissions import (
+        identity_reset_pending,
+        record_identity_reset,
+    )
+
+    if not _tcc_reset_needed(previous_cdhash, _bundle_cdhash(bundle)):
+        return
+    if identity_reset_pending():
+        log.warning(
+            "The app signature changed again while an earlier permission reset "
+            "is still unresolved — NOT resetting the macOS grants a second time. "
+            "Rebuilds are recurring on this install; fix the cause above."
+        )
+    else:
+        _reset_stale_tcc_grants()
+    # Either way the user now faces an app macOS treats as a stranger. Record
+    # it so the permissions view explains the re-ask instead of just showing
+    # everything as missing again; snapshot() retires the note once the grants
+    # are back.
+    record_identity_reset(_TCC_SERVICES)
 
 
 def ensure_macos_app_bundle(

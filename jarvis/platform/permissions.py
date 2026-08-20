@@ -80,6 +80,17 @@ def _read_identity_reset() -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def identity_reset_pending() -> bool:
+    """Whether an earlier grant reset has not yet been answered by the user.
+
+    The marker is retired by :meth:`SystemPermissionPort.snapshot` as soon as
+    every TCC-governed grant is back. While it survives, the previous reset did
+    NOT get the user to a working state — so repeating it can only wipe grants
+    again, never fix anything.
+    """
+    return _read_identity_reset() is not None
+
+
 def _clear_identity_reset() -> None:
     try:
         identity_reset_marker_path().unlink(missing_ok=True)

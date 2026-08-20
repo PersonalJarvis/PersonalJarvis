@@ -11174,6 +11174,13 @@ banner both render it, plus a hint naming the stranded-grant case.
 is back, so the re-ask is explained instead of looking amnesic.
 (e) `_launchable_issue()` and diagnostics on both identity probes make every
 rebuild log WHY it is rebuilding, at WARNING, naming that it resets permissions.
+(f) `_reset_or_explain()` wipes the grants at most ONCE per unresolved round: a
+recurring rebuild (failing identity probe, churning interpreter) would otherwise
+discard the permissions the user just re-granted on every single start, which is
+precisely the "I allow everything, restart, and it asks again" loop. While the
+marker from the previous reset is unanswered, the sweep is skipped and only the
+explanation is refreshed; the per-row "Ask again" stays available for the rows
+the user actually wants reset.
 
 **Class rule.** A permission flag that outlives the condition it describes is a
 lie the user cannot clear. Anything the UI derives from a probe must die the

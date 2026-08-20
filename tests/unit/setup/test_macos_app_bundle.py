@@ -599,3 +599,32 @@ def test_reset_stale_tcc_grants_survives_a_failing_tccutil() -> None:
     mab._reset_stale_tcc_grants(runner=runner)
 
     assert attempts == list(mab._TCC_SERVICES)
+
+
+def test_a_recurring_rebuild_wipes_the_grants_only_once(tmp_path: Path, monkeypatch) -> None:
+    """BUG-159: a rebuild loop must not re-ask for every permission each start.
+
+    The reset is the right move once. Repeating it while the user has not yet
+    answered the first one destroys the grants they just re-gave — which is
+    exactly what "I allow everything, restart, and it asks again" looks like.
+    """
+    import jarvis.platform.permissions as permissions
+    import jarvis.setup.macos_app_bundle as mab
+
+    marker = tmp_path / "macos-tcc-reset.json"
+    monkeypatch.setattr(permissions, "identity_reset_marker_path", lambda: marker)
+    hashes = iter(["cdhash-two", "cdhash-three"])
+    monkeypatch.setattr(mab, "_bundle_cdhash", lambda _bundle: next(hashes))
+    sweeps: list[int] = []
+    monkeypatch.setattr(mab, "_reset_stale_tcc_grants", lambda: sweeps.append(1))
+
+    bundle = tmp_path / APP_DIR_NAME
+    mab._reset_or_explain(bundle, "cdhash-one")
+    assert sweeps == [1]
+    assert marker.is_file()
+
+    # Second rebuild, first reset still unanswered: explain, never wipe again.
+    mab._reset_or_explain(bundle, "cdhash-two")
+
+    assert sweeps == [1]
+    assert marker.is_file()
