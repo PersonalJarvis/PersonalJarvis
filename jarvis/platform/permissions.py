@@ -76,6 +76,9 @@ def _read_identity_reset() -> dict[str, Any] | None:
             return None
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        # No file, no permission, or bytes that are not JSON: to every caller
+        # these mean the same thing — nothing has been recorded yet, so the
+        # probe runs for real instead of trusting a cache.
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -359,6 +362,9 @@ class SystemPermissionPort:
                 expected_path = Path.home() / "Applications" / f"{APP_NAME}.app"
                 canonical_path = Path(bundle_path).resolve() == expected_path.resolve()
             except (OSError, ValueError):
+                # A path that will not resolve is not the canonical bundle
+                # location. False is the cautious reading and it feeds a
+                # stability flag the caller already reports on.
                 canonical_path = False
         stable = bundle_id == EXPECTED_BUNDLE_ID and launched_as_bundle and canonical_path
         self._bundle_identity_cache = (bundle_id, bundle_path, launched_as_bundle, stable)
@@ -967,6 +973,8 @@ class SystemPermissionPort:
             performed = result.returncode == 0
             detail = (result.stderr or result.stdout or "").strip()
         except (OSError, subprocess.TimeoutExpired) as exc:
+            # Not silent: the reason travels on as the operation's own detail
+            # and is what the user is shown when the permission call failed.
             performed = False
             detail = str(exc)
         if not performed:
