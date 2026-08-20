@@ -147,6 +147,54 @@ async def test_resume_reports_failure_when_action_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_confirmed_failure_names_the_reason() -> None:
+    """A YES the user gave deserves the cause, not just "that didn't work"."""
+
+    class _ReasonExecutor(_FakeExecutor):
+        async def execute_confirmed(self, trace_id, *, user_utterance="", **_):  # type: ignore[no-untyped-def]
+            self.confirmed.append(trace_id)
+            return SimpleNamespace(
+                success=False,
+                output=None,
+                error="Gmail is not connected — connect it in the Plugins view.",
+            )
+
+    mgr = _manager(_ReasonExecutor())
+    _arm(mgr, uuid4())
+    out = await mgr._resume_voice_confirm("ja")
+    assert "Gmail is not connected" in out
+
+
+@pytest.mark.asyncio
+async def test_confirmed_failure_never_speaks_an_exit_token() -> None:
+    """The opaque token the tool layer emits stays out of the spoken line."""
+
+    class _ExitExecutor(_FakeExecutor):
+        async def execute_confirmed(self, trace_id, *, user_utterance="", **_):  # type: ignore[no-untyped-def]
+            self.confirmed.append(trace_id)
+            return SimpleNamespace(success=False, output=None, error="exit 1")
+
+    mgr = _manager(_ExitExecutor())
+    _arm(mgr, uuid4())
+    out = await mgr._resume_voice_confirm("ja")
+    assert "exit" not in out.lower()
+    assert out.strip() != ""
+
+
+@pytest.mark.asyncio
+async def test_a_raising_executor_still_names_what_broke() -> None:
+    class _RaisingExecutor(_FakeExecutor):
+        async def execute_confirmed(self, trace_id, *, user_utterance="", **_):  # type: ignore[no-untyped-def]
+            self.confirmed.append(trace_id)
+            raise RuntimeError("The mailbox is locked by another client")
+
+    mgr = _manager(_RaisingExecutor())
+    _arm(mgr, uuid4())
+    out = await mgr._resume_voice_confirm("ja")
+    assert "mailbox is locked" in out
+
+
+@pytest.mark.asyncio
 async def test_resume_without_pending_returns_none() -> None:
     mgr = _manager(_FakeExecutor())
     assert mgr._pending_voice_confirm is None

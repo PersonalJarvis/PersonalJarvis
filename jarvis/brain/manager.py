@@ -9618,8 +9618,15 @@ class BrainManager:
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("voice-confirm execute failed: %s", exc)
+                # The user just said YES to this action; hearing only "that
+                # didn't work" leaves them nothing to correct with. The same
+                # opaque-token gate the result branch below relies on decides
+                # whether the exception text is speakable at all.
                 return format_confirm_outcome(
-                    "failed", pending.tool_name, language=pending.lang
+                    "failed",
+                    pending.tool_name,
+                    language=pending.lang,
+                    detail=extract_speakable_reason(str(exc), None),
                 )
             kind = "done" if getattr(result, "success", False) else "failed"
             return format_confirm_outcome(
@@ -9627,7 +9634,15 @@ class BrainManager:
                 pending.tool_name,
                 language=pending.lang,
                 detail=(
-                    None if kind == "done" else getattr(result, "error", None)
+                    None
+                    if kind == "done"
+                    # Raw ``error`` is routinely the opaque ``exit N`` token the
+                    # tool layer emits; the gate turns that into no detail at
+                    # all rather than a machine word in the user's ear.
+                    else extract_speakable_reason(
+                        getattr(result, "error", None),
+                        getattr(result, "output", None),
+                    )
                 ),
             )
 
