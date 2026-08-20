@@ -7,10 +7,80 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.5.0] — 2026-08-20
+
+### Added
+
+- **Hybrid tool mode: the live voice model runs the tools itself.** A voice
+  turn that needed a tool used to hand off to a second model, and the wait
+  was audible — measured over three days, first audio came after 0.9 s when
+  the live model answered and after 7.2 s when it delegated. The live model
+  now receives the whole tool catalogue, everything except the computer-use
+  vehicles, which stay with the Tool Model. The declaration fits a token
+  budget (`[voice].realtime_tool_declaration_budget_tokens`, 20k by default)
+  and drops whole tool families in a fixed, logged order when it is tight.
+  The new `[voice].realtime_tool_mode` ships as `hybrid`; `delegate` and
+  `direct` remain for anyone who wants the old behaviour (ADR-0035).
+- **A skill is recognised from what you mean, not from a trigger phrase.**
+  The skill roster the live model reads now carries each skill's
+  `when_to_use` — the sentence that says WHEN it applies, in the words people
+  actually use. The first roster capped descriptions at 70 characters and cut
+  exactly that away. It now degrades in three steps and never drops a name,
+  because a listed name is callable and a folded one is not. A near-match
+  reaches the model as a ranked suggestion instead of silence. Both are
+  suggestions: no skill can take a turn over that it did not clearly win.
+- **The whole orb moves with your voice.** One loop computes the orb's level
+  and writes it to a single CSS variable, so the sun, its corona, the rays
+  and the ring all move as one thing — the real microphone level while you
+  speak, a speech-shaped envelope while Jarvis does, a double heartbeat while
+  it thinks. The reticle stays alive at rest, and the board now takes over
+  from the start screen with a launch instead of a fade.
+- **Grok Build joins the subagents.** The official `grok` CLI is driven over
+  a SuperGrok / X Premium+ login, the same shape as Codex, Claude and
+  Antigravity. Connect, disconnect, test and set-active live on the Agents
+  tab; the xAI API-key card stays separate.
+- **Higgsfield joins the marketplace** as a hosted MCP plugin.
 
 ### Fixed
 
+- **A failure you hear now names its cause.** "That didn't work" told you
+  nothing you could act on. Every spoken failure — a direct tool call, a
+  delegated one, a confirmed action that then broke — is built in one place
+  and carries the reason the tool reported, in the language of the turn even
+  when the rephrasing model is unreachable. A turn that broke in two places
+  names both causes.
+- **The wake word survives a busy machine.** The confirmation pass now
+  streams during the tail instead of after it, audio intake keeps flowing
+  while it runs, and the first stage has a CPU budget — on the weak reference
+  laptop the wake word was being missed under load (BUG-150). Native Vosk
+  calls are serialized, which ends a crash that took the whole process down
+  (BUG-151).
+- **A skill can actually be started by voice.** A realtime call named
+  `run_skill` never reached the `run-skill` tool, so a spoken skill request
+  quietly did nothing (BUG-158). A draft authored by voice can now be
+  switched on, and your own morning routine wins over the built-in one.
+- **Plain conversation stops being handed to the Tool Model.** A greeting or
+  a remark was being delegated like an action, which cost seconds and tokens
+  for nothing.
+- **Music does what you meant.** A play request with no service named goes to
+  the one you have connected, "what's playing" answers in hybrid mode
+  (BUG-156), an in-flight play is no longer aborted as a stalled turn
+  (BUG-157), and a spoken "I'm playing that" that never called a tool is
+  recovered instead of counted as done (BUG-154).
+- **A dead speaker recovers instead of going quiet.** Native voice is also
+  labelled as requested rather than as a fallback (BUG-108, BUG-086), and
+  progress lines are spoken in the session's own voice (BUG-155).
+- **The Test button in Dictation probes the model that will really run.** It
+  used to test a different one, so a broken setup could pass.
+- **Picking a file with `@` in the agentic IDE searches the workspace tree**
+  instead of stopping at the first five name hits.
+- **The app starts lighter.** Every byte of the startup bundle is parsed
+  before the window paints, and 212 KB of it belonged to screens the first
+  view never shows: the wiki graph library (pulled in by three tooltip
+  helpers), the agentic IDE's whole API client (pulled in by two hooks calling
+  one endpoint each), and their dependencies. They now travel in the chunks
+  that use them. What remains in the startup path is what the mission deck
+  actually needs.
 - **A question about your own machine gets an answer, not a refusal.**
   Asking whether the PC is overheating or overloaded matched none of the
   planner's question rules — such a sentence carries no question word and
@@ -74,6 +144,23 @@ versioning per [SemVer](https://semver.org/).
   never becomes an app after twenty, and a second failure paints what went
   wrong plus a Reload button instead of staying dark. The guard is released as
   soon as the app is up, so a later rebuild in the same session still heals.
+- **A window that never received a page is caught too.** The watchdog above
+  lives in the page, so it can only act once a page has arrived — and the
+  window the maintainer kept seeing had none: a frame, a title, the ground
+  colour, nothing else. Three routes lead there, all of them logged on one
+  day: the backend's single event loop frozen inside a native call, so the
+  socket accepted the navigation and never answered it (15 s, 20 s, 42 s,
+  61 s and 188 s measured, the long ones inside PortAudio's stream close
+  during a microphone restart); the backend thread dying after the port was
+  already up; and a web view that never navigated at all. A guard now runs in
+  the window process, outside the loop it watches: it waits out a slow boot,
+  reloads the moment the server answers again, and when it cannot fix it, it
+  puts the reason on the window with a button — in the browser's language,
+  since the bundle is exactly what is missing. That page then polls the
+  server and returns to the app by itself. Closing the microphone no longer
+  runs on the event loop either, which removes the biggest freeze at its
+  source: the loop now keeps serving while a wedged native handle is shut
+  down on a worker thread.
 - **A granted macOS permission stops reading as missing.** Every start warned
   that permissions were off, and the pane the warning linked to showed them
   on. Three things kept that loop alive. Opening System Settings for Screen
@@ -104,6 +191,13 @@ versioning per [SemVer](https://semver.org/).
   headless box) is no longer held on the start screen: with the link up the
   board opens anyway. The wake phrase still greets you — on the board's own
   headline, where it does not block the view.
+
+### Removed
+
+- **`[voice].background_heavy_turns` is gone from the config.** It has been
+  declared since 1.4.0 and read nowhere — the classic-pipeline half of
+  ADR-0034 is not built yet, so setting it changed nothing. It returns with
+  the change that actually reads it. Nothing to do if you never set it.
 
 ## [1.4.0] — 2026-08-18
 
