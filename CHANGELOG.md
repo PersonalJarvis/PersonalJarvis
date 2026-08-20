@@ -29,24 +29,6 @@ versioning per [SemVer](https://semver.org/).
   when the search really was empty. A wordless action still reports done, as
   it should.
 
-- **A window that never received a page is caught too.** The blank-window
-  watchdog shipped in 1.5.0 lives in `index.html`, so it can only act once a
-  page has arrived — and the window the maintainer kept seeing had none: a
-  frame, a title, the ground colour, nothing else. Three routes lead there,
-  all logged on one day: the backend's single event loop frozen inside a
-  native call, so the socket accepted the navigation and never answered it
-  (15 s, 20 s, 42 s, 61 s and 188 s measured, the long ones inside
-  PortAudio's stream close during a microphone restart); the backend thread
-  dying after the port was already up; and a web view that never navigated
-  at all. A guard now runs in the window process, outside the loop it
-  watches: it waits out a slow boot, reloads the moment the server answers
-  again, and when it cannot fix it, it puts the reason on the window with a
-  button — in the browser's language, since the bundle is exactly what is
-  missing. That page then polls the server and returns to the app by itself.
-  Closing the microphone no longer runs on the event loop either, which
-  removes the biggest freeze at its source: the loop now keeps serving while
-  a wedged native handle is shut down on a worker thread.
-
 ## [1.5.0] — 2026-08-20
 
 ### Added
@@ -121,6 +103,23 @@ versioning per [SemVer](https://semver.org/).
   one endpoint each), and their dependencies. They now travel in the chunks
   that use them. What remains in the startup path is what the mission deck
   actually needs.
+- **A window that never received a page is caught too.** The blank-window
+  watchdog shipped in 1.5.0 lives in `index.html`, so it can only act once a
+  page has arrived — and the window the maintainer kept seeing had none: a
+  frame, a title, the ground colour, nothing else. Three routes lead there,
+  all logged on one day: the backend's single event loop frozen inside a
+  native call, so the socket accepted the navigation and never answered it
+  (15 s, 20 s, 42 s, 61 s and 188 s measured, the long ones inside
+  PortAudio's stream close during a microphone restart); the backend thread
+  dying after the port was already up; and a web view that never navigated
+  at all. A guard now runs in the window process, outside the loop it
+  watches: it waits out a slow boot, reloads the moment the server answers
+  again, and when it cannot fix it, it puts the reason on the window with a
+  button — in the browser's language, since the bundle is exactly what is
+  missing. That page then polls the server and returns to the app by itself.
+  Closing the microphone no longer runs on the event loop either, which
+  removes the biggest freeze at its source: the loop now keeps serving while
+  a wedged native handle is shut down on a worker thread.
 - **A question about your own machine gets an answer, not a refusal.**
   Asking whether the PC is overheating or overloaded matched none of the
   planner's question rules — such a sentence carries no question word and
