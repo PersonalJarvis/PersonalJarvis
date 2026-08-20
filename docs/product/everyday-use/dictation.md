@@ -98,8 +98,15 @@ uses a fixed sample and saves nothing. If the model fails or changes too much,
 Jarvis uses the version from before that pass.
 
 **Always write in one language** translates and cleans up in one request.
-Translation starts off. If the model times out, text stays in the spoken
-language.
+Translation starts off. It runs at the provider you picked, on that provider's
+strongest fast model rather than its quickest one, because rewriting a sentence
+in another language asks more than punctuating it. If the model times out, text
+stays in the spoken language.
+
+A long dictation is given more time than a short one: the budget you set
+applies up to about 25 words and then grows with the transcript, up to
+`polish_timeout_max_ms`. Waiting longer costs nothing while the provider is
+healthy — it only decides what happens when it is not.
 
 > [!warning] A hosted recognition provider receives audio; a hosted wording
 > provider receives the transcript. The Language tab names the chosen model.

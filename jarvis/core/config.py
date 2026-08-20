@@ -3147,6 +3147,34 @@ class DictationConfig(BaseModel):
     #: consumer client talking to a cloud model over the open internet.
     polish_timeout_ms: int = Field(default=1200, ge=200, le=5000)
 
+    #: How far the ceiling above may stretch on a LONG dictation, in
+    #: milliseconds.
+    #:
+    #: The key above is a promise about the wait; the work it bounds is sized
+    #: by the user, because the model has to write the finished text out. One
+    #: fixed ceiling therefore switches the pass off on exactly the dictations
+    #: that need it most. Measured on one live install (2026-08-20, 201 wording
+    #: passes at the 1200 ms ceiling): successful passes ran 526 ms median
+    #: below 25 words and 850-1000 ms at 100-220 words, while the 20 that
+    #: expired had a median of 77 words against 15 for the ones that came back.
+    #: A tenth of the pass was being thrown away by the clock, and it was the
+    #: long half.
+    #:
+    #: So the budget ramps: unchanged up to ~25 words, and a few milliseconds
+    #: per further word after that, never past this ceiling. The allowance is
+    #: that small because the same measurement shows the wall is met far
+    #: earlier than "long dictation" suggests — the p90 at 25-49 words was
+    #: already 992 ms.
+    #:
+    #: **A wider ceiling does not make dictation slower.** The model answers
+    #: when it answers; this number is only reached when the provider is
+    #: struggling, and there the choice is between waiting an extra second and
+    #: dropping the wrong language into a live document.
+    #:
+    #: Set it equal to (or below) ``polish_timeout_ms`` to switch the ramp off
+    #: and get the old fixed ceiling back.
+    polish_timeout_max_ms: int = Field(default=4000, ge=200, le=20_000)
+
     #: Skip the pass above this many characters. ``0`` — the default — means
     #: no cap.
     #:
@@ -3393,6 +3421,11 @@ class DictationConfig(BaseModel):
     @classmethod
     def _clamp_polish_timeout_ms(cls, value: object) -> int:
         return _clamped_polish_int(value, default=1200, low=200, high=5000)
+
+    @field_validator("polish_timeout_max_ms", mode="before")
+    @classmethod
+    def _clamp_polish_timeout_max_ms(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=4000, low=200, high=20_000)
 
     @field_validator("polish_max_input_chars", mode="before")
     @classmethod

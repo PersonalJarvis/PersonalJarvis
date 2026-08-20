@@ -419,7 +419,7 @@
     "translate": {
       "title": "Escribir siempre en un idioma",
       "description": "Habla en el idioma en el que piensas y deja que el texto llegue en el que escribes. Dilo en español y en el campo aparece inglés. Lo que dijiste realmente siempre queda en tu historial.",
-      "sends_text": "La traducción ocurre en el mismo paso que el repaso de la redacción, así que no cuesta espera adicional y usa el mismo modelo que elegiste arriba. Si ningún modelo responde a tiempo, tus palabras llegan en el idioma en que las dijiste.",
+      "sends_text": "La traducción ocurre en el mismo paso que el repaso de la redacción, así que no cuesta espera adicional, y se ejecuta en el proveedor que elegiste arriba, con su modelo rápido más potente y no con el más veloz: traducir exige más que puntuar. Si ningún modelo responde a tiempo, tus palabras llegan en el idioma en que las dijiste.",
       "target_label": "Escribir mi dictado en",
       "target_hint": "Todo lo que dictes sale en este idioma, hables el que hables. Los dictados que ya están en él simplemente se pulen.",
       "same_language_notice": "Es el idioma que has fijado para el dictado, así que no se traducirá nada. Elige otro, o vuelve a poner el idioma de dictado de arriba en automático."

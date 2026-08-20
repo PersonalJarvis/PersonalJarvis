@@ -704,3 +704,128 @@ def test_every_translate_reason_is_declared() -> None:
     assert len(set(TRANSLATE_DRIFT_REASONS)) == len(TRANSLATE_DRIFT_REASONS)
     assert "not_translated" in TRANSLATE_DRIFT_REASONS
     assert "language_flip" not in TRANSLATE_DRIFT_REASONS
+
+
+# --------------------------------------------------------------------------
+# Which MODEL the translation runs on
+# --------------------------------------------------------------------------
+# Punctuating a transcript and writing the same utterance again in another
+# language are not the same job, and a family's fastest model is only the right
+# answer to the first one. The failure mode of the second is quiet: a small
+# model returns a grammatical sentence still arranged like the source language
+# and drops the clause it could not place, which reads as a mediocre feature
+# rather than as a model that was out of its depth. So a family may declare a
+# translation tier, and these tests pin that it is used for translations, only
+# for translations, and never over the user's own pin.
+
+
+def _model_seen(monkeypatch: pytest.MonkeyPatch, family_id: str) -> list[str]:
+    """Record every model id the chain walk asks a client to be built for."""
+    seen: list[str] = []
+    client = _FakeClient(answer=ENGLISH)
+    family = next(f for f in POLISH_FAMILIES if f.id == family_id)
+
+    monkeypatch.setattr(polish_module, "resolve_polish_chain", lambda cfg: (family,))
+
+    def _factory(fam: Any, *, model: str) -> Any:
+        seen.append(model)
+        return client
+
+    monkeypatch.setattr(polish_module, "build_polish_client", _factory)
+    return seen
+
+
+async def test_a_translation_runs_on_the_family_translation_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point: the translate pass gets the better model, not the
+    fastest one."""
+    seen = _model_seen(monkeypatch, "groq")
+    family = next(f for f in POLISH_FAMILIES if f.id == "groq")
+
+    await polish_transcript(
+        GERMAN, language="de", cfg=_cfg(translate=True), translate_to="en"
+    )
+
+    assert seen and seen[0] == family.translate_model
+    assert seen[0] != family.default_model
+
+
+async def test_a_plain_polish_stays_on_the_fast_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The formatter's budget is measured in hundreds of milliseconds and its
+    job is pattern work — it must not inherit the translator's model."""
+    seen = _model_seen(monkeypatch, "groq")
+    family = next(f for f in POLISH_FAMILIES if f.id == "groq")
+
+    await polish_transcript(GERMAN, language="de", cfg=_cfg())
+
+    assert seen and seen[0] == family.default_model
+
+
+async def test_a_pinned_model_still_wins_over_the_translation_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model the user typed is a decision, not a hint.
+
+    Sending their dictation to a different model than the one on their own
+    settings screen would be the switch that reads as set and does nothing
+    (AP-31), and it is the one place where "we know better" is wrong.
+    """
+    seen = _model_seen(monkeypatch, "groq")
+
+    await polish_transcript(
+        GERMAN,
+        language="de",
+        cfg=_cfg(translate=True, polish_model="my-own-model"),
+        translate_to="en",
+    )
+
+    assert seen and seen[0] == "my-own-model"
+
+
+async def test_a_family_without_a_tier_translates_on_its_ordinary_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tier is per-family data, so a family that needs none costs nothing.
+
+    Cerebras serves one production model, so there is no faster tier to fall
+    back to and no better one to reach for; the flag has to be a no-op there
+    rather than a branch that has to find something.
+    """
+    family = next(f for f in POLISH_FAMILIES if f.id == "cerebras")
+    assert not family.translate_model, "fixture picked a family that declares a tier"
+
+    seen = _model_seen(monkeypatch, "cerebras")
+    await polish_transcript(
+        GERMAN, language="de", cfg=_cfg(translate=True), translate_to="en"
+    )
+
+    assert seen and seen[0] == family.default_model
+
+
+def test_every_declared_translation_tier_is_a_different_model() -> None:
+    """A tier equal to the default is a line that reads as a decision and is
+    not one — the family should simply leave it empty."""
+    for family in POLISH_FAMILIES:
+        if family.translate_model:
+            assert family.translate_model != family.default_model, family.id
+
+
+def test_the_openai_wording_models_come_from_the_verified_catalog() -> None:
+    """The wording pass and the brain must not disagree about what OpenAI serves.
+
+    This family's default sat on a 2025 model id for long enough that nobody
+    noticed (CLAUDE.md §3 forbids a default that old). Tying both ids to the
+    curated roster the brain already keeps current means the next refresh of
+    that roster cannot leave this pass behind — and a removal there fails here
+    instead of 404-ing at dictation time.
+    """
+    from jarvis.brain.model_catalog import CURATED_MODELS
+
+    served = {model.id for model in CURATED_MODELS["openai"]}
+    family = next(f for f in POLISH_FAMILIES if f.id == "openai")
+
+    assert family.default_model in served
+    assert family.translate_model in served

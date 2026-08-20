@@ -297,6 +297,8 @@ export interface DictationSettings {
   /** "" = the family's own default model. */
   polish_model: string;
   polish_timeout_ms: number;
+  /** Ceiling for a long dictation; equal to the budget above = no extra time. */
+  polish_timeout_max_ms: number;
   polish_max_input_chars: number;
   polish_min_words: number;
   polish_max_output_tokens: number;

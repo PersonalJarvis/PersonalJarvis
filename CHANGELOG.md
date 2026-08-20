@@ -11,6 +11,22 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **Dictation translation reads like the target language now.** The
+  translate pass ran on the same tiny model the formatter uses, which
+  punctuates well and translates flatly — measured on real German
+  transcripts it dropped whole clauses. A family may now declare a
+  translation tier, and the pass uses it: Groq translates on
+  `gpt-oss-120b`, Gemini on `gemini-3.7-flash`, OpenRouter on
+  `google/gemini-3.7-flash`. A model you pinned yourself still wins.
+- **A long dictation is no longer cut off by the wording ceiling.** The
+  1200 ms budget was fixed while the work grows with the transcript, so a
+  tenth of all wording passes expired on one measured install — and they
+  were the long ones. The ceiling now ramps with the transcript length up
+  to `[dictation].polish_timeout_max_ms`. Short dictations are unchanged,
+  and a healthy provider never reaches either number.
+- **Two wording defaults were years out of date.** OpenAI ran on
+  `gpt-4.1-nano` and Gemini on a 3.1 lite build; both now use the current
+  generation their own catalog serves.
 - **A Start-Menu click that cannot boot now says why.** A missing `click`
   (uvicorn's import-time dependency) killed the backend thread, the window
   waited 45 s for `/api/health`, and pythonw swallowed the traceback — so

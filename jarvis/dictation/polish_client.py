@@ -132,6 +132,29 @@ class PolishFamily:
     secret_candidates: tuple[str, ...]
     default_model: str
     default_timeout_ms: int
+    #: The model this family uses when the pass is TRANSLATING, or ``""`` to
+    #: reuse ``default_model``.
+    #:
+    #: The two passes are not the same job. Punctuating a transcript is
+    #: pattern work that the smallest, fastest model in a family does as well
+    #: as the largest one, and that model is the right default because the
+    #: pass has a latency budget measured in hundreds of milliseconds. Writing
+    #: the same utterance again in another language is not pattern work: it
+    #: needs the target language's own word order and idiom, and a model that
+    #: cannot do that does not fail loudly — it returns a grammatical sentence
+    #: still audibly arranged like the source language, and quietly drops the
+    #: clause it could not place. Measured on this family's own default
+    #: (2026-08-20, German -> English, real dictated transcripts): the small
+    #: model dropped a whole clause and flattened the speaker's emphasis where
+    #: the larger one carried both, for ~200 ms more.
+    #:
+    #: So the tier is per-family DATA rather than one global "use the big one"
+    #: rule: a family whose fastest model already translates well (Cerebras
+    #: serves nothing smaller) leaves this empty and pays nothing, and a family
+    #: where the tiers genuinely differ names the model that earns the wait.
+    #: The user's own ``polish_model`` pin still wins over both (see
+    #: :func:`resolve_model`) — this is a default, never an override.
+    translate_model: str = ""
     #: Provider card this family INHERITS its address from, or None for a
     #: hosted endpoint that never moves. A self-hosted server has exactly one
     #: address, and the user set it once on that provider's card; keeping a
@@ -223,6 +246,14 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         # Llama 3.1 8B that used to sit here, and polish lives or dies on
         # latency: the budget above is 1.2 s for the whole call.
         default_model="openai/gpt-oss-20b",
+        # Measured on this box 2026-08-20 against the live Groq catalog, warm
+        # connection, real dictated German transcripts: 20b answers in
+        # 450-650 ms but loses material ("Eine Ahnung oder auf jeden Fall ein
+        # richtig schnelles Modell" vanished entirely); 120b answers in
+        # 630-860 ms and keeps it. Both stay inside the budget, so the larger
+        # model costs ~200 ms and buys the difference between a translation and
+        # a gist.
+        translate_model="openai/gpt-oss-120b",
         default_timeout_ms=1200,
     ),
     PolishFamily(
@@ -249,7 +280,12 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
             "google_aistudio_api_key",
             "google_api_key",
         ),
-        default_model="gemini-3.1-flash-lite",
+        # Verified 2026-08-20 against the live AI Studio catalog. The formatter
+        # stays on the lite tier, where it belongs, but on the CURRENT
+        # generation of it — the 3.1 build that used to sit here is two
+        # generations behind a list that already serves 3.5, 3.6 and 3.7.
+        default_model="gemini-3.5-flash-lite",
+        translate_model="gemini-3.7-flash",
         default_timeout_ms=1500,
     ),
     PolishFamily(
@@ -258,7 +294,13 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         transport="openai_chat",
         base_url="https://api.openai.com/v1",
         secret_candidates=("openai_api_key",),
-        default_model="gpt-4.1-nano",
+        # ``gpt-4.1-nano`` sat here from a 2025 catalog and is more than a year
+        # old — never a default (CLAUDE.md §3). Both ids below are the ones
+        # ``jarvis.brain.model_catalog`` carries as current for this provider
+        # and ``tests/unit/brain/test_current_model_catalogs.py`` pins, so the
+        # wording pass and the brain cannot drift apart on what OpenAI serves.
+        default_model="gpt-5.4-nano",
+        translate_model="gpt-5.4-mini",
         default_timeout_ms=1500,
     ),
     PolishFamily(
@@ -270,6 +312,10 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         # Current small flash-class model on OpenRouter's live catalog
         # (checked 2026-08-09), replacing a Llama 3.1 build from 2024.
         default_model="qwen/qwen3.7-flash",
+        # One OpenRouter key reaches every family, so the translate tier here
+        # is not bound to the formatter's vendor. Verified on OpenRouter's live
+        # catalog 2026-08-20.
+        translate_model="google/gemini-3.7-flash",
         default_timeout_ms=1500,
     ),
     PolishFamily(
@@ -653,18 +699,30 @@ def resolve_polish_chain(cfg: Any) -> tuple[PolishFamily, ...]:
     return tuple(chain)
 
 
-def resolve_model(family: PolishFamily, cfg: Any, *, primary_id: str) -> str:
+def resolve_model(
+    family: PolishFamily, cfg: Any, *, primary_id: str, translating: bool = False
+) -> str:
     """The model id to use for *family* on this call.
 
     ``[dictation].polish_model`` applies to the PRIMARY family only. A model id
     is family-specific — ``llama-3.1-8b-instant`` means nothing to Gemini — so
     carrying the user's pinned model across a fallback would turn a recoverable
     outage into a guaranteed 404.
+
+    ``translating`` picks the family's translation tier
+    (:attr:`PolishFamily.translate_model`) where it declares one. It sits BELOW
+    the pin on purpose: someone who typed a model id chose it for this feature,
+    and silently sending their dictation to a different model than the one on
+    their own settings screen would be the config switch nobody read (AP-31).
+    A family with no declared tier answers with its ordinary default, so the
+    flag is a no-op there rather than a branch.
     """
     if family.id == primary_id:
         pinned = str(getattr(cfg, "polish_model", "") or "").strip()
         if pinned:
             return pinned
+    if translating and family.translate_model:
+        return family.translate_model
     return family.default_model
 
 

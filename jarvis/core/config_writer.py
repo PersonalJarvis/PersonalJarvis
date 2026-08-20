@@ -862,6 +862,7 @@ DICTATION_SETTING_KEYS = (
     "polish_provider",
     "polish_model",
     "polish_timeout_ms",
+    "polish_timeout_max_ms",
     "polish_max_input_chars",
     "polish_min_words",
     "polish_max_output_tokens",

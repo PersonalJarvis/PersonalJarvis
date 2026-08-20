@@ -419,7 +419,7 @@
     "translate": {
       "title": "Immer in einer Sprache schreiben",
       "description": "Sprich in der Sprache, in der du denkst, und lass den Text in der ankommen, in der du schreibst. Sag es auf Deutsch, im Feld steht Englisch. Was du wirklich gesagt hast, bleibt immer in deinem Verlauf.",
-      "sends_text": "Das Übersetzen passiert im selben Schritt wie das Aufräumen der Formulierung — es kostet also keine zusätzliche Wartezeit und nutzt dasselbe Modell, das du oben gewählt hast. Antwortet kein Modell rechtzeitig, kommt dein Text in der Sprache an, in der du ihn gesprochen hast.",
+      "sends_text": "Das Übersetzen passiert im selben Schritt wie das Aufräumen der Formulierung — keine zusätzliche Wartezeit, und es läuft bei dem Anbieter, den du oben gewählt hast. Dort nimmt es dessen stärkstes schnelles Modell, denn übersetzen verlangt mehr als Kommas setzen. Antwortet kein Modell rechtzeitig, kommt dein Text in der Sprache an, in der du ihn gesprochen hast.",
       "target_label": "Diktat schreiben in",
       "target_hint": "Alles, was du diktierst, kommt in dieser Sprache heraus — egal, welche du sprichst. Diktate, die schon in dieser Sprache sind, werden einfach nur aufgeräumt.",
       "same_language_notice": "Das ist die Sprache, auf die du dein Diktat festgelegt hast — es wird also nichts übersetzt. Wähle eine andere, oder stell die Diktatsprache oben wieder auf automatisch."

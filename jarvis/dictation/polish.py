@@ -15,10 +15,12 @@ Two jobs, one pass
 The same machinery also runs the TRANSLATE pass (``[dictation].translate``),
 which delivers the dictation in a fixed language whatever the speaker used. It
 is the same chain, the same breaker, the same ceiling and the same fail-open
-contract — only the prompt (:mod:`jarvis.dictation.translate_prompt`) and the
-guard set (``translate_drift_reason``) differ, and formatting happens inside the
-SAME call so a translation costs one round trip, not two. ``translate_to``
-selects the mode; :func:`resolve_translate_target` decides it.
+contract — the prompt (:mod:`jarvis.dictation.translate_prompt`), the guard set
+(``translate_drift_reason``) and the model TIER
+(:attr:`~jarvis.dictation.polish_client.PolishFamily.translate_model`) differ,
+and formatting happens inside the SAME call so a translation costs one round
+trip, not two. ``translate_to`` selects the mode;
+:func:`resolve_translate_target` decides it.
 
 Precision mode rides on top of both
 -----------------------------------
@@ -48,9 +50,11 @@ Four things bound it
 --------------------
 1. **A hard latency ceiling.** One ``asyncio.wait_for`` around the WHOLE pass —
    the credential sweep included, since that is exactly where a locked keyring
-   blocks — default 1200 ms. On expiry the in-flight work is cancelled and the
-   raw text is delivered. A formatter that makes the user wait has already
-   failed at its job.
+   blocks — default 1200 ms, ramping with the transcript's length up to
+   ``polish_timeout_max_ms`` (see :data:`_TIMEOUT_FREE_WORDS`). On expiry the
+   in-flight work is cancelled and the raw text is delivered. A formatter that
+   makes the user wait has already failed at its job; a ceiling that cancels
+   the pass on every long dictation has failed at its own.
 2. **A key-aware, family-crossing chain** (:func:`resolve_polish_chain`,
    AP-22). No key in any family means an empty chain, status ``unavailable``,
    and behaviour byte-identical to before this feature existed — the AP-23
@@ -196,6 +200,45 @@ _AUTO = "auto"
 #: The smallest per-call timeout we will hand a transport. A request given 0 s
 #: fails in a way that looks like a provider outage instead of like our deadline.
 _MIN_CALL_TIMEOUT_S = 0.05
+
+# ---------------------------------------------------------------------------
+# The length ramp — why one ceiling cannot serve one-line and one-page
+# dictations
+# ---------------------------------------------------------------------------
+# ``polish_timeout_ms`` used to be the whole budget, whatever was dictated. That
+# is a promise about the WAIT, applied to work whose size the user chose: the
+# model has to write the finished text out, so a transcript ten times as long
+# takes materially longer, and a single ceiling therefore switches the feature
+# off on exactly the dictations it was most needed for. Measured on one live
+# install (2026-08-20, 201 wording passes, the shipped 1200 ms ceiling): the
+# passes that succeeded ran 526 ms median under 25 words and 850-1000 ms at
+# 100-220 words, while the 20 that expired had a median of 77 words against 15
+# for the ones that came back. Ten per cent of the pass was being thrown away
+# by the clock, and it was the long half.
+#
+# So the ceiling ramps with the transcript instead. Below the free allowance
+# nothing changes at all — the one-line dictation keeps exactly the budget it
+# always had. Above it, each further word buys a few more milliseconds, up to a
+# hard cap the user sets.
+#
+# The two numbers are read off that same live install rather than guessed. The
+# allowance is 25 words because the p90 at 25-49 words was already 992 ms
+# against a 1200 ms ceiling — the wall is met far earlier than "long dictation"
+# suggests, and a translation, which has to write every word again in another
+# language, meets it earlier still. The rate is ~3x the measured slope
+# (2.7 ms/word formatting, 4.4 ms/word translating), because the ceiling exists
+# to cut off a provider that has DIED, not to race a healthy one having a slow
+# minute.
+#
+# **A wider ceiling does not make dictation slower.** The model answers when it
+# answers — 570-870 ms on the measured runs — and the ceiling is only ever
+# reached when the provider is struggling. What it changes is what happens
+# THERE: waiting an extra second, or dropping German text into an English
+# document. The old ceiling chose the second one nine times out of ten it was
+# hit, and never said so.
+_TIMEOUT_FREE_WORDS = 25
+_TIMEOUT_MS_PER_WORD = 15
+_DEFAULT_TIMEOUT_MAX_MS = 4000
 
 
 @dataclass(frozen=True, slots=True)
@@ -467,7 +510,11 @@ async def polish_transcript(
         if await breaker.is_open():
             return _result("unavailable", reason="circuit_open")
 
-        budget_s = _timeout_budget(cfg, timeout_s)
+        # Counted from the SOURCE, not from the answer: the ceiling has to be
+        # decided before the call that it bounds. It is the same counter the
+        # drift guards use, so "how long this may take" and "how far the answer
+        # may drift" are measured off one number.
+        budget_s = _timeout_budget(cfg, timeout_s, words=count_words(source))
         attempt = _Attempt()
         # Resolved ONCE and used for both the prompt and the guard below. Those
         # two are a matched pair — the precision prompt licenses substitutions
@@ -513,6 +560,7 @@ async def polish_transcript(
                     temperature=_cfg_float(
                         cfg, "polish_temperature", _DEFAULT_TEMPERATURE, lo=0.0, hi=2.0
                     ),
+                    translating=translating,
                 ),
                 budget_s,
             )
@@ -755,6 +803,7 @@ async def _resolve_and_run(
     deadline: float,
     max_output_tokens: int,
     temperature: float,
+    translating: bool = False,
 ) -> str | None:
     """Resolve the chain and then walk it — both inside the caller's ceiling.
 
@@ -778,7 +827,9 @@ async def _resolve_and_run(
     attempt.on_device_only = all(family.runs_on_device for family in chain)
     primary = chain[0]
     attempt.provider = primary.id
-    attempt.model = resolve_model(primary, cfg, primary_id=primary.id)
+    attempt.model = resolve_model(
+        primary, cfg, primary_id=primary.id, translating=translating
+    )
 
     return await _run_chain(
         chain,
@@ -789,6 +840,7 @@ async def _resolve_and_run(
         deadline=deadline,
         max_output_tokens=max_output_tokens,
         temperature=temperature,
+        translating=translating,
     )
 
 
@@ -802,6 +854,7 @@ async def _run_chain(
     deadline: float,
     max_output_tokens: int,
     temperature: float,
+    translating: bool = False,
 ) -> str | None:
     """Walk the family chain until one answers; ``None`` when none does.
 
@@ -818,7 +871,9 @@ async def _run_chain(
     """
     primary_id = chain[0].id
     for family in chain:
-        model = resolve_model(family, cfg, primary_id=primary_id)
+        model = resolve_model(
+            family, cfg, primary_id=primary_id, translating=translating
+        )
         attempt.provider = family.id
         attempt.model = model
 
@@ -862,15 +917,35 @@ async def _run_chain(
     return None
 
 
-def _timeout_budget(cfg: Any, override_s: float | None) -> float:
-    """The hard ceiling for one polish pass, in seconds."""
+def _timeout_budget(cfg: Any, override_s: float | None, *, words: int = 0) -> float:
+    """The hard ceiling for one wording pass, in seconds.
+
+    ``words`` is the transcript's own length, which is what the ramp above is
+    for: ``polish_timeout_ms`` remains the budget for everything up to
+    :data:`_TIMEOUT_FREE_WORDS`, and only a longer transcript earns more, never
+    past ``polish_timeout_max_ms``.
+
+    An explicit ``override_s`` still wins outright and is NOT ramped — its two
+    callers are the settings-screen dry run and the tests, and both mean "this
+    many seconds exactly".
+
+    ``polish_timeout_max_ms`` bounds the RAMP, not the pass: set below the
+    base it simply means "do not ramp", and the base still applies. The base is
+    the key that says how long a wording pass may take; a user who wants a
+    lower ceiling than that lowers THAT one.
+    """
     if override_s is not None:
         try:
             return max(_MIN_CALL_TIMEOUT_S, float(override_s))
         except (TypeError, ValueError):
             pass
-    ms = _cfg_int(cfg, "polish_timeout_ms", _DEFAULT_TIMEOUT_MS, lo=200, hi=5000)
-    return ms / 1000.0
+    base_ms = _cfg_int(cfg, "polish_timeout_ms", _DEFAULT_TIMEOUT_MS, lo=200, hi=5000)
+    max_ms = _cfg_int(
+        cfg, "polish_timeout_max_ms", _DEFAULT_TIMEOUT_MAX_MS, lo=200, hi=20_000
+    )
+    extra_words = max(0, int(words) - _TIMEOUT_FREE_WORDS)
+    ramped_ms = base_ms + extra_words * _TIMEOUT_MS_PER_WORD
+    return min(max(base_ms, ramped_ms), max(base_ms, max_ms)) / 1000.0
 
 
 def _cfg_int(cfg: Any, name: str, default: int, *, lo: int, hi: int) -> int:

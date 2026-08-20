@@ -490,6 +490,14 @@ class SettingsBody(BaseModel):
             "delivered instead (200-5000 ms)"
         ),
     )
+    polish_timeout_max_ms: int | None = Field(
+        default=None,
+        description=(
+            "Ceiling for a LONG dictation, which is given more time than the "
+            "budget above (200-20000 ms); set it to that budget to switch the "
+            "extra time off"
+        ),
+    )
     polish_max_input_chars: int | None = None
     polish_min_words: int | None = None
     polish_max_output_tokens: int | None = None
