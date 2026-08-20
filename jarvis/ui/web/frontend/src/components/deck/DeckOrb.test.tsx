@@ -16,14 +16,20 @@ import { useEventStore } from "@/store/events";
 import { clearVoiceInputLevel, setVoiceInputLevel } from "@/lib/voiceInputLevel";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 
+const step = (id: string, status: ThinkingStep["status"] = "active"): ThinkingStep => ({
+  id,
+  kind: "tool",
+  labelKey: "thinking.tool",
+  status,
+  startedTs: 0,
+});
+
 /**
- * The orb is the click-shaped wake word (maintainer, 2026-08-18): pressing
- * the orb in the centre does what saying the phrase does. Display-only
- * callers get no button at all. The centre is the MASCOT — vectors, no
- * bitmap: the `/deck-orb.png` render that used to sit there was a picture of
- * a light whose baked-in white halo read as a grey box on the dark deck, and
- * the maintainer had asked repeatedly for it to go (2026-08-20). It carries
- * the live voice state so it can breathe with it.
+ * The centre is a STAGE, not a reticle (maintainer, 2026-08-20: "a circle
+ * around the mascot makes no sense"). The mascot stands free, lit from
+ * behind and below; the meter is a wave under it; the readouts are one row.
+ * Pressing the figure does what saying the wake phrase does; display-only
+ * callers get no button at all.
  */
 describe("DeckOrb", () => {
   afterEach(() => cleanup());
@@ -34,35 +40,50 @@ describe("DeckOrb", () => {
     expect(screen.getByTestId("jarvis-orb")).toBeTruthy();
   });
 
-  test("the reticle is instruments only — no scenery left to turn", () => {
-    const { container, rerender } = render(<DeckOrb steps={[]} busy={false} />);
-    // Gone with the PNG: dial ticks, corner brackets, the two orbits, the
-    // satellite, the idle ping. Instruments that measure nothing are a stage
-    // set, and the living thing in the middle carries the life instead.
-    expect(container.querySelector(".deck-orb-orbit-a")).toBeNull();
-    expect(container.querySelector(".deck-orb-orbit-b")).toBeNull();
-    expect(container.querySelector(".deck-orb-rings")).toBeNull();
-    expect(screen.queryByTestId("deck-orb-satellite")).toBeNull();
-    expect(screen.queryByTestId("deck-orb-ping")).toBeNull();
-    // The 72 dial ticks and the compass crosshairs were the only <line>s here.
+  test("nothing rings the figure — the light is behind it and under it", () => {
+    const { container } = render(<DeckOrb steps={[]} busy={false} />);
+    // The sphere's furniture: bezel circle, dial ticks, the arc meter, the
+    // ripple rings, the corona. All of it went with the sphere.
     expect(container.querySelectorAll("line")).toHaveLength(0);
-    // What stays is what reads a real value: the meter, the ripple host — at
-    // rest at zero — and one arc per running step.
-    expect(screen.getByTestId("deck-orb-vu")).toBeTruthy();
-    expect(screen.getByTestId("deck-orb-ripples").childElementCount).toBe(0);
-    expect(screen.getByTestId("deck-orb").style.getPropertyValue("--orb-level")).toBe("0");
-    const step: ThinkingStep = {
-      id: "a",
-      kind: "tool",
-      labelKey: "thinking.tool",
-      status: "active",
-      startedTs: 0,
-    };
-    rerender(<DeckOrb steps={[step]} busy />);
-    expect(container.querySelectorAll("path").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("deck-orb-vu")).toBeNull();
+    expect(screen.queryByTestId("deck-orb-ripples")).toBeNull();
+    expect(container.querySelector(".deck-orb-corona")).toBeNull();
+    expect(container.querySelector(".deck-orb-glow")).toBeNull();
+    // What stages the figure now.
+    expect(screen.getByTestId("deck-stage-light")).toBeTruthy();
+    expect(screen.getByTestId("deck-stage-footlight")).toBeTruthy();
+    expect(screen.getByTestId("deck-orb-wave")).toBeTruthy();
   });
 
-  test("moves with the voice: the real microphone level while listening, one variable for all", async () => {
+  test("the readouts are one row, not four corners", () => {
+    render(
+      <DeckOrb
+        steps={[]}
+        busy={false}
+        readouts={{ nw: "Ready", ne: "0 steps", sw: "Vertex AI", se: "0 words" }}
+      />,
+    );
+    const row = screen.getByTestId("deck-orb-readouts");
+    // Engine first — the one a person checks before they speak.
+    expect(row.textContent).toContain("Vertex AI");
+    expect(row.textContent).toContain("Ready");
+    expect(row.textContent).toContain("0 steps");
+    expect(row.textContent).toContain("0 words");
+    expect(screen.getByTestId("deck-orb-provider").textContent).toBe("Vertex AI");
+  });
+
+  test("parallel work shows as marks, and nothing at all when none runs", () => {
+    const { rerender } = render(<DeckOrb steps={[]} busy={false} />);
+    expect(screen.queryByTestId("deck-orb-steps")).toBeNull();
+    rerender(<DeckOrb steps={[step("a"), step("b", "done")]} busy />);
+    expect(screen.getByTestId("deck-orb-steps").childElementCount).toBe(2);
+    // The wave only travels while work is running.
+    expect(screen.getByTestId("deck-orb-wave").getAttribute("data-busy")).toBe("true");
+    rerender(<DeckOrb steps={[]} busy={false} />);
+    expect(screen.getByTestId("deck-orb-wave").getAttribute("data-busy")).toBeNull();
+  });
+
+  test("moves with the voice: the real microphone level, one variable for all", async () => {
     useEventStore.setState({ voiceState: "listening" });
     setVoiceInputLevel(0.8, "native");
     try {
@@ -71,8 +92,6 @@ describe("DeckOrb", () => {
       await waitFor(() => {
         expect(Number(root.style.getPropertyValue("--orb-level"))).toBeGreaterThan(0.3);
       });
-      // A word landing sent a ripple from the sun towards the bezel.
-      expect(screen.getByTestId("deck-orb-ripples").childElementCount).toBeGreaterThan(0);
     } finally {
       clearVoiceInputLevel();
       useEventStore.setState({ voiceState: "idle" });
@@ -86,10 +105,9 @@ describe("DeckOrb", () => {
     // The PNG is gone from the tree, so it cannot come back in through here.
     expect(orb.querySelectorAll("img")).toHaveLength(0);
     expect(orb.querySelector(".gigi-root")).toBeTruthy();
-    expect(orb.querySelector("svg")).toBeTruthy();
   });
 
-  test("a press on the orb fires the handler and carries its label", () => {
+  test("a press on the figure fires the handler and carries its label", () => {
     const onPress = vi.fn();
     render(
       <DeckOrb

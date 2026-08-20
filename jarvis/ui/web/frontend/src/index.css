@@ -2084,92 +2084,139 @@
   }
 
   /* -----------------------------------------------------------
-     The orb moves with the voice (DeckOrb.tsx, JarvisOrb.tsx).
-     `--orb-level` is ONE number, 0..1, on the orb's root — the real
-     microphone while listening, a speech-shaped envelope while the
-     assistant speaks, a heartbeat while it thinks (lib/orbLevel.ts)
-     — smoothed once, written once per frame. Everything below
-     reads it: the sun's size and brightness, the glow, the corona's
-     rays, the rings, the level arc on the bezel. Transform, opacity
-     and a GPU brightness only, so it all moves as one and costs
-     the main thread one style write.
+     The centre stage (DeckOrb.tsx, JarvisOrb.tsx).
+
+     `--orb-level` is ONE number, 0..1, on the stage's root — the
+     real microphone while listening, a speech-shaped envelope
+     while the assistant speaks, a heartbeat while it thinks
+     (lib/orbLevel.ts) — smoothed once, written once per frame.
+     Everything below reads it: the light behind the figure, the
+     light under it, the figure's own size and brightness, and the
+     wave. Transform, opacity and a GPU brightness only, so it all
+     moves as one and costs the main thread one style write.
+
+     Nothing here rings the figure. The bezel, the dial, the arc
+     meter and the corona were sphere furniture and went with the
+     sphere (2026-08-20).
      ----------------------------------------------------------- */
   .deck-orb-root {
     --orb-level: 0;
   }
-  .deck-orb-glow {
+
+  /* 1. The stage light — the ONE thing that touches the wallpaper here.
+     Three jobs in one gradient, in this order out from the middle:
+
+       · warm gold where the figure stands, so a black silhouette has
+         something to be dark against;
+       · then the theme's own ground colour, so the wave, the readouts and
+         the headline stay legible over whatever picture is behind them;
+       · then nothing, on a circle that reaches zero well inside its own
+         box — no edge anywhere can cut it.
+
+     It was two elements for an hour: this pool, plus a darkening wash the
+     view drew from outside. They fought — bright pool inside dark pool
+     framed the mascot in a lit niche, like a headstone (maintainer,
+     2026-08-20). One gradient cannot fight itself. */
+  .deck-stage-light {
+    left: 50%;
+    top: 44%;
+    transform: translate(-50%, -50%) scale(calc(1 + var(--orb-level, 0) * 0.05));
+    border-radius: 50%;
     background: radial-gradient(
-      circle,
-      rgba(248, 226, 151, 0.5) 0%,
-      rgba(231, 196, 110, 0.28) 38%,
-      rgba(210, 147, 24, 0.1) 58%,
-      rgba(210, 147, 24, 0) 70%
+      circle at 50% 50%,
+      rgba(248, 226, 151, 0.34) 0%,
+      rgba(240, 212, 134, 0.24) 16%,
+      rgba(224, 178, 74, 0.12) 27%,
+      hsl(var(--background) / 0.5) 40%,
+      hsl(var(--background) / 0.28) 52%,
+      hsl(var(--background) / 0) 68%
     );
-    opacity: calc(0.6 + var(--orb-level, 0) * 0.4);
-    transform: translate(-50%, -50%) scale(calc(1 + var(--orb-level, 0) * 0.18));
+    opacity: calc(0.85 + var(--orb-level, 0) * 0.15);
     will-change: transform, opacity;
   }
-  /* at rest the glow breathes slowly — alive, not busy */
-  .deck-orb-glow[data-voice="idle"] {
-    animation: deck-orb-glow-idle 5.5s ease-in-out infinite;
+  /* At rest it breathes — alive, not busy. */
+  .deck-orb-root[data-voice="idle"] .deck-stage-light {
+    animation: deck-stage-breathe 6.5s ease-in-out infinite;
   }
-  /* the sun itself: bigger and brighter with the voice */
-  .deck-orb-reactor {
-    transform: scale(calc(1 + var(--orb-level, 0) * 0.09));
-    filter: brightness(calc(1 + var(--orb-level, 0) * 0.55));
-    will-change: transform, filter;
-  }
-  /* the corona: slow-turning rays behind the sun, seen only in the voice */
-  .deck-orb-corona {
-    inset: -18%;
-    background: repeating-conic-gradient(
-      from 0deg,
-      hsl(var(--primary) / 0) 0deg 5deg,
-      hsl(var(--primary) / 0.55) 8deg,
-      hsl(var(--primary) / 0) 11deg 20deg
-    );
-    -webkit-mask-image: radial-gradient(circle, transparent 30%, #000 42%, #000 58%, transparent 68%);
-    mask-image: radial-gradient(circle, transparent 30%, #000 42%, #000 58%, transparent 68%);
-    opacity: calc(var(--orb-level, 0) * 0.9);
-    animation: deck-orb-turn 30s linear infinite;
-    will-change: transform, opacity;
-  }
-  /* the level arc on the bezel: two half-circles from the top, drawn as far
-     as the level goes; nothing at 0 */
-  .deck-orb-vu path {
-    stroke-dasharray: 1;
-    stroke-dashoffset: calc(1 - var(--orb-level, 0));
-    opacity: 0.9;
-  }
-  .deck-orb-vu {
-    filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.6));
-  }
-  /* a ripple: one ring from the sun to the bezel per word landing */
-  .deck-orb-ripple {
-    width: 78%;
-    height: 78%;
-    border: 1.5px solid hsl(var(--primary) / 0.85);
-    box-shadow: 0 0 8px hsl(var(--primary) / 0.4);
-    animation: deck-orb-ripple 800ms cubic-bezier(0.1, 0.6, 0.3, 1) forwards;
-    will-change: transform, opacity;
-  }
-  @keyframes deck-orb-ripple {
-    0% {
-      transform: scale(0.92);
-      opacity: 0.75;
-    }
-    100% {
-      transform: scale(1.24);
-      opacity: 0;
-    }
-  }
-  @keyframes deck-orb-glow-idle {
+  @keyframes deck-stage-breathe {
     0%,
     100% {
-      opacity: 0.5;
+      opacity: 0.8;
     }
     50% {
-      opacity: 0.74;
+      opacity: 0.95;
+    }
+  }
+
+  /* 2. The footlight: a flat ellipse under the figure. This is what puts
+     Gigi on a floor instead of afloat, and it takes the voice as light. */
+  .deck-stage-footlight {
+    left: 50%;
+    bottom: 13%;
+    transform: translateX(-50%) scaleX(calc(1 + var(--orb-level, 0) * 0.14));
+    border-radius: 50%;
+    background: radial-gradient(
+      ellipse at 50% 50%,
+      hsl(var(--primary) / 0.5) 0%,
+      hsl(var(--primary) / 0.2) 42%,
+      hsl(var(--primary) / 0) 72%
+    );
+    opacity: calc(0.62 + var(--orb-level, 0) * 0.38);
+    filter: blur(1px);
+    will-change: transform, opacity;
+  }
+
+  /* 3. The figure: bigger and brighter with the voice. */
+  .deck-orb-reactor {
+    transform: scale(calc(1 + var(--orb-level, 0) * 0.07));
+    filter: brightness(calc(1 + var(--orb-level, 0) * 0.5));
+    will-change: transform, filter;
+  }
+
+  /* 4. The wave: the meter, in the shape a voice has. Flat when there is
+     nothing to hear — a still line is an honest zero. The group travels
+     while work runs; the line carries the amplitude. */
+  .deck-orb-wave {
+    overflow: hidden;
+    filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.5));
+    /* Nothing to hear, nothing to draw: at rest this is invisible, so the
+       line can never read as a decorative rule under the figure. */
+    opacity: calc(var(--orb-level, 0) * 1.1);
+  }
+  .deck-orb-wave-line {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    transform: scaleY(calc(0.12 + var(--orb-level, 0) * 1.25));
+    will-change: transform;
+  }
+  .deck-orb-wave-flow {
+    will-change: transform;
+  }
+  .deck-orb-wave[data-busy="true"] .deck-orb-wave-flow {
+    animation: deck-wave-flow 2.4s linear infinite;
+  }
+  @keyframes deck-wave-flow {
+    to {
+      transform: translateX(-50px);
+    }
+  }
+
+  /* 5. One mark per step running in parallel; the live one pulses. */
+  .deck-orb-step {
+    transition:
+      width 220ms ease-out,
+      opacity 220ms ease-out;
+  }
+  .deck-orb-step-active {
+    animation: deck-step-pulse 1.3s ease-in-out infinite;
+  }
+  @keyframes deck-step-pulse {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
     }
   }
 
@@ -2197,15 +2244,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .deck-orb-glow,
-    .deck-orb-corona,
-    .deck-orb-ripple,
+    .deck-stage-light,
+    .deck-orb-wave-flow,
+    .deck-orb-step-active,
     .deck-ring-orbit {
       animation: none !important;
-    }
-    .deck-orb-corona,
-    .deck-orb-ripple {
-      display: none;
     }
   }
 
