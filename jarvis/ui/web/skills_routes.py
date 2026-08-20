@@ -5,7 +5,8 @@ Endpoints:
 - ``GET  /api/skills/{name}``         → full skill incl. Markdown body.
 - ``PUT  /api/skills/{name}``         → update body (and optionally frontmatter).
   For built-in skills: ``admin_password`` is required in the request body.
-- ``POST /api/skills/{name}/enable``  → state -> ACTIVE.
+- ``POST /api/skills/{name}/enable``  → state -> ACTIVE
+  (healthy AP-15 drafts are promoted; broken drafts stay 409).
 - ``POST /api/skills/{name}/disable`` → state -> DISABLED.
 - ``POST /api/skills/reload``         → force ``Registry.reload()``.
 
@@ -1595,16 +1596,46 @@ def _flip_state(
     reg = _require_registry(request)
     try:
         skill = reg.get(name)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-
-    # DRAFT stays DRAFT — a broken skill can't be activated.
-    if skill.state == SkillLifecycleState.DRAFT:
+    except KeyError as exc:
         raise HTTPException(
-            status_code=409,
-            detail=f"Skill '{name}' is in DRAFT state (error: {skill.error}) — "
-                   "fix it first.",
-        )
+            status_code=404, detail=f"Skill '{name}' not found"
+        ) from exc
+
+    # A DRAFT is either broken (parse/validation error) or an AP-15 review
+    # draft (voice/AI-authored, frontmatter valid, waiting for a human to
+    # switch it on). ``skill-enable`` and the Skills-view switch are that
+    # human act — they call this route. Broken drafts stay locked.
+    if skill.state == SkillLifecycleState.DRAFT:
+        if new_state != SkillLifecycleState.ACTIVE:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Skill '{name}' is in DRAFT state (error: {skill.error}) — "
+                    "fix or enable it first."
+                ),
+            )
+        if skill.error or skill.frontmatter is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Skill '{name}' is in DRAFT state (error: {skill.error}) — "
+                    "fix it first."
+                ),
+            )
+        from jarvis.skills.authoring.draft_writer import UnsafeSkillError
+
+        try:
+            skill = reg.promote(name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except UnsafeSkillError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        from jarvis.skills import prefs
+
+        prefs.set_state(name, True)
+        return _skill_to_summary(skill)
 
     updated = replace(skill, state=new_state)
     reg._skills[name] = updated  # type: ignore[attr-defined]

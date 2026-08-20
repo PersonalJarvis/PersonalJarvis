@@ -97,6 +97,67 @@ def test_enable_after_disable_records_active(skills_root: Path) -> None:
     assert reg.get("alpha").state == SkillLifecycleState.ACTIVE
 
 
+def test_enable_promotes_healthy_draft(skills_root: Path) -> None:
+    """Voice/AI-authored skills land as ``state: draft`` (AP-15). Enable is
+    the human promotion the Skills view and ``skill-enable`` already advertise.
+    """
+    _make_skill(skills_root, "alpha", state="draft")
+    client, reg = _client(skills_root)
+
+    assert reg.get("alpha").state == SkillLifecycleState.DRAFT
+    assert reg.get("alpha").error is None
+
+    res = client.post("/api/skills/alpha/enable")
+    assert res.status_code == 200, res.text
+    assert res.json()["state"] == "active"
+    assert reg.get("alpha").state == SkillLifecycleState.ACTIVE
+    text = (skills_root / "alpha" / "SKILL.md").read_text(encoding="utf-8")
+    assert "state: active" in text
+    assert prefs.load_state_overrides()["alpha"] == "active"
+
+
+def test_enable_refuses_broken_draft(skills_root: Path) -> None:
+    folder = skills_root / "broken"
+    folder.mkdir()
+    (folder / "SKILL.md").write_text(
+        '---\nschema_version: "1"\nname: broken\ntriggers:\n  - type: voice\n---\n\n## Body\n',
+        encoding="utf-8",
+    )
+    client, reg = _client(skills_root)
+
+    assert reg.get("broken").state == SkillLifecycleState.DRAFT
+    assert reg.get("broken").error
+
+    res = client.post("/api/skills/broken/enable")
+    assert res.status_code == 409, res.text
+    assert reg.get("broken").state == SkillLifecycleState.DRAFT
+
+
+def test_enable_refuses_unsafe_draft(skills_root: Path) -> None:
+    folder = skills_root / "unsafe"
+    folder.mkdir()
+    (folder / "SKILL.md").write_text(
+        '---\nschema_version: "1"\nname: unsafe\nstate: draft\n---\n\n'
+        "```python\neval('boom')\n```\n",
+        encoding="utf-8",
+    )
+    client, _reg = _client(skills_root)
+
+    res = client.post("/api/skills/unsafe/enable")
+    assert res.status_code == 409, res.text
+    detail = res.json()["detail"].lower()
+    assert "eval" in detail or "unsafe" in detail
+
+
+def test_disable_refuses_draft(skills_root: Path) -> None:
+    _make_skill(skills_root, "alpha", state="draft")
+    client, reg = _client(skills_root)
+
+    res = client.post("/api/skills/alpha/disable")
+    assert res.status_code == 409, res.text
+    assert reg.get("alpha").state == SkillLifecycleState.DRAFT
+
+
 # ----------------------------------------------------------------------
 # delete
 # ----------------------------------------------------------------------

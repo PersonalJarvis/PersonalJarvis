@@ -89,7 +89,7 @@ const STATE_VARIANT: Record<
 > = {
   active: "default",
   validated: "secondary",
-  draft: "destructive",
+  draft: "secondary",
   disabled: "outline",
 };
 
@@ -102,10 +102,18 @@ const TRIGGER_ICON: Record<SkillTrigger["type"], typeof Mic> = {
 /**
  * A skill is "on" (it triggers + is offered to the brain) when it is ACTIVE or
  * VALIDATED — the trigger-matcher and the AVAILABLE SKILLS prompt treat both the
- * same. Only DISABLED is "off"; DRAFT is broken and cannot be switched on.
+ * same. DISABLED is "off". A DRAFT is either waiting for the user to switch
+ * it on (healthy, error is empty) or broken (parse/validation error).
  */
 function isSkillOn(state: SkillState): boolean {
   return state === "active" || state === "validated";
+}
+
+function isBrokenDraft(skill: {
+  state: SkillState;
+  error: string | null;
+}): boolean {
+  return skill.state === "draft" && Boolean(skill.error);
 }
 
 // In-memory admin pass — holds the pass for the session so the user doesn't
@@ -162,9 +170,12 @@ export function SkillsView() {
           it.name === name ? { ...it, state: on ? "active" : "disabled" } : it,
         ),
       );
-      setEnabled.mutate({ name, enabled: on });
+      setEnabled.mutate(
+        { name, enabled: on },
+        { onError: () => void refetch() },
+      );
     },
-    [setEnabled],
+    [setEnabled, refetch],
   );
 
   // Names that may actually be deleted — built-ins are protected, so they are
@@ -442,11 +453,13 @@ export function SkillsView() {
             </div>
             {searchActive && search.data && (
               <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                <span>{search.data.total} Treffer</span>
+                <span>
+                  {search.data.total} {t("skills_view.matches")}
+                </span>
                 {search.data.brain_used && (
                   <span className="flex items-center gap-1">
                     <Sparkle className="h-2.5 w-2.5" />
-                    KI-geranked
+                    {t("skills_view.ai_ranked")}
                   </span>
                 )}
               </div>
@@ -510,7 +523,7 @@ export function SkillsView() {
           </ScrollArea>
         </div>
 
-        {/* Rechte Spalte: Detail-Panel */}
+        {/* Right column: detail panel */}
         <div className="flex min-w-0 flex-1 flex-col">
           {selected ? (
             <SkillDetailPanel name={selected} />
@@ -526,7 +539,7 @@ export function SkillsView() {
 }
 
 // ----------------------------------------------------------------------
-// Linke Spalte — Draggable List Row (On/Off switch + delete)
+// Left column — draggable list row (On/Off switch + delete)
 // ----------------------------------------------------------------------
 
 function SkillRowDraggable({
@@ -552,7 +565,7 @@ function SkillRowDraggable({
 }) {
   const t = useT();
   const controls = useDragControls();
-  const isDraft = skill.state === "draft";
+  const broken = isBrokenDraft(skill);
   const on = isSkillOn(skill.state);
   // In selection mode the whole row body toggles the checkbox (built-ins are
   // protected and stay inert); otherwise it opens the detail panel.
@@ -656,10 +669,11 @@ function SkillRowDraggable({
         </button>
 
         {/* Right rail: On/Off switch (or error lock) + delete. Hidden in
-            selection mode — the bulk toolbar owns deletion there. */}
+            selection mode — the bulk toolbar owns deletion there. A healthy
+            draft still gets a switch (off) so the user can promote it. */}
         {!selectionMode && (
           <div className="flex flex-shrink-0 items-center gap-1.5">
-            {isDraft ? (
+            {broken ? (
               <span
                 className="flex items-center gap-1 text-[10px] font-medium text-destructive"
                 title={skill.error ?? undefined}
@@ -891,7 +905,7 @@ function DeleteConfirmDialog({
 }
 
 // ----------------------------------------------------------------------
-// Rechte Spalte — Detail-Panel
+// Right column — detail panel
 // ----------------------------------------------------------------------
 
 function SkillDetailPanel({ name }: { name: string }) {
@@ -945,7 +959,7 @@ function SkillDetailPanel({ name }: { name: string }) {
       } catch (e) {
         const msg = (e as Error).message;
         setSaveError(msg);
-        // 403 -> Admin-Pass noetig
+        // 403 -> admin password required
         if (
           data.is_builtin &&
           (msg.includes("Admin-Password") || msg.includes("403"))
@@ -970,7 +984,7 @@ function SkillDetailPanel({ name }: { name: string }) {
   if (isLoading || !data) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Lade Skill…
+        {t("skills_view.loading_skill")}
       </div>
     );
   }
@@ -982,7 +996,7 @@ function SkillDetailPanel({ name }: { name: string }) {
     );
   }
 
-  const isDraft = data.state === "draft";
+  const broken = isBrokenDraft(data);
   const on = isSkillOn(data.state);
 
   return (
@@ -1029,7 +1043,7 @@ function SkillDetailPanel({ name }: { name: string }) {
             )}
           </div>
           <div className="flex items-center gap-3">
-            {!isDraft && (
+            {!broken && (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">
                   {on ? t("skills_view.on") : t("skills_view.off")}
@@ -1092,7 +1106,7 @@ function SkillDetailPanel({ name }: { name: string }) {
       </div>
 
       <div className="flex min-h-0 flex-1">
-        {/* Linke Sub-Spalte: Editor */}
+        {/* Left sub-column: editor */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center justify-between border-b border-border px-6 py-2">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -1118,7 +1132,7 @@ function SkillDetailPanel({ name }: { name: string }) {
           />
         </div>
 
-        {/* Rechte Sub-Spalte: Bundle-Tree + optional Resource-Viewer */}
+        {/* Right sub-column: bundle tree + optional resource viewer */}
         {data.resource_count > 0 && (
           <div className="flex w-[320px] flex-col border-l border-border">
             {openResource ? (
@@ -1159,7 +1173,7 @@ function SkillDetailPanel({ name }: { name: string }) {
 }
 
 // ----------------------------------------------------------------------
-// Admin-Pass-Dialog
+// Admin password dialog
 // ----------------------------------------------------------------------
 
 function AdminPassDialog({
@@ -1237,9 +1251,12 @@ function buildSkillMdText(
   return `---\n${fmYaml}---\n\n${data.body}`;
 }
 
-function serializeFrontmatter(fm: Record<string, unknown>): string {
+export function serializeFrontmatter(fm: Record<string, unknown>): string {
   // Minimal YAML dumper — no complex cases (refs, anchors). We know that
   // SkillFrontmatter only contains primitives + lists + flat dicts.
+  // Nested lists (e.g. trigger.language: ["de","en"]) MUST go through dump(),
+  // never String(array) — JS Array.toString joins with commas and Save
+  // would write `language: de,en`, which the loader rejects.
   const lines: string[] = [];
   const dump = (key: string, val: unknown, indent = 0): void => {
     const pad = " ".repeat(indent);
@@ -1254,12 +1271,23 @@ function serializeFrontmatter(fm: Record<string, unknown>): string {
       }
       lines.push(`${pad}${key}:`);
       for (const item of val) {
-        if (typeof item === "object" && item !== null) {
+        if (typeof item === "object" && item !== null && !Array.isArray(item)) {
           const entries = Object.entries(item as Record<string, unknown>);
+          if (entries.length === 0) {
+            lines.push(`${pad}  - {}`);
+            continue;
+          }
           const [firstKey, firstVal] = entries[0];
-          lines.push(`${pad}  - ${firstKey}: ${formatScalar(firstVal)}`);
-          for (const [k, v] of entries.slice(1)) {
-            lines.push(`${pad}    ${k}: ${formatScalar(v)}`);
+          if (firstVal === null || typeof firstVal !== "object") {
+            lines.push(`${pad}  - ${firstKey}: ${formatScalar(firstVal)}`);
+            for (const [k, v] of entries.slice(1)) {
+              dump(k, v, indent + 4);
+            }
+          } else {
+            lines.push(`${pad}  -`);
+            for (const [k, v] of entries) {
+              dump(k, v, indent + 4);
+            }
           }
         } else {
           lines.push(`${pad}  - ${formatScalar(item)}`);
@@ -1287,8 +1315,14 @@ function formatScalar(val: unknown): string {
   if (val === null || val === undefined) return "null";
   if (typeof val === "boolean" || typeof val === "number") return String(val);
   const str = String(val);
-  if (/[:#\n]/.test(str) || str.trim() !== str || str === "") {
-    // Quote when there are colons, hashes, or leading/trailing whitespace
+  // Quote numeric-looking strings so YAML does not turn schema_version "1"
+  // into integer 1 (Literal["1"] then rejects the file on Save).
+  if (
+    /[:#\n]/.test(str) ||
+    str.trim() !== str ||
+    str === "" ||
+    /^-?\d+(\.\d+)?$/.test(str)
+  ) {
     return JSON.stringify(str);
   }
   return str;

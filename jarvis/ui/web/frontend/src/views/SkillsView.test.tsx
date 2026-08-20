@@ -1,8 +1,9 @@
 /**
  * Component tests for the reworked SkillsView: a flat list where every healthy
- * skill has an On/Off switch (on by default), a draft skill is shown locked with
- * no switch, deletion is confirmed before it fires, and built-in skills cannot
- * be deleted. Drag-reorder is verified live (jsdom has no real pointer/layout).
+ * skill has an On/Off switch (on by default), a broken draft is shown locked
+ * with no switch, a healthy draft has an off switch (promote via enable),
+ * deletion is confirmed before it fires, and built-in skills cannot be
+ * deleted. Drag-reorder is verified live (jsdom has no real pointer/layout).
  *
  * Driven through a mocked fetch (mirrors ContactsView.test.tsx) with the UI
  * language forced to English for deterministic labels.
@@ -18,7 +19,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { SkillsView } from "@/views/SkillsView";
+import { serializeFrontmatter, SkillsView } from "@/views/SkillsView";
 import { setUiLanguage } from "@/i18n";
 
 interface RouteResult {
@@ -134,7 +135,7 @@ describe("SkillsView — On/Off switch", () => {
 });
 
 describe("SkillsView — draft is locked", () => {
-  it("a draft skill shows an error label and no switch", async () => {
+  it("a broken draft shows an error label and no switch", async () => {
     installFetchMock({
       "GET /api/skills": () => ({
         body: {
@@ -148,6 +149,51 @@ describe("SkillsView — draft is locked", () => {
     await screen.findByText("broken");
     expect(screen.queryByRole("switch")).toBeNull();
     expect(screen.getByText("Error")).toBeTruthy();
+  });
+
+  it("a healthy draft shows an off switch, not an error", async () => {
+    installFetchMock({
+      "GET /api/skills": () => ({
+        body: {
+          skills: [skill({ name: "morning", state: "draft", error: null })],
+          total: 1,
+        },
+      }),
+    });
+    renderView();
+
+    await screen.findByText("morning");
+    const sw = screen.getByRole("switch");
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByText("Error")).toBeNull();
+  });
+
+  it("turning a healthy draft on calls enable", async () => {
+    const calls = installFetchMock({
+      "GET /api/skills": () => ({
+        body: {
+          skills: [skill({ name: "morning", state: "draft", error: null })],
+          total: 1,
+        },
+      }),
+      "POST /api/skills/morning/enable": () => ({
+        body: skill({ name: "morning", state: "active" }),
+      }),
+    });
+    renderView();
+
+    await screen.findByText("morning");
+    fireEvent.click(screen.getByRole("switch"));
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "POST" &&
+            c.url.endsWith("/api/skills/morning/enable"),
+        ),
+      ).toBe(true);
+    });
   });
 });
 
@@ -260,5 +306,32 @@ describe("SkillsView — multi-select bulk delete", () => {
     expect(
       screen.getByRole("button", { name: /Delete \(2\)/ }),
     ).toBeTruthy();
+  });
+});
+
+describe("serializeFrontmatter", () => {
+  it("writes nested trigger.language as a YAML list, not a comma string", () => {
+    const yaml = serializeFrontmatter({
+      schema_version: "1",
+      name: "Morning Routine 2",
+      triggers: [
+        {
+          type: "voice",
+          pattern: "(morning routine|morgenroutine)",
+          combo: null,
+          cron: null,
+          language: ["de", "en"],
+        },
+      ],
+    });
+    expect(yaml).toContain("language:");
+    expect(yaml).toContain("- de");
+    expect(yaml).toContain("- en");
+    expect(yaml).not.toMatch(/language:\s*de,en/);
+  });
+
+  it("quotes schema_version so YAML keeps it as a string", () => {
+    const yaml = serializeFrontmatter({ schema_version: "1", name: "x" });
+    expect(yaml).toContain('schema_version: "1"');
   });
 });
