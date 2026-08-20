@@ -238,7 +238,7 @@ _MIN_CALL_TIMEOUT_S = 0.05
 # hit, and never said so.
 _TIMEOUT_FREE_WORDS = 25
 _TIMEOUT_MS_PER_WORD = 15
-_DEFAULT_TIMEOUT_MAX_MS = 4000
+_DEFAULT_TIMEOUT_MAX_MS = 2000
 
 
 @dataclass(frozen=True, slots=True)

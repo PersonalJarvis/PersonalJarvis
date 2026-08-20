@@ -3173,7 +3173,7 @@ class DictationConfig(BaseModel):
     #:
     #: Set it equal to (or below) ``polish_timeout_ms`` to switch the ramp off
     #: and get the old fixed ceiling back.
-    polish_timeout_max_ms: int = Field(default=4000, ge=200, le=20_000)
+    polish_timeout_max_ms: int = Field(default=2000, ge=200, le=20_000)
 
     #: Skip the pass above this many characters. ``0`` — the default — means
     #: no cap.
@@ -3425,7 +3425,7 @@ class DictationConfig(BaseModel):
     @field_validator("polish_timeout_max_ms", mode="before")
     @classmethod
     def _clamp_polish_timeout_max_ms(cls, value: object) -> int:
-        return _clamped_polish_int(value, default=4000, low=200, high=20_000)
+        return _clamped_polish_int(value, default=2000, low=200, high=20_000)
 
     @field_validator("polish_max_input_chars", mode="before")
     @classmethod

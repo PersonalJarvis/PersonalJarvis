@@ -55,7 +55,7 @@ class _Cfg:
     polish_provider: str = "auto"
     polish_model: str = ""
     polish_timeout_ms: int = 1200
-    polish_timeout_max_ms: int = 4000
+    polish_timeout_max_ms: int = 2000
     polish_min_words: int = 4
     polish_max_input_chars: int = 0
     polish_max_output_tokens: int = 1200
@@ -132,13 +132,13 @@ async def test_a_long_dictation_is_given_more_time_than_a_short_one(
     """
     short = await _deadline_for(monkeypatch, 20, _Cfg())
     polish.reset_polish_state()
-    long = await _deadline_for(monkeypatch, 100, _Cfg())
+    long = await _deadline_for(monkeypatch, 60, _Cfg())
 
     assert long > short
-    # 100 words = 75 over the free allowance, 15 ms each on top of 1200 ms,
-    # and still short of the 4000 ms cap — so this asserts the RAMP rather
-    # than the ceiling the next test owns.
-    assert 2.1 < long <= 2.325
+    # 60 words = 35 over the free allowance, 15 ms each on top of 1200 ms, and
+    # still short of the 2000 ms cap — so this asserts the RAMP rather than
+    # the ceiling the next test owns.
+    assert 1.5 < long <= 1.725
 
 
 async def test_the_extra_time_stops_at_the_configured_maximum(
