@@ -860,6 +860,105 @@ def _is_speakable_observation(text: str | None) -> bool:
     return _CU_VERIFIER_DUMP_RE.search(text or "") is None
 
 
+#: Failure families OUR OWN tools emit, mapped to a spoken sentence per
+#: language. Tool error strings are English by contract (CLAUDE.md §1: the
+#: model rephrases them for the user), but the rephrasing model is not always
+#: there — no ``[ack_brain]`` provider, a dead key, an exhausted quota, the
+#: breaker open. Live 2026-08-20: the Gemini flash slot answered 404 (stale
+#: pinned model) and then 429 (credits gone), so EVERY readback came out of the
+#: canned table and a German turn spoke the failure line with the cause still
+#: in English — half the sentence in the wrong language.
+#:
+#: These are OUR strings with OUR wording, so the mapping is a deterministic
+#: regex table, not a translator (AP-11: no LLM on this path). An unknown
+#: reason — any third-party plugin's own text — is passed through verbatim,
+#: because a foreign-language cause still beats no cause at all.
+_REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
+    (
+        re.compile(
+            r"^(?P<subject>[\w .&'’-]{2,40}?)\s+is not connected\b.*$",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        {
+            "de": "{subject} ist nicht verbunden. "  # i18n-allow
+                  "Verbinde es in der Plugins-Ansicht.",  # i18n-allow
+            "en": "{subject} is not connected. Connect it in the Plugins view.",
+            "es": "{subject} no está conectado. Conéctalo en la vista de Plugins.",
+        },
+    ),
+    (
+        re.compile(
+            r"^(?P<subject>[\w .&'’-]{2,40}?)\s+authorization expired\b.*$",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        {
+            "de": "Die Anmeldung bei {subject} ist abgelaufen. "  # i18n-allow
+                  "Verbinde es in der Plugins-Ansicht neu.",  # i18n-allow
+            "en": "The sign-in for {subject} expired. Reconnect it in the Plugins view.",
+            "es": "La sesión de {subject} caducó. Vuelve a conectarlo en la vista de Plugins.",
+        },
+    ),
+    (
+        re.compile(r"^Unknown skill:\s*(?P<subject>[^.]{1,60})\.?.*$", re.DOTALL),
+        {
+            "de": "Ich kenne keinen Skill namens {subject}.",  # i18n-allow
+            "en": "I don't know a skill called {subject}.",
+            "es": "No conozco ninguna skill llamada {subject}.",
+        },
+    ),
+    (
+        re.compile(
+            r"^Skill '(?P<subject>[^']{1,60})' is in DRAFT state\b.*$", re.DOTALL
+        ),
+        {
+            "de": "Der Skill {subject} ist noch ein Entwurf. Gib ihn erst frei.",  # i18n-allow
+            "en": "The skill {subject} is still a draft. Promote it first.",
+            "es": "La skill {subject} sigue siendo un borrador. Actívala primero.",
+        },
+    ),
+    (
+        re.compile(
+            r"^Skill '(?P<subject>[^']{1,60})' is DISABLED\b.*$", re.DOTALL
+        ),
+        {
+            "de": "Der Skill {subject} ist ausgeschaltet. "  # i18n-allow
+                  "Schalte ihn erst wieder ein.",  # i18n-allow
+            "en": "The skill {subject} is switched off. Switch it back on first.",
+            "es": "La skill {subject} está desactivada. Vuelve a activarla primero.",
+        },
+    ),
+)
+
+
+def localize_failure_reason(reason: str | None, language: str) -> str:
+    """Speak a KNOWN failure cause in the turn's language; pass others through.
+
+    The deterministic floor under the contextual composer. When the composer
+    is alive it rephrases the cause itself and this table never shows; when it
+    is not — and on the 2026-08-20 dev box it was not, twice over — this is
+    what keeps a German turn from ending in an English clause.
+
+    Returns ``""`` for an empty input, the mapped sentence for a family in
+    :data:`_REASON_FAMILIES`, and the input unchanged for anything else.
+    """
+    text = " ".join(str(reason or "").split())
+    if not text:
+        return ""
+    lang = str(language or "").strip().lower()
+    for pattern, templates in _REASON_FAMILIES:
+        match = pattern.match(text)
+        if match is None:
+            continue
+        # Same language resolution as ``action_phrase``: an unknown code falls
+        # back to the module default, never to a half-translated sentence.
+        template = templates.get(lang) or templates[_DEFAULT]
+        subject = " ".join(match.group("subject").split()).strip("'\" ")
+        if not subject:
+            continue
+        return template.format(subject=subject)
+    return text
+
+
 def extract_speakable_reason(error: str | None, output: object = None) -> str | None:
     """Pull a clean, user-facing failure reason out of a tool result, or ``None``.
 
@@ -986,6 +1085,7 @@ __all__ = [
     "cu_failure_readback",
     "cu_success_readback",
     "extract_speakable_reason",
+    "localize_failure_reason",
     "resolve_ambient_language",
     "resolve_phrase_language",
 ]

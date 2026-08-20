@@ -92,6 +92,7 @@ from jarvis.voice.action_phrases import (
     cu_failure_readback,
     cu_success_readback,
     extract_speakable_reason,
+    localize_failure_reason,
 )
 from jarvis.voice.contextual_readback import render_readback
 
@@ -8480,7 +8481,15 @@ class BrainManager:
         if reason:
             facts: dict[str, object] | None = {"reason": reason}
             instruction = f"{situation} The reason given was: {reason}"
-            canned = lambda: action_phrase(reason_key, lang, reason=reason)  # noqa: E731
+            # The composer rephrases the English cause itself — but only while
+            # it has a live model. The canned floor gets the cause already in
+            # the turn's language, so a dead flash slot cannot produce a
+            # half-translated sentence (live 2026-08-20: the Gemini ack slot
+            # answered 404 and then 429, and every readback came out canned).
+            spoken_reason = localize_failure_reason(reason, lang)
+            canned = lambda: action_phrase(  # noqa: E731
+                reason_key, lang, reason=spoken_reason
+            )
         else:
             facts = None
             instruction = situation
@@ -9626,7 +9635,10 @@ class BrainManager:
                     "failed",
                     pending.tool_name,
                     language=pending.lang,
-                    detail=extract_speakable_reason(str(exc), None),
+                    detail=localize_failure_reason(
+                        extract_speakable_reason(str(exc), None), pending.lang
+                    )
+                    or None,
                 )
             kind = "done" if getattr(result, "success", False) else "failed"
             return format_confirm_outcome(
@@ -9638,11 +9650,17 @@ class BrainManager:
                     if kind == "done"
                     # Raw ``error`` is routinely the opaque ``exit N`` token the
                     # tool layer emits; the gate turns that into no detail at
-                    # all rather than a machine word in the user's ear.
-                    else extract_speakable_reason(
-                        getattr(result, "error", None),
-                        getattr(result, "output", None),
+                    # all rather than a machine word in the user's ear. There is
+                    # no composer on this path at all, so the cause is localized
+                    # deterministically or it stays English forever.
+                    else localize_failure_reason(
+                        extract_speakable_reason(
+                            getattr(result, "error", None),
+                            getattr(result, "output", None),
+                        ),
+                        pending.lang,
                     )
+                    or None
                 ),
             )
 

@@ -167,7 +167,10 @@ async def test_failed_tool_speaks_the_reason_not_the_stock_line() -> None:
     text, succeeded = await sess._direct_tool_fallback_text()
 
     assert succeeded is False
-    assert GMAIL_REASON in text, "the user must hear WHY the mail call failed"
+    # The cause is spoken in the TURN's language (localize_failure_reason), so
+    # assert on the fact, not on the tool's English wording.
+    assert "Gmail" in text, "the user must hear WHY the mail call failed"
+    assert "Plugins" in text, "and what they can do about it"
     assert text != action_phrase("action_failed_generic", sess._language)
 
 
@@ -188,7 +191,8 @@ async def test_failed_skill_call_names_the_skill_problem() -> None:
     text, succeeded = await sess._direct_tool_fallback_text()
 
     assert succeeded is False
-    assert "DRAFT" in text
+    assert "morning-routine" in text
+    assert text != action_phrase("action_failed_generic", sess._language)
 
 
 @pytest.mark.asyncio

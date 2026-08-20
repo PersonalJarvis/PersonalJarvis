@@ -77,8 +77,15 @@ class _ProvidersBundle(BaseModel):
     # before use, so retaining forward-compatible data is safe here.
     model_config = ConfigDict(extra="allow")
 
+    # The rolling alias, NOT a pinned generation. A hardcoded version name is
+    # exactly how this slot broke: "gemini-3.1-flash" is absent from the AI
+    # Studio catalog (probed live 2026-08-20 — it serves 3.1-flash-lite,
+    # 3.5/3.6/3.7-flash and the aliases, but no plain 3.1-flash), so EVERY ack
+    # and every contextual readback 404'd and silently fell back to the canned
+    # table on any install using a Gemini key. The alias cannot go stale, and a
+    # one-sentence ack has no capability requirement that would justify a pin.
     gemini: GeminiAckProviderConfig = Field(
-        default_factory=lambda: GeminiAckProviderConfig(model="gemini-3.1-flash")
+        default_factory=lambda: GeminiAckProviderConfig(model="gemini-flash-latest")
     )
     grok: GrokAckProviderConfig = Field(
         default_factory=lambda: GrokAckProviderConfig(

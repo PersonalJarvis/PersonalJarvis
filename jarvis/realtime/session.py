@@ -8403,7 +8403,10 @@ class RealtimeVoiceSession:
            when a cause exists, ``generic_key`` when the tool genuinely gave
            none. Never empty, never a hardcoded German string on an en/es turn.
         """
-        from jarvis.voice.action_phrases import action_phrase
+        from jarvis.voice.action_phrases import (
+            action_phrase,
+            localize_failure_reason,
+        )
         from jarvis.voice.contextual_readback import render_readback
 
         language = language or self._language
@@ -8412,7 +8415,7 @@ class RealtimeVoiceSession:
             instruction = f"{situation} The reason reported was: {reason}"
             facts: dict[str, object] | None = {"reason": reason}
             canned = lambda: action_phrase(  # noqa: E731
-                "action_failed_reason", language, reason=reason
+                "action_failed_reason", language, reason=spoken_reason
             )
         else:
             instruction = situation
@@ -8453,6 +8456,11 @@ class RealtimeVoiceSession:
             await self._publish_turn_completed()
         # Between this boundary and the transcript there is no open turn, yet the
         # user is audibly mid-utterance: no follow-up may take the floor here.
+            # The composer rephrases the English cause itself — but only while
+            # it has a live model. The canned floor gets the cause already in
+            # the turn's language, so a dead flash slot cannot produce the
+            # half-German sentence of 2026-08-20.
+            spoken_reason = localize_failure_reason(reason, language)
         self._user_speech_active = True
         # Do not open the next persisted turn on VAD alone. A cancelled provider
         # response can still emit response.done after barge-in; opening here would

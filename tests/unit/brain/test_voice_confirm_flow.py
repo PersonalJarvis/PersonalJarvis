@@ -162,7 +162,9 @@ async def test_confirmed_failure_names_the_reason() -> None:
     mgr = _manager(_ReasonExecutor())
     _arm(mgr, uuid4())
     out = await mgr._resume_voice_confirm("ja")
-    assert "Gmail is not connected" in out
+    # Spoken in the pending turn's language, so assert the fact:
+    assert "Gmail" in out
+    assert "Plugins" in out
 
 
 @pytest.mark.asyncio
