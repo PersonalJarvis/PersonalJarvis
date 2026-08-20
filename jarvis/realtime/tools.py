@@ -652,6 +652,7 @@ class RealtimeToolBridge:
         if self._vetoed_tool == name:
             return name, {
                 "success": False,
+                "blocked": True,
                 "error": "The user declined this action. Do not ask again in this turn.",
             }
         validation_error = self._validate_arguments(descriptor, arguments)
@@ -661,7 +662,17 @@ class RealtimeToolBridge:
 
         guard_error = await self._guard(descriptor, name, arguments)
         if guard_error:
-            return name, {"success": False, "error": guard_error}
+            # ``blocked`` separates a POLICY decision from a broken tool. The
+            # error text here is an instruction addressed to the model ("Answer
+            # the user's turn directly yourself, right now, inline") — the voice
+            # layer must never read it out, and must never let it become the
+            # spoken outcome of the turn. Live forensic 2026-08-20 13:41:24: a
+            # spawn_worker block was the LAST result of a two-tool turn, so the
+            # readback took its unspeakable text, fell through to the stock
+            # "that didn't work", and the turn ended with the calendar reason
+            # from the FIRST tool never spoken. See
+            # ``RealtimeVoiceSession._direct_tool_fallback_text``.
+            return name, {"success": False, "blocked": True, "error": guard_error}
 
         pending = self._pending
         if pending is not None and pending.tool_name == name:

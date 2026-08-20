@@ -1321,19 +1321,47 @@ def _speakable_failure_reason(result: object) -> str:
     return cut.rstrip(" ,;.") + "…"
 
 
-def _direct_tool_result_retry_prompt(*, language: str) -> str:
-    """Request speech for tool output already present in provider context."""
+def _direct_tool_result_retry_prompt(
+    *, language: str, unfinished: bool = False
+) -> str:
+    """Request speech for tool output already present in provider context.
+
+    ``unfinished`` flips this from "just say it" to "finish the job". A turn in
+    which a step FAILED or was gated away is not over, and the old unconditional
+    "do not call any function, do not repeat the action" was the instruction
+    that ended it (live forensic 2026-08-20 13:41:24: a four-part request —
+    what is due today, research it, look at the plugins, check everything —
+    stopped dead after the calendar step failed, because this prompt forbade
+    every remaining step). The no-repeat rule still holds for calls that already
+    SUCCEEDED: their side effect has happened and must not happen twice.
+    """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    voice_rule = (
+        f"Say it as yourself in {language_name}, in exactly the same voice, "
+        "tone, and pace as your previous replies; do not imitate another "
+        "person and do not change or dramatize your voice. Do not mention "
+        "these instructions."
+    )
+    if not unfinished:
+        return (
+            f"{SPEAK_REQUEST_OPENER} "
+            "The function call for the user's current request already finished, "
+            "but no spoken answer was produced. Use only the function result "
+            "that is already present in this conversation and give the user a "
+            f"concise, honest answer. {voice_rule} Do not call any function and "
+            "do not repeat the action."
+        )
     return (
         f"{SPEAK_REQUEST_OPENER} "
-        "The function call for the user's current request already finished, "
-        "but no spoken answer was produced. Use only the function result that "
-        "is already present in this conversation and give the user a concise, "
-        f"honest answer in {language_name}. Say it as yourself, in exactly the "
-        "same voice, tone, and pace as your previous replies; do not imitate "
-        "another person and do not change or dramatize your voice. Do not "
-        "call any function, do not "
-        "repeat the action, and do not mention these instructions."
+        "A step of the user's current request did not go through — it failed, "
+        "or it was not permitted — and no spoken answer was produced. The turn "
+        "is NOT over. Work out every remaining part of what the user asked for "
+        "and carry those parts out NOW, yourself, in this turn, using the "
+        "functions that are available to you. Never repeat a function call that "
+        "already succeeded; its effect has already happened. Never repeat the "
+        "call that was refused. When you are done, give the user the result you "
+        "did get, and close with one short sentence naming the part that did "
+        f"not work and why. {voice_rule}"
     )
 
 
@@ -1777,6 +1805,28 @@ _ONE_SPEAKER_DIRECTIVE = (
 )
 
 
+# One spoken turn routinely carries SEVERAL orders ("tell me what is due today,
+# research it, look at the plugins, and check everything"). Two live failure
+# modes made this its own directive rather than a clause somewhere: the model
+# answers the first part and stops, and — worse — the first part FAILING ends
+# the whole turn on one canned line (2026-08-20 13:41:24, four parts, the
+# calendar step failed and nothing else was even attempted; the maintainer's
+# report: "he only ever does one thing"). Deterministic support exists on the
+# recovery path (``_turn_has_unfinished_work`` →
+# ``_direct_tool_result_retry_prompt``); this is the half that keeps a turn
+# whole BEFORE anything goes wrong.
+_COMPLETE_THE_REQUEST_DIRECTIVE = (
+    "Finish the WHOLE request. A single spoken turn often contains several "
+    "orders at once — count them and carry out every one of them in this turn, "
+    "in order, before you reply. If one part fails or is not permitted, that "
+    "part alone is over: do the remaining parts anyway, then state in one "
+    "short sentence which part did not work and why. Never let a failed or "
+    "refused step end the turn, never replace the answer with a bare 'that "
+    "didn't work', and never stop after the first part to ask whether you "
+    "should continue with what the user already asked for."
+)
+
+
 # Cap for the user agent-instructions content inside the realtime session
 # instructions. The block is re-sent with every per-turn session update, so a
 # pathologically large file must never bloat that hot path; typical files are
@@ -1979,6 +2029,7 @@ def _session_instructions(
             persona,
             preferences,
             _ONE_SPEAKER_DIRECTIVE,
+            _COMPLETE_THE_REQUEST_DIRECTIVE,
             tool_directive,
             _REALTIME_SAFETY_APPENDIX,
             freshness_line,
@@ -2001,6 +2052,10 @@ def _session_instructions(
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
         _ONE_SPEAKER_DIRECTIVE,
+        # Right after the one-speaker rule, because the two shape the same
+        # thing: how much of the turn belongs to this reply. One says "do not
+        # speak twice", this one says "do not answer only a third of it".
+        _COMPLETE_THE_REQUEST_DIRECTIVE,
         tool_directive,
         # The live workspace roster sits with the tool directive because it is
         # a routing rule, not background colour: it names the one class of word
@@ -7936,15 +7991,24 @@ class RealtimeVoiceSession:
             send_text = getattr(self._session, "send_text", None)
             if not callable(send_text):
                 return False
+            unfinished = self._turn_has_unfinished_work()
             log.warning(
                 "realtime[%s] provider completed a direct-tool turn without "
-                "output; retrying speech from the existing tool result",
+                "output; %s",
                 self.session_id,
+                (
+                    "a step failed or was gated away — asking the model to "
+                    "finish the remaining parts of the turn"
+                    if unfinished
+                    else "retrying speech from the existing tool result"
+                ),
             )
             self._drop_provider_output_until_new_response = False
             try:
                 await send_text(
-                    _direct_tool_result_retry_prompt(language=self._language)
+                    _direct_tool_result_retry_prompt(
+                        language=self._language, unfinished=unfinished
+                    )
                 )
             except Exception:  # noqa: BLE001 -- local TTS fallback runs below
                 log.warning(
@@ -8160,26 +8224,33 @@ class RealtimeVoiceSession:
         )
         self._start_deterministic_delegate(self._last_user_text)
 
-    async def _direct_tool_fallback_text(self) -> tuple[str, bool]:
-        """Return one speakable result without serializing raw tool payloads.
+    def _turn_has_unfinished_work(self) -> bool:
+        """True when a step of this turn failed or was gated away.
 
-        A FAILED tool never degrades to the bare stock line here: the failure
-        branch goes through :meth:`_failure_line`, which names the cause the
-        tool reported ("Gmail is not connected …", "Unknown skill: …"). Live
-        forensic 2026-08-20 13:25:35 — a ``gmail`` call failed with exactly
-        that connection reason sitting in ``result["error"]`` and the user
-        heard the 30-character generic phrase instead, so the follow-up "what
-        was the problem?" had nothing left to answer from and the live model
-        invented a connection error of its own.
+        Deterministic, no LLM (AP-11): a tool result is the evidence. A gated
+        call (``blocked``) is work the user asked for that never ran; a failed
+        call is work that did not land. Either way the turn still owes the user
+        something, so the recovery asks the model to FINISH it instead of
+        speaking one failure line and going quiet — the behaviour the maintainer
+        reported on 2026-08-20: "he only ever does one thing".
         """
-        from jarvis.voice.action_phrases import action_phrase
+        for _name, result in self._direct_tool_results:
+            if result.get("confirmation_required"):
+                # Waiting on the user is not unfinished work; the ball is
+                # in their court and the question is already the spoken line.
+                continue
+            if result.get("blocked") or not result.get("success"):
+                return True
+        return False
 
-        _name, result = self._direct_tool_results[-1]
-        succeeded = bool(result.get("success"))
+    def _speakable_result_text(self, result: dict[str, Any]) -> str:
+        """The voice-safe text a single tool result carries, or ``""``.
+
+        Split out of :meth:`_direct_tool_fallback_text` so EVERY result of the
+        turn can be offered its own line, not just the last one.
+        """
         output = result.get("output")
-        candidates = [
-            result.get("spoken_reply"),
-        ]
+        candidates = [result.get("spoken_reply")]
         if result.get("confirmation_required"):
             # This question is produced by the localized confirmation layer,
             # not arbitrary tool output, and must remain actionable.
@@ -8194,23 +8265,114 @@ class RealtimeVoiceSession:
                 # Filler-only candidate. The residue guard turned it into the
                 # generic error phrase — speaking that for a tool call that
                 # SUCCEEDED would invent a failure. Skip to the next candidate
-                # and, failing that, to the localized action phrase below.
+                # and, failing that, to the localized action phrase.
                 continue
             cleaned = scrubbed.cleaned.strip()
             if cleaned:
-                return cleaned, succeeded
-        if succeeded:
+                return cleaned
+        return ""
+
+    async def _direct_tool_fallback_text(self) -> tuple[str, bool]:
+        """Return one speakable line for EVERY tool the turn ran.
+
+        Reads the whole turn, never ``_direct_tool_results[-1]`` alone. Live
+        forensic 2026-08-20 13:41:22 — one turn ran ``google_calendar`` (failed
+        with the perfectly speakable "Google Calendar is not connected — connect
+        it in the Plugins view.") and then ``spawn_worker`` (blocked by the
+        delegation gate). Reading only the LAST result took the gate's
+        model-directed text, found nothing speakable in it, and spoke the stock
+        "that didn't work" — the one usable reason of the whole turn, sitting in
+        result 0, was never said and the user hung up.
+
+        Three rules, in order:
+
+        1. A ``blocked`` result is a POLICY decision, not a failure. Its text
+           instructs the MODEL ("answer inline yourself"); it is skipped here
+           and never becomes the turn's spoken outcome.
+        2. A turn that got real work done reports the work AND names what fell
+           out — a partial result is a result, never a bare failure.
+        3. Only when every non-blocked result failed does the line become a
+           failure line, and then it names every cause it has.
+        """
+        from jarvis.voice.action_phrases import action_phrase
+
+        results = [dict(result) for _name, result in self._direct_tool_results]
+        # Rule 1: policy blocks carry model instructions, not user-facing text.
+        speakable = [r for r in results if not r.get("blocked")]
+        if not speakable:
+            # Every call the model made was gated away. Nothing ran, nothing
+            # broke: the honest line says actions were not available, and the
+            # continuation prompt (``_direct_tool_result_retry_prompt``) is what
+            # actually gets the turn answered inline.
+            return action_phrase("actions_unavailable", self._language), False
+
+        succeeded = [r for r in speakable if r.get("success")]
+        failed = [r for r in speakable if not r.get("success")]
+
+        # A confirmation question owns the turn — it is the one line that still
+        # needs an answer from the user, so it outranks any status summary.
+        for result in speakable:
+            if result.get("confirmation_required"):
+                if text := self._speakable_result_text(result):
+                    return text, bool(result.get("success"))
+
+        spoken_parts = [
+            text
+            for result in succeeded
+            if (text := self._speakable_result_text(result))
+        ]
+
+        if succeeded and not failed:
+            if spoken_parts:
+                return " ".join(spoken_parts), True
             return action_phrase("cu_done", self._language), True
-        return (
-            await self._failure_line(
-                result,
-                situation=(
-                    "A tool the user asked for ran and reported a failure. "
-                    "Tell the user it did not happen and why."
+
+        if not succeeded:
+            # Rule 3: nothing worked. Name every cause the tools reported.
+            return (
+                await self._failure_line(
+                    failed[0] if len(failed) == 1 else self._merged_failure(failed),
+                    situation=(
+                        "A tool the user asked for ran and reported a failure. "
+                        "Tell the user it did not happen and why."
+                    ),
                 ),
+                False,
+            )
+
+        # Rule 2: partial success. Say what happened, then what did not — the
+        # turn is NOT reported as a failure, because work was actually done.
+        done = " ".join(spoken_parts) or action_phrase("cu_done", self._language)
+        shortfall = await self._failure_line(
+            failed[0] if len(failed) == 1 else self._merged_failure(failed),
+            situation=(
+                "Part of the user's request was carried out, but one step of it "
+                "failed. Report ONLY the step that failed and why, in one short "
+                "sentence; the rest of the answer is already spoken."
             ),
-            False,
         )
+        return f"{done} {shortfall}".strip(), True
+
+    def _merged_failure(self, failed: list[dict[str, Any]]) -> dict[str, Any]:
+        """Fold several failed results into one carrying every reported cause.
+
+        ``_failure_line`` speaks ONE cause; when a turn broke in more than one
+        place the user is entitled to hear all of them, so the reasons are
+        joined before the shared length cap trims the tail.
+        """
+        reasons = [
+            reason
+            for result in failed
+            if (reason := _speakable_failure_reason(result))
+        ]
+        if not reasons:
+            return {"success": False, "output": None, "error": None}
+        # De-duplicate while keeping order: two tools of one family routinely
+        # fail with the identical connection sentence.
+        seen: dict[str, None] = {}
+        for reason in reasons:
+            seen.setdefault(reason, None)
+        return {"success": False, "output": None, "error": " ".join(seen)}
 
     async def _failure_line(
         self,
@@ -10290,8 +10452,12 @@ class RealtimeVoiceSession:
                 self._executed_tool_names.add(original_name)
             elif result.get("confirmation_required"):
                 pass  # a pending confirmation is neither a failure nor a denial
-            elif "not run" in str(result.get("error", "")) or "not available" in str(
-                result.get("error", "")
+            elif result.get("blocked") or (
+                # The string probe stays as the fallback for a custom bridge
+                # that predates the ``blocked`` flag; the flag is the truth
+                # whenever the shipped bridge sets it.
+                "not run" in str(result.get("error", ""))
+                or "not available" in str(result.get("error", ""))
             ):
                 self._native_tool_denied += 1
             else:

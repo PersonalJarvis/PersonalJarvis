@@ -1136,6 +1136,7 @@ class ToolUseLoop:
                     )
                     tool_result_payload = {
                         "success": False,
+                        "blocked": True,
                         "output": None,
                         "error": (
                             "spawn_worker was not executed: the user is talking "
@@ -1163,8 +1164,19 @@ class ToolUseLoop:
                         "guard: no explicit delegation request — spawn not executed",
                         tid,
                     )
+                    # ``blocked`` marks a POLICY decision, never a broken tool.
+                    # Two readers, both real: the MODEL sees it in the tool
+                    # result JSON below and can tell "not permitted" from
+                    # "broken" (a broken tool is worth retrying, a gated one
+                    # never is), and the realtime bridge sets the same flag so
+                    # its voice layer skips the block when it composes the
+                    # turn's spoken outcome. The error text itself is addressed
+                    # to the model and must never be read out (live forensic
+                    # 2026-08-20 13:41:24 — a block became the spoken result of
+                    # the turn and buried the real reason from an earlier call).
                     tool_result_payload = {
                         "success": False,
+                        "blocked": True,
                         "output": None,
                         "error": spawn_blocked_feedback(user_utterance),
                     }
@@ -1192,6 +1204,7 @@ class ToolUseLoop:
                     )
                     tool_result_payload = {
                         "success": False,
+                        "blocked": True,
                         "output": None,
                         "error": CU_BLOCKED_MODEL_FEEDBACK,
                     }
@@ -1211,6 +1224,7 @@ class ToolUseLoop:
                     )
                     tool_result_payload = {
                         "success": False,
+                        "blocked": True,
                         "output": None,
                         "error": (
                             f"Tool '{tool_name}' NOT executed: {stt_reason}. "
@@ -1241,6 +1255,7 @@ class ToolUseLoop:
                     )
                     tool_result_payload = {
                         "success": False,
+                        "blocked": True,
                         "output": None,
                         "error": (
                             f"Tool '{tool_name}' was not executed: the utterance "

@@ -370,6 +370,11 @@ async def test_conversational_turn_blocks_realtime_spawn():
     assert result["success"] is False
     assert "did not explicitly ask" in result["error"]
     assert executor.execute_calls == []
+    # A guard decision is NOT a broken tool. Without this flag the voice layer
+    # reads the block as the turn's failure and speaks a stock line, throwing
+    # away the real reason an earlier tool reported (live 2026-08-20 13:41:24 —
+    # see tests/unit/realtime/test_multi_step_turn_is_finished.py).
+    assert result["blocked"] is True
 
 
 @pytest.mark.asyncio
