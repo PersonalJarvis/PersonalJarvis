@@ -74,6 +74,25 @@ versioning per [SemVer](https://semver.org/).
   never becomes an app after twenty, and a second failure paints what went
   wrong plus a Reload button instead of staying dark. The guard is released as
   soon as the app is up, so a later rebuild in the same session still heals.
+- **A granted macOS permission stops reading as missing.** Every start warned
+  that permissions were off, and the pane the warning linked to showed them
+  on. Three things kept that loop alive. Opening System Settings for Screen
+  Recording, Accessibility or Input Monitoring flagged a pending restart even
+  when nothing there needed changing, and nothing but quitting the app ever
+  cleared it — while it stood, Computer-Use and the global hotkeys were really
+  switched off with every grant in place. "Ask again", which clears this app's
+  own record so macOS asks once more, appeared only for a permission macOS
+  reported as denied; the two probes that strand most often report a lost
+  grant as plain "not granted", so the one way out was invisible, and the
+  app-wide banner carried no such button at all. And a request macOS silently
+  swallowed still promised that a restart would help. A pending restart now
+  dies the moment a probe sees the grant, the reset is offered wherever it can
+  help and explained in words, and a swallowed request says so. Underneath,
+  the app is only ad-hoc signed, so any rebuild of its bundle makes it a
+  stranger to macOS and drops every grant: that rebuild now logs why it
+  happened, says in the permissions view why it is asking again, and — when
+  rebuilds recur — no longer wipes the permissions a second time before you
+  have answered the first (BUG-159).
 - **The deck opens on the board, and the waiting screen is gone.** Starting
   the app left you on a standby ring under a big "Say 'Hey Nova'", with
   nothing to look at until you spoke. That screen has been cut. The start is
