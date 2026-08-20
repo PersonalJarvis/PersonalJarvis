@@ -606,6 +606,15 @@ class SkillCreatorService:
                     raise
                 last_error = exc
                 continue
+            # The KEY is the slug; what the ANSWER says is the model's display
+            # name. Reporting the slug back made a spoken confirmation read
+            # "morgenroutine" for a user who had just said "Morgenroutine" —
+            # the docstring's promise is a name the answer reports, and a slug
+            # is an identifier, not a name. A collision suffix is carried over
+            # so the second skill is not announced as the first.
+            spoken_name = raw_name or draft["name"]
+            if attempt > 1:
+                spoken_name = f"{spoken_name} {attempt}"
             return AuthoredSkill(
                 skill=skill,
                 result=SkillCreatorResult(
@@ -615,7 +624,7 @@ class SkillCreatorService:
                     brain_used=True,
                     brain_source=result.brain_source,
                 ),
-                name=draft["name"],
+                name=spoken_name,
                 slug=slugify(draft["name"]),
             )
         assert last_error is not None

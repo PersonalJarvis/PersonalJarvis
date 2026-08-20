@@ -196,6 +196,11 @@ def render_available_skills_section(
     return f"{header}\n{intro}\n{body}{outro}"
 
 
+#: Per-entry cap for a candidate blurb, applied inside the renderer so both
+#: callers get the same bound rather than each truncating to its own taste.
+_CANDIDATE_BLURB_CHARS = 400
+
+
 def render_skill_candidate_hint(entries: Sequence[tuple[str, str]]) -> str:
     """The "these scored, you decide" block for a turn nothing captured.
 
@@ -206,14 +211,25 @@ def render_skill_candidate_hint(entries: Sequence[tuple[str, str]]) -> str:
     drift, and a hint that says something different depending on which engine
     is running is worse than one that is merely imperfect.
 
-    ``entries`` is ``(skill_name, blurb)``, best first and already truncated by
-    the caller. Returns ``""`` for an empty list so callers can append blindly.
+    ``entries`` is ``(skill_name, blurb)``, best first. Returns ``""`` for an
+    empty list so callers can append blindly.
+
+    Whitespace is flattened HERE, not in the callers. ``when_to_use`` is
+    routinely a YAML block scalar, so its text arrives with real newlines; a
+    caller that forgot to collapse them let a skill's own frontmatter emit
+    extra ``- `name` — …`` lines inside this block and forge candidates that
+    were never ranked. One renderer with one normalization is the whole point
+    of sharing it.
 
     The decision explicitly stays with the model: a wrong candidate is ignored,
     never executed. That is what makes this block safe to show on a merely
     plausible match, where an automatic capture would not be.
     """
-    lines = [f"- `{name}` — {blurb}" if blurb else f"- `{name}`" for name, blurb in entries]
+    lines = []
+    for name, blurb in entries:
+        flat_name = " ".join(str(name or "").split())
+        flat_blurb = " ".join(str(blurb or "").split())[:_CANDIDATE_BLURB_CHARS]
+        lines.append(f"- `{flat_name}` — {flat_blurb}" if flat_blurb else f"- `{flat_name}`")
     if not lines:
         return ""
     return (
@@ -235,6 +251,15 @@ _REALTIME_RICH_CHARS = 300
 
 #: Per-entry budget for the SHORT tier — description only, no matching rule.
 _REALTIME_DESC_CHARS = 70
+
+
+#: ``(id(registry), generation, compact, budget) -> block``. The roster only
+#: changes when the registry reloads, but it is rebuilt for every per-turn
+#: session update on a live call, at three call sites. Keyed on the reload
+#: counter the registry publishes for exactly this (``SkillRegistry.generation``),
+#: the same convention ``jarvis.skills.relevance.get_index`` already uses.
+#: Single-entry: one live session has one registry and one profile.
+_REALTIME_ROSTER_CACHE: dict[tuple[int, int, bool, int], str] = {}
 
 
 def render_realtime_skills_directive(
@@ -269,28 +294,30 @@ def render_realtime_skills_directive(
     Returns ``""`` when no skill is invocable, so the caller can drop the
     block from the instruction assembly entirely.
     """
+    generation = getattr(registry, "generation", None)
+    cache_key: tuple[int, int, bool, int] | None = None
+    if isinstance(generation, int):
+        cache_key = (id(registry), generation, bool(compact), int(budget_chars))
+        cached = _REALTIME_ROSTER_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
     try:
         active = registry.list_active()
     except Exception:  # noqa: BLE001 — a roster fault must never break a call
         return ""
-    # (name, rich blurb, short blurb, is_builtin)
+    # (name, full rich blurb, description only, is_builtin) — untruncated here;
+    # the width is chosen below against the budget.
     entries: list[tuple[str, str, str, bool]] = []
     for skill in active:
         fm = getattr(skill, "frontmatter", None)
         if fm is None:
             continue
-        name = str(skill.name)
+        name = " ".join(str(skill.name).split())
         if not name:
             continue
         desc = " ".join((getattr(fm, "description", "") or "").split())
         when = " ".join((getattr(fm, "when_to_use", "") or "").split())
-        rich = f"{desc} {when}".strip()
-        if len(rich) > _REALTIME_RICH_CHARS:
-            rich = rich[: _REALTIME_RICH_CHARS - 1].rstrip() + "…"
-        short = desc
-        if len(short) > _REALTIME_DESC_CHARS:
-            short = short[: _REALTIME_DESC_CHARS - 1].rstrip() + "…"
-        entries.append((name, rich, short, _is_builtin(skill)))
+        entries.append((name, f"{desc} {when}".strip(), desc, _is_builtin(skill)))
     if not entries:
         return ""
 
@@ -310,15 +337,36 @@ def render_realtime_skills_directive(
         "that merely mentions the topic is not a match."
     )
 
+    def _finish(block: str) -> str:
+        if cache_key is not None:
+            _REALTIME_ROSTER_CACHE.clear()
+            _REALTIME_ROSTER_CACHE[cache_key] = block
+        return block
+
+    def _clip(text: str, cap: int) -> str:
+        return text if len(text) <= cap else text[: cap - 1].rstrip() + "…"
+
+    def _block(index: int, cap: int) -> str:
+        listed = "\n".join(
+            f"- {entry[0]} — {_clip(entry[index], cap)}"
+            if entry[index]
+            else f"- {entry[0]}"
+            for entry in entries
+        )
+        return f"{header}{listed}{rule}"
+
     if not compact:
-        for index in (1, 2):  # 1 = rich blurb, 2 = short blurb
-            listed = "\n".join(
-                f"- {name} — {entry[index]}" if entry[index] else f"- {name}"
-                for entry in entries
-                for name in (entry[0],)
-            )
-            block = f"{header}{listed}{rule}"
+        # Narrow the blurbs before dropping them. The earlier version tried one
+        # rich width and then fell straight to description-only, so a corpus
+        # merely a few hundred characters over budget demoted EVERY skill to
+        # the 70-char description this whole renderer exists to get away from.
+        # Width degrades; the matching rule survives as long as it can.
+        for cap in (_REALTIME_RICH_CHARS, 200, 140):
+            block = _block(1, cap)
             if len(block) <= budget_chars:
-                return block
-    names_only = ", ".join(name for name, _, _, _ in entries)
-    return f"{header}{names_only}{rule}"
+                return _finish(block)
+        block = _block(2, _REALTIME_DESC_CHARS)
+        if len(block) <= budget_chars:
+            return _finish(block)
+    names_only = ", ".join(entry[0] for entry in entries)
+    return _finish(f"{header}{names_only}{rule}")

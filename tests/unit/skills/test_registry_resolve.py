@@ -137,12 +137,22 @@ def test_resolve_prefers_the_live_user_skill_over_a_disabled_builtin(
 
 
 def test_resolve_is_deterministic_under_an_ambiguous_name(tmp_path: Path) -> None:
-    """Two skills folding to the same tokens always resolve to the same one,
-    never to whichever the dict happened to yield first."""
-    _write(tmp_path, "a-thing", "Focus Mode")
+    """Two skills folding to the same tokens resolve to a NAMED one.
+
+    Asserting only that twenty calls agree proves nothing: Python's dict order
+    is stable within a process, so a resolver that iterated ``_skills`` with no
+    ordering at all would pass that. The property is that the answer is decided
+    by the documented sorted-name rule — "Focus Mode" sorts before "focus-mode"
+    (uppercase first), so it wins regardless of insertion order.
+    """
+    # Written in the reverse of the expected winner, so insertion order and
+    # sort order disagree and only the sort can produce the assertion below.
     _write(tmp_path, "b-thing", "focus-mode")
+    _write(tmp_path, "a-thing", "Focus Mode")
     reg = SkillRegistry(tmp_path)
     reg.reload_sync()
+
+    assert reg.resolve("focus mode").name == "Focus Mode"
 
     first = reg.resolve("focus mode").name
     assert all(reg.resolve("focus mode").name == first for _ in range(20))

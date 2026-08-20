@@ -36,12 +36,17 @@ class FakeSession:
         self.text_inputs = []
         self.interrupts = 0
         self.closed = False
+        #: Events the session actually pulled off the stream. The direct
+        #: measure of "the pump kept pumping" — a pump blocked on a tool
+        #: call stops consuming, and nothing else in this double shows that.
+        self.received = []
 
     async def send_audio(self, chunk):
         self.sent_audio.append(chunk)
 
     async def receive(self):
         for ev in self._events:
+            self.received.append(ev)
             yield ev
             await asyncio.sleep(0)
 
@@ -6438,17 +6443,21 @@ async def test_delegate_does_not_block_pump():
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
     await sess.wait_finished()
 
-    # The pump processed the later events while the brain turn still hangs —
-    # ``wait_finished`` returned with the gate still closed, and the transcript
-    # that arrived after the tool call was surfaced.
+    # The pump consumed the event AFTER the tool call while the brain turn is
+    # still hanging. That is the whole claim in the test's name, and it is the
+    # only assertion that carries it: a pump blocked at the tool call would
+    # have stopped at two events.
     #
-    # This used to assert an ASSISTANT transcript. It cannot any more, and that
-    # is the correct behaviour, not a regression: provider chatter is held
-    # while a delegate is pending, so the user does not hear a fresh-
-    # conversation filler over the real answer being computed (live 2026-07-17
-    # 09:23, the incident test_presence_check_during_pending_action… guards).
-    # What this test is about is that the delegate does not BLOCK the pump.
-    assert any(m.get("type") == "transcript" for m in jsons)
+    # This used to assert an ASSISTANT transcript reached the surface. It
+    # cannot any more, and that is correct behaviour rather than a regression:
+    # provider chatter is held while a delegate is pending, so the user does
+    # not hear a fresh-conversation filler over the real answer being computed
+    # (live 2026-07-17 09:23, which test_presence_check_during_pending_action…
+    # guards). Weakening the assertion to "some transcript exists" was worse
+    # than either — the user's own input transcript arrives BEFORE the tool
+    # call, so it stayed green even if the pump stopped dead there.
+    assert len(provider.session.received) == 3
+    assert provider.session.received[-1].type == "output_transcript_delta"
     assert provider.session.tool_results == []
 
     gate.set()

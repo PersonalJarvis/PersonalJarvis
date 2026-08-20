@@ -2458,6 +2458,9 @@ class RealtimeVoiceSession:
         #: ``_skill_directive``. The delegate reads it to avoid handing the
         #: brain a skill this session already put in front of the model.
         self._skill_inlined_for: tuple[str, str] | None = None
+        #: ``(utterance, MatchDecision)`` — one skill evaluation per utterance,
+        #: shared by the inline injection, the NARROW hint and the delegate.
+        self._skill_decision_cache: tuple[str, Any] | None = None
         # Live caption of the CURRENT unfinished utterance. Surfaces render
         # it; persistence never does unless the promotion path says so
         # explicitly (a mid-word partial silently recorded as the turn's
@@ -2854,14 +2857,10 @@ class RealtimeVoiceSession:
             # This session already put the skill in front of the model.
             return
         try:
-            from jarvis.skills.match_eval import BAND_FIRE, evaluate_match
-            from jarvis.skills.skill_context import try_get_skill_context
+            from jarvis.skills.match_eval import BAND_FIRE
 
-            context = try_get_skill_context()
-            if context is None:
-                return
-            decision = evaluate_match(context.registry, utterance, limit=2)
-            if decision.band != BAND_FIRE or decision.top is None:
+            decision = self._skill_decision(utterance)
+            if decision is None or decision.band != BAND_FIRE or decision.top is None:
                 return
             skill_name = str(decision.top.skill_name)
             note(skill_name, content="", source="realtime_match")
@@ -2897,7 +2896,7 @@ class RealtimeVoiceSession:
         if not utterance:
             return ""
         try:
-            from jarvis.skills.match_eval import BAND_NARROW, evaluate_match
+            from jarvis.skills.match_eval import BAND_NARROW
             from jarvis.skills.prompt_injection import render_skill_candidate_hint
             from jarvis.skills.skill_context import try_get_skill_context
 
@@ -2905,8 +2904,8 @@ class RealtimeVoiceSession:
             if context is None:
                 return ""
             limit = max(1, int(getattr(self._skills_cfg(), "narrow_candidates", 3)))
-            decision = evaluate_match(context.registry, utterance, limit=limit + 2)
-            if decision.band != BAND_NARROW:
+            decision = self._skill_decision(utterance)
+            if decision is None or decision.band != BAND_NARROW:
                 return ""
             entries: list[tuple[str, str]] = []
             for candidate in decision.candidates or ():
@@ -2941,12 +2940,57 @@ class RealtimeVoiceSession:
 
     def _skills_cfg(self) -> Any:
         """The ``[skills]`` config section, or defaults."""
-        section = getattr(self._config, "skills", None)
+        section = getattr(getattr(self, "_config", None), "skills", None)
         if section is not None:
             return section
         from jarvis.core.config import SkillsConfig
 
         return SkillsConfig()
+
+    def _skill_decision(self, text: str) -> Any | None:
+        """The skill match for ``text`` — evaluated once, reused for the turn.
+
+        Three call sites ask the same question about the same sentence on the
+        same turn (inline injection, the NARROW hint, and the delegate
+        hand-off), and the first two sit in the same ``update_session`` payload.
+        Scoring the corpus three times per turn on the live-voice hot path buys
+        nothing, so the answer is computed once and cached against the
+        utterance it was computed for.
+
+        Every ``[skills]`` knob travels with it. Reading only some of the
+        section is a silent config switch (CLAUDE.md §7).
+        """
+        key = str(text or "").strip()
+        if not key:
+            return None
+        # ``getattr`` rather than direct access: the cache is an optimisation,
+        # not a contract, and the bound-method test doubles in
+        # tests/unit/realtime carry only the collaborators a method needs.
+        cached = getattr(self, "_skill_decision_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        try:
+            from jarvis.skills.match_eval import evaluate_match
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            context = try_get_skill_context()
+            if context is None:
+                return None
+            cfg = self._skills_cfg()
+            limit = max(3, int(getattr(cfg, "narrow_candidates", 3)) + 2)
+            decision = evaluate_match(
+                context.registry,
+                key,
+                limit=limit,
+                use_relevance=bool(getattr(cfg, "relevance_enabled", True)),
+                fire_threshold=getattr(cfg, "fire_threshold", None),
+                hint_threshold=getattr(cfg, "hint_threshold", None),
+            )
+        except Exception:  # noqa: BLE001 — a match fault must never end a call
+            log.debug("Realtime skill match unavailable", exc_info=True)
+            return None
+        self._skill_decision_cache = (key, decision)
+        return decision
 
     def _skills_directive(self, *, compact: bool | None = None) -> str:
         """The installed-skill roster for this session's instructions.
@@ -3020,7 +3064,7 @@ class RealtimeVoiceSession:
             return ""
         try:
             from jarvis.skills.autofire_policy import CLASS_INSTRUCTION, classify
-            from jarvis.skills.match_eval import BAND_FIRE, evaluate_match
+            from jarvis.skills.match_eval import BAND_FIRE
             from jarvis.skills.schema import SkillInvoked
             from jarvis.skills.skill_context import try_get_skill_context
         except Exception:  # noqa: BLE001
@@ -3032,8 +3076,8 @@ class RealtimeVoiceSession:
             context = try_get_skill_context()
             if context is None:
                 return ""
-            decision = evaluate_match(context.registry, text, limit=2)
-            if decision.band != BAND_FIRE or decision.top is None:
+            decision = self._skill_decision(text)
+            if decision is None or decision.band != BAND_FIRE or decision.top is None:
                 return ""
             skill = context.registry.get(decision.top.skill_name)
         except Exception:  # noqa: BLE001
@@ -3116,17 +3160,15 @@ class RealtimeVoiceSession:
         installed skill produced no skill reason and never reached the
         orchestrator that could run it.
 
-        This is an O(1) cache read keyed on the registry's reload counter — the
-        index is built lazily on first use, never here on the hot path (AP-26).
+        Delegates to the one implementation in ``jarvis.skills.skill_context``
+        so this and the execute-time tool guard cannot answer the same sentence
+        differently. A cache read keyed on the registry's reload counter; only
+        the first call after a hot reload pays for the rebuild.
         """
         try:
-            from jarvis.skills.relevance import get_index
-            from jarvis.skills.skill_context import try_get_skill_context
+            from jarvis.skills.skill_context import current_match_index
 
-            context = try_get_skill_context()
-            if context is None:
-                return None
-            return get_index(context.registry)
+            return current_match_index()
         except Exception:  # noqa: BLE001 — planning keeps its static fallbacks
             log.debug("Realtime skill match index unavailable", exc_info=True)
             return None
@@ -8414,6 +8456,11 @@ class RealtimeVoiceSession:
         if reason:
             instruction = f"{situation} The reason reported was: {reason}"
             facts: dict[str, object] | None = {"reason": reason}
+            # The composer rephrases the English cause itself — but only while
+            # it has a live model. The canned floor gets the cause already in
+            # the turn's language, so a dead flash slot cannot produce the
+            # half-German sentence of 2026-08-20.
+            spoken_reason = localize_failure_reason(reason, language)
             canned = lambda: action_phrase(  # noqa: E731
                 "action_failed_reason", language, reason=spoken_reason
             )
@@ -8456,11 +8503,6 @@ class RealtimeVoiceSession:
             await self._publish_turn_completed()
         # Between this boundary and the transcript there is no open turn, yet the
         # user is audibly mid-utterance: no follow-up may take the floor here.
-            # The composer rephrases the English cause itself — but only while
-            # it has a live model. The canned floor gets the cause already in
-            # the turn's language, so a dead flash slot cannot produce the
-            # half-German sentence of 2026-08-20.
-            spoken_reason = localize_failure_reason(reason, language)
         self._user_speech_active = True
         # Do not open the next persisted turn on VAD alone. A cancelled provider
         # response can still emit response.done after barge-in; opening here would

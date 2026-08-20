@@ -240,17 +240,24 @@ def normalize_text(text: str) -> str:
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
-_NAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
+#: Any run of word characters except the underscore, which is a separator in a
+#: skill name. Deliberately NOT ``[a-z0-9]+``: that matched nothing in
+#: Cyrillic, Greek, Hebrew, Arabic or CJK, so every fuzzy name lookup below
+#: failed closed for those scripts and a skill authored by voice in such a
+#: language was reachable only by its exact key — the very BUG-158 failure,
+#: left open for most of the world. All locales are equal (CLAUDE.md §1).
+_NAME_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 def skill_name_tokens(name: str) -> tuple[str, ...]:
     """Fold a skill name to the token tuple used to compare names.
 
     ``morning-routine``, ``Morning Routine`` and ``MORNING_ROUTINE`` all fold
-    to ``("morning", "routine")``. Two naming conventions live in one registry
+    to ``("morning", "routine")``; ``Утренняя Рутина`` folds to its own two
+    tokens rather than to nothing. Two naming conventions live in one registry
     keyed by this field — builtins ship kebab-case slugs while the skill
-    creator writes Title Case display names — so every name comparison outside
-    an exact-key read has to go through this.
+    creator writes display names — so every name comparison outside an
+    exact-key read has to go through this.
     """
     return tuple(_NAME_TOKEN_RE.findall(normalize_text(name)))
 

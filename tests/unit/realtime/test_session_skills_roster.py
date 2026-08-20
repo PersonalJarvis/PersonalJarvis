@@ -43,12 +43,17 @@ class _Session:
         self._brain = brain
         self._compact_instructions = compact
         self._skill_inlined_for: tuple[str, str] | None = None
+        self._skill_decision_cache = None
+        self._config = None
         self.session_id = "roster-test"
 
     _skills_directive = session_module.RealtimeVoiceSession._skills_directive
     _note_skill_for_delegate = (
         session_module.RealtimeVoiceSession._note_skill_for_delegate
     )
+    # The one skill evaluation per utterance the directives read.
+    _skill_decision = session_module.RealtimeVoiceSession._skill_decision
+    _skills_cfg = session_module.RealtimeVoiceSession._skills_cfg
 
 
 def _write_skill(
@@ -232,7 +237,6 @@ class _CfgSession(_Session):
 
     def __init__(self, **kw) -> None:
         super().__init__(**kw)
-        self._config = None
 
     def _has_pending_delegate_from_earlier_turn(self) -> bool:
         return False

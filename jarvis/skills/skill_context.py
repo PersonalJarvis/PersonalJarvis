@@ -77,3 +77,34 @@ def try_get_skill_context() -> SkillContext | None:
     wasn't set up, such as in headless mock mode).
     """
     return _CONTEXT
+
+
+def current_match_index() -> object | None:
+    """The deterministic skill index for the live registry, or ``None``.
+
+    The one home for "give the turn planner something to score skills with".
+    The realtime session's routing decision and the execute-time tool guard
+    both need it and must use the SAME vocabulary — two copies of this lookup
+    drift, and a router and a guard that disagree about one sentence is the
+    failure mode both of them exist to prevent (BUG-158).
+
+    A cache read keyed on the registry's reload counter. The index is built
+    lazily on a miss, so the first call after a hot reload does pay for the
+    rebuild; every other call is O(1). Any fault answers "no index", which
+    returns the planner to its static vocabulary rather than raising into a
+    live turn.
+    """
+    try:
+        from jarvis.skills.relevance import get_index
+
+        context = _CONTEXT
+        if context is None:
+            return None
+        return get_index(context.registry)
+    except Exception:  # noqa: BLE001 — planning keeps its static fallbacks
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "skill match index unavailable", exc_info=True
+        )
+        return None

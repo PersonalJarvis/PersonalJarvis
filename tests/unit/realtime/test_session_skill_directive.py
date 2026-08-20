@@ -52,11 +52,16 @@ class _Session:
     def __init__(self, *, pending: bool = False) -> None:
         self._bus = None
         self._pending = pending
+        self._config = None
+        self._skill_decision_cache = None
 
     def _has_pending_delegate_from_earlier_turn(self) -> bool:
         return self._pending
 
     _skill_directive = session_module.RealtimeVoiceSession._skill_directive
+    # The one skill evaluation per utterance that _skill_directive reads.
+    _skill_decision = session_module.RealtimeVoiceSession._skill_decision
+    _skills_cfg = session_module.RealtimeVoiceSession._skills_cfg
 
 
 def _write_skill(

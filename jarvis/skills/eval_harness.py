@@ -24,6 +24,7 @@ from typing import Any
 
 from jarvis.skills.guards import (
     VETO_AUTHORING_REQUEST,
+    VETO_BLOCK_TIER,
     VETO_LIFECYCLE_REQUEST,
     evaluate_guards,
 )
@@ -274,6 +275,18 @@ class Report:
         }
 
 
+def _is_block_tier(skill: Any) -> bool:
+    """Mirrors ``BrainManager._skill_is_blocked`` — the ONLY gate the explicit
+    and authoring channels apply before firing."""
+    frontmatter = getattr(skill, "frontmatter", None)
+    if frontmatter is None:
+        return True
+    try:
+        return frontmatter.risk_policy.default_tier == "block"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _prefer_music_service(
     registry: Any, decision: Any, skill: Any, text: str
 ) -> tuple[Any, Any]:
@@ -291,6 +304,11 @@ def _prefer_music_service(
     """
     from dataclasses import replace as _replace
 
+    # The whole body sits inside the try, the rewrite included: an earlier
+    # version closed it before the two ``_replace`` calls, so a registry double
+    # whose skills are not frozen dataclasses raised straight out of ``_decide``
+    # and aborted the entire run — exactly what the noqa below promises it
+    # cannot do.
     try:
         from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
         from jarvis.core.music_service import resolve_music_service
@@ -307,13 +325,13 @@ def _prefer_music_service(
         )
         if not target or target == plugin_id:
             return decision, skill
+        # ``registry.get`` RAISES on a miss; it never returns None, so there is
+        # no None branch to write here.
         sibling = registry.get(f"plugin-{target}")
+        top = _replace(decision.top, skill_name=sibling.name)
+        return _replace(decision, top=top, candidates=(top,)), sibling
     except Exception:  # noqa: BLE001 — a routing nicety must never break the eval
         return decision, skill
-    if sibling is None:
-        return decision, skill
-    top = _replace(decision.top, skill_name=sibling.name)
-    return _replace(decision, top=top, candidates=(top,)), sibling
 
 
 def _decide(registry: Any, text: str, lang: str = "auto") -> tuple[Any, str]:
@@ -330,18 +348,23 @@ def _decide(registry: Any, text: str, lang: str = "auto") -> tuple[Any, str]:
     from jarvis.skills.authoring_request import resolve_skill_authoring_request
     from jarvis.skills.explicit_request import resolve_explicit_skill_request
 
-    # Channel 0 — the user NAMED a skill. Trigger-grade rights.
+    # Channel 0 — the user NAMED a skill. Trigger-grade rights: production
+    # applies ONLY the block-tier gate here and fires (manager.py:5394-5412),
+    # so running the full guard ladder would re-introduce the same
+    # ladder mismatch this function exists to remove, merely inverted — a
+    # question naming a skill would score `definitional_question` here and
+    # fire in production.
     explicit = resolve_explicit_skill_request(text, registry)
     if explicit is not None:
         explicit_skill, explicit_decision = explicit
-        ladder = evaluate_guards(
-            explicit_skill, user_text=text, evidence=explicit_decision.top.evidence
+        return explicit_decision, (
+            VETO_BLOCK_TIER if _is_block_tier(explicit_skill) else ""
         )
-        return explicit_decision, ladder.vetoed_by
 
     # Channel 0.5 — the user asked to CREATE or MANAGE a skill. Every service
     # named inside such a request is CONTENT, never a command to that service,
-    # so no domain skill may capture even when its brand regex matches.
+    # so no domain skill may capture even when its brand regex matches. Same
+    # block-tier-only gate as Channel 0 (manager.py:5458-5475).
     authoring = resolve_skill_authoring_request(text, registry)
     if authoring is not None:
         if authoring.skill is None or authoring.kind == "lifecycle":
@@ -351,10 +374,9 @@ def _decide(registry: Any, text: str, lang: str = "auto") -> tuple[Any, str]:
                 else VETO_AUTHORING_REQUEST
             )
             return authoring.decision, veto
-        ladder = evaluate_guards(
-            authoring.skill, user_text=text, evidence=authoring.decision.top.evidence
+        return authoring.decision, (
+            VETO_BLOCK_TIER if _is_block_tier(authoring.skill) else ""
         )
-        return authoring.decision, ladder.vetoed_by
 
     # Channel 1/2 — the author's trigger regex, then the relevance scorer.
     decision = evaluate_match(registry, text, lang=lang)
