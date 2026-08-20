@@ -1,0 +1,135 @@
+# Spoken turns that must behave, replayed on every test run.
+#
+# Each entry is one turn: what the user said, which tools succeed, fail, or get
+# refused, and what the reply must (and must not) contain. No model runs — this
+# pins what the SESSION decides, which is where the 2026-08-20 bugs lived.
+#
+# `user` texts are SIMULATED USER UTTERANCES — matching data, not project prose.
+# That is why this file is German-heavy (same rule as the skill-routing golden
+# set).  # i18n-allow: simulated user utterances under test
+#
+# outcome:
+#   succeeded - the tool worked
+#   failed    - the tool broke, `error` is the cause the user is entitled to hear
+#   blocked   - a GUARD refused it; `error` is addressed to the MODEL and must
+#               never be spoken. A block is not a failure.
+#   confirm   - the tool wants a yes/no first
+#
+# expect:
+#   spoken_contains / spoken_excludes - substrings of the whole spoken reply
+#   continues_turn                    - was the model told to finish the rest?
+#   spoken_equals                     - the exact reply, for the strict cases
+
+scenarios:
+  # ---------------------------------------------------------------------
+  # The forensic. Live 2026-08-20 13:41:20-29, session c5863fe0, vertex-live.
+  # ---------------------------------------------------------------------
+  - name: four-orders-and-the-calendar-fails
+    why: >
+      The turn that made the maintainer hang up. Four orders in one breath; the
+      calendar failed with a perfectly speakable cause, the spawn was gated, and
+      the user heard the stock line while three parts were never attempted.
+    language: de
+    user: "sag mir was heute ansteht, recherchier das, schau dir die Plugins an und check alles"
+    tools:
+      - name: google_calendar
+        outcome: failed
+        error: "Google Calendar is not connected — connect it in the Plugins view."
+      - name: spawn_worker
+        outcome: blocked
+        error: >
+          spawn_worker was not executed: the user did not explicitly ask to
+          delegate this to a background agent. Answer the user's turn directly
+          yourself, right now, inline.
+    expect:
+      spoken_contains: ["Google Calendar"]
+      spoken_excludes:
+        - "spawn_worker"
+        - "inline"
+        - "background agent"
+      continues_turn: true
+
+  # ---------------------------------------------------------------------
+  # The class behind it, one axis at a time.
+  # ---------------------------------------------------------------------
+  - name: a-failure-names-its-cause
+    why: "Live 2026-08-20 13:25 — the gmail cause existed and was replaced by the stock line."
+    language: de
+    user: "schau mal in meine mails"
+    tools:
+      - name: gmail
+        outcome: failed
+        error: "Gmail is not connected — connect it in the Plugins view."
+    expect:
+      spoken_contains: ["Gmail"]
+      continues_turn: true
+
+  - name: a-block-alone-is-not-a-breakdown
+    why: "Nothing ran and nothing broke; claiming a failure would be a lie."
+    language: de
+    user: "kannst du dir das mal ansehen"
+    tools:
+      - name: spawn_worker
+        outcome: blocked
+        error: "spawn_worker was not executed: the user did not explicitly ask to delegate."
+    expect:
+      spoken_excludes: ["spawn_worker", "delegate"]
+      continues_turn: true
+
+  - name: partial-success-still-reports-the-work
+    why: >
+      A result is a result — one broken step must not erase the finished one.
+      The utterance is deliberately two plain ACTIONS: "was steht heute an"
+      reads as a public-fact question to the turn planner and would be answered
+      by the grounding path instead of the tools under test here.
+    language: de
+    user: "schau in meinen kalender und in meine mails"
+    tools:
+      - name: wiki
+        outcome: succeeded
+        spoken_reply: "Heute stehen drei Sachen an."
+      - name: gmail
+        outcome: failed
+        error: "Gmail is not connected — connect it in the Plugins view."
+    expect:
+      spoken_contains: ["Heute stehen drei Sachen an.", "Gmail"]
+      continues_turn: true
+
+  - name: every-cause-reaches-the-user
+    why: "Two broken tools, two reasons — the second must not be swallowed."
+    language: de
+    user: "check kalender und mails"
+    tools:
+      - name: google_calendar
+        outcome: failed
+        error: "Google Calendar is not connected."
+      - name: gmail
+        outcome: failed
+        error: "Gmail is not connected."
+    expect:
+      spoken_contains: ["Google Calendar", "Gmail"]
+      continues_turn: true
+
+  - name: a-clean-turn-is-left-alone
+    why: "Guard against over-correction: nothing failed, so nothing is continued."
+    language: de
+    user: "mach mal den fokus modus an"
+    tools:
+      - name: set_mode
+        outcome: succeeded
+        spoken_reply: "Fokus-Modus ist an."
+    expect:
+      spoken_equals: "Fokus-Modus ist an."
+      continues_turn: false
+
+  - name: a-pending-question-owns-the-turn
+    why: "The one line still needing an answer outranks any status summary."
+    language: de
+    user: "schick die mail an tom"
+    tools:
+      - name: send_email
+        outcome: confirm
+        spoken_reply: "Soll ich die Mail wirklich senden?"
+    expect:
+      spoken_equals: "Soll ich die Mail wirklich senden?"
+      continues_turn: false
