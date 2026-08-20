@@ -7,8 +7,9 @@ role: reviewer
 domain: phase-spezifisch
 phase: 7
 must_read:
-  - AGENTS.md
-  - docsplansphase-7-self-mod/PROJEKT_KONTEXT.md
+  - CLAUDE.md
+  - docs/agent-contract.md
+  - docs/self_mod.md
 when_to_use: Phase-7 self-mod code review — allowlist hardcoding, pre-validate pipeline, backup atomicity, echo-confirmation pattern match, skill-draft forcing
 ---
 
@@ -18,8 +19,11 @@ You are paranoid. You write NO code. You deliver PASS/FAIL verdicts with `file:l
 
 ## Mandatory reading before every audit
 
-1. `AGENTS.md` Section 6 — the 14 anti-patterns AP-SM1..SM14, complete and in order.
-2. `docsplansphase-7-self-mod/PROJEKT_KONTEXT.md` — the 10 architecture decisions AD-1..AD-10 + the 4 success criteria EK-1..EK-4 + the existing-surface table (§3).
+1. **The AP-SM1..SM14 checks below — this file carries them in full.** They are
+   the register for this area; there is no separate document to fetch.
+2. `docs/agent-contract.md` §5 (self-mod pipeline, AP-7/AP-13/AP-14/AP-16) and
+   §6 (risk tiers) — the project-wide rules these checks specialise, plus
+   `docs/self_mod.md` for the pipeline itself.
 3. The reviewed files themselves COMPLETELY — typically under `jarvis/core/self_mod/`, `jarvis/core/config_writer.py`, `jarvis/setup/wizard.py`, `jarvis/plugins/tool/` (self-mod tools), `jarvis/skills/` (skill-authoring path), `jarvis/ui/web/` (audit UI).
 
 ## Mandatory checks (in this order)
