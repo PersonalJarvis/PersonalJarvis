@@ -213,6 +213,23 @@ designed for the FULL matrix from the first sentence (maintainer directive
   channels (Telegram / Discord / webhook / SMS), the CLI.
 - **Every OS** — see the next subsection.
 
+**Proportionality (BINDING, added 2026-08-20).** This section states the
+standard, not the ceremony every change must perform. The evidence a change
+owes is set by the SURFACE IT TOUCHES, in three tiers — decide the tier first,
+in one line, and then owe only that tier:
+
+| Tier | What you touched | What you owe |
+|---|---|---|
+| **1 — Local** | Styling, copy, a single view, a test, a doc, a refactor behind one call site. Nothing provider-, mode-, or OS-facing. | Nothing extra. Ship it. Naming a matrix here is noise, not diligence. |
+| **2 — One surface** | An existing provider adapter, one transport, one channel, one OS backend — without changing the shared contract. | Name the cells you touched and what happens on the others (unchanged / emulated / degraded). Tests for the family you touched. |
+| **3 — Contract** | A capability, a shared interface, turn-taking, credentials, config schema, a new provider/transport/OS backend, anything the five paths below can brick. | The full treatment: the matrix named, `tests/contract/` coverage per family, and the five non-maintainer paths verified. |
+
+Tier 3 is where this project earns its promise; tiers 1 and 2 are where it
+stays fast. **Mis-tiering downward is the defect** — if you are unsure whether a
+change is 2 or 3, it is 3. Mis-tiering *upward* is also a defect: a CSS fix
+that arrives with a provider matrix wasted the effort that a real tier-3
+change deserved. State the tier in the PR or commit body; one line is enough.
+
 Rules:
 
 1. **Design once, capability-gated (AP-21).** A transport- or
@@ -222,12 +239,12 @@ Rules:
    through the generic path or an emulation, or degrades honestly with a
    stated reason. "Works on vertex-live" or "works in realtime mode" is one
    cell of the matrix, not done.
-2. **Name the matrix before building.** An assessment, plan, ADR, or PR
-   that touches a provider- or mode-facing path states which cells it
-   covers natively, which it emulates, and which degrade — and why. The
-   maintainer's cell is never the implicit reference; an analysis that
+2. **Name the matrix before building — at tier 2 and above.** An assessment,
+   plan, ADR, or PR that touches a provider- or mode-facing path states which
+   cells it covers natively, which it emulates, and which degrade — and why.
+   The maintainer's cell is never the implicit reference; an analysis that
    reasons only from the dev box's current provider is incomplete and is
-   redone.
+   redone. At tier 1 this rule does not apply at all.
 3. **Test the families, not the favourite.** A change to a provider-facing
    contract lands with `tests/contract/` coverage or fakes for each family
    it touches; a change to turn-taking, acknowledgments, interim speech, or
@@ -239,8 +256,10 @@ Rules:
 
 ### OS feature parity — macOS and Linux are first-class (BINDING)
 
-Every feature ships working on **all three OSes in the SAME change**, never
-as a "later" follow-up. OS-specific backends live behind ONE capability probe
+Every feature that TOUCHES an OS-specific path ships working on **all three
+OSes in the SAME change**, never as a "later" follow-up. (Tier 1 work touches
+no such path and owes nothing here — a component that only renders does not
+need a macOS story.) OS-specific backends live behind ONE capability probe
 (Win32/UIA ↔ AppleScript/Quartz/AXUIElement ↔ xdotool/AT-SPI/D-Bus);
 `sys.platform == "win32"` with silent nothing elsewhere is a defect. Where a
 backend is genuinely impossible (headless), degrade to a clearly-messaged
@@ -248,9 +267,10 @@ English no-op. A Windows-only implementation lands ONLY with the capability
 gate + honest degradation + a tracked entry in
 [`docs/os-parity.md`](os-parity.md).
 
-**Definition of done** for any change touching config, credentials, a
-provider/integration, a voice engine, a chat/channel surface, or OS-specific
-code — verify the FIVE non-maintainer paths (test or honest manual trace):
+**Definition of done — TIER 3 ONLY** (a capability, a shared interface,
+credentials, config schema, a new provider / transport / OS backend). At tier 1
+and 2 this list does not apply; see the proportionality table above. When it
+does apply, verify the FIVE non-maintainer paths (test or honest manual trace):
 
 1. **Fresh install, ONE arbitrary key** reaches a working path (chat + voice
    + Jarvis-Agent + the touched feature), entirely in-app.
@@ -555,31 +575,25 @@ verifier blocks + fingerprints. Enforced by
 
 ---
 
-## 8. Recurring bug classes (signal → defense)
+## 8. Recurring bug classes — symptom → cause
 
-Detail in [`docs/BUGS.md`](BUGS.md):
+§7 reads forward (*don't do this*). This table reads BACKWARD: you are staring
+at a symptom and want the anti-pattern behind it. That is its whole job — it
+adds no rules of its own. Detail in [`docs/BUGS.md`](BUGS.md).
 
-1. **Restore trap** (BUG-006/014/015) — fix "works in tests" but behavior
-   unchanged after restart → `pwsh scripts/preflight.ps1` +
-   `python -c "import jarvis; print(jarvis.__file__)"`.
-2. **Enum drift** (BUG-008) — empty UI list while the DB has rows, Pydantic
-   `literal_error` → five-layer pattern + parity test.
-3. **Config drift** (BUG-010) — parallel sessions silently rolling back
-   `jarvis.toml` switches → `scripts/drift-guard-daemon.ps1` + ENV overrides
-   + BOM-safe writer.
-4. **Console flicker** (BUG-012) — import `NO_WINDOW_CREATIONFLAGS` from
-   `jarvis.core.process_utils`.
-5. **Audio host-API trap** (BUG-014) — WDM-KS auto-picked, PortAudio crashes
-   → `_FORBIDDEN_OUTPUT_HOSTAPIS` + shortest-unique-token matching.
-6. **Stale watchdog counter** (BUG-032) — watchdog fires between units →
-   reset the counter per unit of work (AP-19).
-7. **Socket loop on teardown error** — treat any read error as terminal,
-   `break` (AP-20).
-8. **Wedged native inference** (BUG-036) — non-blocking lock + rebuild a
-   fresh model (AP-24).
-9. **Wake transcript traps** (BUG-037) — "fires on silence" / "goes deaf on
-   its own wake word" share one root; word-agnostic verification only
-   (AP-27).
+| You are seeing… | It is | Fix |
+|---|---|---|
+| Fix works in tests, behaviour unchanged after restart | Restore trap (BUG-006/014/015) | `pwsh scripts/preflight.ps1`, then `python -c "import jarvis; print(jarvis.__file__)"` (AP-8) |
+| Empty UI list while the DB has rows; Pydantic `literal_error` | Enum drift (BUG-008, 4× recurrence) | Five-layer pattern + parity test (AP-4) |
+| A `jarvis.toml` switch silently rolls back | Config drift (BUG-010) | Drift-guard daemon + ENV override + BOM-safe writer (AP-7) |
+| Console windows flickering under `pythonw` | Console flicker (BUG-012) | `NO_WINDOW_CREATIONFLAGS` from `jarvis.core.process_utils` (AP-1) |
+| TTS silent, PortAudio crashes | Audio host-API trap (BUG-014) | `_FORBIDDEN_OUTPUT_HOSTAPIS` + shortest-unique-token matching |
+| Watchdog aborts a fresh answer | Stale counter (BUG-032) | Reset per unit of work (AP-19) |
+| Receive loop spinning on a dead socket | Socket teardown | Any read error is terminal — `break` (AP-20) |
+| STT wedged permanently, timeouts do not recover it | Wedged native inference (BUG-036, BUG-151 open) | Non-blocking lock + rebuild a fresh model (AP-24) |
+| Wake fires on silence, or goes deaf on its own word | Wake transcript trap (BUG-037) | One root, not two: word-agnostic verification only (AP-27) |
+| A feature "half works" and nothing is logged | Silent handler | Log, re-raise, or say why silence is right (AP-30) |
+| A settings switch changes nothing | Unwired config | Read the value or delete the field (AP-31) |
 
 ---
 

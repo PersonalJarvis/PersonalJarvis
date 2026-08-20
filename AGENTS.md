@@ -34,36 +34,39 @@ published GitHub Release; `check_release_completeness.py` before and after).
 ## 3. Open-source universality (BINDING)
 Assume an arbitrary downloader, never the maintainer: ANY single key works
 (capability-gated, cross-family fallback, honest degradation, AP-21/22); every
-OS incl. headless `python:3.11-slim` (base stays torch-free; GPU deps in
-`[local-voice]`); credentials recoverable IN-APP (keyring → ENV → file).
-macOS/Linux ship in the SAME change behind one capability probe or degrade
-honestly (+ `docs/os-parity.md`). Done = the five non-maintainer paths (§3).
-**Provider & mode parity (BINDING):** every feature — and every analysis,
-plan, or estimate BEFORE it — targets the FULL matrix from the first
-sentence: every provider family and key (all Brain/Tool-Model providers incl.
-local Ollama/llama.cpp, every realtime transport `openai-realtime` /
-`gemini-live` / `vertex-live` / tool-less handoff, every STT/TTS/Vision/Wake
-— enumerated by `jarvis/core/config.py` + `jarvis/realtime/factory.py`,
-NEVER by the dev box's `jarvis.toml`) × every mode and surface (realtime
-engine AND classic pipeline, text chat, browser/headless, channels, CLI) ×
-every OS. A transport-specific trick is ONE declared capability; every other
-transport gets the generic path, an emulation, or honest degradation with a
-stated reason. "Works on vertex-live" / "works in realtime mode" is one cell,
-not done; plans and PRs name the cells they cover, emulate, and degrade.
+OS incl. headless `python:3.11-slim` (base install + boot must succeed there;
+extras group, env marker, or lazy import — whichever fits); credentials
+recoverable IN-APP (keyring → ENV → file). Enumerate providers from the CODE
+(`jarvis/core/config.py`, `jarvis/realtime/factory.py`), NEVER from the dev
+box's `jarvis.toml`. A transport-specific trick is ONE declared capability;
+every other transport gets the generic path, an emulation, or honest
+degradation with a stated reason.
+
+**Proportionality (BINDING).** The evidence a change owes is set by the surface
+it touches. Decide the tier in one line, then owe only that tier:
+**T1 local** (styling, copy, one view, a test, a doc, a refactor behind one
+call site) → nothing extra, ship it; a matrix here is noise, not diligence.
+**T2 one surface** (an existing adapter, transport, channel, or OS backend,
+shared contract unchanged) → name the cells you touched and what the others do
+(unchanged / emulated / degraded) + tests for that family.
+**T3 contract** (a capability, shared interface, turn-taking, credentials,
+config schema, a NEW provider/transport/OS backend) → full treatment: matrix
+named, `tests/contract/` per family, the five non-maintainer paths verified,
+all three OSes in the SAME change behind one capability probe (+
+`docs/os-parity.md`). Unsure between T2 and T3 → it is T3. Over-tiering is
+also a defect. Full table + the five paths: `docs/agent-contract.md` §3.
+
 Device triage: version lag → setup divergence → OS gap.
 Ollama/llama.cpp defaults, recommendations, and examples must be verified
 against the official live catalog when changed and use a current,
 hardware-fitting generation/quantization; an artifact shown as one year old
 or older must never be a default or recommendation. A measured compatibility
 pin may remain only as a documented non-general exception with a removal test.
-Marketplace — the standard binds US first: only a registry-published entry
-(Agent Plugins 1.0.0 `plugin.json` + `mcp.json`, publisher/version/date/install
-command) may appear in the store's list, counts, search, chips, tabs or detail
-pages; `seed_catalog.json` connectors ship with the app, are NOT listings, and
-belong in the "built in" wall; a built-in reaches the store only via a registry
-PR like anyone else's; "Official" names the author, never a review — every
-registry entry keeps "Not human-reviewed". Binds app + registry + storefront
-(`personal-jarvis-webui`) alike.
+**Marketplace** — the standard binds US first: only a registry-published entry
+is a listing; `seed_catalog.json` connectors ship with the app and are NOT
+listings; a built-in reaches the store only via a registry PR like anyone
+else's; "Official" names the author, never a review. Binds app + registry +
+storefront alike. Full rules: `docs/agent-contract.md` §3.
 
 ## 4. Naming (BINDING)
 Internal: **Jarvis-Agents**. User-visible brand is DYNAMIC from the wake word
@@ -82,15 +85,16 @@ kill-on-crash + tool broker (ADR-0025/26); UTF-8 + `NO_WINDOW_CREATIONFLAGS`
 on every subprocess. Safety tiers safe/monitor/ask/block, blacklist >
 whitelist > default; only `ToolExecutor.execute()`; skills stay `draft`.
 
-## 7. Anti-patterns AP-1..31 + bug classes (BINDING)
-Full register: `docs/agent-contract.md` §7–8. Essence: no keys via voice/chat;
+## 7. Anti-patterns AP-1..31 (BINDING)
+Full register: `docs/agent-contract.md` §7; §8 there reads it backward
+(symptom → cause) when you are debugging. Essence: no keys via voice/chat;
 enum strings in ALL five layers; no spawn tools in worker sets; atomic TOML
 writes only; preflight every new worktree (restore trap!); nothing heavy on
 the boot critical path; no LLM in the voice scrubber; native inference = lock
 + fresh-model recover; GPU wake gates ONLY on the inference probe; wake
 verification word-agnostic, never transcript content; no `isinstance` gates
 on unpinned libs; signing private keys ONLY in GH Actions secrets; no silent
-`except`; no unread config switch. Bug classes → [`docs/BUGS.md`](docs/BUGS.md).
+`except`; no unread config switch.
 
 ## 9. Operational reality & git
 Working tree is SHARED: stage only YOUR files (`git add -p`/pathspec, never
