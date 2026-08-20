@@ -829,3 +829,60 @@ def test_the_openai_wording_models_come_from_the_verified_catalog() -> None:
 
     assert family.default_model in served
     assert family.translate_model in served
+
+
+async def test_the_provider_test_button_probes_the_translation_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"Ready" must mean the model the NEXT dictation will really use.
+
+    With translation on, that is the family's translation tier — a different,
+    usually larger model, and one an account may not be entitled to. Probing
+    the formatter's model instead would hand back a green card for a setup
+    whose very next dictation 404s, which is the precise claim
+    ``polish_probe`` exists to stop the provider cards from making.
+    """
+    from jarvis.dictation.polish_probe import probe_polish_family
+
+    family = next(f for f in POLISH_FAMILIES if f.id == "groq")
+    asked: list[str] = []
+
+    class _Ok:
+        async def complete(self, system: str, user: str, **kwargs: Any) -> str:
+            return "We can ship it on Tuesday."
+
+    def _builder(fam: Any, model: str) -> Any:
+        asked.append(model)
+        return _Ok()
+
+    class _App:
+        dictation = _cfg(translate=True, translate_target="en")
+
+    await probe_polish_family(family, _App(), make_client=_builder)
+
+    assert asked == [family.translate_model]
+
+
+async def test_the_provider_test_button_probes_the_formatter_when_not_translating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """And with the switch off it is the formatter's own model again."""
+    from jarvis.dictation.polish_probe import probe_polish_family
+
+    family = next(f for f in POLISH_FAMILIES if f.id == "groq")
+    asked: list[str] = []
+
+    class _Ok:
+        async def complete(self, system: str, user: str, **kwargs: Any) -> str:
+            return "We can ship it on Tuesday."
+
+    def _builder(fam: Any, model: str) -> Any:
+        asked.append(model)
+        return _Ok()
+
+    class _App:
+        dictation = _cfg()
+
+    await probe_polish_family(family, _App(), make_client=_builder)
+
+    assert asked == [family.default_model]

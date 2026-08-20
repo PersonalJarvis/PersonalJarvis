@@ -60,13 +60,27 @@ def _default_make_client(family: Any, model: str) -> Any:
 
 
 def _resolve_probe_model(family: Any, dictation_cfg: Any, model: str) -> str:
-    """The model the real pass would use for *family*; its default on trouble."""
+    """The model the real pass would use for *family*; its default on trouble.
+
+    Reads the TRANSLATE switch, because with it on the pass runs on the
+    family's translation tier and that is a different model — often a larger
+    one, and one the account may not be entitled to. A probe that dialled the
+    formatter's model instead would answer "ready" for a setup whose very next
+    dictation 404s, which is the exact claim this module exists to stop the
+    provider cards from making.
+    """
     if model:
         return model
     try:
+        from jarvis.dictation.polish import resolve_translate_target
         from jarvis.dictation.polish_client import resolve_model
 
-        return resolve_model(family, dictation_cfg, primary_id=getattr(family, "id", ""))
+        return resolve_model(
+            family,
+            dictation_cfg,
+            primary_id=getattr(family, "id", ""),
+            translating=bool(resolve_translate_target(dictation_cfg)),
+        )
     except Exception as exc:  # noqa: BLE001 — a resolver hiccup is not a verdict
         log.debug("polish probe model resolution failed (%s); using the default.", exc)
         return str(getattr(family, "default_model", "") or "")
