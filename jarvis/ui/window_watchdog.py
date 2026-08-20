@@ -629,4 +629,9 @@ class BlankWindowWatchdog:
         try:
             return probe()
         except Exception:  # noqa: BLE001
+            # The guard exists to catch a window that shows nothing. A probe
+            # that throws is one more way of not knowing, and the default it
+            # falls back to is the cautious reading — so a broken probe makes
+            # the watchdog look harder, never quieter. Reporting here would
+            # also mean logging from the very path a dead UI is failing on.
             return default
