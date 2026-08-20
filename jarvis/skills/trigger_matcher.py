@@ -11,6 +11,7 @@ import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 
+from .builtin import BUILTIN_SKILL_NAMES
 from .registry import SkillRegistry
 from .schema import Skill, SkillLifecycleState
 
@@ -68,6 +69,16 @@ _FILLER_MATCH_PENALTY = 100_000
 _PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
 
 
+def _normalize_punct(utterance: str) -> str:
+    """Flatten punctuation (hyphens, commas, …) to spaces. No filler stripping.
+
+    Speech-to-text routinely emits ``Morning-Routine`` for a pattern written as
+    ``morning routine``. That is spelling, not politeness, so it must not pay
+    the filler penalty.
+    """
+    return " ".join(_PUNCT_RE.sub(" ", utterance).split())
+
+
 def _strip_fillers(utterance: str) -> str:
     """Return ``utterance`` with leading/trailing politeness fillers removed.
 
@@ -76,8 +87,7 @@ def _strip_fillers(utterance: str) -> str:
     core must still satisfy the anchored pattern by itself, which is exactly
     the "phrase must carry the sentence" contract.
     """
-    cleaned = _PUNCT_RE.sub(" ", utterance)
-    tokens = cleaned.split()
+    tokens = _normalize_punct(utterance).split()
     if not tokens:
         return ""
     start, end = 0, len(tokens)
@@ -86,6 +96,10 @@ def _strip_fillers(utterance: str) -> str:
     while end > start and tokens[end - 1].lower() in _FILLER_WORDS:
         end -= 1
     return " ".join(tokens[start:end])
+
+
+def _is_builtin_name(name: str) -> bool:
+    return name in BUILTIN_SKILL_NAMES
 
 
 class TriggerMatcher:
@@ -143,11 +157,12 @@ class TriggerMatcher:
         """
         if not utterance:
             return None
-        # Step 2: politeness-tolerant fallback for ``^...$``-anchored patterns.
-        # The raw utterance is tried first (preserves all existing behaviour,
-        # incl. un-anchored "contains" patterns); only on a miss do we retry
-        # against the filler-stripped core. A stripped hit carries a score
-        # penalty so a direct hit on any skill always outranks it.
+        # Three attempts, cheapest first:
+        # 1. raw utterance (preserves existing un-anchored "contains" hits)
+        # 2. punctuation flattened, no penalty — "Morning-Routine" == "morning routine"
+        # 3. politeness fillers stripped, with a score penalty so a direct hit
+        #    on any skill always outranks a tolerant fallback hit on another
+        punct = _normalize_punct(utterance)
         stripped = _strip_fillers(utterance)
         best: tuple[int, Skill, re.Match[str]] | None = None
         for sk in self.registry.by_trigger("voice"):
@@ -165,13 +180,26 @@ class TriggerMatcher:
                     continue
                 penalty = 0
                 m = pat.search(utterance)
-                if m is None and stripped and stripped != utterance:
+                if m is None and punct and punct != utterance:
+                    m = pat.search(punct)
+                if m is None and stripped and stripped != utterance and stripped != punct:
                     m = pat.search(stripped)
                     penalty = _FILLER_MATCH_PENALTY
                 if m is None:
                     continue
                 score = len(m.group(0)) - penalty
                 if best is None or score > best[0]:
+                    best = (score, sk, m)
+                    continue
+                if (
+                    score == best[0]
+                    and _is_builtin_name(best[1].name)
+                    and not _is_builtin_name(sk.name)
+                ):
+                    # Equal span: the skill the user wrote beats a bundled one
+                    # with the same phrase. Live 2026-08-20: "Morning Routine"
+                    # always fired the builtin briefing, never the voice-authored
+                    # replacement that actually plays music.
                     best = (score, sk, m)
         return (best[1], best[2]) if best else None
 

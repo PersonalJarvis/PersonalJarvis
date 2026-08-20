@@ -260,3 +260,68 @@ def test_anchored_no_false_positive_on_casual_mention(
 def test_anchored_no_false_positive_on_unrelated(anchored_registry: SkillRegistry):
     m = TriggerMatcher(anchored_registry)
     assert m.match_voice("erzähl mir was über den morgen", lang="de") is None
+
+
+def test_hyphenated_utterance_matches_spaced_pattern(tmp_path: Path) -> None:
+    """ASR often emits Morning-Routine for a pattern written as morning routine."""
+    _write_skill(
+        tmp_path,
+        "user-morning",
+        """---
+schema_version: "1"
+name: user-morning
+triggers:
+  - type: voice
+    pattern: "(morning routine|morgenroutine)"
+    language: ["de", "en"]
+---
+body
+""",
+    )
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+    m = TriggerMatcher(reg)
+    sk = m.match_voice("Morning-Routine", lang="en")
+    assert sk is not None
+    assert sk.name == "user-morning"
+
+
+def test_user_skill_wins_tie_against_builtin_name(tmp_path: Path) -> None:
+    """A voice-authored replacement must beat the bundled skill on the same phrase."""
+    _write_skill(
+        tmp_path,
+        "morning-routine",
+        """---
+schema_version: "1"
+name: morning-routine
+triggers:
+  - type: voice
+    pattern: "(morning routine|morgenroutine)"
+    language: ["de", "en"]
+---
+body
+""",
+    )
+    _write_skill(
+        tmp_path,
+        "morning-routine-2",
+        """---
+schema_version: "1"
+name: Morning Routine 2
+triggers:
+  - type: voice
+    pattern: "(morning routine|morgenroutine|starte morning routine)"
+    language: ["de", "en"]
+---
+body
+""",
+    )
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+    m = TriggerMatcher(reg)
+    sk = m.match_voice("Morning Routine", lang="en")
+    assert sk is not None
+    assert sk.name == "Morning Routine 2"
+    sk2 = m.match_voice("Morgenroutine", lang="de")
+    assert sk2 is not None
+    assert sk2.name == "Morning Routine 2"
