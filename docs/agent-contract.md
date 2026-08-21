@@ -492,6 +492,33 @@ downgrades to `safe` (anti-confirmation-fatigue contract). Direct
 | AP-23 | Build or test only against the maintainer's config/keys/OS and claim done | Whole surface bricked for every other downloader; verify §3's paths |
 | AP-30 | Catch an exception and neither log, re-raise, nor say why silence is right | The feature just does nothing and nobody can tell it failed — the single largest source of "it only half works" (gate: `check_silent_exception_handlers.py`) |
 | AP-31 | Add a config field nothing reads, or leave a switch whose value is ignored | `jarvis.toml` and the settings screen promise behaviour that does not exist (gate: `check_config_switches_wired.py`) |
+| AP-32 | Mount a WebGL renderer without giving the context back | A browser allows ~16 live contexts and kills the OLDEST to make room, so the leak kills a DIFFERENT, innocent scene — and the browser paints its broken-canvas placeholder there (gate: `check_webgl_contexts_released.py`) |
+
+### AP-32 — Never mount a WebGL renderer without a release path
+
+A browser gives a page a small, fixed number of live WebGL contexts (Chromium:
+16) and enforces the cap by silently taking the OLDEST one away. `dispose()`
+does not return a context — only `WEBGL_lose_context` / `forceContextLoss()`
+does. So the component that leaks is never the one that breaks: the scene that
+dies is whichever has been running longest, and the browser paints its own
+broken-canvas placeholder there — a white rectangle with a small sad face —
+while the app carries on believing everything is fine. Measured 2026-08-21:
+fourteen trips into the Wiki section and back left fifteen live contexts behind
+ONE canvas, and the deck's memory map (mounted since boot) went white.
+
+Two obligations, and the second is as binding as the first, because a GPU reset
+takes every context no matter how clean the release path is:
+
+1. **Give it back.** On unmount, hand the context to the browser.
+2. **Survive losing it.** `webglcontextlost` must call `preventDefault()` —
+   without it the browser never fires `webglcontextrestored` — and the scene
+   must be rebuilt on a fresh canvas. When rebuilding fails repeatedly, degrade
+   honestly (the flat map) with the REAL reason, never a dead canvas.
+
+Both live in `jarvis/ui/web/frontend/src/hooks/useWebglSurface.ts`; use it
+rather than re-deriving them. Note the trap it documents: React commits the
+rebuilt child BEFORE running the old effect's cleanup, so touching the graph
+ref in that cleanup reaches the NEW scene and pauses it.
 
 ### AP-24 — Never share a native inference engine between concurrent callers
 
@@ -594,6 +621,7 @@ adds no rules of its own. Detail in [`docs/BUGS.md`](BUGS.md).
 | Wake fires on silence, or goes deaf on its own word | Wake transcript trap (BUG-037) | One root, not two: word-agnostic verification only (AP-27) |
 | A feature "half works" and nothing is logged | Silent handler | Log, re-raise, or say why silence is right (AP-30) |
 | A settings switch changes nothing | Unwired config | Read the value or delete the field (AP-31) |
+| A white rectangle with a small sad face where a 3D view was | Lost WebGL context | Release the context on unmount and rebuild on loss — `useWebglSurface` (AP-32) |
 
 ---
 

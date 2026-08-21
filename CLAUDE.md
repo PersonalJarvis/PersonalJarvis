@@ -85,7 +85,7 @@ kill-on-crash + tool broker (ADR-0025/26); UTF-8 + `NO_WINDOW_CREATIONFLAGS`
 on every subprocess. Safety tiers safe/monitor/ask/block, blacklist >
 whitelist > default; only `ToolExecutor.execute()`; skills stay `draft`.
 
-## 7. Anti-patterns AP-1..31 (BINDING)
+## 7. Anti-patterns AP-1..32 (BINDING)
 Full register: `docs/agent-contract.md` §7; §8 there reads it backward
 (symptom → cause) when you are debugging. Essence: no keys via voice/chat;
 enum strings in ALL five layers; no spawn tools in worker sets; atomic TOML
@@ -94,7 +94,8 @@ the boot critical path; no LLM in the voice scrubber; native inference = lock
 + fresh-model recover; GPU wake gates ONLY on the inference probe; wake
 verification word-agnostic, never transcript content; no `isinstance` gates
 on unpinned libs; signing private keys ONLY in GH Actions secrets; no silent
-`except`; no unread config switch.
+`except`; no unread config switch; a WebGL scene releases its context and
+survives losing it.
 
 ## 9. Operational reality & git
 Working tree is SHARED: stage only YOUR files (`git add -p`/pathspec, never

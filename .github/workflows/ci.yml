@@ -393,6 +393,13 @@ jobs:
         # fails only when a file GAINS one. Mirrors pre-push.
         run: python scripts/ci/check_silent_exception_handlers.py
 
+      - name: WebGL-context gate (every 3D surface gives its context back)
+        # Static + stdlib-only: a browser allows ~16 live WebGL contexts and
+        # kills the OLDEST to make room, and three.js `dispose()` never returns
+        # one — so a scene that mounts without releasing eventually kills a
+        # different, innocent scene on the page (AP-32).
+        run: python scripts/ci/check_webgl_contexts_released.py
+
       - name: CLI reference drift gate (docs in sync with command tree)
         # Fails if a curated command was added/changed without regenerating
         # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
