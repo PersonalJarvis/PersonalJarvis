@@ -29,7 +29,6 @@ import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
 import { MascotGigi } from "@/components/MascotGigi";
-import { ChladniField } from "@/components/ChladniField";
 import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
 import { installWallpaperSync, useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
@@ -64,10 +63,6 @@ function DesktopWallpaper({ hideMascot = false }: { hideMascot?: boolean }) {
         className="jarvis-desktop-wallpaper absolute inset-0"
         style={{ backgroundImage: `url(${wallpaperUrl})` }}
       />
-      {/* The vibrating plate, on top of the picture and under the veil, so it
-          works with whichever wallpaper the user picked instead of replacing
-          it. It reads the voice itself — see ChladniField. */}
-      <ChladniField className="jarvis-chladni-field absolute inset-0 h-full w-full" />
       {mascotOn && !hideMascot ? (
         <div
           className="jarvis-desktop-wallpaper-mascot"

@@ -211,14 +211,11 @@ export function MissionDeckView({
   const orbPressLabel = callActive
     ? t("deck.orb_hangup")
     : t("deck.orb_call").replace("{0}", wakePhrase);
-  // A counter at zero is not a reading, it is the centre saying nothing with
-  // a number attached. The empty string is how a value says "I have nothing
-  // yet" — DeckOrb drops it from the line rather than printing a 0.
   const readouts: OrbReadouts = {
     nw: t(`deck.mood_${mood}`),
-    ne: running.length > 0 ? `${running.length} ${t("deck.orb_steps")}` : "",
+    ne: `${running.length} ${t("deck.orb_steps")}`,
     sw: engine.providerLabel,
-    se: wordsSession > 0 ? `${wordsSession} ${t("deck.orb_words")}` : "",
+    se: `${wordsSession} ${t("deck.orb_words")}`,
   };
   // Pressing the orb reaches for the voice — the board opens on the press
   // itself, so the hand-off plays the moment the person acts, not a second

@@ -46,9 +46,8 @@ describe("DeckOrb", () => {
     expect(screen.queryByTestId("deck-orb-ping")).toBeNull();
     // The 72 dial ticks and the compass crosshairs were the only <line>s here.
     expect(container.querySelectorAll("line")).toHaveLength(0);
-    // What stays is what reads a real value: the stage light the voice moves
-    // (it carried a level arc on the bezel until 2026-08-21), the ripple host
-    // — at rest at zero — and one arc per running step.
+    // What stays is what reads a real value: the meter, the ripple host — at
+    // rest at zero — and one arc per running step.
     expect(screen.getByTestId("deck-orb-vu")).toBeTruthy();
     expect(screen.getByTestId("deck-orb-ripples").childElementCount).toBe(0);
     expect(screen.getByTestId("deck-orb").style.getPropertyValue("--orb-level")).toBe("0");
