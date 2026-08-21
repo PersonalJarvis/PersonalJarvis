@@ -30,6 +30,7 @@ from typing import Any
 
 import pytest
 
+import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.config import DictationConfig
 from jarvis.core.events import DictationCompleted
 from jarvis.dictation.insert import InsertResult
@@ -288,6 +289,125 @@ async def test_the_recording_reaches_the_store_with_the_degraded_outcome() -> No
     assert row["outcome_name"] == "partial"
     assert row["audio"], "the recording must reach the store, or Restore has nothing"
     assert is_recoverable(row["outcome_name"]) is True
+
+
+# --------------------------------------------------------------------------
+# The OTHER hole: audio the capture never recorded
+# --------------------------------------------------------------------------
+#
+# Frames the mic queue dropped are not a transcription failure. When the event
+# loop stalls longer than the queue holds, the drop-oldest policy deletes the
+# oldest frame per arrival and that speech never becomes audio at all — no
+# retry reaches it, and neither does Restore, because there is nothing in the
+# recording to re-read. Measured across 797 live dictations: 56 % lost frames,
+# the worst 7.4 s out of a 15.4 s recording, every one of them delivered as a
+# clean success with nothing anywhere saying a word had gone missing.
+
+
+@pytest.mark.asyncio
+async def test_dropped_capture_audio_degrades_the_outcome_and_says_so() -> None:
+    pipe, events, _recorded = _pipeline()
+
+    await pipe._finish_dictation(
+        raw_text="the half of it that reached the recording",
+        language="en",
+        duration_s=12.0,
+        target="chat",
+        hung_up=False,
+        dropped_audio_s=2.4,
+    )
+
+    completed = _completed(events)
+    assert completed.outcome == "partial"
+    assert "2.4s" in completed.detail
+    assert "words are missing" in completed.detail
+    # Never Restore: the audio it would re-read is the audio never recorded.
+    assert "Restore" not in completed.detail
+
+
+@pytest.mark.asyncio
+async def test_a_loss_too_small_to_have_taken_a_word_stays_a_success() -> None:
+    """One dropped 32 ms frame is not "words are missing".
+
+    Degrading on any loss at all would mark 56 % of real dictations, which is
+    the same as marking none: a caveat on everything says nothing about
+    anything. The floor is one WORD of speech.
+    """
+    pipe, events, _recorded = _pipeline()
+
+    await pipe._finish_dictation(
+        raw_text="all of it arrived",
+        language="en",
+        duration_s=4.0,
+        target="chat",
+        hung_up=False,
+        dropped_audio_s=pipeline_mod._DICTATION_DROPPED_AUDIO_NOTICE_S - 0.05,
+    )
+
+    assert _completed(events).outcome == "chat"
+    assert _completed(events).detail == ""
+
+
+@pytest.mark.asyncio
+async def test_there_is_no_partial_of_nothing_when_capture_dropped_frames() -> None:
+    """An empty transcript stays ``empty``/``failed``, exactly as for lost audio."""
+    pipe, events, _recorded = _pipeline()
+
+    await pipe._finish_dictation(
+        raw_text="",
+        language="en",
+        duration_s=9.0,
+        target="chat",
+        hung_up=False,
+        dropped_audio_s=5.0,
+    )
+
+    assert _completed(events).outcome == "empty"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_dictation_is_not_degraded_by_dropped_frames() -> None:
+    """The user called it off; unread seconds after that are their decision."""
+    pipe, events, _recorded = _pipeline()
+
+    await pipe._finish_dictation(
+        raw_text="never mind",
+        language="en",
+        duration_s=6.0,
+        target="chat",
+        hung_up=True,
+        dropped_audio_s=4.0,
+    )
+
+    assert _completed(events).outcome == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_both_kinds_of_loss_are_reported_in_one_sentence_each() -> None:
+    """They are different losses and only one of them promises Restore."""
+    pipe, events, _recorded = _pipeline(
+        DictationConfig(history_enabled=False, keep_failed_audio=True)
+    )
+
+    await pipe._finish_dictation(
+        raw_text="what survived both holes",
+        language="en",
+        duration_s=40.0,
+        target="chat",
+        hung_up=False,
+        lost_audio_s=8.0,
+        dropped_audio_s=3.0,
+    )
+
+    completed = _completed(events)
+    assert completed.outcome == "partial"
+    assert "3.0s of audio was lost while recording" in completed.detail
+    assert "8.0s of the recording could not be transcribed" in completed.detail
+    # The Restore offer belongs to the half that has a recording to restore.
+    assert completed.detail.index("was lost while recording") < completed.detail.index(
+        "could not be transcribed"
+    )
+    assert "Restore" in completed.detail
 
 
 @pytest.mark.asyncio

@@ -678,6 +678,33 @@ def _resolve_input_device(
     return None
 
 
+class _ResizableQueue(asyncio.Queue[AudioChunk]):
+    """The capture bridge queue, whose bound may change while it is in use.
+
+    One microphone stream serves consumers with opposite needs. A wake detector
+    wants a SHALLOW bound so a CPU that falls behind sees near-present audio; a
+    dictation wants a DEEP one, because every frame is a word the user said and
+    the drop-oldest policy deletes speech rather than staleness. The stream is
+    handed from the first to the second mid-flight (the wake handoff), so the
+    bound has to move with it.
+
+    ``asyncio.Queue`` exposes ``maxsize`` read-only and offers no resize. The
+    obvious alternative — build a new queue and copy the items over — silently
+    strands any consumer already parked in ``get()`` on the old object, which on
+    this path is the drain that owns the recording. So the bound is moved in
+    place instead: ``_maxsize`` is read afresh by ``full()`` on every put, so a
+    raise takes effect on the very next frame and nobody is left waiting.
+    """
+
+    #: Declared for the type checker: the base class keeps it as a plain
+    #: attribute behind the read-only ``maxsize`` property.
+    _maxsize: int
+
+    def set_maxsize(self, value: int) -> None:
+        """Change the bound. Never below one — a zero bound means UNbounded."""
+        self._maxsize = max(1, int(value))
+
+
 class MicrophoneCapture:
     """Async wrapper around sounddevice.InputStream.
 
@@ -757,7 +784,11 @@ class MicrophoneCapture:
         # silence and the wake word are seen near-present, not 2 s late — the
         # "stuck listening / missed wake on a weaker laptop" bug. A machine that
         # keeps up never fills the queue, so the depth is invisible there.
-        self._queue: asyncio.Queue[AudioChunk] = asyncio.Queue(
+        #
+        # The depth is not frozen at construction: a stream opened for wake is
+        # handed to a dictation without being reopened, and the two want
+        # opposite bounds (see ``set_queue_depth``).
+        self._queue: _ResizableQueue = _ResizableQueue(
             maxsize=max(1, int(max_queue_chunks))
         )
         self._stream: sd.InputStream | None = None
@@ -1242,6 +1273,29 @@ class MicrophoneCapture:
     def dropped_frames(self) -> int:
         """Number of frames lost due to a full queue."""
         return self._drops
+
+    @property
+    def queue_depth(self) -> int:
+        """Current bound of the bridge queue, in chunks."""
+        return self._queue.maxsize
+
+    def set_queue_depth(self, max_queue_chunks: int) -> int:
+        """Re-bound the bridge queue for a new kind of consumer. Returns the old bound.
+
+        The one lever that decides whether a slow moment costs WORDS. When the
+        event loop stalls longer than the queue holds, ``_safe_put`` starts
+        dropping the oldest frame per arrival and that speech is gone for good —
+        no retry reaches it, because it never became a chunk anyone read. A
+        bulk consumer therefore raises the bound for as long as it owns the
+        stream and puts it back afterwards, so the wake detector does not
+        inherit a depth that would let it score seconds-stale audio.
+
+        Takes effect immediately, including for a consumer already waiting in
+        ``stream()`` — the queue object itself never changes identity.
+        """
+        previous = self._queue.maxsize
+        self._queue.set_maxsize(max_queue_chunks)
+        return previous
 
     @property
     def restart_count(self) -> int:

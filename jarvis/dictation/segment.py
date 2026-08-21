@@ -108,6 +108,51 @@ def quietest_cut(
 #: costs a whole request to be told so.
 _MIN_WINDOW_S = 1.0
 
+#: Audio the two halves of a re-read share. Same job as the overlap between
+#: quality windows: a word sitting on the seam is spoken in full inside one of
+#: them, and the duplicate that creates is removed from the TEXT afterwards.
+#: Small, because the cut already went looking for the quietest moment.
+_REREAD_OVERLAP_S = 0.4
+
+
+def halve_at_quietest(
+    pcm: bytes,
+    *,
+    bytes_per_second: int = 16_000 * BYTES_PER_SAMPLE,
+    overlap_s: float = _REREAD_OVERLAP_S,
+) -> list[tuple[int, int]]:
+    """Two overlapping halves of ``pcm``, split at its quietest middle moment.
+
+    The re-read shape for a window a recognizer stopped short on WITHOUT
+    leaving the energy scan a sustained pause to split at — continuous speech
+    that simply arrived half-transcribed. :func:`speech_runs` reports one run
+    for that recording and has nothing to offer; halving it does, because the
+    second request is handed audio that begins where the delivered text went
+    quiet, and a recognizer that truncates a long read rarely truncates a short
+    one at the same place.
+
+    Not a substitute for the pause split: a recording that HAS pauses should be
+    cut there, since those seams cost nothing. This is the fallback for the one
+    that does not.
+
+    Returns ``[]`` when the buffer is too short for the split to mean anything,
+    which the caller reads as "keep what the recognizer said".
+    """
+    total = len(pcm)
+    min_half = int(_MIN_WINDOW_S * bytes_per_second)
+    if total < 2 * min_half:
+        return []
+    cut = quietest_cut(pcm, _align(total // 2), bytes_per_second)
+    if cut < min_half or total - cut < min_half:
+        # The quiet scan landed somewhere that would leave a sliver. The plain
+        # midpoint is no worse a guess and keeps both halves worth reading.
+        cut = _align(total // 2)
+    overlap = _align(max(0, int(overlap_s * bytes_per_second)))
+    return [
+        (0, _align(min(total, cut + overlap))),
+        (_align(max(0, cut - overlap)), total),
+    ]
+
 
 def quality_windows(
     pcm: bytes,
@@ -338,6 +383,7 @@ def is_silent_segment(pcm: bytes, *, session_peak: float = 0.0) -> bool:
 
 __all__ = [
     "BYTES_PER_SAMPLE",
+    "halve_at_quietest",
     "is_silent_segment",
     "quality_windows",
     "quietest_cut",

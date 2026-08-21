@@ -50,12 +50,22 @@ class _StubSTT:
 class _ControlledMic:
     """A microphone whose open/close edges and frames the test drives."""
 
-    def __init__(self) -> None:
+    def __init__(self, queue_depth: int = 63) -> None:
         self.frames: asyncio.Queue[AudioChunk | BaseException] = asyncio.Queue()
         self.entered = asyncio.Event()
         self.open_count = 0
         self.close_count = 0
         self.closed = False
+        #: Mirrors ``MicrophoneCapture``: the bound a borrower may re-set for
+        #: the kind of consumer it is, and every depth it was ever left at.
+        self.queue_depth = queue_depth
+        self.depth_history: list[int] = []
+
+    def set_queue_depth(self, max_queue_chunks: int) -> int:
+        previous = self.queue_depth
+        self.queue_depth = max(1, int(max_queue_chunks))
+        self.depth_history.append(self.queue_depth)
+        return previous
 
     async def __aenter__(self) -> _ControlledMic:
         self.open_count += 1
@@ -144,6 +154,75 @@ async def test_a_dictation_takes_the_live_wake_microphone_instead_of_opening_one
     assert mic.open_count == 1
     assert mic.close_count == 1
     assert pipeline._wake_capture_released.is_set()
+
+
+@pytest.mark.asyncio
+async def test_the_borrowed_stream_is_deepened_for_the_dictation_and_handed_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A borrowed wake stream must not keep the wake detector's shallow bound.
+
+    The wake mic is opened shallow on purpose — a detector scoring seconds-old
+    audio is its own bug. But a dictation is a BULK consumer: every frame is a
+    word, and the queue's drop-oldest policy deletes speech rather than
+    staleness. Live telemetry over 797 dictations: 56 % lost frames this way,
+    the worst 7.4 s out of a 15.4 s recording, all reported as clean successes.
+
+    The deep bound written for dictation only ever applied to the fallback
+    capture, which never runs on an install with a wake word — so it protected
+    nobody. Both halves are pinned here: it is raised while the dictation owns
+    the stream, and it is PUT BACK, or this fix simply trades itself for the
+    missed-wake-word bug.
+    """
+    pipeline, mic, _factory_calls = _wake_pipeline(monkeypatch)
+    shallow = mic.queue_depth
+
+    wake_task = asyncio.create_task(pipeline._run_parallel_wake())
+    await asyncio.wait_for(mic.entered.wait(), timeout=1.0)
+    assert mic.queue_depth == shallow
+
+    async with pipeline._capture_dictation_input():
+        assert mic.queue_depth == pipeline_mod._DICTATION_CAPTURE_QUEUE_CHUNKS
+        assert mic.queue_depth > shallow
+
+    assert mic.queue_depth == shallow
+    assert mic.depth_history == [
+        pipeline_mod._DICTATION_CAPTURE_QUEUE_CHUNKS,
+        shallow,
+    ]
+    await asyncio.wait_for(wake_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_the_depth_is_restored_even_when_the_dictation_blows_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash inside the recording must not leave wake deaf-by-staleness."""
+    pipeline, mic, _factory_calls = _wake_pipeline(monkeypatch)
+    shallow = mic.queue_depth
+
+    wake_task = asyncio.create_task(pipeline._run_parallel_wake())
+    await asyncio.wait_for(mic.entered.wait(), timeout=1.0)
+
+    with pytest.raises(RuntimeError, match="recording fell over"):
+        async with pipeline._capture_dictation_input():
+            assert mic.queue_depth > shallow
+            raise RuntimeError("recording fell over")
+
+    assert mic.queue_depth == shallow
+    await asyncio.wait_for(wake_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_without_a_capture_behind_it_still_dictates() -> None:
+    """A hand-fed buffer (every unit test, and the Restore route) has no mic.
+
+    The re-bound is a safeguard, never a gate: nothing about it may turn a
+    missing attribute into a failed dictation.
+    """
+    buffer = pipeline_mod._SessionInputBuffer()
+
+    assert buffer.capture is None
 
 
 @pytest.mark.asyncio

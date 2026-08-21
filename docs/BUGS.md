@@ -11368,3 +11368,89 @@ that IS necessary still costs one round of re-granting. A Developer-ID signing
 identity is the structural fix. The rebuild guard also arms only after the
 first rebuild it observes, so an install already caught in the loop pays for
 one more round before it stops.
+
+## BUG-162: dictation silently drops the end of what was said — a deep queue that never applied, a truncation guard that fired once in 797 recordings, and a loss nothing reported (HIGH, FIXED 2026-08-21)
+
+**Symptom (reported 2026-08-21).** "Sometimes the last sentence just is not
+transcribed." Intermittent, never reproducible on demand, and every affected
+dictation reported itself as a clean success.
+
+**Evidence.** 797 consecutive dictations from the local flight recorder, seven
+days. Three independent causes, each producing the same user-visible symptom.
+
+**Root cause 1 — the bulk queue depth never applied to a real dictation.**
+`_capture_dictation_input()` opens its fallback capture with
+`_DICTATION_CAPTURE_QUEUE_CHUNKS` (10 s), commented "the defence is depth".
+That path only runs when NO wake stream exists. With a wake word configured —
+the default, and the shipped state — every dictation instead borrows the wake
+stream, which is opened at `DEFAULT_QUEUE_CHUNKS` (2 s) because a detector
+wants fresh audio, not deep buffers. So the defence written for dictation was
+dead code on exactly the installs that needed it. When the event loop stalls
+longer than the queue holds, `MicrophoneCapture._safe_put` drops the OLDEST
+frame per arrival and that speech is gone for good: it never became a chunk
+anyone read, so no retry, no re-read and no Restore reaches it. Measured: 448
+of 797 dictations (56 %) lost frames; 177 s of 10 293 s recorded; worst single
+case 7.4 s missing from a 15.4 s recording. Confirmed independently by
+differencing the recording's wall time against its captured audio seconds,
+which reproduces the same figures.
+
+**Root cause 2 — the truncation guard was calibrated out of reach.**
+`_repair_truncated_read` re-reads a final-pass window whose transcript carries
+fewer than `_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S` tokens per voiced
+second. At 1.0 that demanded a recognizer swallow some 60 % of a window before
+anyone looked — real speech in the sample runs at a median 2.5 tokens per
+second of WHOLE recording, pauses included. A dropped last sentence is a fifth
+of the text, not two thirds, so the ordinary case never qualified. Across 797
+dictations the repair fired **once**. Second gate, independent of the first:
+the guard returned immediately unless the window held two or more speech runs,
+so continuous speech — no pause to split at — was believed in full whatever it
+came back as. Live examples, all with zero capture dropouts and
+`truncation_repairs:0`: an 11.9 s recording ending "…interested in context
+management **for**", a 15.7 s one ending "…as it right now is, **then**".
+
+**Root cause 3 — nothing reported the loss.** `lost_audio_s` (recorded but
+never transcribed) degrades the outcome to `partial` and offers Restore.
+Capture dropouts had no equivalent: `audio_dropouts` / `audio_dropout_ms` went
+to telemetry only, so a recording with seconds missing from the middle was
+delivered as `inserted` with no caveat anywhere.
+
+**Fix (2026-08-21).**
+(a) `MicrophoneCapture.set_queue_depth()` re-bounds the bridge queue in place,
+and `_capture_dictation_input()` deepens a BORROWED stream for the dictation
+and restores the shallow bound on the way out — including on the crash path,
+or this trades itself for a wake word scored against stale audio. In place, not
+a fresh queue: replacing the object strands the drain already parked in
+`get()`, which would stop the recording outright.
+(b) `_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S` 1.0 → 1.3 (78 wpm of actual
+speech, against the sample's 150 wpm median), and a window with a single
+speech run is now halved at its quietest middle moment
+(`jarvis.dictation.segment.halve_at_quietest`) instead of returning early. The
+merged reading still only wins by carrying MORE speech, so a false positive
+costs one discarded read and never a worse transcript.
+(c) `_finish_dictation(dropped_audio_s=…)` degrades to `partial` above 0.5 s —
+one word at the measured speaking rate — and says so. Deliberately kept apart
+from `lost_audio_s` and deliberately silent about Restore: the audio it would
+re-read is the audio that was never recorded. Marks 10.8 % of the sample, every
+one of them a real loss.
+
+**Guards.** `tests/unit/audio/test_capture_overflow.py::test_the_depth_can_be_raised_while_the_stream_is_open`,
+`::test_a_deepened_queue_stops_dropping_what_the_shallow_one_lost`,
+`::test_the_queue_object_survives_a_resize`,
+`::test_a_depth_below_one_is_refused`,
+`tests/unit/speech/test_dictation_mic_handoff.py::test_the_borrowed_stream_is_deepened_for_the_dictation_and_handed_back`,
+`::test_the_depth_is_restored_even_when_the_dictation_blows_up`,
+`tests/unit/dictation/test_truncation_repair.py::test_continuous_speech_that_came_back_short_is_reread_in_halves`,
+`::test_a_halved_reread_that_finds_no_more_speech_keeps_the_original`,
+`::test_halving_covers_the_whole_buffer_with_an_overlap_at_the_seam`,
+`tests/unit/dictation/test_partial_outcome.py::test_dropped_capture_audio_degrades_the_outcome_and_says_so`,
+`::test_a_loss_too_small_to_have_taken_a_word_stays_a_success`,
+`::test_both_kinds_of_loss_are_reported_in_one_sentence_each`.
+
+**Still open.** What STALLS the loop long enough to overflow a 2 s queue is not
+diagnosed — the deeper bound raises the ceiling to 10 s, it does not remove the
+cause. There is no event-loop lag monitor anywhere in the process, so the stall
+is currently invisible; the dictation lane runs a local preview decode every
+1.2 s beside the drain, which is the first thing to measure. Cause 2's floor
+also remains a density heuristic: it cannot catch a truncation that drops only
+a short final clause, because no token count distinguishes that from ordinary
+speech. A recognizer offering word timestamps would settle it directly.

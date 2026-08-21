@@ -1197,7 +1197,36 @@ _DICTATION_FINAL_DEAD_PIECES = 2
 # verdict is judged on ENERGY versus token count, never on what the text says
 # (AP-27's lesson); the repair re-reads the window split at its pauses and the
 # longer reading wins.
-_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S = 1.0
+#
+# Raised from 1.0 after measuring what it actually caught: across 797 live
+# dictations the repair fired ONCE. Real speech in that sample runs at a median
+# 2.5 tokens per second of WHOLE recording — pauses included, so the voiced rate
+# is higher still. A floor of 1.0 therefore demanded that a recognizer swallow
+# some 60 % of a window before anyone even looked, which is why every ordinary
+# truncation (a dropped last sentence is a fifth of the text, not two thirds)
+# went unexamined.
+#
+# 1.3 is where the two costs cross. Tokens-per-WHOLE-second is a lower bound on
+# tokens-per-voiced-second, so the share of the sample under a threshold bounds
+# the re-read rate from above: at most 12.9 % here, against 7.8 % at the old
+# floor, and a false positive only ever costs one extra read whose result is
+# discarded unless it carries MORE speech. In words per minute of ACTUAL speech
+# — every pause already excluded — the floor now sits at 78 wpm, against the
+# 150 wpm median of the sample. Anything under that is worth one confirming
+# read (``test_a_healthy_window_is_not_reread`` pins the healthy side).
+_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S = 1.3
+
+# How much audio the CAPTURE may lose before the dictation says so. Frames the
+# queue dropped are not a transcription failure — they never became audio at
+# all, so no retry, no re-read and no Restore can bring them back; the only
+# honest thing left is to tell the user their recording has a hole in it.
+#
+# The floor is a WORD. At the measured 2.5 tokens per second of speech one word
+# is ~400 ms, so anything under half a second cannot have taken a whole one and
+# saying "words are missing" would be the wrong kind of true. Across the same
+# 797 live dictations this marks 10.8 % of them — every one a real loss, and
+# every one previously delivered as if it were complete.
+_DICTATION_DROPPED_AUDIO_NOTICE_S = 0.5
 
 # How far the live probe backs off after a failed transcription, and the ceiling
 # it backs off to. A provider refusing calls — the everyday case is a rate limit,
@@ -1236,7 +1265,16 @@ class _SessionInputBuffer:
         *,
         initial: tuple[AudioChunk, ...] = (),
         max_buffer_bytes: int = _SESSION_START_BUFFER_MAX_BYTES,
+        capture: MicrophoneCapture | None = None,
     ) -> None:
+        #: The still-open stream behind this handoff, when the frames come from
+        #: a live microphone rather than a test's hand-fed list. Carried purely
+        #: so a consumer that takes the stream over can re-bound its queue for
+        #: the kind of consumer IT is — a dictation records every frame, while
+        #: the wake detector this stream was opened for wants shallow and fresh
+        #: (``MicrophoneCapture.set_queue_depth``). ``None`` means there is
+        #: nothing to re-bound, which every caller treats as fine.
+        self.capture = capture
         self._chunks: deque[tuple[int, AudioChunk]] = deque()
         self._max_buffer_bytes = max(1, int(max_buffer_bytes))
         self._retained_bytes = 0
@@ -7115,7 +7153,7 @@ class SpeechPipeline:
             max_queue_chunks=REALTIME_QUEUE_CHUNKS,
             device_priority=self._input_priority,
         ) as mic:
-            buffer = _SessionInputBuffer()
+            buffer = _SessionInputBuffer(capture=mic)
 
             async def _unmuted_capture() -> AsyncIterator[AudioChunk]:
                 async for chunk in mic.stream():
@@ -7204,12 +7242,37 @@ class SpeechPipeline:
         wake loop re-arms its own microphone as soon as the dictation's block on
         activation lifts — including on the crash path, because the release runs
         in a ``finally``.
+
+        Either way the stream ends up bound for a BULK consumer. That mattered
+        more than it looked: the borrowed path is the one that actually runs on
+        any install with a wake word, and it used to inherit the wake stream's
+        shallow default. So the deep queue written for dictation below was dead
+        code on exactly the machines that needed it, and a stalled loop cost
+        seconds of speech — measured on the maintainer's box at 7.4 s gone from
+        a 15.4 s recording, with nothing anywhere saying so.
         """
         buffer = await self._claim_wake_capture_for_dictation()
         if buffer is not None:
+            restore_depth: int | None = None
+            capture = getattr(buffer, "capture", None)
+            if capture is not None:
+                try:
+                    restore_depth = capture.set_queue_depth(
+                        _DICTATION_CAPTURE_QUEUE_CHUNKS
+                    )
+                except Exception:  # noqa: BLE001 — a bound is a safeguard, never a gate
+                    log.debug("dictation could not deepen the capture queue", exc_info=True)
             try:
                 yield buffer
             finally:
+                if capture is not None and restore_depth is not None:
+                    # Hand the wake detector its shallow bound back. Leaving the
+                    # deep one on would trade this fix for the other failure:
+                    # a wake word scored against seconds-stale audio.
+                    try:
+                        capture.set_queue_depth(restore_depth)
+                    except Exception:  # noqa: BLE001 — teardown never fails a dictation
+                        log.debug("capture queue depth not restored", exc_info=True)
                 # ``close()`` sets ``released`` before it awaits anything, so
                 # the wake owner is freed even if this task is being cancelled.
                 await buffer.close()
@@ -7638,7 +7701,7 @@ class SpeechPipeline:
                     else tuple(recent_chunks)
                 )
                 self._discard_wake_preroll()
-            handoff_buffer = _SessionInputBuffer(initial=initial)
+            handoff_buffer = _SessionInputBuffer(initial=initial, capture=mic)
             self._wake_handoff_buffer = handoff_buffer
             self._wake_handoff_ready.set()
             return handoff_buffer
@@ -11257,17 +11320,27 @@ class SpeechPipeline:
             A recognizer handed audio with a sustained mid-recording pause can
             stop at the pause and silently drop everything after it — the
             transcript arrives fluent, punctuated, and half the length of what
-            was said. Detected here on energy alone: when the piece holds more
-            than one speech run and the transcript's token count is far below
-            what its VOICED seconds must have contained
-            (``_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S``), the piece is
-            re-read as its individual runs and the merged result replaces the
+            was said. Detected here on energy alone: when the transcript's
+            token count is far below what its VOICED seconds must have
+            contained (``_DICTATION_TRUNCATION_TOKENS_PER_VOICED_S``), the
+            piece is re-read in parts and the merged result replaces the
             original only when it actually carries more speech.
 
-            The runs are told the language the long window just detected
+            Where to cut is decided by the audio, in that order of preference:
+
+            * **At its pauses**, when the energy scan found more than one
+              speech run. Those seams cost nothing — no word sits on them.
+            * **In half at its quietest middle moment**, when it found only
+              one. That case used to return early and stand: continuous speech
+              that came back half-transcribed had no pause to split on, so the
+              guard looked at the most ordinary truncation there is and did
+              nothing. A recognizer that stops short on a long read rarely
+              stops at the same place on a short one.
+
+            The parts are told the language the long window just detected
             rather than asked to detect it themselves — a short clip guessing
             its language is the translation trap the long windows exist to
-            avoid. A run that cannot be read keeps the original transcript: a
+            avoid. A part that cannot be read keeps the original transcript: a
             dropped middle is worse than the dropped tail it would repair.
             """
             nonlocal truncation_repairs
@@ -11275,31 +11348,60 @@ class SpeechPipeline:
                 merge_transcripts,
                 transcript_token_count,
             )
-            from jarvis.dictation.segment import speech_runs
+            from jarvis.dictation.segment import (
+                halve_at_quietest,
+                is_silent_segment,
+                speech_runs,
+            )
 
             runs = speech_runs(
                 piece,
                 session_peak=session_peak,
                 bytes_per_second=bytes_per_second,
             )
-            if len(runs) < 2:
+            if not runs:  # No speech to be missing any of.
                 return text
             voiced_s = sum(end - start for start, end in runs) / bytes_per_second
             tokens = transcript_token_count(text)
             if tokens >= voiced_s * _DICTATION_TRUNCATION_TOKENS_PER_VOICED_S:
                 return text
+            split_at_pauses = len(runs) > 1
+            if not split_at_pauses:
+                # Halve the RUN, never the window. A window is mostly silence
+                # whenever the speaker paused to think, and halving that hands
+                # one request a stretch with no speech in it — the single most
+                # reliable way to make a recognizer invent a sentence, and a
+                # request spent to be told nothing. Offsets are mapped back so
+                # the reads still come from the window's own audio.
+                speech_start, speech_end = runs[0]
+                halves = halve_at_quietest(
+                    piece[speech_start:speech_end],
+                    bytes_per_second=bytes_per_second,
+                )
+                if not halves:  # Too short to halve — nothing useful to ask twice.
+                    return text
+                runs = [
+                    (speech_start + start, speech_start + end)
+                    for start, end in halves
+                ]
             log.warning(
                 "final dictation window looks truncated (%d tokens for %.1fs "
-                "of speech in %d runs) — re-reading it split at its pauses.",
+                "of speech) — re-reading it %s.",
                 tokens,
                 voiced_s,
-                len(runs),
+                "split at its pauses" if split_at_pauses else "in two halves",
             )
             run_ask = language if (not ask_for or ask_for == "auto") else ask_for
             parts: list[str] = []
             for start, end in runs:
                 run_piece = piece[start:end]
                 if len(run_piece) < min_bytes:
+                    continue
+                if is_silent_segment(run_piece, session_peak=session_peak):
+                    # Costs nothing to check and saves a request over silence,
+                    # which is the one input a recognizer answers with words
+                    # nobody said. Skipped, never counted as a failed read: a
+                    # piece with no speech in it has nothing to contribute.
                     continue
                 run_text, run_read = await _read_piece(
                     run_piece, ask_for=run_ask or None
@@ -11692,6 +11794,7 @@ class SpeechPipeline:
                 # the failure that actually cost the user something.
                 stt_error=capture_error or lost_reason or stt_error,
                 lost_audio_s=lost_audio_s,
+                dropped_audio_s=quality_metrics.dropout_duration_ms / 1000.0,
                 audio=bytes(buffer),
                 stt_providers=tuple(stt_providers),
                 stt_models=tuple(stt_models),
@@ -11920,6 +12023,7 @@ class SpeechPipeline:
         hung_up: bool,
         stt_error: str | None = None,
         lost_audio_s: float = 0.0,
+        dropped_audio_s: float = 0.0,
         audio: bytes | None = None,
         stt_providers: tuple[str, ...] = (),
         stt_models: tuple[str, ...] = (),
@@ -11960,6 +12064,15 @@ class SpeechPipeline:
         only the second one is a reason to stop calling the dictation a success
         and to keep its audio. Defaults to zero so every existing caller (and
         the crash path below) keeps today's behaviour exactly.
+
+        ``dropped_audio_s`` is the OTHER way to end up missing words, and it is
+        kept apart from ``lost_audio_s`` because the two owe the user different
+        sentences. Lost audio was recorded and never read — a retry could still
+        read it, which is what Restore offers. Dropped audio was never recorded:
+        the capture queue overflowed while the loop was busy and those frames
+        are gone, so promising Restore would point at a button that cannot help.
+        Both degrade the outcome to ``partial``; only the first one promises
+        anything.
 
         ``audio`` is the session's raw PCM; it is written to a local sidecar
         only when the dictation left the user missing words AND they allow it
@@ -12264,6 +12377,37 @@ class SpeechPipeline:
                 "transcribed (%s); the recording is kept for Restore.",
                 lost_audio_s,
                 stt_error or "unknown",
+            )
+
+        # The other hole, and the one nothing used to mention: frames the
+        # CAPTURE dropped. When the event loop stalls longer than the mic
+        # queue holds, ``_safe_put`` deletes the oldest frame per arrival and
+        # that speech never becomes audio anyone can read — measured across 797
+        # live dictations at 56 % of them losing something and one losing 7.4 s
+        # out of 15.4 s, every one of them delivered as a clean success.
+        #
+        # Said FIRST when both holes are present: this is the unrecoverable
+        # one. It also deliberately does not mention Restore — the audio it
+        # would re-read is the audio that was never recorded.
+        if (
+            dropped_audio_s >= _DICTATION_DROPPED_AUDIO_NOTICE_S
+            and not hung_up
+            and cleaned.strip()
+        ):
+            outcome_name = "partial"
+            detail = " ".join(
+                part
+                for part in (
+                    f"About {dropped_audio_s:.1f}s of audio was lost while "
+                    "recording, so words are missing.",
+                    detail,
+                )
+                if part
+            )
+            log.warning(
+                "dictation degraded to partial: %.1fs of audio never reached "
+                "the recording (capture queue overflow) — not recoverable.",
+                dropped_audio_s,
             )
 
         # Mark the turn closed BEFORE the publish attempt: this flag answers

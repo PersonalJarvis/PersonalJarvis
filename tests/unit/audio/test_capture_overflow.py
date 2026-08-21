@@ -58,6 +58,72 @@ def test_safe_put_drops_oldest_and_keeps_newest_on_overflow() -> None:
     assert mic.dropped_frames == 1
 
 
+# --------------------------------------------------------------------------
+# Re-bounding a live stream — the wake mic becomes a dictation mic mid-flight
+# --------------------------------------------------------------------------
+
+
+def test_the_depth_can_be_raised_while_the_stream_is_open() -> None:
+    """A bulk consumer takes a shallow stream over and deepens it.
+
+    Not a hypothetical: with a wake word configured, EVERY dictation borrows
+    the wake stream rather than opening its own, so the deep bulk depth written
+    for dictation only ever applied on installs with no wake word at all.
+    """
+    mic = MicrophoneCapture(max_queue_chunks=REALTIME_QUEUE_CHUNKS)
+
+    previous = mic.set_queue_depth(DEFAULT_QUEUE_CHUNKS)
+
+    assert previous == REALTIME_QUEUE_CHUNKS
+    assert mic.queue_depth == DEFAULT_QUEUE_CHUNKS
+    assert mic.set_queue_depth(previous) == DEFAULT_QUEUE_CHUNKS
+    assert mic.queue_depth == REALTIME_QUEUE_CHUNKS
+
+
+def test_a_deepened_queue_stops_dropping_what_the_shallow_one_lost() -> None:
+    """The whole point: the frames a stall would have deleted are still there."""
+    mic = MicrophoneCapture(max_queue_chunks=2)
+    mic.set_queue_depth(4)
+
+    for tag in (1, 2, 3, 4):
+        mic._safe_put(_chunk(tag))
+
+    drained = []
+    while not mic._queue.empty():
+        drained.append(mic._queue.get_nowait().timestamp_ns)
+
+    assert drained == [1, 2, 3, 4], drained
+    assert mic.dropped_frames == 0
+
+
+def test_the_queue_object_survives_a_resize() -> None:
+    """Identity matters: a consumer parked in ``get()`` holds the old object.
+
+    Building a fresh queue and copying the items across would leave the
+    dictation's drain waiting on a queue nothing puts to again — the recording
+    would simply stop, which is the failure this whole change is about.
+    """
+    mic = MicrophoneCapture(max_queue_chunks=2)
+    before = mic._queue
+    mic._safe_put(_chunk(7))
+
+    mic.set_queue_depth(9)
+
+    assert mic._queue is before
+    assert mic._queue.get_nowait().timestamp_ns == 7
+
+
+def test_a_depth_below_one_is_refused() -> None:
+    """``asyncio.Queue(0)`` means UNBOUNDED — the opposite of a tight bound."""
+    mic = MicrophoneCapture(max_queue_chunks=5)
+
+    mic.set_queue_depth(0)
+    assert mic.queue_depth == 1
+
+    mic.set_queue_depth(-3)
+    assert mic.queue_depth == 1
+
+
 def test_safe_put_no_drop_when_not_full() -> None:
     mic = MicrophoneCapture(max_queue_chunks=8)
     for tag in range(5):

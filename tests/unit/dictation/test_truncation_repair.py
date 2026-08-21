@@ -24,7 +24,7 @@ from typing import Any
 from jarvis.core.config import DictationConfig
 from jarvis.core.events import DictationCompleted
 from jarvis.dictation.merge import transcript_token_count
-from jarvis.dictation.segment import speech_runs
+from jarvis.dictation.segment import halve_at_quietest, speech_runs
 from jarvis.speech.pipeline import SpeechPipeline
 
 # 16 kHz mono int16 — the capture contract every dictation records under.
@@ -218,15 +218,112 @@ async def test_a_window_cut_at_a_pause_is_reread_and_the_tail_recovered() -> Non
 
 
 async def test_a_healthy_window_is_not_reread() -> None:
-    # Same pause, but the transcript's token count covers its voiced seconds
-    # — eight tokens for ~6 s of speech is a normal reading, not a truncation.
-    stt = _ScriptedSTT(["one two three four five six seven eight"])
+    # Same pause, but the transcript's token count covers its voiced seconds.
+    #
+    # Twelve tokens for ~6.6 voiced seconds is 109 words per minute of actual
+    # speech — an ordinary dictation. The count was eight while the floor sat
+    # at 1.0 token per voiced second; that floor demanded a recognizer swallow
+    # some 60 % of a window before anyone looked, so it caught one truncation
+    # in 797 live dictations and the ordinary case — a dropped last sentence —
+    # went unexamined. At the raised floor, eight tokens across 6.6 voiced
+    # seconds is 73 wpm with every pause already excluded, which is slow enough
+    # to be worth one confirming read.
+    stt = _ScriptedSTT(["one two three four five six seven eight nine ten again yes"])
     pipe, events = _session_pipeline(stt, _paused_recording())
 
     await _run_session(pipe)
 
     assert stt.calls == 1
     assert "truncation_repairs:0" in _completed(events).stt_audit
+
+
+# --------------------------------------------------------------------------
+# halve_at_quietest — the re-read shape for speech with no pause to split at
+# --------------------------------------------------------------------------
+
+
+def test_halving_covers_the_whole_buffer_with_an_overlap_at_the_seam() -> None:
+    # 6 s, a breath too short to count as a pause, 6 s — one speech run, so
+    # the pause split has nothing to offer and the halves are all there is.
+    pcm = _paused_recording(first_s=6.0, pause_s=0.3, second_s=6.0)
+    assert len(speech_runs(pcm, bytes_per_second=BYTES_PER_SECOND)) == 1
+
+    halves = halve_at_quietest(pcm, bytes_per_second=BYTES_PER_SECOND)
+
+    assert len(halves) == 2
+    first, second = halves
+    assert first[0] == 0
+    assert second[1] == len(pcm)
+    # Overlapping, so a word on the seam is spoken in full inside one of them.
+    assert second[0] < first[1]
+    # The cut itself is the middle of that shared stretch, and it landed in the
+    # quiet spot rather than at the blind midpoint.
+    cut = (first[1] + second[0]) // 2
+    assert 5.9 * BYTES_PER_SECOND <= cut <= 6.4 * BYTES_PER_SECOND
+
+
+def test_a_buffer_too_short_to_halve_is_left_alone() -> None:
+    """Two slivers are two hallucinated subtitle credits, not a repair."""
+    assert halve_at_quietest(b"\x11\x22" * 8_000, bytes_per_second=BYTES_PER_SECOND) == []
+    assert halve_at_quietest(b"", bytes_per_second=BYTES_PER_SECOND) == []
+
+
+def test_continuous_speech_halves_near_the_middle() -> None:
+    """No quiet spot anywhere — the split still has to make two real halves."""
+    pcm = b"\x11\x22" * (12 * 16_000)
+
+    first, second = halve_at_quietest(pcm, bytes_per_second=BYTES_PER_SECOND)
+
+    assert first[0] == 0 and second[1] == len(pcm)
+    for start, end in (first, second):
+        assert end - start >= 4.0 * BYTES_PER_SECOND
+
+
+# --------------------------------------------------------------------------
+# The session, for speech that never paused — the case that used to stand
+# --------------------------------------------------------------------------
+
+
+async def test_continuous_speech_that_came_back_short_is_reread_in_halves() -> None:
+    """One run, a transcript far too small for it — and nobody used to look.
+
+    ``speech_runs`` reports a single run for continuous speech, and the guard
+    returned on the spot. So the most ordinary truncation there is — a fluent
+    recording whose last sentences simply never arrived — was believed in full.
+    """
+    stt = _ScriptedSTT(
+        [
+            "Please use simple words.",
+            "Please use simple words.",
+            "and then finish the thought properly at the end.",
+        ]
+    )
+    pcm = _paused_recording(first_s=6.0, pause_s=0.3, second_s=6.0)
+    pipe, events = _session_pipeline(stt, pcm)
+
+    await _run_session(pipe)
+
+    completed = _completed(events)
+    assert "finish the thought" in completed.raw_text
+    assert stt.calls == 3  # the long read, then one per half
+    assert "truncation_repairs:1" in completed.stt_audit
+
+
+async def test_a_halved_reread_that_finds_no_more_speech_keeps_the_original() -> None:
+    """The merged reading only ever wins by carrying MORE.
+
+    A false positive must cost one wasted pair of requests and nothing else —
+    never a transcript rebuilt out of two worse reads.
+    """
+    stt = _ScriptedSTT(["Six words is not very many.", "Six words", "is not"])
+    pcm = _paused_recording(first_s=6.0, pause_s=0.3, second_s=6.0)
+    pipe, events = _session_pipeline(stt, pcm)
+
+    await _run_session(pipe)
+
+    completed = _completed(events)
+    assert completed.raw_text == "Six words is not very many."
+    assert "truncation_repairs:0" in completed.stt_audit
 
 
 async def test_a_failed_run_read_keeps_the_original_transcript() -> None:
