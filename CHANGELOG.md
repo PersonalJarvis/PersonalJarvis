@@ -9,6 +9,22 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The marketplace is a section of the app now.** Everything the community
+  published — plugins, skills and wallpapers — sits behind one sidebar entry
+  with one search across all three, instead of being split over a tab, a
+  second list and a third screen. Opening an entry shows the publisher, the
+  source repository and the actual published files before anything installs,
+  and once it lands the app says which section now holds it and takes you
+  there. "Open the marketplace" works by voice, in all three languages.
+
+### Fixed
+
+- **"Open the modes" was an unknown section to the assistant.** The character
+  screen shipped as a real section but never reached the navigation tool's
+  list, so the spoken command went nowhere.
+
 ## [1.5.1] — 2026-08-21
 
 ### Added
