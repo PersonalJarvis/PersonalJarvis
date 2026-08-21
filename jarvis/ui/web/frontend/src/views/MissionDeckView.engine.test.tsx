@@ -22,6 +22,13 @@ vi.mock("@/components/deck/DeckSignalCards", () => ({
   CaptureCard: () => <section>capture</section>,
   LiveCounter: () => <div>counter</div>,
 }));
+// Stubbed for the same reason as the cards above — the real hook reads the
+// outputs, runs and IDE queries and needs a QueryClient. This file is about
+// which engine the header names.
+vi.mock("@/components/deck/DeckRestStrip", () => ({
+  useDeckRest: () => ({ atRest: false, segments: [] }),
+  DeckRestStrip: () => <section>rest</section>,
+}));
 vi.mock("@/components/deck/DeckTurnCard", () => ({ TurnCard: () => <section>turn</section> }));
 vi.mock("@/components/deck/DeckLogCard", async () => {
   const actual = await vi.importActual<typeof import("@/components/deck/DeckLogCard")>(
