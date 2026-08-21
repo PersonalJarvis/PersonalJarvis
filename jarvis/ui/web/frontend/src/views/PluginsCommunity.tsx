@@ -102,6 +102,8 @@ export interface CommunityWallpaperWire {
   raw_url?: string | null;
   /** The small preview the registry publishes next to the full image. */
   thumb_url?: string | null;
+  /** SPDX id the publisher declared for the artwork. */
+  license?: string | null;
   theme?: string | null;
   installed: boolean;
 }

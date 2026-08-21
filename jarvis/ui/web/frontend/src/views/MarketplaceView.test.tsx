@@ -60,6 +60,8 @@ const INDEX: CommunityResponse = {
       version: "1.0.0",
       source_url: "https://github.com/PersonalJarvis/marketplace/tree/main/plugins/sentry",
       auth: { mode: "hosted_mcp_oauth_dcr" },
+      // Exactly the shape the live index serves for this entry.
+      mcp_server: { transport: "http", url: "https://mcp.sentry.dev/mcp" },
       installed: false,
     },
   ],
@@ -197,6 +199,43 @@ describe("MarketplaceView", () => {
 
     expect(screen.queryByText("Sentry")).toBeNull();
     expect(screen.getByText("Three Bullet Brief")).toBeTruthy();
+  });
+
+  it("says where a plugin would send data before it can be installed", async () => {
+    installFetchMock();
+    renderView();
+    await screen.findByText("Sentry");
+
+    fireEvent.click(screen.getByText("Sentry"));
+
+    // The destination is spelled out verbatim — a file listing alone does not
+    // tell anybody where their access token ends up.
+    expect(
+      await screen.findByText(/requests and your access token go to/i),
+    ).toBeTruthy();
+    expect(screen.getByText("https://mcp.sentry.dev/mcp")).toBeTruthy();
+    expect(screen.getByText("OAuth sign-in")).toBeTruthy();
+  });
+
+  it("names the command a stdio plugin would run", async () => {
+    installFetchMock({
+      plugins: [
+        {
+          ...INDEX.plugins[0],
+          name: "local-tool",
+          id: "local-tool",
+          display_name: "Local Tool",
+          auth: undefined,
+          mcp_server: { transport: "stdio", install: ["npx", "-y", "some-server"] },
+        },
+      ],
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByText("Local Tool"));
+
+    expect(await screen.findByText(/runs on your computer/i)).toBeTruthy();
+    expect(screen.getByText("npx -y some-server")).toBeTruthy();
   });
 
   it("shows the published files before install is reachable", async () => {

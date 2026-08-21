@@ -4621,6 +4621,14 @@
     "landed_skill": "Liegt jetzt unter Skills und ist sofort einsatzbereit.",
     "landed_wallpaper": "Liegt jetzt unter Hintergrund — auswählen, um es zu setzen.",
     "landed_needs_connect": "Installiert, aber noch nicht nutzbar: es muss noch verbunden werden.",
+    "sends_data_to": "Sobald verbunden, gehen Anfragen und dein Zugriffstoken an:",
+    "runs_command": "Sobald verbunden, läuft dieser Befehl auf deinem Rechner:",
+    "metadata_only": "Nur Metadaten — das ergänzt keinen Server und führt keinen Befehl aus.",
+    "sign_in_method": "Anmeldeweg",
+    "portable_skill": "Portabler Skill — läuft auch in",
+    "portable_any": "anderen Agenten, die SKILL.md lesen",
+    "license": "Lizenz",
+    "seed_conflict": "Ein Plugin dieses Namens liegt der App schon bei. Dieses hier ersetzt es.",
     "landed_open": "Zeig es mir"
   }
 }

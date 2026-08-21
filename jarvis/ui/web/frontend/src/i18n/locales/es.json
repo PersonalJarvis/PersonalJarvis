@@ -4621,6 +4621,14 @@
     "landed_skill": "Ya está en Skills y se puede usar enseguida.",
     "landed_wallpaper": "Ya está en Fondo de pantalla: elígelo para aplicarlo.",
     "landed_needs_connect": "Instalado, pero todavía no se puede usar: falta conectarlo.",
+    "sends_data_to": "Una vez conectado, las peticiones y tu token de acceso van a:",
+    "runs_command": "Una vez conectado, este comando se ejecuta en tu ordenador:",
+    "metadata_only": "Solo metadatos: no añade ningún servidor ni ejecuta ningún comando.",
+    "sign_in_method": "Forma de iniciar sesión",
+    "portable_skill": "Skill portable: también funciona en",
+    "portable_any": "otros agentes que leen SKILL.md",
+    "license": "Licencia",
+    "seed_conflict": "La app ya trae un plugin con este nombre. Instalar este lo sustituye.",
     "landed_open": "Muéstramelo"
   }
 }

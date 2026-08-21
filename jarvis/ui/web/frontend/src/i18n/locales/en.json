@@ -4621,6 +4621,14 @@
     "landed_skill": "It is in Skills now and can be used right away.",
     "landed_wallpaper": "It is in Wallpaper now — pick it to apply it.",
     "landed_needs_connect": "Installed, but not usable yet: it still needs to be connected.",
+    "sends_data_to": "Once connected, requests and your access token go to:",
+    "runs_command": "Once connected, this command runs on your computer:",
+    "metadata_only": "Metadata only — this adds no server and runs no command.",
+    "sign_in_method": "Sign-in method",
+    "portable_skill": "Portable skill — also runs in",
+    "portable_any": "other agents that read SKILL.md",
+    "license": "Licence",
+    "seed_conflict": "A plugin of this name already ships with the app. Installing this one replaces it.",
     "landed_open": "Show me"
   }
 }

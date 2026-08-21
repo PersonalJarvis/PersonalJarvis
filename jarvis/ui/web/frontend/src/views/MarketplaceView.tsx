@@ -77,6 +77,23 @@ interface Entry {
   /** A plugin whose manifest this client could not read. */
   broken?: boolean;
   problem?: string | null;
+  /**
+   * Where installing this would eventually send data, or what it would run.
+   *
+   * The whole reason the drawer exists: the registry auto-merges submissions
+   * that pass automated checks, so the only honest consent is showing the
+   * destination verbatim before the button is pressed — the same three cases
+   * the plugin consent dialog spells out (hosted URL / stdio argv / neither).
+   */
+  mcp?: { transport?: string; url?: string; install?: string[] } | null;
+  /** How connecting works, once installed. Plugins only. */
+  authMode?: string | null;
+  /** A plugin the shipped seed catalog already carries under this name. */
+  seedConflict?: boolean;
+  /** Skills only: a portable Agent Skill states the agents it also runs in. */
+  portableAgents?: string[] | null;
+  /** Wallpapers only. */
+  license?: string | null;
 }
 
 /** Where an installed entry of this kind now lives in the app. */
@@ -104,6 +121,9 @@ function pluginEntry(p: CommunityPluginWire): Entry {
     logoColor: /^[0-9a-fA-F]{6}$/.test(raw) ? `#${raw}` : null,
     broken: !p.valid,
     problem: p.error ?? null,
+    mcp: p.mcp_server ?? null,
+    authMode: p.auth?.mode ?? null,
+    seedConflict: Boolean(p.seed_conflict),
   };
 }
 
@@ -118,6 +138,7 @@ function skillEntry(s: CommunitySkillWire): Entry {
     categories: s.categories ?? [],
     sourceUrl: s.source_url,
     installed: Boolean(s.installed),
+    portableAgents: s.flavor === "portable" ? (s.compatible_agents ?? []) : null,
   };
 }
 
@@ -133,6 +154,7 @@ function wallpaperEntry(w: CommunityWallpaperWire): Entry {
     sourceUrl: w.source_url,
     installed: Boolean(w.installed),
     thumbUrl: w.thumb_url ?? w.raw_url ?? null,
+    license: w.license ?? null,
   };
 }
 
@@ -807,6 +829,8 @@ function EntryDrawer({
               {t("marketplace.unreviewed_note")}
             </p>
 
+            <Destination entry={entry} t={t} />
+
             {entry.sourceUrl && (
               <Button
                 variant="outline"
@@ -894,6 +918,82 @@ function EntryDrawer({
     </div>
   );
 }
+
+/**
+ * What installing this would actually reach.
+ *
+ * A plugin is a door to somebody else's service: the hosted URL its requests
+ * and access token go to, or the command it would run on this computer. The
+ * plugin consent dialog has always said this verbatim, and now that the drawer
+ * is a second way to install, it has to say it too — a file listing alone does
+ * not tell anybody where their data ends up.
+ */
+function Destination({ entry, t }: { entry: Entry; t: Translate }) {
+  const rows: { label: string; value?: string; code?: string }[] = [];
+
+  if (entry.kind === "plugin") {
+    const mcp = entry.mcp;
+    if (mcp?.transport === "stdio") {
+      rows.push({
+        label: t("marketplace.runs_command"),
+        code: (mcp.install ?? []).join(" "),
+      });
+    } else if (mcp?.url) {
+      rows.push({ label: t("marketplace.sends_data_to"), code: mcp.url });
+    } else {
+      rows.push({ label: t("marketplace.metadata_only") });
+    }
+    const auth = entry.authMode ? AUTH_MODE_LABEL[entry.authMode] : undefined;
+    if (auth) rows.push({ label: t("marketplace.sign_in_method"), value: auth });
+  }
+
+  if (entry.portableAgents) {
+    rows.push({
+      label: t("marketplace.portable_skill"),
+      value:
+        entry.portableAgents.length > 0
+          ? entry.portableAgents.join(", ")
+          : t("marketplace.portable_any"),
+    });
+  }
+
+  if (entry.license) {
+    rows.push({ label: t("marketplace.license"), value: entry.license });
+  }
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {entry.seedConflict && (
+        <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {t("marketplace.seed_conflict")}
+        </p>
+      )}
+      {rows.map((row) => (
+        <div key={row.label}>
+          <p className="mb-1 text-xs font-medium text-foreground">{row.label}</p>
+          {row.code && (
+            <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
+              {row.code}
+            </code>
+          )}
+          {row.value && <p className="text-xs text-muted-foreground">{row.value}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Mirrors the plugin consent dialog's labels — one vocabulary for one act. */
+const AUTH_MODE_LABEL: Record<string, string> = {
+  pat_paste: "Personal access token",
+  oauth_device_flow: "Device sign-in",
+  hosted_mcp_oauth_dcr: "OAuth sign-in",
+  oauth_pkce_loopback: "OAuth sign-in",
+  hosted_mcp_allowlist: "Account allowlist",
+};
 
 /**
  * Where the thing landed — and the way to it.
