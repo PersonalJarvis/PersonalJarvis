@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef } from "react";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { JarvisOrb } from "@/components/deck/JarvisOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
@@ -82,22 +82,6 @@ export function DeckOrb({
     [],
   );
 
-  const [sweep, setSweep] = useState(0);
-  const raf = useRef<number | null>(null);
-  useEffect(() => {
-    if (!busy || reduced) return;
-    let start: number | null = null;
-    const tick = (ts: number) => {
-      if (start === null) start = ts;
-      setSweep(((ts - start) / 30) % 360);
-      raf.current = requestAnimationFrame(tick);
-    };
-    raf.current = requestAnimationFrame(tick);
-    return () => {
-      if (raf.current !== null) cancelAnimationFrame(raf.current);
-    };
-  }, [busy, reduced]);
-
   const R = size / 2;
   // The sphere sat at 0.78 of the reticle and left a ring of nothing around
   // it. Gigi carries a lot of air inside its own 256 viewBox — the figure is
@@ -122,8 +106,20 @@ export function DeckOrb({
     };
   });
 
-  const [sx, sy] = point(sweep, R * 0.94);
-  const [ex, ey] = point(sweep + 36, R * 0.94);
+  // The sweep is drawn ONCE, at rest, and turned by CSS (`.deck-orb-sweep`,
+  // index.css). It used to be an animation-frame loop that put its angle in
+  // React state: sixty renders a second of this whole component, each one
+  // rewriting the arc's `d` INSIDE the halo filter, which forced the filter
+  // to raster again — on the CPU, at every frame, while the deck was busy.
+  // That is exactly when a person is waiting for an answer and watching the
+  // centre, and on a four-core laptop it is what made the deck crawl
+  // (maintainer, 2026-08-21: "1 FPS"). The geometry never changed; only the
+  // angle did, and an angle is a transform. So it is one now, on its own
+  // unfiltered group with the same halo as a cheap `drop-shadow`, the way
+  // `.deck-ring-orbit` already turns the standby's ring: compositor work,
+  // no render, no repaint, no filter pass.
+  const [sx, sy] = point(0, R * 0.94);
+  const [ex, ey] = point(36, R * 0.94);
   const haloId = useId();
 
   // The corners used to carry four readouts, and two of them were counters
@@ -216,17 +212,24 @@ export function DeckOrb({
             opacity={0.95}
           />
         ))}
-        {busy && !reduced && (
-          <path
-            d={`M ${sx} ${sy} A ${R * 0.94} ${R * 0.94} 0 0 1 ${ex} ${ey}`}
-            fill="none"
-            stroke="hsl(var(--primary))"
-            strokeWidth={2}
-            strokeLinecap="butt"
-            opacity={0.7}
-          />
-        )}
         </g>
+        {/* The sweep turns on its OWN group, outside the halo filter: a
+            filtered group has to be rastered again every time anything
+            inside it moves, and this one moves every frame. It carries the
+            same halo as a `drop-shadow` in CSS, which is rastered once and
+            then only turned. */}
+        {busy && !reduced && (
+          <g className="deck-orb-sweep">
+            <path
+              d={`M ${sx} ${sy} A ${R * 0.94} ${R * 0.94} 0 0 1 ${ex} ${ey}`}
+              fill="none"
+              stroke="hsl(var(--primary))"
+              strokeWidth={2}
+              strokeLinecap="butt"
+              opacity={0.7}
+            />
+          </g>
+        )}
       </svg>
 
       {/* Ripples: one ring per word landing, leaving the figure for the edge.

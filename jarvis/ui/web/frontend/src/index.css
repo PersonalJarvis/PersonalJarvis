@@ -669,6 +669,24 @@
       );
   }
 
+  /*
+   * The vibrating plate (ChladniField).
+   *
+   * It rides ON the wallpaper, so its weight is set here rather than in the
+   * canvas: the component paints the sand at full strength and this decides
+   * how much of the picture underneath it is allowed to cover. Dark gets more
+   * of it — hot sand on a dark ground reads as light and does not compete
+   * with the artwork. Light gets less, because dark ink over a bright picture
+   * hides it rather than lighting it, and the maintainer's standing rule for
+   * light mode is that the wallpaper stays genuinely visible (see below).
+   */
+  .jarvis-chladni-field {
+    opacity: 0.5;
+  }
+  :root:not(.dark) .jarvis-chladni-field {
+    opacity: 0.34;
+  }
+
   /* Light keeps the artwork untinted (no darkening filter), but it retains
      the contrast veil: the veil is built from --shell-rgb, so on paper it
      settles the edges of the frame — where chrome text lives — with a faint
@@ -2238,6 +2256,25 @@
     filter: drop-shadow(0 0 1.2px hsl(var(--background) / 0.85));
     animation: deck-orb-turn 90s linear infinite reverse;
   }
+  /* The orb's sweep: one arc that turns while the deck has something
+     running (DeckOrb.tsx). It used to take its angle from an
+     animation-frame loop through React state — sixty renders a second of
+     the whole centre, each one rewriting the arc's `d` inside the halo
+     filter, so the filter rastered again on the CPU at every frame. It was
+     doing that exactly while a person waited for an answer, and on a
+     four-core laptop the deck fell to a frame a second. Same arc, same
+     speed (a turn every 10.8 s), same halo — as a transform the compositor
+     owns, so a busy deck costs the main thread NOTHING now.
+
+     It sits outside the halo filter for that reason: a filtered group is
+     rastered again whenever anything in it moves. */
+  .deck-orb-sweep {
+    transform-box: view-box;
+    transform-origin: 50% 50%;
+    will-change: transform;
+    filter: drop-shadow(0 0 1.2px hsl(var(--background) / 0.85));
+    animation: deck-orb-turn 10.8s linear infinite;
+  }
   @keyframes deck-orb-turn {
     to {
       transform: rotate(360deg);
@@ -2248,6 +2285,7 @@
     .deck-orb-glow,
     .deck-orb-corona,
     .deck-orb-ripple,
+    .deck-orb-sweep,
     .deck-ring-orbit {
       animation: none !important;
     }
