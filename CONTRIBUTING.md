@@ -24,8 +24,25 @@
 
 ---
 
+## Your first PR, in five lines
+
+1. Fork, then `git clone` your fork. `pip install -e . --no-deps && pip install -r requirements.txt && pip install -e ".[dev]"`
+2. Pick something from [good first issue](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), or just fix the thing that annoyed you.
+3. Change one thing. Run `pytest -m "not slow"` (or `npm run test` in `jarvis/ui/web/frontend/` for UI work).
+4. Open the PR. Tick only the block in the template that matches your change — a docs fix owes nothing else.
+5. Stuck at any point? Ask on [Discord](https://discord.gg/x7USduHxbc). Same day, usually.
+
+Small PRs get merged. You do not need to read the rest of this file to open one, and you do
+not need to understand the whole system to fix a piece of it. Everything below is reference
+for when you go deeper.
+
+**One exception, and it is not negotiable:** everything written into the repo is English.
+
+---
+
 ## Contents
 
+- [Your first PR](#your-first-pr-in-five-lines)
 - [What to work on](#what-to-work-on)
 - [Before you start](#before-you-start)
 - [Development environment](#development-environment)
@@ -166,17 +183,26 @@ Tests use fakes from `tests/fakes/`, not mocks. New providers have to pass the c
 
 ## Opening your PR
 
-Run through this before you open it:
+The checklist in the PR template **scales with what you touched**; there is no single bar
+for everybody. Pick your block and ignore the rest:
 
-- [ ] Tests pass (`pytest`), including `tests/contract/` for new providers
-- [ ] `ruff` and `mypy` are clean; the frontend builds and `vitest` is green
-- [ ] Everything new or changed is English (the CI language gate is required)
-- [ ] New wire-format enums use the five-layer pattern plus a parity test
-- [ ] No new base-install dependency on Windows-only or GPU-only packages
-- [ ] User-facing changes update the docs and `CHANGELOG.md`
+| Your change | What it owes |
+|---|---|
+| Docs, comments, translations | Nothing beyond English artifacts |
+| Web UI | `npm run test` + `npm run build`, works in light **and** dark mode, a screenshot. Do not commit `jarvis/ui/web/dist/` — the maintainer rebuilds the shipped bundle |
+| Bug fix, ordinary Python | `pytest -m "not slow"` green, a test for the fixed behaviour, `ruff` clean |
+| New provider | The above plus `pytest tests/contract/`, no `import jarvis.*` in the module, honest degradation without a key |
+| A shared contract (capability, config schema, turn-taking, credentials, OS backend) | The above plus: which platforms you touched and what the others do now, a boot on headless `python:3.11-slim`, `CHANGELOG.md` |
+
+Unsure whether you are in the last row? Open the PR and ask. Guessing high wastes your
+evening; we would rather tell you in review.
 
 Describe what changed and why, and link the issue it closes. By contributing you agree your
 work is licensed under the [MIT License](LICENSE).
+
+> [!NOTE]
+> **A first PR does not have to be perfect.** Failing CI on a rule you had never heard of is
+> normal and is not a rejection. Say so in the PR and we will walk you through it.
 
 ## Community
 

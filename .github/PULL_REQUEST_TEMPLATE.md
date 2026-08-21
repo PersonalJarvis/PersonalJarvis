@@ -1,38 +1,89 @@
 <!--
-Thanks for contributing to Personal Jarvis! Please fill out the sections below.
-Keep all artifacts (code, comments, docs, this PR text) in English — see CONTRIBUTING.md.
+Thanks for contributing to Personal Jarvis.
+
+Tick only the block that matches your change. A one-line docs fix does not owe
+the same evidence as a new speech provider, and we do not pretend otherwise.
 -->
 
 ## What does this PR do?
 
-<!-- A short, plain-language summary of the change and the motivation. -->
+<!-- Two or three sentences: what changed, and why. Plain language is fine. -->
 
-## Related issues
+## Related issue
 
-<!-- e.g. "Closes #123". Link any issue this addresses. -->
+<!-- "Closes #123", or "none" if there isn't one. Small fixes don't need an issue first. -->
 
-## Type of change
+---
 
-- [ ] Bug fix (non-breaking change that fixes an issue)
-- [ ] New feature (non-breaking change that adds functionality)
-- [ ] Breaking change (fix or feature that changes existing behavior)
-- [ ] Documentation only
-- [ ] Refactor / internal cleanup (no behavior change)
+## Everyone
 
-## Checklist
+- [ ] **English only** — code, comments, docs, commit messages, and this PR text.
+      Maintainers have to be able to read every line that lands; CI enforces it.
+      Chat with us in any language you like on [Discord](https://discord.gg/x7USduHxbc).
+- [ ] **One logical change.** Unrelated fixes go in their own PR.
+- [ ] **No secrets, API keys, or personal data** anywhere in the diff.
 
-- [ ] I read [`CONTRIBUTING.md`](../CONTRIBUTING.md) and, for larger changes, [`CLAUDE.md`](../CLAUDE.md) + [`docs/PHILOSOPHY.md`](../docs/PHILOSOPHY.md).
-- [ ] All artifacts are in English (code, comments, docs, commit messages).
-- [ ] Tests pass locally (`pytest -m "not slow"`), and I added tests for new behavior.
-- [ ] New brain/STT/TTS/tool/channel providers pass the contract suite (`pytest tests/contract/`).
-- [ ] No secrets, API keys, or personal data are included in the diff.
-- [ ] Lint/format is clean (`ruff check jarvis/` && `ruff format jarvis/`).
-- [ ] The change works on a headless Linux server (cloud-first), not only on a desktop — or local-only parts are gated behind an extras group with a graceful fallback.
+## Then pick your block
 
-## How was this tested?
+<details open>
+<summary><b>Docs, comments, or translations only</b></summary>
 
-<!-- Commands you ran, platforms you tested on (Linux / macOS / Windows), and what you observed. -->
+- [ ] Nothing else. Open it — this is the whole checklist.
 
-## Screenshots / recordings (if UI-facing)
+</details>
 
-<!-- Drag in before/after images or a short clip for any visible change. -->
+<details>
+<summary><b>Web UI / frontend change</b></summary>
+
+- [ ] `npm run test` and `npm run build` pass in `jarvis/ui/web/frontend/`
+- [ ] It works in **light and dark mode** — colours come from theme tokens, not one hardcoded mode
+- [ ] Screenshot or clip below, before and after
+- [ ] You did **not** commit `jarvis/ui/web/dist/` — the maintainer rebuilds the shipped bundle
+
+</details>
+
+<details>
+<summary><b>Bug fix or ordinary Python change</b></summary>
+
+- [ ] `pytest -m "not slow"` passes, and there is a test covering the fixed behaviour
+- [ ] `ruff check jarvis/` and `ruff format --check jarvis/` are clean
+
+</details>
+
+<details>
+<summary><b>New provider (wake / STT / TTS / brain / harness / tool / channel)</b></summary>
+
+- [ ] `pytest tests/contract/` passes for the group you added to
+- [ ] No `import jarvis.*` inside the plugin module; entry-point registered in `pyproject.toml`
+- [ ] Secrets go through `get_secret()`; the provider degrades honestly without a key
+- [ ] Any heavy or platform-specific dependency is an extra, not a base install
+
+</details>
+
+<details>
+<summary><b>Change to a shared contract (capability, config schema, turn-taking, credentials, OS backend)</b></summary>
+
+- [ ] Named which platforms and providers you touched, and what the others do now
+      (unchanged / emulated / degraded, with the reason)
+- [ ] `pytest tests/contract/` passes; a new gate has a test that fails without it
+- [ ] It still imports and boots on a headless `python:3.11-slim` container
+- [ ] `CHANGELOG.md` and the affected docs are updated
+
+</details>
+
+---
+
+## How did you test it?
+
+<!-- The commands you ran and the platform you ran them on (Linux / macOS / Windows).
+     "pytest -m 'not slow' on Ubuntu 24.04" is a complete answer. -->
+
+## Screenshots or recordings
+
+<!-- Only for visible changes. Drag the files straight in. -->
+
+<!--
+First PR here? You do not need to get every box right. Open it, and we will
+help you finish it in review. By contributing you agree your work is licensed
+under the MIT License.
+-->

@@ -1,8 +1,11 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: Questions & community
-    url: https://discord.gg/UPu6pFWrJ
-    about: For usage questions, setup help, and general chat, please use Discord instead of an issue.
+  - name: Questions & community (Discord)
+    url: https://discord.gg/x7USduHxbc
+    about: Usage questions, setup help, and general chat. Fastest answer, usually same day.
+  - name: Ideas & design discussion
+    url: https://github.com/PersonalJarvis/PersonalJarvis/discussions
+    about: Propose a feature, ask how something is meant to work, or float an approach before you build it.
   - name: Security vulnerability
-    url: https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md
-    about: Please report security issues privately — do NOT open a public issue.
+    url: https://github.com/PersonalJarvis/PersonalJarvis/security/advisories/new
+    about: Report privately through GitHub. Please do NOT open a public issue.

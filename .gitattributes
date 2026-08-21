@@ -46,3 +46,11 @@ install/tuf/*.json           text eol=lf
 # (jarvis/realtime/local_server/patching.py): a CRLF checkout would change
 # every inserted line and fail the result hash. Pin them to LF everywhere.
 *.patch                      text eol=lf
+
+# The shipped web bundle is BUILD OUTPUT that has to stay tracked: install.sh
+# clones this repository (`git clone --depth 1`) and the wheel ships dist/ as
+# package data, so a user needs no Node toolchain to run Personal Jarvis.
+# Marking it generated keeps it out of pull-request diffs and out of GitHub's
+# language statistics. Contributors never commit it; the maintainer rebuilds
+# the bundle from HEAD's sources (see CONTRIBUTING.md, "Opening your PR").
+jarvis/ui/web/dist/**        linguist-generated=true

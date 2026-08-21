@@ -562,10 +562,32 @@ land anywhere else, and questions are welcome there.
 
 ## Contributing
 
-Pull requests are welcome, and [`CONTRIBUTING.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md) has the full
-guide. The short version: artifacts are English, read [`CLAUDE.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CLAUDE.md)
-before larger changes, new providers must pass `pytest tests/contract/`, and security issues
-go to [`SECURITY.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md) privately.
+Pull requests are welcome, and there is no bar you have to clear before opening one.
+[`CONTRIBUTING.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md)
+opens with **your first PR in five lines**; the checklist scales with what you touched, so a
+docs fix owes nothing that a new speech provider owes. One rule holds for everyone:
+**everything written into the repo is English**, because a maintainer has to be able to read
+every line that lands. Talk to us in any language you like on
+[Discord](https://discord.gg/x7USduHxbc).
+
+Security issues go through [`SECURITY.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md)
+privately, never a public issue. Everyone here follows the
+[Code of Conduct](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CODE_OF_CONDUCT.md).
+
+### Where a human beats the agents
+
+Most commits here are written with AI assistance, and that is exactly why some work is
+wide open. These are the places a person contributes something no agent can:
+
+- **Real hardware.** AMD and Intel GPUs, Apple Silicon and Intel Macs, the distro your
+  laptop actually runs, the microphone you actually own. The maintainer has one Windows box.
+  Label [`area:hardware`](https://github.com/PersonalJarvis/PersonalJarvis/labels/area%3Ahardware).
+- **Providers we have no key for.** Every wake, STT, TTS, brain, and channel plugin is
+  swappable; adding one is self-contained work that `pytest tests/contract/` grades for you.
+- **Your language.** The assistant speaks whatever you configure, and native speakers catch
+  what a translation pass never does.
+- **Telling us it broke.** A precise bug report on a setup we cannot reproduce is worth more
+  than a patch.
 
 ## License
 
