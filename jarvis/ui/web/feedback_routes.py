@@ -1,18 +1,34 @@
-"""REST API for the in-app feedback / bug-report form.
+"""REST API for the in-app feedback section — bug reports AND feature requests.
 
 Endpoints:
 
     GET  /api/feedback/status  →  {"configured": bool, "github_url": str,
-                                   "context": {...}}
+                                   "templates": {...}, "context": {...}}
+    GET  /api/feedback/board   →  {"available": bool, "ideas": [...],
+                                   "bugs": [...], "detail": str}
     POST /api/feedback         →  {"ok": bool, "status": str, "detail": str,
                                    "github_url": str | None}
 
-``GET /status`` is the capability probe: the frontend calls it before the user
-types anything, so the form can honestly present the path this install really
-has — direct dispatch when the operator webhook exists, or a prefilled GitHub
-issue otherwise.  ``context`` carries the same system fields the POST route
-would attach server-side, so the GitHub fallback can include them in the
-issue body.
+GitHub is the PRIMARY channel for both report kinds, not a fallback: the
+repository already carries the two issue forms this section drives
+(``.github/ISSUE_TEMPLATE/bug_report.yml`` and ``feature_request.yml``), and
+they are what puts the ``bug`` / ``enhancement`` label and the title prefix on
+a report.  ``GET /status`` therefore hands the frontend the template FILENAMES
+(:data:`ISSUE_TEMPLATES`) rather than letting it hardcode them — an issue
+opened without ``?template=`` lands as a blank, unlabelled issue that the
+maintainer has to sort by hand.
+
+``GET /status`` is also the capability probe.  ``configured`` reports whether
+this install additionally has the operator's direct dispatch channel (see
+below); it is False on every fresh download.  ``context`` carries the system
+fields the POST route would attach server-side, so a GitHub issue is not a
+second-class report — including ``os_choice``, which is pre-matched to the
+bug form's operating-system dropdown so the value is accepted verbatim.
+
+``GET /board`` reads the project's OPEN issues from the public GitHub API so
+the section can show what other people already asked for.  That read needs no
+token and no login — the point being that someone who has not signed in still
+sees their wish is already tracked, instead of filing a duplicate.
 
 The POST endpoint validates the payload, enriches it with system context (app
 version, OS, Python, UTC timestamp), and forwards it to a Discord webhook as
@@ -40,13 +56,16 @@ report the bug.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime
 import functools
 import json as _json
 import logging
+import os
 import platform
 import re
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -54,7 +73,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from jarvis.core.branding import OFFICIAL_REPO_URL
+from jarvis.core.branding import OFFICIAL_REPO_SLUG, OFFICIAL_REPO_URL
 from jarvis.core.config import get_secret
 
 log = logging.getLogger(__name__)
@@ -77,10 +96,43 @@ _SCREENSHOT_DECODED_MAX_BYTES = 8 * 1024 * 1024
 _SECRET_KEY = "discord_feedback_webhook_url"  # noqa: S105 — key NAME, not a value
 _ENV_KEY = "DISCORD_FEEDBACK_WEBHOOK_URL"
 
-# Public fallback for every downloader when the operator-only Discord webhook
-# is not configured (the default — that credential belongs to the project
-# maintainer, not to the end user running this install).
+# The public issues page — the primary destination for both report kinds, and
+# the honest answer when the operator-only Discord webhook is absent (the
+# default: that credential belongs to the project maintainer, not to the end
+# user running this install).
 _GITHUB_ISSUES_URL = f"{OFFICIAL_REPO_URL}/issues"
+
+#: Report type → issue-form filename under ``.github/ISSUE_TEMPLATE/``.
+#: Handed to the frontend so a prefilled issue opens the RIGHT form, which is
+#: what applies the ``bug`` / ``enhancement`` label and the title prefix.
+#: ``question`` has no form on purpose — questions belong in Discord or
+#: Discussions (see ``.github/ISSUE_TEMPLATE/config.yml``), not in the tracker.
+ISSUE_TEMPLATES: dict[str, str | None] = {
+    "bug": "bug_report.yml",
+    "idea": "feature_request.yml",
+    "question": None,
+}
+
+#: Labels the two issue forms apply, mirrored here so the board can query them.
+_LABEL_IDEA = "enhancement"
+_LABEL_BUG = "bug"
+
+# --- Board (public issue read) ----------------------------------------------
+
+_GITHUB_API_ISSUES = f"https://api.github.com/repos/{OFFICIAL_REPO_SLUG}/issues"
+
+#: Unauthenticated GitHub API allows 60 requests per hour per IP. One board
+#: refresh costs two (one per label), so a 15-minute cache keeps a whole day of
+#: normal use inside a fraction of that budget even with several app windows.
+_BOARD_CACHE_TTL_SECONDS = 15 * 60
+
+#: Rows per list. A feedback section shows what is popular, not the full
+#: tracker — the "see all on GitHub" link covers the rest.
+_BOARD_LIMIT = 8
+
+#: The board must never delay the view. A slow GitHub answers with an empty
+#: board and a reason, not with a spinner that outlives the user's patience.
+_BOARD_TIMEOUT = httpx.Timeout(connect=4.0, read=8.0, write=4.0, pool=4.0)
 
 
 # ----------------------------------------------------------------------
@@ -111,19 +163,63 @@ class FeedbackContext(BaseModel):
     app_version: str
     os: str
     python: str
+    # The same OS, collapsed onto one of the bug form's dropdown options. A
+    # GitHub issue form rejects a dropdown prefill that is not an exact option
+    # string, so the free-form ``os`` above cannot serve that field.
+    os_choice: str
 
 
 class FeedbackChannelStatus(BaseModel):
     """Capability probe result for the feedback form (GET /status)."""
 
     # True when this install can dispatch feedback directly (operator webhook
-    # present). False on every fresh download — the frontend then offers a
-    # prefilled GitHub issue instead of a submit that would dead-end.
+    # present). False on every fresh download — the frontend then opens the
+    # report as a prefilled GitHub issue, which is the normal path, not a
+    # degraded one.
     configured: bool
     # Public issues page of the project — always present so the frontend never
     # has to hardcode it.
     github_url: str
+    # Report type → issue-form filename (see ISSUE_TEMPLATES). A type mapped to
+    # None has no form and must not open the tracker.
+    templates: dict[str, str | None]
     context: FeedbackContext
+
+
+class BoardEntry(BaseModel):
+    """One open issue as the board renders it."""
+
+    number: int
+    title: str
+    url: str
+    # 👍 reactions — the closest thing the tracker has to a vote count, and the
+    # reason the idea list is worth showing at all.
+    upvotes: int
+    comments: int
+
+
+class FeedbackBoard(BaseModel):
+    """Open issues grouped by kind (GET /board).
+
+    ``available`` is False whenever the lists could not be refreshed AND no
+    cached copy exists — the frontend then hides the board instead of showing
+    an empty one that reads as "nobody ever asked for anything".
+    """
+
+    available: bool
+    ideas: list[BoardEntry]
+    bugs: list[BoardEntry]
+    # Why the board is unavailable, for the log and a muted UI line. Empty on
+    # success. Never carries a GitHub error body verbatim.
+    detail: str = ""
+
+
+# Process-wide board cache. Several desktop windows share one backend, so
+# without the lock each open window would spend its own pair of requests from
+# the same 60/hour IP budget on the identical refresh.
+_board_cache: FeedbackBoard | None = None
+_board_cache_at: float = 0.0
+_board_lock = asyncio.Lock()
 
 
 # ----------------------------------------------------------------------
@@ -164,12 +260,38 @@ def _app_version() -> str:
     return "unknown"
 
 
+def _os_choice() -> str:
+    """Collapse this machine onto one of the bug form's dropdown options.
+
+    The option strings are fixed by ``.github/ISSUE_TEMPLATE/bug_report.yml``;
+    GitHub drops a dropdown prefill that does not match one exactly, so this
+    must stay in step with that file.
+
+    A Linux box with no display server is reported as the headless option
+    rather than plain "Linux": that distinction is the first thing a triage
+    question asks, and the box itself knows the answer better than the user.
+    """
+    system = platform.system()
+    if system == "Windows":
+        return "Windows"
+    if system == "Darwin":
+        return "macOS"
+    if system == "Linux":
+        if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            return "Linux"
+        return "Headless server / VPS"
+    # Anything else (BSD, unknown) — "Linux" is the closest option on offer and
+    # a wrong dropdown is better than a dropped prefill.
+    return "Linux"
+
+
 def _system_context() -> FeedbackContext:
     """Gather the system fields attached to every dispatched report."""
     return FeedbackContext(
         app_version=_app_version(),
         os=platform.platform(),
         python=platform.python_version(),
+        os_choice=_os_choice(),
     )
 
 
@@ -180,21 +302,144 @@ def _system_context() -> FeedbackContext:
 
 @router.get("/status")
 async def feedback_status() -> FeedbackChannelStatus:
-    """Report whether this install can dispatch feedback directly.
+    """Describe the paths this install has for filing a report.
 
-    The frontend probes this before rendering the form so it can offer the
-    honest path up front: direct dispatch when the operator webhook is
-    configured, or a prefilled GitHub issue otherwise.  ``context`` carries
-    the system fields (app version, OS, Python) so the GitHub fallback can
-    embed them in the issue body — the same enrichment the POST route
-    performs server-side.
+    The frontend probes this before rendering the form.  ``templates`` drives
+    the primary path — a prefilled GitHub issue on the right issue form, which
+    is what gives the report its label, its title prefix and its structure.
+    ``configured`` reports the additional operator-only direct channel; it is
+    False on every fresh download, and that is a normal state, not a fault.
+
+    ``context`` carries the system fields (app version, OS, Python, plus the
+    dropdown-ready ``os_choice``) so a GitHub issue receives the same
+    enrichment the POST route performs server-side.
     """
     webhook_url = get_secret(_SECRET_KEY, env_fallback=_ENV_KEY)
     return FeedbackChannelStatus(
         configured=bool(webhook_url),
         github_url=_GITHUB_ISSUES_URL,
+        templates=dict(ISSUE_TEMPLATES),
         context=_system_context(),
     )
+
+
+def _entries_from_issues(raw: object) -> list[BoardEntry]:
+    """Map a GitHub issues payload onto board rows, most-upvoted first.
+
+    Pull requests are filtered out: ``/issues`` returns them too, and a PR is
+    not something a user asked for.
+    """
+    if not isinstance(raw, list):
+        return []
+    entries: list[BoardEntry] = []
+    for item in raw:
+        if not isinstance(item, dict) or "pull_request" in item:
+            continue
+        number = item.get("number")
+        title = item.get("title")
+        url = item.get("html_url")
+        if not isinstance(number, int) or not isinstance(title, str):
+            continue
+        if not isinstance(url, str):
+            continue
+        reactions = item.get("reactions")
+        upvotes = 0
+        if isinstance(reactions, dict) and isinstance(reactions.get("+1"), int):
+            upvotes = reactions["+1"]
+        comments = item.get("comments")
+        entries.append(
+            BoardEntry(
+                number=number,
+                title=title,
+                url=url,
+                upvotes=upvotes,
+                comments=comments if isinstance(comments, int) else 0,
+            )
+        )
+    entries.sort(key=lambda e: (e.upvotes, e.comments), reverse=True)
+    return entries[:_BOARD_LIMIT]
+
+
+async def _fetch_label(client: httpx.AsyncClient, label: str) -> list[BoardEntry]:
+    """Fetch one label's open issues. Raises on transport / HTTP failure."""
+    resp = await client.get(
+        _GITHUB_API_ISSUES,
+        params={
+            "state": "open",
+            "labels": label,
+            # Fetched wide and ranked locally: the issues API cannot sort by
+            # reactions (only the search API can, at a far tighter rate limit),
+            # and one page covers this tracker comfortably.
+            "per_page": 50,
+            "sort": "updated",
+            "direction": "desc",
+        },
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            # GitHub rejects an API request without a User-Agent.
+            "User-Agent": f"PersonalJarvis/{_app_version()}",
+        },
+    )
+    resp.raise_for_status()
+    return _entries_from_issues(resp.json())
+
+
+@router.get("/board")
+async def feedback_board() -> FeedbackBoard:
+    """List the project's open feature requests and bugs.
+
+    Public, unauthenticated read — no token, no GitHub login, so it works for
+    everyone including someone who has no account at all.  That is the point:
+    seeing an idea already tracked prevents the duplicate that the same person
+    would otherwise file.
+
+    Cached for 15 minutes process-wide.  On a failed refresh the last good
+    lists are served instead of an empty board, because a rate limit or a
+    network blip is no reason to tell the user nobody ever asked for anything.
+    """
+    global _board_cache, _board_cache_at
+
+    async with _board_lock:
+        now = time.monotonic()
+        if _board_cache is not None and now - _board_cache_at < _BOARD_CACHE_TTL_SECONDS:
+            return _board_cache
+
+        try:
+            async with httpx.AsyncClient(timeout=_BOARD_TIMEOUT) as client:
+                ideas = await _fetch_label(client, _LABEL_IDEA)
+                bugs = await _fetch_label(client, _LABEL_BUG)
+        except httpx.HTTPStatusError as exc:
+            # 403 here is virtually always the unauthenticated rate limit.
+            reason = (
+                "rate_limited"
+                if exc.response.status_code in (403, 429)
+                else f"http_{exc.response.status_code}"
+            )
+            log.info("feedback: board refresh failed (%s)", reason)
+            return _stale_or_empty(reason)
+        except httpx.HTTPError as exc:
+            log.info("feedback: board unreachable — %s", type(exc).__name__)
+            return _stale_or_empty("unreachable")
+        except ValueError as exc:  # malformed JSON body
+            log.warning("feedback: board payload was not valid JSON — %s", exc)
+            return _stale_or_empty("bad_payload")
+
+        _board_cache = FeedbackBoard(available=True, ideas=ideas, bugs=bugs)
+        _board_cache_at = now
+        return _board_cache
+
+
+def _stale_or_empty(reason: str) -> FeedbackBoard:
+    """Serve the last good board after a failed refresh, else an empty one.
+
+    Called with ``_board_lock`` held.  The cache timestamp is deliberately NOT
+    advanced: the next request retries rather than sitting on stale data for a
+    full TTL after a one-off blip.
+    """
+    if _board_cache is not None:
+        return _board_cache
+    return FeedbackBoard(available=False, ideas=[], bugs=[], detail=reason)
 
 
 @router.post("")
