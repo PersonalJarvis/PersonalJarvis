@@ -2544,7 +2544,8 @@
     "dimension_2d_title": "Show the map flat",
     "dimension_3d_title": "Show the map in space, rotate it by dragging",
     "dimension_unavailable": "This machine cannot render 3D graphics, so the map stays flat.",
-    "loading_3d": "Loading the 3D map…"
+    "loading_3d": "Loading the 3D map…",
+    "dimension_lost": "The 3D map lost its graphics context, so the flat map took over. Reloading the page brings it back."
   },
   "tree_sidebar": {
     "load_error": "Could not load the wiki.",

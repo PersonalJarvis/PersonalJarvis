@@ -57,6 +57,7 @@ import {
 } from "@/lib/orbitalLayout";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
+import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useThemeValue } from "@/hooks/useTheme";
 import { buildSunObject, sunPalette, syncSystemDecor } from "@/components/wiki/wikiSystem";
 
@@ -133,6 +134,11 @@ export function WikiGraph3D({
   const graphRef = useRef<ForceGraphMethods<RenderNode, RenderEdge> | undefined>(
     undefined,
   );
+  // The element the renderer paints into, and the guard that keeps its WebGL
+  // context alive: it hands the context back when this scene goes away, and
+  // rebuilds the scene if the browser takes the context off us.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const { generation } = useWebglSurface(hostRef);
   const theme = useThemeValue();
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -205,9 +211,6 @@ export function WikiGraph3D({
   // per frame is an O(n) tax on the simulation. Same discipline as the flat
   // map's `configureForces`.
   const forcesConfiguredRef = useRef(false);
-  useEffect(() => {
-    forcesConfiguredRef.current = false;
-  }, [graphData]);
   const pivotSlugRef = useRef(pivotSlug);
   pivotSlugRef.current = pivotSlug;
   /** The live pivot node object (set below, once the data is known). */
@@ -224,6 +227,13 @@ export function WikiGraph3D({
   const hopsRef = useRef(hops);
   hopsRef.current = hops;
   const decorKeyRef = useRef("");
+  // New data, or a scene rebuilt after a lost context. A rebuild hands back a
+  // NEW renderer with an empty scene graph, so the forces have to be set on it
+  // again and the sun's decor has to be built again.
+  useEffect(() => {
+    forcesConfiguredRef.current = false;
+    decorKeyRef.current = "";
+  }, [graphData, generation]);
   const reducedMotion = useMemo(
     () =>
       typeof window.matchMedia === "function" &&
@@ -338,7 +348,6 @@ export function WikiGraph3D({
   // Framing and the slow drift are one piece of state, so one hook owns both
   // (see hooks/useGraphOrbit.ts). It re-frames whenever this counter changes:
   // new data, a settled layout, or the host's Center button.
-  const hostRef = useRef<HTMLDivElement | null>(null);
   const [frameSignal, setFrameSignal] = useState(0);
   const reframe = useCallback(() => setFrameSignal((tick) => tick + 1), []);
 
@@ -378,7 +387,9 @@ export function WikiGraph3D({
       window.setTimeout(reframe, delay),
     );
     return () => timers.forEach(window.clearTimeout);
-  }, [graphData, resetSignal, reframe, width, height]);
+    // `generation` belongs here too: a rebuilt scene starts with the library's
+    // default camera, and the map would sit off-frame until the next reset.
+  }, [graphData, resetSignal, reframe, width, height, generation]);
 
   const handleNodeClick = useCallback(
     (node: NodeObject<RenderNode>): void => {
@@ -570,6 +581,11 @@ export function WikiGraph3D({
     // the space the network floats in (see .wiki-space in index.css).
     <div ref={hostRef} className="wiki-space relative h-full w-full">
     <ForceGraph3D<RenderNode, RenderEdge>
+      // The ONLY thing that remounts this renderer. Size and data changes go
+      // through live setters (see the flat map's note on why a size key is a
+      // bug); a lost graphics context cannot — the canvas that lost it stays
+      // dead, so the scene is built again on a fresh one.
+      key={generation}
       ref={graphRef}
       graphData={data}
       width={width}

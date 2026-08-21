@@ -128,10 +128,20 @@ function probeWebgl(): boolean {
   }
 }
 
+/** What the machine can do right now, and why not when it cannot. */
+export type WebglState = "ok" | "absent" | "lost";
+
 interface GraphDimensionStore {
   /** What the user asked for, regardless of what the machine can do. */
   preference: GraphDimension;
   setPreference: (value: GraphDimension) => void;
+  /**
+   * Set once a graphics context was taken away and could not be rebuilt.
+   * A page-lifetime fact, not a preference: it is never persisted, so a
+   * reload offers 3D again.
+   */
+  webglLost: boolean;
+  setWebglLost: (value: boolean) => void;
 }
 
 const useGraphDimensionStore = create<GraphDimensionStore>((set) => ({
@@ -140,7 +150,38 @@ const useGraphDimensionStore = create<GraphDimensionStore>((set) => ({
     writeGraphDimension(value);
     set({ preference: value });
   },
+  webglLost: false,
+  setWebglLost: (value) => set({ webglLost: value }),
 }));
+
+/**
+ * Report that a WebGL surface gave up — the browser dropped its context and
+ * rebuilding it kept failing.
+ *
+ * Every graph on screen reads the same flag, so ONE dead scene degrades all of
+ * them to the flat map at once instead of leaving the others to paint the
+ * browser's broken-canvas placeholder in turn.
+ */
+export function reportWebglLost(value: boolean): void {
+  useGraphDimensionStore.getState().setWebglLost(value);
+}
+
+/** Read the flag outside React (tests, non-component callers). */
+export function isWebglLost(): boolean {
+  return useGraphDimensionStore.getState().webglLost;
+}
+
+/**
+ * Can a WebGL scene be drawn right now? The machine's answer, minus any
+ * context this page has already lost for good.
+ *
+ * For surfaces that always want the spatial map and never read the switch —
+ * the deck's wiki card is the one.
+ */
+export function useWebglSupported(): boolean {
+  const lost = useGraphDimensionStore((s) => s.webglLost);
+  return !lost && detectWebgl();
+}
 
 /**
  * Set the preference from outside React — the same path the switch takes, so
@@ -158,6 +199,13 @@ export interface GraphDimensionHandle {
   preference: GraphDimension;
   setDimension: (value: GraphDimension) => void;
   webglSupported: boolean;
+  /**
+   * Why 3D is off, when it is. `absent` = this machine never had a context,
+   * `lost` = it had one and the GPU took it away mid-session. The two need
+   * different words: the first is a property of the machine, the second is an
+   * accident the user can often undo by reloading.
+   */
+  webglState: WebglState;
 }
 
 /**
@@ -168,11 +216,15 @@ export interface GraphDimensionHandle {
 export function useGraphDimension(): GraphDimensionHandle {
   const preference = useGraphDimensionStore((s) => s.preference);
   const setDimension = useGraphDimensionStore((s) => s.setPreference);
-  const webglSupported = detectWebgl();
+  const lost = useGraphDimensionStore((s) => s.webglLost);
+  // The probe stays lazy and cached: asking it here costs nothing after the
+  // first call, and the first call must not be dragged onto the boot path.
+  const webglSupported = useWebglSupported();
   return {
     dimension: resolveGraphDimension(preference, webglSupported),
     preference,
     setDimension,
     webglSupported,
+    webglState: lost ? "lost" : webglSupported ? "ok" : "absent",
   };
 }

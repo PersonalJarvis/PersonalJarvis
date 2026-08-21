@@ -2544,7 +2544,8 @@
     "dimension_2d_title": "Mostrar el mapa plano",
     "dimension_3d_title": "Mostrar el mapa en el espacio, arrastra para girarlo",
     "dimension_unavailable": "Este equipo no puede representar gráficos 3D, así que el mapa se queda plano.",
-    "loading_3d": "Cargando el mapa 3D…"
+    "loading_3d": "Cargando el mapa 3D…",
+    "dimension_lost": "El mapa 3D perdió su contexto gráfico, así que el mapa plano tomó el relevo. Recargar la página lo recupera."
   },
   "tree_sidebar": {
     "load_error": "No se pudo cargar el wiki.",

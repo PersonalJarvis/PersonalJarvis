@@ -15,7 +15,7 @@ import {
   type RenderNode,
   type WikiGraphPayload,
 } from "@/lib/wikiGraph";
-import { detectWebgl } from "@/lib/graphDimension";
+import { detectWebgl, useWebglSupported } from "@/lib/graphDimension";
 import { useDeckSlotPowered } from "@/components/deck/DeckReveal";
 import { DeckCard, DeckIconButton } from "@/components/deck/DeckCard";
 import { HudLamp, useElementSize } from "@/components/deck/HudFrame";
@@ -92,7 +92,9 @@ function DeckWikiScene({
 }) {
   const t = useT();
   const [ref, size] = useElementSize<HTMLDivElement>();
-  const webgl = useMemo(() => detectWebgl(), []);
+  // Not a plain `detectWebgl()`: a context this page already lost for good
+  // takes the flat map's side, here as everywhere else.
+  const webgl = useWebglSupported();
 
   const titles = useMemo(
     () => new Map(graphData.nodes.map((n) => [n.id, n.title])),

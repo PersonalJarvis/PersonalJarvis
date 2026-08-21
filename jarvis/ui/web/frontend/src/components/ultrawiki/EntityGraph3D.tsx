@@ -32,6 +32,7 @@ import { CENTRING_STRENGTH, createCentringForce } from "@/lib/graphForces";
 import { endpointId as endpointKey } from "@/lib/wikiGraph";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
+import { useWebglSurface } from "@/hooks/useWebglSurface";
 
 /** Node shape the Explore map renders — mirrors EntityGraph's RenderNode. */
 export interface ExploreRenderNode {
@@ -108,6 +109,11 @@ export function EntityGraph3D({
   const graphRef = useRef<
     ForceGraphMethods<ExploreRenderNode, ExploreRenderEdge> | undefined
   >(undefined);
+  // The element the renderer paints into, and the guard that keeps its WebGL
+  // context alive: it hands the context back when this map goes away, and
+  // rebuilds the scene if the browser takes the context off us.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const { generation } = useWebglSurface(hostRef);
 
   // Accessors read the selection through a ref so choosing a topic does not
   // swap the prop functions and make the renderer re-ingest every node.
@@ -160,9 +166,11 @@ export function EntityGraph3D({
   // Forces are set once per data generation, never per tick: d3's setters walk
   // every node and every link, so per-frame calls are a tax on the simulation.
   const forcesConfiguredRef = useRef(false);
+  // New data, or a scene rebuilt after a lost context — a rebuild hands back a
+  // NEW renderer whose forces are the library defaults again.
   useEffect(() => {
     forcesConfiguredRef.current = false;
-  }, [graphData]);
+  }, [graphData, generation]);
 
   /**
    * A co-occurrence network is the densest thing this app draws, and the third
@@ -198,7 +206,6 @@ export function EntityGraph3D({
 
   // Framing and the slow drift are one piece of state; one hook owns both
   // (hooks/useGraphOrbit.ts), and it re-frames whenever this counter changes.
-  const hostRef = useRef<HTMLDivElement | null>(null);
   const [frameSignal, setFrameSignal] = useState(0);
   const reframe = useCallback(() => setFrameSignal((tick) => tick + 1), []);
 
@@ -229,7 +236,9 @@ export function EntityGraph3D({
       window.setTimeout(reframe, delay),
     );
     return () => timers.forEach(window.clearTimeout);
-  }, [graphData, reframe, width, height]);
+    // `generation` belongs here too: a rebuilt scene starts on the library's
+    // default camera and would sit off-frame until the next reset.
+  }, [graphData, reframe, width, height, generation]);
 
   const nodeVal = useCallback((node: NodeObject<ExploreRenderNode>): number => {
     const base = (node as ExploreRenderNode).radius * SPHERE_SCALE;
@@ -312,6 +321,10 @@ export function EntityGraph3D({
     // taken the wheel; the renderer paints into its own canvas inside it.
     <div ref={hostRef} className="wiki-space relative h-full w-full">
     <ForceGraph3D<ExploreRenderNode, ExploreRenderEdge>
+      // The ONLY thing that remounts this renderer: a lost graphics context.
+      // The canvas that lost it stays dead, so the scene is built again on a
+      // fresh one. Size and data changes go through live setters instead.
+      key={generation}
       ref={graphRef}
       graphData={graphData}
       width={width || undefined}

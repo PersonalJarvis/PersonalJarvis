@@ -26,13 +26,20 @@ export function GraphDimensionToggle({
   className,
 }: GraphDimensionToggleProps): JSX.Element {
   const t = useT();
-  const { dimension, setDimension, webglSupported } = useGraphDimension();
+  const { dimension, setDimension, webglSupported, webglState } = useGraphDimension();
 
   const segment = (value: GraphDimension) => {
     const active = dimension === value;
     const blocked = value === "3d" && !webglSupported;
+    // Two different "no", two different sentences: a machine that never had a
+    // graphics context is not the same as a session that lost one, and the
+    // second one a reload can undo.
     const title = blocked
-      ? t("wiki_graph.dimension_unavailable")
+      ? t(
+          webglState === "lost"
+            ? "wiki_graph.dimension_lost"
+            : "wiki_graph.dimension_unavailable",
+        )
       : t(value === "3d" ? "wiki_graph.dimension_3d_title" : "wiki_graph.dimension_2d_title");
     const Icon = value === "3d" ? Box : Square;
     return (
@@ -67,6 +74,7 @@ export function GraphDimensionToggle({
       data-testid="graph-dimension-toggle"
       data-dimension={dimension}
       data-webgl={webglSupported ? "true" : "false"}
+      data-webgl-state={webglState}
       className={cn(
         "inline-flex items-center gap-0.5 rounded-md border border-border bg-card/80 p-0.5 backdrop-blur",
         className,

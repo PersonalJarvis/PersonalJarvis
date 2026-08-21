@@ -2544,7 +2544,8 @@
     "dimension_2d_title": "Karte flach anzeigen",
     "dimension_3d_title": "Karte im Raum anzeigen, zum Drehen ziehen",
     "dimension_unavailable": "Dieser Rechner kann keine 3D-Grafik darstellen, die Karte bleibt flach.",
-    "loading_3d": "3D-Karte wird geladen…"
+    "loading_3d": "3D-Karte wird geladen…",
+    "dimension_lost": "Die 3D-Karte hat ihren Grafik-Kontext verloren, deshalb übernimmt die flache Karte. Ein Neuladen der Seite holt sie zurück."
   },
   "tree_sidebar": {
     "load_error": "Konnte das Wiki nicht laden.",
