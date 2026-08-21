@@ -252,6 +252,31 @@ describe("FeedbackView", () => {
     expect(screen.queryByText("Click to attach a screenshot")).toBeNull();
   });
 
+  it("still files a report against a backend that predates the probe fields", async () => {
+    // The bundle reloads itself while the Python process keeps running, so
+    // during an update this view briefly talks to the older API. A submit
+    // button that silently does nothing reads as a broken section.
+    const legacyStatus = {
+      configured: false,
+      github_url: ISSUES_URL,
+      context: { app_version: "1.0.8", os: "TestOS-1.0", python: "3.11.0" },
+    };
+    stubFeedbackApi(legacyStatus, { board: EMPTY_BOARD });
+    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(undefined);
+
+    render(<FeedbackView />);
+    const submit = await screen.findByRole("button", { name: "Report the bug on GitHub" });
+    fillBugForm();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
+    const url = String(openSpy.mock.calls[0][0]);
+    expect(param(url, "template")).toBe("bug_report.yml");
+    expect(param(url, "what-happened")).toBe("It broke when I clicked the button.");
+    // The unknown dropdown value is omitted rather than sent as "undefined".
+    expect(param(url, "os")).toBeNull();
+  });
+
   it("keeps submit disabled until the title and the first field are filled", async () => {
     stubFeedbackApi(STATUS_NOT_CONFIGURED);
     render(<FeedbackView />);

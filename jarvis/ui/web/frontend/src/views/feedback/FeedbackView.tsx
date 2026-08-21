@@ -87,6 +87,21 @@ const FIELD_MAX = 4000;
  */
 const URL_MAX_CHARS = 6000;
 
+/**
+ * Fallback issue-form names for a backend that predates `templates` in the
+ * status probe — the frontend bundle reloads by itself while the Python
+ * process keeps running, so during an update this view can briefly talk to an
+ * older API. Without this the submit button would silently do nothing, which
+ * reads as a broken section rather than as a backend waiting to restart.
+ *
+ * The backend stays the source of truth whenever it answers with the field.
+ */
+const FALLBACK_TEMPLATES: Partial<Record<FeedbackType, string | null>> = {
+  bug: "bug_report.yml",
+  idea: "feature_request.yml",
+  question: null,
+};
+
 type ResultKind =
   | "sent"
   | "error"
@@ -140,7 +155,10 @@ function buildIssueUrl(
   primary: string,
   secondary: string,
 ): ComposedIssue | null {
-  const template = channel.templates[type];
+  const templates = channel.templates ?? FALLBACK_TEMPLATES;
+  // `question` is mapped to null on purpose — absent means "older backend",
+  // present-but-null means "deliberately not a tracker item".
+  const template = type in templates ? templates[type] : FALLBACK_TEMPLATES[type];
   if (!template) return null;
 
   const prefix = type === "bug" ? "[Bug]: " : "[Feature]: ";
@@ -152,9 +170,11 @@ function buildIssueUrl(
     if (type === "bug") {
       params.set("what-happened", a);
       if (b) params.set("steps", b);
-      // Both prefilled from the running install, so nobody has to look them up.
-      params.set("os", channel.context.os_choice);
-      params.set("python", channel.context.python);
+      // Both prefilled from the running install, so nobody has to look them
+      // up. Guarded because an older backend answers without `os_choice`, and
+      // a literal "undefined" is worse than an unfilled field.
+      if (channel.context.os_choice) params.set("os", channel.context.os_choice);
+      if (channel.context.python) params.set("python", channel.context.python);
     } else {
       params.set("problem", a);
       if (b) params.set("solution", b);
