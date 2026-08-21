@@ -62,7 +62,7 @@ voice path worse than it was.
 
 After that, cross-platform work. Linux, macOS, Windows and headless servers are equal here,
 and a feature that only runs on one of them is unfinished rather than done. The reasoning is
-in [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md).
+in [`CLAUDE.md`](CLAUDE.md) section 2.
 
 Then security hardening: prompt injection, the boundary between what the user said and what
 a tool merely observed, the risk-tier policy, path traversal, privilege escalation. See
@@ -125,7 +125,7 @@ The router dispatches rather than doing. Heavy work becomes a mission in an isol
 
 For the deep version, read [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md), which is a dense
 engineering snapshot, [`CLAUDE.md`](CLAUDE.md) for the binding conventions, and
-[`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) for the cross-platform doctrine.
+[`CLAUDE.md`](CLAUDE.md) section 2 for the cross-platform doctrine.
 
 ## Plugin, tool, or skill?
 

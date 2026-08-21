@@ -36,5 +36,5 @@ body:
       options:
         - label: I searched existing issues and this is not a duplicate.
           required: true
-        - label: This fits the cross-platform, provider-agnostic direction (see docs/PHILOSOPHY.md).
+        - label: This fits the cross-platform, provider-agnostic direction (see CLAUDE.md).
           required: false

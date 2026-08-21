@@ -8,7 +8,7 @@ name: macOS desktop
 
 # Trigger note (2026-08-20): this ran on `pull_request` only, and the project
 # has no PR flow — 0 merge commits in the last 200 — so the macOS leg had not
-# fired in months while CLOUD.md Rule #1 called macOS a first-class target "in
+# fired in months while CLAUDE.md called macOS a first-class target "in
 # the SAME change". A non-negotiable rule whose proof never runs is a rule on
 # paper. The path filters below keep the cost honest: the expensive runners
 # wake only for a change that can actually break the desktop.
