@@ -139,6 +139,7 @@ def _port(
     iohid_check: Callable[[int], int | None] = lambda _type: None,
     credential_backend: Callable[[], str] = lambda: "platform",
     credential_recover: Callable[[], bool] = lambda: True,
+    screen_capture_live: Callable[[], bool | None] = lambda: None,
 ) -> SystemPermissionPort:
     def load(name: str) -> object:
         if name not in modules:
@@ -147,11 +148,13 @@ def _port(
 
     # iohid_check defaults to "unavailable" so unit runs stay hermetic even on
     # a real Mac, where the default probe would read the machine's TCC state;
-    # the credential stubs keep the host's real keyring untouched the same way.
+    # the credential and window-server stubs keep the host's real keyring and
+    # screen untouched the same way.
     return SystemPermissionPort(
         platform_name="darwin",
         module_loader=load,
         iohid_check=iohid_check,
+        screen_capture_live_check=screen_capture_live,
         credential_store_backend=credential_backend,
         credential_store_recover=credential_recover,
     )
@@ -816,3 +819,102 @@ def test_credential_store_probe_failure_reports_unavailable() -> None:
 
     assert item["status"] == "unavailable"
     assert item["can_request"] is False
+
+
+# --- BUG-161: the app insisted permissions were missing after they were given
+
+
+def test_the_app_in_the_shared_applications_folder_is_a_stable_identity() -> None:
+    """Dragging the app to /Applications is normal, not a tampering signal.
+
+    The old rule accepted only ~/Applications, so the ordinary move turned the
+    installed app into an "unstable identity": every request button vanished,
+    every feature reported not-ready, and the banner kept demanding grants the
+    user had already given, with nothing left to click (BUG-161).
+    """
+    modules, _, _ = _native_modules()
+    shared_copy = SimpleNamespace(
+        bundleIdentifier=lambda: EXPECTED_BUNDLE_ID,
+        bundlePath=lambda: "/Applications/Personal Jarvis.app",
+    )
+    modules["Foundation"].NSBundle = SimpleNamespace(mainBundle=lambda: shared_copy)
+
+    snapshot = _port(modules).snapshot()
+
+    assert snapshot["app_identity"]["stable"] is True
+    assert _permission(snapshot, PermissionId.MICROPHONE)["can_request"] is False
+    assert snapshot["features"]["voice"]["identity_ready"] is True
+
+
+def test_a_live_window_probe_beats_the_frozen_screen_recording_preflight() -> None:
+    """A grant given in System Settings mid-session must be seen at once.
+
+    ``CGPreflightScreenCaptureAccess`` answers from a value frozen when the
+    process first asked, so without a live probe the app reports the grant as
+    missing no matter how often the user gives it.
+    """
+    modules, screen, _ = _native_modules()
+    screen["granted"] = False
+
+    stale = _port(modules, screen_capture_live=lambda: None)
+    healed = _port(modules, screen_capture_live=lambda: True)
+
+    assert stale.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+    assert healed.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
+    assert healed.runtime_access_granted(PermissionId.SCREEN_RECORDING) is True
+
+
+def test_a_live_window_probe_never_invents_a_grant_the_preflight_denies() -> None:
+    """An empty window list proves nothing; only a title upgrades the verdict."""
+    modules, screen, _ = _native_modules()
+    screen["granted"] = False
+
+    port = _port(modules, screen_capture_live=lambda: False)
+
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.NOT_GRANTED
+
+
+def test_a_crashing_live_probe_leaves_the_preflight_verdict_intact() -> None:
+    def _explode() -> bool | None:
+        raise RuntimeError("window server is gone")
+
+    modules, screen, _ = _native_modules()
+    screen["granted"] = False
+
+    assert (
+        _port(modules, screen_capture_live=_explode).state(PermissionId.SCREEN_RECORDING)
+        is PermissionState.NOT_GRANTED
+    )
+
+
+def test_window_titles_prove_the_grant_only_from_another_apps_own_layer() -> None:
+    from jarvis.platform.permissions import _window_titles_are_visible
+
+    own = [{"kCGWindowLayer": 0, "kCGWindowOwnerPID": 42, "kCGWindowName": "Jarvis"}]
+    chrome = [{"kCGWindowLayer": 25, "kCGWindowOwnerPID": 7, "kCGWindowName": "Menubar"}]
+    nameless = [{"kCGWindowLayer": 0, "kCGWindowOwnerPID": 7, "kCGWindowName": ""}]
+    foreign = [{"kCGWindowLayer": 0, "kCGWindowOwnerPID": 7, "kCGWindowName": "Safari"}]
+
+    assert _window_titles_are_visible(own, 42) is None
+    assert _window_titles_are_visible(chrome, 42) is None
+    assert _window_titles_are_visible(nameless, 42) is None
+    assert _window_titles_are_visible(None, 42) is None
+    assert _window_titles_are_visible(foreign, 42) is True
+
+
+def test_open_settings_works_while_the_app_sits_in_the_background() -> None:
+    """The Settings deep link is not a prompt, so it needs no foreground.
+
+    Refusing it in the background left every non-foreground surface (the app
+    behind System Settings, the browser view) with a permission banner whose
+    only control answered "bring the app to the front" (BUG-161).
+    """
+    modules, _, workspace = _native_modules(active=False)
+
+    snapshot = _port(modules).snapshot()
+    operation = _port(modules).open_settings(PermissionId.MICROPHONE)
+
+    assert snapshot["app_identity"]["foreground"] is False
+    assert _permission(snapshot, PermissionId.MICROPHONE)["can_open_settings"] is True
+    assert operation.ok is True
+    assert workspace.opened_urls

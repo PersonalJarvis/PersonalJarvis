@@ -234,6 +234,70 @@ def _reset_stale_tcc_grants(runner=subprocess.run) -> None:
             log.warning("TCC reset for %s failed: %s", service, detail[-300:])
 
 
+# Fingerprint of the last rebuild this install performed. A rebuild that does
+# not satisfy the very probe that triggered it is not a repair — it is a loop
+# that costs the user every macOS permission on every start (BUG-161).
+_REBUILD_MARKER_FILENAME = "macos-bundle-rebuild.json"
+
+
+def _rebuild_marker_path() -> Path:
+    from jarvis.core.paths import user_data_dir
+
+    return user_data_dir() / _REBUILD_MARKER_FILENAME
+
+
+def _rebuild_fingerprint(bundle: Path, *, install_root: Path) -> dict[str, str | None]:
+    """Everything that decides whether a fresh build could come out different."""
+    return {
+        "cdhash": _bundle_cdhash(bundle),
+        "install_root": str(install_root),
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "machine": platform.machine(),
+    }
+
+
+def _record_rebuild(bundle: Path, *, install_root: Path) -> None:
+    """Note what this rebuild produced, so a repeat of it can be recognized."""
+    marker = _rebuild_marker_path()
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(_rebuild_fingerprint(bundle, install_root=install_root), sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError:
+        # Best-effort: without the note the next start rebuilds once more,
+        # which is the behaviour that existed before this guard.
+        log.debug("Could not record the macOS bundle rebuild fingerprint.", exc_info=True)
+
+
+def _rebuild_would_repeat(bundle: Path, *, install_root: Path) -> bool:
+    """Whether rebuilding now would reproduce the build that just failed a probe.
+
+    Same sources, same interpreter, same machine, and the bundle on disk is
+    still byte-identical to what the last rebuild signed: a fresh build can
+    only produce the same app and fail the same probe again. Doing it anyway
+    changes the ad-hoc signature, and macOS answers a changed signature by
+    orphaning every recorded TCC grant — the "I allow everything, restart, and
+    it asks again" loop (BUG-161). A launchable bundle is worth more than a
+    probe verdict that no rebuild can satisfy.
+    """
+    try:
+        recorded = json.loads(_rebuild_marker_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # Nothing recorded, unreadable, or not JSON: to this caller they all
+        # mean the same thing — no previous rebuild to compare against.
+        return False
+    if not isinstance(recorded, dict):
+        return False
+    current = _rebuild_fingerprint(bundle, install_root=install_root)
+    if current["cdhash"] is None:
+        # Without a readable signature we cannot prove the bundle is the one
+        # the last rebuild produced, so the guard must not suppress a repair.
+        return False
+    return recorded == current
+
+
 def _launchable_issue(candidate: Path) -> str | None:
     """Name the first reason ``candidate`` is not a usable app bundle.
 
@@ -718,15 +782,29 @@ def _runtime_identity_valid(
         probe.unlink(missing_ok=True)
 
 
-def _current_process_identity_valid(
-    bundle: Path,
+def _running_managed_bundle(
     *,
     install_root: Path,
     diagnostics: list[str] | None = None,
-) -> bool:
-    """Recognize the already-running canonical app without spawning a probe."""
+) -> Path | None:
+    """Return the bundle THIS process runs from, when it is our managed app.
+
+    A running process is proof no probe can beat: if we are executing as a
+    bundle that carries our id and imports the managed checkout, the install
+    is valid and must be left alone — wherever the user keeps the app.
+
+    The location is deliberately NOT part of the verdict (BUG-161). Dragging
+    an app to ``/Applications`` is the most ordinary thing a Mac user does,
+    and the old path equality turned it into a permanent loop: the canonical
+    ``~/Applications`` slot looked empty, every start rebuilt a bundle there,
+    the rebuild changed the ad-hoc signature shared by both copies, and
+    ``tccutil reset`` then wiped the grants of the app that was running at
+    that moment. The user re-granted everything and the next start did it
+    again. TCC pins grants to the bundle id and signature, never to a path,
+    so the path can never be the reason to rebuild.
+    """
     if sys.platform != "darwin":
-        return False
+        return None
     try:
         from Foundation import NSBundle  # type: ignore[import-not-found]
 
@@ -740,19 +818,19 @@ def _current_process_identity_valid(
         reasons: list[str] = []
         if current_id != BUNDLE_ID:
             reasons.append(f"running bundle id is {current_id!r}, expected {BUNDLE_ID!r}")
-        if current_bundle != bundle.resolve():
-            reasons.append(f"running from {current_bundle}, expected {bundle.resolve()}")
+        if current_bundle.suffix != ".app":
+            reasons.append(f"not running from an app bundle: {current_bundle}")
         if not launcher_file.is_file():
             reasons.append(f"launcher module has no file on disk: {launcher_file}")
         elif not launcher_file.is_relative_to(expected_root / "jarvis" / "ui" / "web"):
             reasons.append(f"launcher {launcher_file} is outside the checkout {expected_root}")
         if diagnostics is not None:
             diagnostics.extend(f"current process: {reason}" for reason in reasons)
-        return not reasons
+        return None if reasons else current_bundle
     except (ImportError, OSError, TypeError, ValueError) as exc:
         if diagnostics is not None:
             diagnostics.append(f"current process: probe failed: {type(exc).__name__}: {exc}")
-        return False
+        return None
 
 
 def _install_native_bundle(install_root: Path, bundle: Path) -> Path:
@@ -847,14 +925,18 @@ def ensure_macos_app_bundle(
     try:
         install_root = (install_dir or _default_install_dir()).resolve()
         bundle = macos_app_bundle_path(applications_dir=applications_dir)
+        diagnostics: list[str] = []
+        # The app running right now IS the installed app — including when the
+        # user keeps it in /Applications. Nothing to repair, and a rebuild
+        # under our bundle id here would strip the grants of the very process
+        # asking the question (BUG-161).
+        running = _running_managed_bundle(install_root=install_root, diagnostics=diagnostics)
+        if running is not None:
+            register_with_launch_services(running)
+            return running
         launchable_issue = _launchable_issue(bundle) if bundle.exists() else "bundle not installed"
         if launchable_issue is None:
-            diagnostics: list[str] = []
-            if _current_process_identity_valid(
-                bundle, install_root=install_root, diagnostics=diagnostics
-            ) or _runtime_identity_valid(
-                bundle, install_root=install_root, diagnostics=diagnostics
-            ):
+            if _runtime_identity_valid(bundle, install_root=install_root, diagnostics=diagnostics):
                 # A healthy bundle is kept byte-for-byte, but LaunchServices may
                 # still not know it — an interrupted earlier run, or a database
                 # rebuilt since. Re-registering is a no-op when it is known, and
@@ -862,6 +944,20 @@ def ensure_macos_app_bundle(
                 register_with_launch_services(bundle)
                 return bundle
             launchable_issue = "; ".join(diagnostics) or "identity probe failed without detail"
+            if _rebuild_would_repeat(bundle, install_root=install_root):
+                # The last rebuild already produced exactly this bundle and the
+                # probe still refuses it. Building it again would only change
+                # the signature and cost the user every permission, so keep the
+                # launchable app and say what is really wrong.
+                log.warning(
+                    "The macOS app bundle failed its identity probe again after a rebuild "
+                    "that produced the identical app — keeping it so its macOS permissions "
+                    "survive. Reason: %s [%s]",
+                    launchable_issue,
+                    bundle,
+                )
+                register_with_launch_services(bundle)
+                return bundle
         # A rebuild is never routine: it changes the ad-hoc signature and macOS
         # then discards every permission the user granted. Say why, at WARNING,
         # so a recurring rebuild is visible in the log instead of showing up as
@@ -875,6 +971,7 @@ def ensure_macos_app_bundle(
             return _write_cross_platform_fixture_bundle(bundle)
         installed = _install_native_bundle(install_root, bundle)
         register_with_launch_services(installed)
+        _record_rebuild(installed, install_root=install_root)
         log.info("Native macOS app bundle installed: %s", installed)
         return installed
     except Exception as exc:  # noqa: BLE001 - installer consumes the None result

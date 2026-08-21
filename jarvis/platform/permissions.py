@@ -182,6 +182,67 @@ _IOHID_ACCESS_STATES: dict[int, PermissionState] = {
 }
 
 
+def _canonical_app_roots() -> tuple[Path, ...]:
+    """The directories a legitimately installed copy of this app may live in.
+
+    Both are equally canonical. The installer writes ``~/Applications``, but
+    ``/Applications`` is where Mac users put apps, and dragging it there is a
+    normal move — not a tampering signal. TCC pins a grant to the bundle id
+    and its signature, never to a path, so a stricter rule buys no safety and
+    costs everything: an app read as "unstable" hides every request button,
+    reports every feature as not ready, and keeps insisting the permissions
+    are missing while System Settings shows them enabled (BUG-161).
+    """
+    return (Path.home() / "Applications", Path("/Applications"))
+
+
+def _default_screen_capture_live_check() -> bool | None:
+    """Prove the Screen Recording grant by USING it; ``None`` when unknowable.
+
+    ``CGPreflightScreenCaptureAccess`` answers from a value macOS freezes when
+    the process first asks. A grant given in System Settings while the app runs
+    therefore stays invisible until relaunch, and the app keeps demanding a
+    permission the user has already given — however often they give it again
+    (BUG-161). Window TITLES of other applications are screen-recording-gated
+    data, so one on-screen window owned by another process and carrying a name
+    is live proof the grant works right now. The reverse does not hold (there
+    may simply be no other window on screen), so an empty result is ``None``
+    and never contradicts the preflight.
+    """
+    try:
+        import Quartz  # type: ignore[import-not-found]
+
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+            Quartz.kCGNullWindowID,
+        )
+    except Exception:  # noqa: BLE001 - a missing native bridge proves nothing
+        return None
+    return _window_titles_are_visible(windows, os.getpid())
+
+
+def _window_titles_are_visible(windows: Any, own_pid: int) -> bool | None:
+    """``True`` when another app's window title is readable, else ``None``."""
+    try:
+        entries = list(windows or ())
+    except TypeError:
+        return None
+    for window in entries:
+        try:
+            # Layer 0 is the ordinary application layer. The Dock, the menu
+            # bar and other system chrome sit above it and expose names
+            # without the grant, so they would fake a positive result.
+            if int(window.get("kCGWindowLayer", -1)) != 0:
+                continue
+            if int(window.get("kCGWindowOwnerPID", own_pid)) == own_pid:
+                continue
+            if str(window.get("kCGWindowName") or "").strip():
+                return True
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return None
+
+
 def _default_iohid_check(request_type: int) -> int | None:
     """Query IOKit's tri-state HID access check; ``None`` when unavailable.
 
@@ -302,12 +363,14 @@ class SystemPermissionPort:
         platform_name: PlatformName | None = None,
         module_loader: Callable[[str], Any] = importlib.import_module,
         iohid_check: Callable[[int], int | None] = _default_iohid_check,
+        screen_capture_live_check: Callable[[], bool | None] = _default_screen_capture_live_check,
         credential_store_backend: Callable[[], str] = _default_credential_store_backend,
         credential_store_recover: Callable[[], bool] = _default_credential_store_recover,
     ) -> None:
         self._platform_name = platform_name
         self._module_loader = module_loader
         self._iohid_check = iohid_check
+        self._screen_capture_live_check = screen_capture_live_check
         self._credential_store_backend = credential_store_backend
         self._credential_store_recover = credential_store_recover
         # This is operation state, not a cached permission probe. The set lives
@@ -359,8 +422,11 @@ class SystemPermissionPort:
         canonical_path = False
         if launched_as_bundle and bundle_path:
             try:
-                expected_path = Path.home() / "Applications" / f"{APP_NAME}.app"
-                canonical_path = Path(bundle_path).resolve() == expected_path.resolve()
+                resolved = Path(bundle_path).resolve()
+                canonical_path = any(
+                    resolved == (root / f"{APP_NAME}.app").resolve()
+                    for root in _canonical_app_roots()
+                )
             except (OSError, ValueError):
                 # A path that will not resolve is not the canonical bundle
                 # location. False is the cautious reading and it feeds a
@@ -450,6 +516,13 @@ class SystemPermissionPort:
         except Exception:  # noqa: BLE001 - native probes never crash callers
             return PermissionState.UNAVAILABLE
 
+    def _screen_capture_live(self) -> bool:
+        """Whether a live probe proves the frozen Screen Recording preflight wrong."""
+        try:
+            return self._screen_capture_live_check() is True
+        except Exception:  # noqa: BLE001 - native probes never crash callers
+            return False
+
     def _iohid_state(self, request_type: int) -> PermissionState | None:
         """Tri-state TCC probe that separates "denied" from "not asked yet"."""
         try:
@@ -487,7 +560,14 @@ class SystemPermissionPort:
         if permission_id is PermissionId.MICROPHONE:
             return self._microphone_state()
         if permission_id is PermissionId.SCREEN_RECORDING:
-            return self._boolean_state("Quartz", "CGPreflightScreenCaptureAccess")
+            preflight = self._boolean_state("Quartz", "CGPreflightScreenCaptureAccess")
+            if preflight is PermissionState.GRANTED:
+                return preflight
+            # The preflight is frozen per process and can only go stale
+            # NEGATIVE. Ask the window server whether the grant works right
+            # now before telling the user a permission they just gave is
+            # missing (BUG-161).
+            return PermissionState.GRANTED if self._screen_capture_live() else preflight
         if permission_id is PermissionId.ACCESSIBILITY:
             return self._boolean_state("ApplicationServices", "AXIsProcessTrusted")
         if permission_id is PermissionId.INPUT_MONITORING:
@@ -607,6 +687,10 @@ class SystemPermissionPort:
         eligible = (
             self.platform == "darwin" and identity.stable and identity.foreground and not headless
         )
+        # Opening a System Settings pane is not a prompt: it works from the
+        # background, so it must not disappear together with the request
+        # button when the user is looking at another window.
+        settings_reachable = self.platform == "darwin" and identity.stable and not headless
         for permission_id in PermissionId:
             state = self._live_state(permission_id)
             states[permission_id] = state
@@ -688,7 +772,7 @@ class SystemPermissionPort:
                     can_request=can_request,
                     # The Keychain has no System Settings pane; its only
                     # recovery path is the request flow above.
-                    can_open_settings=eligible and permission_id in _SETTINGS_URLS,
+                    can_open_settings=settings_reachable and permission_id in _SETTINGS_URLS,
                     can_reset=can_reset,
                     restart_required=restart_pending,
                     detail=detail,
@@ -734,7 +818,9 @@ class SystemPermissionPort:
             "restart_required": bool(self._restart_required),
         }
 
-    def _eligibility_error(self, snapshot: dict[str, Any]) -> str | None:
+    def _eligibility_error(
+        self, snapshot: dict[str, Any], *, needs_foreground: bool = True
+    ) -> str | None:
         if self.platform != "darwin":
             return "macOS permission requests are not required on this platform."
         if snapshot["headless"]:
@@ -745,7 +831,12 @@ class SystemPermissionPort:
                 "Relaunch Personal Jarvis from its installed app before requesting "
                 "permissions; granting access to Terminal or Python is unsafe."
             )
-        if not identity["foreground"]:
+        # Only the native PROMPT needs the foreground — a dialog raised behind
+        # other windows is a dialog the user never answers. Opening a Settings
+        # pane through LaunchServices does not, and refusing it in the
+        # background left the browser surface with a permission banner that
+        # offered no way out at all (BUG-161).
+        if needs_foreground and not identity["foreground"]:
             return "Bring Personal Jarvis to the foreground and try again."
         return None
 
@@ -1030,7 +1121,7 @@ class SystemPermissionPort:
                 f"Would open {_LABELS[permission_id]} in System Settings.",
                 before,
             )
-        error = self._eligibility_error(before)
+        error = self._eligibility_error(before, needs_foreground=False)
         if error is not None:
             return PermissionOperation(
                 False,

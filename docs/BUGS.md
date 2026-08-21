@@ -11271,3 +11271,100 @@ counterweight — suppression must not cost the mute recovery), and
 `tests/unit/realtime/test_lookup_never_reports_done.py` (a finished search is
 never "Erledigt."; an empty one says so; a wordless ACTION still reports done;
 the facts handed to the composer carry the content and never the URLs).
+
+---
+
+## BUG-161: macOS permissions still read as missing after BUG-159 — every start rebuilt the app bundle, and a copy in /Applications was treated as a stranger (HIGH, FIXED 2026-08-21)
+
+**Symptom (maintainer's Mac, reported 2026-08-21).** The app kept asking for
+permissions it had already been given. Granting them again changed nothing;
+neither did a restart. This is BUG-159's symptom surviving BUG-159's fix,
+which had closed three real defects but left the mechanism that produces the
+loop untouched — its own "Still open" note named it.
+
+**Root causes (four, each sufficient on its own).**
+
+1. *A rebuild that cannot repair itself repeated on every single start.*
+   `ensure_desktop_integration()` runs at every boot and rebuilds the app
+   bundle whenever the identity probe refuses it. The rebuild changes the
+   ad-hoc signature, and macOS answers a changed signature by orphaning every
+   recorded TCC grant. When the probe fails for a reason a rebuild does not
+   touch — a moved checkout, an interpreter the probe reads differently, an
+   `open -W -n` that will not complete — the same rebuild happens again next
+   start, and again after that. BUG-159 (f) only suppressed the second
+   `tccutil reset`, and only while the user had NOT restored the grants:
+   `snapshot()` retires that marker as soon as every row is back, so the user
+   who did the right thing armed the next wipe. Grant everything, restart,
+   be asked again — exactly as reported.
+
+2. *A copy in `/Applications` was not recognized as this app.* The canonical
+   location was `~/Applications` alone, everywhere: `_current_process_identity_valid()`
+   compared the running bundle against that one path, so dragging the app to
+   `/Applications` — the most ordinary thing a Mac user does — made the
+   `~/Applications` slot look empty. Every start then built a bundle there,
+   under the SAME bundle id, and the signature change stripped the grants of
+   the copy that was running at that moment.
+
+3. *The permission port called the same move a tampering signal.* `_bundle_identity()`
+   applied the identical `~/Applications`-only rule to `stable`. An app in
+   `/Applications` therefore reported an unstable identity: every request and
+   settings button disappeared, `runtime_access_granted()` returned False for
+   every grant, every feature reported not-ready, and the banner demanded
+   permissions with nothing left to click. TCC pins a grant to the bundle id
+   and its signature, never to a path, so the strict rule bought no safety.
+
+4. *A Screen Recording grant given in System Settings was invisible forever.*
+   `CGPreflightScreenCaptureAccess` answers from a value macOS freezes when the
+   process first asks. The port had exactly one way to learn otherwise: a
+   pending-restart flag that only its OWN request/settings flow set. A user who
+   opened System Settings themselves — which is what macOS's own prompt tells
+   them to do — got no flag and a permanent "not granted", however often they
+   granted it.
+
+**Fix (2026-08-21).**
+(a) `_running_managed_bundle()` replaces `_current_process_identity_valid()`
+and runs FIRST, before the launchable check: a process executing as a bundle
+with our id, importing the managed checkout, IS the installed app and is left
+alone — wherever the user keeps it. Location is no longer part of the verdict.
+(b) `_rebuild_would_repeat()` records what each rebuild produced (cdhash,
+checkout, interpreter minor version, machine). When a launchable bundle fails
+its identity probe and a fresh build would reproduce the same app, the build is
+skipped and the reason is logged at WARNING — a launchable app is worth more
+than a probe verdict no rebuild can satisfy. A bundle that genuinely cannot
+launch is still rebuilt every time.
+(c) `_canonical_app_roots()` accepts `~/Applications` and `/Applications`
+alike for the `stable` identity.
+(d) `_default_screen_capture_live_check()` proves the grant by using it: window
+TITLES of other applications are screen-recording-gated data, so one on-screen
+window on layer 0 owned by another process and carrying a name means the grant
+works right now. It only ever upgrades the frozen preflight — an empty result
+is `None`, never a denial — and it costs nothing on the hot path, where the
+preflight already reads granted.
+(e) Opening a System Settings pane no longer requires the foreground. Only the
+native prompt does (a dialog behind other windows is one the user never
+answers); refusing the deep link left every background surface with a banner
+whose single control answered "bring the app to the front".
+
+**Class rule.** A repair that does not fix its own trigger is a loop, and a
+loop that costs the user something must run at most once. Prove the cost is
+buying a change before paying it again. Second half: a permission is bound to
+an identity, never to a location — any check stricter than the OS's own turns
+a normal user action into a permanent failure the user cannot even name.
+
+**Guards.** `tests/unit/setup/test_macos_app_bundle.py::test_a_rebuild_that_reproduces_the_same_app_is_not_repeated`,
+`::test_a_changed_interpreter_still_earns_a_fresh_rebuild`,
+`::test_a_broken_bundle_is_always_rebuilt_however_often_it_recurs`,
+`::test_the_running_app_is_accepted_wherever_the_user_keeps_it`,
+`::test_the_running_bundle_probe_ignores_the_install_location`,
+`::test_a_foreign_bundle_id_is_never_taken_for_the_managed_app`,
+`tests/unit/platform/test_permissions.py::test_the_app_in_the_shared_applications_folder_is_a_stable_identity`,
+`::test_a_live_window_probe_beats_the_frozen_screen_recording_preflight`,
+`::test_a_live_window_probe_never_invents_a_grant_the_preflight_denies`,
+`::test_window_titles_prove_the_grant_only_from_another_apps_own_layer`,
+`::test_open_settings_works_while_the_app_sits_in_the_background`.
+
+**Still open.** The ad-hoc signature remains the underlying churn: a rebuild
+that IS necessary still costs one round of re-granting. A Developer-ID signing
+identity is the structural fix. The rebuild guard also arms only after the
+first rebuild it observes, so an install already caught in the loop pays for
+one more round before it stops.

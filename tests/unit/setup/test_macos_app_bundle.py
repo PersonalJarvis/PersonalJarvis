@@ -81,8 +81,8 @@ def test_failed_runtime_probe_rebuilds_instead_of_preserving(tmp_path: Path, mon
     monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
     monkeypatch.setattr(
         mab,
-        "_current_process_identity_valid",
-        lambda _bundle, *, install_root, diagnostics=None: False,
+        "_running_managed_bundle",
+        lambda *, install_root, diagnostics=None: None,
     )
     monkeypatch.setattr(
         mab,
@@ -118,8 +118,8 @@ def test_running_canonical_app_skips_second_launchservices_probe(
     monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
     monkeypatch.setattr(
         mab,
-        "_current_process_identity_valid",
-        lambda _bundle, *, install_root, diagnostics=None: True,
+        "_running_managed_bundle",
+        lambda *, install_root, diagnostics=None: bundle,
     )
     monkeypatch.setattr(
         mab,
@@ -628,3 +628,193 @@ def test_a_recurring_rebuild_wipes_the_grants_only_once(tmp_path: Path, monkeypa
 
     assert sweeps == [1]
     assert marker.is_file()
+
+
+# --- BUG-161: a rebuild loop that wiped the grants on every single start
+
+
+def test_a_rebuild_that_reproduces_the_same_app_is_not_repeated(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The loop that made the app forget every permission on every start.
+
+    The identity probe can keep refusing a bundle for a reason no rebuild
+    touches. Building the identical app again changes only its ad-hoc
+    signature, and macOS answers a changed signature by orphaning every TCC
+    grant — so the user allows everything, restarts, and is asked again.
+    """
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    marker = tmp_path / "macos-bundle-rebuild.json"
+    monkeypatch.setattr(mab, "_rebuild_marker_path", lambda: marker)
+    monkeypatch.setattr(mab, "_bundle_cdhash", lambda _bundle: "cdhash-one")
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
+    monkeypatch.setattr(mab, "_running_managed_bundle", lambda *, install_root, **_kw: None)
+    monkeypatch.setattr(
+        mab,
+        "_runtime_identity_valid",
+        lambda _bundle, *, install_root, diagnostics=None: False,
+    )
+    rebuilds: list[Path] = []
+
+    def _rebuild(install_root: Path, destination: Path) -> Path:
+        rebuilds.append(destination)
+        return destination
+
+    monkeypatch.setattr(mab, "_install_native_bundle", _rebuild)
+    install_dir = tmp_path / "install"
+    applications = tmp_path / "Applications"
+
+    first = ensure_macos_app_bundle(install_dir=install_dir, applications_dir=applications)
+    second = ensure_macos_app_bundle(install_dir=install_dir, applications_dir=applications)
+
+    assert first == second == bundle
+    assert rebuilds == [bundle]
+
+
+def test_a_changed_interpreter_still_earns_a_fresh_rebuild(tmp_path: Path, monkeypatch) -> None:
+    """The guard suppresses a repeat, never a build that could come out different."""
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    marker = tmp_path / "macos-bundle-rebuild.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "cdhash": "cdhash-one",
+                "install_root": str((tmp_path / "install").resolve()),
+                "python": "3.11",
+                "machine": platform.machine(),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mab, "_rebuild_marker_path", lambda: marker)
+    monkeypatch.setattr(mab, "_bundle_cdhash", lambda _bundle: "cdhash-one")
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
+    monkeypatch.setattr(mab, "_running_managed_bundle", lambda *, install_root, **_kw: None)
+    monkeypatch.setattr(
+        mab,
+        "_runtime_identity_valid",
+        lambda _bundle, *, install_root, diagnostics=None: False,
+    )
+    rebuilds: list[Path] = []
+    monkeypatch.setattr(
+        mab,
+        "_install_native_bundle",
+        lambda install_root, destination: (rebuilds.append(destination), destination)[1],
+    )
+
+    # The recorded note carries Python 3.11; this interpreter is a different
+    # minor version, so a fresh build genuinely can produce a different app.
+    assert f"{sys.version_info.major}.{sys.version_info.minor}" != "3.11"
+    ensure_macos_app_bundle(
+        install_dir=tmp_path / "install",
+        applications_dir=tmp_path / "Applications",
+    )
+
+    assert rebuilds == [bundle]
+
+
+def test_a_broken_bundle_is_always_rebuilt_however_often_it_recurs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A bundle that cannot launch is a real repair — the loop guard must not block it."""
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    marker = tmp_path / "macos-bundle-rebuild.json"
+    monkeypatch.setattr(mab, "_rebuild_marker_path", lambda: marker)
+    monkeypatch.setattr(mab, "_bundle_cdhash", lambda _bundle: "cdhash-one")
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "_launchable_issue", lambda _candidate: "executable is missing")
+    monkeypatch.setattr(mab, "_running_managed_bundle", lambda *, install_root, **_kw: None)
+    rebuilds: list[Path] = []
+    monkeypatch.setattr(
+        mab,
+        "_install_native_bundle",
+        lambda install_root, destination: (rebuilds.append(destination), destination)[1],
+    )
+    install_dir = tmp_path / "install"
+    applications = tmp_path / "Applications"
+
+    ensure_macos_app_bundle(install_dir=install_dir, applications_dir=applications)
+    ensure_macos_app_bundle(install_dir=install_dir, applications_dir=applications)
+
+    assert rebuilds == [bundle, bundle]
+
+
+def test_the_running_app_is_accepted_wherever_the_user_keeps_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A copy in /Applications must never trigger a rebuild of the ~ slot.
+
+    Both copies share our bundle id, so the rebuild's ``tccutil reset`` strips
+    the permissions of the app that is running at that moment (BUG-161).
+    """
+    import jarvis.setup.macos_app_bundle as mab
+
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    shared_copy = tmp_path / "SharedApplications" / APP_DIR_NAME
+    monkeypatch.setattr(
+        mab, "_running_managed_bundle", lambda *, install_root, **_kw: shared_copy
+    )
+    monkeypatch.setattr(
+        mab,
+        "_install_native_bundle",
+        lambda *_args: pytest.fail("a running managed app must never be rebuilt"),
+    )
+    registered: list[Path] = []
+    monkeypatch.setattr(mab, "register_with_launch_services", registered.append)
+
+    result = ensure_macos_app_bundle(
+        install_dir=tmp_path / "install",
+        applications_dir=tmp_path / "Applications",
+    )
+
+    assert result == shared_copy
+    assert registered == [shared_copy]
+
+
+def test_the_running_bundle_probe_ignores_the_install_location(monkeypatch) -> None:
+    """Only the bundle id and the managed checkout decide — never the path."""
+    import jarvis.setup.macos_app_bundle as mab
+    import jarvis.ui.web.launcher as launcher
+
+    install_root = Path(launcher.__file__).resolve().parents[3]
+    running = Path("/Applications") / APP_DIR_NAME
+    foundation = ModuleType("Foundation")
+    foundation.NSBundle = SimpleNamespace(  # type: ignore[attr-defined]
+        mainBundle=lambda: SimpleNamespace(
+            bundlePath=lambda: str(running),
+            bundleIdentifier=lambda: mab.BUNDLE_ID,
+        )
+    )
+    monkeypatch.setitem(sys.modules, "Foundation", foundation)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+
+    assert mab._running_managed_bundle(install_root=install_root) == running.resolve()
+
+
+def test_a_foreign_bundle_id_is_never_taken_for_the_managed_app(monkeypatch) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    foundation = ModuleType("Foundation")
+    foundation.NSBundle = SimpleNamespace(  # type: ignore[attr-defined]
+        mainBundle=lambda: SimpleNamespace(
+            bundlePath=lambda: "/Applications/Terminal.app",
+            bundleIdentifier=lambda: "com.apple.Terminal",
+        )
+    )
+    monkeypatch.setitem(sys.modules, "Foundation", foundation)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    diagnostics: list[str] = []
+
+    assert (
+        mab._running_managed_bundle(install_root=Path.cwd(), diagnostics=diagnostics) is None
+    )
+    assert any("bundle id" in reason for reason in diagnostics)
