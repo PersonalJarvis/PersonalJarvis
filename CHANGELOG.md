@@ -9,8 +9,55 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-08-21
+
+### Added
+
+- **The board's centre is a stage, not a reticle.** The mascot stands in the
+  middle of the deck now, drawn as a vector measured off the original artwork
+  instead of sketched by eye, and framed on the figure rather than on the
+  bitmap's empty margin. The bottom row of cards shows its own scale at rest
+  instead of five shrunken apologies, and the rest strip no longer carries
+  orphans the board never loads.
+- **The Jarvis Bar thinks with the deck's sweep.** While a turn is being
+  worked on, the bar runs the same sweep the board uses, instead of the old
+  orbital core — one motion language across both surfaces.
+- **A contributor wall on the front page.** The README shows the people who
+  have contributed, and it refreshes when a pull request merges instead of
+  waiting for the next Monday.
+
 ### Fixed
 
+- **macOS stops asking for permissions it has already been given.** The app
+  demanded microphone, screen recording and accessibility access that System
+  Settings showed as enabled; granting them again changed nothing, and neither
+  did a restart. Four causes stacked up. The app rebuilt its own bundle on
+  every start whenever an identity probe refused it — the rebuild changes the
+  ad-hoc signature, and macOS answers a changed signature by discarding every
+  recorded grant, so a probe that failed for a reason no rebuild touches wiped
+  the permissions on every single start. A copy in `/Applications` was not
+  recognised as this app at all, because only `~/Applications` counted as
+  canonical: dragging the app there made that slot look empty, every start
+  built a second bundle into it under the same bundle id, and the signature
+  change stripped the grants of the copy that was running. The permission
+  view applied the same rule, so that same move hid every button and failed
+  every runtime check with nothing left to click. And a Screen Recording
+  grant given in System Settings stayed invisible, because the preflight macOS
+  offers is frozen for the life of the process. Now the running process is
+  taken as proof of a valid install wherever it lives, a rebuild that would
+  reproduce the identical app is skipped and logged instead of repeated, both
+  Applications folders are canonical, and the Screen Recording grant is proved
+  by reading a window title only that grant allows.
+- **The memory map hands its WebGL context back.** The wiki's 3-D map leaked
+  its rendering context when the view was left, and a browser only grants a
+  handful of them — enough visits and the map came back as a white canvas with
+  a sad face. It now releases the context on the way out and survives losing
+  one, and a CI gate fails the build for any scene that does not.
+- **The page loads the bundle files that are actually shipped.** Some entry
+  chunks lived only in `index.html`, not in the tree, so a fresh clone could
+  open onto a blank window.
+- **A busy Vertex Live is spoken, not silently retried.** A 1011 resource
+  exhaustion used to disappear into a retry loop; it now says what happened.
 - **A question is no longer answered with "Erledigt."** In a live call, asking
   something could come back as that one word — a report that a job was
   finished, for a job nobody had given, while the actual answer was thrown
