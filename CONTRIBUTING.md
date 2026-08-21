@@ -140,6 +140,18 @@ The most common design question. Pick the smallest thing that fits:
 A swappable backend is a plugin. A single action the brain can call is a tool. A multi-step
 workflow somebody wrote down is a skill.
 
+> [!WARNING]
+> **A TTS provider needs four registrations, not one.** The entry point in `pyproject.toml`
+> makes it discoverable, but the config path builds providers through `_build_provider()` in
+> [`jarvis/plugins/tts/__init__.py`](jarvis/plugins/tts/__init__.py) — that is where each
+> family's own voice, model and sub-table handling lives, and where foreign values left over
+> from a previous provider get scrubbed. A provider with an entry point but no branch there
+> hits the `Unknown TTS provider` fallback: Gemini speaks instead of you, with only a log
+> line to say so. Four places: the entry point in `pyproject.toml`, then a branch in
+> `_build_provider()`, an alias set wired into `_canonical_tts_name()` so every spelling of
+> your provider resolves to one family, and an entry in `_TTS_SECRET_CANDIDATES` if it needs
+> a key — without that last one the credential gate treats it as always-available.
+
 > [!IMPORTANT]
 > **Marketplace plugins** (the connectors in the app's Plugins store — GitHub, Notion,
 > Slack, …) are a separate, fourth thing, and every NEW submission must be packaged per the
