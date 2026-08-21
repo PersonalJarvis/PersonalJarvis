@@ -589,6 +589,27 @@ wide open. These are the places a person contributes something no agent can:
 - **Telling us it broke.** A precise bug report on a setup we cannot reproduce is worth more
   than a patch.
 
+## Contributors
+
+Thanks to everyone who has shipped something here:
+
+<!-- contributors:start -->
+
+<a href="https://github.com/rubenluetke10-beep"><img src="https://avatars.githubusercontent.com/u/226271791?v=4&s=48" width="48" height="48" alt="rubenluetke10-beep"></a>
+
+<!-- contributors:end -->
+
+The wall is generated from the commit history by
+[`scripts/ci/update_contributors.py`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/ci/update_contributors.py)
+and refreshes itself weekly. Land a pull request and your face is on it — no
+form to fill in, no permission to ask for. **AI-assisted pull requests are
+welcome**; what gets reviewed is the diff, not how you wrote it.
+
+New to the repo? The [issue chooser](https://github.com/PersonalJarvis/PersonalJarvis/issues/new/choose)
+is the front door, [good first issues](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+are scoped down to a file and a test command, and setup questions get answered
+the same day on [Discord](https://discord.gg/x7USduHxbc).
+
 ## License
 
 MIT. Free to use, modify, and distribute, including commercially; see
