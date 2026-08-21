@@ -2090,7 +2090,7 @@
      assistant speaks, a heartbeat while it thinks (lib/orbLevel.ts)
      — smoothed once, written once per frame. Everything below
      reads it: the sun's size and brightness, the glow, the corona's
-     rays, the rings, the level arc on the bezel. Transform, opacity
+     rays, the rings, the stage's beam and pool. Transform, opacity
      and a GPU brightness only, so it all moves as one and costs
      the main thread one style write.
      ----------------------------------------------------------- */
@@ -2134,15 +2134,63 @@
     animation: deck-orb-turn 30s linear infinite;
     will-change: transform, opacity;
   }
-  /* the level arc on the bezel: two half-circles from the top, drawn as far
-     as the level goes; nothing at 0 */
-  .deck-orb-vu path {
-    stroke-dasharray: 1;
-    stroke-dashoffset: calc(1 - var(--orb-level, 0));
-    opacity: 0.9;
+  /* ---- The stage ----------------------------------------------------
+     A light from above, the pool it throws on the ground, and the figure's
+     shadow between the two. This is where the voice arrives now: beam and
+     pool both read --orb-level, so louder is brighter and wider. It
+     replaced the level arc on the bezel, which measured the voice on a ring
+     that made the figure small and boxed it in.
+
+     Both are lit from --primary, so the stage takes its light from whichever
+     theme it lands in. The shadow is the one part that stays black in both:
+     on the dark deck the light carries the depth, on the light one the
+     shadow does — a shadow that inverts with the theme is a glow.
+     Transform and opacity only; no width animation, so the pool costs the
+     compositor a frame and the main thread nothing.
+     ------------------------------------------------------------------- */
+  .deck-stage-beam {
+    top: -6%;
+    left: 50%;
+    width: 76%;
+    height: 74%;
+    transform: translateX(-50%);
+    clip-path: polygon(37% 0%, 63% 0%, 93% 100%, 7% 100%);
+    background: linear-gradient(
+      to bottom,
+      hsl(var(--primary) / 0.2) 0%,
+      hsl(var(--primary) / 0.06) 55%,
+      hsl(var(--primary) / 0) 100%
+    );
+    opacity: calc(0.45 + var(--orb-level, 0) * 0.55);
+    filter: blur(8px);
+    will-change: opacity;
   }
-  .deck-orb-vu {
-    filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.6));
+  .deck-stage-pool {
+    bottom: 8%;
+    left: 50%;
+    width: 54%;
+    height: 13%;
+    transform: translateX(-50%) scaleX(calc(0.84 + var(--orb-level, 0) * 0.46));
+    border-radius: 50%;
+    background: radial-gradient(
+      closest-side,
+      hsl(var(--primary) / 0.4) 0%,
+      hsl(var(--primary) / 0) 100%
+    );
+    opacity: calc(0.55 + var(--orb-level, 0) * 0.45);
+    filter: blur(6px);
+    will-change: transform, opacity;
+  }
+  .deck-stage-shadow {
+    bottom: 10.5%;
+    left: 50%;
+    width: 40%;
+    height: 5%;
+    transform: translateX(-50%);
+    border-radius: 50%;
+    background: #000;
+    opacity: 0.5;
+    filter: blur(7px);
   }
   /* a ripple: one ring from the sun to the bezel per word landing */
   .deck-orb-ripple {

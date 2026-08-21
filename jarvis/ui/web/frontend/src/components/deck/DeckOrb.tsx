@@ -8,9 +8,9 @@ import { driveTarget, isOnset, orbDriveFor, smoothOrbLevel } from "@/lib/orbLeve
 import { cn } from "@/lib/utils";
 
 /**
- * The centre of the deck: the mascot in a reticle — one hairline bezel, one
- * bright arc per running step, the voice meter, and four small readouts at
- * the corners.
+ * The centre of the deck: the mascot on a STAGE — a light from above, the
+ * pool that light throws on the ground, the figure's own shadow, one bright
+ * arc per running step, and a single line of readouts along the bottom.
  *
  * The middle is Gigi itself (`JarvisOrb`), moved by the real voice state,
  * with a soft gold glow throwing the dark silhouette forward. It was a PNG
@@ -19,10 +19,13 @@ import { cn } from "@/lib/utils";
  * picture had earned it — its baked-in white halo read as a grey box on the
  * dark deck, and this reticle sliced that box off at the ring.
  *
- * The reticle is now INSTRUMENTS ONLY, and every part of it carries
- * information: the arcs are parallel work made visible, the sweep turns only
- * while something runs, the meter is the voice, the readouts are live values
- * the caller sources. What went with the PNG was the scenery that measured
+ * The bezel and the level arc that rode it went on 2026-08-21 (maintainer:
+ * the ring made Gigi small, measured nothing, and three of the four corner
+ * readouts said "0" or "Ready" — the centre exhibiting its own emptiness).
+ * What is left carries information: the arcs are parallel work made visible,
+ * the sweep turns only while something runs, and the readouts are live values
+ * the caller sources, on one line, each one dropped while it would read as a
+ * zero. The voice is not a meter any more — it is the light on the stage. What went with the PNG was the scenery that measured
  * nothing — 72 dial ticks, corner brackets, two counter-turning orbits, a
  * satellite riding the bezel and an idle ping (maintainer, 2026-08-20:
  * instruments that show nothing are a stage set). The deck does not need
@@ -36,8 +39,8 @@ import { cn } from "@/lib/utils";
  * (`lib/orbLevel.ts`: the real microphone while listening, a speech-shaped
  * envelope while the assistant speaks, a heartbeat while it thinks), smooths
  * it, and writes it to ONE CSS variable on the root (`--orb-level`); the
- * core's size and brightness, the glow, the corona's rays, the rings and the
- * level arc on the bezel all read that variable in CSS (index.css). A jump
+ * core's size and brightness, the glow, and the stage's beam, pool and
+ * shadow all read that variable in CSS (index.css). A jump
  * in the level — a word landing — sends one ripple from the sun to the
  * bezel. One number, one smoothing, so every part moves as one thing.
  */
@@ -123,6 +126,21 @@ export function DeckOrb({
   const [ex, ey] = point(sweep + 36, R * 0.94);
   const haloId = useId();
 
+  // The corners used to carry four readouts, and two of them were counters
+  // that said "0" whenever nothing had happened yet — the centre measuring
+  // its own emptiness. They are ONE line now, and a value joins it only once
+  // it has something to say: the caller passes an empty string for a value
+  // that would be a zero, and an empty string never reaches the line. The
+  // engine keeps its place at the front, because which voice is answering is
+  // true whether or not anything has run yet.
+  const extras = readouts
+    ? [
+        { id: "mood", text: readouts.nw },
+        { id: "steps", text: readouts.ne },
+        { id: "words", text: readouts.se },
+      ].filter((r) => r.text.trim().length > 0)
+    : [];
+
   // The level loop: one number for everything that moves with the voice,
   // written to the root as `--orb-level`. Runs only while a voice state
   // drives it; idle (and reduced motion) is a still 0 and no loop at all.
@@ -168,12 +186,25 @@ export function DeckOrb({
       style={{ width: size, height: size }}
       data-testid="deck-orb"
     >
+      {/* The stage. A light from above, a pool of it on the ground and the
+          figure's own shadow — the three things that put Gigi SOMEWHERE
+          instead of nowhere. All three read the same `--orb-level` the rest
+          of the centre reads, so the voice arrives as light rather than as a
+          number: louder is brighter and wider. This replaced the bezel and
+          its level arc, which drew a ring around the figure and measured the
+          voice on it (maintainer, 2026-08-21: the reticle made Gigi small and
+          nothing on it carried its weight). */}
+      <div
+        aria-hidden
+        className="deck-stage-beam pointer-events-none absolute"
+        data-testid="deck-orb-vu"
+      />
+      <div aria-hidden className="deck-stage-pool pointer-events-none absolute" />
+      <div aria-hidden className="deck-stage-shadow pointer-events-none absolute" />
+
       <svg viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 h-full w-full" aria-hidden>
         <HudHaloDefs id={haloId} />
         <g filter={`url(#${haloId})`}>
-        {/* bezel — the one hairline the meter and the arcs are read against */}
-        <circle cx={R} cy={R} r={R * 0.94} fill="none" stroke="hsl(var(--primary))" strokeWidth={1} opacity={0.4} />
-
         {arcs.map((a) => (
           <path
             key={a.id}
@@ -198,33 +229,7 @@ export function DeckOrb({
         </g>
       </svg>
 
-      {/* The level arc on the bezel: grows from the top down both sides with
-          the voice — a meter, reading `--orb-level` (CSS). */}
-      <svg
-        viewBox={`0 0 ${size} ${size}`}
-        className="deck-orb-vu pointer-events-none absolute inset-0 h-full w-full"
-        aria-hidden
-        data-testid="deck-orb-vu"
-      >
-        <path
-          d={`M ${R} ${R - R * 0.94} A ${R * 0.94} ${R * 0.94} 0 0 1 ${R} ${R + R * 0.94}`}
-          pathLength={1}
-          fill="none"
-          stroke="hsl(var(--primary))"
-          strokeWidth={3}
-          strokeLinecap="round"
-        />
-        <path
-          d={`M ${R} ${R - R * 0.94} A ${R * 0.94} ${R * 0.94} 0 0 0 ${R} ${R + R * 0.94}`}
-          pathLength={1}
-          fill="none"
-          stroke="hsl(var(--primary))"
-          strokeWidth={3}
-          strokeLinecap="round"
-        />
-      </svg>
-
-      {/* Ripples: one ring per word landing, from the sun to the bezel.
+      {/* Ripples: one ring per word landing, leaving the figure for the edge.
           Spawned by the level loop, gone when their animation ends. */}
       <div
         ref={ripplesRef}
@@ -259,16 +264,18 @@ export function DeckOrb({
       </div>
 
       {readouts && (
-        <>
-          <Readout className="left-1 top-1 text-left" text={readouts.nw} />
-          <Readout className="right-1 top-1 text-right" text={readouts.ne} />
-          <Readout
-            className="bottom-1 left-1 text-left"
-            text={readouts.sw}
-            testId="deck-orb-provider"
-          />
-          <Readout className="bottom-1 right-1 text-right" text={readouts.se} />
-        </>
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-wrap items-baseline justify-center gap-x-2 px-2 text-center font-mono text-[9px] uppercase tracking-[0.16em] text-primary/80"
+          data-testid="deck-orb-readouts"
+        >
+          <span data-testid="deck-orb-provider">{readouts.sw}</span>
+          {extras.map((r) => (
+            <span key={r.id}>
+              <span className="mr-2 text-primary/30">·</span>
+              {r.text}
+            </span>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -310,24 +317,3 @@ function spawnRipple(host: HTMLDivElement | null): void {
   host.appendChild(el);
 }
 
-function Readout({
-  text,
-  className,
-  testId,
-}: {
-  text: string;
-  className?: string;
-  testId?: string;
-}) {
-  return (
-    <span
-      data-testid={testId}
-      className={cn(
-        "pointer-events-none absolute max-w-[42%] truncate px-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-primary/90",
-        className,
-      )}
-    >
-      {text}
-    </span>
-  );
-}
