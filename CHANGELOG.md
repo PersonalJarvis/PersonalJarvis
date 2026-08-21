@@ -22,9 +22,7 @@ versioning per [SemVer](https://semver.org/).
 - **The Jarvis Bar thinks with the deck's sweep.** While a turn is being
   worked on, the bar runs the same sweep the board uses, instead of the old
   orbital core — one motion language across both surfaces.
-- **The background is a vibrating plate the voice plays.** The app's backdrop
-  reacts to what is being said instead of sitting still, and the deck's sweep
-  runs as a single transform rather than sixty redraws a second.
+- **The deck's sweep runs as one transform** instead of sixty redraws a second.
 - **A contributor wall on the front page.** The README shows the people who
   have contributed, and it refreshes when a pull request merges instead of
   waiting for the next Monday.
