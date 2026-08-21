@@ -57,6 +57,7 @@ import {
 } from "@/lib/orbitalLayout";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
+import { useGraphAwake, type GraphEngineApi } from "@/hooks/useGraphAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useThemeValue } from "@/hooks/useTheme";
 import { buildSunObject, sunPalette, syncSystemDecor } from "@/components/wiki/wikiSystem";
@@ -367,6 +368,11 @@ export function WikiGraph3D({
     pivot: pivotSlug ? PINNED_ORIGIN : null,
     frameSignal,
   });
+
+  // This engine never cools (see `cooldownTicks` below), so it is the gate
+  // below — not the layout settling — that stops the map costing a core once
+  // the window is behind something else.
+  useGraphAwake(graphRef as unknown as RefObject<GraphEngineApi | undefined>);
 
   /*
    * The host asked for a reset, or the data changed under us — and framing has

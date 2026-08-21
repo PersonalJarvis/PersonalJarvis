@@ -32,6 +32,7 @@ import { CENTRING_STRENGTH, createCentringForce } from "@/lib/graphForces";
 import { endpointId as endpointKey } from "@/lib/wikiGraph";
 import type { Vec3 } from "@/lib/graphCamera";
 import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
+import { useGraphAwake, type GraphEngineApi } from "@/hooks/useGraphAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 
 /** Node shape the Explore map renders — mirrors EntityGraph's RenderNode. */
@@ -215,6 +216,10 @@ export function EntityGraph3D({
     nodes: graphData.nodes as Array<Partial<Vec3>>,
     frameSignal,
   });
+
+  // This layout does cool down, but the drift keeps drawing after it — and an
+  // unwatched window should draw nothing at all. Same gate as the wiki map.
+  useGraphAwake(graphRef as unknown as RefObject<GraphEngineApi | undefined>);
 
   /*
    * Framing has to be repeated, not done once.
