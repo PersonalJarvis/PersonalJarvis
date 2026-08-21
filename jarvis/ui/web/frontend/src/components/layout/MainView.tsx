@@ -161,6 +161,11 @@ const VisualizationView = lazyView(() =>
     default: m.VisualizationView,
   })),
 );
+const MarketplaceView = lazyView(() =>
+  import("@/views/MarketplaceView").then((m) => ({
+    default: m.MarketplaceView,
+  })),
+);
 
 type IdleWindow = Window & {
   requestIdleCallback?: (
@@ -442,6 +447,10 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     // building another one by talking to it.
     case "modes":
       return <ModesView />;
+    // The marketplace storefront: everything the community published, in one
+    // place, installable without leaving the app.
+    case "marketplace":
+      return <MarketplaceView />;
     // Deliberately nothing: the coding workspace is rendered by the STICKY
     // branch in `MainView` above, which keeps it mounted across section
     // changes. This switch is not rendered at all while one of those ids is

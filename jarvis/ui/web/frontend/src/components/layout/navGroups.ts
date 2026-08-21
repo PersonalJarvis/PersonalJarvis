@@ -28,6 +28,7 @@ import {
   Settings,
   Share2,
   Sparkles,
+  Store,
   Terminal,
   UserCircle2,
   Users,
@@ -87,6 +88,16 @@ export const NAV_GROUPS: NavItem[][] = [
     },
     // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
     { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
+    // The marketplace. Sits right under Skills & Tools because that is what
+    // fills those lists: a plugin, a skill or a wallpaper published there ends
+    // up in one of them once installed. Same Store icon as the badge that
+    // marks an installed entry, so the mark and its origin read as one thing.
+    {
+      id: "marketplace",
+      labelKey: "nav.marketplace",
+      icon: Store,
+      fallbackLabel: "Marketplace",
+    },
   ],
   // 2) Content & data — things the user reads, edits, or browses.
   [

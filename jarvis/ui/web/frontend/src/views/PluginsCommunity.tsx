@@ -7,6 +7,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Store,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { installBlock } from "@/lib/installStandard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { PRODUCT_NAME } from "@/lib/branding";
+import { useEventStore } from "@/store/events";
 
 // ---------------------------------------------------------------------------
 // Community marketplace tab.
@@ -98,6 +100,8 @@ export interface CommunityWallpaperWire {
   categories: string[];
   source_url?: string | null;
   raw_url?: string | null;
+  /** The small preview the registry publishes next to the full image. */
+  thumb_url?: string | null;
   theme?: string | null;
   installed: boolean;
 }
@@ -172,6 +176,9 @@ const AUTH_MODE_LABEL: Record<string, string> = {
 
 export function CommunityTab() {
   const queryClient = useQueryClient();
+  // The storefront section shows the same index with room to browse it; this
+  // tab keeps the plugin connect flow next to the installed plugins.
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const { data, isLoading, error } = useQuery({
     queryKey: ["marketplace-community"],
     queryFn: fetchCommunity,
@@ -335,6 +342,15 @@ export function CommunityTab() {
             to before installing it.
           </p>
         </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setActiveSection("marketplace")}
+          title="The whole marketplace — plugins, skills and wallpapers — in its own section"
+        >
+          <Store className="mr-1.5 h-3.5 w-3.5" />
+          Marketplace section
+        </Button>
         <Button
           size="sm"
           variant="outline"
