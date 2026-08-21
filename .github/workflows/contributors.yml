@@ -18,18 +18,37 @@ on:
   schedule:
     # Mondays, 04:17 UTC. Off the hour so it does not queue behind the crowd.
     - cron: "17 4 * * 1"
+  # The moment that actually matters: somebody's first pull request just landed
+  # and they go looking for their face. Waiting up to a week for the Monday run
+  # is exactly the disappointment this section exists to avoid.
+  #
+  # `pull_request_target` rather than `pull_request` on purpose. A pull request
+  # from a fork - which is what every outside contribution is - gets a
+  # read-only token under `pull_request`, so the job could regenerate the wall
+  # but never push it. `pull_request_target` runs in the base repository's
+  # context with a writable token. That is only safe because this job never
+  # checks out or executes anything from the pull request: it checks out `main`
+  # explicitly below and the script only reads the GitHub API.
+  pull_request_target:
+    types: [closed]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: contributors-${{ github.ref }}
+  # One constant group, NOT keyed on the ref: every run of this job pushes to
+  # main, so a merge-triggered run and the Monday run overlapping would have
+  # them racing on the same branch. Serialise instead, and never cancel - a
+  # cancelled run silently drops somebody off the wall until the next one.
+  group: contributors
   cancel-in-progress: false
 
 jobs:
   refresh:
     name: refresh the avatar wall
+    # A closed-but-not-merged pull request adds nobody.
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

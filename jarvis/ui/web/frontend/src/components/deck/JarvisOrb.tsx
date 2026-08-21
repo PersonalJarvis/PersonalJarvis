@@ -14,13 +14,13 @@ import { cn } from "@/lib/utils";
  * both PNGs are gone from the tree and the middle is Gigi, drawn as vectors:
  * sharp at any size, no edge to cut, no bitmap to ship.
  *
- * The staging is a dark figure standing in golden light, and it all happens
- * BEHIND and BELOW it (DeckOrb.tsx: the backlight and the footlight) —
- * nothing is drawn over the figure and nothing rings it. A corona of turning
- * rays sat here for a day and went the same way as the bezel (2026-08-20):
- * rays fanning out of a circle are sphere furniture, and the mascot is not a
- * sphere. Gigi brings its own life — it blinks, the pupils drift, it waves
- * now and then, and with `reactToVoice` it listens, thinks and speaks along.
+ * The staging is a dark figure standing in golden light. The glow behind it
+ * (`.deck-orb-glow`, DeckOrb.tsx) throws the silhouette forward; the corona's
+ * slow rays come up behind it in the voice. Gigi brings its own life — it
+ * blinks, the pupils drift, it waves now and then, and with `reactToVoice` it
+ * listens, thinks and speaks along. That is why the reticle around it no
+ * longer needs to dance: the living thing is alive, the instruments stay
+ * still until they have something to show.
  *
  * Voice moves the whole figure, honestly and cheaply. At rest a slow breath
  * (framer, a gentle loop). While something is happening, the VOICE itself:
@@ -83,6 +83,8 @@ export function JarvisOrb({
       className={cn("relative select-none", className)}
       style={{ width: size, height: size }}
     >
+      {/* the corona: slow-turning rays behind the mascot, lit by the level */}
+      <div aria-hidden className="deck-orb-corona pointer-events-none absolute rounded-full" />
       {/* the reactor: the figure, sized and lit by the level */}
       <div className="deck-orb-reactor absolute inset-0">
         <motion.div

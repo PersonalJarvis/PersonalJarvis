@@ -24,14 +24,6 @@ vi.mock("@/components/deck/DeckSignalCards", () => ({
   CaptureCard: () => <section>capture</section>,
   LiveCounter: () => <div>counter</div>,
 }));
-// Same reason as the cards above: the rest strip reads the outputs, runs and
-// IDE queries to decide whether the board is at rest, and the real hooks need
-// a QueryClient. These tests are about the acts, so the bottom row stays in
-// its card form; `MissionDeckView.rest.test.tsx` covers the two forms.
-vi.mock("@/components/deck/DeckRestStrip", () => ({
-  useDeckRest: () => ({ atRest: false, segments: [] }),
-  DeckRestStrip: () => <section>rest</section>,
-}));
 vi.mock("@/components/deck/DeckTurnCard", () => ({ TurnCard: () => <section>turn</section> }));
 vi.mock("@/components/deck/DeckLogCard", async () => {
   const actual = await vi.importActual<typeof import("@/components/deck/DeckLogCard")>(

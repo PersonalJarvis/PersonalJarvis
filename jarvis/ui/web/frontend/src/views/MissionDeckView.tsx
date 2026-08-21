@@ -20,7 +20,6 @@ import {
   TerminalsCard,
 } from "@/components/deck/DeckActivityCards";
 import { ApiStatsCard, CaptureCard, LiveCounter } from "@/components/deck/DeckSignalCards";
-import { DeckRestStrip, useDeckRest } from "@/components/deck/DeckRestStrip";
 import { LogCard } from "@/components/deck/DeckLogCard";
 import { TurnCard } from "@/components/deck/DeckTurnCard";
 import { WikiCard, warmWikiScene } from "@/components/deck/DeckWiki";
@@ -29,7 +28,7 @@ import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useElementSize } from "@/hooks/useElementSize";
-import { orbSizeFor } from "@/lib/deckStage";
+import { orbSizeFor, stageVignette, stageWashSize } from "@/lib/deckStage";
 import { HANDOFF, autoLaunchAfterMs, resolvePhase } from "@/lib/deckStandby";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
@@ -49,22 +48,6 @@ import { useT } from "@/i18n";
  *   │      │  terminal]     (      ORB      )       [                    ] │
  *   │      │ [outputs][run]   [capture]            [terminals] [ide grid] │
  *   └──────┴───────────────────────────────────────────────────────────────┘
- *
- * The bottom row has a SECOND form. On a machine that has simply been
- * switched on, four of its five cards say "nothing yet" and the fifth lists
- * yesterday's runs — a third of the stage spent on boxes that apologise for
- * being empty (maintainer, 2026-08-21: boring). So when nothing is happening
- * (`lib/deckRest.ts::boardAtRest` — running missions, live runs, shell
- * commands, terminal output, IDE panes, a capture in its afterglow; HISTORY
- * DOES NOT COUNT) the row collapses to one strip of readouts
- * (`DeckRestStrip`) and gives its height to the log, the orb and the wiki:
- *
- *   │      │ ◇ outputs 142 · ◇ runs 84 · ◇ shot — · ◇ term 0 · ◇ ws 1  [^] │
- *
- * Each segment prints the FIGURE that says how big that instrument is and
- * jumps into the same section its card's title did, so collapsing hides
- * nothing; the chevron brings the full row back for as long as the board
- * stays quiet.
  *
  * Two of the sketch's cards were re-thought on 2026-08-18 (maintainer): the
  * "right now" trace doubled the run inspector, which the small RUNS card
@@ -204,21 +187,6 @@ export function MissionDeckView({
     turnPhase === "think" ||
     turnPhase === "act";
 
-  // The bottom row has two forms (`lib/deckRest.ts`): the five cards while
-  // something is happening, and ONE strip of readouts when nothing is —
-  // which is what a machine that has simply been switched on looks like, and
-  // what the maintainer saw on 2026-08-21: four cards apologising for being
-  // empty and a fifth listing yesterday's runs, over a third of the stage.
-  // At rest the row gives its height back to the log, the orb and the wiki.
-  const { atRest, segments: restSegments } = useDeckRest(phase === "board");
-  const [restExpanded, setRestExpanded] = useState(false);
-  // Expanding is a peek, not a mode: the next spell of activity clears it, so
-  // the board settles back to the strip on its own afterwards.
-  useEffect(() => {
-    if (!atRest) setRestExpanded(false);
-  }, [atRest]);
-  const restRow = atRest && !restExpanded;
-
   const mood: DeckMood = !connected
     ? "offline"
     : voiceState === "error"
@@ -348,13 +316,7 @@ export function MissionDeckView({
           {phase === "board" && (
             <div
               data-testid="deck-board"
-              className={cn(
-                "relative grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden",
-                "lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)]",
-                // At rest the bottom row is one strip and takes only the
-                // height it needs; everything else grows into what it gave up.
-                restRow ? "lg:grid-rows-[minmax(0,1fr)_auto]" : "lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)]",
-              )}
+              className="relative grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden"
             >
               {/* LEFT top: the log — the terminal of the session */}
               <DeckReveal slot="left-top" reveal={revealBoard} bodyClassName="flex min-h-0 flex-col">
@@ -391,55 +353,37 @@ export function MissionDeckView({
                 <WikiCard className="min-h-0 flex-1" />
               </DeckReveal>
 
-              {restRow ? (
-                /* BOTTOM at rest: the five instruments on one strip, full width. */
-                <DeckReveal
-                  slot="centre-bottom"
-                  reveal={revealBoard}
-                  className="lg:col-span-3"
-                  bodyClassName="flex items-stretch"
-                >
-                  <DeckRestStrip
-                    segments={restSegments}
-                    onExpand={() => setRestExpanded(true)}
-                    className="min-w-0 flex-1"
-                  />
-                </DeckReveal>
-              ) : (
-                <>
-                  {/* LEFT bottom: outputs and runs */}
-                  <DeckReveal
-                    slot="left-bottom"
-                    reveal={revealBoard}
-                    className="min-h-[8rem]"
-                    bodyClassName="grid grid-cols-2 gap-3"
-                  >
-                    <OutputsCard className="min-h-0" />
-                    <RunsCard className="min-h-0" />
-                  </DeckReveal>
+              {/* LEFT bottom: outputs and runs */}
+              <DeckReveal
+                slot="left-bottom"
+                reveal={revealBoard}
+                className="min-h-[8rem]"
+                bodyClassName="grid grid-cols-2 gap-3"
+              >
+                <OutputsCard className="min-h-0" />
+                <RunsCard className="min-h-0" />
+              </DeckReveal>
 
-                  {/* CENTRE bottom: the last capture (briefly), then the ledger; centred and not too wide */}
-                  <DeckReveal
-                    slot="centre-bottom"
-                    reveal={revealBoard}
-                    className="min-h-[8rem]"
-                    bodyClassName="flex items-stretch justify-center"
-                  >
-                    <CaptureCard className="w-full max-w-[28rem]" />
-                  </DeckReveal>
+              {/* CENTRE bottom: the last capture (briefly), then the ledger; centred and not too wide */}
+              <DeckReveal
+                slot="centre-bottom"
+                reveal={revealBoard}
+                className="min-h-[8rem]"
+                bodyClassName="flex items-stretch justify-center"
+              >
+                <CaptureCard className="w-full max-w-[28rem]" />
+              </DeckReveal>
 
-                  {/* RIGHT bottom: terminals and the coding workspace */}
-                  <DeckReveal
-                    slot="right-bottom"
-                    reveal={revealBoard}
-                    className="min-h-[8rem]"
-                    bodyClassName="grid grid-cols-2 gap-3"
-                  >
-                    <TerminalsCard className="min-h-0" />
-                    <IdeGridCard className="min-h-0" />
-                  </DeckReveal>
-                </>
-              )}
+              {/* RIGHT bottom: terminals and the coding workspace */}
+              <DeckReveal
+                slot="right-bottom"
+                reveal={revealBoard}
+                className="min-h-[8rem]"
+                bodyClassName="grid grid-cols-2 gap-3"
+              >
+                <TerminalsCard className="min-h-0" />
+                <IdeGridCard className="min-h-0" />
+              </DeckReveal>
 
               {/* The launch's last beat: one scan down the whole board. */}
               {revealBoard && <BoardSweep />}
@@ -519,11 +463,21 @@ function BoardCentre({
     >
       {/* The same layoutId as the standby's orb: when the board takes over,
           the orb travels here instead of blinking — and lands with a ring. */}
-      {/* No wash here. Lifting the centre off the wallpaper is the stage's
-          own job now (`DeckOrb`'s `.deck-stage-light`): a second pool drawn
-          from out here only fought the first one, and the two together drew
-          a lit niche around the mascot (maintainer, 2026-08-20). */}
       <div className="relative isolate">
+        {/* The wash that lifts the centre off the wallpaper. It rides on the
+            orb, on a square of its own, because it used to be a background
+            on the column above — where the column's straight top and bottom
+            cut the circle while it was still opaque (deckStage.ts). */}
+        <div
+          aria-hidden
+          data-testid="deck-stage-wash"
+          className="pointer-events-none absolute left-1/2 top-1/2 -z-10 -translate-x-1/2 -translate-y-1/2 rounded-full"
+          style={{
+            width: stageWashSize(orbSize),
+            height: stageWashSize(orbSize),
+            backgroundImage: stageVignette(orbSize),
+          }}
+        />
         <motion.div layoutId="deck-orb" layoutDependency={orbSize} transition={ORB_TRAVEL}>
           <DeckOrb
             steps={steps}
