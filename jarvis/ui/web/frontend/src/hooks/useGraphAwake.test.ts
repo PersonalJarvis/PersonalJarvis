@@ -127,6 +127,88 @@ describe("useGraphAwake", () => {
     expect(graph.pauseAnimation).not.toHaveBeenCalled();
   });
 
+  it("pauses without any event at all", () => {
+    // The case the first cut missed entirely: a window the user never clicked
+    // into never fires `blur` when they work elsewhere. Measured in the real
+    // WebView, `hasFocus()` was already false while the page painted 60 fps,
+    // because nothing had asked. The timer is what asks.
+    vi.useFakeTimers();
+    try {
+      const graph = engine();
+      pretend({ focused: true });
+      renderHook(() => useGraphAwake({ current: graph }));
+
+      pretend({ focused: false });
+      expect(graph.pauseAnimation).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(2_500);
+      });
+
+      expect(graph.pauseAnimation).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes without any event at all", () => {
+    vi.useFakeTimers();
+    try {
+      const graph = engine();
+      pretend({ focused: false });
+      renderHook(() => useGraphAwake({ current: graph }));
+      act(() => {
+        vi.advanceTimersByTime(2_500);
+      });
+      expect(graph.pauseAnimation).toHaveBeenCalledTimes(1);
+
+      pretend({ focused: true });
+      act(() => {
+        vi.advanceTimersByTime(2_500);
+      });
+
+      expect(graph.resumeAnimation).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("polls at most once per state change, not once per tick", () => {
+    vi.useFakeTimers();
+    try {
+      const graph = engine();
+      pretend({ focused: false });
+      renderHook(() => useGraphAwake({ current: graph }));
+
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      expect(graph.pauseAnimation).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling once unmounted", () => {
+    vi.useFakeTimers();
+    try {
+      const graph = engine();
+      pretend({ focused: true });
+      const view = renderHook(() => useGraphAwake({ current: graph }));
+      view.unmount();
+
+      pretend({ focused: false });
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      expect(graph.pauseAnimation).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("survives a ref that has no instance yet", () => {
     const ref: { current: GraphEngineApi | undefined } = { current: undefined };
     pretend({ focused: true });

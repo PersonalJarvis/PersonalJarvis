@@ -37,6 +37,21 @@ export interface GraphEngineApi {
  */
 const MAX_ATTACH_FRAMES = 120;
 
+/**
+ * Why this polls instead of trusting the events.
+ *
+ * The first cut listened for `blur`/`focus`/`visibilitychange` alone and did
+ * nothing at all in the case it was written for. A window the user has never
+ * clicked into never HAD focus, so it never fires `blur` when they work
+ * elsewhere — the gate simply never woke up to look. Measured in the real
+ * WebView 2026-08-21: `document.hasFocus()` was already false and the page
+ * was still painting a full 60 fps, because nothing had asked.
+ *
+ * Two seconds is well under the time it takes to notice a still map, and one
+ * `hasFocus()` read on a timer is nothing next to the frames it saves.
+ */
+const CHECK_MS = 2_000;
+
 /** Is anyone actually looking at this document right now? */
 function isWatched(): boolean {
   if (typeof document === "undefined") return true;
@@ -77,12 +92,16 @@ export function useGraphAwake(
     };
 
     apply();
+    // The events are the fast path — they react the instant you click away.
+    // The timer is the one that actually catches the common case; see above.
+    const timer = window.setInterval(apply, CHECK_MS);
     document.addEventListener("visibilitychange", apply);
     window.addEventListener("focus", apply);
     window.addEventListener("blur", apply);
 
     return () => {
       cancelAnimationFrame(frame);
+      window.clearInterval(timer);
       document.removeEventListener("visibilitychange", apply);
       window.removeEventListener("focus", apply);
       window.removeEventListener("blur", apply);
