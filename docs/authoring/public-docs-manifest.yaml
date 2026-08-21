@@ -26,7 +26,7 @@ pages:
     summary: Understand what Personal Jarvis can do, what stays under your control, and where to begin.
     authoritative_sources:
       - README.md
-      - docs/PHILOSOPHY.md
+      - CLAUDE.md
       - jarvis/ui/web/frontend/src/components/layout/Sidebar.tsx
       - jarvis/ui/web/frontend/src/components/layout/MainView.tsx
     related:
@@ -852,7 +852,7 @@ pages:
     diataxis: explanation
     summary: Learn what Jarvis stores locally, what may be sent to a connected service, and how each optional feature changes that boundary.
     authoritative_sources:
-      - docs/PHILOSOPHY.md
+      - CLAUDE.md
       - jarvis/core/paths.py
       - jarvis/core/redact.py
       - jarvis/state/chat_store.py
@@ -917,7 +917,7 @@ pages:
     diataxis: explanation
     summary: Learn why some actions run immediately, some require confirmation, and some are blocked before they can affect your computer or accounts.
     authoritative_sources:
-      - docs/PHILOSOPHY.md
+      - CLAUDE.md
       - jarvis/safety/risk_tier.py
       - jarvis/safety/approval.py
       - jarvis/safety/tool_executor.py
