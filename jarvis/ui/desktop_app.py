@@ -4787,6 +4787,36 @@ class DesktopApp:
             time.sleep(0.25)
         return False
 
+    def _health_probe_client(self) -> Any | None:
+        """The ONE client the health probe reuses. ``None`` when httpx is absent.
+
+        ``httpx.get()`` is a client per call, and building a client builds an
+        SSL context — ``ssl.create_default_context()`` reads and parses the
+        whole CA bundle — even when the URL is plain ``http://`` on loopback
+        and no certificate will ever be checked. At one probe a second that is
+        a CA bundle parsed 3600 times an hour for nothing.
+
+        Measured on the maintainer's laptop 2026-08-21: ``create_default_context``
+        was **54 % of all backend CPU time**, by a wide margin the single
+        hottest thing the process did while idle. Built once and reused, it is
+        paid once per run.
+        """
+        existing = getattr(self, "_health_http", None)
+        if existing is not None:
+            return existing
+        try:
+            import httpx
+        except Exception as exc:  # noqa: BLE001
+            from loguru import logger
+
+            logger.debug("Health probe: httpx unavailable ({})", exc)
+            return None
+        # Annotated loosely on purpose: httpx is an optional import here, so
+        # the attribute must also be allowed to go back to None on shutdown.
+        client: Any = httpx.Client(timeout=1.0)
+        self._health_http = client
+        return client
+
     def _backend_healthy(self) -> bool:
         """One quick ``/api/health`` probe — is the server answering right now?
 
@@ -4794,13 +4824,16 @@ class DesktopApp:
         a second and needs the ANSWER, including the honest "no" while the loop
         is frozen. ``_wait_for_backend``'s poll and the lock holder's four-try
         probe both mean something else.
+
+        The client behind it is reused rather than rebuilt per call; see
+        ``_health_probe_client`` for what that costs otherwise.
         """
         try:
-            import httpx
-
-            r = httpx.get(
+            client = self._health_probe_client()
+            if client is None:
+                return False
+            r = client.get(
                 f"http://127.0.0.1:{self.cfg.ui.admin_api_port}/api/health",
-                timeout=1.0,
             )
             return bool(r.status_code == 200)
         except Exception:  # noqa: BLE001 — an unreachable server is the answer
@@ -5542,6 +5575,15 @@ class DesktopApp:
         if watchdog is not None:
             with suppress(Exception):
                 watchdog.stop()
+
+        # The watchdog's probe client outlives the watchdog itself; close it
+        # here so the connection it keeps to our own port does not hold a
+        # socket open while the server underneath is being torn down.
+        probe_client = getattr(self, "_health_http", None)
+        if probe_client is not None:
+            with suppress(Exception):
+                probe_client.close()
+            self._health_http = None
 
         # Hide the orb overlay first — the event path (pipeline → supervisor
         # → bus → OrbBridge) doesn't reliably reach the bridge anymore during a
