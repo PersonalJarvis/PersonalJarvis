@@ -1246,6 +1246,18 @@ _DICTATION_ERROR_BACKOFF_MAX_S = 12.0
 # silently shrinks the safety margin.
 _DICTATION_CAPTURE_QUEUE_CHUNKS = capture_chunks_for_duration(10.0)
 
+# How many final-pass windows may be in flight at once on a provider that
+# advertises ``supports_concurrent_requests`` (the cloud HTTP ones). The final
+# pass used to read its windows strictly one after another, so the wait after
+# key release grew with the recording: measured on the live history, 2.2 s
+# median for a 25-50 s dictation and 4.6 s past 50 s, against 0.66 s for a
+# short one. Three keeps well inside every provider's per-minute limit while
+# the windows already finalized during the recording (see
+# ``_prefetch_final_windows``) mean there is rarely more than one left to read
+# at release anyway. A native engine never sees concurrency: the gate is one
+# wide unless the provider says otherwise (AP-24).
+_DICTATION_CONCURRENT_READS = 3
+
 
 class _SessionInputBuffer:
     """Replayable bounded handoff for one continuously captured mic stream.
@@ -10783,6 +10795,51 @@ class SpeechPipeline:
         # recovered by re-reading their speech runs. Reported in the audit so
         # "the provider keeps dropping my second sentence" is measurable.
         truncation_repairs = 0
+        # The final pass, INCREMENTAL. It used to run only after key release —
+        # the whole recording, window after window — so the wait for the text
+        # grew with every second spoken. Now each final window is closed and
+        # read as soon as the recording has grown past it, while the user is
+        # still talking; on release only the open tail is left. The shape of
+        # the windows is unchanged (``next_quality_window`` is the very step
+        # ``quality_windows`` takes), only WHEN they are read moved.
+        #
+        # ``final_reads`` maps a window's index to ``(text, was_read)`` once its
+        # read finished; ``final_tasks`` holds the reads in flight;
+        # ``final_next_start`` is the byte offset the next window begins at.
+        final_reads: dict[int, tuple[str, bool]] = {}
+        final_tasks: dict[int, asyncio.Task[None]] = {}
+        final_next_start = 0
+        final_next_index = 0
+        # Windows read BEFORE release — the ones the user no longer waits for.
+        final_prefetched = 0
+        # Consecutive final windows that exhausted every attempt. Past
+        # ``_DICTATION_FINAL_DEAD_PIECES`` the provider is down, not flaky, and
+        # further windows are counted as lost rather than asked for.
+        dead_windows = 0
+        # Wall-clock from key release to the final text being ready — the
+        # number a person actually feels, kept apart from ``stt_latency_ms``
+        # (the SUM of call durations, which concurrency makes larger than the
+        # wait it describes).
+        release_wait_ms = 0
+        # One gate for every provider call this session makes. Width follows
+        # the provider's own word: a cloud HTTP client takes several requests
+        # at once, a native engine takes exactly one (AP-24) — and the gate is
+        # what stops a prefetched window and the live probe from colliding on
+        # it.
+        stt_gate = asyncio.Semaphore(
+            _DICTATION_CONCURRENT_READS
+            if getattr(stt, "supports_concurrent_requests", False)
+            else 1
+        )
+        # ``auto`` is passed explicitly rather than omitted: an absent language
+        # argument means "no opinion" to a provider, which lands on whatever the
+        # recognition language is pinned to — the exact inheritance that used
+        # to write German speech in English.
+        final_ask_for = (
+            "auto"
+            if code_switching or dictation_language == "auto"
+            else dictation_language
+        )
 
         def _append_unique(values: list[str], value: object) -> None:
             text = str(value or "").strip()
@@ -10830,6 +10887,7 @@ class SpeechPipeline:
             pcm: bytes,
             *,
             ask_for: str | None = None,
+            probe: bool = False,
         ) -> tuple[str, str, bool, BaseException | None]:
             """One transcription. ``(text, language, ok, error)``; never raises.
 
@@ -10870,6 +10928,12 @@ class SpeechPipeline:
             guarantee that the provider stopped working. That is still the whole
             difference between a dictation that ends with an honest error and
             one that never ends at all.
+
+            ``probe`` marks a call made by the live probe task. Only those
+            raise ``inference_active``, because that flag answers one question
+            — "is the PROBE mid-call?" — for ``_stop_ptt_live_transcription``;
+            a prefetched final window in flight must not make the release wait
+            for a probe that is idle.
             """
             # ``stt_failures`` is appended to, never rebound, so it needs no
             # ``nonlocal`` — the list object itself is the shared state.
@@ -10887,41 +10951,44 @@ class SpeechPipeline:
             # Startup/live-switch warm-up and this call share one native task.
             # Joining it avoids both an 11 s cold final decode and a concurrent
             # model call that would return TranscribeBusy (AP-24).
-            stt = await self._join_dictation_warmup(stt)
-            inference_active.set()
-            call_started = time.perf_counter()
-            try:
+            async with stt_gate:
+                stt = await self._join_dictation_warmup(stt)
+                if probe:
+                    inference_active.set()
+                call_started = time.perf_counter()
                 try:
-                    transcript = await asyncio.wait_for(
-                        stt.transcribe_pcm(pcm, language=ask_for),
-                        timeout=ceiling,
+                    try:
+                        transcript = await asyncio.wait_for(
+                            stt.transcribe_pcm(pcm, language=ask_for),
+                            timeout=ceiling,
+                        )
+                    except TypeError:
+                        # Provider predates the keyword (contract allows a bare
+                        # ``transcribe_pcm(pcm)``). Fall back rather than call the
+                        # choice a failure — precedent: rolling_whisper_wake.
+                        transcript = await asyncio.wait_for(
+                            stt.transcribe_pcm(pcm), timeout=ceiling
+                        )
+                except TimeoutError as exc:
+                    stt_error_detail = (
+                        f"the provider did not answer within {ceiling:.0f}s "
+                        f"for {len(pcm) / bytes_per_second:.1f}s of audio"
                     )
-                except TypeError:
-                    # Provider predates the keyword (contract allows a bare
-                    # ``transcribe_pcm(pcm)``). Fall back rather than call the
-                    # choice a failure — precedent: rolling_whisper_wake.
-                    transcript = await asyncio.wait_for(
-                        stt.transcribe_pcm(pcm), timeout=ceiling
-                    )
-            except TimeoutError as exc:
-                stt_error_detail = (
-                    f"the provider did not answer within {ceiling:.0f}s "
-                    f"for {len(pcm) / bytes_per_second:.1f}s of audio"
-                )
-                stt_error = classify_stt_failure(exc)
-                stt_failures.append(stt_error)
-                log.warning("dictation transcribe timed out: %s", stt_error_detail)
-                return "", "", False, exc
-            except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
-                stt_error_detail = f"{type(exc).__name__}: {exc}".strip()
-                stt_error = classify_stt_failure(exc)
-                stt_failures.append(stt_error)
-                log.debug("dictation transcribe failed: %s", stt_error_detail)
-                return "", "", False, exc
-            finally:
-                stt_calls += 1
-                stt_latency_ms += (time.perf_counter() - call_started) * 1000.0
-                inference_active.clear()
+                    stt_error = classify_stt_failure(exc)
+                    stt_failures.append(stt_error)
+                    log.warning("dictation transcribe timed out: %s", stt_error_detail)
+                    return "", "", False, exc
+                except Exception as exc:  # noqa: BLE001 — one failed call is not fatal
+                    stt_error_detail = f"{type(exc).__name__}: {exc}".strip()
+                    stt_error = classify_stt_failure(exc)
+                    stt_failures.append(stt_error)
+                    log.debug("dictation transcribe failed: %s", stt_error_detail)
+                    return "", "", False, exc
+                finally:
+                    stt_calls += 1
+                    stt_latency_ms += (time.perf_counter() - call_started) * 1000.0
+                    if probe:
+                        inference_active.clear()
             stt_error = None
             stt_error_detail = ""
             # ``raw_text`` when the provider offers it, ``text`` otherwise. A
@@ -11025,7 +11092,7 @@ class SpeechPipeline:
                     )
                     text, lang, ok = (local_text or ""), "", True
                 else:
-                    text, lang, ok, _exc = await _transcribe(piece)
+                    text, lang, ok, _exc = await _transcribe(piece, probe=True)
                 if stop_event.is_set():
                     return True
                 if not ok:
@@ -11072,6 +11139,13 @@ class SpeechPipeline:
                         pass
                     if stop_event.is_set():
                         return
+
+                    # Final windows first: a window the recording has grown
+                    # past is read NOW, in the background, so the user never
+                    # waits for it after release. Launching costs no call on
+                    # this task — the read runs beside the probe behind the
+                    # provider gate.
+                    _prefetch_final_windows()
 
                     # Closing segments has priority over the preview: it is the
                     # half that produces the final text, and the half that keeps
@@ -11204,7 +11278,9 @@ class SpeechPipeline:
                     # headless install), and then strictly within its budget so
                     # it can never again outbid the transcript for requests.
                     if want_preview and preview_budget().try_spend():
-                        tail_text, lang, ok, _exc = await _transcribe(tail)
+                        tail_text, lang, ok, _exc = await _transcribe(
+                            tail, probe=True
+                        )
                         if stop_event.is_set():
                             return
                         if not ok:
@@ -11416,8 +11492,120 @@ class SpeechPipeline:
                 return merged
             return text
 
+        async def _read_final_window(idx: int, start: int, end: int) -> None:
+            """Read ONE final window of the recording and file its result.
+
+            Runs as its own task — during the recording for a prefetched
+            window, after release for the tail — so everything it needs is
+            taken from the shared buffer and everything it learns goes into
+            ``final_reads``; ``_final_quality_text`` assembles the windows in
+            order once all of them are in. Never raises: a window that could
+            not be read is filed as ``("", False)`` and its audio counted as
+            lost, which is what degrades the outcome and keeps the recording
+            for a later Restore.
+            """
+            nonlocal session_peak, lost_audio_bytes, dead_windows
+            from jarvis.dictation.segment import (
+                is_silent_segment,
+                segment_energy,
+            )
+
+            try:
+                piece = bytes(buffer[start:end])
+                if len(piece) < min_bytes:
+                    final_reads[idx] = ("", True)
+                    return
+                peak, _rms = segment_energy(piece)
+                session_peak = max(session_peak, peak)
+                if is_silent_segment(piece, session_peak=session_peak):
+                    final_reads[idx] = ("", True)
+                    return
+                if dead_windows >= _DICTATION_FINAL_DEAD_PIECES:
+                    # The provider is not flaky, it is down. Counting this
+                    # window as lost is what degrades the outcome, and the
+                    # degraded outcome is what keeps the audio for a later
+                    # Restore — far better than making the user wait through
+                    # another full retry ladder to be told the same thing.
+                    lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
+                    final_reads[idx] = ("", False)
+                    log.warning(
+                        "final dictation window %d not read — %d consecutive "
+                        "windows already failed (%s); %.1fs of audio kept for "
+                        "a later retry rather than making you wait.",
+                        idx,
+                        dead_windows,
+                        stt_error_detail or stt_error or "unknown error",
+                        (end - start) / bytes_per_second,
+                    )
+                    return
+                text, was_read = await _read_piece(piece, ask_for=final_ask_for)
+                if was_read:
+                    dead_windows = 0
+                    if text:
+                        text = await _repair_truncated_read(
+                            piece, text, ask_for=final_ask_for
+                        )
+                else:
+                    dead_windows += 1
+                    # Only the audio this window did not SHARE with its
+                    # neighbour is at risk; the overlap is read by the window
+                    # after it. Counting the whole window would report a loss
+                    # the user never experienced.
+                    lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
+                final_reads[idx] = (text, was_read)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — one window must not end the pass
+                log.warning(
+                    "final dictation window %d crashed (non-fatal)",
+                    idx,
+                    exc_info=True,
+                )
+                lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
+                final_reads[idx] = ("", False)
+
+        def _launch_final_window(start: int, end: int, *, prefetched: bool) -> None:
+            nonlocal final_next_index, final_prefetched
+            idx = final_next_index
+            final_next_index += 1
+            if prefetched:
+                final_prefetched += 1
+            final_tasks[idx] = asyncio.create_task(
+                _read_final_window(idx, start, end),
+                name=f"dictation-final-{idx}",
+            )
+
+        def _prefetch_final_windows() -> None:
+            """Close and start reading every final window the recording holds.
+
+            Called from the probe on every tick. A window is closed the moment
+            the recording has grown a full window past the last one — at the
+            quietest point near the nominal length, exactly where the one-shot
+            pass would have cut it — and its read starts at once. The scan is
+            handed one window of audio, so the copy stays bounded however long
+            the recording gets; only ``total`` tells it how much there is.
+            """
+            nonlocal final_next_start
+            if not final_quality_pass or final_window_bytes <= 0:
+                return
+            from jarvis.dictation.segment import next_quality_window
+
+            total = len(buffer)
+            while total - final_next_start > final_window_bytes:
+                start = final_next_start
+                scan = bytes(buffer[start : start + final_window_bytes])
+                (w_start, w_end), final_next_start = next_quality_window(
+                    scan,
+                    start=start,
+                    total=total,
+                    window_bytes=final_window_bytes,
+                    overlap_bytes=final_overlap_bytes,
+                    bytes_per_second=bytes_per_second,
+                )
+                _launch_final_window(w_start, w_end, prefetched=True)
+
         async def _final_quality_text(audio: bytes) -> str:
-            """Re-read the WHOLE recording in long, overlapping windows.
+            """The WHOLE recording read in long, overlapping windows.
 
             This is the transcript the user is handed, and it is a different
             request from the one the live line makes. Two properties, both of
@@ -11440,74 +11628,39 @@ class SpeechPipeline:
             from the text (``jarvis.dictation.merge``), which is possible,
             while recovering half a word is not.
 
+            Most windows were already read while the user was speaking
+            (``_prefetch_final_windows``). What is left here is the open tail —
+            and, should the probe have been slow or absent, any window it did
+            not get to — started together and awaited together, so the wait
+            after release is one window's read, not the recording's length.
+
             Returns ``""`` when nothing could be read — the caller then falls
             back to the incremental text rather than losing the dictation.
             """
-            nonlocal session_peak, lost_audio_bytes, final_window_count
+            nonlocal final_window_count, final_next_start
             from jarvis.dictation.merge import merge_transcripts
-            from jarvis.dictation.segment import (
-                is_silent_segment,
-                quality_windows,
-                segment_energy,
-            )
+            from jarvis.dictation.segment import quality_windows
 
-            windows = quality_windows(
-                audio,
-                window_bytes=final_window_bytes,
-                overlap_bytes=final_overlap_bytes,
-                bytes_per_second=bytes_per_second,
-            )
-            if not windows:
+            total = len(audio)
+            if total > final_next_start:
+                base = final_next_start
+                for start, end in quality_windows(
+                    audio[base:],
+                    window_bytes=final_window_bytes,
+                    overlap_bytes=final_overlap_bytes,
+                    bytes_per_second=bytes_per_second,
+                ):
+                    _launch_final_window(base + start, base + end, prefetched=False)
+                final_next_start = total
+            final_window_count = len(final_tasks)
+            if not final_tasks:
                 return ""
-            final_window_count = len(windows)
-            # ``auto`` is passed explicitly rather than omitted: an absent
-            # language argument means "no opinion" to a provider, which lands
-            # on whatever the recognition language is pinned to — the exact
-            # inheritance that used to write German speech in English.
-            ask_for = (
-                "auto"
-                if code_switching or dictation_language == "auto"
-                else dictation_language
-            )
-            parts: list[str] = []
-            dead_streak = 0
-            for start, end in windows:
-                piece = audio[start:end]
-                if len(piece) < min_bytes:
-                    continue
-                peak, _rms = segment_energy(piece)
-                session_peak = max(session_peak, peak)
-                if is_silent_segment(piece, session_peak=session_peak):
-                    continue
-                if dead_streak >= _DICTATION_FINAL_DEAD_PIECES:
-                    # The provider is not flaky, it is down. Counting the rest
-                    # as lost is what degrades the outcome, and the degraded
-                    # outcome is what keeps the audio for a later Restore.
-                    lost_audio_bytes += len(audio) - start
-                    log.warning(
-                        "final dictation transcription abandoned after %d "
-                        "consecutive failed windows (%s) — %.1fs of audio kept "
-                        "for a later retry rather than making you wait.",
-                        dead_streak,
-                        stt_error_detail or stt_error or "unknown error",
-                        (len(audio) - start) / bytes_per_second,
-                    )
-                    break
-                text, was_read = await _read_piece(piece, ask_for=ask_for)
-                if was_read:
-                    dead_streak = 0
-                    if text:
-                        text = await _repair_truncated_read(
-                            piece, text, ask_for=ask_for
-                        )
-                        parts.append(text)
-                else:
-                    dead_streak += 1
-                    # Only the audio this window did not SHARE with its
-                    # neighbour is at risk; the overlap is read by the window
-                    # after it. Counting the whole window would report a loss
-                    # the user never experienced.
-                    lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
+            await asyncio.gather(*final_tasks.values(), return_exceptions=True)
+            parts = [
+                final_reads[idx][0]
+                for idx in sorted(final_reads)
+                if final_reads[idx][0]
+            ]
             return merge_transcripts(parts)
 
         async def _finalize_tail(tail: bytes) -> str:
@@ -11726,7 +11879,11 @@ class SpeechPipeline:
                     # a recognizer given twenty-five seconds instead of eight
                     # knows which language it is hearing — which is the whole
                     # difference between a transcript and a translation.
+                    release_started = time.monotonic()
                     quality_text = await _final_quality_text(bytes(buffer))
+                    release_wait_ms = round(
+                        (time.monotonic() - release_started) * 1000.0
+                    )
                     if quality_text:
                         raw_text = quality_text
                         final_pass_status = "applied"  # noqa: S105 - status token
@@ -11805,6 +11962,8 @@ class SpeechPipeline:
                 stt_audit=(
                     f"final_pass:{final_pass_status}",
                     f"final_windows:{final_window_count}",
+                    f"final_windows_prefetched:{final_prefetched}",
+                    f"release_wait_ms:{release_wait_ms}",
                     f"truncation_repairs:{truncation_repairs}",
                     f"code_switching:{'on' if code_switching else 'off'}",
                     f"capture_restarts:{capture_restart_count}",
@@ -11902,6 +12061,12 @@ class SpeechPipeline:
             # also abort before it publishes. Both land here. Scheduled rather
             # than awaited, because awaiting inside a cancelled task is not
             # reliable.
+            #
+            # A hangup or a crash leaves prefetched final windows in flight;
+            # nothing will read their answers, so stop asking for them.
+            for pending in final_tasks.values():
+                if not pending.done():
+                    pending.cancel()
             if not getattr(self, "_dictation_completion_published", True):
                 self._dictation_completion_published = True
                 quality_metrics = audio_quality.snapshot(

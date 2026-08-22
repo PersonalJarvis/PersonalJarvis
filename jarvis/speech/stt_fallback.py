@@ -29,6 +29,7 @@ What it does NOT do, on purpose:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -105,6 +106,13 @@ class FallbackSTT:
         # The alternate that last worked, tried first among the alternates so a
         # long dictation does not re-walk the whole chain on every segment.
         self._preferred: str | None = None
+        # One lock per provider that cannot take concurrent calls. The chain is
+        # handed concurrent requests by the dictation lane when its PRIMARY
+        # allows them; a crossover to a native engine (faster-whisper raises
+        # ``TranscribeBusy`` on a second caller, AP-24) must then serialise
+        # those calls here rather than turn each of them into an ``engine_busy``
+        # failure — which is exactly what the live 2026-08-15 history shows.
+        self._serial_locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # Delegation
@@ -118,6 +126,17 @@ class FallbackSTT:
     @property
     def provider_label(self) -> str:
         return self._primary_name
+
+    @property
+    def supports_concurrent_requests(self) -> bool:
+        """Whether callers may run several transcriptions at once.
+
+        Answered by the PRIMARY, because that is the provider those concurrent
+        calls normally land on. A crossover mid-flight to a provider that
+        cannot take them is serialised inside :meth:`_call`, so a caller that
+        read ``True`` here stays safe either way.
+        """
+        return bool(getattr(self._primary, "supports_concurrent_requests", False))
 
     @property
     def last_used_provider(self) -> str:
@@ -208,7 +227,12 @@ class FallbackSTT:
             if fn is None:
                 continue
             try:
-                result = await fn(*args, **kwargs)
+                if getattr(provider, "supports_concurrent_requests", False):
+                    result = await fn(*args, **kwargs)
+                else:
+                    lock = self._serial_locks.setdefault(name, asyncio.Lock())
+                    async with lock:
+                        result = await fn(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001 — classified below
                 kind = _classify(exc)
                 if not kind:

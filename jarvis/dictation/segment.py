@@ -187,7 +187,49 @@ def quality_windows(
     total = len(pcm)
     if total <= 0 or window_bytes <= 0:
         return []
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    while start < total:
+        window, start = next_quality_window(
+            pcm[start:],
+            start=start,
+            total=total,
+            window_bytes=window_bytes,
+            overlap_bytes=overlap_bytes,
+            bytes_per_second=bytes_per_second,
+        )
+        ranges.append(window)
+    return ranges
+
+
+def next_quality_window(
+    scan: bytes,
+    *,
+    start: int,
+    total: int,
+    window_bytes: int,
+    overlap_bytes: int = 0,
+    bytes_per_second: int = 16_000 * BYTES_PER_SAMPLE,
+) -> tuple[tuple[int, int], int]:
+    """One step of :func:`quality_windows`: the window at ``start`` and where
+    the next one begins.
+
+    ``scan`` is the audio FROM ``start`` onward — at least one window of it
+    when the recording holds that much; ``total`` is the recording's length in
+    bytes. Returns ``((start, end), next_start)``; ``next_start == total`` when
+    this was the last window.
+
+    Public because the dictation lane closes final windows WHILE the user is
+    still speaking, one per tick, so that on key release only the open tail is
+    left to read. Sharing this step is what keeps that incremental shape
+    byte-identical to the one-shot ``quality_windows`` over the finished
+    recording: the cut depends only on the audio inside the window, so a
+    window closed mid-recording is the very window the finished recording
+    would have produced.
+    """
     window = _align(window_bytes)
+    if window <= 0:
+        return (start, total), total
     # More than half a window of overlap can never improve a seam enough to
     # justify re-reading most of the same audio. More importantly, clamping to
     # ``window - one sample`` technically made progress but could turn a bad
@@ -195,31 +237,24 @@ def quality_windows(
     # still far above the recommended 1--2 seconds and gives a hard O(n) bound.
     overlap = max(0, min(_align(overlap_bytes), window // 2))
     min_window = int(_MIN_WINDOW_S * bytes_per_second)
-
-    ranges: list[tuple[int, int]] = []
-    start = 0
-    while start < total:
-        remaining = total - start
-        if remaining <= window:
-            ranges.append((start, total))
-            break
-        cut = quietest_cut(pcm[start:], window, bytes_per_second)
-        if cut < min_window:
-            # The scan found its quiet spot too early to be a useful window —
-            # take the nominal length instead. The overlap is what protects the
-            # word this cut may land inside.
-            cut = window
-        end = _align(min(total, start + cut))
-        if end <= start:  # pragma: no cover — _align keeps this unreachable
-            end = min(total, start + window)
-        ranges.append((start, end))
-        # Step back by the overlap, but never to (or behind) this window's own
-        # start: that would transcribe the same audio forever.
-        # A pause search may cut as early as 60% of the nominal window. Keep a
-        # half-window minimum stride even then: otherwise a legal 50% overlap
-        # plus the earliest cut advances by only 10% and multiplies requests.
-        start = max(end - overlap, start + window // 2)
-    return ranges
+    remaining = total - start
+    if remaining <= window:
+        return (start, total), total
+    cut = quietest_cut(scan, window, bytes_per_second)
+    if cut < min_window:
+        # The scan found its quiet spot too early to be a useful window —
+        # take the nominal length instead. The overlap is what protects the
+        # word this cut may land inside.
+        cut = window
+    end = _align(min(total, start + cut))
+    if end <= start:  # pragma: no cover — _align keeps this unreachable
+        end = min(total, start + window)
+    # Step back by the overlap, but never to (or behind) this window's own
+    # start: that would transcribe the same audio forever.
+    # A pause search may cut as early as 60% of the nominal window. Keep a
+    # half-window minimum stride even then: otherwise a legal 50% overlap
+    # plus the earliest cut advances by only 10% and multiplies requests.
+    return (start, end), max(end - overlap, start + window // 2)
 
 
 #: Below these an int16 microphone signal cannot be carrying speech on ANY

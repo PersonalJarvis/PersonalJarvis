@@ -9,6 +9,15 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dictation delivers its text about as fast after a long recording as after
+  a short one.** The final read used to start only after the key was released
+  and work through the recording one window at a time, so a one-minute
+  dictation waited several seconds for its text. Windows are now read while
+  you are still speaking, and whatever is left at release is read side by side
+  on providers that allow it; a local engine still takes one call at a time.
+
 ## [1.5.3] — 2026-08-22
 
 ### Added

@@ -140,6 +140,12 @@ class OpenRouterSTT:
 
     name = "openrouter-stt"
     supports_streaming = False
+    #: Concurrent ``transcribe_pcm`` calls are safe here: each is one HTTP
+    #: request on a shared async client, with no native engine behind it. The
+    #: dictation lane reads this to decide whether its final windows may be
+    #: transcribed side by side (AP-24 forbids that on a native engine, which
+    #: is why the attribute is opt-in and the local providers never set it).
+    supports_concurrent_requests = True
 
     def __init__(
         self,
