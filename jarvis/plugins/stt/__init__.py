@@ -990,6 +990,24 @@ def _persist_wake_gpu_probe(ok: bool, ct2_version: str | None = None) -> None:
         logger.debug("Wake-GPU probe cache write failed ({}).", exc)
 
 
+def forget_gpu_probe_results() -> None:
+    """Drop both persisted GPU verdicts so the next build probes afresh.
+
+    Called after the GPU libraries were installed from inside the app: the
+    verdicts on disk were written by a runtime that could not load cuBLAS and
+    would otherwise keep every later build on the CPU until the ctranslate2
+    version changes. Best-effort; a missing file is the goal, not an error.
+    """
+    _wake_cuda_available.cache_clear()
+    for path in (_wake_cuda_cache_path(), _wake_gpu_probe_cache_path()):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort cache hygiene
+            logger.debug("GPU probe cache {} not removed ({}).", path, exc)
+
+
 def mark_wake_gpu_bad() -> None:
     """Record that the LIVE GPU wake model wedged — future builds stay on CPU.
 

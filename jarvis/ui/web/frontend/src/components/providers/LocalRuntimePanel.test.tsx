@@ -25,6 +25,9 @@ vi.mock("@/i18n", () => ({
       "apikeys_view.local_installing": "Installing…",
       "apikeys_view.local_install_retry": "Try again",
       "apikeys_view.local_install_hint": "This downloads a few gigabytes.",
+      "apikeys_view.gpu_libraries_install_cta": "Install GPU libraries (about 700 MB)",
+      "apikeys_view.gpu_libraries_installing": "Installing GPU libraries…",
+      "apikeys_view.gpu_libraries_install_hint": "This downloads about 700 MB once.",
     })[key] ?? key,
 }));
 
@@ -171,5 +174,83 @@ describe("local runtime panel", () => {
       (screen.getByRole("button", { name: /try again/i }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+  });
+});
+
+describe("local runtime panel — accelerator truth", () => {
+  const MISSING = {
+    requested: "cuda",
+    effective: "cpu",
+    reason: "cuda_libraries_missing" as const,
+    libraries_present: false,
+    verified: null,
+    installable: true,
+    detail:
+      "The GPU libraries (cuBLAS/cuDNN) are not installed in this app, so the local recognizer falls back to the CPU.",
+  };
+
+  it("names a CPU fallback the user did not ask for and offers the fix", () => {
+    render(
+      <AuthWidget
+        descriptor={withRuntime({ ready: true, accelerator: MISSING })}
+        onChanged={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("local-accelerator").textContent).toMatch(/falls back to the CPU/);
+    expect(screen.getByRole("button", { name: /install gpu libraries/i })).toBeTruthy();
+  });
+
+  it("stays quiet when the GPU is used or the CPU was configured", () => {
+    render(
+      <AuthWidget
+        descriptor={withRuntime({
+          ready: true,
+          accelerator: { ...MISSING, effective: "cuda", reason: "", libraries_present: true, verified: true, installable: false },
+        })}
+        onChanged={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("local-accelerator")).toBeNull();
+    cleanup();
+
+    render(
+      <AuthWidget
+        descriptor={withRuntime({
+          ready: true,
+          accelerator: { ...MISSING, requested: "cpu", reason: "not_requested", installable: false },
+        })}
+        onChanged={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("local-accelerator")).toBeNull();
+    expect(screen.queryByRole("button", { name: /gpu/i })).toBeNull();
+  });
+
+  it("starts the GPU-library install through its own route and reports progress", async () => {
+    const calls: string[] = [];
+    installFetchMock((url) => {
+      calls.push(url);
+      return { state: "running", ready: false, message: "Installing nvidia-cublas-cu12…" };
+    });
+
+    render(
+      <AuthWidget
+        descriptor={withRuntime({ ready: true, accelerator: MISSING })}
+        onChanged={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /install gpu libraries/i }));
+
+    await waitFor(() => {
+      expect(calls.some((u) => u.endsWith("/api/local-gpu/libraries"))).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Installing nvidia-cublas-cu12…")).toBeTruthy();
+    });
+    expect(
+      (screen.getByRole("button", { name: /installing gpu libraries/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 });

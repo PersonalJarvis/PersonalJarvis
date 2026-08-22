@@ -468,6 +468,18 @@ local-voice = [
     # an honest unavailable state when the optional runtime is absent.
     "sherpa-onnx>=1.13.3; sys_platform != 'win32' or platform_machine != 'ARM64'",
 ]
+# GPU runtime for the on-device CTranslate2 recognizer (faster-whisper): the
+# cuBLAS 12 / cuDNN 9 wheels ctranslate2 4.x links against. Opt-in and OUTSIDE
+# [full] on purpose — ~700 MB that only a CUDA desktop can use, and [full] stays
+# portable to every cell of the install matrix. Without it the recognizer
+# self-heals onto the CPU and the provider card says so (and offers this install
+# from inside the app). Mirrored by jarvis/plugins/stt/fwhisper.py::
+# GPU_LIBRARY_PACKAGES, which the in-app installer asks pip for; a test pins the
+# two together. macOS has no CUDA, hence the marker.
+cuda = [
+    "nvidia-cublas-cu12>=12.4,<13; sys_platform != 'darwin'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform != 'darwin'",
+]
 # Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
 # faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
 # and speaker-drift backends attach their own models at runtime. Opt-in dev/CI

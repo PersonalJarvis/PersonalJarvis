@@ -385,7 +385,10 @@ def _stored_base_url(spec: ProviderSpec) -> str | None:
 
 
 def _local_runtime_payload(
-    spec: ProviderSpec, *, model_override: str | None = None
+    spec: ProviderSpec,
+    *,
+    model_override: str | None = None,
+    requested_device: str = "cpu",
 ) -> dict[str, Any] | None:
     """On-disk truth for a provider that runs locally; ``None`` for cloud cards.
 
@@ -405,6 +408,23 @@ def _local_runtime_payload(
         return None
     if status is None:
         return None
+    accelerator: dict[str, Any] | None = None
+    try:
+        from jarvis.speech.local_models import accelerator_status
+
+        acc = accelerator_status(status.runtime, requested_device=requested_device)
+        if acc is not None:
+            accelerator = {
+                "requested": acc.requested,
+                "effective": acc.effective,
+                "reason": acc.reason,
+                "libraries_present": acc.libraries_present,
+                "verified": acc.verified,
+                "installable": acc.installable,
+                "detail": acc.detail,
+            }
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Accelerator probe for %s failed (%s); reporting none.", spec.id, exc)
     return {
         "runtime": status.runtime,
         "engine_installed": status.engine_installed,
@@ -412,6 +432,9 @@ def _local_runtime_payload(
         "model_label": status.model_label,
         "ready": status.ready,
         "detail": status.detail,
+        # GPU truth for the CTranslate2 runtime; null for runtimes without a
+        # GPU path. Rendered verbatim, like ``detail``.
+        "accelerator": accelerator,
     }
 
 
@@ -492,6 +515,7 @@ def _spec_to_payload(
     active_computer_use: str | None = None,
     active_dictation: str | None = None,
     local_model_override: str | None = None,
+    local_requested_device: str = "cpu",
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
@@ -623,7 +647,11 @@ def _spec_to_payload(
         # On-device cards only: whether the engine and its weights are REALLY
         # here, so the UI can offer the install instead of a false "ready".
         # ``None`` on every cloud card.
-        "local_runtime": _local_runtime_payload(spec, model_override=local_model_override),
+        "local_runtime": _local_runtime_payload(
+            spec,
+            model_override=local_model_override,
+            requested_device=local_requested_device,
+        ),
         # Self-hosted realtime card only: state of the one-click managed
         # server install (fail-closed, server sentence rendered verbatim).
         "managed_server": _managed_server_payload(spec),
@@ -1177,10 +1205,17 @@ async def list_providers(request: Request) -> dict[str, Any]:
     # user who pinned a different Whisper size in jarvis.toml would read a
     # reassuring "ready" about a model their install never loads.
     local_model_override: str | None = None
+    # The device the config asks the local recognizer for. Read regardless of
+    # the active provider: the local card shows GPU truth even while a cloud
+    # provider is active, because that is when a person decides to switch.
+    local_requested_device = "cpu"
     try:
         stt_cfg = getattr(_resolve_cfg(request), "stt", None)
         if (getattr(stt_cfg, "provider", "") or "").strip() == "faster-whisper":
             local_model_override = (getattr(stt_cfg, "model", "") or "").strip() or None
+        local_requested_device = (
+            (getattr(stt_cfg, "device", "") or "cpu").strip().lower() or "cpu"
+        )
     except Exception as exc:  # noqa: BLE001 — the provider list must never 500
         log.debug("Local STT model override lookup failed (%s); using the default.", exc)
 
@@ -1200,6 +1235,7 @@ async def list_providers(request: Request) -> dict[str, Any]:
                 active_computer_use=active_computer_use,
                 active_dictation=active_dictation,
                 local_model_override=local_model_override,
+                local_requested_device=local_requested_device,
             )
             for spec in PROVIDERS
             # A hidden spec is withdrawn from the catalog: no card, no CLI
@@ -2537,6 +2573,29 @@ async def start_local_install(provider_id: str) -> dict[str, Any]:
     if result.get("state") == "error" and "not a local provider" in result.get("message", ""):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
+
+
+@router.post("/local-gpu/libraries")
+async def start_gpu_libraries_install_route() -> dict[str, Any]:
+    """Install the CUDA runtime libraries (cuBLAS/cuDNN) into this app.
+
+    The §3 "recoverable in-app" contract for the GPU: on a desktop with a
+    working driver but without these wheels, the local recognizer silently
+    falls back to the CPU (the engine self-heals; only a log line says why).
+    Returns immediately with a ``state`` the UI polls; a second call while a
+    run is in flight joins it.
+    """
+    from jarvis.speech.local_install import start_gpu_libraries_install
+
+    return await asyncio.to_thread(start_gpu_libraries_install)
+
+
+@router.get("/local-gpu/libraries/status")
+async def get_gpu_libraries_install_status() -> dict[str, Any]:
+    """Progress of the GPU-library install plus the on-disk library truth."""
+    from jarvis.speech.local_install import gpu_libraries_install_status
+
+    return await asyncio.to_thread(gpu_libraries_install_status)
 
 
 @router.get("/providers/{provider_id}/local-install/status")

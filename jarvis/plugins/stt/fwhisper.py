@@ -203,6 +203,80 @@ _CUDA_DLL_PACKAGE_DIRS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     ("nvidia.cudnn", ("bin",)),
 )
 
+#: The pip wheels that put the CUDA runtime CTranslate2 needs into THIS
+#: interpreter — cuBLAS 12 and cuDNN 9, the pair ctranslate2 4.x links against.
+#: Mirrored by the ``cuda`` extra in ``pyproject.toml`` (a test pins the two
+#: together) and installed from inside the app by
+#: :func:`jarvis.speech.local_install.start_gpu_libraries_install`, because a
+#: GPU that the app cannot reach is not something a person should have to fix
+#: in a terminal (CLAUDE.md §2, credentials-and-capabilities recoverable in-app).
+GPU_LIBRARY_PACKAGES: Final[tuple[str, ...]] = (
+    "nvidia-cublas-cu12>=12.4,<13",
+    "nvidia-cudnn-cu12>=9,<10",
+)
+
+#: Where the same libraries live per package on Linux (``.so``), next to the
+#: Windows ``bin`` directories above.
+_CUDA_SO_PACKAGE_DIRS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    ("torch", ("lib",)),
+    ("nvidia.cublas", ("lib",)),
+    ("nvidia.cudnn", ("lib",)),
+)
+
+
+def cuda_runtime_libraries_present() -> bool:
+    """Whether a cuBLAS runtime the local recognizer could load is installed
+    in THIS interpreter. A cheap on-disk look, never a CUDA call (AP-26).
+
+    This answers one precise question — "is the library there?" — and not
+    "does the GPU work" (that is the out-of-process inference probe, AP-25).
+    It exists because the two used to be indistinguishable: on a desktop with
+    a working driver but no ``nvidia-cublas-cu12`` wheel, ctranslate2 fails
+    with "Library cublas64_12.dll is not found", the provider self-heals onto
+    the CPU and nothing but a log line says why. macOS has no CUDA at all and
+    reads as absent.
+    """
+    import importlib.util  # noqa: PLC0415 — lazy path must stay cheap
+
+    if sys.platform == "darwin":
+        return False
+    if os.name == "nt":
+        candidates, pattern = _CUDA_DLL_PACKAGE_DIRS, "cublas64_*.dll"
+    else:
+        candidates, pattern = _CUDA_SO_PACKAGE_DIRS, "libcublas.so*"
+    for module_name, relative_parts in candidates:
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, ValueError):
+            continue
+        if spec is None:
+            continue
+        roots: list[Path] = []
+        origin = getattr(spec, "origin", None)
+        if origin:
+            roots.append(Path(origin).parent)
+        for location in getattr(spec, "submodule_search_locations", ()) or ():
+            root = Path(location)
+            if root not in roots:
+                roots.append(root)
+        for root in roots:
+            directory = root.joinpath(*relative_parts)
+            try:
+                if directory.is_dir() and any(directory.glob(pattern)):
+                    return True
+            except OSError:
+                continue
+    if os.name != "nt":
+        # A system-wide CUDA install (distro package, conda) is just as real;
+        # the dynamic loader finds it without any of the wheels above.
+        import ctypes.util  # noqa: PLC0415 — lazy path must stay cheap
+
+        try:
+            return ctypes.util.find_library("cublas") is not None
+        except Exception:  # noqa: BLE001 — a broken loader config is "absent"
+            return False
+    return False
+
 #: Loaded explicitly, in dependency order, once a directory holding them is
 #: found. Adding that directory to the search path is NOT enough on its own —
 #: measured: ctranslate2 still raised "Library cublas64_12.dll is not found or

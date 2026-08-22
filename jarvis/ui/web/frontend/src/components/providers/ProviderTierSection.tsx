@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -34,6 +34,8 @@ import {
   type OllamaRuntimeStatus,
   pullableModels,
   searchModelLibrary,
+  startGpuLibrariesInstall,
+  gpuLibrariesInstallStatus,
   startLocalInstall,
   type LibraryModel,
   type LibraryTag,
@@ -1820,6 +1822,37 @@ function LocalRuntimePanel({
   const [progress, setProgress] = useState<LocalInstallProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const running = progress?.state === "running";
+  // The GPU-library install is its own run: it serves every on-device
+  // recognizer at once and is offered only when the card's accelerator truth
+  // names the missing libraries as the reason for a CPU fallback.
+  const [gpuProgress, setGpuProgress] = useState<LocalInstallProgress | null>(null);
+  const [gpuError, setGpuError] = useState<string | null>(null);
+  const gpuRunning = gpuProgress?.state === "running";
+
+  useEffect(() => {
+    if (!gpuRunning) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await gpuLibrariesInstallStatus();
+        if (cancelled) return;
+        setGpuProgress(next);
+        if (next.state === "done" || next.state === "error") {
+          window.clearInterval(timer);
+          onChanged();
+        }
+      } catch (err) {
+        if (cancelled) return;
+        window.clearInterval(timer);
+        setGpuError(err instanceof Error ? err.message : String(err));
+        setGpuProgress(null);
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [gpuRunning, onChanged]);
 
   // Poll only while an install is actually in flight, and stop on the terminal
   // state. A finished run refreshes the provider list so the card's own
@@ -1860,7 +1893,22 @@ function LocalRuntimePanel({
     }
   };
 
+  const startGpu = async () => {
+    setGpuError(null);
+    try {
+      setGpuProgress(await startGpuLibrariesInstall());
+    } catch (err) {
+      setGpuError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const failed = progress?.state === "error";
+  const gpuFailed = gpuProgress?.state === "error";
+  const accelerator = status.accelerator ?? null;
+  // Only a CPU fallback the person did not ask for is worth a line and a
+  // button; "CPU, as configured" and a verified GPU are the quiet cases.
+  const showAccelerator =
+    accelerator !== null && accelerator.reason !== "not_requested" && accelerator.reason !== "";
   return (
     <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
       <div className="flex items-start gap-2 text-xs">
@@ -1873,6 +1921,51 @@ function LocalRuntimePanel({
           {progress?.message ?? status.detail}
         </span>
       </div>
+      {showAccelerator && accelerator && (
+        <div
+          className="flex items-start gap-2 text-xs"
+          data-testid="local-accelerator"
+        >
+          <Cpu
+            className={cn(
+              "mt-0.5 h-3.5 w-3.5 shrink-0",
+              accelerator.effective === "cpu" && accelerator.installable
+                ? "text-amber-500"
+                : "text-muted-foreground",
+            )}
+          />
+          <span className="text-muted-foreground">
+            {gpuProgress?.message ?? accelerator.detail}
+          </span>
+        </div>
+      )}
+      {showAccelerator && accelerator?.installable && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={startGpu}
+          disabled={gpuRunning}
+          className="gap-2"
+          data-testid="install-gpu-libraries"
+        >
+          {gpuRunning ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          {gpuRunning
+            ? t("apikeys_view.gpu_libraries_installing")
+            : gpuFailed
+              ? t("apikeys_view.local_install_retry")
+              : t("apikeys_view.gpu_libraries_install_cta")}
+        </Button>
+      )}
+      {gpuRunning && (
+        <p className="text-[11px] text-muted-foreground">
+          {t("apikeys_view.gpu_libraries_install_hint")}
+        </p>
+      )}
+      {gpuError && <p className="text-[11px] text-destructive">{gpuError}</p>}
       {!status.ready && (
         <Button
           size="sm"

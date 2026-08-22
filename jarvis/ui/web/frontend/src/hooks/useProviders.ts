@@ -34,6 +34,28 @@ export interface AltCredential {
  * doing inference) and the model (its weights) are tracked separately because
  * they fail separately and need different fixes: install versus download.
  */
+/**
+ * GPU truth for an on-device recognizer: what the config asked for, what the
+ * engine will really run on, and why they differ. `reason` is a stable code
+ * (`""` when they agree); `installable` says the in-app installer can fix it.
+ */
+export interface AcceleratorStatus {
+  requested: string;
+  effective: string;
+  reason:
+    | ""
+    | "not_requested"
+    | "unsupported_os"
+    | "cuda_libraries_missing"
+    | "gpu_probe_failed"
+    | "unverified";
+  libraries_present: boolean;
+  verified: boolean | null;
+  installable: boolean;
+  /** One honest sentence for the card — render it verbatim. */
+  detail: string;
+}
+
 export interface LocalRuntimeStatus {
   runtime: string;
   engine_installed: boolean;
@@ -42,6 +64,8 @@ export interface LocalRuntimeStatus {
   ready: boolean;
   /** One honest sentence for the card — render it verbatim. */
   detail: string;
+  /** GPU truth for the CTranslate2 runtime; null for runtimes without a GPU path. */
+  accelerator?: AcceleratorStatus | null;
 }
 
 export interface ProviderDescriptor {
@@ -856,6 +880,29 @@ export async function localInstallStatus(
   const res = await fetch(
     `/api/providers/${encodeURIComponent(providerId)}/local-install/status`,
   );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as LocalInstallProgress;
+}
+
+/**
+ * Start (or join) the in-app install of the CUDA runtime libraries the local
+ * recognizer needs for the GPU. Returns at once; poll `gpuLibrariesInstallStatus`.
+ */
+export async function startGpuLibrariesInstall(): Promise<LocalInstallProgress> {
+  const res = await fetch("/api/local-gpu/libraries", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as LocalInstallProgress;
+}
+
+/** Poll the GPU-library install; `ready` is the on-disk library truth. */
+export async function gpuLibrariesInstallStatus(): Promise<LocalInstallProgress> {
+  const res = await fetch("/api/local-gpu/libraries/status");
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body.detail ?? `HTTP ${res.status}`);

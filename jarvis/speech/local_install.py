@@ -145,6 +145,96 @@ def _run_install(provider_id: str) -> None:
     log.info("local install for %s finished: ok=%s msg=%s", provider_id, ok, message[:200])
 
 
+#: Registry key under which the GPU-library install keeps its progress. Not a
+#: provider: the libraries serve every CTranslate2 provider at once.
+GPU_LIBRARIES_RUN_KEY = "gpu-libraries"
+
+
+def _run_gpu_libraries_install() -> None:
+    """pip-install cuBLAS/cuDNN into this interpreter, then verify. Never raises.
+
+    The CPU fallback it repairs is silent by construction (the engine
+    self-heals onto the CPU and only a log line says why), so the verification
+    at the end is the on-disk library look the card reads — the same authority,
+    so the card cannot claim a success the next load would contradict. A
+    finished install also forgets the cached GPU probe verdicts: they were
+    written under a runtime that could not load the libraries and must not
+    keep the engine on the CPU now that it can.
+    """
+    run = _run_for(GPU_LIBRARIES_RUN_KEY)
+    from jarvis.plugins.stt.fwhisper import (
+        GPU_LIBRARY_PACKAGES,
+        cuda_runtime_libraries_present,
+    )
+    from jarvis.setup.dependencies import install_pip_package
+
+    ok = True
+    message = ""
+    for package in GPU_LIBRARY_PACKAGES:
+        with run.lock:
+            run.message = f"Installing {package.split('>=')[0].split('<')[0]}…"
+        ok, message = install_pip_package(package, only_binary=True)
+        if not ok:
+            break
+    importlib.invalidate_caches()
+    if ok:
+        if cuda_runtime_libraries_present():
+            message = (
+                "The GPU libraries are installed. The local recognizer uses the "
+                "GPU from its next load on."
+            )
+            try:
+                from jarvis.plugins.stt import forget_gpu_probe_results
+
+                forget_gpu_probe_results()
+            except Exception as exc:  # noqa: BLE001 — a stale cache is not a failure
+                log.debug("GPU probe cache could not be cleared: %s", exc)
+        else:
+            ok = False
+            message = (
+                "The install finished, but the GPU libraries still cannot be "
+                "found in this app. Try again; if it keeps failing, this "
+                "machine may not have a CUDA-capable setup."
+            )
+    with run.lock:
+        run.state = "done" if ok else "error"
+        run.message = message
+    log.info("GPU library install finished: ok=%s msg=%s", ok, message[:200])
+
+
+def start_gpu_libraries_install() -> dict[str, Any]:
+    """Begin (or join) the GPU-library install; returns the current state."""
+    run = _run_for(GPU_LIBRARIES_RUN_KEY)
+    with run.lock:
+        if run.state != "running":
+            run.state = "running"
+            run.message = "Starting the GPU library install…"
+            threading.Thread(
+                target=_run_gpu_libraries_install,
+                name="jarvis-gpu-libraries-install",
+                daemon=True,
+            ).start()
+    return gpu_libraries_install_status()
+
+
+def gpu_libraries_install_status() -> dict[str, Any]:
+    """Progress of the GPU-library install plus the independent on-disk truth."""
+    run = _run_for(GPU_LIBRARIES_RUN_KEY)
+    try:
+        from jarvis.plugins.stt.fwhisper import cuda_runtime_libraries_present
+
+        present = cuda_runtime_libraries_present()
+    except Exception:  # noqa: BLE001 — the status must never raise
+        present = False
+    with run.lock:
+        return {
+            "state": run.state,
+            "message": run.message,
+            "ready": present,
+            "libraries_present": present,
+        }
+
+
 def start_install(provider_id: str) -> dict[str, Any]:
     """Begin (or join) an install for *provider_id*; returns the current state.
 

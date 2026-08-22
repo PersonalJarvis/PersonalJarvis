@@ -38,6 +38,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -85,6 +86,127 @@ class LocalModelStatus:
     def ready(self) -> bool:
         """True only when the engine AND its weights are both usable."""
         return self.engine_installed and self.model_present
+
+
+@dataclass(frozen=True)
+class AcceleratorStatus:
+    """Whether the local recognizer will really run on the GPU it was asked for.
+
+    ``requested`` is the configured device (``[stt].device``), ``effective`` the
+    one the engine will actually build on once it loads, ``reason`` a stable
+    code for the difference (``""`` when there is none):
+
+    * ``not_requested`` — the config asks for the CPU;
+    * ``unsupported_os`` — no CUDA on this platform (macOS);
+    * ``cuda_libraries_missing`` — the cuBLAS/cuDNN wheels are not in this
+      interpreter, so the load fails and the provider self-heals onto the CPU
+      (the live 2026-08-22 finding: 36 silent CPU fallbacks in one log);
+    * ``gpu_probe_failed`` — the libraries are there but the out-of-process
+      inference probe recorded a hang (AP-25);
+    * ``unverified`` — libraries present, no probe verdict on disk yet; the
+      engine will try the GPU.
+
+    ``installable`` says whether the in-app installer can fix the reason.
+    """
+
+    requested: str
+    effective: str
+    reason: str
+    libraries_present: bool
+    verified: bool | None
+    installable: bool
+    detail: str
+
+
+def accelerator_status(runtime: str, *, requested_device: str) -> AcceleratorStatus | None:
+    """GPU truth for *runtime*, or ``None`` for a runtime that never uses CUDA.
+
+    Cheap: an on-disk library look plus the cached probe verdict — never a
+    CUDA call, never the blocking probe (AP-26). Only the CTranslate2 runtime
+    has a GPU path today; the ONNX-Runtime providers run on the CPU by design
+    and report nothing here rather than a misleading "CPU fallback".
+    """
+    if runtime != "faster-whisper":
+        return None
+    requested = (requested_device or "cpu").strip().lower() or "cpu"
+    try:
+        from jarvis.plugins.stt.fwhisper import cuda_runtime_libraries_present
+
+        libraries = cuda_runtime_libraries_present()
+    except Exception as exc:  # noqa: BLE001 — a probe failure reads as "absent"
+        log.debug("CUDA library probe failed (%s); reporting absent.", exc)
+        libraries = False
+    verified: bool | None = None
+    try:
+        from jarvis.plugins.stt import wake_gpu_probe_cached
+
+        verified = wake_gpu_probe_cached()
+    except Exception as exc:  # noqa: BLE001 — no verdict is an honest state
+        log.debug("GPU probe cache unreadable (%s); treating as unprobed.", exc)
+        verified = None
+
+    if requested == "cpu":
+        return AcceleratorStatus(
+            requested=requested,
+            effective="cpu",
+            reason="not_requested",
+            libraries_present=libraries,
+            verified=verified,
+            installable=False,
+            detail="Runs on the CPU, as configured.",
+        )
+    if sys.platform == "darwin":
+        return AcceleratorStatus(
+            requested=requested,
+            effective="cpu",
+            reason="unsupported_os",
+            libraries_present=False,
+            verified=None,
+            installable=False,
+            detail="There is no CUDA on macOS — the local recognizer runs on the CPU here.",
+        )
+    if not libraries:
+        return AcceleratorStatus(
+            requested=requested,
+            effective="cpu",
+            reason="cuda_libraries_missing",
+            libraries_present=False,
+            verified=verified,
+            installable=True,
+            detail=(
+                "The GPU libraries (cuBLAS/cuDNN) are not installed in this app, "
+                "so the local recognizer falls back to the CPU — roughly eight "
+                "times slower. Install them from here (about 700 MB, once)."
+            ),
+        )
+    if verified is False:
+        return AcceleratorStatus(
+            requested=requested,
+            effective="cpu",
+            reason="gpu_probe_failed",
+            libraries_present=True,
+            verified=False,
+            installable=False,
+            detail=(
+                "The GPU libraries are installed, but a real test run on this "
+                "GPU hung, so the recognizer stays on the CPU until the runtime "
+                "changes."
+            ),
+        )
+    return AcceleratorStatus(
+        requested=requested,
+        effective=requested,
+        reason="" if verified else "unverified",
+        libraries_present=True,
+        verified=verified,
+        installable=False,
+        detail=(
+            f"Runs on the GPU ({requested}) — verified with a real test run."
+            if verified
+            else f"Runs on the GPU ({requested}); the libraries are installed and "
+            "the first load will confirm it."
+        ),
+    )
 
 
 def runtime_installed(runtime: str) -> bool:
@@ -525,7 +647,9 @@ def local_status(
 __all__ = [
     "LOCAL_PROVIDERS",
     "WHISPER_VOICE_MODEL",
+    "AcceleratorStatus",
     "LocalModelStatus",
+    "accelerator_status",
     "LocalProvider",
     "get_local_provider",
     "local_status",
