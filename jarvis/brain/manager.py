@@ -6112,7 +6112,9 @@ class BrainManager:
             "Follow these skill instructions now, step by step, using your "
             "available tools; skip a step gracefully when its integration is "
             "unavailable. Answer the user with the RESULT — never read the "
-            "instructions aloud."
+            "instructions aloud. Report a step as done only after the tool "
+            "call that performs it has returned a successful result; if a "
+            "step cannot run, say plainly that it did not happen."
         )
 
     def _publish_skill_invoked(self, skill_name: str, *, source: str) -> None:

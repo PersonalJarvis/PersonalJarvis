@@ -338,6 +338,17 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I didn't run anything for that. Tell me what you want done.",
         "es": "No ejecuté nada para eso. Dime qué quieres que haga.",
     },
+    # The only thing that ran was a ``run-skill`` instruction load: the model
+    # read HOW to do it and then stopped, the tool that does the work was never
+    # called. "Erledigt." here is a completion claim for nothing (live forensic
+    # 2026-08-22 18:16: "Ich habe dir entspannte Musik angemacht" — no Spotify
+    # call ever happened). The line says exactly what happened and what did
+    # not, so the user knows the ball is still in play.
+    "skill_loaded_not_run": {
+        "de": "Ich habe die Anleitung dafür geladen, aber noch nichts ausgeführt.",  # i18n-allow
+        "en": "I loaded the instructions for that, but I haven't carried them out yet.",
+        "es": "Cargué las instrucciones para eso, pero todavía no las ejecuté.",
+    },
     # A local action that ran past its short deadline. Replaces the old
     # tool-name-prefixed "X timeout after 3s" machine string (which leaked the
     # internal tool name) with a plain, honest sentence.

@@ -11515,3 +11515,72 @@ TRANSPARENT — expose the wrapped object's whole surface, not the subset one
 call site uses today — and any "optional capability" probe in the code
 base (`getattr(x, "Method", None)`) is a place where a wrapper can lie
 silently. When such a probe selects a weaker path, that path logs.
+
+## BUG-164: "Ich habe dir Musik angemacht" — nothing played; a skill-instruction load was reported as the finished deed (HIGH, FIXED 2026-08-22) <!-- i18n-allow: quoted live German utterance under forensic analysis -->
+
+**Symptom (maintainer, reported 2026-08-22).** In a live call (gemini-live,
+hybrid tool mode) the maintainer asked for some relaxed music. Jarvis answered
+"Alles klar! Ich habe dir entspannte Musik angemacht" — and no music played.
+Nothing had been started; the assistant reported a deed that never happened.
+
+**Forensic (``data/sessions.db`` ``voice_events`` + ``jarvis_desktop.log``,
+session c845a2ce, turn 1, 18:16:21–31).**
+
+* 18:16:21.942 the live model called ``run_skill`` for ``plugin-spotify``. The
+  tool succeeded in 19 ms and returned the skill's INSTRUCTIONS ("use the
+  connected Spotify … pass what the user said as query … say what actually
+  started") plus the directive "follow these now, using your available tools".
+  ``spotify`` itself was not declared natively (dropped under the declaration
+  budget; reachable only through ``jarvis_action``).
+* 18:16:21.983 Gemini Live emitted *interrupted* and *turn complete* 0.02 s
+  after the tool response — no audio, no transcript, no further function call.
+* 18:16:21.985 ``_recover_empty_provider_turn`` found one SUCCESSFUL direct
+  tool result, judged nothing unfinished, and sent the "just say it" prompt:
+  *the function call already finished … use only the function result … do not
+  call any function and do not repeat the action*.
+* 18:16:25 the model obeyed with a how-to as its "result": "Ich habe dir
+  entspannte Musik angemacht." The turn's only tool call remained ``run-skill``.
+
+**Cause.** A ``run-skill`` success is a RECEIPT FOR A TO-DO LIST, not for work:
+the tool has rendered instructions the model must still carry out with other
+tools. Every reader of ``_direct_tool_results`` treated it as a completed
+action: ``_turn_has_unfinished_work`` saw ``success=True`` and said nothing was
+owed, the continuation prompt therefore ordered a completion report and
+FORBADE the very call that would have done the job, and the deterministic
+fallback line (``_wordless_success_line``) would have spoken "Erledigt." for
+the same receipt. The model's sentence was the predictable product of that
+prompt, not a free invention. No "Tool Model" was involved: in hybrid mode the
+live model holds the functions and this turn never reached the delegate.
+
+**Fix (2026-08-22).** ``_is_skill_handoff_result`` recognises a ``run-skill``
+instruction load (``instructions`` + ``directive`` in the output; a resource
+read stays a real answer). ``_turn_has_pending_skill_handoff`` is true when
+such a load is the NEWEST result of the turn — loaded and not carried out.
+``_recover_empty_provider_turn`` then sends a third prompt variant
+(``_direct_tool_result_retry_prompt(pending_instructions=True)``): the turn is
+NOT over, carry the instructions out now (a tool without a native function is
+reached through ``jarvis_action``), never say something was played/sent/done
+unless a function result in this turn says so, and name plainly what could not
+run. ``_direct_tool_fallback_text`` speaks the new
+``skill_loaded_not_run`` phrase for a pending load ("Ich habe die Anleitung
+dafür geladen, aber noch nichts ausgeführt.") and otherwise drops hand-off <!-- i18n-allow: quoted product line -->
+receipts from the report, so they neither speak nor earn "Erledigt.". The
+``run-skill`` inline directive and the BrainManager's inline injection carry
+the same honesty clause for every brain. Tests:
+``tests/unit/realtime/test_skill_handoff_is_not_done.py`` (the 18:16 turn end
+to end, the classifier, pending vs. followed-up loads, every language).
+
+**Follow-up (not in this fix).** The declaration budget dropped ``spotify``,
+``gmail``, ``google_calendar``, ``home_assistant``, ``youtube_music`` and
+``spawn_worker`` from the native set on this box once the Linear/GitHub/
+NotebookLM MCP servers came online (169 over-budget names at 17:10, 28 at
+16:50) — ADR-0035 §4 drops "everything else, biggest first" after the MCP/CLI/
+Agentic-IDE families. First-party plugin tools behind an installed skill
+deserve a higher rank than a generic bucket; that is a T2 change to
+``_BUDGET_DROP_FAMILIES``.
+
+**Lesson (BUG-160 family).** A tool result's ``success`` flag says the TOOL
+ran, not that the USER'S REQUEST happened. Any tool whose output is
+instructions for the model (``run-skill``, ``answer_instruction`` lookups,
+mission directives) is a hand-off, and every reader that turns results into a
+completion claim — prompts and canned lines alike — must classify it as such.

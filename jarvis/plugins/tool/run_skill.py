@@ -56,7 +56,10 @@ _INLINE_DIRECTIVE = (
     "These are the skill's instructions. Follow these skill instructions now, "
     "step by step, using your available tools. Skip a step gracefully when its "
     "integration is unavailable. Then answer the user with the result — never "
-    "read the raw instructions aloud."
+    "read the raw instructions aloud. Loading these instructions has done "
+    "nothing for the user yet: report a step as done only after the tool call "
+    "that performs it has returned a successful result, and if a step cannot "
+    "run, say plainly that it did not happen."
 )
 _MISSION_DIRECTIVE = (
     "This skill runs as a background mission. Call the spawn_worker tool NOW "

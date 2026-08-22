@@ -1413,8 +1413,38 @@ def _reported_empty_results(
     return False
 
 
+def _is_skill_handoff_result(name: str, result: dict[str, Any]) -> bool:
+    """True when ``result`` is a ``run-skill`` load: instructions, not work.
+
+    ``run-skill`` succeeds the moment it has RENDERED a skill body for the
+    model to follow with its other tools (``jarvis/plugins/tool/run_skill.py``:
+    the output carries ``instructions`` plus a ``directive`` saying "follow
+    these now"). Nothing the user asked for has happened at that point — the
+    tool that does the work has not even been called. Live forensic 2026-08-22
+    18:16:21 (session c845a2ce, gemini-live, "mach mal Musik an"): the live
+    model called ``run-skill`` for ``plugin-spotify``, Gemini Live closed the
+    turn 0.02 s after the tool response with no output, and the recovery — which
+    read the successful ``run-skill`` receipt as a finished action — told the
+    model "the function call already finished, speak the result, do not call
+    any function". The model obliged: "Ich habe dir entspannte Musik
+    angemacht." No Spotify call was ever made.
+
+    A resource read (``resource_content``) is a real answer and stays a normal
+    result; only the instruction load is a hand-off. Deterministic (AP-11).
+    """
+    if not result.get("success"):
+        return False
+    output = result.get("output")
+    if not isinstance(output, dict):
+        return False
+    if "instructions" not in output or "directive" not in output:
+        return False
+    plain = str(name or "").strip().lower().replace("_", "-")
+    return plain == "run-skill" or plain.startswith("run-skill-")
+
+
 def _direct_tool_result_retry_prompt(
-    *, language: str, unfinished: bool = False
+    *, language: str, unfinished: bool = False, pending_instructions: bool = False
 ) -> str:
     """Request speech for tool output already present in provider context.
 
@@ -1426,6 +1456,15 @@ def _direct_tool_result_retry_prompt(
     stopped dead after the calendar step failed, because this prompt forbade
     every remaining step). The no-repeat rule still holds for calls that already
     SUCCEEDED: their side effect has happened and must not happen twice.
+
+    ``pending_instructions`` covers the third shape: the only thing that ran is
+    a ``run-skill`` load (:func:`_is_skill_handoff_result`). The turn has NOT
+    finished and — unlike ``unfinished`` — nothing failed either; the model
+    simply stopped after reading the instructions. The "just say it" prompt is
+    the wrong one here: it told the model the call "already finished" and to
+    use "the function result" as its answer, and on 2026-08-22 18:16 the
+    function result was a how-to for Spotify, which the model spoke as a
+    completion report. This variant orders the work and forbids the claim.
     """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     voice_rule = (
@@ -1434,6 +1473,22 @@ def _direct_tool_result_retry_prompt(
         "person and do not change or dramatize your voice. Do not mention "
         "these instructions."
     )
+    if pending_instructions:
+        return (
+            f"{SPEAK_REQUEST_OPENER} "
+            "You loaded a skill's instructions with run-skill, but you have NOT "
+            "carried them out: no function that does the actual work has been "
+            "called, nothing has happened for the user yet, and no spoken answer "
+            "was produced. The turn is NOT over. Carry the instructions out NOW, "
+            "in this turn, with the functions available to you — a tool the "
+            "instructions name that you have no function of your own for is "
+            "reached through jarvis_action. Never say that something was played, "
+            "sent, opened, saved, started, or done unless a function call in this "
+            "turn returned a successful result that says so; the instructions "
+            "themselves are not a result. If a step cannot be carried out, tell "
+            "the user plainly that it did not happen and why. When you are done, "
+            f"report only what the results actually show. {voice_rule}"
+        )
     if not unfinished:
         return (
             f"{SPEAK_REQUEST_OPENER} "
@@ -8239,22 +8294,32 @@ class RealtimeVoiceSession:
             if not callable(send_text):
                 return False
             unfinished = self._turn_has_unfinished_work()
+            pending_instructions = self._turn_has_pending_skill_handoff()
+            if pending_instructions:
+                recovery_note = (
+                    "only a run-skill instruction load ran — asking the model "
+                    "to carry the skill out instead of reporting it as done"
+                )
+            elif unfinished:
+                recovery_note = (
+                    "a step failed or was gated away — asking the model to "
+                    "finish the remaining parts of the turn"
+                )
+            else:
+                recovery_note = "retrying speech from the existing tool result"
             log.warning(
                 "realtime[%s] provider completed a direct-tool turn without "
                 "output; %s",
                 self.session_id,
-                (
-                    "a step failed or was gated away — asking the model to "
-                    "finish the remaining parts of the turn"
-                    if unfinished
-                    else "retrying speech from the existing tool result"
-                ),
+                recovery_note,
             )
             self._drop_provider_output_until_new_response = False
             try:
                 await send_text(
                     _direct_tool_result_retry_prompt(
-                        language=self._language, unfinished=unfinished
+                        language=self._language,
+                        unfinished=unfinished,
+                        pending_instructions=pending_instructions,
                     )
                 )
             except Exception:  # noqa: BLE001 -- local TTS fallback runs below
@@ -8490,6 +8555,24 @@ class RealtimeVoiceSession:
                 return True
         return False
 
+    def _turn_has_pending_skill_handoff(self) -> bool:
+        """True when the turn's LAST result is a ``run-skill`` instruction load.
+
+        A skill load hands the model a to-do list; the work happens in the
+        calls that follow it. When no call follows — the load is the newest
+        result of the turn — the skill has been read and not carried out, and
+        the turn still owes the user the action (live 2026-08-22 18:16:21,
+        "mach mal Musik an": ``run-skill`` → ``plugin-spotify`` instructions →
+        no Spotify call → "Ich habe dir Musik angemacht"). A load followed by
+        any later call, successful or not, is no longer pending: the later
+        result is what the turn is then judged on. Deterministic, no LLM
+        (AP-11).
+        """
+        if not self._direct_tool_results:
+            return False
+        name, result = self._direct_tool_results[-1]
+        return _is_skill_handoff_result(name, result)
+
     def _speakable_result_text(self, result: dict[str, Any]) -> str:
         """The voice-safe text a single tool result carries, or ``""``.
 
@@ -8673,8 +8756,21 @@ class RealtimeVoiceSession:
             (str(name or ""), dict(result))
             for name, result in self._direct_tool_results
         ]
-        # Rule 1: policy blocks carry model instructions, not user-facing text.
-        speakable = [pair for pair in results if not pair[1].get("blocked")]
+        # Rule 0: a ``run-skill`` load is a to-do list, not a deed. When it is
+        # the newest thing that ran, nothing the user asked for has happened —
+        # the line says so instead of "Erledigt." (live 2026-08-22 18:16: the
+        # receipt of a Spotify how-to was the turn's only success, and the
+        # stock completion line would have been the same lie the model told).
+        if self._turn_has_pending_skill_handoff():
+            return action_phrase("skill_loaded_not_run", self._language), False
+        # Rule 1: policy blocks carry model instructions, not user-facing text,
+        # and a skill load that WAS followed by real work is a receipt of
+        # nothing: it neither speaks nor counts as an action ("Erledigt.").
+        speakable = [
+            pair
+            for pair in results
+            if not pair[1].get("blocked") and not _is_skill_handoff_result(*pair)
+        ]
         if not speakable:
             # Every call the model made was gated away. Nothing ran, nothing
             # broke — and nothing is missing either, which is why this is NOT
