@@ -57,6 +57,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--wizard", action="store_true", help="Restart the setup wizard.")
     parser.add_argument("--check", action="store_true", help="Only show the hardware analysis.")
+    parser.add_argument(
+        "--json", action="store_true", dest="json_output",
+        help="With --check or --doctor: emit JSON Lines (one object per component: "
+             "component, status, message, hint) instead of the human report, so an "
+             "installer can gate on the result without parsing prose. Exit codes are "
+             "unchanged. Must follow the command flag — a LEADING `--json` is the "
+             "control CLI's own global option (`jarvis --json missions list`).",
+    )
     parser.add_argument("--plugins", action="store_true", help="List the plugin registry.")
     parser.add_argument(
         "--worker-tool-broker-stdio",
@@ -153,8 +161,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return _build_parser().parse_args(argv)
 
 
-def _cmd_check() -> int:
-    return detection.main()
+def _cmd_check(as_json: bool = False) -> int:
+    return detection.main(as_json=as_json)
 
 
 def _cmd_plugins() -> int:
@@ -236,7 +244,7 @@ def _cmd_phase5_doctor() -> int:
     return 0
 
 
-def _cmd_doctor() -> int:
+def _cmd_doctor(as_json: bool = False) -> int:
     """Completeness self-check — what is registered & ready vs. advertised but
     missing. Generalises the phantom-jarvis-agent forensic (2026-06-28): a fresh
     download can *look* complete while one dead reference makes a working feature
@@ -248,6 +256,14 @@ def _cmd_doctor() -> int:
 
     config = cfg.load_config()
     findings = run_doctor(config)
+
+    if as_json:
+        from jarvis.diagnostics.json_report import dumps, record
+
+        print(dumps([
+            record(f.category, f.status, f.message, f.hint) for f in findings
+        ]))
+        return 1 if has_failures(findings) else 0
 
     lines: list[str] = [f"Jarvis {__version__} — Doctor (completeness self-check)",
                         "=" * 64]
@@ -541,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return broker_stdio_main()
     if args.check:
-        return _cmd_check()
+        return _cmd_check(as_json=args.json_output)
     if args.plugins:
         return _cmd_plugins()
     if args.phase5_doctor:
@@ -549,7 +565,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.orb_doctor:
         return _cmd_orb_doctor()
     if args.doctor:
-        return _cmd_doctor()
+        return _cmd_doctor(as_json=args.json_output)
     if args.install_admin_helper:
         return _cmd_install_admin_helper()
     if args.uninstall:

@@ -393,6 +393,105 @@ def _format_report(report: HardwareReport, rec: WhisperRecommendation) -> str:
     return "\n".join(lines)
 
 
+def check_records(
+    report: HardwareReport, rec: WhisperRecommendation
+) -> list[dict[str, object]]:
+    """The same preflight as :func:`_format_report`, as machine-readable records.
+
+    One record per component, in the closed vocabulary defined by
+    :mod:`jarvis.diagnostics.json_report`. The verdicts here are not invented
+    for the JSON path — they are the ones the human report already makes:
+
+      * ``ffmpeg`` missing is the one thing the text report calls out as
+        needing action, so it is the one ``warn`` that is always meaningful.
+      * ``ram`` uses the SAME 8 GB threshold as :func:`recommend_whisper`. Below
+        it, local speech-to-text is not recommended and the box needs a cloud
+        provider key to have a voice at all — worth a ``warn``, never a
+        ``fail``, because Jarvis runs fine that way.
+
+    Everything else is ``info``: a CPU name or an absent GPU is a fact about
+    the host, not a defect, and a script must never fail an install over it.
+    """
+    from jarvis.diagnostics.json_report import record
+
+    os_version = report.os_version.split()[0] if report.os_version else ""
+    records: list[dict[str, object]] = [
+        record("os", "info", f"{report.os_name} {os_version}".strip()),
+        record(
+            "python",
+            "info",
+            f"{report.python_version} ({report.python_executable})",
+        ),
+        record(
+            "cpu",
+            "info",
+            f"{report.cpu_name} — {report.cpu_cores_physical} physical / "
+            f"{report.cpu_cores_logical} logical cores",
+        ),
+    ]
+
+    ram_ok = report.ram_total_mb >= 8192
+    records.append(
+        record(
+            "ram",
+            "ok" if ram_ok else "warn",
+            f"{report.ram_total_mb} MB total, {report.ram_available_mb} MB available",
+            None
+            if ram_ok
+            else "Under 8 GB — local speech-to-text is not recommended here. "
+            "Configure a cloud provider key so voice input still works.",
+        )
+    )
+
+    if report.gpus:
+        for i, gpu in enumerate(report.gpus):
+            detail = f"{gpu.name} ({gpu.vram_mb} MB VRAM)"
+            if gpu.compute_capability:
+                detail += f", compute capability {gpu.compute_capability}"
+            records.append(record(f"gpu{i}", "ok", detail))
+    else:
+        records.append(
+            record("gpu", "info", "no NVIDIA GPU detected — everything runs on CPU")
+        )
+
+    records.append(
+        record(
+            "cuda-runtime",
+            "ok" if report.cuda_runtime else "info",
+            report.cuda_runtime or "not installed",
+        )
+    )
+    records.append(
+        record(
+            "torch-cuda",
+            "ok" if report.torch_cuda_available else "info",
+            "available" if report.torch_cuda_available else "not available",
+        )
+    )
+    records.append(
+        record(
+            "ffmpeg",
+            "ok" if report.ffmpeg_version else "warn",
+            report.ffmpeg_version or "not found",
+            None if report.ffmpeg_version else "Install ffmpeg and put it on PATH.",
+        )
+    )
+
+    for pkg, version in sorted(report.existing_installs.items()):
+        records.append(record(f"installed:{pkg}", "info", version))
+
+    records.append(
+        record(
+            "speech-to-text",
+            "info",
+            f"{rec.provider} / {rec.model} on {rec.device} ({rec.compute_type}), "
+            f"~{rec.expected_latency_ms} ms for 5 s of audio",
+            rec.rationale,
+        )
+    )
+    return records
+
+
 def cuda_inference_verified() -> bool | None:
     """Cached GPU-inference verdict for this host (non-blocking), or ``None``.
 
@@ -461,9 +560,20 @@ def system_ram_gb() -> float | None:
     return round(total_mb / 1024.0, 1) if total_mb > 0 else None
 
 
-def main() -> int:
+def main(as_json: bool = False) -> int:
+    """Render the hardware preflight.
+
+    ``as_json`` swaps the box-drawing report for JSON Lines so an installer can
+    gate on it. The exit code is 0 either way — this command reports, it does
+    not judge — so existing callers keep working unchanged.
+    """
     report = analyze()
     rec = recommend_whisper(report, gpu_inference_verified=cuda_inference_verified())
+    if as_json:
+        from jarvis.diagnostics.json_report import dumps
+
+        print(dumps(check_records(report, rec)))
+        return 0
     print(_format_report(report, rec))
     return 0
 
