@@ -69,12 +69,18 @@ RUNTIME_READY_POLL_S = 0.5
 OWNED_STARTUP_TIMEOUT_S = RUNTIME_READY_TIMEOUT_S
 
 # The managed process is meant to be warm before a user calls. Poll its
-# ownership cheaply once a second so an idle native crash starts recovering
-# immediately; probe the full model pool often enough that an abandoned
+# ownership every few seconds so an idle native crash starts recovering
+# promptly (once a second cost ~1.6 % of a core on Windows, where each psutil
+# status() walks the whole process table — CPU diet, 2026-08-22); probe the
+# full model pool often enough that an abandoned
 # capacity-one session cannot make the next caller wait minutes.  Replacement
 # still requires 30 seconds of continuously unavailable capacity and a second
 # generation-bound probe under the lifecycle lease.
-RUNTIME_MONITOR_POLL_S = 1.0
+RUNTIME_MONITOR_POLL_S = 5.0
+#: Whether a crashed child can linger as a zombie that still answers
+#: ``create_time()`` — POSIX yes, Windows never (module-level so a test can
+#: exercise the POSIX path on any box).
+_ZOMBIE_STATUS_POSSIBLE = os.name != "nt"
 RUNTIME_MONITOR_POOL_INTERVAL_S = 5.0
 RUNTIME_MONITOR_UNREADY_GRACE_S = 30.0
 
@@ -476,11 +482,15 @@ def _process_create_time(pid: int) -> float | None:
         created = float(process.create_time())
     except Exception:  # noqa: BLE001 — gone/denied both mean "not verifiable"
         return None
-    try:
-        if process.status() == psutil.STATUS_ZOMBIE:
-            return None
-    except Exception:  # noqa: BLE001 — an unreadable status must not revoke ownership
-        log.debug("supervisor: process status probe failed for pid %s", pid, exc_info=True)
+    # Zombies are a POSIX notion; on Windows ``status()`` is also by far the
+    # most expensive psutil call (it enumerates every process on the box), so
+    # the question is only asked where the answer can be "yes".
+    if _ZOMBIE_STATUS_POSSIBLE:
+        try:
+            if process.status() == psutil.STATUS_ZOMBIE:
+                return None
+        except Exception:  # noqa: BLE001 — an unreadable status must not revoke ownership
+            log.debug("supervisor: process status probe failed for pid %s", pid, exc_info=True)
     return created
 
 

@@ -344,6 +344,13 @@ const RECAP_POLL_MS = 5000;
 const ACTIVITY_POLL_MS = 1500;
 
 /**
+ * The badge poll's cadence while every pane's agent has stopped and no
+ * just-sent prompt is waiting for confirmation. Nothing can flip on its own
+ * then, so the fast beat would only re-read the same answer.
+ */
+const ACTIVITY_POLL_IDLE_MS = 5000;
+
+/**
  * How long a just-sent prompt is allowed to claim "working" on its own.
  *
  * Only until the backend can answer for itself: the submit grace over there
@@ -1037,17 +1044,30 @@ export function AgenticGrid({
    */
   const [sentAt, setSentAt] = useState<Record<string, number>>({});
 
+  // Mirror of `sentAt` the poll can read without re-creating itself: a pending
+  // bridge means a badge is waiting for the backend's confirmation, which is
+  // exactly when the fast cadence earns its keep.
+  const sentPendingRef = useRef(false);
+  useEffect(() => {
+    sentPendingRef.current = Object.keys(sentAt).length > 0;
+  }, [sentAt]);
+
   useEffect(() => {
     if (!pollRecaps) return;
     let cancelled = false;
     let pulling = false;
-    const pull = async () => {
-      if (pulling) return;
+    let timer: number | undefined;
+    // Returns whether anything is in flight — that decides the next delay.
+    const pull = async (): Promise<boolean> => {
+      if (pulling) return true;
       pulling = true;
       try {
         const answer = await fetchTerminalActivity(session.id);
-        if (cancelled) return;
+        if (cancelled) return false;
         const next = Object.fromEntries(answer.terminals.map((row) => [row.name, row]));
+        const busy =
+          answer.terminals.some((row) => row.activity === "working") ||
+          sentPendingRef.current;
         // Same keep-identity guard as the recap poll above: most ticks change
         // nothing, and a fresh-but-equal object every 1.5 seconds would
         // re-render this very large component forty times a minute for it.
@@ -1070,18 +1090,31 @@ export function AgenticGrid({
             ? current
             : Object.fromEntries(keep);
         });
+        return busy;
       } catch {
         // The recap poll warns for both feeds; a second warning per tick from
-        // the fast poll would only drown it.
+        // the fast poll would only drown it. Keep the fast cadence so a
+        // backend coming back is noticed within a beat.
+        return true;
       } finally {
         pulling = false;
       }
     };
-    void pull();
-    const timer = window.setInterval(() => void pull(), ACTIVITY_POLL_MS);
+    // Adaptive cadence: the fast beat only while a pane is working (or a
+    // just-sent prompt is waiting to be confirmed) — that is when a badge
+    // flipping late reads as broken. With every agent stopped nothing can
+    // flip except by the user's own Send, which the optimistic bridge shows
+    // at once, so the idle beat costs a third of the requests for the same
+    // picture (CPU diet, 2026-08-22).
+    const run = async () => {
+      const busy = await pull();
+      if (cancelled) return;
+      timer = window.setTimeout(() => void run(), busy ? ACTIVITY_POLL_MS : ACTIVITY_POLL_IDLE_MS);
+    };
+    void run();
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [session.id, pollRecaps]);
 
@@ -1890,14 +1923,32 @@ export function AgenticGrid({
       }
     };
 
-    // Past the 300 ms glide, then a slow patrol — measuring a dozen rects is
-    // cheap, but forcing layout more often than this buys nothing.
+    // Past the 300 ms glide, then re-check whenever the surface actually
+    // changes size (a ResizeObserver fires once per real layout change, not on
+    // a clock), with a slow patrol as the safety net for drift that no resize
+    // announces. The old 3 s patrol forced a layout measurement of a dozen
+    // rects twenty times a minute for a workspace nobody was touching (CPU
+    // diet, 2026-08-22).
     const first = window.setTimeout(check, 450);
-    const patrol = window.setInterval(check, 3000);
+    const patrol = window.setInterval(check, 15000);
+    let settle: number | undefined;
+    const surfaceNode = canvasRef.current;
+    const observer =
+      surfaceNode && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            // Let the glide finish before measuring, and coalesce a burst of
+            // resize notifications into one check.
+            if (settle !== undefined) window.clearTimeout(settle);
+            settle = window.setTimeout(check, 350);
+          })
+        : null;
+    observer?.observe(surfaceNode as Element);
     return () => {
       cancelled = true;
       window.clearTimeout(first);
       window.clearInterval(patrol);
+      if (settle !== undefined) window.clearTimeout(settle);
+      observer?.disconnect();
     };
   }, [guardActive, layout, session.terminals]);
 

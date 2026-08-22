@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 import queue
 import secrets
@@ -1338,6 +1339,37 @@ def _make_conductor_announcer(
 # DesktopApp
 # ---------------------------------------------------------------------------
 
+
+
+class _HealthProbeLogFilter(logging.Filter):
+    """Drop httpx's INFO line for the loopback ``/api/health`` probe.
+
+    httpx logs one ``HTTP Request: GET …/api/health`` line per call. The
+    blank-window watchdog probes on a timer for the whole life of the window,
+    and that single line was 40 % of everything ``jarvis_desktop.log`` received
+    while idle (2 011 of the last 5 000 lines on 2026-08-22) — noise that also
+    costs the log-writer thread. Only the self-probe is dropped; every other
+    httpx request (providers, Telegram, …) still logs as before.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 — a malformed record is not ours to judge
+            return True
+        return not ("/api/health" in message and "127.0.0.1" in message)
+
+
+_health_probe_log_filter: _HealthProbeLogFilter | None = None
+
+
+def _silence_health_probe_log() -> None:
+    """Install the filter once, on the logger httpx actually emits through."""
+    global _health_probe_log_filter
+    if _health_probe_log_filter is not None:
+        return
+    _health_probe_log_filter = _HealthProbeLogFilter()
+    logging.getLogger("httpx").addFilter(_health_probe_log_filter)
 
 class DesktopApp:
     """Orchestrates the pywebview window + backend thread.
@@ -4815,14 +4847,15 @@ class DesktopApp:
         # the attribute must also be allowed to go back to None on shutdown.
         client: Any = httpx.Client(timeout=1.0)
         self._health_http = client
+        _silence_health_probe_log()
         return client
 
     def _backend_healthy(self) -> bool:
         """One quick ``/api/health`` probe — is the server answering right now?
 
-        Deliberately single-shot and short: the blank-window watchdog asks once
-        a second and needs the ANSWER, including the honest "no" while the loop
-        is frozen. ``_wait_for_backend``'s poll and the lock holder's four-try
+        Deliberately single-shot and short: the blank-window watchdog asks every
+        few seconds and needs the ANSWER, including the honest "no" while the
+        loop is frozen. ``_wait_for_backend``'s poll and the lock holder's four-try
         probe both mean something else.
 
         The client behind it is reused rather than rebuilt per call; see

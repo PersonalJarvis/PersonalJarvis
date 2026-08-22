@@ -150,14 +150,29 @@ FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 # only the render()/PhotoImage()/itemconfig() work is skipped.
 _IDLE_SETTLE_TICKS = 30
 
-# Adaptive pacing: the nominal target stays 16ms (~60fps aspirational — the
-# real ceiling is lower, see above), but the actual next delay is derived
-# from how long THIS tick took, not a blind constant. In the common case
-# (render cost << 16ms) this is indistinguishable from the old fixed delay.
-# It only matters after an unusually slow tick, where it schedules the next
-# one sooner instead of adding a full 16ms on top of the overrun — this
-# bounds how much a single slow frame can widen the gap to the next one.
-TARGET_FRAME_MS = 16
+# Silent-active skip (CPU diet, 2026-08-22): the equalizer is deterministic in
+# (t, level) and ``bar_heights`` collapses to a flat row of ``min_h`` strokes
+# the moment the level is zero — so a ``listen``/``speak`` bar with no sound
+# (the wake listener waiting, which is the bar's state for HOURS) repaints the
+# same pixels every tick just like the idle pill does. Those ticks go through
+# the same settle counter: once the eased pill size and display level have
+# converged, the render/PhotoImage/itemconfig work is skipped until sound,
+# playback, a mode flip, hover or mute changes the tick key. Measured before
+# the change: the tk thread alone cost ~6 % of one core while nothing was
+# happening. ``think`` (the travelling sweep) and drop feedback stay
+# time-dependent and are never skipped.
+
+# Adaptive pacing: the nominal target is 40ms (25fps). The bar is a row of
+# five strokes and a sweep — 25 updates/s is visually indistinguishable from
+# the earlier 16ms target on this window style (whose measured DWM ceiling was
+# ~31 updates/s anyway, see above) and costs a little over a third of the
+# wake-ups. The actual next delay is derived from how long THIS tick took, not
+# a blind constant. In the common case (render cost << target) this is
+# indistinguishable from a fixed delay. It only matters after an unusually
+# slow tick, where it schedules the next one sooner instead of adding a full
+# target interval on top of the overrun — this bounds how much a single slow
+# frame can widen the gap to the next one.
+TARGET_FRAME_MS = 40
 MIN_FRAME_DELAY_MS = 1
 
 # Once the close-X is accepted, suppress rapid follow-up clicks long enough for
@@ -809,9 +824,7 @@ class JarvisBarOverlay:
             )
             from jarvis.overlay.drop_target import make_drop_target
 
-            if make_drop_target().register(
-                self._canvas, dispatch_drop, self._set_drop_active
-            ):
+            if make_drop_target().register(self._canvas, dispatch_drop, self._set_drop_active):
                 # Only claim the return leg once the target actually registered
                 # — a host without tkdnd has no drops to confirm, and leaving a
                 # stale sink installed would point at a bar that never sees one.
@@ -1009,9 +1022,7 @@ class JarvisBarOverlay:
         # Clamp to the monitor the bar sits on (measured at the new centre), not
         # the primary screen, so a resize near a secondary-monitor edge stays on
         # that monitor.
-        work = self._work_area_for_point(
-            new_x + renderer.WIN_W // 2, new_y + renderer.WIN_H // 2
-        )
+        work = self._work_area_for_point(new_x + renderer.WIN_W // 2, new_y + renderer.WIN_H // 2)
         new_x, new_y = interaction.clamp_to_work_area(
             new_x,
             new_y,
@@ -1065,9 +1076,7 @@ class JarvisBarOverlay:
         # runs while still withdrawn so it is invisible.
         if self._follow_cursor and self._project_onto_cursor_monitor():
             try:
-                self._root.geometry(
-                    f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}"
-                )
+                self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
             except Exception:  # noqa: BLE001
                 log.debug("jarvisbar follow-monitor reveal move failed", exc_info=True)
 
@@ -1264,34 +1273,46 @@ class JarvisBarOverlay:
             # long before a file arrives, so the very frames the tick lives in
             # are exactly the ones the fast path skips.
             drop_visual = self._current_drop_visual()
-            tick_key = (effective_mode, self._hovered, self._muted, drop_visual)
+            # A stale level (the feed stopped without a zero) renders as
+            # silence, never as frozen dancing bars. getattr default:
+            # ``__new__``-built test/hot-reload instances skip __init__; a
+            # missing stamp reads as "never received".
+            level = renderer.effective_ext_level(
+                self._ext_level,
+                now - getattr(self, "_last_level_rx_t", 0.0),
+            )
+            # Silent-active skip (see the TARGET_FRAME_MS block above): with no
+            # level and no playback the equalizer is a flat, time-independent
+            # row, so a silent listen/speak bar settles exactly like the idle
+            # pill. The silence flag is part of the tick key so the first
+            # audible sample (or playback starting) resets the counter and
+            # renders immediately.
+            silent = level <= 0.0 and not playing
+            static_capable = effective_mode == "idle" or (
+                effective_mode in ("listen", "speak") and silent
+            )
+            tick_key = (effective_mode, self._hovered, self._muted, drop_visual, silent)
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
                 self._static_tick_count = 0
             else:
                 self._static_tick_count += 1
-            is_settled_idle = (
-                effective_mode == "idle"
+            is_settled_static = (
+                static_capable
                 and drop_visual == renderer.DROP_STATE_NONE
                 and self._static_tick_count >= _IDLE_SETTLE_TICKS
             )
 
-            if not is_settled_idle:
+            if not is_settled_static:
                 # The level is fed live per ~60 ms TTS sub-block
                 # (player._write_samples), so the equalizer reacts to Jarvis's
                 # actual loudness — thin and lively, exactly like it reacts to
                 # your mic. No synthetic floor (that made the bars look
-                # uniformly blocky). A stale sample (the feed stopped without a
-                # zero) renders as silence, never as frozen dancing bars.
-                # getattr default: ``__new__``-built test/hot-reload instances
-                # skip __init__; a missing stamp reads as "never received".
+                # uniformly blocky).
                 img = self._renderer.render(
                     t,
                     effective_mode,
-                    renderer.effective_ext_level(
-                        self._ext_level,
-                        now - getattr(self, "_last_level_rx_t", 0.0),
-                    ),
+                    level,
                     hovered=self._hovered,
                     muted=self._muted,
                     drop_state=drop_visual,
@@ -1471,13 +1492,9 @@ class JarvisBarOverlay:
         finally:
             if self._running and self._root is not None:
                 try:
-                    self._root.after(
-                        CURSOR_MONITOR_POLL_MS, self._schedule_cursor_monitor_guard
-                    )
+                    self._root.after(CURSOR_MONITOR_POLL_MS, self._schedule_cursor_monitor_guard)
                 except Exception:  # noqa: BLE001
-                    log.warning(
-                        "JarvisBar cursor-monitor guard re-arm skipped", exc_info=True
-                    )
+                    log.warning("JarvisBar cursor-monitor guard re-arm skipped", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Drag (reposition) + click (start a voice session)                 #
@@ -1579,9 +1596,7 @@ class JarvisBarOverlay:
         something: a drop that produced nothing usable is exactly the case
         where silence would leave the user guessing.
         """
-        state = (
-            renderer.DROP_STATE_OK if accepted else renderer.DROP_STATE_REJECTED
-        )
+        state = renderer.DROP_STATE_OK if accepted else renderer.DROP_STATE_REJECTED
         if self._root is None:
             # Not started (or already torn down) — nothing to animate on.
             return

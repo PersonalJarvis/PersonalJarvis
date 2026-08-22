@@ -85,8 +85,8 @@ _KEY_MAP = {
 # and a jarvis.toml stay legible on every OS.
 _MOUSE_TOKEN_TO_VK = {
     "mouse_middle": "0x04",  # VK_MBUTTON
-    "mouse_x1": "0x05",      # VK_XBUTTON1 (Back)
-    "mouse_x2": "0x06",      # VK_XBUTTON2 (Forward)
+    "mouse_x1": "0x05",  # VK_XBUTTON1 (Back)
+    "mouse_x2": "0x06",  # VK_XBUTTON2 (Forward)
 }
 
 
@@ -100,6 +100,7 @@ def _to_library_combo(normalized: str) -> str:
     parts = [p.strip() for p in normalized.split("+") if p.strip()]
     return " + ".join(_MOUSE_TOKEN_TO_VK.get(p, p) for p in parts)
 
+
 # --------------------------------------------------------------------------
 # Module-level single-checker guard.
 #
@@ -112,6 +113,49 @@ def _to_library_combo(normalized: str) -> str:
 _CHECKER_LOCK = threading.Lock()
 _CHECKER_REFCOUNT = 0
 
+#: How often the library's checker thread samples the keyboard. The package
+#: hardcodes ``time.sleep(0.02)`` in its polling loop — 50 ``GetAsyncKeyState``
+#: sweeps a second for the life of the process, measured at ~0.9 % of one core
+#: while nothing was pressed (CPU diet, 2026-08-22). A chord is HELD, not
+#: tapped, so 20 samples a second detect it just as reliably at under half the
+#: wake-ups; anything slower would start to feel late on press-to-talk.
+HOTKEY_POLL_S = 0.05
+
+
+class _PacedTime:
+    """``time`` stand-in for the library's checker module.
+
+    Every sleep shorter than :data:`HOTKEY_POLL_S` is stretched to it; every
+    other attribute (and every longer sleep, such as the library's 0.7 s
+    checker-restart settle) passes straight through to the real module. Only
+    the checker module sees this object — the process-wide ``time`` is untouched.
+    """
+
+    def __init__(self, real) -> None:
+        self._real = real
+
+    def sleep(self, seconds: float) -> None:
+        self._real.sleep(seconds if seconds >= HOTKEY_POLL_S else HOTKEY_POLL_S)
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+def _pace_checker_poll(gh) -> None:
+    """Slow the library's checker loop to :data:`HOTKEY_POLL_S` — idempotent.
+
+    The loop lives in ``global_hotkeys.hotkey_checker`` and reads ``time`` as a
+    module global, so swapping that one name is the whole change. A library
+    build without that module (or without a ``time`` global) is left alone.
+    """
+    checker = getattr(gh, "hotkey_checker", None)
+    if checker is None:
+        return
+    current = getattr(checker, "time", None)
+    if current is None or isinstance(current, _PacedTime):
+        return
+    checker.time = _PacedTime(current)
+
 
 def _start_checker_once(gh) -> None:
     """Start the shared checker on the 0->1 transition.
@@ -122,6 +166,7 @@ def _start_checker_once(gh) -> None:
     global _CHECKER_REFCOUNT
     with _CHECKER_LOCK:
         if _CHECKER_REFCOUNT == 0:
+            _pace_checker_poll(gh)
             gh.start_checking_hotkeys()
         _CHECKER_REFCOUNT += 1
 
@@ -360,9 +405,7 @@ class GlobalHotkeysBackend:
             # hand-written jarvis.toml could spell an existing chord differently and
             # slip past its duplicate check; comparing the token SETS ourselves is
             # what keeps that from arming one physical press twice.
-            taken = {
-                frozenset(c.replace(" ", "").split("+")) for c in registered_strings
-            }
+            taken = {frozenset(c.replace(" ", "").split("+")) for c in registered_strings}
             for row in compat:
                 keys = frozenset(row[0].replace(" ", "").split("+"))
                 if keys in taken:
@@ -423,8 +466,7 @@ class GlobalHotkeysBackend:
                     # rows). Passing the rows is the bug that left stale state.
                     gh.remove_hotkeys(self._combo_strings)
                 except Exception:  # noqa: BLE001 — teardown must never propagate
-                    log.debug("remove_hotkeys during teardown failed (non-fatal)",
-                              exc_info=True)
+                    log.debug("remove_hotkeys during teardown failed (non-fatal)", exc_info=True)
         self._registered = []
         self._combo_strings = []
         self._gh = None

@@ -47,8 +47,11 @@ from typing import Any, Literal
 
 from loguru import logger
 
-#: How often the window is asked what it is showing.
-POLL_S = 1.0
+#: How often the window is asked what it is showing. Five seconds: every tick
+#: is a page-state query plus a loopback ``/api/health`` request, and the
+#: grace periods below are measured in tens of seconds, so a 1 s cadence only
+#: bought 3 600 health requests an hour (CPU diet, 2026-08-22).
+POLL_S = 5.0
 
 #: How long a window may show nothing before that counts as a failure. A cold
 #: WebView2 on a busy machine needs several seconds before it paints the boot

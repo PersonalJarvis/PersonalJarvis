@@ -146,6 +146,14 @@ const CLOUD_LIGHT: Rgb = [255, 249, 216];
 const TEXTURE_SIZE = 48;
 const NOISE_SIZE = 64;
 const FRAME_INTERVAL_MS = 1000 / 20;
+/**
+ * The idle orb only breathes — a slow sine the eye cannot tell apart at 10 or
+ * 20 frames a second — yet each frame repaints the whole weather texture pixel
+ * by pixel. Idle is the orb's state for hours; halving its frame rate halves
+ * the single largest standing cost of the renderer process (CPU diet,
+ * 2026-08-22). Every live state keeps the full rate.
+ */
+const IDLE_FRAME_INTERVAL_MS = 1000 / 10;
 
 function mix(a: number, b: number, amount: number): number {
   return a + (b - a) * amount;
@@ -450,7 +458,8 @@ export function VoiceOrb({
     let lastPaint = performance.now();
     drawFrame(lastPaint);
     let raf = requestAnimationFrame(function loop(now: number) {
-      if (now - lastPaint >= FRAME_INTERVAL_MS) {
+      const interval = stateRef.current === "idle" ? IDLE_FRAME_INTERVAL_MS : FRAME_INTERVAL_MS;
+      if (now - lastPaint >= interval) {
         drawFrame(now);
         lastPaint = now;
       }

@@ -117,7 +117,37 @@ describe("voice orb renderer", () => {
       return 21;
     });
 
+    // Idle only breathes, so it paints at 10 fps (every 100 ms) — half the
+    // live rate, see IDLE_FRAME_INTERVAL_MS.
     render(<VoiceOrb state="idle" />);
+    expect(display.drawImage).toHaveBeenCalledTimes(1);
+    nextFrame?.(50);
+    expect(display.drawImage).toHaveBeenCalledTimes(1);
+    nextFrame?.(99);
+    expect(display.drawImage).toHaveBeenCalledTimes(1);
+    nextFrame?.(100);
+    expect(display.drawImage).toHaveBeenCalledTimes(2);
+    nextFrame?.(600_150);
+    expect(display.drawImage).toHaveBeenCalledTimes(3);
+
+    const meanDelta = snapshots[1].reduce(
+      (total, value, index) => total + Math.abs(value - snapshots[2][index]),
+      0,
+    ) / snapshots[1].length;
+    expect(meanDelta).toBeLessThan(2);
+  });
+
+  it("paints live states at the full 20 fps", () => {
+    setReducedMotion(false);
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    const { display } = installCanvasContexts();
+    let nextFrame: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      nextFrame = callback;
+      return 21;
+    });
+
+    render(<VoiceOrb state="listening" />);
     expect(display.drawImage).toHaveBeenCalledTimes(1);
     nextFrame?.(49);
     expect(display.drawImage).toHaveBeenCalledTimes(1);
@@ -127,14 +157,6 @@ describe("voice orb renderer", () => {
     expect(display.drawImage).toHaveBeenCalledTimes(2);
     nextFrame?.(100);
     expect(display.drawImage).toHaveBeenCalledTimes(3);
-    nextFrame?.(600_150);
-    expect(display.drawImage).toHaveBeenCalledTimes(4);
-
-    const meanDelta = snapshots[2].reduce(
-      (total, value, index) => total + Math.abs(value - snapshots[3][index]),
-      0,
-    ) / snapshots[2].length;
-    expect(meanDelta).toBeLessThan(2);
   });
 
   it("moves the internal weather faster while thinking than while idle", () => {

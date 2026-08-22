@@ -318,3 +318,77 @@ def test_adaptive_pacing_keeps_the_full_target_delay_for_a_fast_tick(monkeypatch
 
     ms, _fn = root.scheduled[-1]
     assert ms == TARGET_FRAME_MS
+
+
+# --- silent-active skip (CPU diet, 2026-08-22) --------------------------------
+# The wake listener keeps the bar in ``listen`` for hours. With no sound the
+# equalizer is a flat, time-independent row, so those ticks must settle and
+# skip exactly like the idle pill — and wake up again the instant sound
+# arrives.
+
+
+def test_silent_listen_settles_and_skips_render():
+    renderer_obj = _CountingRenderer()
+    bar, _root, canvas = _bare_bar(renderer_obj, mode="listen")
+    # No level ever received → effective level 0, no playback → silent.
+    for _ in range(_IDLE_SETTLE_TICKS):
+        bar._schedule_frame()
+    assert renderer_obj.calls > 0, "silent listen never rendered even once"
+
+    calls_before = renderer_obj.calls
+    itemconfig_before = canvas.itemconfig_calls
+    for _ in range(20):
+        bar._schedule_frame()
+    assert renderer_obj.calls == calls_before, (
+        "a settled silent listen bar kept re-rendering identical flat bars"
+    )
+    assert canvas.itemconfig_calls == itemconfig_before
+
+
+def test_audible_listen_never_skips_render(monkeypatch):
+    """Sound present → level-driven bars jitter with ``t`` → every tick renders."""
+    renderer_obj = _CountingRenderer()
+    bar, _root, _canvas = _bare_bar(renderer_obj, mode="listen")
+    bar._ext_level = 0.6
+    # Keep the level sample fresh on every tick so it never goes stale.
+    monkeypatch.setattr(renderer, "effective_ext_level", lambda level, age: level, raising=True)
+    for _ in range(_IDLE_SETTLE_TICKS + 5):
+        bar._schedule_frame()
+    assert renderer_obj.calls == _IDLE_SETTLE_TICKS + 5, (
+        "an audible listen bar skipped rendering — the equalizer would freeze"
+    )
+
+
+def test_sound_arriving_after_a_silent_settle_renders_immediately(monkeypatch):
+    renderer_obj = _CountingRenderer()
+    bar, _root, _canvas = _bare_bar(renderer_obj, mode="listen")
+    for _ in range(_IDLE_SETTLE_TICKS + 5):
+        bar._schedule_frame()
+    calls_while_settled = renderer_obj.calls
+
+    bar._ext_level = 0.5
+    monkeypatch.setattr(renderer, "effective_ext_level", lambda level, age: level, raising=True)
+    bar._schedule_frame()
+    assert renderer_obj.calls == calls_while_settled + 1, (
+        "the first audible sample after a silent settle did not render"
+    )
+
+
+def test_playback_keeps_a_silent_speak_bar_rendering(monkeypatch):
+    """TTS playback is the player's authoritative signal (the level tap only
+    fires at buffer-write time) — while it is active the bar never settles."""
+    from jarvis.audio import level_tap
+
+    renderer_obj = _CountingRenderer()
+    bar, _root, _canvas = _bare_bar(renderer_obj, mode="speak")
+    monkeypatch.setattr(level_tap, "playback_active", lambda: True)
+    for _ in range(_IDLE_SETTLE_TICKS + 5):
+        bar._schedule_frame()
+    assert renderer_obj.calls == _IDLE_SETTLE_TICKS + 5
+
+
+def test_target_frame_is_25fps_not_60():
+    """The bar is five strokes and a sweep; 25 updates/s is indistinguishable
+    from the old 16 ms target on a layered window whose DWM ceiling was ~31/s,
+    and costs a third of the wake-ups."""
+    assert TARGET_FRAME_MS == 40

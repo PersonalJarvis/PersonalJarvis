@@ -681,6 +681,15 @@ export function AgenticTerminal({
   focusedRef.current = focused;
   layoutBusyRef.current = layoutBusy;
 
+  // Only the focused pane's cursor blinks. A blinking cursor repaints its pane
+  // twice a second forever, and on a wall of a dozen idle terminals that was
+  // the renderer's biggest standing cost (CPU diet, 2026-08-22). The unfocused
+  // panes keep a steady cursor, so where the agent is typing stays visible.
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.cursorBlink = focused;
+  }, [focused]);
+
   useEffect(() => {
     const region = terminalRegionRef.current;
     if (!region) return;
@@ -737,7 +746,8 @@ export function AgenticTerminal({
       // and the text under it accumulate different sub-pixel offsets and the
       // frame visibly bends. Monospace legibility comes from the line height.
       letterSpacing: 0,
-      cursorBlink: true,
+      // Only the focused pane blinks — see the `focused` effect above.
+      cursorBlink: focusedRef.current,
       cursorStyle: "bar",
       scrollback: 10000,
       // Required by the Unicode 11 width provider below.

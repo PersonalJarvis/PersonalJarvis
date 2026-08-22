@@ -413,9 +413,7 @@ def test_noop_backend_logs_once_then_no_ops(caplog):
     with caplog.at_level(logging.INFO, logger="jarvis.trigger.backends.noop"):
         NoopBackend()
         NoopBackend()  # second construction must NOT log again
-    explained = [
-        r for r in caplog.records if "Global hotkeys are unavailable" in r.getMessage()
-    ]
+    explained = [r for r in caplog.records if "Global hotkeys are unavailable" in r.getMessage()]
     assert len(explained) == 1, "the explanation must log exactly once"
 
 
@@ -503,9 +501,7 @@ def test_pynput_linux_right_alt_drives_one_ptt_edge_pair():
 
     edges: list[str] = []
     backend = PynputBackend()
-    backend.register(
-        [["alt + l", lambda: edges.append("down"), lambda: edges.append("up")]]
-    )
+    backend.register([["alt + l", lambda: edges.append("down"), lambda: edges.append("up")]])
     right_alt = types.SimpleNamespace(char=None, name="alt_r")
     letter_l = types.SimpleNamespace(char="l", name=None)
 
@@ -776,9 +772,7 @@ def test_quartz_backend_delivers_one_ptt_edge_pair() -> None:
     edges: list[str] = []
     backend = QuartzHotkeyBackend()
     backend._permission_check = lambda: True
-    backend.register(
-        [["alt + l", lambda: edges.append("down"), lambda: edges.append("up")]]
-    )
+    backend.register([["alt + l", lambda: edges.append("down"), lambda: edges.append("up")]])
 
     backend._handle_flags(1 << 19)  # Option/Alt down
     backend._handle_key_down(0x25)  # physical L
@@ -851,8 +845,8 @@ def _install_fake_quartz(monkeypatch):
     quartz.CFRunLoopRun = _run_loop
     quartz.CFRunLoopStop = _stop_loop
     quartz.CFRunLoopWakeUp = _wake_loop
-    quartz.CFRunLoopRemoveSource = (
-        lambda loop, source, mode: quartz.removed_sources.append((loop, source, mode))
+    quartz.CFRunLoopRemoveSource = lambda loop, source, mode: quartz.removed_sources.append(
+        (loop, source, mode)
     )
     quartz.CGEventTapEnable = lambda tap, enabled: setattr(tap, "enabled", enabled)
     quartz.CFMachPortInvalidate = lambda tap: setattr(tap, "invalidated", True)
@@ -888,3 +882,43 @@ def test_quartz_rearm_fully_retires_old_event_tap(monkeypatch) -> None:
     assert quartz.taps[-1].enabled is True
     assert old_tap.enabled is False
     backend.stop()
+
+
+# --- checker poll pacing (CPU diet, 2026-08-22) -------------------------------
+
+
+def test_checker_poll_is_paced_to_hotkey_poll_s() -> None:
+    """The library hardcodes ``time.sleep(0.02)`` in its checker loop; the
+    backend swaps the checker module's ``time`` for a paced stand-in so every
+    short sleep becomes ``HOTKEY_POLL_S`` while longer sleeps (the 0.7 s
+    restart settle) and every other ``time`` attribute pass straight through."""
+    import types
+
+    from jarvis.trigger.backends import global_hotkeys as ghb
+
+    calls: list[float] = []
+    real_time = types.SimpleNamespace(sleep=calls.append, monotonic=lambda: 42.0)
+    checker = types.SimpleNamespace(time=real_time)
+    gh = types.SimpleNamespace(hotkey_checker=checker)
+
+    ghb._pace_checker_poll(gh)
+    ghb._pace_checker_poll(gh)  # idempotent: never wraps the wrapper
+    assert isinstance(checker.time, ghb._PacedTime)
+    assert checker.time._real is real_time
+
+    checker.time.sleep(0.02)
+    checker.time.sleep(0.7)
+    assert calls == [ghb.HOTKEY_POLL_S, 0.7]
+    assert checker.time.monotonic() == 42.0
+
+
+def test_checker_poll_pacing_leaves_a_library_without_checker_alone() -> None:
+    import types
+
+    from jarvis.trigger.backends import global_hotkeys as ghb
+
+    gh = types.SimpleNamespace()
+    ghb._pace_checker_poll(gh)  # no hotkey_checker attribute → no-op, no raise
+    checker = types.SimpleNamespace()
+    ghb._pace_checker_poll(types.SimpleNamespace(hotkey_checker=checker))
+    assert not hasattr(checker, "time")

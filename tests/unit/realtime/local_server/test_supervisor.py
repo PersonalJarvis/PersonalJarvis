@@ -1904,7 +1904,29 @@ def test_a_zombie_child_is_never_mistaken_for_a_live_server(monkeypatch) -> None
             return psutil.STATUS_ZOMBIE
 
     monkeypatch.setattr(psutil, "Process", _Zombie)
+    monkeypatch.setattr(supervisor, "_ZOMBIE_STATUS_POSSIBLE", True)
     assert supervisor._process_create_time(4711) is None
+
+
+def test_windows_never_pays_for_a_status_probe(monkeypatch) -> None:
+    """Windows has no zombies, and ``status()`` there walks the whole process
+    table — the monitor asks it every few seconds, so the question is skipped
+    where the answer cannot be "zombie" (CPU diet, 2026-08-22)."""
+    import psutil
+
+    class _Live:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def create_time(self) -> float:
+            return 1000.0
+
+        def status(self) -> str:
+            raise AssertionError("status() must not be consulted on Windows")
+
+    monkeypatch.setattr(psutil, "Process", _Live)
+    monkeypatch.setattr(supervisor, "_ZOMBIE_STATUS_POSSIBLE", False)
+    assert supervisor._process_create_time(4711) == 1000.0
 
 
 def test_a_running_process_keeps_its_verified_ownership(monkeypatch) -> None:
