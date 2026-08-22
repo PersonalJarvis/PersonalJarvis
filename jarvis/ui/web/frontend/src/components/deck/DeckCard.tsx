@@ -73,7 +73,7 @@ export function DeckCard({
   return (
     <section
       ref={ref}
-      className={cn("group/card relative flex min-h-0 flex-col", variant === "rail" ? "pl-2" : "", className)}
+      className={cn("group/card deck-card relative flex min-h-0 flex-col", variant === "rail" ? "pl-2" : "", className)}
     >
       <HudFrameOverlay variant={variant} w={size.w} h={size.h} live={live} />
 

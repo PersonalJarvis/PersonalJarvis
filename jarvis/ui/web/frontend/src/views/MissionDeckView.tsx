@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
@@ -12,6 +20,8 @@ import { DeckOrb, type OrbReadouts } from "@/components/deck/DeckOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import { DeckStandby, ORB_TRAVEL } from "@/components/deck/DeckStandby";
 import { DeckReveal } from "@/components/deck/DeckReveal";
+import { DeckFloor, useDeckParallax } from "@/components/deck/DeckStage3D";
+import { SLOT_DEPTH, slotDepthVars } from "@/lib/deckDepth";
 import { HudLamp } from "@/components/deck/HudFrame";
 import {
   IdeGridCard,
@@ -29,7 +39,7 @@ import { useWakeWord } from "@/hooks/useWakeWord";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useElementSize } from "@/hooks/useElementSize";
 import { orbSizeFor, stageVignette, stageWashSize } from "@/lib/deckStage";
-import { HANDOFF, autoLaunchAfterMs, resolvePhase } from "@/lib/deckStandby";
+import { HANDOFF, autoLaunchAfterMs, resolvePhase, type BoardSlot } from "@/lib/deckStandby";
 import { writeDeckMode } from "@/lib/deckMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -156,6 +166,9 @@ export function MissionDeckView({
   // the first render so the wrappers never remount because the flag moved.
   const mountedInto = useRef(phase);
   const revealBoard = mountedInto.current !== "board";
+  // The board is a display case: the pointer sways its planes (lib/deckDepth).
+  const boardRef = useRef<HTMLDivElement>(null);
+  useDeckParallax(boardRef, phase === "board");
   // While the stage waits for the first word, the board's heaviest part gets
   // ready in the idle time: the WebGL probe and the 3D map's chunk. Measured
   // 2026-08-19: done in the click's own task they froze the launch for half
@@ -315,11 +328,20 @@ export function MissionDeckView({
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {phase === "board" && (
             <div
+              ref={boardRef}
               data-testid="deck-board"
-              className="relative grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden"
+              className="deck-board-3d relative grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(200px,3fr)_minmax(0,6fr)_minmax(240px,4fr)] lg:grid-rows-[minmax(0,1fr)_minmax(0,0.6fr)] lg:overflow-hidden"
             >
+              {/* The floor the case stands on — behind every plane, on the wall's side. */}
+              <DeckFloor />
+
               {/* LEFT top: the log — the terminal of the session */}
-              <DeckReveal slot="left-top" reveal={revealBoard} bodyClassName="flex min-h-0 flex-col">
+              <DeckReveal
+                slot="left-top"
+                reveal={revealBoard}
+                {...depthSlot("left-top")}
+                bodyClassName="flex min-h-0 flex-col"
+              >
                 <LogCard className="min-h-0 flex-1" />
               </DeckReveal>
 
@@ -328,9 +350,9 @@ export function MissionDeckView({
                 <DeckReveal
                   slot="centre-top"
                   reveal={revealBoard}
-                  className="shrink-0"
+                  className={cn("shrink-0", depthSlot("centre-top").className)}
                   bodyClassName="grid grid-cols-2 gap-3"
-                  style={{ height: "36%" }}
+                  style={{ height: "36%", ...depthSlot("centre-top").style }}
                 >
                   <TurnCard className="min-h-0" />
                   <ApiStatsCard className="min-h-0" />
@@ -349,7 +371,12 @@ export function MissionDeckView({
               </div>
 
               {/* RIGHT top: the wiki, in space, tall */}
-              <DeckReveal slot="right-top" reveal={revealBoard} bodyClassName="flex min-h-0 flex-col">
+              <DeckReveal
+                slot="right-top"
+                reveal={revealBoard}
+                {...depthSlot("right-top")}
+                bodyClassName="flex min-h-0 flex-col"
+              >
                 <WikiCard className="min-h-0 flex-1" />
               </DeckReveal>
 
@@ -357,7 +384,8 @@ export function MissionDeckView({
               <DeckReveal
                 slot="left-bottom"
                 reveal={revealBoard}
-                className="min-h-[8rem]"
+                className={cn("min-h-[8rem]", depthSlot("left-bottom").className)}
+                style={depthSlot("left-bottom").style}
                 bodyClassName="grid grid-cols-2 gap-3"
               >
                 <OutputsCard className="min-h-0" />
@@ -368,7 +396,8 @@ export function MissionDeckView({
               <DeckReveal
                 slot="centre-bottom"
                 reveal={revealBoard}
-                className="min-h-[8rem]"
+                className={cn("min-h-[8rem]", depthSlot("centre-bottom").className)}
+                style={depthSlot("centre-bottom").style}
                 bodyClassName="flex items-stretch justify-center"
               >
                 <CaptureCard className="w-full max-w-[28rem]" />
@@ -378,7 +407,8 @@ export function MissionDeckView({
               <DeckReveal
                 slot="right-bottom"
                 reveal={revealBoard}
-                className="min-h-[8rem]"
+                className={cn("min-h-[8rem]", depthSlot("right-bottom").className)}
+                style={depthSlot("right-bottom").style}
                 bodyClassName="grid grid-cols-2 gap-3"
               >
                 <TerminalsCard className="min-h-0" />
@@ -417,6 +447,19 @@ export function MissionDeckView({
 }
 
 type DeckMood = "ready" | "busy" | "listening" | "speaking" | "fail" | "offline";
+
+/**
+ * A slot's place in the display case (lib/deckDepth.ts) as the props its
+ * DeckReveal wrapper takes: the transform rule's class, the depth as custom
+ * properties, and `deck-slot-far` for planes behind the wall so their cards
+ * read softer.
+ */
+function depthSlot(slot: BoardSlot): { className: string; style: CSSProperties } {
+  return {
+    className: cn("deck-slot-3d", SLOT_DEPTH[slot].z < 0 && "deck-slot-far"),
+    style: slotDepthVars(slot) as CSSProperties,
+  };
+}
 
 
 /**
@@ -478,6 +521,8 @@ function BoardCentre({
             backgroundImage: stageVignette(orbSize),
           }}
         />
+        {/* The mascot stands on the case's floor: a ground shadow under it. */}
+        <div aria-hidden data-testid="deck-orb-ground" className="deck-orb-ground" />
         <motion.div layoutId="deck-orb" layoutDependency={orbSize} transition={ORB_TRAVEL}>
           <DeckOrb
             steps={steps}

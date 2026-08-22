@@ -2607,6 +2607,116 @@
     border-right-width: 1.5px;
   }
 
+  /*
+   * The board as a display case (lib/deckDepth.ts). The board element sets
+   * the perspective; each slot's wrapper carries its depth as custom
+   * properties and ONE transform rule turns them into a plane in front of
+   * (or behind) the wallpaper, turned toward the centre, swayed by the
+   * pointer (`--deck-px/--deck-py`, written by useDeckParallax) and scaled
+   * back so neighbours never overlap. Cards inside the case are glass slabs
+   * — a ground of the theme's card colour, blurred, with a shadow that
+   * lands on the floor — because a hairline frame alone has no depth to
+   * show. Transform, opacity and filter only: nothing here reaches layout.
+   */
+  .deck-board-3d {
+    perspective: 1400px;
+    perspective-origin: 50% 42%;
+    --deck-px: 0px;
+    --deck-py: 0px;
+  }
+  .deck-slot-3d {
+    transform: translate3d(
+        calc(var(--slot-dx, 0px) + var(--deck-px) * var(--slot-par, 1)),
+        calc(var(--slot-dy, 0px) + var(--deck-py) * var(--slot-par, 1)),
+        var(--slot-z, 0px)
+      )
+      rotateY(var(--slot-ry, 0deg)) scale(var(--slot-scale, 1));
+    transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    will-change: transform;
+  }
+  .deck-board-3d .deck-card {
+    background: hsl(var(--card) / 0.5);
+    backdrop-filter: blur(14px) saturate(1.05);
+    -webkit-backdrop-filter: blur(14px) saturate(1.05);
+    border-radius: 6px;
+    box-shadow:
+      0 18px 34px -18px rgb(0 0 0 / 0.55),
+      0 2px 0 -1px hsl(var(--primary) / 0.08) inset;
+  }
+  :root:not(.dark) .deck-board-3d .deck-card {
+    background: hsl(var(--card) / 0.62);
+    box-shadow:
+      0 18px 30px -18px rgb(40 28 12 / 0.35),
+      0 1px 0 0 rgb(255 255 255 / 0.5) inset;
+  }
+  /* Cards behind the wall's plane read softer, like things further away. */
+  .deck-slot-far .deck-card {
+    background: hsl(var(--card) / 0.34);
+  }
+  /* The floor: a plane laid flat, receding from the viewer to the wall. */
+  .deck-floor {
+    position: absolute;
+    left: -12%;
+    right: -12%;
+    top: 46%;
+    height: 120%;
+    transform-origin: 50% 0;
+    transform: rotateX(76deg);
+    pointer-events: none;
+    z-index: -1;
+    overflow: hidden;
+    border-radius: 50% / 6%;
+    mask-image: linear-gradient(180deg, transparent, rgb(0 0 0 / 0.85) 14%, rgb(0 0 0 / 0.5) 50%, transparent 92%);
+    -webkit-mask-image: linear-gradient(180deg, transparent, rgb(0 0 0 / 0.85) 14%, rgb(0 0 0 / 0.5) 50%, transparent 92%);
+  }
+  .deck-floor-echo {
+    position: absolute;
+    inset: 0;
+    background-position: center 0;
+    background-size: 100% auto;
+    background-repeat: no-repeat;
+    transform: scaleY(-1);
+    filter: blur(10px) saturate(0.9);
+    opacity: 0.32;
+  }
+  .deck-floor-sheen {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 50% 0%, hsl(var(--primary) / 0.18), transparent 55%),
+      linear-gradient(180deg, hsl(var(--background) / 0.35), hsl(var(--background) / 0.75));
+  }
+  :root:not(.dark) .deck-floor-echo {
+    opacity: 0.22;
+  }
+  :root:not(.dark) .deck-floor-sheen {
+    background:
+      radial-gradient(ellipse at 50% 0%, hsl(var(--primary) / 0.1), transparent 55%),
+      linear-gradient(180deg, hsl(var(--background) / 0.45), hsl(var(--background) / 0.85));
+  }
+  /* The mascot's ground shadow: it stands on the floor, not in the air. */
+  .deck-orb-ground {
+    position: absolute;
+    left: 14%;
+    right: 14%;
+    bottom: 2%;
+    height: 9%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 50%, rgb(0 0 0 / 0.5), transparent 70%);
+    filter: blur(6px);
+    z-index: -1;
+    pointer-events: none;
+  }
+  :root:not(.dark) .deck-orb-ground {
+    background: radial-gradient(ellipse at 50% 50%, rgb(40 28 12 / 0.32), transparent 70%);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .deck-slot-3d {
+      transition: none;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .deck-ring-tick[data-ignite="true"],
     .deck-ring-bezel[data-ignite="true"],
