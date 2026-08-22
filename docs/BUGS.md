@@ -11590,6 +11590,19 @@ wins, then the preferred connected one, then the only connected one). Tests:
 ``test_bridge_refits_the_declared_set_to_a_new_budget``,
 ``test_a_music_skill_load_follows_the_only_connected_service``.
 
+**Last mile on this box (2026-08-22 19:21, after restart).** The live model
+now called ``youtube_music`` for real — and Google answered 403
+``accessNotConfigured``: the YouTube Data API v3 was never enabled in the
+bring-your-own Google Cloud project behind the shared Google OAuth client
+(Gmail/Calendar/Drive worked because THEIR APIs were enabled there). Enabled
+in the console; the first search then returned "Ed Sheeran - Perfect".
+Jarvis had said it honestly ("Problem mit der YouTube-Programmierschnittstelle")
+but without the one click that fixes it, so ``_explain`` now appends Google's
+``activationUrl`` (``error.details[].metadata.activationUrl``) to the
+``_API_DISABLED`` text — the Plugins view shows the direct link, voice scrubs
+the URL as always (``_activation_url``,
+``test_execute_explains_search_quota_api_disabled_and_scope``).
+
 **Lesson (BUG-160 family).** A tool result's ``success`` flag says the TOOL
 ran, not that the USER'S REQUEST happened. Any tool whose output is
 instructions for the model (``run-skill``, ``answer_instruction`` lookups,

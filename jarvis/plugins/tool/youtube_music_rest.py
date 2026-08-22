@@ -606,6 +606,39 @@ class YouTubeMusicRestTool:
         return resp.json()
 
     @staticmethod
+    def _activation_url(exc: Any) -> str:
+        """The console URL Google attaches to a ``SERVICE_DISABLED`` error, or ``""``.
+
+        Lives in ``error.details[*].metadata.activationUrl`` (ErrorInfo) or in
+        the ``Help`` detail's links. Only ``https://console.`` Google URLs are
+        handed on — the text ends up in a user-facing error string.
+        """
+        try:
+            payload = exc.response.json()
+        except Exception:  # noqa: BLE001 — a non-JSON error body carries no link
+            return ""
+        error = payload.get("error") if isinstance(payload, dict) else None
+        details = error.get("details") if isinstance(error, dict) else None
+        if not isinstance(details, list):
+            return ""
+        candidates: list[str] = []
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            metadata = detail.get("metadata")
+            if isinstance(metadata, dict):
+                candidates.append(str(metadata.get("activationUrl") or ""))
+            links = detail.get("links")
+            if isinstance(links, list):
+                for link in links:
+                    if isinstance(link, dict):
+                        candidates.append(str(link.get("url") or ""))
+        for url in candidates:
+            if url.startswith("https://console.") and "google.com/" in url:
+                return url
+        return ""
+
+    @staticmethod
     def _reason(exc: Any) -> str:
         """Google's machine-readable failure reason (``quotaExceeded``,
         ``accessNotConfigured``, ``insufficientPermissions`` …)."""
@@ -1115,6 +1148,14 @@ class YouTubeMusicRestTool:
                         return _SEARCH_QUOTA
                     return _QUOTA
                 if reason in ("accessNotConfigured", "SERVICE_DISABLED"):
+                    # Google names the exact console page for the project
+                    # behind the OAuth client; hand it on, so the Plugins view
+                    # shows the one click that fixes it (live 2026-08-22
+                    # 19:21: the bring-your-own project had Gmail enabled and
+                    # YouTube not, and the user heard only "API problem").
+                    activation = cls._activation_url(exc)
+                    if activation:
+                        return f"{_API_DISABLED} Direct link: {activation}"
                     return _API_DISABLED
                 if reason in ("insufficientPermissions", "forbidden", "PERMISSION_DENIED"):
                     return _NO_SCOPE

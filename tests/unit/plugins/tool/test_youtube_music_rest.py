@@ -675,6 +675,38 @@ async def test_execute_explains_search_quota_api_disabled_and_scope():
     res = await _tool(disabled).execute({"action": "list_playlists"}, ctx=None)  # type: ignore[arg-type]
     assert "not enabled" in res.error
 
+    # Live 2026-08-22 19:21: Google's SERVICE_DISABLED error names the exact
+    # console page for the project behind the bring-your-own OAuth client.
+    # The link travels with the error so the Plugins view shows the one click.
+    activation = (
+        "https://console.developers.google.com/apis/api/youtube.googleapis.com/"
+        "overview?project=940985062784"
+    )
+
+    def disabled_with_link(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "code": 403,
+                    "message": "YouTube Data API v3 has not been used in project …",
+                    "errors": [{"reason": "accessNotConfigured", "domain": "usageLimits"}],
+                    "status": "PERMISSION_DENIED",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                            "reason": "SERVICE_DISABLED",
+                            "metadata": {"activationUrl": activation},
+                        }
+                    ],
+                }
+            },
+        )
+
+    res = await _tool(disabled_with_link).execute({"action": "list_playlists"}, ctx=None)  # type: ignore[arg-type]
+    assert "not enabled" in res.error
+    assert activation in res.error
+
     def scope(request: httpx.Request) -> httpx.Response:
         return _google_error(403, "insufficientPermissions")
 
