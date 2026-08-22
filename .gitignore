@@ -417,3 +417,6 @@ docs/reports/*marketing-readiness*
 # ============================================================
 scripts/ci/privacy_gate/references/pii-scrub.tsv
 scripts/ci/privacy_gate/references/secret-allowlist.tsv
+
+# Temporary marketing-video workspace (Remotion project + rendered frames)
+.tmp-music-video/

@@ -1,3 +1,3 @@
 """Personal Jarvis — a voice-driven, cross-platform meta-orchestrator."""
 
-__version__ = "1.5.1"
+__version__ = "1.5.3"

@@ -9,6 +9,8 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.3] — 2026-08-22
+
 ### Added
 
 - **The marketplace is a section of the app now.** Everything the community
@@ -18,12 +20,46 @@ versioning per [SemVer](https://semver.org/).
   source repository and the actual published files before anything installs,
   and once it lands the app says which section now holds it and takes you
   there. "Open the marketplace" works by voice, in all three languages.
+- **The storefront drawer says where an install would reach.** A file listing
+  tells you what a plugin ships, not where your access token ends up. The
+  drawer now names the destination before anything installs — the hosted URL
+  requests go to, or the command that would run on this computer — in the same
+  words the consent dialog under Skills & Tools has always used, and it warns
+  when an entry would replace a plugin the app already ships. Skills say
+  whether they are portable and which agents they also run in; wallpapers name
+  their licence.
+- **A feature request files as a real issue, right beside a bug.** The report
+  section had a bug/idea/question switch nobody could see, and its GitHub path
+  opened a blank, unlabelled issue. A report now picks the matching issue form
+  and arrives filled in and labelled `bug` or `enhancement`, with its title
+  prefix and structure intact. A report too long for a link is put on the
+  clipboard in full, so nothing anyone wrote is lost. GitHub is the normal
+  path now rather than a fallback, and the account requirement is said before
+  the login wall — not after it.
 
 ### Fixed
 
 - **"Open the modes" was an unknown section to the assistant.** The character
   screen shipped as a real section but never reached the navigation tool's
   list, so the spoken command went nowhere.
+- **The end of what you said stops disappearing (BUG-162).** Dictation
+  sometimes dropped its last sentence and still reported a clean success. 797
+  recorded dictations named three separate causes: the queue depth written to
+  defend a long recording never applied on installs with a wake word, the
+  truncation guard was calibrated so far out of reach it fired once in all
+  797, and a second gate believed continuous speech whatever came back. All
+  three are closed, and the report now says when it lost frames.
+- **The app costs a fraction of the machine while it sits idle.** Two things
+  ran flat out for nothing: the blank-window watchdog rebuilt a whole HTTPS
+  client — certificate bundle and all — once a second for a plain loopback
+  call, and the wiki map kept painting at 60 fps behind other windows because
+  its sleep gate waited for a `blur` event a never-focused window never sends.
+  Measured on a four-core laptop, the idle cost drops from roughly a third of
+  the machine to about a tenth.
+- **The report button works before the backend has restarted.** Straight after
+  an update the view talks to an old backend for a while. It then had no issue
+  form to open and the button did nothing at all — from the outside,
+  indistinguishable from a broken section.
 
 ## [1.5.1] — 2026-08-21
 
