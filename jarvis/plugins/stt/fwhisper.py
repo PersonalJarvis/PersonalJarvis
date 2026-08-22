@@ -404,6 +404,46 @@ def ensure_cuda_libraries_findable() -> None:
         return
 
 
+_GPU_COMPUTE_REMAP_LOGGED: set[str] = set()
+
+
+def _gpu_compute_type(device: str, compute_type: str) -> str:
+    """The compute type a GPU engine is REALLY built with.
+
+    Measured 2026-08-22 on a Blackwell card with ctranslate2 4.8: the int8
+    pairs (``int8_float16``, ``int8``) decode 8 s of real speech in 10-11 s,
+    ``float16`` in 0.7 s, the CPU in 1.2 s — so the shipped GPU default was
+    slower than no GPU at all. With large-v3 that became "one to two minutes
+    for three words" and every dictation ran into the 15 s provider ceiling.
+    The int8 path on a GPU saves memory and nothing else a recognizer needs,
+    so on CUDA an int8 request becomes ``float16`` whenever the runtime says
+    it can do it; CPU requests are untouched (``_cpu_safe_compute_type`` owns
+    those). Gated on the runtime's own capability list, never on a GPU name
+    (AP-21). Never raises: a runtime that cannot answer keeps the request.
+    """
+    if device.lower() == "cpu" or not compute_type.lower().startswith("int8"):
+        return compute_type
+    try:
+        import ctranslate2  # noqa: PLC0415 — lazy, the GPU path only
+
+        supported = set(ctranslate2.get_supported_compute_types(device))
+    except Exception as exc:  # noqa: BLE001 — no answer means no remap
+        log.debug("GPU compute-type probe failed (%s); keeping %s.", exc, compute_type)
+        return compute_type
+    if "float16" not in supported:
+        return compute_type
+    if compute_type not in _GPU_COMPUTE_REMAP_LOGGED:
+        _GPU_COMPUTE_REMAP_LOGGED.add(compute_type)
+        log.info(
+            "Whisper on %s: building with float16 instead of the configured %s "
+            "— the int8 kernels run an order of magnitude slower on this GPU "
+            "(measured 10-11 s vs 0.7 s for 8 s of speech).",
+            device,
+            compute_type,
+        )
+    return "float16"
+
+
 def _new_whisper_model(
     model_name: str, device: str, compute_type: str, cpu_threads: int = 0
 ) -> Any:
@@ -432,6 +472,7 @@ def _new_whisper_model(
     with inference_only_import_shield():
         from faster_whisper import WhisperModel
 
+    compute_type = _gpu_compute_type(device, compute_type)
     kwargs: dict[str, Any] = {"device": device, "compute_type": compute_type}
     if cpu_threads and cpu_threads > 0:
         kwargs["cpu_threads"] = int(cpu_threads)
