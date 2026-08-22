@@ -974,6 +974,53 @@ def _dictation_retry_worthwhile(exc: BaseException | None) -> bool:
     return status in _STT_TRANSIENT_STATUS
 
 
+def _align_pcm(offset: int) -> int:
+    """``offset`` rounded down to a whole int16 sample boundary."""
+    return max(0, offset - (offset % 2))
+
+
+def _capture_counter(source: object, name: str) -> int:
+    """A cumulative capture counter, wherever the stream keeps it.
+
+    A dictation that borrows the wake stream sees a handoff buffer whose
+    ``capture`` attribute is the microphone; one that opened its own stream
+    sees the microphone directly. Either way a missing counter reads as zero —
+    an honest degrade on a source that cannot report it.
+    """
+    for holder in (source, getattr(source, "capture", None)):
+        if holder is None:
+            continue
+        value = getattr(holder, name, None)
+        if value is not None:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _transcript_end_s(transcript: object) -> float | None:
+    """Where the provider's transcript ENDS on its own clock, in seconds.
+
+    Read from the ``segments`` a verbose response carries (Groq / OpenAI
+    Whisper: ``{"start", "end", "text", …}`` per segment). ``None`` when the
+    provider sent none — a Gemini-class answer, a provider predating the
+    field — so the caller falls back to the energy-versus-token heuristic.
+    Never raises: a malformed segment is treated as absent.
+    """
+    best: float | None = None
+    for segment in getattr(transcript, "segments", ()) or ():
+        if not isinstance(segment, dict):
+            continue
+        try:
+            end = float(segment.get("end", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if end > 0.0 and (best is None or end > best):
+            best = end
+    return best
+
+
 def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
     """Which language a finished dictation is treated as. Never raises.
 
@@ -1257,6 +1304,19 @@ _DICTATION_CAPTURE_QUEUE_CHUNKS = capture_chunks_for_duration(10.0)
 # at release anyway. A native engine never sees concurrency: the gate is one
 # wide unless the provider says otherwise (AP-24).
 _DICTATION_CONCURRENT_READS = 3
+
+# When a provider's transcript carries segment timestamps, a window whose
+# transcript ENDS this many seconds before its speech does has had its tail
+# dropped — the recognizer stopped early and said nothing about it. The tail
+# alone is then re-read from half a second before the transcript's end, so the
+# head the provider got right is kept verbatim and only the missing part is
+# asked for again. Judged on the transcript's own clock against the window's
+# ENERGY (where the speech really ends), never on what the words say (AP-27).
+# One and a half seconds of speech is three or four words — a loss worth a
+# request — while the ~0.5-1 s a recognizer's last timestamp ordinarily trails
+# the true end of speech stays well inside it.
+_DICTATION_TAIL_DROP_MIN_S = 1.5
+_DICTATION_TAIL_REREAD_BACK_S = 0.5
 
 
 class _SessionInputBuffer:
@@ -10691,6 +10751,7 @@ class SpeechPipeline:
         audio_quality = AudioQualityAccumulator()
         capture_reported_dropouts = 0
         capture_restart_count = 0
+        capture_overflows = 0
         # Sub-0.4s of audio is almost always a near-silence Whisper
         # hallucination; wait until enough has accumulated before transcribing.
         min_bytes = int(0.4 * bytes_per_second)
@@ -10816,6 +10877,12 @@ class SpeechPipeline:
         # ``_DICTATION_FINAL_DEAD_PIECES`` the provider is down, not flaky, and
         # further windows are counted as lost rather than asked for.
         dead_windows = 0
+        # Tails read back in on the strength of the transcript's OWN
+        # timestamps (a subset of ``truncation_repairs``), and how much pause
+        # the uploads left out — both in the audit so the two repairs stay
+        # measurable apart from each other.
+        tail_repairs = 0
+        pause_trim_bytes = 0
         # Wall-clock from key release to the final text being ready — the
         # number a person actually feels, kept apart from ``stt_latency_ms``
         # (the SUM of call durations, which concurrency makes larger than the
@@ -10888,6 +10955,7 @@ class SpeechPipeline:
             *,
             ask_for: str | None = None,
             probe: bool = False,
+            sink: dict[str, Any] | None = None,
         ) -> tuple[str, str, bool, BaseException | None]:
             """One transcription. ``(text, language, ok, error)``; never raises.
 
@@ -10934,6 +11002,12 @@ class SpeechPipeline:
             — "is the PROBE mid-call?" — for ``_stop_ptt_live_transcription``;
             a prefetched final window in flight must not make the release wait
             for a probe that is idle.
+
+            ``sink``, when given, receives what the tuple has no room for and
+            only the final pass needs: ``transcript_end_s`` — where the
+            provider's transcript ends on its own clock (``None`` without
+            segment timestamps), which is how a dropped tail is told apart
+            from a slow speaker.
             """
             # ``stt_failures`` is appended to, never rebound, so it needs no
             # ``nonlocal`` — the list object itself is the shared state.
@@ -11008,6 +11082,8 @@ class SpeechPipeline:
             ).strip()
             lang = str(getattr(transcript, "language", "") or "")
             _record_stt_identity(transcript)
+            if sink is not None:
+                sink["transcript_end_s"] = _transcript_end_s(transcript)
             return text, lang, True, None
 
         def preview_only_engine() -> Any:
@@ -11316,7 +11392,10 @@ class SpeechPipeline:
                 pass
 
         async def _read_piece(
-            piece: bytes, *, ask_for: str | None = None
+            piece: bytes,
+            *,
+            ask_for: str | None = None,
+            sink: dict[str, Any] | None = None,
         ) -> tuple[str, bool]:
             """One piece of audio, retried. ``(text, was_read)``; never raises.
 
@@ -11331,7 +11410,9 @@ class SpeechPipeline:
             """
             nonlocal language, session_language
             for attempt in range(_DICTATION_FINAL_ATTEMPTS):
-                text, lang, ok, exc = await _transcribe(piece, ask_for=ask_for)
+                text, lang, ok, exc = await _transcribe(
+                    piece, ask_for=ask_for, sink=sink
+                )
                 language = lang or language
                 if ok:
                     # The first piece to come back also answers "what language
@@ -11389,9 +11470,30 @@ class SpeechPipeline:
             return "", False
 
         async def _repair_truncated_read(
-            piece: bytes, text: str, *, ask_for: str | None
+            piece: bytes,
+            text: str,
+            *,
+            ask_for: str | None,
+            transcript_end_s: float | None = None,
         ) -> str:
             """``text`` for ``piece``, with a pause-dropped tail read back in.
+
+            Two detectors, tried in this order:
+
+            * **The transcript's own clock.** When the provider sent segment
+              timestamps, a transcript that ends
+              ``_DICTATION_TAIL_DROP_MIN_S`` or more before the window's speech
+              does (``speech_runs``, energy) has lost its tail. Only that tail
+              is re-read, from half a second before the transcript's end, in
+              the language the long window detected; the head the provider got
+              right is kept verbatim and the two are merged at the seam. This
+              is the precise detector — a dropped last sentence is a fifth of
+              the text and sits far above the token floor below — and it is
+              the one the polish pass can trust, because the re-read is short
+              and pause-free.
+            * **Tokens against voiced seconds**, as before, for providers
+              without timestamps and for a window that came back short without
+              a clock to say where it stopped.
 
             A recognizer handed audio with a sustained mid-recording pause can
             stop at the pause and silently drop everything after it — the
@@ -11419,7 +11521,7 @@ class SpeechPipeline:
             avoid. A part that cannot be read keeps the original transcript: a
             dropped middle is worse than the dropped tail it would repair.
             """
-            nonlocal truncation_repairs
+            nonlocal truncation_repairs, tail_repairs
             from jarvis.dictation.merge import (
                 merge_transcripts,
                 transcript_token_count,
@@ -11439,6 +11541,37 @@ class SpeechPipeline:
                 return text
             voiced_s = sum(end - start for start, end in runs) / bytes_per_second
             tokens = transcript_token_count(text)
+            run_ask = language if (not ask_for or ask_for == "auto") else ask_for
+            voiced_end_s = runs[-1][1] / bytes_per_second
+            if (
+                transcript_end_s is not None
+                and voiced_end_s - transcript_end_s >= _DICTATION_TAIL_DROP_MIN_S
+            ):
+                tail_from = _align_pcm(
+                    int(
+                        max(0.0, transcript_end_s - _DICTATION_TAIL_REREAD_BACK_S)
+                        * bytes_per_second
+                    )
+                )
+                tail_piece = piece[tail_from:]
+                if len(tail_piece) >= min_bytes and not is_silent_segment(
+                    tail_piece, session_peak=session_peak
+                ):
+                    log.warning(
+                        "final dictation window's transcript ends at %.1fs but "
+                        "its speech runs to %.1fs — re-reading the dropped tail.",
+                        transcript_end_s,
+                        voiced_end_s,
+                    )
+                    tail_text, tail_read = await _read_piece(
+                        tail_piece, ask_for=run_ask or None
+                    )
+                    if tail_read and tail_text:
+                        merged = merge_transcripts([text, tail_text])
+                        if transcript_token_count(merged) > tokens:
+                            truncation_repairs += 1
+                            tail_repairs += 1
+                            return merged
             if tokens >= voiced_s * _DICTATION_TRUNCATION_TOKENS_PER_VOICED_S:
                 return text
             split_at_pauses = len(runs) > 1
@@ -11467,7 +11600,6 @@ class SpeechPipeline:
                 voiced_s,
                 "split at its pauses" if split_at_pauses else "in two halves",
             )
-            run_ask = language if (not ask_for or ask_for == "auto") else ask_for
             parts: list[str] = []
             for start, end in runs:
                 run_piece = piece[start:end]
@@ -11504,8 +11636,9 @@ class SpeechPipeline:
             lost, which is what degrades the outcome and keeps the recording
             for a later Restore.
             """
-            nonlocal session_peak, lost_audio_bytes, dead_windows
+            nonlocal session_peak, lost_audio_bytes, dead_windows, pause_trim_bytes
             from jarvis.dictation.segment import (
+                compress_pauses,
                 is_silent_segment,
                 segment_energy,
             )
@@ -11538,12 +11671,24 @@ class SpeechPipeline:
                         (end - start) / bytes_per_second,
                     )
                     return
-                text, was_read = await _read_piece(piece, ask_for=final_ask_for)
+                # What is UPLOADED: the window with every sustained pause cut
+                # to half a second, so the recognizer never sits in the pause
+                # that makes it stop. The recording itself is untouched; the
+                # loss accounting below stays in the recording's own bytes.
+                sent = compress_pauses(
+                    piece, session_peak=session_peak, bytes_per_second=bytes_per_second
+                )
+                pause_trim_bytes += max(0, len(piece) - len(sent))
+                sink: dict[str, Any] = {}
+                text, was_read = await _read_piece(sent, ask_for=final_ask_for, sink=sink)
                 if was_read:
                     dead_windows = 0
                     if text:
                         text = await _repair_truncated_read(
-                            piece, text, ask_for=final_ask_for
+                            sent,
+                            text,
+                            ask_for=final_ask_for,
+                            transcript_end_s=sink.get("transcript_end_s"),
                         )
                 else:
                     dead_windows += 1
@@ -11678,8 +11823,9 @@ class SpeechPipeline:
             only postpones a read; here it ends it, and the seconds behind those
             bytes are words the user said that nothing will ever transcribe.
             """
-            nonlocal session_peak, lost_audio_bytes
+            nonlocal session_peak, lost_audio_bytes, pause_trim_bytes
             from jarvis.dictation.segment import (
+                compress_pauses,
                 is_silent_segment,
                 quietest_cut,
                 segment_energy,
@@ -11715,11 +11861,19 @@ class SpeechPipeline:
                 session_peak = max(session_peak, peak)
                 if is_silent_segment(piece, session_peak=session_peak):
                     continue
-                text, piece_read = await _read_piece(piece)
+                sent = compress_pauses(
+                    piece, session_peak=session_peak, bytes_per_second=bytes_per_second
+                )
+                pause_trim_bytes += max(0, len(piece) - len(sent))
+                sink: dict[str, Any] = {}
+                text, piece_read = await _read_piece(sent, sink=sink)
                 if piece_read:
                     if text:
                         text = await _repair_truncated_read(
-                            piece, text, ask_for=None
+                            sent,
+                            text,
+                            ask_for=None,
+                            transcript_end_s=sink.get("transcript_end_s"),
                         )
                         parts.append(text)
                     dead_streak = 0
@@ -11753,6 +11907,9 @@ class SpeechPipeline:
             # dictation never runs a second native input stream beside the wake
             # loop's (AP-24). The wake side gets its stream back on exit.
             async with self._capture_dictation_input() as source:
+                # PortAudio's overflow counter is cumulative for the stream;
+                # what this dictation lost is the difference from here.
+                overflow_base = _capture_counter(source, "overflow_count")
 
                 async def _drain() -> None:
                     async for chunk in source.stream():
@@ -11828,9 +11985,14 @@ class SpeechPipeline:
                                 "dictation input stream ended; finalizing what "
                                 "was captured."
                             )
+                    capture_overflows = max(
+                        0, _capture_counter(source, "overflow_count") - overflow_base
+                    )
+                    # Queue drops and hardware overflows are both frames that
+                    # never became audio; either is a real hole in the recording.
                     capture_reported_dropouts = max(
                         capture_reported_dropouts,
-                        int(getattr(source, "dropped_frames", 0) or 0),
+                        int(getattr(source, "dropped_frames", 0) or 0) + capture_overflows,
                     )
                     capture_restart_count = max(
                         capture_restart_count,
@@ -11965,6 +12127,9 @@ class SpeechPipeline:
                     f"final_windows_prefetched:{final_prefetched}",
                     f"release_wait_ms:{release_wait_ms}",
                     f"truncation_repairs:{truncation_repairs}",
+                    f"tail_repairs:{tail_repairs}",
+                    f"pause_trim_ms:{round(pause_trim_bytes * 1000 / bytes_per_second)}",
+                    f"capture_overflows:{capture_overflows}",
                     f"code_switching:{'on' if code_switching else 'off'}",
                     f"capture_restarts:{capture_restart_count}",
                     *audio_preprocessing.audit(),

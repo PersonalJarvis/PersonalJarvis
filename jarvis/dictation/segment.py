@@ -369,6 +369,70 @@ def speech_runs(
     return ranges
 
 
+#: The longest pause a window may still contain when it is handed to a
+#: recognizer. Whisper-class models meet a sustained mid-recording pause and
+#: sometimes stop there, silently dropping everything after it (live
+#: 2026-08-22: three tokens back for 22 s of speech). Pauses between sentences
+#: run 0.5-1 s; a thinking pause runs seconds. Half a second keeps the prosodic
+#: boundary the model punctuates on and removes the stretch it gives up in.
+_MAX_UPLOADED_PAUSE_S = 0.5
+
+
+def compress_pauses(
+    pcm: bytes,
+    *,
+    session_peak: float = 0.0,
+    bytes_per_second: int = 16_000 * BYTES_PER_SAMPLE,
+    max_pause_s: float = _MAX_UPLOADED_PAUSE_S,
+) -> bytes:
+    """``pcm`` with every sustained pause shortened to ``max_pause_s``.
+
+    What gets UPLOADED for a final window, never what gets kept: the recording
+    itself stays byte-identical (it is what the history's Restore re-reads),
+    only the request is shaped so the recognizer never sits in a pause long
+    enough to stop. Speech runs are copied untouched — every run already
+    carries its onset/offset pad from :func:`speech_runs` — and the quiet
+    between two runs is cut to the first ``max_pause_s`` of it; so is the
+    quiet before the first run and after the last.
+
+    A buffer with no pause longer than that comes back as the SAME object, so
+    the ordinary window costs nothing here. A buffer with no speech at all is
+    returned unchanged too: the caller's silence gate already decides about
+    those, and shortening silence would only move its verdict.
+    """
+    if not pcm:
+        return pcm
+    runs = speech_runs(pcm, session_peak=session_peak, bytes_per_second=bytes_per_second)
+    if not runs:
+        return pcm
+    # ``max_pause_s`` is the SILENCE the upload may hold, and every run already
+    # reaches ``_RUN_PAD_S`` into the quiet on both sides — so the stretch kept
+    # between two runs is the cap minus both pads, and at either edge of the
+    # buffer the cap minus the one pad that borders it.
+    cap = _align(max(0, int(max_pause_s * bytes_per_second)))
+    pad = _align(max(0, int(_RUN_PAD_S * bytes_per_second)))
+    keep_between = max(0, cap - 2 * pad)
+    keep_edge = max(0, cap - pad)
+    total = len(pcm)
+    lead = runs[0][0]
+    trail = total - runs[-1][1]
+    widest_gap = max(
+        (runs[i + 1][0] - runs[i][1] for i in range(len(runs) - 1)), default=0
+    )
+    if lead <= keep_edge and trail <= keep_edge and widest_gap <= keep_between:
+        return pcm
+    out = bytearray()
+    out += pcm[max(0, lead - keep_edge) : lead]
+    for index, (start, end) in enumerate(runs):
+        out += pcm[start:end]
+        if index + 1 < len(runs):
+            gap_end = runs[index + 1][0]
+            out += pcm[end : min(gap_end, end + keep_between)]
+    last_end = runs[-1][1]
+    out += pcm[last_end : min(total, last_end + keep_edge)]
+    return bytes(out)
+
+
 def segment_energy(pcm: bytes) -> tuple[float, float]:
     """``(peak, rms)`` of ``pcm`` as int16 magnitudes. ``(0, 0)`` when empty.
 

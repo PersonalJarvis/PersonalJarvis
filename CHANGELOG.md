@@ -17,6 +17,12 @@ versioning per [SemVer](https://semver.org/).
   dictation waited several seconds for its text. Windows are now read while
   you are still speaking, and whatever is left at release is read side by side
   on providers that allow it; a local engine still takes one call at a time.
+- **Dictation no longer loses the words after a thinking pause.** The
+  recognizer used to be handed long pauses inside a window and sometimes
+  stopped there, silently dropping everything after it. Every pause in an
+  upload is now cut to half a second before it is sent, a transcript that ends
+  well before your speech does gets only its missing tail read back in, and
+  a hardware overflow on the microphone is counted as the real loss it is.
 - **The wake word no longer fires on a stray single word.** Since the 20 Aug
   crash fix, the check that decides between "Hey George" and whatever was
   actually said had quietly lost its strongest comparison, so a lone word like

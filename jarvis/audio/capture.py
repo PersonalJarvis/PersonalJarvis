@@ -794,6 +794,7 @@ class MicrophoneCapture:
         self._stream: sd.InputStream | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._drops = 0
+        self._overflows = 0
         self._closed: bool = False
         self._last_chunk_monotonic: float = 0.0
         self._watchdog_task: asyncio.Task | None = None
@@ -821,9 +822,16 @@ class MicrophoneCapture:
         that will be overwritten by the next callback) and dispatch them
         thread-safely into the asyncio queue.
         """
-        if status:
-            # Overflow/underflow — will be logged later via the event bus
-            pass
+        if status and getattr(status, "input_overflow", False):
+            # PortAudio's own word that its input buffer overran: audio was
+            # lost BEFORE it reached this callback. It is the one hardware-level
+            # loss signal there is, and it used to be discarded right here — so
+            # a dictation with a hole in it was reported whole, and the only
+            # loss anyone could see was a timestamp gap that cannot tell a real
+            # hole from callback jitter. A plain increment on the audio thread
+            # (atomic under the GIL); readers take the delta over their own
+            # lifetime through ``overflow_count``.
+            self._overflows += 1
         pcm_bytes = bytes(indata)  # copy
         resampler = self._capture_resampler
         if resampler is not None:
@@ -1273,6 +1281,15 @@ class MicrophoneCapture:
     def dropped_frames(self) -> int:
         """Number of frames lost due to a full queue."""
         return self._drops
+
+    @property
+    def overflow_count(self) -> int:
+        """How often PortAudio reported an input overflow on this stream.
+
+        Cumulative for the stream's lifetime — a consumer that wants "during
+        my turn" takes the difference between two readings.
+        """
+        return self._overflows
 
     @property
     def queue_depth(self) -> int:

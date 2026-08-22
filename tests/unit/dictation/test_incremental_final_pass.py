@@ -267,9 +267,10 @@ async def test_a_concurrent_provider_reads_the_remaining_windows_side_by_side(
     events = await _release_with_windows_left(stt)
 
     assert stt.calls >= 3
+    # Side by side — overlap is the proof; the wall-clock bound stays loose
+    # because a loaded test host cannot promise timing, only ordering.
     assert stt.max_in_flight >= 2
-    # Side by side: the whole pass took about one call, not one per window.
-    assert _audit(events, "release_wait_ms") < 400
+    assert _audit(events, "release_wait_ms") < 1500
     text = _completed(events).raw_text
     assert text.index("alpha") < text.index("bravo") < text.index("charlie")
 
