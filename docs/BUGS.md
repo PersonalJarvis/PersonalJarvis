@@ -11454,3 +11454,64 @@ is currently invisible; the dictation lane runs a local preview decode every
 also remains a density heuristic: it cannot catch a truncation that drops only
 a short final clause, because no token count distinguishes that from ordinary
 speech. A recognizer offering word timestamps would settle it directly.
+
+## BUG-163: the wake word fires on a single unrelated word ('power', 'pedro', 'hey nova') — the BUG-151 lock proxy hid `SetGrammar`, so the acoustic competition silently ran on its static grammar (HIGH, FIXED 2026-08-22)
+
+**Symptom.** Live 2026-08-22 17:10:52 (`data/jarvis_desktop.log`): with no
+key pressed and no dictation running, the Jarvis Bar opened a Gemini Live
+voice session on its own; the user hung it up ten seconds later with zero
+turns and reported "it kept running after I let go of my key". The log line
+behind it: `vosk-kws: verify OK (wake) — free ear heard 'power' at the
+candidate span (conf=1.00) vs phrase 'Hey George'` — a ONE-word utterance
+confirmed as a two-word wake phrase, fired from the early (partial)
+candidate check on the `de` model. `scripts/vosk_wake_bench.py --phrase
+"Hey George"` at HEAD reproduced it wholesale: 16/16 positives fired, but
+13 of 40 negatives fired too — `neg_random` 4/12 ('pedro', 'peter',
+'petra'), `neg_other_name` 6/12 ('hey nova', 'hallo florian'), `neg_flow`
+3/8 — every one via the `de` model, every one "verify OK (wake|undecided)",
+i.e. accepted by the acoustic competition. The 2026-08-12 calibration of
+exactly that competition had measured these classes at 0.
+
+**Cause.** The competition (`_shape_competition_ok`) installs its
+per-candidate alternatives — the phrase, `"<prefix> [unk]"`, the free
+ear's OWN hypothesis for the span, `"[unk]"` — with `SetGrammar`, which it
+PROBES (`getattr(rec, "SetGrammar", None)`) because vosk builds before
+0.3.32 lack it; without it the prewarmed recognizer keeps its static
+grammar (phrase vs `"<prefix> [unk]"` vs `"[unk]"`), "a weaker but valid
+competition". BUG-151 (2026-08-20) wrapped every native recognizer in
+`vosk_native.LockedRecognizer`, a proxy that listed only the methods the
+provider calls unconditionally — `AcceptWaveform`, `PartialResult`,
+`Result`, `FinalResult`, `Reset`, `SetWords`. `SetGrammar` was not on the
+list, so the probe answered "absent" on EVERY build and the competition
+degraded to the static grammar everywhere, with no log line to tell the
+two apart. Against phrase-vs-`[unk]` alone, a short isolated word that the
+forced grammar had already stretched onto the phrase wins the phrase back
+at conf ≥ 0.9; with the free hypothesis ('power', 'pedro') in the grammar
+the decoder keeps the hypothesis and the candidate is rejected. The unit
+test that pins the alternatives
+(`test_the_competition_judges_span_trimmed_audio_with_the_hypothesis`)
+passed throughout because it hands the provider a bare stub that is never
+wrapped — the live path goes through the proxy.
+
+**Fix (2026-08-22).** `LockedRecognizer` exposes `SetGrammar` explicitly
+and proxies every OTHER native method through a `__getattr__` backstop
+(locked, and answering a `getattr(..., None)` probe exactly like the
+wrapped recognizer would), so no optional method can fall off the proxy
+again. `_shape_competition_ok` logs ONE WARNING per provider when a
+recognizer really has no `SetGrammar` — the static-grammar degrade is a
+measurably weaker judge and must never be silent again. Tests:
+`test_locked_recognizer_proxies_set_grammar_under_the_lock`,
+`test_locked_recognizer_reaches_every_native_method_locked`,
+`test_locked_recognizer_reports_a_missing_optional_method_honestly`
+(`tests/unit/plugins/wake/test_vosk_native.py`);
+`test_the_competition_installs_its_alternatives_through_the_native_lock`
+(the live path: a vosk-named recognizer THROUGH `wrap_recognizer`) and
+`test_a_competition_without_set_grammar_says_so_once`
+(`test_vosk_wake_word_agnostic.py`). Bench after the fix, same corpus:
+16/16 positives, 0/40 negatives.
+
+**Lesson (AP-24/BUG-151 family).** A proxy around a native engine must be
+TRANSPARENT — expose the wrapped object's whole surface, not the subset one
+call site uses today — and any "optional capability" probe in the code
+base (`getattr(x, "Method", None)`) is a place where a wrapper can lie
+silently. When such a probe selects a weaker path, that path logs.

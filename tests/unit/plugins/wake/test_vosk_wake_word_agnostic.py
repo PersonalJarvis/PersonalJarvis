@@ -970,3 +970,66 @@ def test_suppression_logging_never_feeds_a_decision() -> None:
         [_w("hey", 0.40, 0.62, conf=0.9), _w("erhoben", 0.62, 1.05, conf=0.6)],
         "Hey Ruben",
     ) is True
+
+
+def test_the_competition_installs_its_alternatives_through_the_native_lock(
+    monkeypatch,
+) -> None:
+    """BUG-163 (live 2026-08-22 17:10): the wake fired on the single word
+    'power'. Since BUG-151 every native recognizer is wrapped in
+    ``LockedRecognizer``; that proxy did not expose ``SetGrammar``, so the
+    competition's per-candidate alternatives (phrase, "<prefix> [unk]", the
+    free ear's OWN hypothesis, "[unk]") were never installed and the static
+    grammar — phrase against "[unk]" only — confirmed bare words. Bench
+    2026-08-22: 13 false fires on 40 negatives before, 0 after. This pins
+    the path the live engine takes: through the wrapper, not a bare stub.
+    """
+    from jarvis.plugins.wake.vosk_native import wrap_recognizer
+
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {"text": "power", "result": [_w("power", 1.60, 2.10, conf=0.9)]}
+    seen: dict = {}
+
+    class KaldiRecognizer(_StubRec):  # the wrapper keys on this name/module
+        def SetGrammar(self, grammar: str) -> None:  # noqa: N802 - vosk API
+            seen["alternatives"] = json.loads(grammar)
+
+        def FinalResult(self) -> str:  # noqa: N802 - vosk API
+            # Once the alternatives are installed the decoder keeps the
+            # free hypothesis for 'power' audio; without them it would have
+            # been forced to pick the phrase.
+            if "alternatives" in seen:
+                return json.dumps({"text": "power", "result": []})
+            return json.dumps(_GEORGE_GRAMMAR)
+
+    KaldiRecognizer.__module__ = "vosk"
+
+    def _take(model_path, kind):  # noqa: ANN001
+        if kind == "competition":
+            return wrap_recognizer(KaldiRecognizer({}))
+        return _StubRec(_GEORGE_GRAMMAR if kind == "grammar" else free)
+
+    monkeypatch.setattr(p, "_take_verify_rec", _take)
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is False
+    assert seen["alternatives"] == ["hey george", "hey [unk]", "power", "[unk]"]
+
+
+def test_a_competition_without_set_grammar_says_so_once(monkeypatch, caplog) -> None:
+    """The static-grammar degrade is a measurably weaker judge; it must be
+    visible in the log exactly once per provider, never silent (BUG-163)."""
+    import logging
+
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {"text": "pedro", "result": [_w("pedro", 1.60, 2.10, conf=0.9)]}
+    monkeypatch.setattr(
+        p,
+        "_take_verify_rec",
+        _stub_take(
+            _GEORGE_GRAMMAR, free, competition={"text": "pedro", "result": []}
+        ),
+    )
+    with caplog.at_level(logging.WARNING, logger="jarvis.wake.vosk"):
+        p._verify_window(_loud_window(3.0), fail_open=True)
+        p._verify_window(_loud_window(3.0), fail_open=True)
+    hits = [r for r in caplog.records if "no SetGrammar" in r.getMessage()]
+    assert len(hits) == 1

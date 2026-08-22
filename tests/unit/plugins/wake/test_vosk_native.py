@@ -105,3 +105,59 @@ def test_build_recognizer_uses_the_patched_vosk_factory(monkeypatch) -> None:
     assert rec is built[0]
     assert rec.words is True
     assert rec.grammar == '["hey nova","[unk]"]'
+
+
+class _GrammarRec(_Contended):
+    """A recognizer that also carries the optional ``SetGrammar``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.grammars: list[str] = []
+
+    def SetGrammar(self, grammar: str) -> None:  # noqa: N802
+        self._enter()
+        self.grammars.append(grammar)
+
+
+def test_locked_recognizer_proxies_set_grammar_under_the_lock() -> None:
+    """BUG-163: the proxy hid ``SetGrammar`` and the competition never saw
+    the free ear's hypothesis again — 'power' won the wake for 'Hey George'.
+    The provider PROBES the method (``getattr(rec, "SetGrammar", None)``), so
+    the proxy must answer that probe exactly like the wrapped recognizer."""
+    inner = _GrammarRec()
+    rec = LockedRecognizer(inner)
+    set_grammar = getattr(rec, "SetGrammar", None)
+    assert callable(set_grammar)
+    set_grammar('["hey george", "power", "[unk]"]')
+    assert inner.grammars == ['["hey george", "power", "[unk]"]']
+
+
+def test_locked_recognizer_reaches_every_native_method_locked() -> None:
+    """Any method the proxy does not list explicitly is still reachable, and
+    still serialised — a future optional method cannot fall off the proxy."""
+    inner = _GrammarRec()
+    rec = LockedRecognizer(inner)
+    errors: list[BaseException] = []
+
+    def _feed() -> None:
+        try:
+            rec.SetGrammar("[]")
+            rec.AcceptWaveform(b"\x00\x00")
+        except BaseException as exc:  # noqa: BLE001 — collect for the assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_feed) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+    assert errors == []
+    assert inner.overlaps == 0
+
+
+def test_locked_recognizer_reports_a_missing_optional_method_honestly() -> None:
+    """An older vosk build without ``SetGrammar`` must still read as absent
+    through the proxy — the provider's static-grammar degrade depends on it."""
+    rec = LockedRecognizer(_Contended())
+    assert getattr(rec, "SetMaxAlternatives", None) is None

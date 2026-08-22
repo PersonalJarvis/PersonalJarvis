@@ -816,6 +816,9 @@ class VoskKwsProvider:
             self._competition_grammar = json.dumps(
                 [self._phrase.lower(), f"{raw_tokens[0]} [unk]", "[unk]"]
             )
+        # One-shot flag for the "competition degraded to its static grammar"
+        # warning in ``_shape_competition_ok`` (BUG-163).
+        self._warned_static_competition = False
         self._match_min_rms = float(match_min_rms)
         self._cooldown_s = float(cooldown_s)
         self._rejected_candidate_backoff_s = max(
@@ -1813,6 +1816,19 @@ class VoskKwsProvider:
             set_grammar = getattr(rec, "SetGrammar", None)
             if callable(set_grammar):
                 set_grammar(json.dumps(alternatives))
+            elif not getattr(self, "_warned_static_competition", False):
+                # Say so ONCE, at WARNING. The static grammar is a measurably
+                # weaker judge (bench 2026-08-22: 13 false fires on 40
+                # negatives vs 0 with the per-candidate alternatives), and
+                # the degrade used to be invisible — BUG-163 ran for two days
+                # behind a proxy that hid ``SetGrammar`` without a single
+                # log line telling it apart from the real competition.
+                self._warned_static_competition = True
+                log.warning(
+                    "vosk-kws: this recognizer offers no SetGrammar — the "
+                    "acoustic competition runs on its static grammar only "
+                    "(weaker precision; vosk >= 0.3.32 restores it)."
+                )
             rec.AcceptWaveform(pcm)
             res = json.loads(rec.FinalResult())
             if self._phrase.lower() not in res.get("text", ""):

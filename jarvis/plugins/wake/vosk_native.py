@@ -64,6 +64,43 @@ class LockedRecognizer:
         with _LOCK:
             return self._rec.SetWords(flag)
 
+    def SetGrammar(self, grammar: Any) -> Any:  # noqa: N802 — vosk API
+        # BUG-163: the first version of this proxy listed only the methods the
+        # provider calls UNCONDITIONALLY. ``SetGrammar`` is probed with
+        # ``getattr(rec, "SetGrammar", None)`` (older vosk builds lack it), so
+        # leaving it off this class silently downgraded the acoustic
+        # competition to its static grammar on every build — the free ear's
+        # own hypothesis never joined the alternatives again, and bare words
+        # ('power', 'pedro', 'hey nova') won the wake. The proxy must expose
+        # every method the wrapped recognizer has, hence ``__getattr__`` below
+        # as the backstop; this explicit method exists so the one the
+        # precision rests on can never fall through to it by accident.
+        with _LOCK:
+            return self._rec.SetGrammar(grammar)
+
+    def __getattr__(self, name: str) -> Any:
+        """Every OTHER native method stays reachable — and locked.
+
+        ``getattr(rec, "SomeMethod", None)`` on the proxy must answer exactly
+        as it would on the wrapped recognizer: present on builds that have it,
+        absent otherwise. A callable is returned behind the same process-wide
+        lock every listed method holds; a plain attribute passes through.
+        (``__getattr__`` only runs for names this class does not define, so
+        the explicit methods above are unaffected and ``_rec`` itself never
+        recurses.)
+        """
+        if name == "_rec":  # guard against half-initialised proxies
+            raise AttributeError(name)
+        target = getattr(self._rec, name)
+        if not callable(target):
+            return target
+
+        def _locked(*args: Any, **kwargs: Any) -> Any:
+            with _LOCK:
+                return target(*args, **kwargs)
+
+        return _locked
+
 
 def wrap_recognizer(rec: Any) -> Any:
     """Lock a native recognizer; leave test doubles untouched."""

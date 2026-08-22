@@ -17,6 +17,11 @@ versioning per [SemVer](https://semver.org/).
   dictation waited several seconds for its text. Windows are now read while
   you are still speaking, and whatever is left at release is read side by side
   on providers that allow it; a local engine still takes one call at a time.
+- **The wake word no longer fires on a stray single word.** Since the 20 Aug
+  crash fix, the check that decides between "Hey George" and whatever was
+  actually said had quietly lost its strongest comparison, so a lone word like
+  "power" or "Pedro" could open a voice session by itself. The comparison is
+  back, and the app now says so in the log if it ever has to run without it.
 
 ## [1.5.3] — 2026-08-22
 
