@@ -213,22 +213,7 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 > operating system's credential manager, never in the repo. Re-running the same one-liner
 > updates in place.
 
-**Uninstall** is one command as well. It removes the install folder, the autostart entry,
-and the keychain entries. Add `--dry-run` to preview, `--yes` to skip the confirmation:
-
-```powershell
-# Windows (PowerShell)
-& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
-```
-
-```bash
-# macOS · Linux
-bash ~/.personal-jarvis/install/uninstall.sh
-```
-
-Both of those run the uninstaller that is already on your disk. If it is missing or refuses
-to start, the app can uninstall itself instead: see
-[`install/README.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md#uninstalling).
+Removing it again is one command too — see [**Uninstall**](#uninstall).
 
 <details>
 <summary><b>Optional extras, install flags, pipx & manual clone</b></summary>
@@ -454,6 +439,25 @@ fallback = "grok-voice"    # cross-provider fallback is the norm everywhere
 Overrides cascade from `jarvis.toml` to ENV (`JARVIS__SECTION__KEY=…`). Secrets never go in
 this file. API keys live in your operating system's credential manager, or in `.env`, and
 you enter them in the app.
+
+## Uninstall
+
+One command as well. It removes the install folder, the autostart entry, and the
+keychain entries. Add `--dry-run` to preview, `--yes` to skip the confirmation:
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
+```
+
+```bash
+# macOS · Linux
+bash ~/.personal-jarvis/install/uninstall.sh
+```
+
+Both of those run the uninstaller that is already on your disk. If it is missing or refuses
+to start, the app can uninstall itself instead: see
+[`install/README.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md#uninstalling).
 
 ## Privacy
 
