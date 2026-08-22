@@ -42,11 +42,14 @@ Every function returns a tree in canonical form:
 * **A close gives the freed room to the siblings, proportionally.** The
   closed pane's weight is simply dropped; the remaining weights renormalise
   against each other, so a 2:1:1 stack losing its tail becomes 2:1.
-* **The session evens the wall after every open.** The halving above decides
-  the SHAPE; the weights it leaves are then replaced by ``evened`` — every
-  terminal at the same share, exactly what the grid's "even out" button does
-  — because a new terminal carved from a pane that had been dragged small
-  arrived as a sliver nobody asked for (maintainer request, 2026-08-22).
+* **The session evens the wall after every open — except by hand-sized
+  boundaries.** The halving above decides the SHAPE; the weights it leaves
+  are then replaced by ``evened`` — every terminal at the same share, what
+  the grid's "even out" button does — because a new terminal carved from a
+  pane that had been dragged small arrived as a sliver nobody asked for. A
+  container whose boundaries the user dragged (``Split.pinned``, decided
+  from the weights at save time) keeps them: a size chosen on purpose is
+  not undone by the next open (maintainer request, 2026-08-22).
 """
 
 from __future__ import annotations
@@ -81,6 +84,13 @@ class Split:
     direction: Direction
     children: list[LayoutNode] = field(default_factory=list)
     weights: list[float] = field(default_factory=list)
+    #: The user dragged THIS container's boundaries by hand (its weights were
+    #: uneven the last time a client saved sizes). A pinned container keeps
+    #: its weights through the evening that follows every open; every other
+    #: container is dealt equal shares again. Cleared the moment the user
+    #: evens it back out — by hand or with the grid's button — so "manual"
+    #: is exactly "still uneven", never a sticky mode.
+    pinned: bool = False
 
 
 LayoutNode = Leaf | Split
@@ -112,6 +122,7 @@ def normalize(node: LayoutNode) -> LayoutNode:
 
     children: list[LayoutNode] = []
     weights: list[float] = []
+    pinned = node.pinned
     raw_weights = list(node.weights)
     for index, child in enumerate(node.children):
         cleaned = normalize(child)
@@ -120,7 +131,9 @@ def normalize(node: LayoutNode) -> LayoutNode:
             # A row inside a row: inline the grandchildren, scaling their
             # weights so together they still occupy exactly the room the
             # child had. Nothing moves on screen — only the bookkeeping
-            # flattens.
+            # flattens. Hand-sized boundaries stay hand-sized: the merged
+            # container is pinned if either of the two was.
+            pinned = pinned or cleaned.pinned
             total = sum(cleaned.weights) or 1.0
             for grandchild, sub in zip(cleaned.children, cleaned.weights, strict=True):
                 children.append(grandchild)
@@ -131,7 +144,7 @@ def normalize(node: LayoutNode) -> LayoutNode:
 
     if len(children) == 1:
         return children[0]
-    return Split(direction=node.direction, children=children, weights=weights)
+    return Split(direction=node.direction, children=children, weights=weights, pinned=pinned)
 
 
 def leaves(node: LayoutNode | None) -> list[str]:
@@ -318,16 +331,55 @@ def axis_span(node: LayoutNode, direction: Direction) -> int:
     return sum(spans) if node.direction == direction else max(spans)
 
 
-def evened(root: LayoutNode | None) -> LayoutNode | None:
-    """The same tree with every TERMINAL back at an equal share of the room.
+#: How far apart two sibling shares may be and still count as the same size.
+#: Relative, because weights are multipliers: 7 and 7.0000001 are the same
+#: pane on any screen. The frontend's ``EVEN_EPSILON`` (``treeLayout.ts``).
+EVEN_EPSILON = 1e-4
 
-    The backend half of the grid's "even out" button: the arrangement — which
-    pane sits where — is never touched, only how the boundaries fall. Weights
-    are stripe counts rather than a flat 1, so a nested group is given as much
-    room as the terminals it lines up (see ``axis_span``). Applied after every
-    pane the session OPENS (``Registry.add_terminal``), so a fresh terminal
-    never arrives as a sliver carved from a pane that had already been dragged
-    small, and the wall reads as one even grid however it was assembled.
+
+def is_even(node: LayoutNode | None) -> bool:
+    """Is every TERMINAL under ``node`` at the share ``evened`` would give it?
+
+    Judged per stripe, the way ``evened`` deals weights out (``axis_span``),
+    so equal container weights over a nested group do NOT read as even while
+    one terminal draws twice the size of another.
+    """
+    if node is None or isinstance(node, Leaf):
+        return True
+    return _even_weights(node) and all(is_even(child) for child in node.children)
+
+
+def _even_weights(node: Split) -> bool:
+    """``node``'s own boundaries only — children not inspected."""
+    shares = [
+        _clean_weight(node.weights[index] if index < len(node.weights) else 1.0)
+        / axis_span(child, node.direction)
+        for index, child in enumerate(node.children)
+    ]
+    if not shares:
+        return True
+    first = shares[0]
+    return all(abs(share - first) <= EVEN_EPSILON * first for share in shares)
+
+
+def evened(root: LayoutNode | None) -> LayoutNode | None:
+    """Every TERMINAL back at an equal share — except where a hand set them.
+
+    The backend half of the grid's "even out" button, run for the user after
+    every pane the session OPENS (``Registry.add_terminal``), so a fresh
+    terminal never arrives as a sliver carved from a pane that had already
+    been dragged small. The arrangement — which pane sits where — is never
+    touched, only how the boundaries fall; weights are stripe counts rather
+    than a flat 1, so a nested group is given as much room as the terminals
+    it lines up (see ``axis_span``).
+
+    A ``pinned`` container — one whose boundaries the user dragged by hand —
+    keeps its weights: the maintainer asked (2026-08-22) that a size chosen
+    on purpose survives the next open, while everything NOT chosen comes out
+    even. Its children are still evened individually, so a split inside a
+    hand-sized column shares that column evenly without moving the column.
+    Unlike the button, which evens everything, this one is the quiet default
+    and must not undo a choice.
     """
     if root is None:
         return None
@@ -337,11 +389,15 @@ def evened(root: LayoutNode | None) -> LayoutNode | None:
 def _evened(node: LayoutNode) -> LayoutNode:
     if isinstance(node, Leaf):
         return node
-    return Split(
-        direction=node.direction,
-        children=[_evened(child) for child in node.children],
-        weights=[float(axis_span(child, node.direction)) for child in node.children],
-    )
+    children = [_evened(child) for child in node.children]
+    if node.pinned:
+        weights = [
+            _clean_weight(node.weights[index] if index < len(node.weights) else 1.0)
+            for index in range(len(children))
+        ]
+    else:
+        weights = [float(axis_span(child, node.direction)) for child in node.children]
+    return Split(direction=node.direction, children=children, weights=weights, pinned=node.pinned)
 
 
 def remove_pane(root: LayoutNode | None, pane: str) -> LayoutNode | None:
@@ -377,7 +433,9 @@ def remove_pane(root: LayoutNode | None, pane: str) -> LayoutNode | None:
         return None
     if len(children) == 1:
         return normalize(children[0])
-    return normalize(Split(direction=root.direction, children=children, weights=weights))
+    return normalize(
+        Split(direction=root.direction, children=children, weights=weights, pinned=root.pinned)
+    )
 
 
 def swap_panes(root: LayoutNode | None, first: str, second: str) -> LayoutNode | None:
@@ -441,6 +499,7 @@ def to_dict(node: LayoutNode) -> dict[str, Any]:
         "direction": node.direction,
         "children": [to_dict(child) for child in node.children],
         "weights": [_clean_weight(weight) for weight in node.weights],
+        "pinned": bool(node.pinned),
     }
 
 
@@ -474,6 +533,11 @@ def from_dict(data: Any) -> LayoutNode:
         for index in range(len(parsed))
     ]
     node = Split(direction=direction, children=parsed, weights=weights)
+    # A snapshot written before containers carried the flag: a container that
+    # is uneven was dragged by a hand that is no longer there to say so, and
+    # its sizes must survive the next open the same way they did until now.
+    raw_pinned = data.get("pinned")
+    node.pinned = bool(raw_pinned) if isinstance(raw_pinned, bool) else not _even_weights(node)
     seen: set[str] = set()
     for pane in leaves(node):
         if pane in seen:
@@ -505,10 +569,18 @@ def adopt_weights(current: LayoutNode, proposed: LayoutNode) -> LayoutNode:
     Callers check :func:`same_shape` first; this keeps the session's own tree
     authoritative for STRUCTURE while letting a client persist the one thing a
     seam drag changes.
+
+    This is also where ``pinned`` is decided, from the weights alone: a
+    container the save leaves uneven was sized by hand and holds that size
+    through later opens; one the save leaves even — dragged back, a seam
+    double-clicked, the "even out" button — is released. The client's own
+    ``pinned`` value, if it sends one, is not consulted: the flag is a fact
+    about the weights, and deriving it here is what keeps the two from
+    disagreeing.
     """
     if isinstance(current, Leaf) or isinstance(proposed, Leaf):
         return current
-    return Split(
+    adopted = Split(
         direction=current.direction,
         children=[
             adopt_weights(mine, theirs)
@@ -517,6 +589,8 @@ def adopt_weights(current: LayoutNode, proposed: LayoutNode) -> LayoutNode:
         weights=[_clean_weight(weight) for weight in proposed.weights[: len(current.children)]]
         + [1.0] * max(0, len(current.children) - len(proposed.weights)),
     )
+    adopted.pinned = not _even_weights(adopted)
+    return adopted
 
 
 def grid_hints(root: LayoutNode | None) -> dict[str, tuple[int, int]]:

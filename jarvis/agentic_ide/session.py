@@ -3905,14 +3905,16 @@ class Registry:
             else:
                 session.layout = layout_tree.append_pane(session.layout, term.key)
             # Then every terminal back to an equal share — the same act as the
-            # grid's "even out" button, run for the user on every open. The
-            # split decided the SHAPE; its halved weights are not kept, because
-            # a pane split off one that had been dragged small arrived as a
-            # sliver, and the maintainer asked (2026-08-22) that a new
-            # terminal always land in an evenly shared wall. Doing it here
-            # rather than in the grid covers every way a terminal opens —
-            # split button, batch, voice, CLI — and the persisted layout
-            # agrees with the screen.
+            # grid's "even out" button, run for the user on every open — EXCEPT
+            # inside a container whose boundaries were dragged by hand
+            # (`Split.pinned`): a size chosen on purpose survives the next
+            # open, everything not chosen comes out even. The split decided
+            # the SHAPE; its halved weights are not kept where nobody chose
+            # them, because a pane split off one that had been dragged small
+            # arrived as a sliver (maintainer request, 2026-08-22). Doing it
+            # here rather than in the grid covers every way a terminal opens —
+            # split button, batch, voice, CLI — and the persisted layout agrees
+            # with the screen.
             session.layout = layout_tree.evened(session.layout)
             self._renumber(session)
             await self._persist()

@@ -221,6 +221,102 @@ def test_evened_leaves_the_trivial_trees_alone() -> None:
     assert lt.evened(Leaf(pane="t1")) == Leaf(pane="t1")
 
 
+def test_evened_keeps_hand_sized_boundaries_and_evens_the_rest() -> None:
+    """A pinned container holds its weights; its children still even out."""
+    column = Split(
+        direction="column",
+        children=[Leaf(pane="t2"), Leaf(pane="t3"), Leaf(pane="t4")],
+        weights=[1.0, 0.5, 0.5],  # a split's halving, nobody's choice
+    )
+    tree = lt.evened(
+        Split(
+            direction="row",
+            children=[Leaf(pane="t1"), column],
+            weights=[3.0, 1.0],
+            pinned=True,
+        )
+    )
+    assert isinstance(tree, Split)
+    assert tree.weights == [3.0, 1.0] and tree.pinned is True
+    inner = tree.children[1]
+    assert isinstance(inner, Split)
+    assert inner.weights == [1.0, 1.0, 1.0] and inner.pinned is False
+
+
+def test_adopting_weights_decides_pinned_from_the_weights() -> None:
+    mine = lt.wizard_tree(["t1", "t2", "t3"], 2)
+    theirs = lt.wizard_tree(["t1", "t2", "t3"], 2)
+    assert isinstance(mine, Split) and isinstance(theirs, Split)
+
+    theirs.weights = [3.0, 1.0]
+    dragged = lt.adopt_weights(mine, theirs)
+    assert isinstance(dragged, Split) and dragged.pinned is True
+    # The inner stack was not touched and stays free.
+    assert isinstance(dragged.children[0], Split) and dragged.children[0].pinned is False
+
+    theirs.weights = [1.0, 1.0]
+    # A client may echo `pinned` back; the flag is a fact about the weights
+    # and the echo is not consulted.
+    theirs.pinned = True
+    released = lt.adopt_weights(dragged, theirs)
+    assert isinstance(released, Split) and released.pinned is False
+
+
+def test_is_even_measures_terminals_not_nodes() -> None:
+    stack = Split(direction="row", children=[Leaf(pane="t2"), Leaf(pane="t3")], weights=[1.0, 1.0])
+    quarters = Split(
+        direction="row",
+        children=[Leaf(pane="t1"), stack, Leaf(pane="t4")],
+        weights=[1.0, 1.0, 1.0],
+    )
+    # Equal container weights over a two-wide group: NOT even.
+    assert not lt.is_even(quarters)
+    assert lt.is_even(lt.evened(quarters))
+    assert lt.is_even(None) and lt.is_even(Leaf(pane="t1"))
+
+
+def test_pinned_survives_the_dict_form_and_legacy_snapshots() -> None:
+    tree = Split(direction="row", children=[Leaf(pane="t1"), Leaf(pane="t2")], weights=[3.0, 1.0])
+    tree.pinned = True
+    assert lt.to_dict(tree)["pinned"] is True
+    assert lt.from_dict(lt.to_dict(tree)) == tree
+    assert lt.from_dict(lt.to_dict(lt.evened(tree))).pinned is True  # explicit flag wins
+
+    # A snapshot from before the flag: an uneven container was dragged by a
+    # hand that is no longer there to say so, and keeps its sizes.
+    legacy = {"direction": "row", "children": [{"pane": "a"}, {"pane": "b"}], "weights": [3, 1]}
+    assert lt.from_dict(legacy).pinned is True
+    legacy["weights"] = [1, 1]
+    assert lt.from_dict(legacy).pinned is False
+
+
+def test_structural_edits_carry_the_pin() -> None:
+    row = Split(
+        direction="row",
+        children=[Leaf(pane="t1"), Leaf(pane="t2"), Leaf(pane="t3")],
+        weights=[2.0, 1.0, 1.0],
+        pinned=True,
+    )
+    slimmed = lt.remove_pane(row, "t3")
+    assert isinstance(slimmed, Split) and slimmed.pinned is True
+    split = lt.split_pane(row, "t2", "t4", "right")
+    assert isinstance(split, Split) and split.pinned is True
+    # A split running the other way opens a fresh, free container.
+    stacked = lt.split_pane(row, "t2", "t5", "down")
+    assert isinstance(stacked, Split) and stacked.pinned is True
+    inner = stacked.children[1]
+    assert isinstance(inner, Split) and inner.pinned is False
+    # Merging a pinned row into its parent row keeps the pin.
+    nested = Split(
+        direction="row",
+        children=[Leaf(pane="t0"), row],
+        weights=[1.0, 1.0],
+    )
+    flat = lt.normalize(nested)
+    assert isinstance(flat, Split) and flat.pinned is True
+    check_canonical(flat)
+
+
 def test_axis_span_is_the_widest_member_across_the_grain() -> None:
     stack = Split(
         direction="column",

@@ -197,13 +197,43 @@ async def test_dragged_sizes_from_a_reshaped_workspace_are_declined(tmp_path) ->
     assert all(weight == 1.0 for weight in session.layout.weights)
 
 
-async def test_opening_a_terminal_evens_the_whole_wall(tmp_path) -> None:
+async def test_opening_a_terminal_evens_the_untouched_wall(tmp_path) -> None:
     """Every open is also the "even out" button (maintainer request, 2026-08-22).
 
-    Two panes dragged to 3:1, then a split off the SMALL one. Halving alone
-    would leave the newcomer at an eighth of the width — a sliver. The session
-    keeps the split's shape (the new pane sits beside its anchor) but deals
-    every terminal the same share, and the persisted tree says so too.
+    A column of two; a third split off its lower pane. Halving alone would
+    leave the newcomer at a quarter of the column — a sliver. Nobody dragged
+    anything here, so the session keeps the split's shape (the new pane sits
+    under its anchor) but deals every terminal the same share, and the
+    persisted tree says so too.
+    """
+    registry = await _workspace(tmp_path, 1)
+    session = registry.session
+    assert session is not None
+    first = session.terminals[0]
+    second = await registry.add_terminal(anchor=first.name, direction="right")
+    third = await registry.add_terminal(anchor=second.name, direction="down")
+    fourth = await registry.add_terminal(anchor=third.name, direction="down")
+
+    layout = session.layout
+    assert isinstance(layout, layout_tree.Split) and layout.direction == "row"
+    assert layout.weights == [1.0, 1.0]
+    column = layout.children[1]
+    assert isinstance(column, layout_tree.Split) and column.direction == "column"
+    # Shape: the newcomer landed under the pane that was split ...
+    assert layout_tree.leaves(column) == [second.key, third.key, fourth.key]
+    # ... sizes: not 1 : ½ : ½ but three equal shares, on the wire as well.
+    assert column.weights == [1.0, 1.0, 1.0]
+    assert session.to_dict()["layout"]["children"][1]["weights"] == [1.0, 1.0, 1.0]
+
+
+async def test_hand_sized_boundaries_survive_an_open(tmp_path) -> None:
+    """A size the user chose is not undone by the next terminal.
+
+    Two panes dragged to 3:1. Opening more must leave THAT boundary where the
+    hand put it while everything the hand never touched still comes out even
+    — a split inside the narrow column shares the column evenly, the column
+    itself stays a quarter of the width, and an anchor-less add joins the row
+    at an even share without disturbing the 3:1.
     """
     registry = await _workspace(tmp_path, 1)
     session = registry.session
@@ -214,41 +244,49 @@ async def test_opening_a_terminal_evens_the_whole_wall(tmp_path) -> None:
     dragged["weights"] = [3.0, 1.0]
     await registry.set_layout_weights(dragged)
     assert isinstance(session.layout, layout_tree.Split)
-    assert session.layout.weights == [3.0, 1.0]
+    assert session.layout.pinned is True
 
-    third = await registry.add_terminal(anchor=second.name, direction="right")
+    third = await registry.add_terminal(anchor=second.name, direction="down")
+    await registry.add_terminal(anchor=third.name, direction="down")
 
     layout = session.layout
     assert isinstance(layout, layout_tree.Split) and layout.direction == "row"
-    # Shape: the newcomer landed beside the pane that was split.
-    assert layout_tree.leaves(layout) == [first.key, second.key, third.key]
-    # Sizes: the drag is gone, every terminal holds the same share.
-    assert layout.weights == [1.0, 1.0, 1.0]
-    assert session.to_dict()["layout"]["weights"] == [1.0, 1.0, 1.0]
+    # The dragged boundary holds ...
+    assert layout.weights == [3.0, 1.0]
+    assert layout.pinned is True
+    column = layout.children[1]
+    assert isinstance(column, layout_tree.Split)
+    # ... and the boundaries nobody dragged are even.
+    assert column.weights == [1.0, 1.0, 1.0]
+    assert column.pinned is False
+
+    # An anchor-less add takes an even share of the row and leaves the 3:1.
+    await registry.add_terminal(direction="right")
+    layout = session.layout
+    assert isinstance(layout, layout_tree.Split)
+    assert layout.weights == [3.0, 1.0, 2.0]
 
 
-async def test_opening_into_a_nested_group_evens_by_terminal_count(tmp_path) -> None:
-    """The stacked half of a split is as wide as the terminals it lines up."""
+async def test_evening_by_hand_releases_the_boundaries(tmp_path) -> None:
+    """The "even out" button — or a drag back to even — ends the pin."""
     registry = await _workspace(tmp_path, 1)
     session = registry.session
     assert session is not None
     first = session.terminals[0]
-    second = await registry.add_terminal(anchor=first.name, direction="right")
-    # Stack a third under the second: row[t1, column[t2, t3]].
-    await registry.add_terminal(anchor=second.name, direction="down")
+    await registry.add_terminal(anchor=first.name, direction="right")
     dragged = layout_tree.to_dict(session.layout)
     dragged["weights"] = [3.0, 1.0]
     await registry.set_layout_weights(dragged)
+    evened = layout_tree.to_dict(session.layout)
+    evened["weights"] = [1.0, 1.0]
+    await registry.set_layout_weights(evened)
+    assert isinstance(session.layout, layout_tree.Split)
+    assert session.layout.pinned is False
 
-    # Split the first rightwards: row[t1, t4, column[t2, t3]] — the stack is
-    # one terminal wide, so the row deals three equal shares.
-    await registry.add_terminal(anchor=first.name, direction="right")
-
-    layout = session.layout
-    assert isinstance(layout, layout_tree.Split) and layout.direction == "row"
-    assert layout.weights == [1.0, 1.0, 1.0]
-    stack = layout.children[2]
-    assert isinstance(stack, layout_tree.Split) and stack.weights == [1.0, 1.0]
+    await registry.add_terminal(direction="right")
+    # Back on the default path: every open evens the wall.
+    assert isinstance(session.layout, layout_tree.Split)
+    assert session.layout.weights == [1.0, 1.0, 1.0]
 
 
 async def test_unreadable_dragged_sizes_are_refused_out_loud(tmp_path) -> None:
