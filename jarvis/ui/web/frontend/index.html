@@ -208,7 +208,7 @@
               title: "Die Oberfläche wurde nicht geladen.", // i18n-allow
               why: "Grund: ", // i18n-allow
               unknown: "Kein Grund gemeldet.", // i18n-allow
-              hint: "Das passiert, wenn die Oberfläche neu gebaut wird, während das Fenster offen ist.", // i18n-allow
+              hint: "Das passiert, wenn ein Bereich beim Öffnen abstürzt oder die Oberfläche neu gebaut wird, während das Fenster offen ist.", // i18n-allow
               button: "Neu laden", // i18n-allow
             };
           }
@@ -217,7 +217,7 @@
               title: "La interfaz no se cargó.", // i18n-allow
               why: "Motivo: ", // i18n-allow
               unknown: "No se informó ningún motivo.", // i18n-allow
-              hint: "Ocurre cuando la interfaz se reconstruye con la ventana abierta.", // i18n-allow
+              hint: "Ocurre cuando una sección falla al abrirse o la interfaz se reconstruye con la ventana abierta.", // i18n-allow
               button: "Recargar", // i18n-allow
             };
           }
@@ -225,7 +225,7 @@
             title: "The interface did not load.",
             why: "Reason: ",
             unknown: "No reason was reported.",
-            hint: "This happens when the interface is rebuilt while the window is open.",
+            hint: "This happens when a section fails to open, or the interface is rebuilt while the window is open.",
             button: "Reload",
           };
         }
@@ -273,10 +273,29 @@
           root.appendChild(box);
         }
 
+        // The clock the grace period is measured against. It starts at page
+        // load and is re-based every time the app goes from up to not-up, so a
+        // section switch that empties #root twenty minutes in gets the same
+        // 2.5 s of benefit of the doubt the first paint got — not an instant
+        // verdict from a stopwatch that has been running since boot.
+        var emptySince = started;
+        var wasUp = false;
+
         var timer = setInterval(function () {
           var now = state();
           if (now === "up") {
-            clearInterval(timer);
+            // Healthy — but do NOT stop watching. This watchdog used to
+            // clearInterval() here, which retired it permanently the moment the
+            // app painted once. Everything it exists to catch can still happen
+            // afterwards: a lazy section chunk whose import throws above every
+            // error boundary empties #root minutes later, and with the timer
+            // gone nothing noticed. The window simply stayed on the stage's
+            // near-black ground with no card, no reason and no button — the
+            // "it goes black when I switch sections" report. Watching costs one
+            // childElementCount read every 500 ms; not watching costs the user
+            // the whole window.
+            wasUp = true;
+            emptySince = null;
             // The page is healthy: give the next incident its own reload.
             try {
               sessionStorage.removeItem(KEY);
@@ -285,8 +304,12 @@
             }
             return;
           }
-          var waited = Date.now() - started;
-          if (waited < (now === "empty" ? CRASH_GRACE_MS : LOAD_GRACE_MS)) return;
+          if (emptySince === null) emptySince = Date.now();
+          var waited = Date.now() - emptySince;
+          // Once the app HAS painted, an empty #root is a crash rather than a
+          // slow bundle, so the short clock applies to both states.
+          var grace = now === "empty" || wasUp ? CRASH_GRACE_MS : LOAD_GRACE_MS;
+          if (waited < grace) return;
           clearInterval(timer);
           var spent = null;
           try {

@@ -2415,6 +2415,10 @@
     "group_hint": "Alle anderen Einstellungen auf dieser Seite funktionieren weiterhin.",
     "group_retry": "Erneut versuchen"
   },
+  "view_loading": {
+    "loading": "Bereich wird geladen…",
+    "slow": "Das dauert länger als sonst — die App arbeitet noch daran."
+  },
   "plan_step_list": {
     "no_plan": "Kein strukturierter Plan — Single-Shot-Run.",
     "show_output": "Output anzeigen"

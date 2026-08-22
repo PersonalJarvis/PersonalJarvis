@@ -130,6 +130,53 @@ describe("the blank-window watchdog in index.html", () => {
     );
   });
 
+  test("it keeps watching after the app is up, and catches a LATER crash", () => {
+    // The section-switch failure, in order: the app paints, the user works for
+    // a while, then a lazy chunk throws above every error boundary and empties
+    // #root. The watchdog used to clearInterval() on the first healthy poll,
+    // so from that moment nothing was watching and the window just went dark.
+    setRoot(SPLASH);
+    const run = runWatchdog();
+    setRoot("<main>the deck</main>");
+    vi.advanceTimersByTime(60_000);
+    expect(run.reloads()).toBe(0);
+
+    setRoot("");
+    vi.advanceTimersByTime(3_000);
+    expect(run.reloads()).toBe(1);
+  });
+
+  test("a healthy app that empties later still gets its full grace period", () => {
+    // The grace must be measured from when the window went blank, not from
+    // page load — otherwise a stopwatch running since boot condemns the very
+    // first poll after a crash and reloads on a momentary gap.
+    setRoot(SPLASH);
+    const run = runWatchdog();
+    setRoot("<main>the deck</main>");
+    vi.advanceTimersByTime(60_000);
+
+    setRoot("");
+    vi.advanceTimersByTime(1_000);
+    expect(run.reloads()).toBe(0);
+    vi.advanceTimersByTime(2_000);
+    expect(run.reloads()).toBe(1);
+  });
+
+  test("a later crash that has already spent its reload explains itself", () => {
+    setRoot(SPLASH);
+    const run = runWatchdog();
+    setRoot("<main>the deck</main>");
+    vi.advanceTimersByTime(1_000);
+    run.store.set("jarvis:blank-reloaded", "1");
+
+    setRoot("");
+    vi.advanceTimersByTime(3_000);
+    expect(run.reloads()).toBe(0);
+    expect(document.getElementById("root")!.textContent).toContain(
+      "The interface did not load.",
+    );
+  });
+
   test("the reload button clears the guard, so the fresh page may heal itself", () => {
     setRoot("");
     const run = runWatchdog();

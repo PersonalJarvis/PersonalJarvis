@@ -6,7 +6,9 @@ import {
   type ComponentType,
   type LazyExoticComponent,
 } from "react";
+import { Loader2 } from "lucide-react";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
 import { DetachedViewPlaceholder } from "@/components/layout/DetachedViewPlaceholder";
@@ -226,16 +228,67 @@ function useIdleViewPrefetch(): void {
   }, []);
 }
 
+/** Quiet time before a loading section admits it is loading. */
+export const LOADING_HINT_MS = 400;
+
+/** After this, the wait stops being normal and the placeholder says so. */
+export const LOADING_SLOW_MS = 8_000;
+
 /**
  * Placeholder shown while a section chunk is in flight.
  *
- * Deliberately empty: the idle prefetch means this is almost never seen, and a
- * spinner that appears for 30 ms reads as a flicker — worse than nothing. It
- * only holds the layout so the surrounding chrome does not jump. Being
- * text-free, it also needs no translation.
+ * It used to render nothing at all, on the reasoning that the idle prefetch
+ * makes this almost invisible and a spinner shown for 30 ms reads as a
+ * flicker. The first half of that holds; the second half assumed the wait is
+ * always ~30 ms, and it is not. Every asset is served from the one asyncio
+ * loop the whole backend shares, so any synchronous call on that loop stops
+ * the chunk mid-flight — measured on the maintainer's box at 15.0 s, 15.1 s,
+ * 15.2 s, 16.2 s and 17.9 s. For all of that time the only thing painted here
+ * is the section stage's own ground, `rgb(10, 10, 10)`: an unannounced black
+ * rectangle where the app used to be. That is what gets reported as "the app
+ * goes black when I switch sections", and it is a missing loading state rather
+ * than a crash.
+ *
+ * So the quiet is kept where it was earned and dropped where it was not:
+ * nothing for {@link LOADING_HINT_MS}, so a warm chunk still swaps in without
+ * a flash; a calm spinner once the wait is long enough to notice; and past
+ * {@link LOADING_SLOW_MS} a line saying it is taking longer than usual, so a
+ * stalled backend looks like a slow app instead of a dead one.
  */
-function ViewLoadingFallback() {
-  return <div className="h-full w-full" aria-busy="true" />;
+export function ViewLoadingFallback() {
+  const t = useT();
+  const [phase, setPhase] = useState<"quiet" | "loading" | "slow">("quiet");
+
+  useEffect(() => {
+    const hint = window.setTimeout(() => setPhase("loading"), LOADING_HINT_MS);
+    const slow = window.setTimeout(() => setPhase("slow"), LOADING_SLOW_MS);
+    return () => {
+      window.clearTimeout(hint);
+      window.clearTimeout(slow);
+    };
+  }, []);
+
+  return (
+    <div
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background"
+      aria-busy="true"
+      role="status"
+      data-testid="view-loading-fallback"
+      data-phase={phase}
+    >
+      {phase !== "quiet" && (
+        <>
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">{t("view_loading.loading")}</p>
+          {phase === "slow" && (
+            <p className="max-w-[46ch] text-center text-xs text-muted-foreground/80">
+              {t("view_loading.slow")}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 /**

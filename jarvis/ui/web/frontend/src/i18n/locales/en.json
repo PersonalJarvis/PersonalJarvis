@@ -2415,6 +2415,10 @@
     "group_hint": "Every other setting on this page still works.",
     "group_retry": "Try again"
   },
+  "view_loading": {
+    "loading": "Loading the section…",
+    "slow": "This is taking longer than usual — the app is still working on it."
+  },
   "plan_step_list": {
     "no_plan": "No structured plan — single-shot run.",
     "show_output": "Show output"
