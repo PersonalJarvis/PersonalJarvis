@@ -55,6 +55,7 @@ from .schema import (
     WSWelcome,
     event_to_ws_envelope,
 )
+from .spa_build import build_is_complete, holding_page_html
 from .surface_security import SurfaceSecurity, set_browser_login_required
 from .wallpapers import register_wallpaper_routes
 
@@ -346,6 +347,7 @@ class WebServer:
         from .computer_use_routes import router as computer_use_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
+        from .deck_routes import router as deck_router
         from .desktop_routes import router as desktop_router
         from .diagnostics_routes import router as diagnostics_router
         from .dictation_routes import router as dictation_router
@@ -378,7 +380,6 @@ class WebServer:
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
-        from .deck_routes import router as deck_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -2076,7 +2077,16 @@ class WebServer:
             return self._spa_index_response()
 
     def _spa_index_response(self) -> FileResponse | HTMLResponse:
-        if INDEX_FILE.is_file():
+        # An index.html whose own entry bundle is not on disk is worse than no
+        # index.html at all: the window paints the boot splash, the module
+        # script 404s, and nothing further runs — no React, no bundle watch, no
+        # preload recovery — so the only thing left is the 20-second blank-window
+        # watchdog. A rebuild deletes dist/assets while leaving the previous
+        # index.html in place for about two seconds (measured 2026-08-22), and
+        # every window that loads during those two seconds is stuck there. The
+        # holding page below says what is happening and comes back on its own.
+        # See jarvis/ui/web/spa_build.py.
+        if INDEX_FILE.is_file() and build_is_complete(INDEX_FILE, DIST_DIR):
             return FileResponse(
                 str(INDEX_FILE),
                 headers={
@@ -2088,48 +2098,23 @@ class WebServer:
 
     @staticmethod
     def _spa_placeholder_response() -> HTMLResponse:
-        # This page has no bundle behind it, so it carries its own theme. It is
-        # served INSIDE the native window, whose ground was already painted from
-        # [ui] theme — a hardcoded dark page here would be a black rectangle in
-        # a paper-white frame for the whole rebuild.
-        from jarvis.ui.theme import (
-            HOLDING_PAGE_FOREGROUND,
-            HOLDING_PAGE_MUTED,
-            WINDOW_BACKGROUND,
-            configured_theme,
-            resolve_theme,
-        )
+        """The boot splash, while dist/ is between two builds.
 
-        try:
-            from jarvis.core.config import load_config
+        It is deliberately the SAME splash the window opens with — same ground,
+        same ring, same assistant name — because a rebuild is not a different
+        program taking over the window. Resolving the theme is left to a two-line
+        inline script reading the very key `frontend/index.html` reads, which
+        also takes a synchronous `load_config()` off the one event loop that is
+        simultaneously serving every asset of the build that is landing.
 
-            theme = resolve_theme(configured_theme(load_config()))
-        except Exception:  # noqa: BLE001 — a holding page never fails on config
-            theme = "dark"
-
-        bg = WINDOW_BACKGROUND[theme]
-        fg = HOLDING_PAGE_FOREGROUND[theme]
-        muted = HOLDING_PAGE_MUTED[theme]
-        body = (
-            "<!doctype html><html lang=\"en\"><head>"
-            "<meta charset=\"utf-8\">"
-            "<title>Jarvis</title>"
-            "<meta http-equiv=\"refresh\" content=\"2\">"
-            f"<meta name=\"color-scheme\" content=\"{theme}\">"
-            f"<style>html,body{{margin:0;height:100%;background:{bg};"
-            f"color:{fg};font-family:ui-sans-serif,system-ui,sans-serif;"
-            "display:flex;align-items:center;justify-content:center}"
-            "main{text-align:center;max-width:480px;padding:24px}"
-            "h1{font-weight:500;font-size:18px;margin:0 0 12px}"
-            f"p{{margin:0;color:{muted};font-size:14px;line-height:1.5}}</style>"
-            "</head><body><main>"
-            "<h1>Jarvis is starting…</h1>"
-            "<p>The frontend is currently being built or reloaded. "
-            "This page refreshes automatically.</p>"
-            "</main></body></html>"
-        )
+        It waits for a COMPLETE build instead of reloading on a timer: the page
+        polls the entry document and reloads only once the answer is no longer
+        itself. A blind `<meta http-equiv="refresh">` reloads into the same
+        half-written dist over and over, which is the flicker rather than the
+        cure.
+        """
         return HTMLResponse(
-            content=body,
+            content=holding_page_html(),
             status_code=200,
             headers={
                 "Cache-Control": "no-store, max-age=0",

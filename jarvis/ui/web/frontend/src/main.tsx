@@ -7,6 +7,7 @@ import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
 import { installBundleWatch } from "./lib/bundleWatch";
+import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
 import "./index.css";
 
 // When the frontend is rebuilt while the window is open, the old main bundle
@@ -18,7 +19,11 @@ import "./index.css";
 // missing chunk and the window ends up cycling. See lib/preloadRecovery.
 installPreloadRecovery({
   storage: sessionStorage,
-  reload: () => window.location.reload(),
+  // Never a bare location.reload(). The chunk went missing because a rebuild
+  // is running, which is precisely when the entry document is also briefly
+  // unservable — reloading into that leaves the window with no JavaScript and
+  // nothing left to recover with. See lib/safeReload.
+  reload: () => reloadWhenServable(browserSafeReloadDeps()),
   defer: (fn, ms) => {
     window.setTimeout(fn, ms);
   },
@@ -43,7 +48,7 @@ installPreloadRecovery({
       fetch("/", { cache: "no-store", headers: { Accept: "text/html" } }).then(
         (response) => (response.ok ? response.text() : ""),
       ),
-    reload: () => window.location.reload(),
+    reload: () => reloadWhenServable(browserSafeReloadDeps()),
     idleFor: () => (lastInput === null ? null : Date.now() - lastInput),
     visible: () => document.visibilityState !== "hidden",
     every: (fn, ms) => window.setInterval(fn, ms),

@@ -29,6 +29,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from .spa_build import build_is_complete, holding_page_html
 from .surface_security import SurfaceSecurity
 
 # The built React frontend lives next to this module (jarvis/ui/web/dist),
@@ -296,6 +297,28 @@ class FastBootstrap:
             await send({"type": "websocket.accept"})
             await send({"type": "websocket.close", "code": 1013})
 
+    @staticmethod
+    async def _rebuilding(scope: dict, send: Any) -> None:
+        """Answer with the holding splash while dist/ is half-written."""
+        body = holding_page_html().encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"text/html; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("latin-1")),
+                    (b"cache-control", b"no-store, max-age=0"),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"" if scope.get("method") == "HEAD" else body,
+            }
+        )
+
     # ---- static frontend (served while warming, no black screen) -----------
 
     async def _serve_static(self, scope: dict, send: Any) -> bool:
@@ -304,6 +327,13 @@ class FastBootstrap:
         target = self._resolve_static_file(scope.get("path", "/"))
         if target is None:
             return False
+        if target.name == "index.html" and not build_is_complete(target, self._dist_dir):
+            # A rebuild is between deleting dist/assets and writing the new
+            # ones. Handing out this index.html gives the window a boot splash
+            # whose entry bundle 404s — no React, no self-healing, and a
+            # twenty-second wait before anything notices (see spa_build.py).
+            await self._rebuilding(scope, send)
+            return True
         try:
             data = await asyncio.to_thread(target.read_bytes)
         except OSError:

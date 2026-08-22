@@ -172,6 +172,11 @@
         var CRASH_GRACE_MS = 2500;
         var LOAD_GRACE_MS = 20000;
         var POLL_MS = 500;
+        var RETRY_MS = 700;
+        var SLOW_RETRY_MS = 3000;
+        var FAST_TRIES = 20;
+        // Mirrors HOLDING_MARKER in jarvis/ui/web/spa_build.py.
+        var HOLDING = "jarvis-build-holding";
         var KEY = "jarvis:blank-reloaded";
         var started = Date.now();
         var lastError = "";
@@ -187,6 +192,97 @@
           var r = e && e.reason;
           lastError = (r && (r.message || String(r))) || lastError;
         });
+
+        // Reload ONLY once the server can hand out a whole build.
+        //
+        // A reload is a one-way door: once the navigation starts, this script
+        // is gone too. `npm run build` runs with emptyOutDir, so dist/ passes
+        // through a state where assets/ is deleted and the previous index.html
+        // is not — measured at 1.8 s against the live server on 2026-08-22.
+        // Reloading into that gives the window a splash whose module script
+        // 404s and nothing at all left to notice it. So: ask what a fresh
+        // window would load, confirm those files answer, and only then go.
+        // Never gives up — showing the app that is already here beats showing
+        // nothing. Mirrors src/lib/safeReload.ts.
+        function safeReload() {
+          var f = typeof fetch === "function" ? fetch : null;
+          if (!f) {
+            // No way to check (very old engine) — the old behaviour is still
+            // better than never reloading at all.
+            location.reload();
+            return;
+          }
+          var tries = 0;
+          function again() {
+            setTimeout(look, tries < FAST_TRIES ? RETRY_MS : SLOW_RETRY_MS);
+          }
+          function look() {
+            tries++;
+            f("/", { cache: "no-store", headers: { Accept: "text/html" } })
+              .then(function (r) {
+                return r.ok ? r.text() : "";
+              })
+              .then(function (html) {
+                if (!html || html.indexOf(HOLDING) !== -1) {
+                  again();
+                  return;
+                }
+                var refs = html.match(/\/assets\/[A-Za-z0-9._-]+/g) || [];
+                if (!refs.length) {
+                  again();
+                  return;
+                }
+                var left = refs.length;
+                var bad = false;
+                refs.forEach(function (url) {
+                  f(url, { method: "HEAD", cache: "no-store" })
+                    .then(function (r) {
+                      if (!r.ok) bad = true;
+                    })
+                    ["catch"](function () {
+                      bad = true;
+                    })
+                    .then(function () {
+                      left--;
+                      if (left > 0) return;
+                      if (bad) again();
+                      else location.reload();
+                    });
+                });
+              })
+              ["catch"](function () {
+                again();
+              });
+          }
+          look();
+        }
+
+        // Put the splash back while we wait for a build worth reloading into.
+        // An emptied #root is the one state with nothing on screen at all, and
+        // the wait for a rebuild to finish can be tens of seconds — the window
+        // has to say something for all of it.
+        function waiting() {
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount > 0) return;
+          var box = document.createElement("div");
+          box.id = "jarvis-boot-splash";
+          var ring = document.createElement("div");
+          ring.className = "ring";
+          var name = document.createElement("div");
+          name.className = "name";
+          try {
+            name.textContent = (localStorage.getItem("jarvis.assistantName") || "").trim();
+          } catch (e) {
+            /* storage blocked — the spinner alone is enough */
+          }
+          var sub = document.createElement("div");
+          sub.className = "sub";
+          sub.textContent = "Updating…";
+          box.appendChild(ring);
+          box.appendChild(name);
+          box.appendChild(sub);
+          root.appendChild(box);
+        }
 
         function state() {
           var root = document.getElementById("root");
@@ -264,7 +360,11 @@
             } catch (e) {
               /* storage blocked — the reload still happens */
             }
-            location.reload();
+            // Same door, same rule: a person who clicks Reload during a
+            // rebuild must not be handed the black window this card replaced.
+            root.innerHTML = "";
+            waiting();
+            safeReload();
           };
           box.appendChild(h);
           box.appendChild(why);
@@ -326,7 +426,8 @@
               report();
               return;
             }
-            location.reload();
+            waiting();
+            safeReload();
             return;
           }
           report();

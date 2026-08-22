@@ -40,11 +40,28 @@ interface Run {
   store: Map<string, string>;
 }
 
+/** A served index.html the watchdog would consider safe to reload into. */
+const WHOLE_BUILD =
+  '<!doctype html><html><head><script type="module" src="/assets/index-abc.js">' +
+  '</script></head><body><div id="root"></div></body></html>';
+
+/** What the server hands out while a rebuild is between two states on disk. */
+const HOLDING = '<html><div data-state="jarvis-build-holding"></div></html>';
+
 /**
- * Run the watchdog against this document, with `location` and `sessionStorage`
- * shadowed by test doubles (jsdom's own `location.reload` cannot be spied on).
+ * Run the watchdog against this document, with `location`, `sessionStorage`
+ * and `fetch` shadowed by test doubles (jsdom's own `location.reload` cannot
+ * be spied on).
+ *
+ * `fetch` is a double rather than absent because the watchdog no longer
+ * reloads blindly: it asks the server whether a whole build is on disk first,
+ * which is the difference between healing the window and blanking it for
+ * twenty seconds. `served` is the entry document; `assetOk` decides whether
+ * the hashed files it points at answer.
  */
-function runWatchdog(): Run {
+function runWatchdog(
+  options: { served?: string; assetOk?: boolean } = {},
+): Run {
   let reloads = 0;
   const store = new Map<string, string>();
   const sessionStorageStub = {
@@ -53,10 +70,19 @@ function runWatchdog(): Run {
     removeItem: (k: string) => void store.delete(k),
   };
   const locationStub = { reload: () => void (reloads += 1) };
+  const served = options.served ?? WHOLE_BUILD;
+  const assetOk = options.assetOk ?? true;
+  const fetchStub = (_url: string, init?: { method?: string }) =>
+    Promise.resolve(
+      init?.method === "HEAD"
+        ? { ok: assetOk, text: () => Promise.resolve("") }
+        : { ok: true, text: () => Promise.resolve(served) },
+    );
   // eslint-disable-next-line no-new-func
-  new Function("sessionStorage", "location", watchdogSource())(
+  new Function("sessionStorage", "location", "fetch", watchdogSource())(
     sessionStorageStub,
     locationStub,
+    fetchStub,
   );
   return { reloads: () => reloads, store };
 }
@@ -87,21 +113,48 @@ describe("the blank-window watchdog in index.html", () => {
     expect(run.store.has("jarvis:blank-reloaded")).toBe(false);
   });
 
-  test("a splash still spinning gets the long grace, then one reload", () => {
+  test("a splash still spinning gets the long grace, then one reload", async () => {
     setRoot(SPLASH);
     const run = runWatchdog();
-    vi.advanceTimersByTime(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(run.reloads()).toBe(0);
-    vi.advanceTimersByTime(11_000);
+    await vi.advanceTimersByTimeAsync(11_000);
     expect(run.reloads()).toBe(1);
   });
 
-  test("an emptied root is a crash, and does not wait twenty seconds for it", () => {
+  test("an emptied root is a crash, and does not wait twenty seconds for it", async () => {
     setRoot("");
     const run = runWatchdog();
-    vi.advanceTimersByTime(3_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(run.reloads()).toBe(1);
     expect(run.store.get("jarvis:blank-reloaded")).toBe("1");
+  });
+
+  test("it puts the splash back rather than waiting on an empty window", async () => {
+    // While the server check runs — and it can run for as long as a rebuild
+    // takes — #root is the one state with nothing on screen at all.
+    setRoot("");
+    runWatchdog({ served: HOLDING });
+    await vi.advanceTimersByTimeAsync(3_000);
+    const root = document.getElementById("root")!;
+    expect(root.querySelector("#jarvis-boot-splash")).not.toBeNull();
+    expect(root.textContent).toContain("Updating");
+  });
+
+  test("it does NOT reload into a build that is half-written", async () => {
+    // The measured 1.8 s window: index.html is served, its entry bundle 404s.
+    // Reloading here is the black window this whole guard exists to prevent.
+    setRoot("");
+    const run = runWatchdog({ assetOk: false });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(run.reloads()).toBe(0);
+  });
+
+  test("it does NOT reload while the server says a rebuild is in flight", async () => {
+    setRoot("");
+    const run = runWatchdog({ served: HOLDING });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(run.reloads()).toBe(0);
   });
 
   test("the second failure says what happened instead of reloading again", () => {
@@ -130,7 +183,7 @@ describe("the blank-window watchdog in index.html", () => {
     );
   });
 
-  test("it keeps watching after the app is up, and catches a LATER crash", () => {
+  test("it keeps watching after the app is up, and catches a LATER crash", async () => {
     // The section-switch failure, in order: the app paints, the user works for
     // a while, then a lazy chunk throws above every error boundary and empties
     // #root. The watchdog used to clearInterval() on the first healthy poll,
@@ -142,11 +195,11 @@ describe("the blank-window watchdog in index.html", () => {
     expect(run.reloads()).toBe(0);
 
     setRoot("");
-    vi.advanceTimersByTime(3_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(run.reloads()).toBe(1);
   });
 
-  test("a healthy app that empties later still gets its full grace period", () => {
+  test("a healthy app that empties later still gets its full grace period", async () => {
     // The grace must be measured from when the window went blank, not from
     // page load — otherwise a stopwatch running since boot condemns the very
     // first poll after a crash and reloads on a momentary gap.
@@ -156,9 +209,9 @@ describe("the blank-window watchdog in index.html", () => {
     vi.advanceTimersByTime(60_000);
 
     setRoot("");
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(run.reloads()).toBe(0);
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(run.reloads()).toBe(1);
   });
 
@@ -177,12 +230,13 @@ describe("the blank-window watchdog in index.html", () => {
     );
   });
 
-  test("the reload button clears the guard, so the fresh page may heal itself", () => {
+  test("the reload button clears the guard, so the fresh page may heal itself", async () => {
     setRoot("");
     const run = runWatchdog();
     run.store.set("jarvis:blank-reloaded", "1");
-    vi.advanceTimersByTime(3_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     document.getElementById("root")!.querySelector("button")!.click();
+    await vi.advanceTimersByTimeAsync(0);
     expect(run.reloads()).toBe(1);
     expect(run.store.has("jarvis:blank-reloaded")).toBe(false);
   });
