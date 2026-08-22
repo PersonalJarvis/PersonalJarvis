@@ -113,9 +113,27 @@ def bundled_app_icon_png() -> Path | None:
     return path if path.is_file() else None
 
 
+_MUSIC_PLAYER_ICON_FILE = "music-player.ico"
+
+
+def bundled_music_player_icon() -> Path | None:
+    """Return the absolute path to the background music player's window icon.
+
+    The player is its own ``pythonw`` process (``jarvis.platform.music_player_host``),
+    so without an icon of its own its title bar and taskbar button show the
+    Python logo (maintainer, 2026-08-22: "a window with the Python logo — make
+    it proper"). The icon is the YouTube Music mark with the Jarvis mascot as a
+    badge, so the window reads as "YouTube Music, driven by Jarvis" at a
+    glance. ``None`` only when the file is missing (partial checkout).
+    """
+    path = _ICONS_DIR / _MUSIC_PLAYER_ICON_FILE
+    return path if path.is_file() else None
+
+
 __all__ = [
     "bundled_wakeword_models",
     "bundled_silero_vad_model",
     "bundled_app_icon",
     "bundled_app_icon_png",
+    "bundled_music_player_icon",
 ]

@@ -58,9 +58,31 @@ def _default_storage_dir() -> Path:
 
 
 def _default_title() -> str:
+    """The window's title: the service first, then who drives it.
+
+    "Personal Jarvis — Music" next to the interpreter's Python logo read as an
+    anonymous pipe (maintainer, 2026-08-22); the title now names the service
+    the window actually shows.
+    """
     from jarvis.core.branding import PRODUCT_NAME
 
-    return f"{PRODUCT_NAME} — Music"
+    return f"YouTube Music — {PRODUCT_NAME}"
+
+
+def _default_icon() -> str:
+    """Absolute path of the player's window icon, or ``""`` when not bundled.
+
+    Resolved from the package (``jarvis.assets``), never from the repo root, so
+    a wheel install finds it too (the same lesson as ``bundled_app_icon``).
+    """
+    try:
+        from jarvis.assets import bundled_music_player_icon
+
+        path = bundled_music_player_icon()
+    except Exception as exc:  # noqa: BLE001 — an icon is a nicety, never a blocker
+        log.debug("music player icon unresolved: %s", exc)
+        return ""
+    return str(path) if path is not None else ""
 
 
 def _default_spawn(argv: list[str]) -> Any:
@@ -148,6 +170,9 @@ class MusicPlayer:
             storage = self._storage_dir or _default_storage_dir()
             title = self._title or _default_title()
             argv = [sys.executable, "-m", _HOST_MODULE, "--storage", str(storage), "--title", title]
+            icon = _default_icon()
+            if icon:
+                argv += ["--icon", icon]
             try:
                 self._proc = self._spawn(argv)
             except Exception as exc:  # noqa: BLE001 — degrade to the browser, never raise

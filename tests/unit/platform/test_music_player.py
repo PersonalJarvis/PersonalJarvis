@@ -208,6 +208,53 @@ def test_spawn_failure_degrades_instead_of_raising():
         player.load("x")
 
 
+def test_argv_carries_the_window_icon_and_names_the_service():
+    """Maintainer, 2026-08-22: the player window showed the Python logo and
+    "Personal Jarvis — Music" — an anonymous pipe. The host now gets the
+    bundled YouTube-Music-plus-Jarvis icon and a title that names the service."""
+    from pathlib import Path
+
+    from jarvis.assets import bundled_music_player_icon
+    from jarvis.core.branding import PRODUCT_NAME
+
+    seen: list[list[str]] = []
+
+    def spawn(argv):
+        seen.append(list(argv))
+        return FakeHost()
+
+    player = MusicPlayer(spawn=spawn, display_present=lambda: True, has_webview=lambda: True)
+    assert player.start(timeout=1.0) is True
+    argv = seen[0]
+    assert argv[argv.index("--title") + 1] == f"YouTube Music — {PRODUCT_NAME}"
+    icon = bundled_music_player_icon()
+    assert icon is not None and icon.is_file(), "the player icon must ship in the package"
+    assert argv[argv.index("--icon") + 1] == str(icon)
+    # A real multi-size Windows icon, not a renamed PNG: the 256 px frame is
+    # what the taskbar scales from, the 16 px one sits in the title bar.
+    from PIL import Image
+
+    with Image.open(icon) as ico:
+        sizes = set(getattr(ico, "info", {}).get("sizes", set()))
+    assert (256, 256) in sizes and (16, 16) in sizes
+    assert Path(argv[argv.index("--icon") + 1]).suffix == ".ico"
+
+
+def test_argv_skips_the_icon_when_it_is_not_bundled(monkeypatch):
+    from jarvis.platform import music_player as mp
+
+    monkeypatch.setattr(mp, "_default_icon", lambda: "")
+    seen: list[list[str]] = []
+
+    def spawn(argv):
+        seen.append(list(argv))
+        return FakeHost()
+
+    player = MusicPlayer(spawn=spawn, display_present=lambda: True, has_webview=lambda: True)
+    assert player.start(timeout=1.0) is True
+    assert "--icon" not in seen[0]
+
+
 def test_argv_carries_storage_and_title():
     seen: list[list[str]] = []
 

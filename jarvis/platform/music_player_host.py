@@ -266,6 +266,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--storage", required=True, help="persistent browser profile dir")
     parser.add_argument("--title", default="Music", help="window title")
     parser.add_argument(
+        "--icon",
+        default="",
+        help=(
+            "window/taskbar icon file (.ico); without it the pythonw interpreter's "
+            "own logo shows"
+        ),
+    )
+    parser.add_argument(
         "--start",
         choices=("minimized", "hidden", "offscreen", "visible"),
         default="minimized",
@@ -346,7 +354,16 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         # pywebview runs ``func`` on its own worker thread once the GUI loop is up.
-        webview.start(func=_serve_then_quit, private_mode=False, storage_path=args.storage)
+        # ``icon`` is honoured by the WinForms/GTK/Qt backends; a missing file
+        # means the interpreter's default, which is exactly the Python logo the
+        # parent passes an icon to avoid.
+        icon = args.icon if args.icon and os.path.isfile(args.icon) else None
+        webview.start(
+            func=_serve_then_quit,
+            private_mode=False,
+            storage_path=args.storage,
+            icon=icon,
+        )
     except Exception as exc:  # noqa: BLE001 — no GUI backend here (Linux without GTK/Qt)
         _emit({"event": "unavailable", "error": f"{type(exc).__name__}: {exc}"})
         return 2
