@@ -32,10 +32,13 @@ logger = logging.getLogger(__name__)
 _CACHE_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "marketplace_index.json"
 
 _FETCH_TIMEOUT = httpx.Timeout(connect=3.0, read=10.0, write=10.0, pool=10.0)
-# How long a fetched index stays fresh before a view-open refetches it. The
-# refresh endpoint bypasses this; publishing latency is CI-bound (~minutes),
-# so a quarter hour keeps browsing snappy without hammering the host.
-_CACHE_TTL_SECONDS = 900.0
+# How long a fetched index stays fresh before the next read revalidates it.
+# The refresh endpoint bypasses this. Two minutes, not fifteen: the store view
+# polls while it is open so a fresh publish shows up on its own, and the
+# revalidation is a conditional GET (If-None-Match) — GitHub Pages answers a
+# 304 with no body when nothing changed, so the short TTL costs the host a
+# few hundred bytes per window, not a re-download of the index.
+_CACHE_TTL_SECONDS = 120.0
 
 # One in-process fetch at a time — a double view-open must not race two
 # downloads into the same cache file.
@@ -260,10 +263,17 @@ def index_url() -> str:
         return MarketplaceConfig().community_index_url
 
 
-def _read_cache() -> tuple[float, CommunityIndex] | None:
+def _read_cache_raw() -> tuple[float, CommunityIndex, str | None] | None:
+    """``(fetched_at, index, etag)`` — ``etag`` is None for a cache written
+    before validators were stored, or when the host sent none."""
     try:
         raw = json.loads(_CACHE_PATH.read_text(encoding="utf-8-sig"))
-        return float(raw["fetched_at"]), CommunityIndex.model_validate(raw["index"])
+        etag = raw.get("etag")
+        return (
+            float(raw["fetched_at"]),
+            CommunityIndex.model_validate(raw["index"]),
+            str(etag) if isinstance(etag, str) and etag else None,
+        )
     except FileNotFoundError:
         return None  # no cache yet — the caller fetches the index
     except (OSError, ValueError, KeyError, ValidationError) as exc:
@@ -271,18 +281,28 @@ def _read_cache() -> tuple[float, CommunityIndex] | None:
         return None
 
 
-def _write_cache(index: CommunityIndex) -> None:
-    """Atomic tmp+replace, like every other data/ writer in this repo."""
+def _read_cache() -> tuple[float, CommunityIndex] | None:
+    hit = _read_cache_raw()
+    return (hit[0], hit[1]) if hit else None
+
+
+def _write_cache(index: CommunityIndex, etag: str | None = None) -> None:
+    """Atomic tmp+replace, like every other data/ writer in this repo.
+
+    ``etag`` is the host's validator for this exact body; the next refresh
+    after the TTL sends it back as ``If-None-Match`` so an unchanged index
+    costs a 304 instead of a download.
+    """
     try:
         _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = _CACHE_PATH.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(
-                {"fetched_at": time.time(), "index": index.model_dump(mode="json")},
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+        payload: dict[str, Any] = {
+            "fetched_at": time.time(),
+            "index": index.model_dump(mode="json"),
+        }
+        if etag:
+            payload["etag"] = etag
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp.replace(_CACHE_PATH)
     except OSError as exc:
         # A read-only disk costs persistence, not the current browse.
@@ -303,7 +323,8 @@ async def get_index(
     """Return ``(index, status)`` with status one of:
 
     - ``"disabled"``  — no index URL configured
-    - ``"fresh"``     — served straight from a within-TTL cache
+    - ``"fresh"``     — served from a within-TTL cache, or the host confirmed
+      the cached body is still current (304 Not Modified)
     - ``"fetched"``   — downloaded and cached just now
     - ``"stale"``     — network failed; serving the outdated cache honestly
     - ``"unavailable"`` — network failed and there is no cache at all
@@ -313,10 +334,17 @@ async def get_index(
         return None, "disabled"
 
     async with _fetch_lock:
-        hit = _read_cache()
+        raw_hit = _read_cache_raw()
+        hit = (raw_hit[0], raw_hit[1]) if raw_hit else None
+        etag = raw_hit[2] if raw_hit else None
         if hit and not force and (time.time() - hit[0]) < _CACHE_TTL_SECONDS:
             return hit[1], "fresh"
 
+        # Revalidate rather than re-download when we hold the host's validator.
+        # An explicit refresh (force) asks for the body outright — the user
+        # pressed the button because they suspect the cache, so a "still the
+        # same" answer from a CDN edge would be the wrong kind of reassurance.
+        headers = {"If-None-Match": etag} if (etag and hit and not force) else {}
         try:
             # The index URL is configuration, but its redirects are not: the
             # host on the other end picks them, so the chain stays on https.
@@ -326,16 +354,21 @@ async def get_index(
                 transport=transport,
                 **https_only_async(),
             ) as client:
-                response = await client.get(url)
+                response = await client.get(url, headers=headers)
+                if response.status_code == 304 and hit:
+                    # Same body as cached: stamp it fresh for another TTL.
+                    _write_cache(hit[1], etag)
+                    return hit[1], "fresh"
                 response.raise_for_status()
                 index = CommunityIndex.model_validate(response.json())
+                new_etag = response.headers.get("etag") or None
         except (httpx.HTTPError, ValueError, ValidationError) as exc:
             logger.warning("community index: fetch failed (%s)", exc)
             if hit:
                 return hit[1], "stale"
             return None, "unavailable"
 
-        _write_cache(index)
+        _write_cache(index, new_etag)
         return index, "fetched"
 
 

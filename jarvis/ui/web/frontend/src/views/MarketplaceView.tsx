@@ -217,6 +217,13 @@ export function MarketplaceView() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["marketplace-community"],
     queryFn: fetchCommunity,
+    // The store stays live while it is open: a publish that just merged shows
+    // up on its own instead of waiting for the refresh button. Cheap on
+    // purpose — the server answers from its cache inside the TTL and
+    // revalidates with a conditional GET (304) after it, so this never
+    // re-downloads an unchanged index. Paused while the window is hidden.
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   });
 
   const refresh = useMutation({

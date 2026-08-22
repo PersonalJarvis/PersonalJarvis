@@ -14,6 +14,7 @@ import {
   Plug,
   Search,
   Sparkles,
+  Upload,
   UploadCloud,
   X,
 } from "lucide-react";
@@ -28,7 +29,11 @@ import {
 } from "@/components/marketplace/PublishIdentity";
 import { PublishWallpaperDialog } from "@/components/wallpaper/PublishWallpaperDialog";
 import { thumbUrlFor, type WallpaperEntry } from "@/hooks/useWallpaperCatalog";
-import { uploadAsEntry, useWallpaperUploads } from "@/hooks/useWallpaperUploads";
+import {
+  uploadAsEntry,
+  useUploadMutations,
+  useWallpaperUploads,
+} from "@/hooks/useWallpaperUploads";
 import { fill, useLocaleChunk, useT } from "@/i18n";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
@@ -533,6 +538,11 @@ function SourcePicker({
   const [busy, setBusy] = useState(false);
   const [dropError, setDropError] = useState<string | null>(null);
   const pickerRef = useRef<HTMLInputElement | null>(null);
+  // A second picker for the one-file case: a `webkitdirectory` input can only
+  // ever choose a directory, so without this a skill author who has exactly
+  // one SKILL.md on disk reads the door as "plugins only" (it is not — the
+  // drop zone has always taken a lone file; only the click path refused it).
+  const filePickerRef = useRef<HTMLInputElement | null>(null);
 
   const handleFiles = async (
     load: () => Promise<Parameters<typeof folderToDraft>[0]>,
@@ -605,6 +615,19 @@ function SourcePicker({
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {t("marketplace.studio_door_folder_hint")}
           </p>
+          <button
+            type="button"
+            data-testid="studio-door-skill-file"
+            className="mt-3 inline-flex w-fit items-center gap-1.5 text-xs font-medium text-primary underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={(e) => {
+              // The tile itself opens the folder picker — this link must not.
+              e.stopPropagation();
+              filePickerRef.current?.click();
+            }}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            {t("marketplace.studio_door_skill_file")}
+          </button>
           <input
             ref={pickerRef}
             type="file"
@@ -618,6 +641,24 @@ function SourcePicker({
                 void handleFiles(
                   () => Promise.resolve(collectPickedFiles(list)),
                   t("marketplace.studio_origin_folder"),
+                );
+              }
+              e.currentTarget.value = "";
+            }}
+          />
+          <input
+            ref={filePickerRef}
+            type="file"
+            accept=".md,text/markdown,.json,application/json"
+            multiple
+            className="hidden"
+            data-testid="studio-skill-file-input"
+            onChange={(e) => {
+              const list = e.currentTarget.files;
+              if (list && list.length > 0) {
+                void handleFiles(
+                  () => Promise.resolve(collectPickedFiles(list)),
+                  t("marketplace.studio_origin_file"),
                 );
               }
               e.currentTarget.value = "";
@@ -1062,6 +1103,16 @@ function WallpaperLane({
     () => (uploads ?? []).filter((u) => u.source !== "marketplace").map(uploadAsEntry),
     [uploads],
   );
+  // Adding a picture right here, not only in the Wallpaper section: the same
+  // upload the picker uses (it lands in "Yours" there too), and the share
+  // dialog opens on it straight away — drop, title, publish, three steps.
+  const { add } = useUploadMutations();
+  const [dragOver, setDragOver] = useState(false);
+  const imagePickerRef = useRef<HTMLInputElement | null>(null);
+  const addAndShare = (file: File | undefined) => {
+    if (!file) return;
+    add.mutate(file, { onSuccess: (upload) => setShareItem(uploadAsEntry(upload)) });
+  };
   return (
     <section className="space-y-4">
       <PublishIdentityCard
@@ -1069,6 +1120,66 @@ function WallpaperLane({
         loading={identityLoading}
         blurb={t("marketplace.share_identity_blurb")}
       />
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={t("marketplace.studio_wallpapers_add")}
+        data-testid="studio-wallpaper-drop"
+        onClick={() => imagePickerRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") imagePickerRef.current?.click();
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          addAndShare(e.dataTransfer.files?.[0]);
+        }}
+        className={cn(
+          "flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed p-4 text-left transition-colors",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          dragOver
+            ? "border-primary bg-primary/10"
+            : "border-border bg-gradient-to-br from-primary/10 via-card to-card hover:border-primary/50",
+        )}
+      >
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg">
+          {add.isPending ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : (
+            <Upload className="h-5 w-5" />
+          )}
+        </span>
+        <span className="min-w-0">
+          <span className="block font-display text-sm font-semibold tracking-tight text-foreground">
+            {t("marketplace.studio_wallpapers_add")}
+          </span>
+          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+            {t("marketplace.studio_wallpapers_add_hint")}
+          </span>
+        </span>
+        <input
+          ref={imagePickerRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+          className="hidden"
+          data-testid="studio-wallpaper-file-input"
+          onChange={(e) => {
+            addAndShare(e.currentTarget.files?.[0]);
+            e.currentTarget.value = "";
+          }}
+        />
+      </div>
+      {add.error && (
+        <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {add.error.message}
+        </p>
+      )}
       <div className="flex flex-wrap items-baseline gap-2">
         <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
           {t("marketplace.studio_wallpapers_label")}
@@ -1596,6 +1707,14 @@ function PublishedCard({
 }) {
   const [live, setLive] = useState(false);
   const [waitedOut, setWaitedOut] = useState(false);
+  const queryClient = useQueryClient();
+
+  // The moment the feed lists the entry, the store behind this overlay must
+  // list it too — the status poll above already forced the server cache, so
+  // refetching the view's query is what makes "live" visibly true.
+  useEffect(() => {
+    if (live) void queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
+  }, [live, queryClient]);
 
   useEffect(() => {
     if (live) return;

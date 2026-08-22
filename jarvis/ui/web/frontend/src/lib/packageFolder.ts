@@ -50,7 +50,7 @@ export const MAX_SKILL_MD_BYTES = 64 * 1024;
 /** Files worth reading at all — everything else in the folder is ignored. */
 const INTERESTING = /(^|\/)(plugin\.json|mcp\.json|SKILL\.md|usage-card\.md)$/;
 
-function readText(file: File): Promise<string> {
+function readText(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ""));
@@ -163,9 +163,51 @@ function normalizePaths(files: NamedFile[]): NamedFile[] {
   return files;
 }
 
+/**
+ * A lone Markdown file IS the skill. "Drop a SKILL.md" must not demand a
+ * wrapping folder — a skill genuinely is one file (publishing-plan.md §3),
+ * and the file name need not be SKILL.md either: `todo-triage.md` dropped on
+ * the door is the same intent. The file is re-addressed to the canonical path
+ * so detection below stays one code path; its stem seeds the package name
+ * when the frontmatter has none (a literal "SKILL" is not a name).
+ */
+async function loneSkillFile(
+  files: NamedFile[],
+): Promise<{ files: NamedFile[]; stem: string } | null> {
+  if (files.length !== 1) return null;
+  const only = files[0];
+  const base = only.path.split("/").pop() ?? only.path;
+  if (!/\.md$/i.test(base)) return null;
+  const stem = base.replace(/\.md$/i, "");
+  const named = /^skill$/i.test(stem);
+  // A README.md dropped by mistake is not a skill: only the canonical name or
+  // a frontmatter opener says "this file is the package".
+  if (!named && only.file.size <= MAX_READ_BYTES) {
+    const head = await readText(only.file.slice(0, 16));
+    if (!head.replace(/^﻿/, "").startsWith("---")) return null;
+  } else if (!named) {
+    return null;
+  }
+  return {
+    files: [{ path: "SKILL.md", file: only.file }],
+    stem: named ? "" : stem,
+  };
+}
+
+/** "Todo Triage.md" → "todo-triage": the store's name rule, applied to a
+ *  file name so the form opens with something the Check will accept. */
+function slugFromStem(stem: string): string {
+  return stem
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+}
+
 /** Turn the recognized files of a package directory into a prefilled draft. */
 export async function folderToDraft(input: NamedFile[]): Promise<FolderDraft> {
-  const files = normalizePaths(input).filter(
+  const lone = await loneSkillFile(input);
+  const files = (lone ? lone.files : normalizePaths(input)).filter(
     (f) => INTERESTING.test(f.path) && f.file.size <= MAX_READ_BYTES,
   );
   const warnings: string[] = [];
@@ -240,13 +282,15 @@ export async function folderToDraft(input: NamedFile[]): Promise<FolderDraft> {
     byPath("SKILL.md") ?? files.find((f) => f.path.endsWith("/SKILL.md")) ?? undefined;
   if (!skillFile) {
     throw new Error(
-      "No plugin.json and no SKILL.md found — a package folder needs one of the two at its top level.",
+      "No plugin.json and no SKILL.md found — a package folder needs one of the two at its " +
+        "top level. A single file works too when it is named SKILL.md or starts with YAML " +
+        "frontmatter (---).",
     );
   }
   draft.skill_md = await read(skillFile);
   const fm = frontmatterValues(draft.skill_md);
   const dirName = skillFile.path.includes("/") ? skillFile.path.split("/")[0] : "";
-  draft.name = fm.name || dirName;
+  draft.name = fm.name || dirName || (lone ? slugFromStem(lone.stem) : "");
   if (fm.version) draft.version = fm.version;
   draft.description = fm.description ?? "";
   draft.title =

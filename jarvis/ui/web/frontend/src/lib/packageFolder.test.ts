@@ -67,6 +67,27 @@ describe("folderToDraft — the folder is the classification (publishing-plan.md
     );
   });
 
+  it("reads a lone SKILL.md file as the skill — no wrapping folder required", async () => {
+    const draft = await folderToDraft([namedFile("SKILL.md", SKILL_MD)]);
+    expect(draft.kind).toBe("skill");
+    expect(draft.name).toBe("todo-triage"); // from the frontmatter, not "SKILL"
+    expect(draft.skill_md).toBe(SKILL_MD);
+  });
+
+  it("accepts a lone Markdown file under any name once it opens with frontmatter, naming it from the file", async () => {
+    const noName = SKILL_MD.replace("name: todo-triage\n", "");
+    const draft = await folderToDraft([namedFile("Todo Triage.md", noName)]);
+    expect(draft.kind).toBe("skill");
+    expect(draft.name).toBe("todo-triage");
+    expect(draft.title).toBe("Todo Triage");
+  });
+
+  it("does not mistake a lone README.md without frontmatter for a skill", async () => {
+    await expect(folderToDraft([namedFile("notes.md", "# just notes")])).rejects.toThrow(
+      /named SKILL\.md or starts with YAML frontmatter/,
+    );
+  });
+
   it("warns instead of dropping bundled skills once the 10-skill cap is exceeded", async () => {
     const files = [namedFile("plugin.json", PLUGIN_JSON)];
     for (let i = 0; i < 11; i++) {

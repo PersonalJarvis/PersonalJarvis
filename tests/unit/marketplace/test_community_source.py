@@ -63,6 +63,18 @@ def _seed_corrupt_cache(path: Path) -> None:
     path.write_text("{not json", encoding="utf-8")
 
 
+def _seed_cache_with_etag(
+    path: Path, payload: dict[str, Any], fetched_at: float, etag: str
+) -> None:
+    path.write_text(
+        json.dumps({"fetched_at": fetched_at, "index": payload, "etag": etag}), encoding="utf-8"
+    )
+
+
+def _raw_cache(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+
+
 async def test_fetch_validates_and_caches(cache_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_index_payload())
@@ -149,3 +161,67 @@ def test_config_default_points_at_registry_pages() -> None:
 
     assert MarketplaceConfig().community_index_url.startswith("https://")
     assert MarketplaceConfig().community_index_url.endswith("/index.json")
+
+
+# ---------------------------------------------------------------------------
+# Revalidation: the store view polls while open, so the TTL is short and an
+# unchanged index must cost the host a 304, not a download.
+# ---------------------------------------------------------------------------
+
+
+async def test_fetch_stores_the_hosts_etag(cache_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_index_payload(revision=4), headers={"ETag": '"rev4"'})
+
+    _, status = await community_source.get_index(transport=_transport(handler))
+    assert status == "fetched"
+    assert _raw_cache(cache_path)["etag"] == '"rev4"'
+
+
+async def test_expired_cache_revalidates_and_304_keeps_it(cache_path: Path) -> None:
+    _seed_cache_with_etag(cache_path, _index_payload(revision=5), 0.0, '"rev5"')
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("If-None-Match"))
+        return httpx.Response(304)
+
+    index, status = await community_source.get_index(transport=_transport(handler))
+    assert seen == ['"rev5"']
+    assert status == "fresh"
+    assert index is not None and index.revision == 5
+    # Stamped fresh again: the next read inside the TTL must not touch the network.
+    raw = _raw_cache(cache_path)
+    assert time.time() - float(raw["fetched_at"]) < 5.0
+    assert raw["etag"] == '"rev5"'
+
+
+async def test_expired_cache_with_changed_body_is_fetched(cache_path: Path) -> None:
+    _seed_cache_with_etag(cache_path, _index_payload(revision=5), 0.0, '"rev5"')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("If-None-Match") == '"rev5"'
+        return httpx.Response(200, json=_index_payload(revision=6), headers={"ETag": '"rev6"'})
+
+    index, status = await community_source.get_index(transport=_transport(handler))
+    assert status == "fetched"
+    assert index is not None and index.revision == 6
+    assert _raw_cache(cache_path)["etag"] == '"rev6"'
+
+
+async def test_force_asks_for_the_body_not_a_304(cache_path: Path) -> None:
+    _seed_cache_with_etag(cache_path, _index_payload(revision=5), time.time(), '"rev5"')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "If-None-Match" not in request.headers
+        return httpx.Response(200, json=_index_payload(revision=7))
+
+    index, status = await community_source.get_index(force=True, transport=_transport(handler))
+    assert status == "fetched"
+    assert index is not None and index.revision == 7
+
+
+async def test_legacy_cache_without_etag_still_reads(cache_path: Path) -> None:
+    _seed_cache(cache_path, _index_payload(revision=8), time.time())
+    assert community_source.cached_index() is not None
+    assert community_source.cached_index().revision == 8  # type: ignore[union-attr]

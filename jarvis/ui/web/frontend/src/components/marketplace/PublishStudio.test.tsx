@@ -33,16 +33,27 @@ function stubServer(identity: PublishIdentityWire, opts?: { validateErrors?: unk
   const json = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: unknown, init?: { method?: string; body?: string }) => {
+    vi.fn(async (input: unknown, init?: { method?: string; body?: string | FormData }) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
-      calls.push({ url, body: init?.body ? JSON.parse(init.body) : undefined });
+      calls.push({
+        url,
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
+      });
       if (url === "/api/marketplace/publish/identity" && method === "GET") return json(identity);
+      if (url === "/api/wallpapers/uploads" && method === "POST") {
+        // The picker's own upload route: the dropped picture comes back as a
+        // fresh "own" upload the lane can hand straight to the share dialog.
+        return json({ id: "u0000000000000003", title: "Dropped", theme: "dark", createdAt: 3, source: "own" });
+      }
       if (url === "/api/marketplace/publish/validate") {
         return json({ ok: !(opts?.validateErrors?.length), errors: opts?.validateErrors ?? [] });
       }
       if (url === "/api/marketplace/publish/submit") {
-        const body = JSON.parse(init?.body ?? "{}") as { name: string; version: string };
+        const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+          name: string;
+          version: string;
+        };
         return json(
           {
             ok: true,
@@ -183,11 +194,44 @@ describe("PublishStudio", () => {
     expect(await screen.findByText(/Publishing is disabled/)).toBeTruthy();
   });
 
+  it("offers a single-file door next to the folder one, and a lone SKILL.md lands in the form", async () => {
+    stubServer(SIGNED_IN);
+    renderStudio();
+    await screen.findByTestId("studio-door-folder");
+    // The link is the visible promise that a skill does not need a folder.
+    expect(screen.getByTestId("studio-door-skill-file")).toBeTruthy();
+    const input = screen.getByTestId("studio-skill-file-input") as HTMLInputElement;
+    expect(input.hasAttribute("webkitdirectory")).toBe(false);
+
+    const file = new File(
+      ["---\nname: todo-triage\ndescription: Sort tasks.\n---\n\nGroup by due date.\n"],
+      "todo-triage.md",
+      { type: "text/markdown" },
+    );
+    fireEvent.change(input, { target: { files: [file] } });
+    await screen.findByTestId("studio-form");
+    // Read as a skill, name from the frontmatter — not a plugin with a missing manifest.
+    expect((screen.getByTestId("studio-name") as HTMLInputElement).value).toBe("todo-triage");
+  });
+
+  it("takes a dropped picture in the wallpaper lane and opens the share form on it", async () => {
+    const calls = stubServer(SIGNED_IN);
+    renderStudio(() => undefined, "wallpapers");
+    const drop = await screen.findByTestId("studio-wallpaper-drop");
+    const file = new File(["png-bytes"], "sunset.png", { type: "image/png" });
+    fireEvent.drop(drop, { dataTransfer: { files: [file] } });
+
+    expect(await screen.findByTestId("publish-wallpaper-dialog")).toBeTruthy();
+    const upload = calls.find((c) => c.url === "/api/wallpapers/uploads" && c.body instanceof FormData);
+    expect(upload).toBeTruthy();
+    expect((upload?.body as FormData).get("file")).toBeInstanceOf(File);
+  });
+
   it("speaks German when the UI does", async () => {
     stubServer(SIGNED_IN);
     setUiLanguage("de");
     renderStudio();
-    expect(await screen.findByText("Paketordner ablegen")).toBeTruthy(); // i18n-allow
+    expect(await screen.findByText(/Paketordner ablegen/)).toBeTruthy(); // i18n-allow
     expect(screen.getByText("Im Marketplace veröffentlichen")).toBeTruthy(); // i18n-allow
   });
 });
