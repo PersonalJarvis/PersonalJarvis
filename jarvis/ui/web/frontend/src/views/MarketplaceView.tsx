@@ -12,6 +12,7 @@ import {
   Search,
   Sparkles,
   Store,
+  UploadCloud,
   Wand2,
   X,
 } from "lucide-react";
@@ -19,7 +20,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ViewHeader } from "@/views/ChatsView";
-import { useT } from "@/i18n";
+import {
+  GithubSignInDialog,
+  PublisherChip,
+  usePublishIdentity,
+} from "@/components/marketplace/PublishIdentity";
+import { PublishStudio } from "@/components/marketplace/PublishStudio";
+import { fill, useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { useEventStore, type SectionId } from "@/store/events";
@@ -55,7 +62,7 @@ import {
 const MARKETPLACE_WEB_URL = "https://personaljarvis.ai/marketplace/";
 
 type Kind = "plugin" | "skill" | "wallpaper";
-type KindFilter = "all" | Kind;
+type KindFilter = "all" | Kind | "mine";
 
 /** One entry of any kind, flattened into what the storefront draws. */
 interface Entry {
@@ -193,11 +200,19 @@ interface InstallResultWire {
 
 export function MarketplaceView() {
   const t = useT();
+  // The publish half's strings ride in a lazy chunk (bundle budget); the
+  // shelves render from the main file meanwhile, the hero waits for it.
+  const localeReady = useLocaleChunk("marketplace");
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [openEntry, setOpenEntry] = useState<Entry | null>(null);
   const [landing, setLanding] = useState<InstallResultWire | null>(null);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [signInOpen, setSignInOpen] = useState(false);
+  const identity = usePublishIdentity();
+  const login = identity.data?.signed_in ? (identity.data.login ?? null) : null;
+  const publishEnabled = identity.data?.enabled !== false;
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["marketplace-community"],
@@ -250,12 +265,19 @@ export function MarketplaceView() {
   }, [data]);
 
   const needle = query.trim().toLowerCase();
+  const mineCount = useMemo(
+    () => (login ? entries.filter((e) => e.publisher === login).length : 0),
+    [entries, login],
+  );
   const visible = useMemo(
     () =>
       entries.filter(
-        (e) => (kindFilter === "all" || e.kind === kindFilter) && matches(e, needle),
+        (e) =>
+          (kindFilter === "all" ||
+            (kindFilter === "mine" ? e.publisher === login : e.kind === kindFilter)) &&
+          matches(e, needle),
       ),
-    [entries, kindFilter, needle],
+    [entries, kindFilter, needle, login],
   );
 
   const wallpapers = visible.filter((e) => e.kind === "wallpaper");
@@ -285,13 +307,27 @@ export function MarketplaceView() {
               />
             </Button>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => openExternalUrl(MARKETPLACE_WEB_URL)}
+              title={t("marketplace.open_web")}
             >
               {t("marketplace.open_web")}
               <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
             </Button>
+            <PublisherChip
+              onSignIn={() => setSignInOpen(true)}
+              onMine={() => {
+                setKindFilter("mine");
+                setQuery("");
+              }}
+            />
+            {publishEnabled && (
+              <Button size="sm" onClick={() => setStudioOpen(true)} data-testid="marketplace-publish">
+                <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+                {t("marketplace.publish_cta")}
+              </Button>
+            )}
           </div>
         }
       />
@@ -319,7 +355,9 @@ export function MarketplaceView() {
             plugin: entries.filter((e) => e.kind === "plugin").length,
             skill: entries.filter((e) => e.kind === "skill").length,
             wallpaper: entries.filter((e) => e.kind === "wallpaper").length,
+            mine: mineCount,
           }}
+          showMine={login !== null}
           t={t}
         />
       </div>
@@ -349,13 +387,26 @@ export function MarketplaceView() {
             </p>
           )}
 
+          {!isLoading && !error && localeReady && kindFilter === "all" && !needle && (
+            <Hero
+              data={data}
+              login={login}
+              publishEnabled={publishEnabled}
+              onPublish={() => setStudioOpen(true)}
+              onSignIn={() => setSignInOpen(true)}
+              t={t}
+            />
+          )}
+
           {!isLoading && !error && visible.length === 0 && (
             <EmptyState
               query={query}
+              mine={kindFilter === "mine"}
               onClear={() => {
                 setQuery("");
                 setKindFilter("all");
               }}
+              onPublish={() => setStudioOpen(true)}
               t={t}
             />
           )}
@@ -414,7 +465,11 @@ export function MarketplaceView() {
           )}
 
           {!isLoading && !error && (
-            <PublishFooter t={t} />
+            <PublishFooter
+              enabled={publishEnabled}
+              onPublish={() => setStudioOpen(true)}
+              t={t}
+            />
           )}
         </div>
       </ScrollArea>
@@ -431,24 +486,14 @@ export function MarketplaceView() {
       )}
 
       {landing && <LandingToast result={landing} onClose={() => setLanding(null)} t={t} />}
+
+      {studioOpen && <PublishStudio onClose={() => setStudioOpen(false)} />}
+      {signInOpen && <GithubSignInDialog onClose={() => setSignInOpen(false)} />}
     </div>
   );
 }
 
 type Translate = (key: string) => string;
-
-/**
- * Fill `{token}` placeholders in a translated string.
- *
- * The in-house i18n resolver interpolates exactly one token — the assistant's
- * name — and takes no variables, so counts and titles are substituted here
- * rather than by widening a resolver three locales and every view depend on.
- */
-function fill(template: string, vars: Record<string, string | number>): string {
-  return template.replace(/\{(\w+)\}/g, (match, key: string) =>
-    key in vars ? String(vars[key]) : match,
-  );
-}
 
 /** "12 entries · index 24 · updated 4 days ago", or the honest alternative. */
 function subtitleFor(
@@ -483,11 +528,13 @@ function FilterChips({
   active,
   onChange,
   counts,
+  showMine,
   t,
 }: {
   active: KindFilter;
   onChange: (kind: KindFilter) => void;
   counts: Record<KindFilter, number>;
+  showMine: boolean;
   t: Translate;
 }) {
   const chips: { id: KindFilter; label: string }[] = [
@@ -496,6 +543,7 @@ function FilterChips({
     { id: "skill", label: t("marketplace.filter_skills") },
     { id: "wallpaper", label: t("marketplace.filter_wallpapers") },
   ];
+  if (showMine) chips.push({ id: "mine", label: t("marketplace.filter_mine") });
   return (
     <div className="flex shrink-0 items-center gap-1">
       {chips.map((chip) => (
@@ -684,13 +732,29 @@ function EntryList({
 
 function EmptyState({
   query,
+  mine,
   onClear,
+  onPublish,
   t,
 }: {
   query: string;
+  mine: boolean;
   onClear: () => void;
+  onPublish: () => void;
   t: Translate;
 }) {
+  if (mine && !query) {
+    return (
+      <div className="py-16 text-center" data-testid="marketplace-empty-mine">
+        <UploadCloud className="mx-auto mb-3 h-6 w-6 text-muted-foreground/60" />
+        <p className="text-sm text-muted-foreground">{t("marketplace.empty_mine")}</p>
+        <Button size="sm" className="mt-3" onClick={onPublish}>
+          <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+          {t("marketplace.publish_cta")}
+        </Button>
+      </div>
+    );
+  }
   return (
     <div className="py-16 text-center">
       <Package className="mx-auto mb-3 h-6 w-6 text-muted-foreground/60" />
@@ -706,18 +770,120 @@ function EmptyState({
   );
 }
 
-function PublishFooter({ t }: { t: Translate }) {
+/**
+ * The storefront's marquee: what the community has put on the shelves, and
+ * the one door that matters for anybody who built something — publish, in
+ * this app, under their GitHub name. Drawn only on the unfiltered front page
+ * so a search never has to scroll past it.
+ */
+function Hero({
+  data,
+  login,
+  publishEnabled,
+  onPublish,
+  onSignIn,
+  t,
+}: {
+  data: CommunityResponse | undefined;
+  login: string | null;
+  publishEnabled: boolean;
+  onPublish: () => void;
+  onSignIn: () => void;
+  t: Translate;
+}) {
+  const counts = {
+    plugins: data?.plugins?.length ?? 0,
+    skills: data?.skills?.length ?? 0,
+    wallpapers: data?.wallpapers?.length ?? 0,
+  };
+  return (
+    <section
+      className="relative mb-8 overflow-hidden rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-sm"
+      data-testid="marketplace-hero"
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-primary/15 blur-3xl"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-primary/10 blur-3xl"
+      />
+      <div className="relative flex flex-wrap items-end gap-6">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            {t("marketplace.hero_eyebrow")}
+          </p>
+          <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight text-foreground">
+            {t("marketplace.hero_title")}
+          </h3>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
+            {t("marketplace.hero_body")}
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {publishEnabled && (
+              <Button size="sm" onClick={onPublish} data-testid="hero-publish">
+                <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+                {login ? t("marketplace.hero_publish_signed_in") : t("marketplace.publish_cta")}
+              </Button>
+            )}
+            {!login && publishEnabled && (
+              <Button size="sm" variant="ghost" onClick={onSignIn}>
+                {t("marketplace.identity_sign_in")}
+              </Button>
+            )}
+          </div>
+        </div>
+        <dl className="grid grid-cols-3 gap-3 sm:gap-4">
+          <Stat value={counts.plugins} label={t("marketplace.filter_plugins")} />
+          <Stat value={counts.skills} label={t("marketplace.filter_skills")} />
+          <Stat value={counts.wallpapers} label={t("marketplace.filter_wallpapers")} />
+        </dl>
+      </div>
+    </section>
+  );
+}
+
+function Stat({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-background/50 px-4 py-3 text-center">
+      <dd className="font-display text-2xl font-semibold tabular-nums tracking-tight text-foreground">
+        {value}
+      </dd>
+      <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</dt>
+    </div>
+  );
+}
+
+function PublishFooter({
+  enabled,
+  onPublish,
+  t,
+}: {
+  enabled: boolean;
+  onPublish: () => void;
+  t: Translate;
+}) {
   return (
     <div className="mt-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-3 backdrop-blur-sm">
       <p className="text-xs text-muted-foreground">{t("marketplace.publish_hint")}</p>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
-      >
-        {t("marketplace.publish_cta")}
-        <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
+          title={t("marketplace.publish_on_web")}
+        >
+          {t("marketplace.publish_on_web")}
+          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+        </Button>
+        {enabled && (
+          <Button size="sm" onClick={onPublish}>
+            <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+            {t("marketplace.publish_cta")}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

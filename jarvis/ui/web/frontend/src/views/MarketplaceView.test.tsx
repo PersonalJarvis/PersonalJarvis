@@ -110,12 +110,31 @@ const CONTENTS = {
   ],
 };
 
+/** The publishing identity the view asks for; signed out unless a test says so. */
+let identity: Record<string, unknown> = { enabled: true, wallpapers_enabled: true, signed_in: false };
+
 function installFetchMock(overrides?: Partial<CommunityResponse>) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url === "/api/marketplace/community" && method === "GET") {
       return { ok: true, status: 200, json: async () => ({ ...INDEX, ...overrides }) } as Response;
+    }
+    if (url === "/api/marketplace/publish/identity" && method === "GET") {
+      return { ok: true, status: 200, json: async () => identity } as Response;
+    }
+    if (url === "/api/wallpapers/uploads") {
+      return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+    }
+    if (url === "/api/marketplace/publish/signin/start") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ flow_id: "f", user_code: "WXYZ-9876", interval: 60 }),
+      } as Response;
+    }
+    if (url.startsWith("/api/marketplace/publish/signin/poll/")) {
+      return { ok: true, status: 200, json: async () => ({ status: "pending" }) } as Response;
     }
     if (url.endsWith("/contents")) {
       return { ok: true, status: 200, json: async () => CONTENTS } as Response;
@@ -162,6 +181,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   openExternalUrl.mockReset();
   setUiLanguage("en");
+  identity = { enabled: true, wallpapers_enabled: true, signed_in: false };
 });
 
 describe("MarketplaceView", () => {
@@ -296,13 +316,13 @@ describe("MarketplaceView", () => {
     // The German strings resolve from the locale file, including the count
     // template whose {count} token this view fills itself.
     expect(await screen.findByText(/3 veröffentlichte Einträge/)).toBeTruthy();
-    // The word appears twice on purpose — the filter chip and the shelf head
-    // name the same thing, and they must agree.
-    expect(screen.getAllByText("Hintergründe").length).toBe(2);
+    // The word appears three times on purpose — the hero count, the filter
+    // chip and the shelf head name the same thing, and they must agree.
+    expect(screen.getAllByText("Hintergründe").length).toBe(3); // i18n-allow
     expect(screen.getByLabelText(/Plugins, Skills und Hintergründe/)).toBeTruthy();
 
     setUiLanguage("es");
-    expect((await screen.findAllByText("Fondos")).length).toBe(2);
+    expect((await screen.findAllByText("Fondos")).length).toBe(3);
   });
 
   it("opens the public storefront in a real browser", async () => {
@@ -313,5 +333,57 @@ describe("MarketplaceView", () => {
     fireEvent.click(screen.getByRole("button", { name: /Storefront/ }));
 
     expect(openExternalUrl).toHaveBeenCalledWith("https://personaljarvis.ai/marketplace/");
+  });
+
+  it("opens the Publish Studio in the app instead of sending people to the website", async () => {
+    installFetchMock();
+    renderView();
+    await screen.findByText("Sentry");
+
+    fireEvent.click(screen.getByTestId("marketplace-publish"));
+    expect(await screen.findByTestId("publish-studio")).toBeTruthy();
+    // Nothing left the app: the studio is the publish path now.
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("offers the GitHub sign-in from the header and shows the code", async () => {
+    installFetchMock();
+    renderView();
+    await screen.findByText("Sentry");
+    fireEvent.click(await screen.findByTestId("publisher-chip-signed-out"));
+    expect(await screen.findByTestId("github-signin-dialog")).toBeTruthy();
+    expect(await screen.findByTestId("device-code")).toBeTruthy();
+    expect(screen.getByText("WXYZ")).toBeTruthy();
+  });
+
+  it("filters to the signed-in account's own publications", async () => {
+    identity = {
+      enabled: true,
+      wallpapers_enabled: true,
+      signed_in: true,
+      login: "octocat",
+      avatar_url: null,
+    };
+    installFetchMock({
+      skills: [
+        { ...INDEX.skills[0] },
+        {
+          ...INDEX.skills[0],
+          name: "someone-elses",
+          title: "Someone Else's Skill",
+          publisher: "stranger",
+        },
+      ],
+    });
+    renderView();
+    await screen.findByText("Sentry");
+
+    const chip = await screen.findByTestId("publisher-chip");
+    expect(chip.textContent).toContain("@octocat");
+
+    fireEvent.click(screen.getByRole("button", { name: /Mine 3/ }));
+    expect(screen.getByText("Three Bullet Brief")).toBeTruthy();
+    expect(screen.getByText("Sentry")).toBeTruthy();
+    expect(screen.queryByText("Someone Else's Skill")).toBeNull();
   });
 });

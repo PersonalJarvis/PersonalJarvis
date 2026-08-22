@@ -12,11 +12,12 @@ import {
   Store,
   Sun,
   Trash2,
+  Share2,
   Upload,
   X,
 } from "lucide-react";
 
-import { translate } from "@/i18n";
+import { translate, useLocaleChunk } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ViewHeader } from "@/views/ChatsView";
@@ -36,6 +37,8 @@ import {
   UPLOAD_WALLPAPER_STYLE,
 } from "@/hooks/useWallpaperUploads";
 import { useApplyWallpaper } from "@/hooks/useApplyWallpaper";
+import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
+import { PublishWallpaperDialog } from "@/components/wallpaper/PublishWallpaperDialog";
 import {
   installRunning,
   useWallpaperLibraryInstall,
@@ -355,6 +358,7 @@ function WallpaperPreview({
   onToggleFavorite,
   onSetTheme,
   onRemove,
+  onShare,
   onClose,
   onStep,
 }: {
@@ -366,6 +370,8 @@ function WallpaperPreview({
   onToggleFavorite: () => void;
   onSetTheme: (theme: Theme) => void;
   onRemove: () => void;
+  /** Absent when this picture cannot be published — see the caller. */
+  onShare?: () => void;
   onClose: () => void;
   onStep: (delta: number) => void;
 }) {
@@ -422,6 +428,18 @@ function WallpaperPreview({
               <Moon className="h-3 w-3" /> Dark
             </SegmentButton>
           </div>
+        )}
+        {onShare && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onShare}
+            data-testid="wallpaper-share"
+            aria-label={`Share ${item.title}`}
+          >
+            <Share2 className="mr-1.5 h-3.5 w-3.5" />
+            {translate("marketplace.share_cta")}
+          </Button>
         )}
         {item.isUpload && (
           <Button
@@ -527,7 +545,20 @@ export function WallpaperView() {
   const [style, setStyle] = useState<string | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [shareId, setShareId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+
+  // Only the owner's OWN pictures can be shared. An installed community
+  // wallpaper is somebody else's work; the server refuses to republish it,
+  // and offering a button the server will refuse is a trap, not a feature.
+  // Hidden too when the wallpaper lane is switched off in this deployment.
+  const publishIdentity = usePublishIdentity();
+  const shareStringsReady = useLocaleChunk("marketplace");
+  const canShare = (item: WallpaperEntry): boolean =>
+    shareStringsReady &&
+    publishIdentity.data?.wallpapers_enabled === true &&
+    item.isUpload === true &&
+    !item.fromMarketplace;
 
   const ownEntries = useMemo(
     () => (uploads ?? []).map(uploadAsEntry),
@@ -873,10 +904,20 @@ export function WallpaperView() {
           onToggleFavorite={() => toggleFavorite(previewItem.id)}
           onSetTheme={(next) => onRethemeUpload(previewItem, next)}
           onRemove={() => onRemoveUpload(previewItem)}
+          onShare={canShare(previewItem) ? () => setShareId(previewItem.id) : undefined}
           onClose={() => setPreviewId(null)}
           onStep={step}
         />
       )}
+      {shareId && (() => {
+        // Resolved against the whole catalog, like the preview above: the
+        // share dialog is a form somebody is filling in, and a filter change
+        // underneath it must not yank the picture out.
+        const shareItem = items.find((item) => item.id === shareId) ?? null;
+        return shareItem ? (
+          <PublishWallpaperDialog item={shareItem} onClose={() => setShareId(null)} />
+        ) : null;
+      })()}
     </div>
   );
 }

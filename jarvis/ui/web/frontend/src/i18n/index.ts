@@ -18,6 +18,7 @@
  * its own setting, distinct from the UI and the reply language:
  *   useSttLanguage(), setSttLanguage("auto" | "en" | "de" | "es")
  */
+import { useEffect } from "react";
 import { create } from "zustand";
 import enJson from "./locales/en.json";
 import deJson from "./locales/de.json";
@@ -67,6 +68,72 @@ const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
   de: deJson as Record<string, unknown>,
   es: esJson as Record<string, unknown>,
 };
+
+/**
+ * Locale chunks that load on demand.
+ *
+ * The three main locale files ride in the startup bundle, which has a byte
+ * budget (scripts/ci/check_frontend_bundle_budget.py). A section nobody opens
+ * on start — the marketplace's publish studio, say — keeps its strings in
+ * `locales/<chunk>/<lang>.json` and asks for them with `useLocaleChunk` when
+ * it mounts. Until the chunk has arrived, `t()` returns the key, so a view
+ * that cares waits for `ready` before it paints.
+ */
+export type LocaleChunk = "marketplace";
+
+const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknown>>> = {
+  marketplace: {
+    en: () => import("./locales/marketplace/en.json"),
+    de: () => import("./locales/marketplace/de.json"),
+    es: () => import("./locales/marketplace/es.json"),
+  },
+};
+
+const EXTRA: Record<UiLanguage, Record<string, unknown>[]> = { en: [], de: [], es: [] };
+const CHUNK_PROMISES: Partial<Record<LocaleChunk, Promise<void>>> = {};
+
+function unwrapModule(mod: unknown): Record<string, unknown> {
+  const m = mod as { default?: Record<string, unknown> };
+  return (m.default ?? (mod as Record<string, unknown>)) as Record<string, unknown>;
+}
+
+/** Load one chunk for every language; idempotent, shared across callers. */
+export function loadLocaleChunk(chunk: LocaleChunk): Promise<void> {
+  const pending = CHUNK_PROMISES[chunk];
+  if (pending) return pending;
+  const loaders = CHUNK_LOADERS[chunk];
+  const promise = Promise.all(
+    (Object.keys(loaders) as UiLanguage[]).map(async (lang) => {
+      EXTRA[lang].push(unwrapModule(await loaders[lang]()));
+    }),
+  ).then(() => {
+    LOADED_CHUNKS.add(chunk);
+    // Bump the revision so every `useT` consumer re-renders with the strings.
+    useI18nStore.setState((state) => ({ chunkRevision: state.chunkRevision + 1 }));
+  });
+  CHUNK_PROMISES[chunk] = promise;
+  return promise;
+}
+
+/** True once `chunk` is resident — for tests and imperative callers. */
+export function isLocaleChunkLoaded(chunk: LocaleChunk): boolean {
+  return LOADED_CHUNKS.has(chunk);
+}
+const LOADED_CHUNKS = new Set<LocaleChunk>();
+
+/**
+ * Mount-time loader for a view that needs a chunk. Returns `true` once the
+ * strings are resident; the view decides whether to wait on it.
+ */
+export function useLocaleChunk(chunk: LocaleChunk): boolean {
+  const revision = useI18nStore((s) => s.chunkRevision);
+  useEffect(() => {
+    void loadLocaleChunk(chunk);
+  }, [chunk]);
+  // `revision` is read so the hook re-evaluates when any chunk lands.
+  void revision;
+  return LOADED_CHUNKS.has(chunk);
+}
 
 const UI_KEY = "jarvis.ui.language";
 const REPLY_KEY = "jarvis.reply.language";
@@ -229,6 +296,8 @@ interface I18nState {
   stt: SttLanguage;
   /** Languages the recogniser accepts, as reported by the backend. */
   sttOptions: readonly string[];
+  /** Bumped each time a lazy locale chunk lands, so `useT` consumers re-render. */
+  chunkRevision: number;
   setUi: (lang: UiLanguage, opts?: { push?: boolean }) => void;
   setReply: (lang: ReplyLanguage, opts?: { push?: boolean }) => void;
   setStt: (lang: SttLanguage, opts?: { push?: boolean }) => void;
@@ -240,6 +309,7 @@ export const useI18nStore = create<I18nState>((set) => ({
   reply: readReply(),
   stt: readStt(),
   sttOptions: STT_FALLBACK_OPTIONS,
+  chunkRevision: 0,
   setSttOptions: (options) => set({ sttOptions: options }),
   setUi: (lang, opts) => {
     try {
@@ -302,7 +372,20 @@ function resolve(lang: UiLanguage, key: string): string {
     }
     return typeof cur === "string" ? cur : null;
   };
-  return tryLookup(RESOURCES[lang]) ?? tryLookup(RESOURCES.en) ?? key;
+  const tryChunks = (l: UiLanguage): string | null => {
+    for (const extra of EXTRA[l]) {
+      const hit = tryLookup(extra);
+      if (hit !== null) return hit;
+    }
+    return null;
+  };
+  return (
+    tryLookup(RESOURCES[lang]) ??
+    tryChunks(lang) ??
+    tryLookup(RESOURCES.en) ??
+    tryChunks("en") ??
+    key
+  );
 }
 
 // The assistant-name token. Any locale value referring to the assistant by name
@@ -333,8 +416,25 @@ export function translate(key: string): string {
   return interpolateName(resolve(lang, key), name);
 }
 
+/**
+ * Fill `{token}` placeholders in a translated string.
+ *
+ * The resolver interpolates exactly one token — the assistant's name — and
+ * takes no variables, so counts, names and titles are substituted by the view
+ * with this helper rather than by widening a resolver three locales and every
+ * view depend on. Unknown tokens are left in place, visibly, so a typo in a
+ * locale file reads as a bug rather than vanishing.
+ */
+export function fill(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    key in vars ? String(vars[key]) : match,
+  );
+}
+
 export function useT(): (key: string) => string {
   const lang = useI18nStore((s) => s.ui);
+  // Re-render when a lazy locale chunk lands, so keys turn into strings.
+  useI18nStore((s) => s.chunkRevision);
   // Reactive: every t() consumer re-renders when the assistant name changes,
   // so a Settings rename live-updates the whole UI. Selector-scoped, so other
   // store mutations (voiceState, transcript, …) do NOT trigger a re-render.
