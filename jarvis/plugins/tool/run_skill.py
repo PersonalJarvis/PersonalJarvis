@@ -76,6 +76,9 @@ class RunSkillTool:
 
     name: str = "run-skill"
     risk_tier: str = "monitor"
+    #: This tool RETURNS INSTRUCTIONS; it never performs the skill. Callers
+    #: that ask "did anything actually happen this turn?" must not count it.
+    yields_instructions_only: bool = True
     description: str = (
         "Load an installed skill's instructions by name and follow them. "
         "Use this tool when the user request matches one of the skills listed "

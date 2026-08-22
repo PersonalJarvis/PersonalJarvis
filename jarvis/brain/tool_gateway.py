@@ -70,6 +70,7 @@ class BrainSupervisorToolGateway:
                     input_schema=copy.deepcopy(schema),
                     risk_tier=risk_tier,
                     is_action_tool=bool(getattr(tool, "is_action_tool", False)),
+                    yields_instructions_only=bool(getattr(tool, "yields_instructions_only", False)),
                     risk_tier_for_args=hook if callable(hook) else None,
                     describe_args=impact if callable(impact) else None,
                 )

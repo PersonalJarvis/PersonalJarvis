@@ -544,3 +544,14 @@ async def test_a_music_skill_stays_when_nothing_is_connected(monkeypatch) -> Non
 
     assert result.success is True
     assert result.output["skill_name"] == "plugin-spotify"
+
+
+def test_the_skill_loader_declares_that_it_only_yields_instructions() -> None:
+    """The flag the realtime honesty guard reads.
+
+    ``run-skill`` returns a skill's steps for the model to follow; it performs
+    nothing itself. Callers asking "did this turn actually do anything?" must
+    be able to tell that apart from a tool with an effect, which is what a
+    2026-08-22 voice turn got wrong when it announced music that never played.
+    """
+    assert RunSkillTool.yields_instructions_only is True

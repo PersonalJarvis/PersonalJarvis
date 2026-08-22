@@ -191,6 +191,13 @@ class SupervisorToolDescriptor:
     input_schema: dict[str, Any]
     risk_tier: RiskTier
     is_action_tool: bool = False
+    # Whether this tool only HANDS BACK TEXT for the caller to act on, with no
+    # effect of its own (the skill instruction loader is the one shipped case).
+    # A successful call is therefore no evidence that anything the model
+    # promised actually happened, which is exactly what the realtime honesty
+    # guard asks. Live 2026-08-22: two music turns called only the instruction
+    # loader, and "a tool succeeded" let the guard pass a fabricated result.
+    yields_instructions_only: bool = False
     # Optional per-call hook (same contract as ``Tool.risk_tier_for_args``).
     # Catalog build captures it so the hybrid execute guard can treat a
     # ``now_playing`` read as ``safe`` without holding the Tool object.

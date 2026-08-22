@@ -270,3 +270,74 @@ def test_packaged_persona_forbids_narrating_a_future_action() -> None:
 
     assert "emit the tool call without narrating a future action first" in prompt
     assert "a promise is not execution evidence" in prompt
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Live 2026-08-22 18:22, gemini-live hybrid, zero function calls:
+        # the whole turn was spoken as a finished result.
+        (
+            "Ich habe dir ein paar Lieder rausgesucht, bei denen du "  # i18n-allow: German runtime fixture
+            "dich gut konzentrieren kannst. Sie laufen jetzt auf "  # i18n-allow: German runtime fixture
+            "YouTube Music. Viel Spaß dabei!"  # i18n-allow: German runtime fixture
+        ),
+        # Live 2026-08-22 18:16, same session shape, Spotify skill.
+        (
+            "Alles klar! Ich habe dir entspannte Musik angemacht, "  # i18n-allow: German runtime fixture
+            "damit du dich ein bisschen zurücklehnen kannst. "  # i18n-allow: German runtime fixture
+            "Ich hoffe, es gefällt dir!"  # i18n-allow: German runtime fixture
+        ),
+        "Die Musik läuft jetzt.",  # i18n-allow: German runtime fixture
+        "Your song is playing now on the speaker.",
+        "La canción ya está sonando.",  # i18n-allow: Spanish runtime fixture
+    ],
+)
+def test_spoken_completions_without_a_tool_call_are_false_completions(
+    text: str,
+) -> None:
+    """A world-state claim names no actor, so the first-person matchers miss it.
+
+    The forensic that produced this test: two voice turns reported music
+    playing while ``tool_calls`` held only the instruction loader, and this
+    predicate returned False for both, so nothing was withheld.
+    """
+    assert has_false_completion_claim(text) is True
+    assert has_unbacked_action_claim(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A delivered result after the claim keeps the whole text.
+        (
+            "Ich habe dir die Zusammenfassung geschickt. Der Umsatz "  # i18n-allow: German runtime fixture
+            "lag bei 1,2 Millionen Euro im dritten Quartal."  # i18n-allow: German runtime fixture
+        ),
+        "Ich habe dir die Datei gespeichert. Sie liegt jetzt im Ordner Downloads.",  # i18n-allow: German runtime fixture
+        # A present-tense "running now" about something other than the
+        # promised action.
+        (
+            "Die Sitzung läuft jetzt schon zwanzig Minuten, "  # i18n-allow: German runtime fixture
+            "also fassen wir zusammen."  # i18n-allow: German runtime fixture
+        ),
+        "Es sind 20 Grad und sonnig.",  # i18n-allow: German runtime fixture
+        "I checked the calculation: the result is 42.",
+    ],
+)
+def test_a_delivered_result_is_never_read_as_a_false_completion(text: str) -> None:
+    assert has_false_completion_claim(text) is False
+
+
+def test_a_send_off_alone_does_not_rescue_a_false_completion() -> None:
+    """Goodwill is not substance.
+
+    A two-word send-off clears the content bar on structure alone, which is
+    what let the YouTube Music turn read as an answer.
+    """
+    assert (
+        has_false_completion_claim(
+            "Ich habe dir die Playlist gestartet. Viel Spaß dabei!"  # i18n-allow: German runtime fixture
+        )
+        is True
+    )

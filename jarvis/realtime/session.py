@@ -7265,6 +7265,23 @@ class RealtimeVoiceSession:
         )
         return True
 
+    def _has_execution_evidence(self) -> bool:
+        """Whether anything this turn actually DID something.
+
+        A tool that only hands instructions back to the model (``run-skill``)
+        succeeds without touching the world, so counting it here is what let
+        a fabricated "it is playing now" through on 2026-08-22: the skill
+        loader ran, the music tool never did, and the guard below read the
+        loader's success as proof the promise was kept.
+        """
+        if not self._executed_tool_names:
+            return False
+        bridge = self._tool_bridge
+        instruction_only = getattr(bridge, "instruction_only_tool_names", frozenset())
+        if not instruction_only:
+            return True
+        return bool(self._executed_tool_names - set(instruction_only))
+
     async def _recover_unbacked_action_claim(self) -> bool:
         """Turn a provider's unsupported action promise into a real outcome.
 
@@ -7277,7 +7294,7 @@ class RealtimeVoiceSession:
         """
         if (
             self._external_update is not None
-            or self._executed_tool_names
+            or self._has_execution_evidence()
             or self._native_tools_in_flight
             or self._delegate_delivery_started()
             or not has_unbacked_action_claim(self._provider_output_probe)
@@ -8336,7 +8353,9 @@ class RealtimeVoiceSession:
 
         # A tool may have succeeded without a retained result only through a
         # legacy/custom bridge. Never replay that side-effecting user request.
-        if self._executed_tool_names:
+        # An instruction load is not side-effecting, so it must not block the
+        # replay of a request whose real action never ran.
+        if self._has_execution_evidence():
             from jarvis.voice.action_phrases import action_phrase
 
             if self._outage_notice_allowed():

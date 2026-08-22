@@ -43,7 +43,9 @@ _FALSE_COMPLETION_RE = re.compile(
     r"(?:dir|fur\s+dich)\b|"  # i18n-allow: German output matcher
     r"\bich\s+habe\s+(?:dir|fur\s+dich)\s+"  # i18n-allow: DE output
     r"(?:gerade\s+)?.{0,48}"
-    r"(?:gespielt|geoffnet|gestartet|gesendet|"  # i18n-allow: DE output
+    r"(?:gespielt|abgespielt|angemacht|angeschaltet|"  # i18n-allow: DE output
+    r"eingeschaltet|aufgelegt|rausgesucht|herausgesucht|"  # i18n-allow: DE output
+    r"geoffnet|gestartet|gesendet|"  # i18n-allow: DE output
     r"geschickt|gespeichert|erledigt)\b|"  # i18n-allow: DE output
     r"\bi(?:'m|\s+am)\s+(?:playing|opening|starting|sending|saving)\s+"
     r"(?:you\s+)?(?:a|the|your)\b|"
@@ -56,7 +58,19 @@ _FALSE_COMPLETION_RE = re.compile(
     r"(?:playlist|cancion|musica)\b|"  # i18n-allow: ES output
     r"\bte\s+(?:envio|abro)\s+(?:el|la|un|una|tu)\b|"  # i18n-allow: ES output
     r"\bestoy\s+(?:reproduciendo|abriendo|iniciando|enviando)\b|"  # i18n-allow
-    r"\bhe\s+(?:reproducido|abierto|iniciado|enviado|guardado)\b"  # i18n-allow
+    r"\bhe\s+(?:reproducido|abierto|iniciado|enviado|guardado)\b|"  # i18n-allow
+    # World-state completions name no actor at all ("it is playing now"),
+    # so none of the first-person alternatives above can see them. Live
+    # 2026-08-22 18:22: "Sie laufen jetzt auf YouTube Music" cleared every
+    # guard while the turn had made zero function calls.
+    r"\b(?:laufen|lauft|spielt|spielen|"  # i18n-allow: DE output
+    r"ertont|erklingt)\s+(?:jetzt|gerade|nun|"  # i18n-allow: DE output
+    r"bereits|schon)\b|"  # i18n-allow: DE output
+    r"\b(?:jetzt|gerade|nun)\s+(?:am\s+)?"  # i18n-allow: DE output
+    r"(?:laufen|lauft|spielt|spielen)\b|"  # i18n-allow: DE output
+    r"\b(?:is|are)\s+(?:playing|running)\s+(?:now|already)\b|"
+    r"\b(?:now|already)\s+(?:playing|running)\b|"
+    r"\b(?:ya\s+)?(?:esta|estan)\s+sonando\b"  # i18n-allow: ES output
     r")"
 )
 
@@ -160,6 +174,47 @@ _SUBORDINATE_OPENER_RE = re.compile(
     r"en\s+cuanto|para\s+que"  # i18n-allow: Spanish output matcher
     r")\b"
 )
+
+# Two clause shapes that look like delivered content to the structural
+# substance test but can never BE delivered content. They are discounted only
+# in the false-completion path (``has_false_completion_claim``), never in
+# ``_analyse`` — a real answer must keep every chance to survive.
+#
+# A relative continuation elaborates the claim it hangs off ("… songs, which
+# you can focus to"); it has no meaning once that claim is gone. Only the
+# unambiguous openers are listed: in German a bare definite article and a
+# relative pronoun are the same word, so treating one as a dependent tail
+# would discard a real result that merely opens with an article.
+_DEPENDENT_CONTINUATION_RE = re.compile(
+    r"^(?:(?:und|oder|aber|and|or|but|y|pero)\s+)?"  # i18n-allow: DE/ES matcher
+    r"(?:"
+    r"(?:bei|mit|auf|in|zu|von|fur|durch|uber)\s+"  # i18n-allow: German output matcher
+    r"(?:denen|dem|der|die|das|welchen|welcher|welche)\b|"  # i18n-allow: DE
+    r"wo(?:bei|mit|rauf|ran|durch|von)?\b|"  # i18n-allow: German output matcher
+    r"so\s+dass\b|"  # i18n-allow: German output matcher
+    r"(?:which|where|whom)\b|"
+    r"(?:so|that)\s+you\s+can\b|"
+    r"(?:con|en|para|sobre)\s+(?:los|las|el|la)\s+que\b|"  # i18n-allow: ES
+    r"donde\b"  # i18n-allow: Spanish output matcher
+    r")"
+)
+
+# A send-off carries goodwill, not a result. Without this, a two-word
+# "enjoy!" clears the content bar and rescues the false completion in
+# front of it.
+_COURTESY_RE = re.compile(
+    r"(?:"
+    r"\bviel\s+(?:spass|vergnugen|freude|erfolg)\b|"  # i18n-allow: DE output
+    r"\bich\s+hoffe\b|\bhoffentlich\b|"  # i18n-allow: German output matcher
+    r"\bes\s+gefallt\s+dir\b|"  # i18n-allow: German output matcher
+    r"\b(?:lass\s+es\s+dir\s+gefallen|gute\s+unterhaltung)\b|"  # i18n-allow: DE
+    r"\b(?:enjoy|have\s+fun)\b|"
+    r"\bi\s+hope\b|\bhope\s+you\b|"
+    r"\b(?:que\s+lo\s+disfrutes|espero\s+que|"  # i18n-allow: Spanish output matcher
+    r"buena\s+escucha)\b"  # i18n-allow: Spanish output matcher
+    r")"
+)
+
 
 _TRAILING_CONJUNCTION_RE = re.compile(
     r"\s+(?:und|oder|aber|and|or|but|y|pero)$"  # i18n-allow: German/Spanish output matcher
@@ -327,14 +382,34 @@ def has_false_completion_claim(text: str) -> bool:
     without a tool call. The deferred-promise analyser cannot see these:
     the fake result is the tail, so they look delivered. A list or answer
     in another clause is substance and must not be replaced.
+
+    Two clause shapes are discounted before that substance question is asked,
+    because neither can be a delivered result: a relative continuation of the
+    false completion itself, and a send-off. Live 2026-08-22 18:22 — a turn
+    that picked out songs, said they were now playing on YouTube Music and
+    wished the user fun was spoken with zero function calls. Both trailing
+    clauses cleared the structural substance bar, so the guard read the whole
+    turn as a delivered answer. The verbatim text is in the regression test.
     """
     clauses = _split_clauses(text)
     if not any(_clause_is_false_completion(clause) for clause in clauses):
         return False
-    return not any(
-        clause.substance and not _clause_is_false_completion(clause)
-        for clause in clauses
-    )
+    previous_was_claim = False
+    for clause in clauses:
+        if _clause_is_false_completion(clause):
+            previous_was_claim = True
+            continue
+        if not clause.substance:
+            continue
+        normalized = _normalize(clause.body).strip()
+        if _COURTESY_RE.search(normalized):
+            continue
+        if previous_was_claim and _DEPENDENT_CONTINUATION_RE.match(normalized):
+            # It elaborates the claim in front of it and dies with it.
+            continue
+        previous_was_claim = False
+        return False
+    return True
 
 
 def has_unbacked_action_claim(text: str) -> bool:

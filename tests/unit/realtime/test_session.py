@@ -9373,3 +9373,60 @@ async def test_a_turn_without_a_boundary_releases_the_microphone_fast() -> None:
         "should fire at ~2 s of provider silence"
     )
     await sess.end(reason="test")
+
+
+class _InstructionOnlyBridge(FakeToolBridge):
+    """A bridge whose only tool hands instructions back instead of acting."""
+
+    instruction_only_tool_names = frozenset({"run-skill"})
+
+    async def execute(self, *, wire_name, arguments):
+        self.calls.append((wire_name, arguments))
+        return "run-skill", {
+            "success": True,
+            "output": {
+                "skill_name": "plugin-youtube_music",
+                "execution": "inline",
+                "directive": "Follow these skill instructions now, step by step.",
+            },
+            "error": None,
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_loaded_skill_is_not_evidence_that_the_action_ran():
+    """Live 2026-08-22 18:22, the reported hallucination.
+
+    The model called the skill loader, got instructions back, never called
+    youtube_music, and spoke "Sie laufen jetzt auf YouTube Music". The loader
+    counted as an executed tool, so the honesty guard stood down and the
+    fabricated completion was spoken. A tool that only returns text is not
+    evidence that anything happened.
+    """
+    bridge = _InstructionOnlyBridge()
+    sess = _session(
+        FakeProvider([]),
+        tool_bridge=bridge,
+        tool_mode="hybrid",
+    )
+
+    assert sess._has_execution_evidence() is False
+    sess._executed_tool_names.add("run-skill")
+    assert sess._has_execution_evidence() is False, (
+        "loading a skill's instructions must never count as execution evidence"
+    )
+    sess._executed_tool_names.add("youtube_music")
+    assert sess._has_execution_evidence() is True
+
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_bridge_without_the_capability_keeps_the_old_evidence_rule():
+    """Degrade to the previous behaviour rather than dropping evidence."""
+    sess = _session(FakeProvider([]), tool_bridge=FakeToolBridge(), tool_mode="hybrid")
+
+    sess._executed_tool_names.add("open_app")
+    assert sess._has_execution_evidence() is True
+
+    await sess.end(reason="test")
