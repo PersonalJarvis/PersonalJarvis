@@ -134,7 +134,7 @@ export function PublishWallpaperDialog({
       data-testid="publish-wallpaper-dialog"
       className="fixed inset-0 z-[65] flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm"
     >
-      <div className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl">
         <header className="flex items-center gap-3 border-b border-border px-5 py-3">
           <div className="min-w-0 flex-1">
             <h2 className="truncate font-display text-sm font-semibold tracking-tight">

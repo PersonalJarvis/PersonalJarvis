@@ -334,7 +334,7 @@ export function MarketplaceView() {
 
       <div className="flex items-center gap-3 border-b border-border bg-background/60 px-6 py-3 backdrop-blur-sm">
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute -z-10 left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -798,16 +798,16 @@ function Hero({
   };
   return (
     <section
-      className="relative mb-8 overflow-hidden rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-sm"
+      className="relative isolate mb-8 overflow-hidden rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-sm"
       data-testid="marketplace-hero"
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-primary/15 blur-3xl"
+        className="pointer-events-none absolute -z-10 -right-24 -top-24 hidden h-72 w-72 rounded-full bg-primary/15 blur-3xl dark:block"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-primary/10 blur-3xl"
+        className="pointer-events-none absolute -z-10 -bottom-28 left-1/3 hidden h-64 w-64 rounded-full bg-primary/10 blur-3xl dark:block"
       />
       <div className="relative flex flex-wrap items-end gap-6">
         <div className="min-w-0 flex-1">
@@ -1181,7 +1181,7 @@ function LandingToast({
   const target = HOME_SECTION[result.kind] ?? "skills";
   const ready = result.ready !== false;
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50 flex justify-center p-5">
+    <div className="pointer-events-none absolute -z-10 inset-x-0 bottom-0 z-50 flex justify-center p-5">
       <div className="pointer-events-auto flex w-full max-w-lg items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-xl">
         <div
           className={cn(

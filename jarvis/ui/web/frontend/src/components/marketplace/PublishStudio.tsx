@@ -355,12 +355,12 @@ export function PublishStudio({
         onClick={onClose}
         className="absolute inset-0 cursor-default"
       />
-      <div className="relative m-auto flex h-[min(92vh,56rem)] w-[min(96vw,72rem)] overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className="relative m-auto flex h-[min(92vh,56rem)] w-[min(96vw,72rem)] overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl">
         {/* Rail */}
-        <aside className="relative hidden w-60 shrink-0 flex-col border-r border-border bg-secondary/30 p-5 md:flex">
+        <aside className="relative isolate hidden w-60 shrink-0 flex-col border-r border-border bg-secondary/30 p-5 md:flex">
           <div
             aria-hidden
-            className="pointer-events-none absolute -left-20 top-0 h-64 w-64 rounded-full bg-primary/10 blur-3xl"
+            className="pointer-events-none absolute -z-10 -left-20 top-0 h-64 w-64 rounded-full bg-primary/10 blur-3xl"
           />
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {t("marketplace.studio_eyebrow")}
@@ -369,7 +369,7 @@ export function PublishStudio({
             {t("marketplace.studio_title")}
           </h2>
           <ol className="mt-6 space-y-1">
-            <Station n={1} active={station === 1} done={station > 1} label={t("marketplace.studio_station_who")} />
+            <Station n={1} active={station === 1} done={signedIn} label={t("marketplace.studio_station_who")} />
             <Station n={2} active={station === 2} done={station > 2} label={t("marketplace.studio_station_what")} />
             <Station n={3} active={station === 3} done={station > 3} label={t("marketplace.studio_station_check")} />
             <Station n={4} active={station === 4} done={false} label={t("marketplace.studio_station_live")} />
@@ -585,7 +585,7 @@ function SourcePicker({
             void handleFiles(() => collectDroppedFiles(items), t("marketplace.studio_origin_folder"));
           }}
           className={cn(
-            "group relative flex min-h-44 cursor-pointer flex-col justify-end overflow-hidden rounded-2xl border border-dashed p-5 text-left transition-colors md:row-span-2",
+            "group relative isolate flex min-h-44 cursor-pointer flex-col justify-end overflow-hidden rounded-2xl border border-dashed p-5 text-left transition-colors md:row-span-2",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             dragOver
               ? "border-primary bg-primary/10"
@@ -594,7 +594,7 @@ function SourcePicker({
         >
           <div
             aria-hidden
-            className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-primary/15 blur-3xl transition-transform duration-500 group-hover:scale-125"
+            className="pointer-events-none absolute -z-10 -right-10 -top-10 h-40 w-40 rounded-full bg-primary/15 blur-3xl transition-transform duration-500 group-hover:scale-125"
           />
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg">
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <FolderUp className="h-5 w-5" />}
@@ -1633,10 +1633,10 @@ function PublishedCard({
 
   return (
     <div className="space-y-4" data-testid="studio-published">
-      <section className="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/15 via-card to-card p-5">
+      <section className="relative isolate overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/15 via-card to-card p-5">
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-primary/20 blur-3xl"
+          className="pointer-events-none absolute -z-10 -right-16 -top-16 h-56 w-56 rounded-full bg-primary/20 blur-3xl"
         />
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           {t("marketplace.studio_done_eyebrow")}

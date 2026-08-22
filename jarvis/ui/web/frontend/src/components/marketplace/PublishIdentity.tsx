@@ -239,12 +239,12 @@ function DeviceCodeTicket({
   const verifyUrl = flow.verification_uri ?? GITHUB_DEVICE_URL;
   return (
     <div
-      className="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card p-5"
+      className="relative isolate overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card p-5"
       data-testid="device-code-ticket"
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-primary/15 blur-3xl"
+        className="pointer-events-none absolute -z-10 -right-16 -top-16 h-48 w-48 rounded-full bg-primary/15 blur-3xl"
       />
       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         {t("marketplace.identity_code_label")}
@@ -339,7 +339,7 @@ export function GithubSignInDialog({ onClose }: { onClose: () => void }) {
       data-testid="github-signin-dialog"
       className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm"
     >
-      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl">
         <header className="flex items-start gap-3 border-b border-border px-5 py-4">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-foreground text-background">
             <Github className="h-5 w-5" />
@@ -509,7 +509,7 @@ export function PublisherChip({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card p-1 shadow-xl"
+          className="absolute right-0 top-full z-50 mt-1.5 w-56 overflow-hidden rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl"
         >
           <div className="px-2.5 py-2">
             <p className="truncate text-xs font-semibold text-foreground">@{data.login}</p>
