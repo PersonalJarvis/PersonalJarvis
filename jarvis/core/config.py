@@ -3480,6 +3480,20 @@ class MarketplaceConfig(BaseModel):
     community_index_url: str = (
         "https://personaljarvis.github.io/marketplace/index.json"
     )
+    # Where the in-app Publish flow submits packages. The endpoint verifies
+    # the GitHub identity and opens the registry PR as the marketplace bot;
+    # forks point this at their own deployment. Empty string hides Publish.
+    publish_endpoint: str = "https://personaljarvis.ai/api/marketplace/submit"
+    # Where the in-app Wallpapers view publishes a picture. A lane of its own
+    # because the payload is multipart image bytes, not a JSON manifest — but
+    # the same identity, the same registry, the same feed. Empty string hides
+    # "Share to community" in the wallpaper picker.
+    publish_wallpaper_endpoint: str = (
+        "https://personaljarvis.ai/api/marketplace/submit-wallpaper"
+    )
+    # Client id of the marketplace GitHub App (public by design — device flow
+    # needs no secret, which is why a downloadable binary can use it).
+    publish_github_client_id: str = "Iv23li1YcX62KJO67whO"
     model_config = ConfigDict(extra="allow")
 
 

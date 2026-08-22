@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
@@ -128,6 +129,115 @@ def validate_spec_name(name: Any) -> str:
             "no '--' or '..', no underscores)"
         )
     return text
+
+
+# Caps: the registry repo is also the CDN, and every skill lands as a file on
+# the user's disk. Generous for instructions, small enough that one package
+# cannot bloat the index for everyone.
+MAX_BUNDLED_SKILLS = 10
+MAX_SKILL_MD_BYTES = 64 * 1024
+
+# Top-level frontmatter keys a community skill may not declare.
+#
+# `risk_policy` is a privilege boundary, not a preference: skills/runner.py
+# evaluates a skill's tools against the SKILL'S OWN declared tier rather than
+# the tool's static one ("the skill author's risk_policy is what governs
+# here"). That is correct for repo-contributed skills, which pass human
+# review — for an auto-merged community skill it would let the author
+# downgrade a tool to `safe` and skip the confirmation the tool was given.
+# Rejecting is deliberate over silently dropping the key: the author sees why
+# (contract §7, no silent swallowing), and the built-in default applies.
+_FORBIDDEN_SKILL_FRONTMATTER = ("risk_policy",)
+
+# A top-level YAML key: no indentation, so nested `risk_policy:` inside some
+# other author's block is not what we are matching.
+_TOP_LEVEL_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:", re.MULTILINE)
+
+
+@dataclass(frozen=True, slots=True)
+class BundledSkill:
+    """One ``skills/<name>/SKILL.md`` carried by a plugin package."""
+
+    name: str
+    skill_md: str
+
+
+def _frontmatter_block(skill_md: str) -> str:
+    """The raw YAML frontmatter, or "" when the document has none."""
+    if not skill_md.startswith("---"):
+        return ""
+    _, _, rest = skill_md.partition("---")
+    block, sep, _ = rest.partition("\n---")
+    return block if sep else ""
+
+
+def validate_bundled_skills(raw: Any, *, plugin_name: str) -> list[BundledSkill]:
+    """Validate the ``skills`` block of an index entry or a submission.
+
+    Each item is ``{"name": ..., "skill_md": ...}``. The name becomes a
+    DIRECTORY under the user's skills root, so it carries the same spec name
+    rules the plugin name does — this is a path-traversal boundary, not
+    cosmetics. The publish pre-check (``publish.py``) calls this exact
+    function, so what the store accepts and what the installer accepts is one
+    rule set.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise AgentPluginError("skills must be a list")
+    if len(raw) > MAX_BUNDLED_SKILLS:
+        raise AgentPluginError(
+            f"package bundles {len(raw)} skills — at most {MAX_BUNDLED_SKILLS} are accepted"
+        )
+
+    skills: list[BundledSkill] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise AgentPluginError("each bundled skill must be an object")
+        name = validate_spec_name(item.get("name"))
+        if name in seen:
+            raise AgentPluginError(f"package bundles the skill {name!r} twice")
+        seen.add(name)
+
+        # Validate on the trimmed text, but KEEP the author's bytes: a
+        # SKILL.md is a document, and silently eating its trailing newline
+        # means the file we write is not the file that was published.
+        # `lstrip` only, because the parser needs `---` at offset zero.
+        _require_str(item.get("skill_md"), f"skill {name!r}: skill_md")
+        skill_md = str(item["skill_md"]).lstrip()
+        if len(skill_md.encode("utf-8")) > MAX_SKILL_MD_BYTES:
+            raise AgentPluginError(
+                f"skill {name!r}: SKILL.md exceeds {MAX_SKILL_MD_BYTES // 1024} KB"
+            )
+
+        frontmatter = _frontmatter_block(skill_md)
+        if not frontmatter.strip():
+            raise AgentPluginError(
+                f"skill {name!r}: SKILL.md must open with a YAML frontmatter block"
+            )
+        declared = {match.group(1) for match in _TOP_LEVEL_KEY_RE.finditer(frontmatter)}
+        for key in _FORBIDDEN_SKILL_FRONTMATTER:
+            if key in declared:
+                raise AgentPluginError(
+                    f"skill {name!r}: {key!r} may not be declared by a "
+                    "marketplace skill — it governs which tools run without "
+                    "confirmation, so the built-in default applies instead"
+                )
+        for required in ("name", "description"):
+            if required not in declared:
+                raise AgentPluginError(f"skill {name!r}: frontmatter is missing {required!r}")
+
+        skills.append(BundledSkill(name=name, skill_md=skill_md))
+
+    # A skill directory shares the namespace with everything else the user
+    # installed; colliding with the package's own name would make uninstall
+    # ambiguous (which one does removing the plugin take with it?).
+    if plugin_name in seen and len(seen) > 1:
+        raise AgentPluginError(
+            f"a bundled skill may only be named {plugin_name!r} when it is the package's only skill"
+        )
+    return skills
 
 
 def _reject_http_urls(value: Any, where: str) -> None:
@@ -327,6 +437,42 @@ def _convert_stdio_server(name: str, server: Mapping[str, Any]) -> dict[str, Any
     }
 
 
+def validate_mcp_server(
+    name: str, server: Mapping[str, Any], extension: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Validate and convert ONE ``mcp.json`` server entry.
+
+    Split out of :func:`_convert_mcp_json` so a caller that already knows it
+    is looking at exactly one server (``publish.py``'s pre-check, which
+    enforces "exactly one server" itself before this is reached) can reuse
+    the transport/credential rules — https-only, no ``headers`` on a hosted
+    server, ``$plugin_…``-only ``env`` values, the ``npx``/``uvx``/``docker``
+    launcher allowlist with its pinned-package rule — without also
+    reimplementing the "which server did the author mean" selection.
+
+    ``extension`` is the plugin's ``extensions["io.github.personaljarvis"]``
+    block, consulted only for a hosted server's optional
+    ``mcp_auth_header_template``; omit it when validating an ``mcp.json`` in
+    isolation, before the rest of the manifest exists.
+    """
+    if not isinstance(server, Mapping):
+        raise AgentPluginError(f"mcp.json server {name!r} must be an object")
+    server_type = server.get("type")
+    if server_type == "streamable-http":
+        return _convert_http_server(name, server, extension or {})
+    if server_type == "stdio":
+        return _convert_stdio_server(name, server)
+    if server_type == "sse":
+        raise AgentPluginError(
+            "mcp.json: the deprecated 'sse' transport is not accepted for "
+            "community plugins — publish a streamable-http endpoint"
+        )
+    raise AgentPluginError(
+        f"mcp.json server {name!r}: must declare a 'type' — one of "
+        f"'streamable-http', 'stdio', 'sse' (got {server_type!r})"
+    )
+
+
 def _convert_mcp_json(
     plugin_name: str, mcp_json: Mapping[str, Any], extension: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -342,19 +488,7 @@ def _convert_mcp_json(
             "mcp.json declares several servers and none is named after the "
             "plugin — community packages ship exactly one server"
         )
-    if not isinstance(server, Mapping):
-        raise AgentPluginError(f"mcp.json server {server_name!r} must be an object")
-    server_type = server.get("type")
-    if server_type == "streamable-http":
-        return _convert_http_server(str(server_name), server, extension)
-    if server_type == "stdio":
-        return _convert_stdio_server(str(server_name), server)
-    if server_type == "sse":
-        raise AgentPluginError(
-            "mcp.json: the deprecated 'sse' transport is not accepted for "
-            "community plugins — publish a streamable-http endpoint"
-        )
-    raise AgentPluginError(f"mcp.json: unknown server type {server_type!r}")
+    return validate_mcp_server(str(server_name), server, extension)
 
 
 def convert_manifest(
@@ -439,4 +573,14 @@ def convert_manifest(
         raise AgentPluginError(f"manifest rejected at {location}: {message}") from exc
 
 
-__all__ = ["AgentPluginError", "EXTENSION_NAMESPACE", "convert_manifest", "validate_spec_name"]
+__all__ = [
+    "MAX_BUNDLED_SKILLS",
+    "MAX_SKILL_MD_BYTES",
+    "AgentPluginError",
+    "BundledSkill",
+    "EXTENSION_NAMESPACE",
+    "convert_manifest",
+    "validate_bundled_skills",
+    "validate_mcp_server",
+    "validate_spec_name",
+]
