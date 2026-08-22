@@ -142,6 +142,79 @@ def _serve(window: Any) -> None:
     # down so webview.start() returns and the process ends.
 
 
+#: How long a page-reading command waits for the current navigation to finish
+#: before answering "still loading". pywebview gates ``evaluate_js`` on its
+#: ``loaded`` event and blocks up to 20 s when a navigation has not reported
+#: back (live 2026-08-22 20:01:52: the second ``load`` of the session left
+#: ``loaded`` clear, every ``state`` then sat 20 s in the gate while the parent
+#: gave up at 10 s, and one play request took 199 s — 18 reads plus the
+#: ``show`` queued behind them). The command loop is sequential, so one blocked
+#: read holds every later command hostage; a short bounded wait keeps the loop
+#: answering and lets the parent decide what to do with a page that is still
+#: turning.
+_LOADED_WAIT_S = 1.0
+
+_LOADING_STATE: dict[str, Any] = {
+    "loading": True,
+    "ready": False,
+    "has_video": False,
+    "paused": None,
+    "ended": None,
+    "position": None,
+    "duration": None,
+    "volume": None,
+    "consent": False,
+    "signed_in": False,
+    "url": "",
+    "title": "",
+    "artist": "",
+    "album": "",
+}
+
+
+def _page_loaded(window: Any, wait_s: float | None = None) -> bool:
+    """True when the window's page has finished loading (bounded wait)."""
+    if wait_s is None:
+        wait_s = _LOADED_WAIT_S
+    loaded = getattr(getattr(window, "events", None), "loaded", None)
+    if loaded is None:
+        return True  # a backend without the event has no gate to wait on
+    try:
+        if loaded.is_set():
+            return True
+        return bool(loaded.wait(wait_s))
+    except Exception as exc:  # noqa: BLE001 — an odd event object must not block a command
+        _log(f"loaded probe skipped: {exc}")
+        return True
+
+
+def _force_foreground(window: Any) -> None:
+    """Windows fallback: un-minimize and raise the player window by its title.
+
+    pywebview's ``restore``/``show`` normally do this; when they do not (the
+    window stayed iconic on 2026-08-22 while the parent reported it shown),
+    the Win32 calls are the ground truth. Capability-gated: a quiet no-op
+    anywhere ``ctypes.windll`` does not exist.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        title = str(getattr(window, "title", "") or "")
+        if not title:
+            return
+        handle = user32.FindWindowW(None, title)
+        if not handle:
+            return
+        if user32.IsIconic(handle):
+            user32.ShowWindow(handle, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(handle)
+    except Exception as exc:  # noqa: BLE001 — a foreground nudge is best-effort
+        _log(f"foreground nudge skipped: {exc}")
+
+
 def _dispatch(window: Any, cmd: str, msg: dict[str, Any]) -> Any:
     if cmd == "load":
         window.load_url(str(msg.get("url") or "about:blank"))
@@ -154,6 +227,7 @@ def _dispatch(window: Any, cmd: str, msg: dict[str, Any]) -> Any:
         except Exception as exc:  # noqa: BLE001 — not every backend has restore
             _log(f"restore skipped: {exc}")
         window.show()
+        _force_foreground(window)
         return True
     if cmd == "hide":
         # Minimize, never hide: WebView2 does not start media in a window that
@@ -167,11 +241,20 @@ def _dispatch(window: Any, cmd: str, msg: dict[str, Any]) -> Any:
             window.hide()
         return True
     if cmd == "state":
+        if not _page_loaded(window):
+            # Answer NOW with "still loading" instead of sitting in pywebview's
+            # 20 s gate: the parent polls again, and the next command is not
+            # stuck behind this one.
+            return dict(_LOADING_STATE)
         raw = window.evaluate_js(_STATE_JS)
         return json.loads(raw) if isinstance(raw, str) else raw
     if cmd == "volume":
+        if not _page_loaded(window):
+            raise RuntimeError("the player page is still loading")
         return window.evaluate_js(_volume_js(int(msg.get("level") or 0)))
     if cmd in _JS:
+        if not _page_loaded(window):
+            raise RuntimeError("the player page is still loading")
         return window.evaluate_js(_JS[cmd])
     if cmd == "quit":
         return True

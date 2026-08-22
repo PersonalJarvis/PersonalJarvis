@@ -278,8 +278,10 @@ class MusicPlayer:
     def load(self, url: str) -> bool:
         return bool(self.request("load", url=url))
 
-    def state(self) -> dict[str, Any]:
-        result = self.request("state")
+    def state(self, *, timeout: float = _REQUEST_TIMEOUT_S) -> dict[str, Any]:
+        """The page state; ``timeout`` bounds the wait for a host that is busy
+        (a confirm loop polls this and must not inherit a 10 s wait per read)."""
+        result = self.request("state", timeout=timeout)
         return result if isinstance(result, dict) else {}
 
     def play(self) -> bool:
@@ -300,8 +302,8 @@ class MusicPlayer:
     def set_volume(self, level: int) -> bool:
         return bool(self.request("volume", level=int(level)))
 
-    def show(self) -> bool:
-        return bool(self.request("show"))
+    def show(self, *, timeout: float = _REQUEST_TIMEOUT_S) -> bool:
+        return bool(self.request("show", timeout=timeout))
 
     def hide(self) -> bool:
         return bool(self.request("hide"))

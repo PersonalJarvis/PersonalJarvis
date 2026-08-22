@@ -161,6 +161,35 @@ def test_host_error_and_timeout_surface_as_music_player_error():
     player.stop()
 
 
+def test_state_and_show_take_a_per_call_timeout():
+    """A confirm loop polls ``state``; it must be able to bound each read
+    instead of inheriting the 10 s transport default (live 2026-08-22: 18
+    reads × 10 s = one 199 s play request)."""
+    host = FakeHost()
+    player = _player(host)
+    assert player.state(timeout=0.5)["has_video"] is True
+    assert player.show(timeout=0.5) is True
+
+    class SilentOnState(FakeHost):
+        def _serve(self) -> None:
+            for raw in self.stdin:
+                msg = json.loads(raw)
+                if msg.get("cmd") == "state":
+                    continue  # never answers
+                self.stdout.write(json.dumps({"id": msg["id"], "ok": True, "result": True}) + "\n")
+
+    silent = SilentOnState()
+    player = _player(silent)
+    started = time.monotonic()
+    try:
+        player.state(timeout=0.3)
+    except MusicPlayerError as exc:
+        assert "did not answer" in str(exc)
+    else:  # pragma: no cover — a silent host must surface as a timeout
+        raise AssertionError("state() returned although the host never answered")
+    assert time.monotonic() - started < 2.0
+
+
 def test_unavailable_host_makes_the_player_unavailable_with_its_reason():
     host = FakeHost(unavailable="WebViewException: no GTK")
     player = _player(host)

@@ -571,6 +571,61 @@ async def test_play_nudges_then_shows_the_player_when_it_stays_paused():
     assert player.shown == 1
 
 
+async def test_play_confirm_is_bounded_by_wall_clock_when_the_player_is_slow():
+    """Live 2026-08-22 20:01:52: every state read sat out its transport timeout,
+    the loop counted only its naps, and one play took 199 s. The loop now runs
+    on a wall-clock deadline, so a slow host costs the deadline, not its
+    multiple — and the window is still brought forward at the end."""
+    import time as _time
+
+    class SlowPlayer(FakePlayer):
+        def state(self, **_kw):
+            _time.sleep(0.4)  # a busy host: every read is slow
+            return {"loading": True}
+
+    player = SlowPlayer([], running=True)
+    tool = _tool(_search_handler, player=player, playback="background")
+    tool._player_confirm_timeout_s = 1.0
+
+    started = _time.monotonic()
+    out = await tool.play(query="karma police")
+    elapsed = _time.monotonic() - started
+
+    assert elapsed < 3.0, f"confirm loop ran {elapsed:.1f}s for a 1.0s deadline"
+    assert out["playback_confirmed"] is False and out["needs_attention"] == "press_play"
+    assert player.shown == 1
+
+
+async def test_play_keeps_polling_while_the_host_says_loading():
+    """The host answers "loading" instead of blocking; the loop waits it out
+    and confirms from the first real page state."""
+    player = FakePlayer([{"loading": True}, {"loading": True}, _page(position=2.5)])
+    tool = _tool(_search_handler, player=player, playback="background")
+    out = await tool.play(query="karma police")
+    assert out["playback_confirmed"] is True
+
+
+async def test_play_passes_a_per_call_timeout_to_a_player_that_takes_one():
+    """The shipped MusicPlayer accepts ``timeout=``; the confirm loop uses it
+    so one stuck read costs seconds, not the 10 s transport default."""
+    seen: list[float] = []
+
+    class TimeoutAwarePlayer(FakePlayer):
+        def state(self, *, timeout: float | None = None):
+            seen.append(timeout)
+            return super().state()
+
+        def show(self, *, timeout: float | None = None):
+            seen.append(timeout)
+            return super().show()
+
+    player = TimeoutAwarePlayer([{"url": "https://consent.youtube.com/m?x", "consent": True}])
+    tool = _tool(_search_handler, player=player, playback="background")
+    out = await tool.play(query="karma police")
+    assert out["needs_attention"] == "consent"
+    assert seen and all(isinstance(t, float) and 0 < t <= 10 for t in seen)
+
+
 async def test_play_falls_back_to_the_browser_when_the_player_cannot_run():
     player = FakePlayer(available=(False, "no display here"))
     opener = Opener()

@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -101,6 +102,13 @@ _PRESS_PLAY_NOTE = (
 # know. A page load plus buffering takes four to five seconds (measured
 # 2026-08-18: position starts advancing ~4.5 s after load).
 _PLAYER_CONFIRM_TIMEOUT_S = 9.0
+#: Per-read bound while confirming playback in the background player. The
+#: host answers "loading" at once when the page is still turning, so a read
+#: that takes longer than this is a stuck host, not a slow page — give up on
+#: that read and poll again rather than inherit the 10 s transport default.
+_PLAYER_READ_TIMEOUT_S = 3.0
+#: Bound for bringing the player window forward at the end of a confirm.
+_PLAYER_SHOW_TIMEOUT_S = 5.0
 
 # Music category on YouTube. Songs on YouTube Music are videos in it.
 _MUSIC_CATEGORY_ID = "10"
@@ -126,6 +134,22 @@ def playlist_url(playlist_id: str, first_video_id: str | None = None) -> str:
     if first_video_id:
         return f"{_MUSIC}/watch?v={first_video_id}&list={playlist_id}"
     return f"{_MUSIC}/watch?list={playlist_id}"
+
+
+def _call_with_timeout(fn: Callable[..., Any], timeout: float) -> Any:
+    """Call a player command with a per-call ``timeout`` when it accepts one.
+
+    The shipped :class:`jarvis.platform.music_player.MusicPlayer` takes
+    ``timeout=``; a custom or test player may not, and then the plain call is
+    the right one — the bound is a nicety, never a contract the caller breaks
+    on.
+    """
+    try:
+        return fn(timeout=timeout)
+    except TypeError as exc:
+        if "timeout" not in str(exc):
+            raise
+        return fn()
 
 
 def _default_token_provider() -> str | None:
@@ -445,19 +469,29 @@ class YouTubeMusicRestTool:
         out: dict[str, Any] = {"ok": True, "url": url, "sink": "background_player"}
         if started:
             out["started"] = started
-        elapsed = 0.0
+        # Wall-clock deadline, not a count of sleeps: live 2026-08-22 20:01:52
+        # every state read sat out its full 10 s in the host, the loop counted
+        # only its 0.5 s naps, and one play request took 199 s. Each read is
+        # also bounded tighter than the default so a busy host costs seconds,
+        # not the whole turn.
+        deadline = time.monotonic() + self._player_confirm_timeout_s
         last: dict[str, Any] = {}
         nudged = False
-        while elapsed < self._player_confirm_timeout_s:
+        while time.monotonic() < deadline:
             await asyncio.sleep(_CONFIRM_STEP_S)
-            elapsed += _CONFIRM_STEP_S
             try:
-                last = await asyncio.to_thread(player.state)
+                last = await asyncio.to_thread(
+                    _call_with_timeout, player.state, _PLAYER_READ_TIMEOUT_S
+                )
             except Exception as exc:  # noqa: BLE001 — a blink while the page turns
                 log.debug("background player state during confirm: %s", exc)
                 continue
+            if last.get("loading"):
+                continue
             if last.get("consent"):
-                await asyncio.to_thread(player.show)
+                await asyncio.to_thread(
+                    _call_with_timeout, player.show, _PLAYER_SHOW_TIMEOUT_S
+                )
                 out.update(playback_confirmed=False, needs_attention="consent", note=_CONSENT_NOTE)
                 return out
             playing = last.get("has_video") and last.get("paused") is False
@@ -473,7 +507,7 @@ class YouTubeMusicRestTool:
                 except Exception as exc:  # noqa: BLE001 — the nudge is best-effort
                     log.debug("background player nudge failed: %s", exc)
         try:
-            await asyncio.to_thread(player.show)
+            await asyncio.to_thread(_call_with_timeout, player.show, _PLAYER_SHOW_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — showing is best-effort
             log.debug("background player show failed: %s", exc)
         out.update(playback_confirmed=False, needs_attention="press_play", note=_PRESS_PLAY_NOTE)

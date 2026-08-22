@@ -11608,3 +11608,39 @@ ran, not that the USER'S REQUEST happened. Any tool whose output is
 instructions for the model (``run-skill``, ``answer_instruction`` lookups,
 mission directives) is a hand-off, and every reader that turns results into a
 completion claim — prompts and canned lines alike — must classify it as such.
+
+## BUG-166: "play some music" takes three minutes and the player window never appears — the host sat in pywebview's loaded gate and the parent counted naps, not time (HIGH, FIXED 2026-08-22)
+
+**Symptom (maintainer, 2026-08-22 20:01–20:05).** "Play nice music with
+YouTube Music" — the tool call ran for **199.6 s**; the answer then said the
+player "should be showing you throwback tracks"; no player window was visible.
+Ten minutes later the window was found minimized on the taskbar with YouTube's
+cookie-consent page in it.
+
+**Cause (two defects, one symptom).** (1) ``music_player_host`` reads the page
+with pywebview ``evaluate_js``, which is gated on the window's ``loaded``
+event and blocks up to 20 s when a navigation has not reported back; after
+the session's second ``load`` that event stayed clear, so EVERY ``state`` read
+blocked, and because the host's command loop is sequential the ``show`` behind
+them blocked too — the window was never restored. (2) ``_play_in_player``
+bounded its confirm loop by counting its 0.5 s naps, not by the clock: 18
+reads × (0.5 s nap + 10 s transport timeout) + one 10 s ``show`` = 199 s.
+
+**Fix (2026-08-22).** Host: ``state`` answers ``{"loading": true, …}`` after a
+bounded wait (``_page_loaded``, 1 s) instead of entering the gate; the page
+commands fail fast with "still loading"; ``show`` additionally un-minimizes and
+raises the window through Win32 by its title when pywebview's ``restore`` /
+``show`` leave it iconic (``_force_foreground``, a quiet no-op off Windows).
+Client: ``MusicPlayer.state()`` / ``show()`` take a per-call ``timeout``.
+Plugin: the confirm loop runs on a wall-clock deadline, reads with a 3 s bound
+(``_call_with_timeout`` also accepts players without the kwarg), skips
+``loading`` snapshots, and still brings the window forward at the end. Tests:
+``tests/unit/platform/test_music_player_host.py`` (new),
+``test_state_and_show_take_a_per_call_timeout``,
+``test_play_confirm_is_bounded_by_wall_clock_when_the_player_is_slow``,
+``test_play_keeps_polling_while_the_host_says_loading``.
+
+**Lesson.** A loop that bounds itself by counting sleeps is unbounded the
+moment the work between sleeps can block; bound by the clock, and bound every
+blocking read inside it tighter than the loop. A sequential command channel
+must never run a call that can block for longer than its own client's timeout.
