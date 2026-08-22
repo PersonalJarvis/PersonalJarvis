@@ -43,12 +43,15 @@ Design notes:
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.skills.schema import SkillLifecycleState
 from jarvis.skills.skill_context import try_get_skill_context
+
+log = logging.getLogger(__name__)
 
 _MAX_RESOURCE_BYTES = 64 * 1024
 
@@ -158,6 +161,16 @@ class RunSkillTool:
                     f"Installed skills: {self._installed_names(registry)}"
                 ),
             )
+        # Step 3b — a music skill follows the CONNECTED service. The model picks
+        # a skill by name from the roster, and the roster lists both music
+        # skills whether or not their plugin holds a credential; live
+        # 2026-08-22 18:16 it loaded ``plugin-spotify`` on a box where only
+        # YouTube Music was connected, and the instructions it then held were
+        # for the wrong service. Same resolver as the deterministic skill
+        # capture and the execute-time tool reroute (``jarvis.core.music_service``):
+        # a service the user NAMES wins, then the preferred connected one,
+        # then the only connected one.
+        skill = self._prefer_connected_music_service(skill, registry, ctx)
         # Everything downstream — the rendered output, the SkillInvoked event,
         # the DRAFT/DISABLED refusals — must speak about the skill that was
         # actually found, never the guess that led here.
@@ -246,6 +259,57 @@ class RunSkillTool:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _prefer_connected_music_service(
+        skill: Any, registry: Any, ctx: ExecutionContext
+    ) -> Any:
+        """Swap a MUSIC skill for its sibling when the request belongs to the
+        other service (see ``jarvis.core.music_service``). Never raises and
+        never swaps to a skill that is missing or not live — a fault keeps the
+        skill as it was."""
+        try:
+            from jarvis.core.music_constants import MUSIC_PLUGIN_IDS
+            from jarvis.core.music_service import (
+                connected_music_services,
+                preferred_music_service,
+                resolve_music_service,
+            )
+
+            fm = getattr(skill, "frontmatter", None)
+            plugin_id = str(getattr(fm, "plugin_id", "") or "").strip()
+            if plugin_id not in MUSIC_PLUGIN_IDS:
+                return skill
+            connected = tuple(connected_music_services())
+            target = resolve_music_service(
+                str(getattr(ctx, "user_utterance", "") or ""),
+                preferred=preferred_music_service(),
+                connected=connected,
+                matched=plugin_id,
+            )
+            if not target or target == plugin_id or target not in connected:
+                return skill
+            sibling_name = f"plugin-{target}"
+            try:
+                sibling = registry.get(sibling_name)
+            except KeyError:
+                return skill
+            if sibling is None or sibling.state not in (
+                SkillLifecycleState.ACTIVE,
+                SkillLifecycleState.VALIDATED,
+            ):
+                return skill
+            log.info(
+                "run-skill: music request routed to %s instead of %s "
+                "(connected=%s)",
+                sibling_name,
+                getattr(skill, "name", plugin_id),
+                ",".join(connected) or "none",
+            )
+            return sibling
+        except Exception as exc:  # noqa: BLE001 — a routing nicety must never break a turn
+            log.debug("run-skill: music preference routing skipped: %s", exc)
+            return skill
 
     @staticmethod
     def _installed_names(registry: Any, *, limit: int = 40) -> str:

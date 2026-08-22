@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -378,23 +379,55 @@ def _declaration_size(declaration: dict[str, Any]) -> int:
         return _MAX_DESCRIPTION_CHARS
 
 
-def _drop_rank(name: str) -> int:
-    """Lower rank = dropped earlier (ADR-0035 §4 family order)."""
+def _drop_rank(name: str, keep_last: Collection[str] = ()) -> int:
+    """Lower rank = dropped earlier (ADR-0035 §4 family order).
+
+    ``keep_last`` names outrank every family — they are the LAST to go. The
+    bridge fills it with the connected music connectors (``spotify`` /
+    ``youtube_music``, whichever holds a credential): on this box the
+    "everything else, biggest first" bucket dropped both of them under the
+    8k-token wire budget (live 2026-08-22 18:16, 169 over-budget names), so
+    "mach Musik an" had no native function to land on while a dozen small
+    first-party tools nobody had asked for stayed declared. A connected
+    connector is something the user set up on purpose; it is declared before
+    anything the catalog merely happens to contain.
+    """
+    if name in keep_last:
+        return len(_BUDGET_DROP_FAMILIES) + 1
     for rank, (_family, pattern) in enumerate(_BUDGET_DROP_FAMILIES):
         if pattern.search(name):
             return rank
     return len(_BUDGET_DROP_FAMILIES)
 
 
+def _connected_music_connectors() -> tuple[str, ...]:
+    """The music connector tool names holding a usable credential, or ``()``.
+
+    Read through ``jarvis.core.music_service`` (cached for a few seconds there);
+    any fault answers "none" — the budget must never depend on a keyring read
+    succeeding.
+    """
+    try:
+        from jarvis.core.music_service import connected_music_services
+
+        return tuple(str(name) for name in connected_music_services())
+    except Exception as exc:  # noqa: BLE001 — a probe fault must not brick the catalog
+        log.debug("realtime tool bridge: music connector probe skipped: %s", exc)
+        return ()
+
+
 def _apply_declaration_budget(
     rendered: list[tuple[str, dict[str, Any]]],
     budget_chars: int,
+    *,
+    keep_last: Collection[str] = (),
 ) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
     """Trim ``rendered`` (name, declaration) pairs to ``budget_chars``.
 
     Deterministic: the lowest-priority family goes first, the longest
-    declaration first inside it, ties by name. Returns (kept in the original
-    order, dropped names in drop order). ``budget_chars <= 0`` keeps all.
+    declaration first inside it, ties by name; ``keep_last`` names go after
+    every family. Returns (kept in the original order, dropped names in drop
+    order). ``budget_chars <= 0`` keeps all.
     """
     if budget_chars <= 0:
         return list(rendered), []
@@ -402,9 +435,10 @@ def _apply_declaration_budget(
     total = sum(sizes.values())
     if total <= budget_chars:
         return list(rendered), []
+    keep = frozenset(keep_last)
     drop_order = sorted(
         (name for name, _decl in rendered),
-        key=lambda name: (_drop_rank(name), -sizes[name], name),
+        key=lambda name: (_drop_rank(name, keep), -sizes[name], name),
     )
     dropped: list[str] = []
     for name in drop_order:
@@ -574,7 +608,9 @@ class RealtimeToolBridge:
             if alias and alias not in self._wire_to_name:
                 self._wire_to_name[alias] = str(name)
         kept, dropped = _apply_declaration_budget(
-            rendered, self._declaration_budget_chars
+            rendered,
+            self._declaration_budget_chars,
+            keep_last=_connected_music_connectors(),
         )
         self._dropped_names = tuple(dropped)
         if dropped:
@@ -611,6 +647,31 @@ class RealtimeToolBridge:
     def declaration_chars(self) -> int:
         """Serialized size of the declared set (the budget's own unit)."""
         return sum(_declaration_size(item) for item in self._declarations)
+
+    @property
+    def declaration_budget_chars(self) -> int:
+        """The budget the declared set is currently trimmed to (0 = unbounded)."""
+        return self._declaration_budget_chars
+
+    def set_declaration_budget(self, budget_chars: int) -> bool:
+        """Re-fit the declared set to ``budget_chars``; True when it changed.
+
+        The session builds the bridge before it knows which provider will
+        answer the call, so the first fit is the most conservative budget of
+        the whole chain. Once a candidate is about to be opened, its OWN budget
+        applies (ADR-0035 §4: ``gemini-live`` declares none, the OpenAI-protocol
+        wires declare 8 000 tokens) — live 2026-08-22 a Gemini session was
+        trimmed to the OpenAI fallback's 32 000 characters and lost every
+        first-party connector (``spotify``, ``youtube_music``, ``gmail``,
+        ``google_calendar`` …) to a budget that never applied to its wire.
+        """
+        budget = max(0, int(budget_chars or 0))
+        if budget == self._declaration_budget_chars:
+            return False
+        self._declaration_budget_chars = budget
+        previous = self._declarations
+        self._declarations = self._build_declarations()
+        return self._declarations != previous
 
     def set_language(self, language: str) -> None:
         self._language = language

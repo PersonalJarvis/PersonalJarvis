@@ -3608,6 +3608,9 @@ class RealtimeVoiceSession:
             if not self._provider_is_available(provider):
                 continue
             model, voice = self._active_provider_selection(provider)
+            # ADR-0035 §4: the native tool set is trimmed to THIS candidate's
+            # budget, not to the tightest budget anywhere in the chain.
+            self._fit_declaration_budget(provider)
             input_rate = int(getattr(provider, "input_sample_rate", 16_000) or 16_000)
             output_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
             session_config = RealtimeSessionConfig(
@@ -9349,12 +9352,19 @@ class RealtimeVoiceSession:
             and getattr(self, "_delegate_enabled", False)
         )
 
-    def _declaration_budget_chars(self) -> int:
+    def _declaration_budget_chars(self, provider: Any | None = None) -> int:
         """The native declaration budget in characters (ADR-0035 §4).
 
-        The smaller of the config bound and every candidate provider's own
-        declared budget (``tool_declaration_budget_tokens``, a capability —
-        AP-21); 0 = unbounded.
+        The smaller of the config bound and a provider's own declared budget
+        (``tool_declaration_budget_tokens``, a capability — AP-21); 0 =
+        unbounded. With ``provider`` given, that ONE provider's budget counts;
+        without it, every candidate's — the conservative first fit at
+        construction time, before the call knows which provider answers.
+        The per-provider fit is applied again at connect
+        (:meth:`_fit_declaration_budget`): live 2026-08-22 a ``gemini-live``
+        session, which declares no budget of its own, ran the whole call on
+        the OpenAI fallback's 8 000 tokens and lost every first-party
+        connector to it.
         """
         configured = int(
             getattr(
@@ -9365,7 +9375,8 @@ class RealtimeVoiceSession:
             or 0
         )
         budgets = [configured] if configured > 0 else []
-        for candidate in self._providers:
+        candidates = [provider] if provider is not None else list(self._providers)
+        for candidate in candidates:
             declared = int(
                 getattr(candidate, "tool_declaration_budget_tokens", 0) or 0
             )
@@ -9374,6 +9385,45 @@ class RealtimeVoiceSession:
         if not budgets:
             return 0
         return min(budgets) * 4
+
+    def _fit_declaration_budget(self, provider: Any) -> None:
+        """Re-trim the native tool set to the budget of the provider about to open.
+
+        No-op unless hybrid mode has a bridge that can re-fit. Logs the new
+        shape whenever the declared set actually changed, so a session log
+        always shows the set the wire really carried (AP-30: a trimmed catalog
+        looks exactly like a complete one).
+        """
+        bridge = self._tool_bridge
+        refit = getattr(bridge, "set_declaration_budget", None)
+        if bridge is None or not self._hybrid_enabled or not callable(refit):
+            return
+        budget = self._declaration_budget_chars(provider)
+        try:
+            changed = bool(refit(budget))
+        except Exception:  # noqa: BLE001 — the first fit still stands
+            log.warning(
+                "realtime[%s] declaration budget re-fit failed; keeping the "
+                "conservative set",
+                self.session_id,
+                exc_info=True,
+            )
+            return
+        if not changed:
+            return
+        dropped = tuple(getattr(bridge, "dropped_names", ()) or ())
+        log.info(
+            "realtime[%s] tool set re-fit for %s: %d native tools (~%d tokens "
+            "of a %d-token budget), %d over-budget name(s) reachable via "
+            "jarvis_action%s",
+            self.session_id,
+            str(getattr(provider, "name", "") or "provider"),
+            len(bridge.declarations),
+            int(getattr(bridge, "declaration_chars", 0) or 0) // 4,
+            budget // 4,
+            len(dropped),
+            f": {', '.join(dropped)}" if dropped else "",
+        )
 
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
         if self._hybrid_enabled:
