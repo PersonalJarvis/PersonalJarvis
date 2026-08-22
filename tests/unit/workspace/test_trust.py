@@ -1,4 +1,5 @@
-"""Trust pre-seed for Claude Code (~/.claude.json) and Codex (config.toml)."""
+"""Trust pre-seed for Claude Code, Codex and Grok Build."""
+
 from __future__ import annotations
 
 import json
@@ -64,6 +65,41 @@ def test_claude_is_idempotent_noop_second_run(tmp_path: Path) -> None:
     [res2] = ensure_trusted(repo, ["claude"], home=home)
     assert res2.ok
     assert res2.method == "noop"
+
+
+def test_grok_build_writes_trusted_folders_toml(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = _repo(tmp_path)
+
+    [res] = ensure_trusted(repo, ["grok-build"], home=home)
+    assert res.ok and res.agent == "grok-build"
+
+    parsed = tomllib.loads((home / ".grok" / "trusted_folders.toml").read_text(encoding="utf-8"))
+    assert parsed["folders"][str(repo)]["trusted"] is True
+
+
+def test_grok_build_preserves_other_folders(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    (home / ".grok").mkdir(parents=True)
+    repo = _repo(tmp_path)
+    (home / ".grok" / "trusted_folders.toml").write_text(
+        "[folders.'C:/elsewhere']\ntrusted = true\n",
+        encoding="utf-8",
+    )
+    ensure_trusted(repo, ["grok-build"], home=home)
+    parsed = tomllib.loads((home / ".grok" / "trusted_folders.toml").read_text(encoding="utf-8"))
+    assert parsed["folders"]["C:/elsewhere"]["trusted"] is True
+    assert parsed["folders"][str(repo)]["trusted"] is True
+
+
+def test_test_mode_ignores_real_grok_home_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / "REAL_DO_NOT_TOUCH"))
+    home = tmp_path / "home"
+    home.mkdir()
+    ensure_trusted(_repo(tmp_path), ["grok-build"], home=home)
+    assert (home / ".grok" / "trusted_folders.toml").exists()
+    assert not (tmp_path / "REAL_DO_NOT_TOUCH").exists()
 
 
 def test_codex_writes_trust_level_parseable_toml(tmp_path: Path) -> None:
@@ -171,9 +207,7 @@ def test_an_added_accounts_config_dir_is_trusted_as_well(tmp_path: Path) -> None
     repo = _repo(tmp_path)
     account = tmp_path / "accounts" / "second-seat"
 
-    results = ensure_trusted(
-        repo, ["claude"], home=home, config_dirs={"claude": [account]}
-    )
+    results = ensure_trusted(repo, ["claude"], home=home, config_dirs={"claude": [account]})
 
     assert [r.ok for r in results] == [True, True]
     for cfg in (home / ".claude.json", account / ".claude.json"):
@@ -202,9 +236,7 @@ def test_an_account_directory_for_another_agent_is_ignored(tmp_path: Path) -> No
     home = tmp_path / "home"
     home.mkdir()
     account = tmp_path / "accounts" / "claude-seat"
-    ensure_trusted(
-        _repo(tmp_path), ["codex"], home=home, config_dirs={"claude": [account]}
-    )
+    ensure_trusted(_repo(tmp_path), ["codex"], home=home, config_dirs={"claude": [account]})
     assert not account.exists()
 
 

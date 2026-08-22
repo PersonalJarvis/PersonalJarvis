@@ -54,6 +54,14 @@ const AGENTS: AgentStatus[] = [
     version: null,
     install_command: null,
   },
+  {
+    name: "grok-build",
+    display_name: "Grok Build",
+    installed: false,
+    version: null,
+    install_command: null,
+    description: "xAI's terminal coding agent — SuperGrok or X Premium+.",
+  },
 ];
 
 const ACCOUNTS: AgentAccount[] = [
@@ -177,6 +185,9 @@ describe("AgentAllocation", () => {
         .querySelector("img")
         ?.getAttribute("src"),
     ).toBe("/agent-logos/zai.svg");
+    expect(
+      screen.getByTestId("agent-mark-grok-build").getAttribute("data-logo"),
+    ).toBe("/provider-logos/grok.svg");
 
     fireEvent.click(screen.getAllByRole("button", { name: "All" })[0]);
     expect(claudeMark.getAttribute("data-logo")).toBe(

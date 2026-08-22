@@ -1,16 +1,18 @@
 """How each coding CLI names, keeps and reopens one of its conversations.
 
 A pane of the Agentic IDE is not the conversation it shows. The conversation
-lives inside the agent's own CLI — Claude Code and Codex each keep their own
-history on disk — and all this module does is hold the one string needed to
-point back at it: a *resume handle*.
+lives inside the agent's own CLI — every coding CLI here (Claude Code, Codex,
+OpenCode, Kimi Code, Grok Build, and the launch profiles over them) keeps its
+own history on disk — and all this module does is hold the one string needed
+to point back at it: a *resume handle*.
 
 That indirection is what makes a workspace survivable. Closing the browser kills
 every agent process (deliberately: an unwatched agent burns tokens invisibly),
 and a restarted app forgets the workspace entirely. With a handle per pane, both
 can be undone — the pane comes back and so does what it already knows.
 
-The two CLIs do NOT work the same way, and the difference decides the design:
+The CLIs do NOT work the same way, and the difference decides the design. Two
+shapes cover all of them — ASSIGNED at launch, or DISCOVERED afterwards:
 
 * **Claude Code** accepts ``--session-id <uuid>``, so the id can be *assigned*
   at launch. We mint one per pane and hand it over; resuming is then simply
@@ -20,6 +22,10 @@ The two CLIs do NOT work the same way, and the difference decides the design:
   shortcut and is a trap: it means "the newest session in this folder", so three
   Codex panes in one repository would all resume the SAME conversation and two
   users' work would silently vanish. Every pane must carry its own id.
+* **Grok Build** is the Claude Code shape (``--session-id`` at launch,
+  ``--resume`` later); **OpenCode** and **Kimi Code** are the Codex shape
+  (the id is theirs to choose — a database row, a session directory — and
+  ours to find by folder and time). Each adapter below says which.
 
 Callers never branch on an agent name (AP-21). They ask this module whether a
 handle can be minted, spent, or found, and an agent that answers "no" degrades
@@ -118,9 +124,7 @@ class _Adapter:
     # Finds the id afterwards, for CLIs that cannot be told one. The third
     # argument is the set of ids other panes already hold — see `discover`; the
     # fourth is the config dir whose history to search (None = the default).
-    discover: (
-        Callable[[str, float, Collection[str], Path | None], ResumeHandle | None] | None
-    )
+    discover: Callable[[str, float, Collection[str], Path | None], ResumeHandle | None] | None
     # Is there actually a conversation behind an id? See `has_conversation`.
     exists: Callable[[ResumeHandle, Path | None], bool]
 
@@ -131,6 +135,17 @@ def _claude_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
     return (
         ("--session-id", session_id),
         ResumeHandle(kind="claude_session", id=session_id, captured_at=time.time()),
+    )
+
+
+def _grok_launch() -> tuple[tuple[str, ...], ResumeHandle | None]:
+    # Same shape as Claude Code: Grok accepts a client-supplied UUID at
+    # launch (``--session-id``) and refuses anything that is not one. Minting
+    # here means we never have to guess which session a pane created.
+    session_id = str(uuid4())
+    return (
+        ("--session-id", session_id),
+        ResumeHandle(kind="grok_session", id=session_id, captured_at=time.time()),
     )
 
 
@@ -160,9 +175,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         resume=lambda session_id: ("resume", session_id),
         # Late-bound on purpose: the discovery function is defined further down,
         # next to the file-format knowledge it needs.
-        discover=lambda cwd, started, taken, home: _discover_codex(
-            cwd, started, taken, home
-        ),
+        discover=lambda cwd, started, taken, home: _discover_codex(cwd, started, taken, home),
         exists=lambda handle, home: _codex_conversation_exists(handle, home),
     ),
     "opencode": _Adapter(
@@ -172,9 +185,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         # reused for something else between releases; `--session` has to keep
         # meaning this or the CLI would break its own users.
         resume=lambda session_id: ("--session", session_id),
-        discover=lambda cwd, started, taken, home: _discover_opencode(
-            cwd, started, taken, home
-        ),
+        discover=lambda cwd, started, taken, home: _discover_opencode(cwd, started, taken, home),
         exists=lambda handle, home: _opencode_conversation_exists(handle, home),
     ),
     "kimi": _Adapter(
@@ -184,10 +195,15 @@ _ADAPTERS: dict[str, _Adapter] = {
         # generations disagree on the SHORT flag (-C versus -c), so a short one
         # would mean something different depending on which is installed.
         resume=lambda session_id: ("--session", session_id),
-        discover=lambda cwd, started, taken, home: _discover_kimi(
-            cwd, started, taken, home
-        ),
+        discover=lambda cwd, started, taken, home: _discover_kimi(cwd, started, taken, home),
         exists=lambda handle, home: _kimi_conversation_exists(handle, home),
+    ),
+    "grok-build": _Adapter(
+        kind="grok_session",
+        launch=_grok_launch,
+        resume=lambda session_id: ("--resume", session_id),
+        discover=None,
+        exists=lambda handle, home: _grok_conversation_exists(handle, home),
     ),
 }
 
@@ -238,9 +254,7 @@ def resume_argv(agent: str, handle: ResumeHandle | None) -> tuple[str, ...] | No
     return adapter.resume(handle.id)
 
 
-def has_conversation(
-    agent: str, handle: ResumeHandle | None, home: Path | None = None
-) -> bool:
+def has_conversation(agent: str, handle: ResumeHandle | None, home: Path | None = None) -> bool:
     """Is there actually something behind this handle, or only a reserved id?
 
     **The distinction this whole module got wrong at first.** Being handed an id
@@ -312,9 +326,7 @@ def _claude_home(override: Path | None = None) -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".claude"
 
 
-def _claude_conversation_exists(
-    handle: ResumeHandle, home: Path | None = None
-) -> bool:
+def _claude_conversation_exists(handle: ResumeHandle, home: Path | None = None) -> bool:
     """True when Claude Code has a transcript filed under this session id.
 
     Searched by id across all project folders rather than by rebuilding the
@@ -441,9 +453,7 @@ def _candidate_files(root: Path, started_at: float) -> list[Path]:
     return keep[:_MAX_CANDIDATES]
 
 
-def _codex_conversation_exists(
-    handle: ResumeHandle, home: Path | None = None
-) -> bool:
+def _codex_conversation_exists(handle: ResumeHandle, home: Path | None = None) -> bool:
     """True when Codex still has the rollout file this handle came from.
 
     The id is in the filename, and ``captured_at`` says roughly when it was
@@ -556,9 +566,7 @@ def _opencode_db(home: Path | None = None) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def _opencode_rows(
-    home: Path | None, query: str, params: tuple[Any, ...]
-) -> list[tuple[Any, ...]]:
+def _opencode_rows(home: Path | None, query: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
     """Run a read-only query against the session database.
 
     Read-only and never ``immutable``: the CLI may well be running and holding a
@@ -600,12 +608,8 @@ def _epoch_seconds(value: Any) -> float | None:
     return number / 1000.0 if number > 1e11 else number
 
 
-def _opencode_conversation_exists(
-    handle: ResumeHandle, home: Path | None = None
-) -> bool:
-    rows = _opencode_rows(
-        home, "SELECT 1 FROM session WHERE id = ? LIMIT 1", (handle.id,)
-    )
+def _opencode_conversation_exists(handle: ResumeHandle, home: Path | None = None) -> bool:
+    rows = _opencode_rows(home, "SELECT 1 FROM session WHERE id = ? LIMIT 1", (handle.id,))
     return bool(rows)
 
 
@@ -660,9 +664,7 @@ def _discover_opencode(
         stamp = _epoch_seconds(created)
         if stamp is None or stamp < started_at - _SKEW_S:
             continue
-        return ResumeHandle(
-            kind="opencode_session", id=session_id, captured_at=stamp
-        )
+        return ResumeHandle(kind="opencode_session", id=session_id, captured_at=stamp)
     return None
 
 
@@ -688,17 +690,19 @@ def _kimi_root(home: Path | None = None) -> Path | None:
 
 
 def _kimi_folder_key(cwd: str) -> str | None:
-    """The per-working-directory folder name this CLI derives from a path.
+    """The per-working-directory folder name the LEGACY generation derives.
 
     MEASURED against a live install rather than taken from documentation: the
     folder is the MD5 of the working directory exactly as the OS spells it
     (``C:\\Users\\...`` on Windows), which is why the native string is hashed and
     not a normalised or POSIX one.
 
-    This is the ONLY link between a session and the folder it belongs to — the
-    files inside record no working directory — so when the derived folder is
-    absent there is simply nothing to match against, and the caller starts a
-    fresh conversation instead of guessing.
+    In that generation this is the ONLY link between a session and the folder
+    it belongs to — the files inside record no working directory — so when the
+    derived folder is absent there is simply nothing to match against. The
+    current generation records the working directory inside each session (see
+    :func:`_kimi_session_folder`) and names its buckets differently, so it is
+    never matched through this key.
     """
     import hashlib
 
@@ -711,23 +715,177 @@ def _kimi_folder_key(cwd: str) -> str | None:
     return hashlib.md5(native.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
-def _kimi_sessions_dir(cwd: str, home: Path | None) -> Path | None:
-    root = _kimi_root(home)
+# The current generation names its per-folder buckets like this. Anything else
+# under ``sessions/`` is the legacy generation's MD5 bucket (or a stranger).
+_KIMI_WORKSPACE_BUCKET_PREFIX = "wd_"
+
+# What the current generation writes into a session's wire log the moment the
+# session OPENS, before anybody has typed anything — MEASURED across eight
+# opened-and-abandoned sessions on a live install, each exactly these records
+# and nothing else. A log that holds any record beyond them has a conversation
+# in it. Keyed on "anything beyond the setup prefix" rather than on the name of
+# the first-turn record on purpose: a future release can rename its turn
+# records and this still reads a real conversation as real.
+_KIMI_SETUP_RECORDS = frozenset({"metadata", "config.update", "tools.set_active_tools"})
+
+
+def _kimi_buckets_for(cwd: str, root: Path) -> list[Path]:
+    """Every bucket under ``root/sessions`` that may hold ``cwd``'s sessions.
+
+    Both generations at once, because a machine can carry both histories and
+    the launch path does not know which one a given pane wrote into:
+
+    * **Legacy** — one bucket named ``md5(cwd)``; it IS the folder scoping.
+    * **Current** — buckets named ``wd_<slug>_<hash>``, mapped back to their
+      folder by the CLI's own ``workspaces.json`` (``workspaces[key].root``).
+      When that index is missing or unreadable every ``wd_`` bucket is offered
+      and the per-session ``state.json`` does the filtering instead, so a
+      damaged index costs a few more ``stat`` calls and never a conversation.
+    """
+    sessions = root / "sessions"
+    if not sessions.is_dir():
+        return []
+    out: list[Path] = []
     key = _kimi_folder_key(cwd)
-    if root is None or key is None:
+    if key is not None and (sessions / key).is_dir():
+        out.append(sessions / key)
+
+    mapped: list[Path] | None = None
+    index = root / "workspaces.json"
+    try:
+        payload = json.loads(index.read_text(encoding="utf-8")) if index.is_file() else None
+    except (OSError, ValueError):
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("workspaces"), dict):
+        mapped = []
+        for bucket_name, entry in payload["workspaces"].items():
+            if not isinstance(bucket_name, str) or not isinstance(entry, dict):
+                continue
+            bucket_root = entry.get("root")
+            if isinstance(bucket_root, str) and _same_folder(bucket_root, cwd):
+                bucket = sessions / bucket_name
+                if bucket.is_dir():
+                    mapped.append(bucket)
+    if mapped is None:
+        try:
+            mapped = [
+                child
+                for child in sessions.iterdir()
+                if child.is_dir() and child.name.startswith(_KIMI_WORKSPACE_BUCKET_PREFIX)
+            ]
+        except OSError:
+            mapped = []
+    out.extend(bucket for bucket in mapped if bucket not in out)
+    return out
+
+
+def _kimi_session_state(folder: Path) -> dict[str, Any] | None:
+    """The current generation's ``state.json`` for a session, or None (legacy)."""
+    state = folder / "state.json"
+    try:
+        if not state.is_file():
+            return None
+        payload = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
-    folder = root / "sessions" / key
-    return folder if folder.is_dir() else None
+    return payload if isinstance(payload, dict) else None
 
 
-def _kimi_conversation_exists(
-    handle: ResumeHandle, home: Path | None = None
-) -> bool:
+def _kimi_session_folder(folder: Path) -> str | None:
+    """The working directory a session belongs to, when the session says so.
+
+    Only the current generation records it (``state.json`` → ``workDir``). None
+    means "the session does not say" — the legacy layout, where the bucket name
+    already is the scoping — and NOT "no folder".
+    """
+    state = _kimi_session_state(folder)
+    if state is None:
+        return None
+    work_dir = state.get("workDir")
+    return work_dir if isinstance(work_dir, str) and work_dir else None
+
+
+def _kimi_session_created(folder: Path) -> float | None:
+    """When a session opened: its own ``createdAt`` when recorded, else mtime.
+
+    The legacy generation records nothing, and there the directory's mtime is
+    the moment it was created (the CLI never touches the directory afterwards —
+    it writes INTO it). The current generation stamps ``createdAt`` in
+    ``state.json``; that is read first because the directory's mtime there moves
+    whenever a file inside is added.
+    """
+    state = _kimi_session_state(folder)
+    if state is not None:
+        stamp = _parse_utc(state.get("createdAt"))
+        if stamp is not None:
+            return stamp
+    try:
+        return folder.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _kimi_wire_has_turn(log: Path) -> bool:
+    """Does this wire log hold anything beyond the records written at open?
+
+    Reads line by line and stops at the first record outside
+    :data:`_KIMI_SETUP_RECORDS`, so a long conversation costs the few setup
+    lines and one more, never the whole file. A line that is not JSON is taken
+    as content: the CLI writes only JSON here, so anything else was written by
+    a turn that was cut off mid-line — which is still a conversation.
+    """
+    try:
+        with log.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    return True
+                kind = record.get("type") if isinstance(record, dict) else None
+                if kind not in _KIMI_SETUP_RECORDS:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def _kimi_session_has_content(folder: Path) -> bool:
+    """Is there a conversation in this session directory, or only its shell?
+
+    Both generations create the directory the moment a session opens, so "the
+    directory exists" is no evidence of anything. What counts as content
+    differs per layout and is MEASURED, not assumed:
+
+    * **Current** — ``agents/<name>/wire.jsonl`` exists from the start and is
+      already tens of kilobytes (the system prompt is logged into it), so its
+      SIZE says nothing; what says something is a record beyond the setup
+      prefix (:func:`_kimi_wire_has_turn`).
+    * **Legacy** — ``context.jsonl``/``wire.jsonl`` are created at open and
+      stay EMPTY until the first turn, so any non-empty regular file is a
+      conversation.
+    """
+    try:
+        wires = sorted(folder.glob("agents/*/wire.jsonl"))
+    except OSError:
+        return False
+    if wires:
+        return any(_kimi_wire_has_turn(wire) for wire in wires)
+    try:
+        return any(child.is_file() and child.stat().st_size > 0 for child in folder.iterdir())
+    except OSError:
+        return False
+
+
+def _kimi_conversation_exists(handle: ResumeHandle, home: Path | None = None) -> bool:
     """True when this CLI still holds a conversation behind the handle.
 
-    Searched by id across every working-directory folder, for the same reason
-    the Claude check is: the id is unique everywhere, while the folder name is
-    the CLI's own convention and could change without notice.
+    Searched by id across every bucket, for the same reason the Claude check
+    is: the id is unique everywhere (a UUID, prefixed ``session_`` in the
+    current generation), while the bucket name is the CLI's own convention and
+    differs between its two generations already.
     """
     session_id = handle.id
     if not session_id or "/" in session_id or "\\" in session_id:
@@ -740,7 +898,7 @@ def _kimi_conversation_exists(
         return False
     try:
         return any(
-            child.is_dir() and any(child.iterdir())
+            child.is_dir() and _kimi_session_has_content(child)
             for child in sessions.glob(f"*/{session_id}")
         )
     except OSError:
@@ -755,22 +913,29 @@ def _discover_kimi(
 ) -> ResumeHandle | None:
     """The session a pane in ``cwd`` started at ``started_at`` created.
 
-    A session here is a DIRECTORY named after its id, so the moment it was
-    created is its own timestamp — no file has to be opened at all, which keeps
-    this the cheapest discovery of the three even for a heavy user.
+    A session here is a DIRECTORY named after its id — in the current generation
+    ``session_<uuid>``, which is also exactly what ``--session`` expects, so the
+    directory name is the handle. The two generations scope a session to its
+    folder differently (see :func:`_kimi_buckets_for`), and this walks whichever
+    buckets can hold ``cwd``'s sessions, in either layout.
 
-    An empty directory is skipped: this CLI creates the folder when the session
-    opens and writes into it once the conversation has content, so resuming an
-    empty one reopens nothing and costs the pane its launch.
+    A session without content is skipped: both generations create the directory
+    the moment the session opens, so resuming an empty one reopens nothing and
+    costs the pane its launch. A current-generation session whose ``state.json``
+    names another folder is skipped too — that only happens when the bucket
+    index was unreadable and every bucket is being offered.
     """
-    folder = _kimi_sessions_dir(cwd, home)
-    if folder is None:
+    root = _kimi_root(home)
+    if root is None:
         return None
     claimed = {str(t) for t in taken}
-    best: tuple[float, str] | None = None
-    try:
-        children = list(folder.iterdir())
-    except OSError:
+    candidates: list[Path] = []
+    for bucket in _kimi_buckets_for(cwd, root):
+        try:
+            candidates.extend(child for child in bucket.iterdir() if child.is_dir())
+        except OSError:
+            continue
+    if not candidates:
         return None
 
     def _mtime(path: Path) -> float:
@@ -784,24 +949,83 @@ def _discover_kimi(
     # pane's own folder for an arbitrary 400 others, and the pane would come
     # back as a fresh conversation with nothing to explain why. A pane's own
     # session is by construction among the newest.
-    children.sort(key=_mtime, reverse=True)
-    for child in children[:_MAX_CANDIDATES]:
+    candidates.sort(key=_mtime, reverse=True)
+    best: tuple[float, str] | None = None
+    for child in candidates[:_MAX_CANDIDATES]:
         session_id = child.name
-        if session_id in claimed or not child.is_dir():
+        if session_id in claimed:
             continue
-        try:
-            if not any(child.iterdir()):
-                continue
-            stamp = child.stat().st_mtime
-        except OSError:
+        recorded_folder = _kimi_session_folder(child)
+        if recorded_folder is not None and not _same_folder(recorded_folder, cwd):
             continue
-        if stamp < started_at - _SKEW_S:
+        stamp = _kimi_session_created(child)
+        if stamp is None or stamp < started_at - _SKEW_S:
+            continue
+        if not _kimi_session_has_content(child):
             continue
         if best is None or stamp < best[0]:
             best = (stamp, session_id)
     if best is None:
         return None
     return ResumeHandle(kind="kimi_session", id=best[1], captured_at=best[0])
+
+
+# ---------------------------------------------------------------- Grok Build
+def _grok_home(override: Path | None = None) -> Path:
+    """The GROK_HOME whose history to read: the account's, else the default."""
+    if override is not None:
+        return Path(override).expanduser()
+    raw = os.environ.get("GROK_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".grok"
+
+
+def _grok_conversation_exists(handle: ResumeHandle, home: Path | None = None) -> bool:
+    """True when Grok Build has a transcript filed under this session id.
+
+    Searched by id across every working-directory group rather than by
+    reconstructing the encoded folder name. That name is the CLI's own
+    convention (URL-encoded cwd, or a slug-plus-hash when the encoding is
+    over 255 bytes) and could change without notice, while the id is a UUID
+    and unique everywhere.
+
+    The directory and its ``updates.jsonl`` exist from the moment the session
+    OPENS — MEASURED on a live install: a pane opened and abandoned leaves a
+    log holding the ``session_start`` hook run and nothing else, so neither
+    the directory nor a non-empty log is evidence of a conversation. What is
+    evidence is a user turn in that log (``"sessionUpdate":
+    "user_message_chunk"``). Resuming a session without one reopens an empty
+    conversation, which is indistinguishable from a dead pane.
+    """
+    session_id = handle.id
+    if not session_id or "/" in session_id or "\\" in session_id:
+        return False
+    root = _grok_home(home) / "sessions"
+    if not root.is_dir():
+        return False
+    found = next(root.glob(f"*/{session_id}"), None)
+    if found is None or not found.is_dir():
+        return False
+    return _grok_log_has_user_turn(found / "updates.jsonl")
+
+
+# The session-update record Grok Build writes when the USER says something.
+# Every other record in `updates.jsonl` (hook runs, agent chunks, turn ends) can
+# appear without a conversation ever having happened.
+_GROK_USER_TURN_MARKER = b'"user_message_chunk"'
+
+
+def _grok_log_has_user_turn(log: Path) -> bool:
+    """Does this update log record at least one user turn?
+
+    Read as bytes, line by line, stopping at the first hit: a long conversation
+    has its first user turn within the first few lines, and an abandoned pane's
+    log is one line long.
+    """
+    try:
+        with log.open("rb") as handle:
+            return any(_GROK_USER_TURN_MARKER in line for line in handle)
+    except OSError:
+        return False
 
 
 __all__ = [

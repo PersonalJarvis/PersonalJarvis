@@ -213,6 +213,16 @@ USER_SETUP: dict[Platform, tuple[Shared, ...]] = {
         # Same reasoning as Claude Code's plugins above, and the same treatment.
         Shared("plugins", "dir", copy_fallback=False, whole=True),
     ),
+    "grok-build": (
+        # Grok's login lives in auth.json, so the settings file can be shared
+        # whole — the same split Codex has.
+        Shared("config.toml", "file", fmt="toml"),
+        Shared("settings.json", "file", fmt="json"),
+        Shared("skills", "dir"),
+        Shared("commands", "dir"),
+        Shared("hooks", "dir"),
+        Shared("rules", "dir"),
+    ),
 }
 
 #: Keys merged out of a document that also holds identity. See :class:`MergedKey`.
@@ -233,6 +243,7 @@ MERGED_KEYS: dict[Platform, tuple[MergedKey, ...]] = {
     ),
     # Codex's mcp_servers live in config.toml, which is shared whole above.
     "codex": (),
+    "grok-build": (),
 }
 
 

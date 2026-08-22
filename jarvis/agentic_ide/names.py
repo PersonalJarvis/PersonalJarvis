@@ -37,6 +37,7 @@ fuzzy matching: "T1" and "T11" score 0.80 against each other, which is above
 the acting floor, so a fuzzy hit between two positions would be a coin flip
 over which agent gets the work. Positions match exactly or not at all.
 """
+
 from __future__ import annotations
 
 import re
@@ -56,7 +57,7 @@ _POSITION_NAME_RE = re.compile(rf"^{CALL_SIGN_PREFIX}(\d{{1,3}})$", re.IGNORECAS
 #: merely has installed — so the list is deliberately WIDER than the registry.
 #: Positional call-signs cannot collide with any of them.
 _KNOWN_PRODUCTS: frozenset[str] = frozenset(
-    {"jarvis", "claude", "codex", "gemini", "copilot", "cursor", "aider"}
+    {"jarvis", "claude", "codex", "gemini", "copilot", "cursor", "aider", "grok"}
 )
 
 
@@ -104,6 +105,7 @@ _NEAR_MISS_FLOOR = 0.55
 # --------------------------------------------------------------------------- #
 # Positional call-signs                                                       #
 # --------------------------------------------------------------------------- #
+
 
 def position_name(number: int) -> str:
     """The call-sign of the ``number``-th pane, counting from 1 ("T3")."""
@@ -173,22 +175,72 @@ def free_positions(taken: Iterable[str], count: int) -> list[str]:
 # reading its article as the digit would turn it into an order for pane one.
 _NUMBER_WORDS: dict[str, int] = {
     # German
-    "eins": 1, "zwei": 2, "zwo": 2, "drei": 3,  # i18n-allow: input vocabulary
-    "vier": 4, "fuenf": 5, "fünf": 5, "sechs": 6, "sieben": 7, "acht": 8,  # i18n-allow: input vocabulary
-    "neun": 9, "zehn": 10, "elf": 11, "zwoelf": 12, "zwölf": 12,  # i18n-allow: input vocabulary
-    "dreizehn": 13, "vierzehn": 14, "fuenfzehn": 15, "fünfzehn": 15,  # i18n-allow: input vocabulary
-    "sechzehn": 16, "siebzehn": 17, "achtzehn": 18, "neunzehn": 19,  # i18n-allow: input vocabulary
+    "eins": 1,
+    "zwei": 2,
+    "zwo": 2,
+    "drei": 3,  # i18n-allow: input vocabulary
+    "vier": 4,
+    "fuenf": 5,
+    "fünf": 5,  # i18n-allow: input vocabulary
+    "sechs": 6,
+    "sieben": 7,
+    "acht": 8,  # i18n-allow: input vocabulary
+    "neun": 9,
+    "zehn": 10,
+    "elf": 11,
+    "zwoelf": 12,
+    "zwölf": 12,  # i18n-allow: input vocabulary
+    "dreizehn": 13,
+    "vierzehn": 14,
+    "fuenfzehn": 15,
+    "fünfzehn": 15,  # i18n-allow: input vocabulary
+    "sechzehn": 16,
+    "siebzehn": 17,
+    "achtzehn": 18,
+    "neunzehn": 19,  # i18n-allow: input vocabulary
     "zwanzig": 20,  # i18n-allow: input vocabulary
     # English
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
-    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
-    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
-    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
     # Spanish
-    "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
-    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11,
-    "doce": 12, "trece": 13, "catorce": 14, "quince": 15, "dieciseis": 16,
-    "dieciséis": 16, "diecisiete": 17, "dieciocho": 18, "diecinueve": 19,
+    "uno": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+    "once": 11,
+    "doce": 12,
+    "trece": 13,
+    "catorce": 14,
+    "quince": 15,
+    "dieciseis": 16,
+    "dieciséis": 16,
+    "diecisiete": 17,
+    "dieciocho": 18,
+    "diecinueve": 19,
     "veinte": 20,
 }
 
@@ -199,26 +251,66 @@ _NUMBER_WORDS: dict[str, int] = {
 # ending is what tells the two apart, so it is mandatory wherever the language
 # has one.
 _ORDINAL_STEMS_DE: dict[str, int] = {
-    "erst": 1, "zweit": 2, "dritt": 3, "viert": 4, "fuenft": 5, "fünft": 5,  # i18n-allow: input vocabulary
-    "sechst": 6, "siebt": 7, "siebent": 7, "acht": 8, "neunt": 9, "zehnt": 10,  # i18n-allow: input vocabulary
-    "elft": 11, "zwoelft": 12, "zwölft": 12,  # i18n-allow: input vocabulary
+    "erst": 1,
+    "zweit": 2,
+    "dritt": 3,
+    "viert": 4,
+    "fuenft": 5,
+    "fünft": 5,  # i18n-allow: input vocabulary
+    "sechst": 6,
+    "siebt": 7,
+    "siebent": 7,
+    "acht": 8,
+    "neunt": 9,
+    "zehnt": 10,  # i18n-allow: input vocabulary
+    "elft": 11,
+    "zwoelft": 12,
+    "zwölft": 12,  # i18n-allow: input vocabulary
 }
 _ORDINAL_ENDINGS_DE: tuple[str, ...] = ("e", "en", "er", "es", "em")
 
 _ORDINAL_PLAIN: dict[str, int] = {
     # i18n-allow: speech-recognition input vocabulary, not prose
     # English
-    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
-    "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11,
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+    "eleventh": 11,
     "twelfth": 12,
     # Spanish, in every gendered and apocopated form people actually say
-    "primer": 1, "primero": 1, "primera": 1,
-    "segundo": 2, "segunda": 2,
-    "tercer": 3, "tercero": 3, "tercera": 3,
-    "cuarto": 4, "cuarta": 4, "quinto": 5, "quinta": 5,
-    "sexto": 6, "sexta": 6, "septimo": 7, "séptimo": 7, "septima": 7,
-    "séptima": 7, "octavo": 8, "octava": 8, "noveno": 9, "novena": 9,
-    "decimo": 10, "décimo": 10, "decima": 10, "décima": 10,
+    "primer": 1,
+    "primero": 1,
+    "primera": 1,
+    "segundo": 2,
+    "segunda": 2,
+    "tercer": 3,
+    "tercero": 3,
+    "tercera": 3,
+    "cuarto": 4,
+    "cuarta": 4,
+    "quinto": 5,
+    "quinta": 5,
+    "sexto": 6,
+    "sexta": 6,
+    "septimo": 7,
+    "séptimo": 7,
+    "septima": 7,
+    "séptima": 7,
+    "octavo": 8,
+    "octava": 8,
+    "noveno": 9,
+    "novena": 9,
+    "decimo": 10,
+    "décimo": 10,
+    "decima": 10,
+    "décima": 10,
 }
 
 _ORDINAL_WORDS: dict[str, int] = {
@@ -233,8 +325,7 @@ _ORDINAL_WORDS: dict[str, int] = {
 #: Words meaning "the one at the end", resolved against the live pane count.
 _LAST_WORDS: frozenset[str] = frozenset(
     # i18n-allow: speech-recognition input vocabulary, not prose
-    {"letzte", "letzten", "letztes", "letzter", "last", "ultimo", "último",
-     "ultima", "última"}
+    {"letzte", "letzten", "letztes", "letzter", "last", "ultimo", "último", "ultima", "última"}
 )
 
 #: How a person says the noun. Matches the German compound too ("Terminalfenster")
@@ -244,12 +335,8 @@ _PANE_NOUN = r"(?:terminals?|terminales|panes?|tabs?|fenster)"
 #: An article in front of the noun or the ordinal, all three locales.
 _ARTICLE = r"(?:der|die|das|den|dem|des|the|el|la|los|las)"  # i18n-allow: input vocabulary
 
-_NUMBER_WORD_ALT = "|".join(
-    sorted((re.escape(w) for w in _NUMBER_WORDS), key=len, reverse=True)
-)
-_ORDINAL_ALT = "|".join(
-    sorted((re.escape(w) for w in _ORDINAL_WORDS), key=len, reverse=True)
-)
+_NUMBER_WORD_ALT = "|".join(sorted((re.escape(w) for w in _NUMBER_WORDS), key=len, reverse=True))
+_ORDINAL_ALT = "|".join(sorted((re.escape(w) for w in _ORDINAL_WORDS), key=len, reverse=True))
 _LAST_ALT = "|".join(sorted((re.escape(w) for w in _LAST_WORDS), key=len, reverse=True))
 
 #: Every shape that names a pane BY POSITION. Each one carries a terminal
@@ -458,9 +545,7 @@ def phonetic_key(name: str) -> str:
     return "".join(squeezed)
 
 
-def resolve(
-    spoken: str, candidates: list[str], *, fuzzy: bool = True
-) -> str | None:
+def resolve(spoken: str, candidates: list[str], *, fuzzy: bool = True) -> str | None:
     """Best-matching call-sign for ``spoken``, or ``None`` when nothing fits.
 
     ``spoken`` may be a whole utterance ("what is terminal three up to?") — the
@@ -575,8 +660,7 @@ def near_miss(
         (
             (name, score)
             for name in candidates
-            if position_of(name) is None
-            and (score := similarity(spoken, name)) >= _NEAR_MISS_FLOOR
+            if position_of(name) is None and (score := similarity(spoken, name)) >= _NEAR_MISS_FLOOR
         ),
         key=lambda item: (-item[1], item[0]),
     )

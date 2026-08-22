@@ -5,6 +5,7 @@ collide. Codex's own ``--last`` shortcut would give all of them the same
 conversation, so discovery has to tell them apart — and it has to do so on a
 machine in any timezone, which is where the interesting failure lives.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,6 +43,14 @@ def test_two_panes_never_share_a_minted_id() -> None:
     _, first = sessions.launch_extra("claude")
     _, second = sessions.launch_extra("claude")
     assert first is not None and second is not None and first.id != second.id
+
+
+def test_grok_build_mints_a_session_id_at_launch() -> None:
+    argv, handle = sessions.launch_extra("grok-build")
+    assert argv[0] == "--session-id"
+    assert handle is not None and handle.id == argv[1]
+    assert len(handle.id) == 36 and handle.id.count("-") == 4
+    assert sessions.resume_argv("grok-build", handle) == ("--resume", handle.id)
 
 
 def test_codex_cannot_be_told_an_id_but_can_resume_one() -> None:
@@ -95,9 +104,7 @@ def _write_rollout(
     record = {"timestamp": utc, "type": "session_meta", "payload": payload}
     # A real rollout has thousands of lines after the header; only the first
     # one may ever be read.
-    target.write_text(
-        json.dumps(record) + "\n" + '{"type":"turn"}\n' * 50, encoding="utf-8"
-    )
+    target.write_text(json.dumps(record) + "\n" + '{"type":"turn"}\n' * 50, encoding="utf-8")
     return target
 
 
@@ -152,9 +159,7 @@ def test_panes_opened_in_one_batch_do_not_claim_the_same_session(
     # Both panes launched within the same second, before either file existed.
     first = sessions.discover("codex", cwd, _epoch("2026-07-25T12:00:00Z"))
     assert first is not None and first.id == "pane-one-session"
-    second = sessions.discover(
-        "codex", cwd, _epoch("2026-07-25T12:00:00Z"), taken={first.id}
-    )
+    second = sessions.discover("codex", cwd, _epoch("2026-07-25T12:00:00Z"), taken={first.id})
     assert second is not None and second.id == "pane-two-session"
 
 
@@ -173,10 +178,7 @@ def test_codex_discovery_ignores_a_session_from_another_folder(
         session_id="stranger",
     )
     assert (
-        sessions.discover(
-            "codex", str(tmp_path / "repo"), _epoch("2026-07-25T12:00:05Z")
-        )
-        is None
+        sessions.discover("codex", str(tmp_path / "repo"), _epoch("2026-07-25T12:00:05Z")) is None
     )
 
 
@@ -261,10 +263,7 @@ def test_a_corrupt_rollout_file_is_skipped_not_raised(
     (folder / "rollout-broken.jsonl").write_text("{not json", encoding="utf-8")
     (tmp_path / "repo").mkdir()
     assert (
-        sessions.discover(
-            "codex", str(tmp_path / "repo"), _epoch("2026-07-25T12:00:05Z")
-        )
-        is None
+        sessions.discover("codex", str(tmp_path / "repo"), _epoch("2026-07-25T12:00:05Z")) is None
     )
 
 

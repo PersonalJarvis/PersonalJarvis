@@ -17,6 +17,7 @@ The discriminator is the terminal noun, and it is mandatory. Everything else
 (verb, count, agent) is optional or defaulted, so the detector can only ever
 claim a turn the user spelled out.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -52,6 +53,9 @@ NAMES = ["Alex", "Blake", "Casey", "Dana"]
         ("Gib mir ein Codex Terminal", 1, "codex"),  # i18n-allow: spoken input under test
         # "Claude" alone is enough — nobody says the product name in full.
         ("Starte zwei Claude Terminals", 2, "claude"),  # i18n-allow: spoken input under test
+        # Grok Build: short name and the two-word product name both count.
+        ("Open two Grok terminals", 2, "grok-build"),
+        ("Open a Grok Build terminal", 1, "grok-build"),
         # Pane / window / tab are the same request.
         ("Öffne zwei neue Panes", 2, None),  # i18n-allow: spoken input under test
         ("Open three more tabs", 3, None),
@@ -81,7 +85,7 @@ def test_a_number_above_the_cap_is_clamped_not_refused() -> None:
 
 
 def test_an_ordinary_large_count_is_taken_at_face_value() -> None:
-    """"as many as you want" is the point — 20 panes must not be trimmed to 12.
+    """ "as many as you want" is the point — 20 panes must not be trimmed to 12.
 
     Guards the 2026-07-26 directive: the old cap of 12 silently rewrote what the
     user asked for, which is worse than refusing it.
@@ -203,9 +207,7 @@ def test_recombined_completed_turn_does_not_hide_a_later_spawn_clause() -> None:
 
 
 def test_question_inside_the_spawn_clause_still_never_opens_panes() -> None:
-    utterance = (
-        "Was passiert, wenn ich 5 Claude-Code-Terminals spawne?"
-    )  # i18n-allow: spoken input under test
+    utterance = "Was passiert, wenn ich 5 Claude-Code-Terminals spawne?"  # i18n-allow: spoken input under test
 
     assert intent.detect_spawn(utterance, names=NAMES) is None
     assert intent.owns_turn(utterance, names=NAMES) is False
@@ -267,16 +269,15 @@ def test_a_mixed_fleet_works_in_english_and_spanish() -> None:
     assert english is not None
     assert [(g.count, g.agent) for g in english.groups] == [(2, "codex"), (4, "claude")]
 
-    spanish = intent.detect_spawn(
-        "Abre tres terminales de Codex y dos de Claude", names=NAMES
-    )
+    spanish = intent.detect_spawn("Abre tres terminales de Codex y dos de Claude", names=NAMES)
     assert spanish is not None
     assert [(g.count, g.agent) for g in spanish.groups] == [(3, "codex"), (2, "claude")]
 
 
 def test_a_single_agent_request_is_still_one_group() -> None:
     found = intent.detect_spawn(
-        "Spawne fünf neue Claude Code Terminals", names=NAMES  # i18n-allow: spoken input under test
+        "Spawne fünf neue Claude Code Terminals",
+        names=NAMES,  # i18n-allow: spoken input under test
     )
     assert found is not None
     assert [(g.count, g.agent) for g in found.groups] == [(5, "claude")]
@@ -285,7 +286,7 @@ def test_a_single_agent_request_is_still_one_group() -> None:
 
 
 def test_an_unnamed_agent_stays_unnamed_so_the_panes_inherit() -> None:
-    """"Three more terminals" must not be turned into a Claude request."""
+    """ "Three more terminals" must not be turned into a Claude request."""
     found = intent.detect_spawn("Open three more terminals", names=NAMES)
     assert found is not None
     assert [(g.count, g.agent) for g in found.groups] == [(3, None)]
@@ -293,7 +294,7 @@ def test_an_unnamed_agent_stays_unnamed_so_the_panes_inherit() -> None:
 
 
 def test_the_same_agent_named_twice_is_merged() -> None:
-    """"Two Codex and two more Codex" is four Codex panes, not two groups."""
+    """ "Two Codex and two more Codex" is four Codex panes, not two groups."""
     found = intent.detect_spawn(
         "Open two Codex terminals and two more Codex terminals", names=NAMES
     )
@@ -406,7 +407,7 @@ POSITIONS = ["T1", "T2", "T3", "T4"]
 
 
 def test_a_mangled_call_sign_brief_still_reaches_its_pane() -> None:
-    """"Terminal T2" garbled to "terminal tft zwei" must not size a fleet.
+    """ "Terminal T2" garbled to "terminal tft zwei" must not size a fleet.
 
     The live failure: speech recognition mangled the call-sign, the addressing
     detector found no pane, and the pane's NAME was re-read as a count — two
@@ -435,9 +436,7 @@ def test_a_briefed_position_never_becomes_a_fleet_size() -> None:
     "there is no terminal two" — rather than opening panes the user never
     asked for.
     """
-    utterance = (
-        "prompt wird du terminal tft zwei, dass es ein deep dive machen soll"
-    )  # i18n-allow: production transcript under test
+    utterance = "prompt wird du terminal tft zwei, dass es ein deep dive machen soll"  # i18n-allow: production transcript under test
 
     assert intent.detect_spawn(utterance, names=["T1"]) is None
     assert (
@@ -461,16 +460,14 @@ def test_a_brief_beside_a_real_fleet_size_still_spawns() -> None:
 
 
 def test_an_elided_pane_noun_still_carries_its_fleet_size() -> None:
-    """"… und öffne noch drei" keeps its three panes without repeating the noun.
+    """ "… und öffne noch drei" keeps its three panes without repeating the noun.
 
     Ordinary spoken continuation elides a noun the sentence already
     established; the opener and the additive in front of the count are what
     mark it as a fleet size rather than task vocabulary, and the veto for the
     briefed position must not swallow it.
     """
-    utterance = (
-        "prompte Terminal zwei und öffne noch drei"  # i18n-allow: spoken input under test
-    )
+    utterance = "prompte Terminal zwei und öffne noch drei"  # i18n-allow: spoken input under test
 
     found = intent.detect_spawn(utterance, names=["T1"])
     assert found is not None
@@ -485,7 +482,7 @@ def test_an_elided_pane_noun_still_carries_its_fleet_size() -> None:
 
 
 def test_an_opened_position_is_one_pane_not_a_count() -> None:
-    """"öffne Terminal 2" opens ONE pane — the number is the pane's name.
+    """ "öffne Terminal 2" opens ONE pane — the number is the pane's name.
 
     The open-verb sibling of the briefed shape: with no pane answering to the
     position, the count fallback used to read the position's number as a
@@ -753,7 +750,7 @@ def test_corrections_replace_in_every_supported_locale(
 
 
 def test_a_retraction_without_a_replacement_changes_nothing() -> None:
-    """"nee" followed by no complete pane request keeps the original reading."""
+    """ "nee" followed by no complete pane request keeps the original reading."""
     utterance = "Öffne zwei neue Codex Terminals, nee warte"  # i18n-allow: spoken input under test
 
     found = intent.detect_spawn(utterance, names=NAMES)
@@ -797,10 +794,8 @@ def test_a_task_after_the_second_fleet_sentence_still_reaches_the_panes() -> Non
 
 
 def test_counts_inside_a_briefed_task_never_become_more_panes() -> None:
-    """"…prompt them: create three config tabs" stays the task, not a fleet."""
-    utterance = (
-        "Open two terminals. Prompt them: create three config tabs for the app"
-    )
+    """ "…prompt them: create three config tabs" stays the task, not a fleet."""
+    utterance = "Open two terminals. Prompt them: create three config tabs for the app"
 
     found = intent.detect_spawn(utterance, names=NAMES)
 
@@ -833,7 +828,7 @@ def test_each_kind_gets_its_own_task() -> None:
 
 
 def test_german_modal_briefs_route_by_kind() -> None:
-    """"Die Claudes sollen …" hands the group its work without a verb in front."""
+    """ "Die Claudes sollen …" hands the group its work without a verb in front."""
     utterance = (
         "Öffne zwei Claude Terminals und einen Codex. Die Claudes sollen die "
         "Tests fixen und der Codex soll die Docs aktualisieren."
@@ -846,19 +841,14 @@ def test_german_modal_briefs_route_by_kind() -> None:
 
 
 def test_a_kind_the_brief_does_not_name_stays_blank() -> None:
-    """"prompt the claudes …" deliberately leaves the codex without a task."""
-    utterance = (
-        "Open two claudes and one codex. Prompt the claudes to fix the "
-        "failing tests."
-    )
+    """ "prompt the claudes …" deliberately leaves the codex without a task."""
+    utterance = "Open two claudes and one codex. Prompt the claudes to fix the failing tests."
 
-    assert intent.spawn_group_tasks(utterance) == {
-        "claude": "fix the failing tests"
-    }
+    assert intent.spawn_group_tasks(utterance) == {"claude": "fix the failing tests"}
 
 
 def test_a_shared_brief_has_no_group_tasks() -> None:
-    """"prompt each one to …" addresses everyone; the map must stand down."""
+    """ "prompt each one to …" addresses everyone; the map must stand down."""
     utterance = (
         "Spawn two Codex terminals and prompt each one to perform a read-only "
         "platform compatibility review"
@@ -884,15 +874,10 @@ def test_work_in_front_of_the_first_kind_brief_disables_the_map() -> None:
 
 
 def test_a_cli_named_inside_another_groups_task_is_not_an_addressee() -> None:
-    """"prompt the claudes to fix codex bugs" briefs the claudes, not Codex."""
-    utterance = (
-        "Open two claude terminals. Prompt the claudes to fix the codex "
-        "integration bugs."
-    )
+    """ "prompt the claudes to fix codex bugs" briefs the claudes, not Codex."""
+    utterance = "Open two claude terminals. Prompt the claudes to fix the codex integration bugs."
 
-    assert intent.spawn_group_tasks(utterance) == {
-        "claude": "fix the codex integration bugs"
-    }
+    assert intent.spawn_group_tasks(utterance) == {"claude": "fix the codex integration bugs"}
 
 
 # --------------------------------------------------------------------------- #
@@ -934,7 +919,7 @@ def test_ordinary_tasks_are_not_divisions(task: str) -> None:
 
 
 def test_prompt_them_does_not_leak_the_pronoun_into_the_task() -> None:
-    """"prompt them, one fixes …" starts the task at the work, not at "them"."""
+    """ "prompt them, one fixes …" starts the task at the work, not at "them"."""
     utterance = (
         "spawn two new terminals and prompt them, one fixes a bug on macOS "
         "and one fixes a bug on Linux"
@@ -988,7 +973,7 @@ def test_counts_in_the_task_half_never_add_panes(utterance: str) -> None:
 
 
 def test_an_additive_extension_is_never_mistaken_for_task_talk() -> None:
-    """"one MORE terminal for the tests" extends the fleet, full stop."""
+    """ "one MORE terminal for the tests" extends the fleet, full stop."""
     found = intent.detect_spawn(
         "Open two terminals and one more terminal for the tests", names=NAMES
     )
@@ -1007,7 +992,7 @@ def test_a_named_groups_trailing_particle_is_not_a_predicate() -> None:
 
 
 def test_a_garble_before_the_next_group_still_earns_the_question() -> None:
-    """"two closed, one codex" garbles "Claudes" — Jarvis must ask, not guess.
+    """ "two closed, one codex" garbles "Claudes" — Jarvis must ask, not guess.
 
     The old guard saw the codex six characters behind "closed" and treated it
     as this group's real name — but it stands past a comma, in a group of its
@@ -1033,7 +1018,7 @@ def test_a_garble_before_the_next_group_still_earns_the_question() -> None:
 
 
 def test_spoken_filler_in_front_of_the_enumeration_is_not_the_task() -> None:
-    """"prompt them LIKE one fixes …" — the filler must not hide the division.
+    """ "prompt them LIKE one fixes …" — the filler must not hide the division.
 
     The maintainer's own phrasing (2026-08-12). "like" in front of the first
     enumerator kept it from opening its clause, so the distributive detector

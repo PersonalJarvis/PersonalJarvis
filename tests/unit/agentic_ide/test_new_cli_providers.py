@@ -1,4 +1,4 @@
-"""The three CLI providers added alongside Claude Code and Codex.
+"""The CLI providers added alongside Claude Code and Codex.
 
 Each of them exercises a different half of the registry contract, which is why
 they are worth testing together rather than one file per product:
@@ -11,6 +11,9 @@ they are worth testing together rather than one file per product:
 * **GLM** is not a CLI at all — it is the Claude Code binary pointed at another
   vendor — so it proves a launch profile inherits behaviour without duplicating
   it, and that the environment it depends on is never half-applied.
+* **Grok Build** is a standalone native CLI that accepts a client UUID at
+  launch, so it proves the mint-at-start resume path works for something that
+  is not Claude Code.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from jarvis.workspace import agents as workspace_agents
 
 def test_every_new_provider_is_launchable_and_installable() -> None:
     """A registered entry must answer the three questions a pane asks of it."""
-    for name in ("opencode", "kimi", "glm"):
+    for name in ("opencode", "kimi", "glm", "grok-build"):
         entry = workspace_agents.get_agent(name)
         assert entry is not None, f"{name} is not registered"
         assert entry.is_coding_agent
@@ -40,7 +43,7 @@ def test_every_new_provider_is_launchable_and_installable() -> None:
 
 
 def test_a_two_part_version_string_is_not_read_as_no_version() -> None:
-    """"kimi, version 1.3" must parse — a blank version reads as a broken install."""
+    """ "kimi, version 1.3" must parse — a blank version reads as a broken install."""
     import re
 
     entry = workspace_agents.get_agent("kimi")
@@ -55,7 +58,7 @@ def test_a_two_part_version_string_is_not_read_as_no_version() -> None:
 def test_a_product_name_can_never_become_a_pane_call_sign() -> None:
     """Saying "Kimi" must address the CLI, not a pane that happens to be called that."""
     reserved = workspace_agents.reserved_call_signs()
-    for spoken in ("kimi", "opencode", "glm", "claude", "codex"):
+    for spoken in ("kimi", "opencode", "glm", "claude", "codex", "grok"):
         assert spoken in reserved
     from jarvis.agentic_ide import names
 
@@ -142,9 +145,7 @@ def test_two_opencode_panes_in_one_folder_get_different_conversations(
     _add_session(db, "ses_b", str(tmp_path), started + 2)
     first = agent_sessions.discover("opencode", str(tmp_path), started)
     assert first is not None
-    second = agent_sessions.discover(
-        "opencode", str(tmp_path), started, taken=[first.id]
-    )
+    second = agent_sessions.discover("opencode", str(tmp_path), started, taken=[first.id])
     assert second is not None
     assert second.id != first.id
 
@@ -233,6 +234,195 @@ def test_kimi_skips_a_session_folder_with_nothing_in_it(
     assert key is not None
     (_agent_history_in_tmp / "kimi" / "sessions" / key / "sess-empty").mkdir(parents=True)
     assert agent_sessions.discover("kimi", str(tmp_path), time.time() - 5) is None
+
+
+# The records the current generation writes into a session's wire log the
+# moment it opens — before anybody typed anything. Mirrors what a live install
+# leaves behind (see `agent_sessions._KIMI_SETUP_RECORDS`).
+_KIMI_CODE_SETUP_LINES = (
+    '{"type":"metadata","protocol_version":"1.4","created_at":1785351452567}\n'
+    '{"type":"config.update","profileName":"agent","systemPrompt":"You are Kimi Code CLI"}\n'
+    '{"type":"config.update","time":1785351452600}\n'
+    '{"type":"tools.set_active_tools","names":["Read","Write","Edit","Grep"]}\n'
+)
+_KIMI_CODE_TURN_LINE = (
+    '{"type":"turn.started","turnId":"t1","input":[{"type":"text","text":"hello"}]}\n'
+)
+
+
+def _kimi_code_session(
+    root: Path,
+    bucket: str,
+    session_id: str,
+    work_dir: Path,
+    created_at: float,
+    *,
+    prompted: bool,
+) -> Path:
+    """Lay down one session exactly as the current generation does.
+
+    A ``wd_<slug>_<hash>`` bucket, ``state.json`` carrying the folder and the
+    open time, and ``agents/main/wire.jsonl`` that is tens of kilobytes from
+    the start — content is a record beyond the setup prefix, never the size.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    folder = root / "sessions" / bucket / session_id
+    (folder / "agents" / "main").mkdir(parents=True)
+    stamp = datetime.fromtimestamp(created_at, tz=UTC).isoformat().replace("+00:00", "Z")
+    state = {
+        "createdAt": stamp,
+        "updatedAt": stamp,
+        "title": "New Session",
+        "agents": {"main": {"type": "main", "parentAgentId": None}},
+        "workDir": work_dir.as_posix(),
+    }
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    lines = _KIMI_CODE_SETUP_LINES + (_KIMI_CODE_TURN_LINE if prompted else "")
+    (folder / "agents" / "main" / "wire.jsonl").write_text(lines, encoding="utf-8")
+    return folder
+
+
+def _kimi_code_index(root: Path, buckets: dict[str, Path]) -> None:
+    """The CLI's own ``workspaces.json``: bucket name → folder it belongs to."""
+    import json
+
+    payload = {
+        "version": 1,
+        "workspaces": {
+            name: {"root": folder.as_posix(), "name": folder.name}
+            for name, folder in buckets.items()
+        },
+        "deleted_workspace_ids": [],
+    }
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "workspaces.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_kimi_code_finds_the_session_its_pane_created_through_the_workspace_index(
+    _agent_history_in_tmp: Path, tmp_path: Path
+) -> None:
+    """The current generation: `wd_` buckets, `state.json`, a `session_` id.
+
+    This is the layout a 2026 install actually has — the MD5 bucket of the
+    legacy generation is simply absent there, and a lookup that only knows
+    the MD5 name reports "nothing to resume" on a machine full of sessions.
+    """
+    root = _agent_history_in_tmp / "kimi"
+    _kimi_code_index(root, {"wd_proj_1fce0659c7a0": tmp_path})
+    started = time.time()
+    _kimi_code_session(
+        root,
+        "wd_proj_1fce0659c7a0",
+        "session_aaaaaaaa-0000-0000-0000-000000000001",
+        tmp_path,
+        started + 1,
+        prompted=True,
+    )
+    handle = agent_sessions.discover("kimi", str(tmp_path), started)
+    assert handle is not None
+    assert handle.kind == "kimi_session"
+    # The directory name IS the id the CLI expects back, prefix included.
+    assert handle.id == "session_aaaaaaaa-0000-0000-0000-000000000001"
+    assert agent_sessions.resume_argv("kimi", handle) == ("--session", handle.id)
+    assert agent_sessions.has_conversation("kimi", handle) is True
+
+
+def test_kimi_code_skips_a_session_that_was_opened_but_never_prompted(
+    _agent_history_in_tmp: Path, tmp_path: Path
+) -> None:
+    """Its wire log is never empty — the system prompt is logged at open — so
+    size is no evidence; only a record beyond the setup prefix is."""
+    root = _agent_history_in_tmp / "kimi"
+    _kimi_code_index(root, {"wd_proj_1fce0659c7a0": tmp_path})
+    started = time.time()
+    _kimi_code_session(
+        root,
+        "wd_proj_1fce0659c7a0",
+        "session_aaaaaaaa-0000-0000-0000-000000000002",
+        tmp_path,
+        started + 1,
+        prompted=False,
+    )
+    assert agent_sessions.discover("kimi", str(tmp_path), started) is None
+    handle = agent_sessions.ResumeHandle(
+        "kimi_session", "session_aaaaaaaa-0000-0000-0000-000000000002", started
+    )
+    assert agent_sessions.has_conversation("kimi", handle) is False
+
+
+def test_kimi_code_reads_the_sessions_own_folder_when_the_index_is_missing(
+    _agent_history_in_tmp: Path, tmp_path: Path
+) -> None:
+    """No `workspaces.json`: every `wd_` bucket is offered and each session's
+    `state.json` decides — a damaged index costs stats, never a conversation."""
+    root = _agent_history_in_tmp / "kimi"
+    started = time.time()
+    _kimi_code_session(
+        root,
+        "wd_other_0000000000ab",
+        "session_aaaaaaaa-0000-0000-0000-00000000000e",
+        tmp_path / "elsewhere",
+        started + 1,
+        prompted=True,
+    )
+    _kimi_code_session(
+        root,
+        "wd_proj_1fce0659c7a0",
+        "session_aaaaaaaa-0000-0000-0000-000000000003",
+        tmp_path,
+        started + 2,
+        prompted=True,
+    )
+    handle = agent_sessions.discover("kimi", str(tmp_path), started)
+    assert handle is not None
+    assert handle.id == "session_aaaaaaaa-0000-0000-0000-000000000003"
+
+
+def test_kimi_code_hands_panes_opened_together_their_own_sessions(
+    _agent_history_in_tmp: Path, tmp_path: Path
+) -> None:
+    """Two panes, seconds apart: the earliest unclaimed session goes to the
+    first pane, and the id it holds is not offered to the second."""
+    root = _agent_history_in_tmp / "kimi"
+    _kimi_code_index(root, {"wd_proj_1fce0659c7a0": tmp_path})
+    started = time.time()
+    first = "session_aaaaaaaa-0000-0000-0000-000000000004"
+    second = "session_aaaaaaaa-0000-0000-0000-000000000005"
+    _kimi_code_session(root, "wd_proj_1fce0659c7a0", first, tmp_path, started + 1, prompted=True)
+    _kimi_code_session(root, "wd_proj_1fce0659c7a0", second, tmp_path, started + 3, prompted=True)
+    one = agent_sessions.discover("kimi", str(tmp_path), started)
+    assert one is not None and one.id == first
+    two = agent_sessions.discover("kimi", str(tmp_path), started, taken={first})
+    assert two is not None and two.id == second
+
+
+def test_kimi_legacy_and_current_histories_are_searched_side_by_side(
+    _agent_history_in_tmp: Path, tmp_path: Path
+) -> None:
+    """A machine that carried both generations keeps both layouts under one
+    root; a handle from either must still be found by id."""
+    root = _agent_history_in_tmp / "kimi"
+    key = agent_sessions._kimi_folder_key(str(tmp_path))
+    assert key is not None
+    legacy = root / "sessions" / key / "11111111-1111-1111-1111-111111111111"
+    legacy.mkdir(parents=True)
+    (legacy / "context.jsonl").write_text('{"role":"user","content":"hi"}\n', encoding="utf-8")
+    _kimi_code_session(
+        root,
+        "wd_proj_1fce0659c7a0",
+        "session_aaaaaaaa-0000-0000-0000-000000000006",
+        tmp_path,
+        time.time(),
+        prompted=True,
+    )
+    for session_id in (
+        "11111111-1111-1111-1111-111111111111",
+        "session_aaaaaaaa-0000-0000-0000-000000000006",
+    ):
+        handle = agent_sessions.ResumeHandle("kimi_session", session_id, time.time())
+        assert agent_sessions.has_conversation("kimi", handle) is True, session_id
 
 
 def test_kimi_folder_key_is_derived_from_the_native_path(tmp_path: Path) -> None:
@@ -464,9 +654,7 @@ async def test_a_refused_glm_pane_says_so_instead_of_claiming_to_be_starting(
 def test_the_glm_environment_factory_reports_not_configured_without_a_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "jarvis.core.config.get_secret", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: None)
     assert workspace_agents.glm_spawn_env() is None
 
 
@@ -481,6 +669,84 @@ def test_the_glm_environment_pins_no_model_the_user_did_not_choose(
     assert "ANTHROPIC_DEFAULT_SONNET_MODEL" not in env
 
 
+# ----------------------------------------------------------------- Grok Build
+
+
+def test_grok_build_mints_a_session_id_the_way_claude_code_does() -> None:
+    """Grok accepts a client UUID at launch, so we never have to guess later."""
+    entry = workspace_agents.get_agent("grok-build")
+    assert entry is not None
+    assert entry.executable == "grok"
+    assert entry.adapter_key == "grok-build"
+    argv, handle = agent_sessions.launch_extra("grok-build")
+    assert handle is not None and handle.kind == "grok_session"
+    assert argv == ("--session-id", handle.id)
+    assert len(handle.id) == 36 and handle.id.count("-") == 4
+    assert agent_sessions.resume_argv("grok-build", handle) == (
+        "--resume",
+        handle.id,
+    )
+    foreign = agent_sessions.ResumeHandle("claude_session", handle.id, time.time())
+    assert agent_sessions.resume_argv("grok-build", foreign) is None
+
+
+def test_grok_build_treats_a_session_folder_without_a_log_as_fresh(
+    _agent_history_in_tmp: Path,
+) -> None:
+    """An opened-but-never-prompted pane must not be resumed into a dead TUI."""
+    _, handle = agent_sessions.launch_extra("grok-build")
+    assert handle is not None
+    assert agent_sessions.has_conversation("grok-build", handle) is False
+    folder = _agent_history_in_tmp / "grok-build" / "sessions" / "encoded-cwd" / handle.id
+    folder.mkdir(parents=True)
+    assert agent_sessions.has_conversation("grok-build", handle) is False
+    (folder / "updates.jsonl").write_text("", encoding="utf-8")
+    assert agent_sessions.has_conversation("grok-build", handle) is False
+    # MEASURED: opening a pane already writes the session_start hook run into
+    # the log, so a non-empty log is not a conversation either.
+    hook_only = (
+        '{"method":"_x.ai/session/update","params":{"update":'
+        '{"sessionUpdate":"hook_execution","event_name":"session_start"}}}\n'
+    )
+    (folder / "updates.jsonl").write_text(hook_only, encoding="utf-8")
+    assert agent_sessions.has_conversation("grok-build", handle) is False
+    user_turn = (
+        '{"method":"_x.ai/session/update","params":{"update":'
+        '{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hi"}}}}\n'
+    )
+    (folder / "updates.jsonl").write_text(hook_only + user_turn, encoding="utf-8")
+    assert agent_sessions.has_conversation("grok-build", handle) is True
+
+
+def test_grok_build_never_follows_a_session_id_out_of_its_home(
+    _agent_history_in_tmp: Path,
+) -> None:
+    """A crafted id with a path separator is not a lookup, it is a traversal."""
+    handle = agent_sessions.ResumeHandle(
+        kind="grok_session", id="../outside", captured_at=time.time()
+    )
+    assert agent_sessions.has_conversation("grok-build", handle) is False
+
+
+def test_grok_build_still_finds_its_session_behind_a_long_history(
+    _agent_history_in_tmp: Path,
+) -> None:
+    """The id is unique; cwd-encoded neighbour folders must not hide it."""
+    _, handle = agent_sessions.launch_extra("grok-build")
+    assert handle is not None
+    root = _agent_history_in_tmp / "grok-build" / "sessions"
+    for index in range(50):
+        other = root / f"other-{index}" / f"sess-{index}"
+        other.mkdir(parents=True)
+        (other / "updates.jsonl").write_text("{}\n", encoding="utf-8")
+    mine = root / "the-cwd" / handle.id
+    mine.mkdir(parents=True)
+    (mine / "updates.jsonl").write_text(
+        '{"params":{"update":{"sessionUpdate":"user_message_chunk"}}}\n', encoding="utf-8"
+    )
+    assert agent_sessions.has_conversation("grok-build", handle) is True
+
+
 # ------------------------------------------------- per-CLI pane behaviour
 
 
@@ -489,6 +755,7 @@ def test_a_dropped_file_is_written_the_way_each_cli_reads_it() -> None:
     assert at_style == '"/w/a b.py"'  # a space would end the @reference early
     assert drops.reference("/w/a.py", agent="claude") == "@/w/a.py"
     assert drops.reference("/w/a.py", agent="opencode") == "@/w/a.py"
+    assert drops.reference("/w/a.py", agent="grok-build") == "@/w/a.py"
     assert drops.reference("/w/a.py", agent="codex") == '"/w/a.py"'
     # An entry nobody has registered gets the form that works everywhere.
     assert drops.reference("/w/a.py", agent="nope") == '"/w/a.py"'
@@ -548,9 +815,7 @@ def test_a_booting_pane_of_a_new_cli_is_not_prompted_yet() -> None:
     assert _ready_for_prompt(_Pane("opencode", ("Loading...",))) is False
     assert _ready_for_prompt(_Pane("opencode", ("> ",))) is True
     assert _ready_for_prompt(_Pane("kimi", ("starting",))) is False
-    assert _ready_for_prompt(
-        _Pane("codex", ("› Input disabled.",), cursor_visible=False)
-    ) is False
+    assert _ready_for_prompt(_Pane("codex", ("› Input disabled.",), cursor_visible=False)) is False
     assert _ready_for_prompt(_Pane("codex", ("› Ask Codex anything",))) is True
     assert _ready_for_prompt(_Pane("codex", ("» Ask Codex anything",))) is True
     # The one measured exception keeps its fast path.

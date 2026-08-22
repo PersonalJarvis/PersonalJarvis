@@ -96,7 +96,17 @@ def test_no_pane_call_sign_can_shadow_a_cli_name() -> None:
     reserved = names._reserved()
     assert not {n.lower() for n in names.default_names(20)} & reserved
     for name in workspace_agents.coding_agent_names():
-        assert name.lower() in reserved
+        entry = workspace_agents.get_agent(name)
+        assert entry is not None
+        token = name.lower()
+        if token.isalpha() and len(token) > 1:
+            assert token in reserved
+            continue
+        # Hyphenated registry keys are not call-sign shaped, so the spoken
+        # product word has to be reserved instead — otherwise "Grok" could
+        # still be handed out as a pane name.
+        first = entry.display_name.split()[0].lower()
+        assert first in reserved, f"{name} has no reserved spoken token"
 
 
 def test_every_coding_cli_either_resumes_or_says_it_cannot() -> None:

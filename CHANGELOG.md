@@ -9,8 +9,34 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Grok Build in the Open-beside menu.** The official `grok` CLI is now a
+  workspace terminal like Claude Code and Codex: pick it when splitting a
+  pane, resume the same conversation, and sign in through SuperGrok or
+  X Premium+. The xAI API-key card stays a separate thing.
+
 ### Fixed
 
+- **A web-searched answer in a live call is spoken to the end.** Gemini Live
+  closes every tool call with an "interrupted" edge before its turn boundary;
+  that edge wiped the evidence the boundary guard needed, so every search
+  looked like a mute provider, the retry it triggered cut the answer already
+  streaming ("… dass sie ihre Plattformen" — end of reply), and the model's
+  second answer was thrown away as a phantom. Both halves of the tool boundary
+  are now recognized and withheld.
+- **A Gemini brain that cannot create a context cache stops paying for the
+  attempt on every call.** A free-tier key (no cache storage) or a Vertex route
+  without default credentials failed the cache create ~0.7 s per call, four
+  times inside one delegated voice turn; a failure now holds for ten minutes.
+- **Every connected coding CLI resumes its conversation, not only Claude Code
+  and Codex.** Kimi Code's current generation files its sessions under
+  `wd_<folder>` buckets with the folder recorded inside each session; the
+  Agentic IDE only knew the previous generation's MD5 folders, so a Kimi pane
+  always came back empty. Both layouts are read now. Grok Build and Kimi Code
+  also write a session file the moment a pane opens, so a pane that was never
+  prompted is no longer "resumed" into an empty conversation — a real user
+  turn is what counts.
 - **Dictation delivers its text about as fast after a long recording as after
   a short one.** The final read used to start only after the key was released
   and work through the recording one window at a time, so a one-minute
@@ -23,6 +49,13 @@ versioning per [SemVer](https://semver.org/).
   upload is now cut to half a second before it is sent, a transcript that ends
   well before your speech does gets only its missing tail read back in, and
   a hardware overflow on the microphone is counted as the real loss it is.
+- **The local recognizer says when it cannot reach your GPU — and fixes it
+  from inside the app.** On a desktop without the CUDA runtime libraries the
+  on-device recognizer quietly ran on the CPU (about eight times slower; the
+  cloud fallback took 48 s for a 70 s recording). The provider card now shows
+  what the config asked for, what really runs, and why, with a one-click
+  install of the missing libraries. They are also available as the `cuda`
+  install extra.
 - **The wake word no longer fires on a stray single word.** Since the 20 Aug
   crash fix, the check that decides between "Hey George" and whatever was
   actually said had quietly lost its strongest comparison, so a lone word like

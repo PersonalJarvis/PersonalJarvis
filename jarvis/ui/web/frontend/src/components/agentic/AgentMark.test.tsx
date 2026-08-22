@@ -27,13 +27,21 @@ describe("AgentMark", () => {
   it("redraws a single-colour silhouette in the theme's own ink", () => {
     // Claude and OpenAI ship as one near-white fill. Nothing about that colour
     // is brand, so the mark is a mask and follows light/dark by itself.
-    render(<AgentMark agent="claude" label="Claude Code" />);
+    const { unmount } = render(<AgentMark agent="claude" label="Claude Code" />);
     expect(mark("claude").getAttribute("data-ground")).toBe("ink");
     expect(mark("claude").getAttribute("data-logo")).toBe(
       "/provider-logos/claude.svg",
     );
     // The <img> is what made it invisible on paper; it must be gone.
     expect(mark("claude").querySelector("img")).toBeNull();
+    unmount();
+
+    render(<AgentMark agent="grok-build" label="Grok Build" />);
+    expect(mark("grok-build").getAttribute("data-ground")).toBe("ink");
+    expect(mark("grok-build").getAttribute("data-logo")).toBe(
+      "/provider-logos/grok.svg",
+    );
+    expect(mark("grok-build").querySelector("img")).toBeNull();
   });
 
   it("gives a lockup with a white background the dark ground it was drawn on", () => {

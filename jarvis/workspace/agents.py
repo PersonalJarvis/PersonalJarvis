@@ -26,10 +26,12 @@ Git Bash on Windows and ``$SHELL``/``/etc/shells`` elsewhere. On a host with no
 shell at all (a stripped container) the entry reports itself as not installed
 rather than handing the PTY an argv that cannot start.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -337,9 +339,7 @@ def make_cli_agent(
         binary_name=binary,
         check_command=(binary, "--version"),
         version_parse_regex=version_regex,
-        install=install or InstallMethods(
-            npm_package=npm_package or None, recommended="npm"
-        ),
+        install=install or InstallMethods(npm_package=npm_package or None, recommended="npm"),
         # We only care whether the binary is installed; the agent handles its
         # own login interactively on first launch in the terminal.
         auth=AuthConfig(type="none"),
@@ -391,6 +391,33 @@ CODEX_TRUST = TrustSpec(
     home_env="CODEX_HOME",
     subdir=".codex",
 )
+
+#: Grok Build keeps folder trust in ``$GROK_HOME/trusted_folders.toml``.
+GROK_TRUST = TrustSpec(
+    filename="trusted_folders.toml",
+    fmt="toml",
+    section=("folders",),
+    key="trusted",
+    value=True,
+    home_env="GROK_HOME",
+    subdir=".grok",
+    backup=True,
+)
+
+
+def _grok_build_install() -> InstallMethods:
+    """Official Grok Build installer for the OS that will run it.
+
+    Grok ships two scripts, not one: ``install.ps1`` on Windows and
+    ``install.sh`` everywhere else. The shared script installer fetches
+    whichever URL we declare and wraps it in the matching runner, so picking
+    the URL at registration is what makes the command actually work.
+    """
+    url = (
+        "https://x.ai/cli/install.ps1" if sys.platform == "win32" else "https://x.ai/cli/install.sh"
+    )
+    return InstallMethods(script_url=url, recommended="script")
+
 
 #: Kimi ships under two generations that both install a binary called ``kimi``.
 KIMI_CURRENT = "kimi-code"
@@ -450,9 +477,7 @@ def kimi_generation() -> str | None:
         parts = {part.lower() for part in resolved.parts}
         if _KIMI_CURRENT_PACKAGE in parts:
             return KIMI_CURRENT
-        package = (
-            resolved.parent / "node_modules" / "@moonshot-ai" / _KIMI_CURRENT_PACKAGE
-        )
+        package = resolved.parent / "node_modules" / "@moonshot-ai" / _KIMI_CURRENT_PACKAGE
         if package.is_dir():
             return KIMI_CURRENT
 
@@ -521,9 +546,7 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         npm_package="@anthropic-ai/claude-code",
         homepage="https://claude.com/claude-code",
         trust=CLAUDE_TRUST,
-        account=AccountSpec(
-            env=(("CLAUDE_CONFIG_DIR", "{dir}"),), native_dir="~/.claude"
-        ),
+        account=AccountSpec(env=(("CLAUDE_CONFIG_DIR", "{dir}"),), native_dir="~/.claude"),
         # Verified live: an ``@path`` is resolved into the file's contents and
         # the file-picker popup does not eat an injected reference.
         file_reference="at",
@@ -622,7 +645,11 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # process the agent rather than a cmd wrapper around it.
         win_shim=WinShim(
             relative_path=(
-                "node_modules", "@moonshot-ai", "kimi-code", "dist", "main.mjs",
+                "node_modules",
+                "@moonshot-ai",
+                "kimi-code",
+                "dist",
+                "main.mjs",
             ),
             kind="node",
         ),
@@ -671,6 +698,32 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # Resolved fresh on every spawn AND every resume — see the docstring.
         spawn_env_factory=glm_spawn_env,
         spoken_aliases=("glm", "g l m", "gee ell em", "jlm"),
+    ),
+    "grok-build": make_cli_agent(
+        "grok-build",
+        "Grok Build",
+        binary="grok",
+        homepage="https://x.ai/cli",
+        description="xAI's terminal coding agent — SuperGrok or X Premium+.",
+        install=_grok_build_install(),
+        trust=GROK_TRUST,
+        account=AccountSpec(
+            env=(("GROK_HOME", "{dir}"),),
+            native_dir="~/.grok",
+            login_markers=("auth.json",),
+            login_argv=("login",),
+        ),
+        extra_path_dirs=("~/.grok/bin",),
+        # Flag, not an env var: Grok's updater is on by default and would swap
+        # the binary under a pane that is mid-conversation (same class as
+        # OpenCode and Kimi).
+        launch_args=("--no-auto-update",),
+        file_reference="at",
+        instruction_filename="AGENTS.md",
+        # "grok build" has to be listed: "open grok build" otherwise matches
+        # the short spelling and leaves "build" as an unmatched word, which
+        # drops the whole spawn group.
+        spoken_aliases=("grok", "groc", "grock", "grok build"),
     ),
     PLAIN_TERMINAL: WorkspaceAgent(
         name=PLAIN_TERMINAL,
@@ -761,9 +814,7 @@ def _custom_agent(entry: Any) -> WorkspaceAgent:
         # Empty for a shell launch: the whole line goes to the shell verbatim,
         # so a second, half-parsed copy of it here would only be something a
         # future caller could pick up and get wrong.
-        launch_args=()
-        if through_shell
-        else custom_clis.split_command(entry.command)[1:],
+        launch_args=() if through_shell else custom_clis.split_command(entry.command)[1:],
         file_reference=entry.file_reference,
         custom=True,
         logo_url=custom_clis.logo_url(entry),
@@ -891,9 +942,7 @@ def coding_agent_names() -> tuple[str, ...]:
     The "Make It Yours" launcher plans a grid of agents that extend Jarvis, so
     it asks this rather than :func:`agent_names`.
     """
-    return tuple(
-        name for name, agent in _registry().items() if agent.is_coding_agent
-    )
+    return tuple(name for name, agent in _registry().items() if agent.is_coding_agent)
 
 
 def needs_trust(name: str) -> bool:
@@ -1099,11 +1148,7 @@ async def detect_agents(
 
     global _detection_cache, _detection_task
     cached = _detection_cache
-    if (
-        not force
-        and cached is not None
-        and time.monotonic() - cached[0] < _DETECTION_TTL_S
-    ):
+    if not force and cached is not None and time.monotonic() - cached[0] < _DETECTION_TTL_S:
         return list(cached[1])
 
     running = _detection_task
@@ -1169,9 +1214,7 @@ async def _sweep_agents(prober: CliStatusProber) -> list[AgentInfo]:
     unspecced = [a for a in registry.values() if a.spec is None and a.is_coding_agent]
     found: dict[str, bool] = {}
     if unspecced:
-        found = await asyncio.to_thread(
-            lambda: {a.name: _on_path(a.executable) for a in unspecced}
-        )
+        found = await asyncio.to_thread(lambda: {a.name: _on_path(a.executable) for a in unspecced})
 
     out: list[AgentInfo] = []
     for agent in registry.values():
@@ -1318,6 +1361,7 @@ __all__ = [
     "AGENT_NAMES",
     "CLAUDE_TRUST",
     "CODEX_TRUST",
+    "GROK_TRUST",
     "KIMI_CURRENT",
     "KIMI_LEGACY",
     "PLAIN_TERMINAL",
