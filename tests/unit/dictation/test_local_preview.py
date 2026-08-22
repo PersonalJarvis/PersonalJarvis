@@ -352,3 +352,88 @@ def test_an_unpinned_decode_reports_the_language_it_found():
     assert (detected, probability) == ("de", 0.98)
     assert text == "Hallo Welt"  # i18n-allow: German test fixture
     assert engine._model.options[-1]["temperature"] == 0.0
+
+
+# --------------------------------------------------------------------------
+# The GPU engine must be FAST, not merely present (live 2026-08-22)
+# --------------------------------------------------------------------------
+
+
+def test_the_device_probe_prefers_plain_half_precision_on_cuda(monkeypatch):
+    """int8 on CUDA measured 10x slower than float16 on a Blackwell card."""
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ctranslate2",
+        SimpleNamespace(
+            get_supported_compute_types=lambda device: (
+                {"int8", "int8_float16", "float16"} if device == "cuda" else {"int8"}
+            )
+        ),
+    )
+
+    assert LocalPreviewTranscriber._pick_device() == ("cuda", "float16")
+
+
+def test_a_dropped_engine_is_rebuilt_on_the_next_device_not_the_same_one(monkeypatch):
+    """The rebuild spiral: an engine that keeps timing out was rebuilt with the
+    SAME settings and timed out again, every 7 s. A drop now advances."""
+    import jarvis.plugins.stt.fwhisper as fwhisper
+
+    calls: list[tuple[str, str]] = []
+
+    class _Model:
+        def __init__(self, device: str, compute: str) -> None:
+            self.device, self.compute = device, compute
+
+        def transcribe(self, _audio, **_kwargs):
+            return [], object()
+
+    def _build(_name: str, device: str, compute: str):
+        calls.append((device, compute))
+        return _Model(device, compute)
+
+    monkeypatch.setattr(fwhisper, "_new_whisper_model", _build)
+    engine = LocalPreviewTranscriber()
+    engine._pick_device = lambda: ("cuda", "float16")  # type: ignore[method-assign]
+
+    engine._load_model()
+    assert (engine._model.device, engine._model.compute) == ("cuda", "float16")
+
+    for _ in range(3):
+        engine._note_failure("timed out")
+    assert engine.ready is False
+    engine._load_model()
+    assert (engine._model.device, engine._model.compute) == ("cuda", "int8_float16")
+
+    for _ in range(3):
+        engine._note_failure("timed out")
+    engine._load_model()
+    assert (engine._model.device, engine._model.compute) == ("cpu", "int8")
+
+    # The floor is the floor: more failures rebuild the CPU engine, not beyond.
+    for _ in range(3):
+        engine._note_failure("timed out")
+    engine._load_model()
+    assert (engine._model.device, engine._model.compute) == ("cpu", "int8")
+    assert calls[0] == ("cuda", "float16")
+    assert calls[-1] == ("cpu", "int8")
+
+
+async def test_a_late_but_successful_preview_ends_the_failure_streak():
+    """Slow is not wedged: a worker that comes back resets the drop counter."""
+    import jarvis.dictation.local_preview as mod
+
+    engine = _Engine(delay=0.05)
+    original = mod.PREVIEW_TIMEOUT_S
+    mod.PREVIEW_TIMEOUT_S = 0.01
+    try:
+        assert await engine.transcribe(b"\x00" * 32000) is None  # times out, worker runs on
+        assert engine._failures == 1
+        await asyncio.sleep(0.15)  # the worker finishes late
+        assert engine._failures == 0
+        assert engine.ready is True
+    finally:
+        mod.PREVIEW_TIMEOUT_S = original

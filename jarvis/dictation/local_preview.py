@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -54,6 +55,21 @@ PREVIEW_TIMEOUT_S = 2.0
 #: Consecutive failures after which the engine is dropped and rebuilt on next
 #: use. A native engine that has wedged never recovers by being asked again.
 _MAX_FAILURES = 3
+
+#: The clip the freshly built engine decodes before it is advertised — four
+#: seconds of near-silence, the shape of an ordinary preview tail. Its timing
+#: is logged, never judged: the first CUDA decode in a process pays context
+#: init and, on a cold driver cache, a one-off kernel compile measured at 19 s,
+#: so a clock here would reject a perfectly good GPU on its first day.
+#:
+#: What IS judged is the live tick. Measured 2026-08-22 on a Blackwell card
+#: (ctranslate2 4.8): ``int8_float16`` decoded 8 s of real speech in 10-11 s,
+#: ``float16`` in 0.7 s — so the engine timed out on every tick, was dropped,
+#: rebuilt with the SAME settings and dropped again, every 7 s for the whole
+#: dictation. A drop therefore now advances to the next engine in the attempt
+#: list (``_load_model``) instead of rebuilding the one that just failed, and
+#: stays on the CPU floor once it gets there.
+_WARM_CLIP_S = 4.0
 
 
 def faster_whisper_available() -> bool:
@@ -78,6 +94,11 @@ class LocalPreviewTranscriber:
         self._model: Any = None
         self._lock = threading.Lock()
         self._busy = threading.Lock()
+        # Which entry of the attempt list the next build starts from, and what
+        # the current engine runs on (for the log line and the status card).
+        self._attempt_index = 0
+        self._engine_device = ""
+        self._engine_compute = ""
         self._failures = 0
         self._unavailable = False
         self._loading = False
@@ -110,8 +131,17 @@ class LocalPreviewTranscriber:
 
             preferred = self._pick_device()
             attempts = [preferred]
+            if preferred == ("cuda", "float16"):
+                # The quantized pair is the old GPU default and still the
+                # right answer on a GPU where it is fast; tried second so a
+                # host that cannot do float16 keeps its GPU preview.
+                attempts.append(("cuda", "int8_float16"))
             if preferred[0] != "cpu":
                 attempts.append(("cpu", "int8"))
+            # A rebuild after repeated live failures starts one entry further
+            # down: the engine that just kept timing out is not asked again.
+            skip = min(self._attempt_index, len(attempts) - 1)
+            attempts = attempts[skip:]
             last_error: Exception | None = None
             for device, compute in attempts:
                 try:
@@ -129,13 +159,20 @@ class LocalPreviewTranscriber:
                     # Constructing the model does not pay CUDA's first-decode
                     # setup cost. Prime one throwaway greedy decode here, while
                     # the preview is still advertised as unavailable, so the
-                    # first visible preview keeps the steady-state latency.
+                    # first visible preview keeps the steady-state latency —
+                    # and TIME it: a GPU engine that cannot decode a preview-
+                    # sized clip well inside the tick ceiling is not a preview
+                    # engine, whatever the constructor said.
                     import numpy as np
 
                     rng = np.random.default_rng(0)
                     warm_audio = (
-                        rng.standard_normal(16_000).astype(np.float32) * 0.001
+                        rng.standard_normal(int(16_000 * _WARM_CLIP_S)).astype(
+                            np.float32
+                        )
+                        * 0.001
                     )
+                    started = time.perf_counter()
                     segments, _info = model.transcribe(
                         warm_audio,
                         beam_size=1,
@@ -143,6 +180,7 @@ class LocalPreviewTranscriber:
                         condition_on_previous_text=False,
                     )
                     list(segments)
+                    warm_s = time.perf_counter() - started
                 except Exception as exc:  # noqa: BLE001 — try the portable floor
                     last_error = exc
                     log.info(
@@ -155,11 +193,16 @@ class LocalPreviewTranscriber:
                     continue
                 with self._lock:
                     self._model = model
+                    self._engine_device = device
+                    self._engine_compute = compute
                 log.info(
-                    "Dictation preview engine ready: %s on %s (%s).",
+                    "Dictation preview engine ready: %s on %s (%s), %.0fs clip "
+                    "in %.2fs.",
                     self._model_name,
                     device,
                     compute,
+                    _WARM_CLIP_S,
+                    warm_s,
                 )
                 break
             else:
@@ -195,7 +238,15 @@ class LocalPreviewTranscriber:
             with inference_only_import_shield():
                 import ctranslate2
 
-            supported = ctranslate2.get_supported_compute_types("cuda")
+            supported = set(ctranslate2.get_supported_compute_types("cuda"))
+            # Plain half precision first: on the one GPU measured so far the
+            # quantized int8 pairs were an order of magnitude SLOWER than
+            # float16 (10-11 s against 0.7 s for 8 s of speech, ctranslate2
+            # 4.8 on a Blackwell card) — the preview model is tiny, so the
+            # memory int8 saves buys nothing here. The warm-decode gate in
+            # ``_load_model`` is the backstop for the next surprise.
+            if "float16" in supported:
+                return "cuda", "float16"
             if "int8_float16" in supported:
                 return "cuda", "int8_float16"
         except Exception as exc:  # noqa: BLE001 — a probe must never decide by raising
@@ -311,6 +362,11 @@ class LocalPreviewTranscriber:
                         pass
                     except Exception as exc:  # noqa: BLE001 — detached worker is contained
                         log.debug("Detached dictation preview failed: %s", exc)
+                    else:
+                        # It came back late, but it came back: a slow engine is
+                        # not a wedged one, and the streak that would have
+                        # dropped it is over.
+                        self._failures = 0
 
                 work.add_done_callback(_release_finished_worker)
             if release_here:
@@ -350,8 +406,19 @@ class LocalPreviewTranscriber:
             # fresh session rather than re-polling a wedged engine (AP-24).
             self._model = None
             self._busy = threading.Lock()
+            # Not the same engine again: the next build takes the next entry
+            # of the attempt list (float16 -> int8_float16 -> cpu) and stays
+            # on the last one. An engine that keeps failing live is slow or
+            # wedged on THIS device/compute pair; the floor below it is not.
+            self._attempt_index += 1
         self._failures = 0
-        log.info("Dictation preview engine dropped (%s); rebuilding on the next tick.", why)
+        log.info(
+            "Dictation preview engine dropped (%s on %s/%s); rebuilding on the "
+            "next tick with the next engine.",
+            why,
+            self._engine_device or "?",
+            self._engine_compute or "?",
+        )
 
 
 _INSTANCE: LocalPreviewTranscriber | None = None
