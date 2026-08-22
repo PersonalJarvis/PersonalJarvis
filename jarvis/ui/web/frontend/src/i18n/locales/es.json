@@ -899,6 +899,11 @@
         "streak": "Mejor racha · {0} días"
       }
     },
+    "export": {
+      "button": "Exportar CSV",
+      "button_tooltip": "Descargar estas estadísticas como archivo CSV",
+      "empty": "Todavía no hay nada que exportar."
+    },
     "hero": {
       "you_spoke": "Tú dijiste",
       "you_spoke_sub": "palabras dichas a {name}",

@@ -899,6 +899,11 @@
         "streak": "{0} Tage Bestserie"
       }
     },
+    "export": {
+      "button": "CSV exportieren",
+      "button_tooltip": "Diese Statistiken als CSV-Datei herunterladen",
+      "empty": "Noch nichts zu exportieren."
+    },
     "hero": {
       "you_spoke": "Du gesagt",
       "you_spoke_sub": "Wörter an {name} gesprochen",

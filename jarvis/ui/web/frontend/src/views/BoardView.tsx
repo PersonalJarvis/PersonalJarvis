@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Flame, Loader2, RefreshCw, Share2, Sparkles } from "lucide-react";
+import { Download, Flame, Loader2, RefreshCw, Share2, Sparkles } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { BoardCard } from "@/components/board/BoardCard";
 import { ShareDialog } from "@/components/board/ShareDialog";
@@ -16,6 +16,7 @@ import {
   useBoardRefresh,
   useBoardSummary,
 } from "@/hooks/useBoard";
+import { boardCsv, boardCsvFilename } from "@/lib/boardCsv";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -26,6 +27,26 @@ export function BoardView() {
   const categories = useBoardCategories();
   const refresh = useBoardRefresh();
   const [shareOpen, setShareOpen] = useState(false);
+
+  // Export exactly what the view is holding — a section that has not loaded is
+  // left out of the file rather than written as zeros, because "not loaded" and
+  // "no activity" are different facts.
+  const canExport = Boolean(summary.data || heatmap.data || categories.data);
+
+  function handleExportCsv() {
+    const text = boardCsv({
+      summary: summary.data,
+      heatmap: heatmap.data,
+      categories: categories.data,
+    });
+    const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = boardCsvFilename();
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const s = summary.data;
   const userWords = s?.totals.user_words ?? 0;
@@ -91,6 +112,25 @@ export function BoardView() {
             >
               <Share2 className="h-3.5 w-3.5" />
               {t("board_view.share.button")}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={!canExport}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
+                "hover:border-primary/40 hover:bg-primary/[0.06]",
+                !canExport && "opacity-50",
+              )}
+              title={
+                canExport
+                  ? t("board_view.export.button_tooltip")
+                  : t("board_view.export.empty")
+              }
+              data-testid="board-export-csv-button"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t("board_view.export.button")}
             </button>
             <button
               type="button"

@@ -899,6 +899,11 @@
         "streak": "{0}-day best streak"
       }
     },
+    "export": {
+      "button": "Export CSV",
+      "button_tooltip": "Download these statistics as a CSV file",
+      "empty": "Nothing to export yet."
+    },
     "hero": {
       "you_spoke": "You said",
       "you_spoke_sub": "words spoken to {name}",
