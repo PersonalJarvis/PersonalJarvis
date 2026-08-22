@@ -23,13 +23,6 @@ versioning per [SemVer](https://semver.org/).
   upload is now cut to half a second before it is sent, a transcript that ends
   well before your speech does gets only its missing tail read back in, and
   a hardware overflow on the microphone is counted as the real loss it is.
-- **The local recognizer says when it cannot reach your GPU — and fixes it
-  from inside the app.** On a desktop without the CUDA runtime libraries the
-  on-device recognizer quietly ran on the CPU (about eight times slower; the
-  cloud fallback took 48 s for a 70 s recording). The provider card now shows
-  what the config asked for, what really runs, and why, with a one-click
-  install of the missing libraries. They are also available as the `cuda`
-  install extra.
 - **The wake word no longer fires on a stray single word.** Since the 20 Aug
   crash fix, the check that decides between "Hey George" and whatever was
   actually said had quietly lost its strongest comparison, so a lone word like

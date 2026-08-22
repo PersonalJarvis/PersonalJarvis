@@ -719,3 +719,88 @@ async def test_an_explicit_order_still_runs_a_destructive_command():
     result = await _shell_call(bridge, order, "Remove-Item C:/Urlaub -Recurse")
     assert result["success"] is True
     assert gateway.executed == ["run_shell"]
+
+
+# ---------------------------------------------------------------------------
+# Budget: connected music connectors are the last to go; the set re-fits
+# ---------------------------------------------------------------------------
+
+
+def test_connected_music_connectors_are_the_last_to_go(monkeypatch):
+    """Live 2026-08-22 18:16: ``spotify`` and ``youtube_music`` were both
+    dropped under the 8k-token wire budget as part of the "everything else,
+    biggest first" bucket, and "mach Musik an" had no native function to land
+    on. A connector the user connected on purpose outranks every family."""
+    from jarvis.core import music_service as ms
+
+    monkeypatch.setattr(ms, "connected_music_services", lambda: ("youtube_music",))
+    rendered = [
+        ("youtube_music", {"name": "youtube_music", "description": "y" * 900}),
+        ("spotify", {"name": "spotify", "description": "s" * 900}),
+        ("wiki-recall", {"name": "wiki-recall", "description": "w" * 100}),
+        ("search_web", {"name": "search_web", "description": "q" * 100}),
+    ]
+    # Room for roughly one big declaration and the two small ones.
+    kept, dropped = _apply_declaration_budget(
+        rendered, 1_250, keep_last=("youtube_music",)
+    )
+    assert dropped == ["spotify"]
+    assert [name for name, _d in kept] == ["youtube_music", "wiki-recall", "search_web"]
+    # Tighter still: the small unconnected tools go before the connected one.
+    kept, dropped = _apply_declaration_budget(
+        rendered, 1_000, keep_last=("youtube_music",)
+    )
+    assert "youtube_music" in [name for name, _d in kept]
+    assert "youtube_music" not in dropped
+    # The bridge reads the connected set itself.
+    gateway_tools = (
+        _descriptor("youtube_music", 900),
+        _descriptor("spotify", 900),
+        _descriptor("wiki-recall", 100),
+    )
+
+    class _Gateway:
+        def catalog(self):
+            return gateway_tools
+
+        async def execute(self, *_a, **_k):
+            return ToolResult(success=True, output="ok")
+
+    # Uncompacted on purpose: the compact renderer caps every description at
+    # 450 characters, which would put the whole set under this budget.
+    bridge = RealtimeToolBridge(
+        gateway=_Gateway(), language="en", compact=False, declaration_budget_chars=1_300
+    )
+    assert "spotify" in bridge.dropped_names
+    assert "youtube_music" not in bridge.dropped_names
+
+
+def test_bridge_refits_the_declared_set_to_a_new_budget():
+    """The session builds the bridge before it knows the provider; the budget
+    of the provider about to open is applied at connect (ADR-0035 §4)."""
+
+    class _Gateway:
+        def catalog(self):
+            return (
+                _descriptor("agentic-ide-fanout", 2_000),
+                _descriptor("wiki-recall", 100),
+            )
+
+        async def execute(self, *_a, **_k):
+            return ToolResult(success=True, output="ok")
+
+    bridge = RealtimeToolBridge(
+        gateway=_Gateway(), language="en", compact=True, declaration_budget_chars=600
+    )
+    assert bridge.dropped_names == ("agentic-ide-fanout",)
+    assert bridge.declaration_budget_chars == 600
+    # Same budget → nothing to do.
+    assert bridge.set_declaration_budget(600) is False
+    # A wider budget lets the coding workspace back in.
+    assert bridge.set_declaration_budget(0) is True
+    assert bridge.dropped_names == ()
+    assert any(d["name"].startswith("wiki_recall") for d in bridge.declarations)
+    assert any(d["name"].startswith("agentic_ide_fanout") for d in bridge.declarations)
+    # And the tighter one takes it out again.
+    assert bridge.set_declaration_budget(600) is True
+    assert bridge.dropped_names == ("agentic-ide-fanout",)

@@ -454,3 +454,93 @@ async def test_run_skill_still_works_on_a_registry_without_resolve() -> None:
     result = await RunSkillTool().execute({"skill_name": "demo_skill"}, _ctx())
 
     assert result.success is True
+
+
+# ----------------------------------------------------------------------
+# Music: the loaded skill follows the CONNECTED service
+# ----------------------------------------------------------------------
+
+
+def _music_skill(plugin_id: str) -> Skill:
+    fm = SkillFrontmatter(
+        schema_version="1",
+        name=f"plugin-{plugin_id}",
+        description=f"Play music on {plugin_id}.",
+        plugin_id=plugin_id,
+        risk_policy=SkillRiskPolicy(default_tier="monitor"),  # type: ignore[arg-type]
+        execution="inline",  # type: ignore[arg-type]
+    )
+    return Skill(
+        path=Path("nonexistent") / f"plugin-{plugin_id}" / "SKILL.md",
+        frontmatter=fm,
+        body=f"Use {plugin_id}.",
+        state=SkillLifecycleState.ACTIVE,
+        body_hash="deadbeef",
+        error=None,
+    )
+
+
+def _music_registry() -> _FakeRegistry:
+    return _FakeRegistry(
+        {
+            "plugin-spotify": _music_skill("spotify"),
+            "plugin-youtube_music": _music_skill("youtube_music"),
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_music_skill_load_follows_the_only_connected_service(monkeypatch) -> None:
+    """Live 2026-08-22 18:16: the model asked for ``plugin-spotify`` on a box
+    where only YouTube Music was connected, and held Spotify's how-to."""
+    from jarvis.core import music_service as ms
+
+    monkeypatch.setattr(ms, "connected_music_services", lambda: ("youtube_music",))
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "auto")
+    runner = _FakeRunner()
+    set_skill_context(SkillContext(registry=_music_registry(), runner=runner))  # type: ignore[arg-type]
+
+    result = await RunSkillTool().execute({"skill_name": "plugin-spotify"}, _ctx())
+
+    assert result.success is True
+    assert result.output["skill_name"] == "plugin-youtube_music"
+    assert runner.calls[0].skill.name == "plugin-youtube_music"
+
+
+@pytest.mark.asyncio
+async def test_a_named_music_service_is_kept(monkeypatch) -> None:
+    """The user said Spotify: that wins even when YouTube Music is connected too."""
+    from jarvis.core import music_service as ms
+
+    monkeypatch.setattr(
+        ms, "connected_music_services", lambda: ("spotify", "youtube_music")
+    )
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "youtube_music")
+    set_skill_context(SkillContext(registry=_music_registry(), runner=_FakeRunner()))  # type: ignore[arg-type]
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Spiel Jazz auf Spotify.",  # i18n-allow: spoken-input fixture
+        config={},
+        memory_read=None,
+    )
+
+    result = await RunSkillTool().execute({"skill_name": "plugin-spotify"}, ctx)
+
+    assert result.success is True
+    assert result.output["skill_name"] == "plugin-spotify"
+
+
+@pytest.mark.asyncio
+async def test_a_music_skill_stays_when_nothing_is_connected(monkeypatch) -> None:
+    """Nothing to route to: the skill the model named is loaded as before, and
+    its own instructions tell the user the service is not connected."""
+    from jarvis.core import music_service as ms
+
+    monkeypatch.setattr(ms, "connected_music_services", lambda: ())
+    monkeypatch.setattr(ms, "preferred_music_service", lambda: "auto")
+    set_skill_context(SkillContext(registry=_music_registry(), runner=_FakeRunner()))  # type: ignore[arg-type]
+
+    result = await RunSkillTool().execute({"skill_name": "plugin-spotify"}, _ctx())
+
+    assert result.success is True
+    assert result.output["skill_name"] == "plugin-spotify"

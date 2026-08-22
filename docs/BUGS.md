@@ -11570,14 +11570,25 @@ the same honesty clause for every brain. Tests:
 ``tests/unit/realtime/test_skill_handoff_is_not_done.py`` (the 18:16 turn end
 to end, the classifier, pending vs. followed-up loads, every language).
 
-**Follow-up (not in this fix).** The declaration budget dropped ``spotify``,
-``gmail``, ``google_calendar``, ``home_assistant``, ``youtube_music`` and
-``spawn_worker`` from the native set on this box once the Linear/GitHub/
-NotebookLM MCP servers came online (169 over-budget names at 17:10, 28 at
-16:50) — ADR-0035 §4 drops "everything else, biggest first" after the MCP/CLI/
-Agentic-IDE families. First-party plugin tools behind an installed skill
-deserve a higher rank than a generic bucket; that is a T2 change to
-``_BUDGET_DROP_FAMILIES``.
+**Follow-up fix (2026-08-22, same day).** Three more defects behind the
+same turn, all landed: (1) the declaration budget was the MINIMUM over every
+candidate in the provider chain, so a ``gemini-live`` call ran on the
+``openai-realtime`` fallback's 8 000 tokens and lost ``spotify``,
+``youtube_music``, ``gmail``, ``google_calendar``, ``home_assistant`` and
+``spawn_worker`` to a budget that never applied to its wire —
+``_declaration_budget_chars(provider)`` now takes ONE provider and
+``_fit_declaration_budget`` re-trims the bridge (``set_declaration_budget``) for
+the candidate about to open; (2) under a genuinely tight budget the connected
+music connectors are now the LAST declarations to go (``keep_last`` in
+``_apply_declaration_budget``, read from ``music_service.connected_music_services``);
+(3) ``run-skill`` loaded ``plugin-spotify`` although only YouTube Music was
+connected — it now follows the same resolver as the skill capture and the
+execute-time reroute (``_prefer_connected_music_service``: a named service
+wins, then the preferred connected one, then the only connected one). Tests:
+``test_declaration_budget_per_provider.py``,
+``test_connected_music_connectors_are_the_last_to_go``,
+``test_bridge_refits_the_declared_set_to_a_new_budget``,
+``test_a_music_skill_load_follows_the_only_connected_service``.
 
 **Lesson (BUG-160 family).** A tool result's ``success`` flag says the TOOL
 ran, not that the USER'S REQUEST happened. Any tool whose output is
