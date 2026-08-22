@@ -3891,10 +3891,10 @@ class Registry:
             session.terminals.append(term)
             # Where it goes is the tree's business, and the distinction is the
             # whole feature: a NAMED anchor is a split — the new pane carves
-            # the clicked pane's own rectangle and nothing else moves — while
-            # an anchor-less add ("open five more", the empty grid's button)
-            # joins the workspace edge as a full-height column, because no
-            # pane was chosen to give up half its room.
+            # the clicked pane's own rectangle and no other pane changes its
+            # PLACE — while an anchor-less add ("open five more", the empty
+            # grid's button) joins the workspace edge as a full-height column,
+            # because no pane was chosen to sit beside.
             if anchor and base is not None:
                 session.layout = layout_tree.split_pane(
                     session.layout,
@@ -3904,6 +3904,16 @@ class Registry:
                 )
             else:
                 session.layout = layout_tree.append_pane(session.layout, term.key)
+            # Then every terminal back to an equal share — the same act as the
+            # grid's "even out" button, run for the user on every open. The
+            # split decided the SHAPE; its halved weights are not kept, because
+            # a pane split off one that had been dragged small arrived as a
+            # sliver, and the maintainer asked (2026-08-22) that a new
+            # terminal always land in an evenly shared wall. Doing it here
+            # rather than in the grid covers every way a terminal opens —
+            # split button, batch, voice, CLI — and the persisted layout
+            # agrees with the screen.
+            session.layout = layout_tree.evened(session.layout)
             self._renumber(session)
             await self._persist()
             logger.info(

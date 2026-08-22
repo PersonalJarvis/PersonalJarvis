@@ -7,6 +7,7 @@ are the coarse hints `_renumber` projects from that tree — for the flat
 columns-of-stacks shapes most of this file builds, the projection is exact,
 which is why the assertions written against the old flat grid still hold.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -194,6 +195,60 @@ async def test_dragged_sizes_from_a_reshaped_workspace_are_declined(tmp_path) ->
     assert isinstance(session.layout, layout_tree.Split)
     # Every weight still even — the stale drag was quietly declined.
     assert all(weight == 1.0 for weight in session.layout.weights)
+
+
+async def test_opening_a_terminal_evens_the_whole_wall(tmp_path) -> None:
+    """Every open is also the "even out" button (maintainer request, 2026-08-22).
+
+    Two panes dragged to 3:1, then a split off the SMALL one. Halving alone
+    would leave the newcomer at an eighth of the width — a sliver. The session
+    keeps the split's shape (the new pane sits beside its anchor) but deals
+    every terminal the same share, and the persisted tree says so too.
+    """
+    registry = await _workspace(tmp_path, 1)
+    session = registry.session
+    assert session is not None
+    first = session.terminals[0]
+    second = await registry.add_terminal(anchor=first.name, direction="right")
+    dragged = layout_tree.to_dict(session.layout)
+    dragged["weights"] = [3.0, 1.0]
+    await registry.set_layout_weights(dragged)
+    assert isinstance(session.layout, layout_tree.Split)
+    assert session.layout.weights == [3.0, 1.0]
+
+    third = await registry.add_terminal(anchor=second.name, direction="right")
+
+    layout = session.layout
+    assert isinstance(layout, layout_tree.Split) and layout.direction == "row"
+    # Shape: the newcomer landed beside the pane that was split.
+    assert layout_tree.leaves(layout) == [first.key, second.key, third.key]
+    # Sizes: the drag is gone, every terminal holds the same share.
+    assert layout.weights == [1.0, 1.0, 1.0]
+    assert session.to_dict()["layout"]["weights"] == [1.0, 1.0, 1.0]
+
+
+async def test_opening_into_a_nested_group_evens_by_terminal_count(tmp_path) -> None:
+    """The stacked half of a split is as wide as the terminals it lines up."""
+    registry = await _workspace(tmp_path, 1)
+    session = registry.session
+    assert session is not None
+    first = session.terminals[0]
+    second = await registry.add_terminal(anchor=first.name, direction="right")
+    # Stack a third under the second: row[t1, column[t2, t3]].
+    await registry.add_terminal(anchor=second.name, direction="down")
+    dragged = layout_tree.to_dict(session.layout)
+    dragged["weights"] = [3.0, 1.0]
+    await registry.set_layout_weights(dragged)
+
+    # Split the first rightwards: row[t1, t4, column[t2, t3]] — the stack is
+    # one terminal wide, so the row deals three equal shares.
+    await registry.add_terminal(anchor=first.name, direction="right")
+
+    layout = session.layout
+    assert isinstance(layout, layout_tree.Split) and layout.direction == "row"
+    assert layout.weights == [1.0, 1.0, 1.0]
+    stack = layout.children[2]
+    assert isinstance(stack, layout_tree.Split) and stack.weights == [1.0, 1.0]
 
 
 async def test_unreadable_dragged_sizes_are_refused_out_loud(tmp_path) -> None:

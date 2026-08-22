@@ -159,6 +159,79 @@ def test_appending_takes_an_even_share_of_a_dragged_row() -> None:
     assert tree.weights == [3.0, 1.0, 2.0]
 
 
+# ------------------------------------------------------------- evening out
+
+
+def test_evened_levels_a_dragged_row() -> None:
+    row = Split(
+        direction="row",
+        children=[Leaf(pane="t1"), Leaf(pane="t2"), Leaf(pane="t3")],
+        weights=[3.0, 1.0, 2.0],
+    )
+    tree = lt.evened(row)
+    assert isinstance(tree, Split)
+    assert tree.weights == [1.0, 1.0, 1.0]
+    # Only the boundaries moved — the arrangement is untouched.
+    assert lt.leaves(tree) == ["t1", "t2", "t3"]
+    check_canonical(tree)
+
+
+def test_evened_counts_terminals_not_tree_nodes() -> None:
+    """A nested stack is as many stripes as the terminals it lines up.
+
+    ``row[pane, stack-of-two, pane]`` evened to a flat 1:1:1 would hand the
+    stack a quarter of the width and draw its two terminals half as wide as
+    their neighbours (reported 2026-08-12 on the grid's button). Stripe
+    counts are the yardstick the frontend's ``evenedTree`` uses, and the
+    backend must deal the same shares or the button reads "already even"
+    over a workspace the server just left uneven.
+    """
+    stack = Split(
+        direction="row",
+        children=[Leaf(pane="t2"), Leaf(pane="t3")],
+        weights=[5.0, 1.0],
+    )
+    tree = lt.evened(
+        Split(
+            direction="column",
+            children=[Leaf(pane="t1"), stack, Leaf(pane="t4")],
+            weights=[4.0, 1.0, 1.0],
+        )
+    )
+    assert isinstance(tree, Split)
+    # A row inside a column is only ONE terminal tall — plain shares.
+    assert tree.weights == [1.0, 1.0, 1.0]
+    inner = tree.children[1]
+    assert isinstance(inner, Split) and inner.weights == [1.0, 1.0]
+
+    wide = lt.evened(
+        Split(
+            direction="row",
+            children=[Leaf(pane="t1"), stack, Leaf(pane="t4")],
+            weights=[4.0, 1.0, 1.0],
+        )
+    )
+    assert isinstance(wide, Split)
+    # A row inside a row is TWO terminals wide and is dealt two shares.
+    assert wide.weights == [1.0, 2.0, 1.0]
+
+
+def test_evened_leaves_the_trivial_trees_alone() -> None:
+    assert lt.evened(None) is None
+    assert lt.evened(Leaf(pane="t1")) == Leaf(pane="t1")
+
+
+def test_axis_span_is_the_widest_member_across_the_grain() -> None:
+    stack = Split(
+        direction="column",
+        children=[Leaf(pane="t1"), Leaf(pane="t2"), Leaf(pane="t3")],
+        weights=[1.0, 1.0, 1.0],
+    )
+    assert lt.axis_span(stack, "column") == 3
+    assert lt.axis_span(stack, "row") == 1
+    assert lt.axis_span(Leaf(pane="t9"), "row") == 1
+
+
 # ---------------------------------------------------------------- closing
 
 

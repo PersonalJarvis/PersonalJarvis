@@ -42,6 +42,11 @@ Every function returns a tree in canonical form:
 * **A close gives the freed room to the siblings, proportionally.** The
   closed pane's weight is simply dropped; the remaining weights renormalise
   against each other, so a 2:1:1 stack losing its tail becomes 2:1.
+* **The session evens the wall after every open.** The halving above decides
+  the SHAPE; the weights it leaves are then replaced by ``evened`` — every
+  terminal at the same share, exactly what the grid's "even out" button does
+  — because a new terminal carved from a pane that had been dragged small
+  arrived as a sliver nobody asked for (maintainer request, 2026-08-22).
 """
 
 from __future__ import annotations
@@ -292,6 +297,51 @@ def append_pane(root: LayoutNode | None, added: str) -> LayoutNode:
         root.weights.append(_clean_weight(share))
         return normalize(root)
     return Split(direction="row", children=[root, Leaf(pane=added)], weights=[1.0, 1.0])
+
+
+def axis_span(node: LayoutNode, direction: Direction) -> int:
+    """How many TERMINALS wide (``row``) or tall (``column``) ``node`` is.
+
+    The yardstick "even" is measured with. A container that runs in
+    ``direction`` is as many stripes as its children together; one running the
+    other way is only as wide as its widest member. Without this a workspace
+    like ``row[pane, stack-of-two, pane]`` would "even" to quarters and the
+    stacked terminals come out half as wide as their neighbours — the same
+    arithmetic the frontend's ``axisSpan`` (``treeLayout.ts``) uses, and the
+    two must agree or the grid's "already even" button state lies.
+    """
+    if isinstance(node, Leaf):
+        return 1
+    spans = [axis_span(child, direction) for child in node.children]
+    if not spans:
+        return 1
+    return sum(spans) if node.direction == direction else max(spans)
+
+
+def evened(root: LayoutNode | None) -> LayoutNode | None:
+    """The same tree with every TERMINAL back at an equal share of the room.
+
+    The backend half of the grid's "even out" button: the arrangement — which
+    pane sits where — is never touched, only how the boundaries fall. Weights
+    are stripe counts rather than a flat 1, so a nested group is given as much
+    room as the terminals it lines up (see ``axis_span``). Applied after every
+    pane the session OPENS (``Registry.add_terminal``), so a fresh terminal
+    never arrives as a sliver carved from a pane that had already been dragged
+    small, and the wall reads as one even grid however it was assembled.
+    """
+    if root is None:
+        return None
+    return _evened(root)
+
+
+def _evened(node: LayoutNode) -> LayoutNode:
+    if isinstance(node, Leaf):
+        return node
+    return Split(
+        direction=node.direction,
+        children=[_evened(child) for child in node.children],
+        weights=[float(axis_span(child, node.direction)) for child in node.children],
+    )
 
 
 def remove_pane(root: LayoutNode | None, pane: str) -> LayoutNode | None:
