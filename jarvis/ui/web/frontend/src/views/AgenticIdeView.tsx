@@ -491,8 +491,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }) => {
     const total = Math.max(1, Math.min(recent.terminals, maxTerminals));
     setCount(total);
+    // Only agents this machine can actually open.
+    //
+    // A remembered folder outlives the entry it was worked in: a CLI the user
+    // added themselves and later deleted, one renamed between releases, one
+    // uninstalled since. The backend refuses the WHOLE open when any requested
+    // agent is unknown or missing ("Unknown agent(s): …"), so a single dead id
+    // in this list made the folder unopenable from here — with an error naming
+    // an agent the user no longer has and no way to get past it. Dropping the
+    // dead ids and topping the plan back up keeps the folder openable; the
+    // panes are staged, so what came back is visible before anything runs.
+    const usable = new Set(
+      agents.filter((a) => a.installed).map((a) => a.name),
+    );
     const entries = Object.entries(recent.agents ?? {}).filter(
-      ([, n]) => n > 0,
+      ([agent, n]) => n > 0 && usable.has(agent),
     );
     if (entries.length === 0) {
       setPlanned(buildPlan(total, [], defaultAgent, suggested));

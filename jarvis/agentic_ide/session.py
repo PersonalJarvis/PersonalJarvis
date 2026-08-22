@@ -3012,6 +3012,24 @@ class Registry:
         # The provider/account gate is acquired BEFORE the machine-wide gate.
         # A Codex pane waiting on shared state must never occupy a CPU slot that
         # an unrelated Claude/OpenCode pane could use immediately.
+        # The one line that makes a resume complaint answerable.
+        #
+        # A pane that came back without its conversation and a pane that came
+        # back with one look IDENTICAL in the log — and identical again in the
+        # snapshot, which records what we intended rather than what the CLI
+        # did. Reconstructing "which binary, with which arguments, on whose
+        # behalf" afterwards meant reading five files and guessing. It is one
+        # INFO line per process start, so it costs nothing on a workspace of a
+        # dozen panes and it is there the next time somebody says "it did not
+        # resume". The full argv, because the difference that matters lives in
+        # the arguments (`--resume <id>`), not in the binary.
+        logger.info(
+            "Agentic IDE: {} ({}) starting {} — {}",
+            term.name,
+            term.agent,
+            "RESUMED" if term.resumed else "fresh",
+            " ".join(argv),
+        )
         agent_start_gate = await self._acquire_agent_cold_start(term)
         spawn_succeeded = False
         try:
