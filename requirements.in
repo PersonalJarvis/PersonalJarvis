@@ -134,6 +134,12 @@ tenacity>=9.0
 # Web search — real DuckDuckGo SERP for the search_web tool (key-free, pure
 # Python, cross-platform). Lazy-imported, so a minimal install without it
 # degrades to the DuckDuckGo Instant-Answer fallback.
+# CAP at 9.14.3: 9.14.4 hardened its dependency to `httpx[brotli,http2,socks]`,
+# and `brotli` publishes NO Windows-ARM64 wheel in any release (checked through
+# 1.2.0) — `brotlicffi` only covers non-CPython, so the CPython branch has no
+# escape hatch. Taking the bump would force a source build on win-arm64 and
+# break `pip install --require-hashes` there (AP-23). Lift this the moment
+# brotli ships a win-arm64 wheel or ddgs drops the mandatory extra.
 ddgs==9.14.3
 
 # MCP (Model Context Protocol)
