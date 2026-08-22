@@ -33,11 +33,29 @@ updates:
       prefix: deps
       include: scope
 
-  # Python (pip) — the runtime dependency surface for installer.py and
-  # the rest of the project. Dependabot updates pyproject.toml +
-  # requirements.txt entries on a weekly cadence. The pip ecosystem
-  # uses semantic-version constraints (not SHA pins), so review the
-  # CHANGELOG of each bumped dep before merging.
+  # Python (pip) — VERSION UPDATES ARE OFF ON PURPOSE (2026-08-22).
+  #
+  # `requirements.txt` in this repo is a PLATFORM-UNIVERSAL lockfile, produced by
+  #   uv pip compile --universal --generate-hashes --python-version 3.11   #       --output-file=requirements.txt requirements.in
+  # `--universal` emits the per-OS environment markers that let ONE lockfile
+  # install correctly on Windows, macOS and Linux. Dependabot recompiles without
+  # it, so every pip PR it opened here arrived with those markers stripped —
+  # `colorama ; sys_platform == 'win32'` lost its condition, the Apple-Silicon
+  # `onnxruntime` and `av` entries vanished, `audioop-lts` lost its
+  # `python_version >= '3.13'` guard. Each of those PRs failed the blocking
+  # deps-sync gate by construction and none was ever mergeable (#62-#65, #101).
+  #
+  # Worse than unmergeable: the grouped PR also proposed bumps that the
+  # portable-install matrix proves would brick advertised platforms — vosk
+  # 0.3.45 (no macOS wheel exists) and ddgs 9.14.4 (pulls brotli, which has no
+  # Windows-ARM64 wheel). Dependabot cannot see those constraints; the matrix
+  # gate can.
+  #
+  # `open-pull-requests-limit: 0` disables VERSION updates only. Dependabot
+  # SECURITY updates are configured separately in the repository settings and
+  # still fire, so advisories keep reaching the repo — they are then serviced by
+  # hand through the compile command above, which is also what the header of
+  # `requirements.in` instructs.
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -45,18 +63,10 @@ updates:
       day: monday
       time: "07:00"
       timezone: "Europe/Berlin"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     labels:
       - dependencies
       - python
     commit-message:
       prefix: deps
       include: scope
-    # Group all pip patch-level updates into one PR per week so the
-    # signal-to-noise ratio of the review queue stays high. Major and
-    # minor bumps still arrive as individual PRs because they often
-    # carry behavior changes worth reviewing one at a time.
-    groups:
-      pip-patch-updates:
-        update-types:
-          - patch
