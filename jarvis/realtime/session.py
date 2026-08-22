@@ -635,6 +635,19 @@ _CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S = 1.0
 # (3 s since 2026-08-18, ADR-0033). Kept as a module attribute so tests can
 # pin it low.
 _INSTANT_ACK_GRACE_S = SHORT_GRACE_S
+# Hard ceiling for ONE native tool call in the live voice path. A native call
+# blocks the live model until its result arrives (ADR-0035 §3), so an unbounded
+# wait IS a mute call: live 2026-08-22 20:01:52 a ``youtube_music`` play sat
+# 199 s on a stuck background-player host — instant ack at 3 s, then nothing
+# until 20:05:12 — while every other tool of the day finished in under 3 s
+# (``REALTIME_TOOL_COMPLETED`` durations: search_web 2.1–2.9 s, run-skill
+# <30 ms, youtube_music 2.6 s when the player answered). Past this ceiling the
+# model gets an honest "still running" result and answers; the tool keeps
+# running to completion in the background (an action mid-flight is never
+# cancelled) and its late outcome is logged and recorded, not dropped. The
+# ceiling is generous on purpose: the slowest honest path by design (YouTube
+# Music's cold-start confirm, ~9 s plus a window show) still fits under it.
+_NATIVE_TOOL_DEADLINE_S = 15.0
 # 20 messages, not 8: a failed screen action typically costs the user several
 # correction turns, and each background completion adds a context note. With 8,
 # the original task was trimmed out exactly when the recovery turn needed it
@@ -10991,7 +11004,47 @@ class RealtimeVoiceSession:
                     for parameter in parameters
                 ):
                     execute_kwargs["trace_id"] = self._turn_trace_id
-                original_name, result = await execute(**execute_kwargs)
+                tool_task = asyncio.ensure_future(execute(**execute_kwargs))
+                try:
+                    # ``shield``: the deadline releases the LIVE MODEL, never
+                    # the tool — an action mid-flight runs to completion and
+                    # reports late (see ``_on_late_native_tool_result``).
+                    original_name, result = await asyncio.wait_for(
+                        asyncio.shield(tool_task), timeout=_NATIVE_TOOL_DEADLINE_S
+                    )
+                except TimeoutError:
+                    original_name = declared_name or wire_name
+                    log.warning(
+                        "realtime[%s] native tool %s still running after %.0fs; "
+                        "releasing the live model with a pending result, the "
+                        "tool finishes in the background",
+                        self.session_id,
+                        original_name,
+                        _NATIVE_TOOL_DEADLINE_S,
+                    )
+                    self._mark_latency_named(
+                        "REALTIME_TOOL_COMPLETED",
+                        detail=(
+                            f"tool={original_name};success=False;pending=True;"
+                            f"duration_ms={round((time.monotonic() - started_at) * 1000)}"
+                        ),
+                    )
+                    tool_task.add_done_callback(
+                        lambda done, _name=original_name, _t0=started_at: (
+                            self._on_late_native_tool_result(_name, _t0, done)
+                        )
+                    )
+                    result = {
+                        "success": False,
+                        "pending": True,
+                        "error": (
+                            "This tool is still running after "
+                            f"{_NATIVE_TOOL_DEADLINE_S:.0f} seconds and will finish "
+                            "in the background. Tell the user in one short sentence "
+                            "that it is taking longer than usual; do not call it "
+                            "again in this turn and do not claim it is done."
+                        ),
+                    }
             except Exception:  # noqa: BLE001 -- a failed tool must not kill duplex audio
                 log.warning("realtime tool execution failed: %s", wire_name, exc_info=True)
                 await self._publish_error(
@@ -11006,8 +11059,10 @@ class RealtimeVoiceSession:
                 }
             if result.get("success"):
                 self._executed_tool_names.add(original_name)
-            elif result.get("confirmation_required"):
-                pass  # a pending confirmation is neither a failure nor a denial
+            elif result.get("confirmation_required") or result.get("pending"):
+                # A pending confirmation or a tool released at the deadline is
+                # neither a failure nor a denial; the late outcome books itself.
+                pass
             elif result.get("blocked") or (
                 # The string probe stays as the fallback for a custom bridge
                 # that predates the ``blocked`` flag; the flag is the truth
@@ -11018,14 +11073,19 @@ class RealtimeVoiceSession:
                 self._native_tool_denied += 1
             else:
                 self._native_tool_failures += 1
-            self._direct_tool_results.append((original_name, dict(result)))
-            self._mark_latency_named(
-                "REALTIME_TOOL_COMPLETED",
-                detail=(
-                    f"tool={original_name};success={bool(result.get('success'))};"
-                    f"duration_ms={round((time.monotonic() - started_at) * 1000)}"
-                ),
-            )
+            if not result.get("pending"):
+                # A released call is still running: it is neither a result the
+                # readback fallback may speak nor "unfinished work" the recovery
+                # would ask the model to redo (that is how a second play call
+                # would be born). Its outcome books itself when it lands.
+                self._direct_tool_results.append((original_name, dict(result)))
+                self._mark_latency_named(
+                    "REALTIME_TOOL_COMPLETED",
+                    detail=(
+                        f"tool={original_name};success={bool(result.get('success'))};"
+                        f"duration_ms={round((time.monotonic() - started_at) * 1000)}"
+                    ),
+                )
         finally:
             self._native_tools_in_flight = max(0, self._native_tools_in_flight - 1)
             if not ack_task.done():
@@ -11092,6 +11152,57 @@ class RealtimeVoiceSession:
             await self._speak_interim_and_keep_thinking(line)
         except Exception:  # noqa: BLE001 — a failed ack must not hurt the call
             log.debug("realtime[%s] native-tool ack send failed", self.session_id, exc_info=True)
+
+    def _on_late_native_tool_result(
+        self, name: str, started_at: float, done: asyncio.Future[Any]
+    ) -> None:
+        """Book the outcome of a native tool that outlived its deadline.
+
+        The live model already answered with the pending result; what the tool
+        finally did still lands in the log, the failure counter and the
+        latency record. Deliberately NOT in the per-turn evidence
+        (``_executed_tool_names`` / ``_direct_tool_results``): those are
+        cleared and read per turn, and by now the user may be mid-way through
+        an unrelated one — a late music result must never become that turn's
+        readback. Nothing is spoken here either: the tool's own effect (music
+        playing, a window opening) is the user-visible outcome, and a second
+        voice turn for it would interrupt whatever the user is doing by then.
+        """
+        elapsed_ms = round((time.monotonic() - started_at) * 1000)
+        if done.cancelled():
+            log.info(
+                "realtime[%s] late native tool %s was cancelled after %d ms",
+                self.session_id, name, elapsed_ms,
+            )
+            return
+        exc = done.exception()
+        if exc is not None:
+            log.warning(
+                "realtime[%s] late native tool %s failed after %d ms: %s",
+                self.session_id, name, elapsed_ms, exc,
+            )
+            self._native_tool_failures += 1
+            return
+        try:
+            original_name, result = done.result()
+        except Exception:  # noqa: BLE001 — an odd bridge return shape is logged, never raised here
+            log.warning(
+                "realtime[%s] late native tool %s returned an unreadable result",
+                self.session_id, name, exc_info=True,
+            )
+            return
+        success = bool(isinstance(result, dict) and result.get("success"))
+        log.info(
+            "realtime[%s] late native tool %s finished after %d ms (success=%s) — "
+            "the live model was released at %.0fs",
+            self.session_id, original_name, elapsed_ms, success, _NATIVE_TOOL_DEADLINE_S,
+        )
+        if not success and not (isinstance(result, dict) and result.get("blocked")):
+            self._native_tool_failures += 1
+        self._mark_latency_named(
+            "REALTIME_TOOL_COMPLETED",
+            detail=f"tool={original_name};success={success};late=True;duration_ms={elapsed_ms}",
+        )
 
     async def _handle_end_call(self, event: Any) -> None:
         if self._session is not None and self._session_takes_tool_results():
