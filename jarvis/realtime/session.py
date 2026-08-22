@@ -55,6 +55,7 @@ from jarvis.brain.turn_planner import (
 )
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
+from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
 from jarvis.core.turn_language import (
     is_substantive_turn,
     normalize_language_tag,
@@ -635,19 +636,19 @@ _CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S = 1.0
 # (3 s since 2026-08-18, ADR-0033). Kept as a module attribute so tests can
 # pin it low.
 _INSTANT_ACK_GRACE_S = SHORT_GRACE_S
-# Hard ceiling for ONE native tool call in the live voice path. A native call
-# blocks the live model until its result arrives (ADR-0035 §3), so an unbounded
-# wait IS a mute call: live 2026-08-22 20:01:52 a ``youtube_music`` play sat
-# 199 s on a stuck background-player host — instant ack at 3 s, then nothing
-# until 20:05:12 — while every other tool of the day finished in under 3 s
-# (``REALTIME_TOOL_COMPLETED`` durations: search_web 2.1–2.9 s, run-skill
-# <30 ms, youtube_music 2.6 s when the player answered). Past this ceiling the
-# model gets an honest "still running" result and answers; the tool keeps
-# running to completion in the background (an action mid-flight is never
-# cancelled) and its late outcome is logged and recorded, not dropped. The
-# ceiling is generous on purpose: the slowest honest path by design (YouTube
-# Music's cold-start confirm, ~9 s plus a window show) still fits under it.
-_NATIVE_TOOL_DEADLINE_S = 15.0
+# Hard ceiling for ONE native tool call in the live voice path — the shared
+# voice tool budget (``jarvis/core/tool_budget.py``), which every tool sizes
+# its own waits under. A native call blocks the live model until its result
+# arrives (ADR-0035 §3), so an unbounded wait IS a mute call: live 2026-08-22
+# 20:01:52 a ``youtube_music`` play sat 199 s on a stuck background-player
+# host — instant ack at 3 s, then nothing until 20:05:12 — while every other
+# tool of the day finished in under 3 s (``REALTIME_TOOL_COMPLETED``
+# durations: search_web 2.1–2.9 s, run-skill <30 ms, youtube_music 2.6 s when
+# the player answered). Past this ceiling the model gets an honest "still
+# running" result and answers; the tool keeps running to completion in the
+# background (an action mid-flight is never cancelled) and its late outcome is
+# logged and recorded, not dropped.
+_NATIVE_TOOL_DEADLINE_S = VOICE_TOOL_BUDGET_S
 # 20 messages, not 8: a failed screen action typically costs the user several
 # correction turns, and each background completion adds a context note. With 8,
 # the original task was trimmed out exactly when the recovery turn needed it

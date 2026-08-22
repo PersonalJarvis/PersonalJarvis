@@ -25,7 +25,14 @@ class HttpClientPool:
     ``httpx.MockTransport`` exactly as they did with the per-request clients.
     """
 
-    def __init__(self, *, timeout_s: float = 20.0, transport: Any | None = None) -> None:
+    def __init__(self, *, timeout_s: float | None = None, transport: Any | None = None) -> None:
+        if timeout_s is None:
+            # The shared voice tool budget (5 s): a round trip not back by then
+            # cannot make the spoken turn any more — fail it, free the
+            # connection, log the cause. A tool that knows better passes its own.
+            from jarvis.core.tool_budget import REST_REQUEST_TIMEOUT_S
+
+            timeout_s = REST_REQUEST_TIMEOUT_S
         self._timeout_s = timeout_s
         self._transport = transport
         self._client: Any | None = None

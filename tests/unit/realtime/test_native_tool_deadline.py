@@ -14,6 +14,7 @@ its result arrives (ADR-0035 §3) and nothing bounded that wait. Pinned here:
 * a tool that answers within the deadline is untouched — same result, no
   pending flag, counted as executed.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -198,7 +199,16 @@ async def test_a_tool_within_the_deadline_is_untouched(
     assert session._native_tool_failures == 0
 
 
-def test_the_deadline_leaves_room_for_the_slowest_honest_tool() -> None:
-    """YouTube Music's cold-start confirm is ~9 s by design plus a window show;
-    the ceiling must sit above it, and well below the turn-stall watchdog."""
-    assert 12.0 <= session_module._NATIVE_TOOL_DEADLINE_S < session_module._TURN_STALL_TIMEOUT_S
+def test_the_deadline_is_the_shared_voice_tool_budget() -> None:
+    """One number, read from one place: the session's ceiling IS the voice tool
+    budget every plugin sizes its waits under (maintainer 2026-08-22: five
+    seconds for everything a tool does, not one plugin). It sits after the
+    instant ack and well before the turn-stall watchdog."""
+    from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
+
+    assert session_module._NATIVE_TOOL_DEADLINE_S == VOICE_TOOL_BUDGET_S == 5.0
+    assert (
+        session_module._INSTANT_ACK_GRACE_S
+        < session_module._NATIVE_TOOL_DEADLINE_S
+        < session_module._TURN_STALL_TIMEOUT_S
+    )

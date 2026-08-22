@@ -575,7 +575,9 @@ async def test_play_confirm_is_bounded_by_wall_clock_when_the_player_is_slow():
     """Live 2026-08-22 20:01:52: every state read sat out its transport timeout,
     the loop counted only its naps, and one play took 199 s. The loop now runs
     on a wall-clock deadline, so a slow host costs the deadline, not its
-    multiple — and the window is still brought forward at the end."""
+    multiple — and a page that never got past loading brings no window
+    forward (there is nothing to press yet); the note says it is still
+    starting."""
     import time as _time
 
     class SlowPlayer(FakePlayer):
@@ -592,8 +594,31 @@ async def test_play_confirm_is_bounded_by_wall_clock_when_the_player_is_slow():
     elapsed = _time.monotonic() - started
 
     assert elapsed < 3.0, f"confirm loop ran {elapsed:.1f}s for a 1.0s deadline"
-    assert out["playback_confirmed"] is False and out["needs_attention"] == "press_play"
-    assert player.shown == 1
+    assert out["playback_confirmed"] is False and "needs_attention" not in out
+    assert "still loading" in out["note"]
+    assert player.shown == 0, "no video to press play on yet — the window stays minimized"
+
+
+async def test_play_confirms_the_moment_the_video_is_unpaused():
+    """``paused`` false is the confirmation; the position advancing later is
+    buffering, not more truth — waiting for it cost the whole voice budget on
+    a cold start (the live model is released at 5 s)."""
+    player = FakePlayer([_page(position=0.0)])
+    tool = _tool(_search_handler, player=player, playback="background")
+    out = await tool.play(query="karma police")
+    assert out["playback_confirmed"] is True
+    assert out["now"]["is_playing"] is True and out["now"]["position_s"] == 0
+
+
+def test_the_player_confirm_fits_under_the_voice_tool_budget():
+    from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
+    from jarvis.plugins.tool import youtube_music_rest as mod
+
+    # Search (~0.4 s live) + load + confirm + a show must stay under the budget
+    # the live model is released at.
+    assert mod._PLAYER_CONFIRM_TIMEOUT_S + 1.0 < VOICE_TOOL_BUDGET_S
+    assert mod._CONFIRM_TIMEOUT_S + 1.0 < VOICE_TOOL_BUDGET_S
+    assert mod._PLAYER_SHOW_TIMEOUT_S <= 2.0
 
 
 async def test_play_keeps_polling_while_the_host_says_loading():

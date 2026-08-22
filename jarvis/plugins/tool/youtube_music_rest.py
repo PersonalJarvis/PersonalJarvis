@@ -99,16 +99,28 @@ _PRESS_PLAY_NOTE = (
 )
 
 # How long `play` watches the background player before it stops claiming to
-# know. A page load plus buffering takes four to five seconds (measured
-# 2026-08-18: position starts advancing ~4.5 s after load).
-_PLAYER_CONFIRM_TIMEOUT_S = 9.0
+# know. Sized under the shared voice tool budget (``VOICE_TOOL_BUDGET_S``, 5 s
+# — ``jarvis/core/tool_budget.py``) with room for the search that precedes it
+# (~0.4 s live) and the load: the live model is released at the budget, and a
+# confirm still running then is wasted. A warm player reports "playing"
+# (``paused`` false) well under a second after load; a cold one within about
+# two (measured 2026-08-18: position advances ~4.5 s after load, the ``paused``
+# flag flips earlier — that flag is the confirmation now, see
+# ``_play_in_player``).
+_PLAYER_CONFIRM_TIMEOUT_S = 3.5
 #: Per-read bound while confirming playback in the background player. The
 #: host answers "loading" at once when the page is still turning, so a read
 #: that takes longer than this is a stuck host, not a slow page — give up on
 #: that read and poll again rather than inherit the 10 s transport default.
-_PLAYER_READ_TIMEOUT_S = 3.0
-#: Bound for bringing the player window forward at the end of a confirm.
-_PLAYER_SHOW_TIMEOUT_S = 5.0
+_PLAYER_READ_TIMEOUT_S = 2.0
+#: Bound for bringing the player window forward at the end of a confirm. A
+#: window call the host cannot answer in this time is a stuck host.
+_PLAYER_SHOW_TIMEOUT_S = 2.0
+_STILL_STARTING_NOTE = (
+    "YouTube Music is still loading the song in the background player; it "
+    "normally starts within a few seconds. If it stays silent, ask to play it "
+    "again."
+)
 
 # Music category on YouTube. Songs on YouTube Music are videos in it.
 _MUSIC_CATEGORY_ID = "10"
@@ -118,9 +130,11 @@ _ART_TRACK_SUFFIX = " - Topic"
 # How long `play` watches the media session for the new track before it stops
 # claiming to know. A warm browser registers the session within a second; a
 # cold start needs four to five (measured live 2026-08-18: Edge from closed took
-# ~4 s). Bounded so a voice turn never hangs on a browser that never starts,
-# and the wait ends the moment playback is seen.
-_CONFIRM_TIMEOUT_S = 6.0
+# ~4 s). Bounded under the shared voice tool budget so a voice turn never hangs
+# on a browser that never starts — a cold browser may still be starting when
+# the wait ends, and the note says so; the wait ends the moment playback is
+# seen.
+_CONFIRM_TIMEOUT_S = 3.5
 _CONFIRM_STEP_S = 0.5
 
 
@@ -494,8 +508,12 @@ class YouTubeMusicRestTool:
                 )
                 out.update(playback_confirmed=False, needs_attention="consent", note=_CONSENT_NOTE)
                 return out
-            playing = last.get("has_video") and last.get("paused") is False
-            if playing and (last.get("position") or 0) > 0:
+            # ``paused`` false on the <video> element IS the confirmation: the
+            # page's own play() went through, which is exactly what a blocked
+            # autoplay refuses. Waiting for the position to advance as well
+            # (buffering, ~4.5 s from load) bought no extra truth and cost the
+            # whole voice budget on a cold start.
+            if last.get("has_video") and last.get("paused") is False:
                 out.update(playback_confirmed=True, now=self._player_now(last))
                 return out
             # The page is up but paused: one programmatic nudge before asking
@@ -506,12 +524,26 @@ class YouTubeMusicRestTool:
                     await asyncio.to_thread(player.play)
                 except Exception as exc:  # noqa: BLE001 — the nudge is best-effort
                     log.debug("background player nudge failed: %s", exc)
-        try:
-            await asyncio.to_thread(_call_with_timeout, player.show, _PLAYER_SHOW_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001 — showing is best-effort
-            log.debug("background player show failed: %s", exc)
-        out.update(playback_confirmed=False, needs_attention="press_play", note=_PRESS_PLAY_NOTE)
-        if last:
+        if last.get("has_video") and last.get("paused"):
+            # Positive evidence of a start that did not happen — a video that
+            # stayed paused through the nudge — is the one case where the
+            # window comes forward: there is a play button to press.
+            try:
+                await asyncio.to_thread(
+                    _call_with_timeout, player.show, _PLAYER_SHOW_TIMEOUT_S
+                )
+            except Exception as exc:  # noqa: BLE001 — showing is best-effort
+                log.debug("background player show failed: %s", exc)
+            out.update(
+                playback_confirmed=False, needs_attention="press_play", note=_PRESS_PLAY_NOTE
+            )
+            out["now"] = self._player_now(last)
+            return out
+        # No video element yet (page still loading, or the host never
+        # answered): nothing to press, so no window — say the song is still
+        # starting and let the budget-released turn move on.
+        out.update(playback_confirmed=False, note=_STILL_STARTING_NOTE)
+        if last and not last.get("loading"):
             out["now"] = self._player_now(last)
         return out
 
