@@ -243,7 +243,10 @@ function VoiceWaveformImpl({
 
   return (
     <svg
-      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+      // Without its frame the drawing is just the row of bars, so the view
+      // box tightens to the pill band: the same height then buys a wider,
+      // more legible row instead of empty margin above and below it.
+      viewBox={frame ? `0 0 ${VIEW_W} ${VIEW_H}` : `0 ${PILL_Y} ${VIEW_W} ${PILL_H}`}
       className={cn("h-14 w-full", className)}
       data-testid="voice-waveform"
       data-phase={phase}

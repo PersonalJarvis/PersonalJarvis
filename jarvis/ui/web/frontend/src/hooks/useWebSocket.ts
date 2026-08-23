@@ -22,6 +22,7 @@ import {
   COMMAND_ACTIVITY_EVENTS,
 } from "@/store/commandActivity";
 import { useDeckStore } from "@/store/deck";
+import { useHomeStore } from "@/store/home";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
@@ -184,6 +185,13 @@ export function useWebSocket(): void {
         // The reducer hands back the same object for every event it does not
         // read, so this is one cheap call, not a re-render per event.
         useDeckStore
+          .getState()
+          .ingest(env.event_name, env.payload, Math.floor(env.timestamp_ns / 1_000_000));
+
+        // Front page: the live transcript (heard words, spoken answers,
+        // typed turns) the voice stage shows. Same shape of call; the
+        // reducer ignores everything but the four text events.
+        useHomeStore
           .getState()
           .ingest(env.event_name, env.payload, Math.floor(env.timestamp_ns / 1_000_000));
 

@@ -2,26 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import { hintFor, recentLines, waveformPhase } from "@/components/home/VoiceStage";
 import { greetingKey } from "@/components/home/Greeting";
-import type { ChatMessage } from "@/store/events";
+import { reduceTranscript, type TranscriptLine } from "@/lib/homeTranscript";
 
 const t = (key: string) => key;
 
-function msg(role: ChatMessage["role"], content: string, i: number): ChatMessage {
-  return { id: `m${i}`, role, content, ts: i };
+function line(who: TranscriptLine["who"], text: string, i: number): TranscriptLine {
+  return { id: `m${i}`, who, text, ts: i };
 }
 
 describe("VoiceStage helpers", () => {
-  it("keeps only the last spoken/typed lines, in order", () => {
-    const all: ChatMessage[] = [
-      msg("system", "boot", 0),
-      msg("user", "one", 1),
-      msg("preamble", "pre", 2),
-      msg("assistant", "two", 3),
-      msg("user", "three", 4),
-      msg("assistant", "four", 5),
-    ];
-    expect(recentLines(all, 3).map((m) => m.content)).toEqual(["two", "three", "four"]);
-    expect(recentLines(all, 10).map((m) => m.content)).toEqual(["one", "two", "three", "four"]);
+  it("keeps only the last lines, in order", () => {
+    const all = [line("user", "one", 1), line("assistant", "two", 2), line("user", "three", 3)];
+    expect(recentLines(all, 2).map((m) => m.text)).toEqual(["two", "three"]);
+    expect(recentLines(all, 10).map((m) => m.text)).toEqual(["one", "two", "three"]);
   });
 
   it("maps the voice state onto the waveform phases, idle when offline", () => {
@@ -54,5 +47,37 @@ describe("VoiceStage helpers", () => {
     expect(greetingKey(8)).toBe("home.greeting_morning");
     expect(greetingKey(13)).toBe("home.greeting_afternoon");
     expect(greetingKey(21)).toBe("home.greeting_evening");
+  });
+});
+
+describe("homeTranscript reducer", () => {
+  it("turns heard words and spoken answers into lines, joining the answer's pieces", () => {
+    let lines: TranscriptLine[] = [];
+    lines = reduceTranscript(lines, "TranscriptFinal", { transcript: { text: "  what time is it " } }, 1000);
+    // The final TranscriptionUpdate of the same utterance is not a second line.
+    lines = reduceTranscript(lines, "TranscriptionUpdate", { text: "what time is it", is_final: true }, 1200);
+    lines = reduceTranscript(lines, "TranscriptionUpdate", { text: "what time", is_final: false }, 1300);
+    lines = reduceTranscript(lines, "SpeechSpoken", { text: "It is ten past nine." }, 2000);
+    lines = reduceTranscript(lines, "SpeechSpoken", { text: "Shall I set a timer?" }, 3000);
+    expect(lines.map((l) => [l.who, l.text])).toEqual([
+      ["user", "what time is it"],
+      ["assistant", "It is ten past nine. Shall I set a timer?"],
+    ]);
+  });
+
+  it("takes typed turns from MessageSent and ignores everything else", () => {
+    let lines: TranscriptLine[] = [];
+    const same = lines;
+    lines = reduceTranscript(lines, "BrainTurnCompleted", { tokens_in: 1 }, 1);
+    expect(lines).toBe(same);
+    lines = reduceTranscript(lines, "MessageSent", { role: "user", text: "hello" }, 10);
+    lines = reduceTranscript(lines, "MessageSent", { role: "system", text: "note" }, 11);
+    lines = reduceTranscript(lines, "MessageSent", { role: "assistant", text: "hi there" }, 12);
+    // A reply that is also spoken is one line, not two.
+    lines = reduceTranscript(lines, "SpeechSpoken", { text: "hi there" }, 13);
+    expect(lines.map((l) => [l.who, l.text])).toEqual([
+      ["user", "hello"],
+      ["assistant", "hi there"],
+    ]);
   });
 });

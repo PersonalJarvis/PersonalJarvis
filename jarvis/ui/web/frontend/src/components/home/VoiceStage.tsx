@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 
-import { useEventStore, type ChatMessage, type VoiceState } from "@/store/events";
+import { useEventStore, type VoiceState } from "@/store/events";
+import { useHomeStore } from "@/store/home";
+import type { TranscriptLine as TranscriptEntry } from "@/lib/homeTranscript";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
@@ -23,17 +25,17 @@ const TRANSCRIPT_LINES = 6;
  * you say the wake word. The bar IS the control — the same start/stop path
  * the IDE's voice bubble uses, so there is exactly one way voice begins.
  *
- * The transcript lane reads the same `messages` the chat stage shows (a
- * spoken turn lands there as MessageSent, like a typed one) plus the live,
- * not-yet-final transcription, so what you are saying appears while you say
- * it. Older lines scroll away; this is the live turn, not an archive — the
- * archive is one click away in the sidebar's recent chats.
+ * The transcript lane reads the home store's transcript (lib/homeTranscript:
+ * heard words, spoken answers and typed turns merged into one list) plus the
+ * live, not-yet-final transcription, so what you are saying appears while
+ * you say it. Older lines scroll away; this is the live turn, not an archive
+ * — the archive is one click away in the sidebar's recent chats.
  */
 export function VoiceStage() {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const voiceState = useEventStore((s) => s.voiceState);
-  const messages = useEventStore((s) => s.messages);
+  const transcript = useHomeStore((s) => s.transcript);
   const transcription = useEventStore((s) => s.transcription);
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
   const { connected, warming } = useVoiceReadiness();
@@ -42,7 +44,7 @@ export function VoiceStage() {
   const { config: wakeConfig } = useWakeWord();
   const wakePhrase = wakeConfig?.phrase.trim() || "";
 
-  const lines = useMemo(() => recentLines(messages, TRANSCRIPT_LINES), [messages]);
+  const lines = useMemo(() => recentLines(transcript, TRANSCRIPT_LINES), [transcript]);
   const liveLine = transcription && !transcriptionFinal ? transcription : "";
 
   const laneEnd = useRef<HTMLDivElement | null>(null);
@@ -68,9 +70,9 @@ export function VoiceStage() {
           {lines.map((m) => (
             <TranscriptLine
               key={m.id}
-              who={m.role === "user" ? t("home.transcript_you") : assistantName}
-              text={m.content}
-              user={m.role === "user"}
+              who={m.who === "user" ? t("home.transcript_you") : assistantName}
+              text={m.text}
+              user={m.who === "user"}
             />
           ))}
           {liveLine && (
@@ -113,9 +115,9 @@ export function VoiceStage() {
             <VoiceWaveform
               levelRef={voiceInputLevelRef}
               phase={phase}
-              count={28}
+              count={32}
               frame={false}
-              className="h-12 min-w-0 flex-1"
+              className="h-14 min-w-0 flex-1"
             />
             <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground sm:flex">
               {engine.providerLabel}
@@ -168,14 +170,9 @@ function TranscriptLine({
   );
 }
 
-/** The last N spoken/typed lines worth showing: user and assistant only. */
-export function recentLines(messages: ChatMessage[], limit: number): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  for (let i = messages.length - 1; i >= 0 && out.length < limit; i--) {
-    const m = messages[i];
-    if (m.role === "user" || m.role === "assistant") out.push(m);
-  }
-  return out.reverse();
+/** The last N lines of the transcript, oldest first. */
+export function recentLines(lines: TranscriptEntry[], limit: number): TranscriptEntry[] {
+  return lines.length > limit ? lines.slice(lines.length - limit) : lines;
 }
 
 export function waveformPhase(state: VoiceState, connected: boolean): WaveformPhase {
