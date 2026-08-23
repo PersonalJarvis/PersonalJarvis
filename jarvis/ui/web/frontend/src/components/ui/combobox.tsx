@@ -74,6 +74,12 @@ export interface ComboboxProps {
   ariaDescribedBy?: string;
   /** Lands on the trigger button; the panel gets `${testId}-panel`. */
   testId?: string;
+  /**
+   * Draw the selected option's `hint` on the trigger too (default). A compact
+   * pill that only has room for the label turns this off; the list still
+   * shows every hint.
+   */
+  triggerHint?: boolean;
 }
 
 /** Panel height cap — roughly nine rows, enough to show that more exist. */
@@ -135,6 +141,7 @@ export function Combobox({
   id,
   ariaDescribedBy,
   testId,
+  triggerHint = true,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -390,7 +397,7 @@ export function Combobox({
       >
         {selected?.icon}
         <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
-        {selected?.hint && (
+        {triggerHint && selected?.hint && (
           <span className="shrink-0 truncate text-xs text-muted-foreground">
             {selected.hint}
           </span>

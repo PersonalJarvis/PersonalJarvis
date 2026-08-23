@@ -328,10 +328,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           title={draft.cwd ? `${t("agent_chat.folder")}: ${draft.cwd}` : t("agent_chat.folder")}
           aria-label={t("agent_chat.folder")}
           data-testid="composer-folder"
-          className="inline-flex h-7 max-w-[180px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="inline-flex h-7 max-w-[160px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span className="truncate font-mono text-[11px]">{folderLeaf(draft.cwd)}</span>
+          <span className="hidden truncate font-mono text-[11px] 2xl:inline">{folderLeaf(draft.cwd)}</span>
         </button>
         <span className="flex-1" />
         <button
@@ -455,6 +455,7 @@ function Pick({
         searchPlaceholder={searchPlaceholder}
         disabled={disabled}
         testId={testId}
+        triggerHint={false}
         className={cn(
           "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium text-foreground shadow-none",
           "hover:border-transparent hover:bg-secondary focus-visible:ring-1",
