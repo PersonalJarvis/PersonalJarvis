@@ -24,11 +24,13 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_ASSETS = _ROOT / "jarvis" / "ui" / "web" / "frontend" / "src" / "assets"
-# Two folders, one rulebook: the plugin-store marks and the provider-card
-# marks. Each keeps its own LOGOS.md ledger next to the files it records.
+# Three folders, one rulebook: the plugin-store marks, the provider-card marks
+# and the CLI-row marks. Each keeps its own LOGOS.md ledger next to the files
+# it records.
 _FOLDERS = (
     _FRONTEND_ASSETS / "brands",
     _FRONTEND_ASSETS / "providers",
+    _FRONTEND_ASSETS / "clis",
 )
 
 # Generous: a real icon is square, but a few legitimate marks are slightly
