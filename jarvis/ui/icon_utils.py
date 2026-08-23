@@ -18,25 +18,27 @@ from typing import Any
 from loguru import logger
 
 from jarvis.core.branding import (
-    LINUX_DESKTOP_ENTRY_FILE_NAME as LINUX_DESKTOP_ENTRY_NAME,
-)
-from jarvis.core.branding import (
-    LINUX_WM_CLASS,
     WINDOWS_BRANDED_LAUNCH_ENV_VAR,
     WINDOWS_BRANDED_LAUNCHER_DIR_NAME,
 )
-from jarvis.core.branding import (
-    PRODUCT_NAME as APP_DISPLAY_NAME,
-)
-from jarvis.core.branding import (
-    WINDOWS_APP_USER_MODEL_ID as APP_USER_MODEL_ID,
-)
-from jarvis.core.branding import (
-    WINDOWS_BRANDED_LAUNCHER_FILE_NAME as BRANDED_LAUNCHER_EXE_NAME,
-)
-from jarvis.core.branding import (
-    WINDOWS_SHORTCUT_FILE_NAME as START_MENU_SHORTCUT_NAME,
-)
+from jarvis.core.instance import current_instance
+
+# Every OS-facing identity below follows the *instance* this process runs as
+# (``jarvis.core.instance``): the default app keeps the stable branding
+# constants, the dev app gets a distinct name, icon, AUMID, shortcut and branded
+# exe so the two never group under one taskbar button, never focus each other's
+# window and never overwrite each other's Start-Menu entry. Bound at import —
+# the launcher pins the instance into the environment before importing this.
+_INSTANCE = current_instance()
+APP_DISPLAY_NAME = _INSTANCE.display_name
+APP_USER_MODEL_ID = _INSTANCE.windows_aumid
+BRANDED_LAUNCHER_EXE_NAME = _INSTANCE.windows_branded_launcher_file_name
+START_MENU_SHORTCUT_NAME = _INSTANCE.windows_shortcut_file_name
+LINUX_DESKTOP_ENTRY_NAME = _INSTANCE.linux_desktop_entry_file_name
+LINUX_WM_CLASS = _INSTANCE.linux_wm_class
+#: Launcher argv written into shortcuts / desktop entries so a click reopens
+#: THIS instance (``--instance dev`` for the dev app, nothing for the default).
+_LAUNCHER_ARGS: tuple[str, ...] = _INSTANCE.launcher_args
 
 _WM_SETICON = 0x0080
 _ICON_SMALL = 0
@@ -617,6 +619,11 @@ def _default_start_menu_programs_dir() -> Path | None:
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
 
 
+def _launcher_arguments() -> str:
+    """The ``Arguments`` field of every shortcut this module writes."""
+    return " ".join(("-m", _LAUNCHER_MODULE, *_LAUNCHER_ARGS))
+
+
 def _shortcut_matches_install(
     lnk: Path,
     *,
@@ -759,7 +766,7 @@ def ensure_start_menu_shortcut(
                 lnk,
                 expected_target=pythonw,
                 expected_icon=ico,
-                expected_arguments=f"-m {_LAUNCHER_MODULE}",
+                expected_arguments=_launcher_arguments(),
             ):
                 return True
             logger.debug("stale/broken Start-Menu shortcut, rewriting: {}", lnk)
@@ -791,7 +798,7 @@ def _write_branded_shortcut(
         shell = Dispatch("WScript.Shell")
         sc = shell.CreateShortcut(str(lnk))
         sc.TargetPath = str(target)
-        sc.Arguments = f"-m {_LAUNCHER_MODULE}"
+        sc.Arguments = _launcher_arguments()
         sc.WorkingDirectory = str(Path.home())
         if ico.is_file():
             sc.IconLocation = f"{ico},0"
@@ -1450,7 +1457,7 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
             "Type=Application\n"
             f"Name={escape_value(APP_DISPLAY_NAME)}\n"
             "Comment=Voice-driven meta-orchestrator\n"
-            f"Exec={exec_value(sys.executable, ('-m', _LAUNCHER_MODULE))}\n"
+            f"Exec={exec_value(sys.executable, ('-m', _LAUNCHER_MODULE, *_LAUNCHER_ARGS))}\n"
             f"Path={escape_value(str(PROJECT_ROOT))}\n"
             "Terminal=false\n"
             f"{icon_line}"
@@ -1587,9 +1594,11 @@ def project_icon_path() -> Path:
     except Exception as exc:  # noqa: BLE001 — never let icon resolution crash boot
         logger.debug("bundled_app_icon lookup failed, trying repo-root: {}", exc)
 
-    repo_root = Path(__file__).resolve().parents[2] / "assets" / "icons" / "jarvis.ico"
-    if repo_root.is_file():
-        return repo_root
+    icon_name = _INSTANCE.icon_file_name
+    repo_icons = Path(__file__).resolve().parents[2] / "assets" / "icons"
+    for candidate in (repo_icons / icon_name, repo_icons / "jarvis.ico"):
+        if candidate.is_file():
+            return candidate
 
     # Nothing found — return the bundled location for a descriptive warning.
-    return Path(__file__).resolve().parent.parent / "assets" / "icons" / "jarvis.ico"
+    return Path(__file__).resolve().parent.parent / "assets" / "icons" / icon_name

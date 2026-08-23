@@ -2049,6 +2049,19 @@ def _default_tts_for_pipeline(config: Any) -> Any:
     return GeminiFlashTTS()
 
 
+def _owns_ambient_duties() -> bool:
+    """May this process arm the wake word and the global hotkeys?
+
+    Only the default instance of the app does (``jarvis.core.instance``); a
+    second instance started beside it for development must not compete for the
+    microphone or the key combos. Lazy import keeps the pipeline's import cost
+    unchanged; the lookup is a dict read.
+    """
+    from jarvis.core.instance import current_instance
+
+    return current_instance().owns_ambient_duties
+
+
 class SpeechPipeline:
     """End-to-End Pipeline mit Call/Hangup-Lifecycle + Parallel-Wake."""
 
@@ -2400,6 +2413,15 @@ class SpeechPipeline:
             if configured_wake_enabled is not None
             else None
         )
+        # A non-default instance of the desktop app (``jarvis.core.instance``,
+        # the "dev" app beside the live one) never listens for the wake word
+        # and never arms a global hotkey — the microphone and the key combos
+        # belong to the default app; two listeners would both answer. The
+        # in-window mic button and the chat still work, so voice can be tested.
+        if not _owns_ambient_duties():
+            self._wake_word_enabled = False
+            enable_openwakeword = False
+            enable_whisper_wake = False
         self._openwakeword_enabled = enable_openwakeword
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
         # When None, the wake path is byte-identical to the legacy "Hey Jarvis"
@@ -3452,7 +3474,7 @@ class SpeechPipeline:
         plan, lazily preparing any detector it needs, and both transitions wake
         the parked/running wake loop through the existing reload event.
         """
-        self._wake_word_enabled = bool(enabled)
+        self._wake_word_enabled = bool(enabled) and _owns_ambient_duties()
         plan = getattr(self, "_wake_plan", None)
         if self._wake_word_enabled and plan is not None:
             self.set_wake_plan(plan)
@@ -3539,11 +3561,14 @@ class SpeechPipeline:
         action made that duplication a drift bug waiting to happen — a shortcut
         that works at boot but not after a Settings save, or the reverse.
         """
+        edge_events: set[str] = set()
+        if not _owns_ambient_duties():
+            # Global hotkeys are the default app's; see __init__.
+            return {"call": [], "hangup": []}, edge_events
         bindings: dict[str, list[str]] = {
             "call": list(self._call_hotkeys),
             "hangup": list(self._hangup_hotkeys),
         }
-        edge_events: set[str] = set()
         if self._ptt_hotkeys:
             bindings["ptt"] = list(self._ptt_hotkeys)
             edge_events.add("ptt")

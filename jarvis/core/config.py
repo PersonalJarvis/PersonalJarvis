@@ -40,6 +40,7 @@ from jarvis.awareness.config import AwarenessConfig
 from jarvis.speech.wake_constants import DEFAULT_WAKE_PHRASE, WAKE_ENGINES
 
 from .branding import CONFIG_FILE_NAME, KEYRING_SERVICE_NAME
+from .instance import current_instance
 from .protocols import RiskTier
 
 # AckBrainConfig lives under jarvis.brain.ack_brain.config. We cannot
@@ -58,7 +59,25 @@ if TYPE_CHECKING:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_FILE = PROJECT_ROOT / CONFIG_FILE_NAME
 PROFILES_DIR = PROJECT_ROOT / "profiles"
-DATA_DIR = PROJECT_ROOT / "data"
+
+
+def _resolve_data_dir() -> Path:
+    """The runtime data directory this process uses.
+
+    ``JARVIS_DATA_DIR`` (headless hosts, read-only installs) wins outright.
+    Otherwise the directory sits next to the checkout and is named by the
+    *instance* (``jarvis.core.instance``): ``data/`` for the default app,
+    ``data-dev/`` for the dev app — two desktop apps from one checkout must not
+    share SQLite stores, the single-instance lock or the WebView profile.
+    Resolved once at import, like every other path constant here.
+    """
+    env_dir = os.environ.get("JARVIS_DATA_DIR")
+    if env_dir and env_dir.strip():
+        return Path(env_dir.strip())
+    return PROJECT_ROOT / current_instance().data_dir_name
+
+
+DATA_DIR = _resolve_data_dir()
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
 # Guards _resolve_writable_data_dir()'s lazy writability probe below. Named
@@ -4339,7 +4358,49 @@ def load_config(
     # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
     _migrate_worker_env_vars()
     data = _apply_env_overrides(data)
+    data = _apply_instance_overrides(data)
     return JarvisConfig(**data)
+
+
+# Ports the dev instance shifts by ``InstanceIdentity.port_offset``: every
+# (section, field) a process binds or publishes. The admin port doubles as the
+# fast-boot bind (``launcher._fast_admin_port`` applies the same offset).
+_INSTANCE_PORT_FIELDS: tuple[tuple[str, str, int], ...] = (
+    ("ui", "admin_api_port", 47821),
+    ("mcp_server", "http_port", 47822),
+    ("telemetry", "metrics_port", 9090),
+)
+
+
+def _apply_instance_overrides(data: dict[str, Any]) -> dict[str, Any]:
+    """Pin the non-default instance's ports and data directory AFTER every
+    user layer (TOML, profile, env) has landed.
+
+    These are not preferences but the contract that lets two desktop apps from
+    one checkout coexist, so no layer may undo them: a ``jarvis.toml`` or
+    ``JARVIS__UI__ADMIN_API_PORT`` is read as the *base* the dev app offsets
+    from, and ``memory.data_dir`` (the anchor for sessions / missions / friends
+    / chats / wiki stores) is the instance's own directory. The default
+    instance passes through untouched.
+    """
+    identity = current_instance()
+    if identity.is_default:
+        return data
+    for section, field, default in _INSTANCE_PORT_FIELDS:
+        table = data.get(section)
+        if not isinstance(table, dict):
+            table = {}
+            data[section] = table
+        base = table.get(field, default)
+        if not isinstance(base, int) or isinstance(base, bool):
+            base = default
+        table[field] = identity.port(base)
+    memory = data.get("memory")
+    if not isinstance(memory, dict):
+        memory = {}
+        data["memory"] = memory
+    memory["data_dir"] = str(DATA_DIR)
+    return data
 
 
 # ----------------------------------------------------------------------

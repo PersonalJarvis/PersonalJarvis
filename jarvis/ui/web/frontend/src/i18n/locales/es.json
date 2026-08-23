@@ -452,6 +452,7 @@
     "indicator_label": "Estado de voz"
   },
   "sidebar": {
+    "instance_dev_hint": "Instancia de desarrollo: una segunda copia de la app que puedes reiniciar libremente, con sus propios datos, puertos e icono. La app normal sigue funcionando al lado.",
     "surface_voice": "Voz",
     "surface_chat": "Chat",
     "surface_hint": "Cambiar la página de inicio entre voz y chat escrito",

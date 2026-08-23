@@ -33,8 +33,12 @@ from typing import Any
 
 import httpx
 
-from jarvis.core.branding import WINDOWS_MUTEX_NAME as MUTEX_NAME
+from jarvis.core.instance import current_instance
 from jarvis.core.paths import ensure_user_dirs
+
+# Per instance (``jarvis.core.instance``): the dev app claims its own mutex so
+# it never reads the live app as "already running".
+MUTEX_NAME = current_instance().windows_mutex_name
 
 logger = logging.getLogger(__name__)
 

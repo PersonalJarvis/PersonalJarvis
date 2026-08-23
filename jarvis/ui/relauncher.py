@@ -50,7 +50,17 @@ def build_launch_command(executable: str) -> list[str]:
     bundle therefore fails closed; the managed installer/repair path owns
     recreating it.
     """
-    fallback = [executable, "-m", LAUNCHER_MODULE]
+    from jarvis.core.instance import current_instance
+
+    identity = current_instance()
+    fallback = [executable, "-m", LAUNCHER_MODULE, *identity.launcher_args]
+    if sys.platform == "darwin" and not identity.is_default:
+        # The bundle is the DEFAULT app's stable identity and LaunchServices
+        # does not carry ``JARVIS_INSTANCE`` into it — re-entering through it
+        # would bring the dev instance back as a second default app. A dev
+        # instance restarts through the interpreter directly (it never owns the
+        # microphone-bound duties the TCC attachment is for).
+        return fallback
     if sys.platform == "darwin":
         bundle = Path.home() / "Applications" / MACOS_APP_DIR_NAME
         try:

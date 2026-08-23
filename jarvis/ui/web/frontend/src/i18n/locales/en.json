@@ -452,6 +452,7 @@
     "indicator_label": "Voice state"
   },
   "sidebar": {
+    "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
     "surface_hint": "Switch the front page between voice and typed chat",

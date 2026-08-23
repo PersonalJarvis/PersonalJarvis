@@ -27,6 +27,7 @@ import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { PRODUCT_NAME } from "@/lib/branding";
+import { useAppInstance } from "@/hooks/useAppInstance";
 
 // A logo request that fails once (backend restarting, dist mid-rebuild) would
 // otherwise stick as the browser's broken-image glyph forever — an <img> never
@@ -107,6 +108,11 @@ export function Sidebar({
   const setActive = useEventStore((s) => s.setActiveSection);
   const voiceState = useEventStore((s) => s.voiceState);
   const assistantName = useEventStore((s) => s.assistantName);
+  // The dev instance (a second, restartable app beside the live one — see
+  // jarvis.core.instance) shows a small tag so the two windows are never
+  // confused; the default app shows nothing here.
+  const appInstance = useAppInstance();
+  const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
   // "+ New chat" lands on the chat surface of the front page with an empty
   // thread — the sidebar owns the history now, so it owns this too.
   const { newChat } = useConversations();
@@ -232,10 +238,19 @@ export function Sidebar({
             data-variant="logo"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
             className={cn(
-              "flex shrink-0 items-center justify-center",
+              "relative flex shrink-0 items-center justify-center",
               railed ? "h-9 w-9" : "h-11 w-11",
             )}
           >
+            {railed && devTag && (
+              <span
+                data-testid="sidebar-instance-tag"
+                title={t("sidebar.instance_dev_hint")}
+                className="absolute -bottom-1 -right-1 rounded-[3px] bg-primary px-[3px] py-px font-mono text-[7px] font-bold leading-none tracking-wider text-primary-foreground"
+              >
+                {devTag}
+              </span>
+            )}
             <img
               src={
                 logoRetry === 0
@@ -258,8 +273,17 @@ export function Sidebar({
           </span>
           {!railed && (
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="font-display text-sm font-semibold tracking-tight">
-                {assistantName}
+              <span className="flex min-w-0 items-center gap-1.5 font-display text-sm font-semibold tracking-tight">
+                <span className="truncate">{assistantName}</span>
+                {devTag && (
+                  <span
+                    data-testid="sidebar-instance-tag"
+                    title={t("sidebar.instance_dev_hint")}
+                    className="shrink-0 rounded-[4px] bg-primary px-1 py-px font-mono text-[9px] font-bold leading-none tracking-wider text-primary-foreground"
+                  >
+                    {devTag}
+                  </span>
+                )}
               </span>
               <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 {voiceLabel}

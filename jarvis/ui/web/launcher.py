@@ -103,7 +103,50 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="No single-instance lock (for parallel dev sessions)",
     )
+    p.add_argument(
+        "--instance",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Run as a named instance. 'dev' starts a second, freely restartable "
+            "desktop app beside the default one (own data dir, ports, icon, no "
+            "wake word / hotkeys / channels). Same as JARVIS_INSTANCE=NAME."
+        ),
+    )
     return p.parse_args(argv)
+
+
+def _select_instance_early(argv: list[str]) -> str | None:
+    """Pin ``--instance`` into the environment BEFORE anything reads it.
+
+    ``jarvis.core.config`` binds ``DATA_DIR`` and ``jarvis.ui.icon_utils`` binds
+    the Windows identity at import, so the choice must be in ``os.environ`` before
+    the first of those imports — hence a hand scan of argv here rather than the
+    argparse pass further down (which still accepts the flag). Returns an error
+    sentence when the name is unknown (the caller reports it and exits), else
+    ``None``.
+    """
+    from jarvis.core.instance import (
+        INSTANCE_ENV_VAR,
+        InstanceNameError,
+        resolve_instance,
+        select_instance,
+    )
+
+    name: str | None = None
+    for i, arg in enumerate(argv):
+        if arg == "--instance" and i + 1 < len(argv):
+            name = argv[i + 1]
+        elif arg.startswith("--instance="):
+            name = arg.split("=", 1)[1]
+    try:
+        if name is not None:
+            select_instance(name)
+        else:
+            resolve_instance()  # validate an inherited JARVIS_INSTANCE
+    except InstanceNameError as exc:
+        return f"{exc}. Use --instance dev, or unset {INSTANCE_ENV_VAR}."
+    return None
 
 
 def _acquire_primary_lock_for_headless(
@@ -210,7 +253,18 @@ def _fast_admin_port() -> int:
     """Read ``[ui].admin_api_port`` from jarvis.toml with a raw tomllib read (a
     few ms) so the fast-boot bootstrap can bind the REAL port without paying the
     ~240 ms full ``load_config`` (which drags pydantic + the brain/awareness
-    imports) on the time-to-serving path. Falls back to the packaged default."""
+    imports) on the time-to-serving path. Falls back to the packaged default.
+
+    The configured value is the *base*: a non-default instance (``--instance
+    dev``) binds ``InstanceIdentity.port_offset`` above it, exactly as
+    ``load_config`` resolves it for the full app — the two must agree or the
+    bootstrap and the real server would bind different ports."""
+    from jarvis.core.instance import current_instance
+
+    return current_instance().port(_fast_admin_base_port())
+
+
+def _fast_admin_base_port() -> int:
     import contextlib
 
     with contextlib.suppress(Exception):  # any failure → packaged default
@@ -467,6 +521,12 @@ async def _run_headless(args) -> int:
 
     def _reconcile_autostart_bg() -> None:
         try:
+            from jarvis.core.instance import current_instance
+
+            if not current_instance().owns_ambient_duties:
+                # The login autostart entry belongs to the default app; a dev
+                # instance reconciling it would rewrite (or remove) the real one.
+                return
             from jarvis.autostart import reconcile_autostart
 
             reconcile_autostart(cfg)
@@ -1122,6 +1182,10 @@ def _desktop_backend_main(args, port: int, token: str, holder: dict, app_ready) 
 
         def _reconcile() -> None:
             try:
+                from jarvis.core.instance import current_instance
+
+                if not current_instance().owns_ambient_duties:
+                    return  # the login autostart entry belongs to the default app
                 from jarvis.autostart import reconcile_autostart
 
                 reconcile_autostart(cfg)
@@ -1228,6 +1292,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[BOOT_PROFILE] m_{_name}={(_now - _m_last) * 1000.0:.1f}", flush=True)
         _m_last = _now
 
+    _raw_argv = argv if argv is not None else sys.argv[1:]
+
+    # Which instance this process IS — decided first, before any module that
+    # derives a path, a port or an OS identity from it gets imported.
+    _instance_error = _select_instance_early(_raw_argv)
+    if _instance_error is not None:
+        _report_startup_failure(_instance_error)
+        return 2
+    try:
+        from pathlib import Path as _IPath
+
+        import jarvis as _jarvis_pkg
+        from jarvis.core.instance_data import ensure_instance_data_dir
+
+        ensure_instance_data_dir(_IPath(_jarvis_pkg.__file__).resolve().parent.parent)
+    except Exception as exc:  # noqa: BLE001 — a missing seed is a blank start, not a failed one
+        import logging as _ilog
+
+        _ilog.getLogger(__name__).warning("instance data dir could not be prepared: %s", exc)
+
     # GUI/desktop launches carry a minimal PATH (macOS launchd, Windows tray
     # relaunch) — append the well-known CLI install dirs before any provider
     # probe or worker spawn resolves binaries (stat-only, AP-26-safe).
@@ -1259,7 +1343,6 @@ def main(argv: list[str] | None = None) -> int:
             ", ".join(_dropped_colour_claims),
         )
 
-    _raw_argv = argv if argv is not None else sys.argv[1:]
     args = _parse_args(_raw_argv)
 
     # Refuse a window we cannot build, BEFORE paying for the boot. Everything
@@ -1462,6 +1545,12 @@ def main(argv: list[str] | None = None) -> int:
     # finishes, the next boot self-heals the entry.
     def _reconcile_autostart_bg() -> None:
         try:
+            from jarvis.core.instance import current_instance
+
+            if not current_instance().owns_ambient_duties:
+                # The login autostart entry belongs to the default app; a dev
+                # instance reconciling it would rewrite (or remove) the real one.
+                return
             from jarvis.autostart import reconcile_autostart
 
             reconcile_autostart(cfg)

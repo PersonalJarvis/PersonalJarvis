@@ -12,8 +12,16 @@ Result:
 Both shortcuts point to run.bat in the project folder. run.bat uses
 pythonw.exe, so no console window pops up.
 
+Dev instance (a second, freely restartable desktop app — see
+``jarvis/core/instance.py``):
+
+    python scripts/install_shortcuts.py --dev
+
+  → Desktop\Personal Jarvis Dev.lnk (DEV-badged icon, ``--instance dev``);
+    never touches autostart.
+
 Uninstall:
-    python scripts/install_shortcuts.py --uninstall
+    python scripts/install_shortcuts.py --uninstall        (also removes the Dev link)
 """
 
 from __future__ import annotations
@@ -35,9 +43,17 @@ from jarvis.core.branding import (  # noqa: E402 - script source path above
     WINDOWS_APP_USER_MODEL_ID,
     WINDOWS_SHORTCUT_FILE_NAME,
 )
+from jarvis.core.instance import (  # noqa: E402 - script source path above
+    DEV_INSTANCE_NAME,
+    InstanceIdentity,
+)
 
 ICON_DIR = PROJECT_ROOT / "assets" / "icons"
 ICON_PATH = ICON_DIR / "jarvis.ico"
+DEV_INSTANCE = InstanceIdentity(DEV_INSTANCE_NAME)
+DEV_ICON_PATH = ICON_DIR / DEV_INSTANCE.icon_file_name
+DEV_SHORTCUT_NAME = DEV_INSTANCE.windows_shortcut_file_name
+DEV_DESCRIPTION = f"{DEV_INSTANCE.display_name} — second, restartable instance"
 RUN_BAT = PROJECT_ROOT / "run.bat"
 
 SHORTCUT_NAME = WINDOWS_SHORTCUT_FILE_NAME
@@ -50,6 +66,10 @@ LAUNCHER_MODULE = "jarvis.ui.web.launcher"
 
 def desktop_path() -> Path:
     return Path(os.environ["USERPROFILE"]) / "Desktop" / SHORTCUT_NAME
+
+
+def dev_desktop_path() -> Path:
+    return Path(os.environ["USERPROFILE"]) / "Desktop" / DEV_SHORTCUT_NAME
 
 
 def startup_path() -> Path:
@@ -156,7 +176,7 @@ def _detect_pythonw() -> Path:
     )
 
 
-def _set_shortcut_app_id(link: Path) -> bool:
+def _set_shortcut_app_id(link: Path, app_id: str = APP_USER_MODEL_ID) -> bool:
     """Best-effort: writes the AppUserModelID into the .lnk property store."""
     try:
         import pywintypes  # type: ignore[import-not-found]
@@ -170,7 +190,7 @@ def _set_shortcut_app_id(link: Path) -> bool:
         )
         store.SetValue(
             pscon.PKEY_AppUserModel_ID,
-            propsys.PROPVARIANTType(APP_USER_MODEL_ID),
+            propsys.PROPVARIANTType(app_id),
         )
         store.Commit()
         return True
@@ -188,6 +208,7 @@ def create_shortcut(
     icon: Path,
     description: str,
     window_style: int = 1,
+    app_id: str = APP_USER_MODEL_ID,
 ) -> None:
     """Creates a .lnk shortcut via PowerShell/WScript.Shell.
 
@@ -214,7 +235,7 @@ def create_shortcut(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
         check=True,
     )
-    _set_shortcut_app_id(link)
+    _set_shortcut_app_id(link, app_id)
     print(f"[ok] Shortcut: {link}")
 
 
@@ -255,14 +276,45 @@ def _disable_autostart_via_port() -> None:
     make_autostart_manager(detect_capabilities()).uninstall(interactive=True)
 
 
+def install_dev_shortcut() -> int:
+    """Desktop shortcut for the DEV instance — icon with the DEV tag, launcher
+    argument ``--instance dev``, its own AUMID; never touches autostart."""
+    try:
+        pythonw = _detect_pythonw()
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    if not DEV_ICON_PATH.is_file():
+        print(
+            f"Error: {DEV_ICON_PATH} is missing — run scripts/make_dev_icon.py first.",
+            file=sys.stderr,
+        )
+        return 2
+    create_shortcut(
+        dev_desktop_path(),
+        target=pythonw,
+        args=f"-m {LAUNCHER_MODULE} {' '.join(DEV_INSTANCE.launcher_args)}",
+        working_dir=PROJECT_ROOT,
+        icon=DEV_ICON_PATH,
+        description=DEV_DESCRIPTION,
+        window_style=1,
+        app_id=DEV_INSTANCE.windows_aumid,
+    )
+    print(
+        f"\nDouble-clicking '{DEV_SHORTCUT_NAME}' on the desktop starts the dev "
+        "instance beside the regular app (own data dir, ports +100, no wake word)."
+    )
+    return 0
+
+
 def uninstall() -> None:
-    # Desktop double-click shortcut — this script owns it.
-    dp = desktop_path()
-    if dp.exists():
-        dp.unlink()
-        print(f"[rm] {dp}")
-    else:
-        print(f"[--] not present: {dp}")
+    # Desktop double-click shortcuts — this script owns them.
+    for dp in (desktop_path(), dev_desktop_path()):
+        if dp.exists():
+            dp.unlink()
+            print(f"[rm] {dp}")
+        else:
+            print(f"[--] not present: {dp}")
     # Autostart entry — delegate to the port (also clears the persisted toggle
     # and any legacy .bat/.lnk names).
     _disable_autostart_via_port()
@@ -280,6 +332,14 @@ def main() -> int:
         action="store_true",
         help="Desktop shortcut only, no autostart",
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help=(
+            "Create the 'Personal Jarvis Dev' desktop shortcut (second, restartable "
+            "instance) instead of the regular one; never touches autostart"
+        ),
+    )
     args = parser.parse_args()
 
     if args.uninstall:
@@ -289,6 +349,9 @@ def main() -> int:
     if sys.platform != "win32":
         print("Error: only Windows is supported.", file=sys.stderr)
         return 1
+
+    if args.dev:
+        return install_dev_shortcut()
 
     try:
         pythonw = _detect_pythonw()

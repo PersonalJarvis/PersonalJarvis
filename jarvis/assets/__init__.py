@@ -93,7 +93,27 @@ def bundled_app_icon() -> Path | None:
     code (``package-data`` glob ``assets/**/*``). Same fix class as the bundled
     Silero VAD model above.
     """
-    path = _ICONS_DIR / _APP_ICON_FILE
+    return _instance_icon(_APP_ICON_FILE)
+
+
+def _instance_icon(default_name: str) -> Path | None:
+    """The icon file for the running *instance* (``jarvis.core.instance``).
+
+    The dev app carries a DEV-badged copy (``jarvis-dev.ico`` / ``.png``,
+    rendered by ``scripts/make_dev_icon.py``) so its taskbar, dock and tray
+    entries are told apart from the default app's at a glance. A missing badged
+    file falls back to the default icon rather than to no icon at all.
+    """
+    from jarvis.core.instance import current_instance
+
+    identity = current_instance()
+    if not identity.is_default:
+        badged = _ICONS_DIR / Path(identity.icon_file_name).with_suffix(
+            Path(default_name).suffix
+        )
+        if badged.is_file():
+            return badged
+    path = _ICONS_DIR / default_name
     return path if path.is_file() else None
 
 
@@ -109,8 +129,7 @@ def bundled_app_icon_png() -> Path | None:
     not Jarvis" report. Resolved fresh from the installed package so the absolute
     path baked into the ``.desktop`` is correct on any install layout.
     """
-    path = _ICONS_DIR / _APP_ICON_PNG_FILE
-    return path if path.is_file() else None
+    return _instance_icon(_APP_ICON_PNG_FILE)
 
 
 _MUSIC_PLAYER_ICON_FILE = "music-player.ico"

@@ -452,6 +452,7 @@
     "indicator_label": "Sprachstatus"
   },
   "sidebar": {
+    "instance_dev_hint": "Dev-Instanz — eine zweite, frei neustartbare Kopie der App mit eigenen Daten, Ports und eigenem Icon. Die normale App läuft daneben weiter.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
     "surface_hint": "Startseite zwischen Sprache und getipptem Chat umschalten",

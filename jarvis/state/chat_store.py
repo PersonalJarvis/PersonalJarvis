@@ -73,15 +73,17 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
 
 
 def default_chats_db_path(data_dir: str = "./data") -> Path:
-    """Resolve ``chats.db`` to sit beside ``sessions.db``.
+    """Resolve ``chats.db`` to sit beside ``sessions.db``: inside ``data_dir``.
 
-    Uses the *identical* formula the session-store bootstrap uses in
-    ``server.py`` (``Path(cfg.memory.data_dir).parent / "data" / <name>``), so
-    ``chats.db`` is guaranteed to land in the same directory as ``sessions.db``
-    regardless of how ``data_dir`` is configured. With the default ``./data``
-    that is repo-root ``data/chats.db``.
+    ``data_dir`` is ``cfg.memory.data_dir`` — the one directory every SQLite
+    store of a running app lives in. The formula used to be
+    ``Path(data_dir).parent / "data"``, which silently assumed that directory is
+    *named* ``data``; a second instance of the app (``jarvis.core.instance``,
+    ``data-dev/``) would have written its chats into the default app's folder.
+    The session store (``server.py``) anchors the same way, so the two files stay
+    together. With the default ``./data`` this is still repo-root ``data/chats.db``.
     """
-    return Path(data_dir).parent / "data" / "chats.db"
+    return Path(data_dir) / "chats.db"
 
 
 def _derive_title(text: str) -> str:

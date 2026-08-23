@@ -901,12 +901,19 @@ class WebServer:
     # ------------------------------------------------------------------
 
     def _register_rest_routes(self, app: FastAPI) -> None:
+        from jarvis.core.instance import current_instance as _ci
+
+        def _instance_name() -> str:
+            return _ci().name
+
         cfg = self.cfg
         bus = self.bus
 
         @app.get("/api/health")
         async def health() -> dict[str, Any]:
-            return {"ok": True, "version": __version__}
+            # ``instance`` lets the frontend badge a dev window as such
+            # (``jarvis.core.instance``): "default" or "dev".
+            return {"ok": True, "version": __version__, "instance": _instance_name()}
 
         @app.post("/api/ui/shell-painted", status_code=204, response_model=None)
         async def shell_painted() -> Response:
@@ -3317,12 +3324,21 @@ class WebServer:
     def _resolve_sessions_db_path(self) -> Path:
         """Absolute path to sessions.db, shared by recorder and board.
 
-        A relative ``[sessions].db_path`` is anchored at the data-dir parent
-        (the repo root), never at the process CWD, so every consumer sees the
-        SAME database regardless of where the app was launched from.
+        The default lives in ``cfg.memory.data_dir`` itself — the directory
+        every other SQLite store of this app uses (chats, missions, friends) —
+        so a second instance of the app (``jarvis.core.instance``, which points
+        ``memory.data_dir`` at ``data-dev/``) keeps its sessions apart from the
+        default app's. An explicit relative ``[sessions].db_path`` is anchored
+        at the data-dir parent (the repo root, as before), an absolute one is
+        taken as is; neither depends on the process CWD. The shipped default
+        string ``"data/sessions.db"`` (present in every jarvis.toml) IS the
+        default and follows the data dir like an absent key.
         """
         section = self._read_sessions_toml_section()
-        db_path = Path(str(section.get("db_path", "data/sessions.db")))
+        raw = section.get("db_path")
+        if not raw or Path(str(raw)) == Path("data/sessions.db"):
+            return Path(self.cfg.memory.data_dir) / "sessions.db"
+        db_path = Path(str(raw))
         if not db_path.is_absolute():
             db_path = Path(self.cfg.memory.data_dir).parent / db_path
         return db_path
@@ -3387,7 +3403,19 @@ class WebServer:
         tg_cfg = None
         dc_cfg = None
         integrations = getattr(self.cfg, "integrations", None)
-        if integrations is not None:
+        from jarvis.core.instance import current_instance
+
+        if not current_instance().owns_ambient_duties:
+            # A second (dev) instance of the app must not poll the same bot
+            # tokens as the live one — Telegram answers a second getUpdates
+            # poller with 409 and both would answer the user's friends. The
+            # Friends registry still comes up; only the channels stay off.
+            logger.info(
+                "Friends-Stack: chat channels stay off in instance '{}' "
+                "(they belong to the default app)",
+                current_instance().name,
+            )
+        elif integrations is not None:
             tg_cfg = getattr(integrations, "telegram", None)
             dc_cfg = getattr(integrations, "discord", None)
 

@@ -30,12 +30,17 @@ from typing import TYPE_CHECKING, Any
 
 from filelock import FileLock, Timeout
 
-from jarvis.core.branding import PRODUCT_NAME as WINDOW_TITLE
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
+from jarvis.core.instance import current_instance
 from jarvis.core.process_utils import ensure_standard_streams
 
 if TYPE_CHECKING:
     from jarvis.ui.web.server import WebServer
+
+# The main window's title doubles as its focus handle
+# (``_bring_window_to_front_by_title``) and follows the *instance*: the dev app
+# is "Personal Jarvis Dev", so neither instance ever raises the other's window.
+WINDOW_TITLE = current_instance().display_name
 
 # Direct ``python -m jarvis.ui.desktop_app`` entry points bypass the launcher,
 # so they need the same pythonw/PyInstaller stream repair here as well.

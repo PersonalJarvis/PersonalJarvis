@@ -347,9 +347,17 @@ def _as_int(value: Any) -> int:
 
 
 def _store_path() -> Path:
+    """``last_session.json`` — per instance (``jarvis.core.instance``).
+
+    The default and the dev app run their own registries; a shared offer file
+    would make a restarted dev app propose to resume panes that are alive in the
+    default app's window (and reopen the same agent conversation twice).
+    """
+    from jarvis.core.instance import current_instance
     from jarvis.core.paths import user_data_dir
 
-    return user_data_dir() / "agentic_ide" / "last_session.json"
+    suffix = current_instance().state_file_suffix
+    return user_data_dir() / "agentic_ide" / f"last_session{suffix}.json"
 
 
 def save(snapshot: Snapshot) -> None:

@@ -53,7 +53,19 @@ logger = logging.getLogger(__name__)
 # per start method, so the flag written by one start was invisible to the next
 # and the first-run setup guide re-appeared on every restart. parents[2] mirrors
 # jarvis.core.config.PROJECT_ROOT (this file is jarvis/setup/state.py).
-_DEFAULT_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "setup_state.json"
+# The data directory follows the *instance* (jarvis.core.instance — a stdlib-only
+# module, so this fast-boot path still never imports the heavy config module):
+# ``data/`` for the default app, ``data-dev/`` for the dev app. ``JARVIS_DATA_DIR``
+# wins when set, mirroring ``jarvis.core.config.DATA_DIR`` exactly.
+def _default_state_path() -> Path:
+    from jarvis.core.instance import instance_data_dir
+
+    env_dir = os.environ.get("JARVIS_DATA_DIR", "").strip()
+    base = Path(env_dir) if env_dir else instance_data_dir(Path(__file__).resolve().parents[2])
+    return base / "setup_state.json"
+
+
+_DEFAULT_STATE_PATH = _default_state_path()
 
 
 def state_path(override: Path | None = None) -> Path:

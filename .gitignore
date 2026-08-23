@@ -66,6 +66,8 @@ build/
 # Jarvis Runtime-Daten (nie committen)
 data/*
 data/**/
+# The dev instance's runtime data (jarvis/core/instance.py) — same rule as data/.
+data-dev/
 *.db
 *.sqlite
 *.sqlite3

@@ -22,7 +22,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from jarvis.core.instance import current_instance
 from jarvis.platform.probes import display_present
+
+# Tooltip prefix: "Jarvis" for the default app, "Jarvis Dev" for the dev
+# instance — the tray icon already carries the DEV badge, the hover text says it.
+_TRAY_NAME = " ".join(p for p in ("Jarvis", current_instance().label) if p)
 
 log = logging.getLogger("jarvis.ui.tray")
 
@@ -149,7 +154,7 @@ class JarvisTray:
             self._icon = Icon(
                 "jarvis",
                 icon=icon_image,
-                title="Jarvis — idle",
+                title=f"{_TRAY_NAME} — idle",
                 menu=self._build_menu(),
             )
             self._icon.run()
@@ -202,7 +207,7 @@ class JarvisTray:
                 self._icon = Icon(
                     "jarvis",
                     icon=icon_image,
-                    title="Jarvis — idle",
+                    title=f"{_TRAY_NAME} — idle",
                     menu=self._build_menu(),
                     darwin_nsapplication=nsapp,
                 )
@@ -274,7 +279,7 @@ class JarvisTray:
         def _apply() -> None:
             try:
                 icon.icon = _make_icon(state)
-                icon.title = f"Jarvis — {state.value}"
+                icon.title = f"{_TRAY_NAME} — {state.value}"
             except Exception:  # noqa: BLE001
                 pass
 
@@ -287,7 +292,7 @@ class JarvisTray:
 
             def _apply() -> None:
                 try:
-                    icon.title = f"Jarvis — Error: {message[:60]}"
+                    icon.title = f"{_TRAY_NAME} — Error: {message[:60]}"
                 except Exception:  # noqa: BLE001
                     pass
 
