@@ -2213,6 +2213,14 @@
     "open_with_loading": "Detectando apps…",
     "opener_default": "App predeterminada del sistema",
     "opener_browser": "Navegador",
+    "view_mode": "Vista",
+    "view_rendered": "Renderizado",
+    "view_source": "Código fuente",
+    "copy_contents": "Copiar contenido",
+    "fullscreen": "Abrir como lector a pantalla completa",
+    "exit_fullscreen": "Cerrar lector",
+    "csv_empty": "Esta tabla está vacía.",
+    "csv_more_rows": "{n} filas más en el archivo.",
     "reveal_in_folder": "Mostrar en la carpeta"
   },
   "common": {

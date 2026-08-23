@@ -306,6 +306,23 @@ export function artifactDownloadUrl(slug: string, path: string): string {
   )}/download?disposition=attachment`;
 }
 
+/** The bytes served inline (image, PDF, …) for the in-app viewer. */
+export function artifactInlineUrl(slug: string, path: string): string {
+  return `/api/outputs/${slug}/files/${encodeArtifactPath(
+    path,
+  )}/download?disposition=inline`;
+}
+
+/**
+ * An HTML deliverable as an ARTIFACT PAGE: the server lets the page's own
+ * scripts run but shuts every way out (no network, no forms, no navigation);
+ * the viewer frames it with `sandbox="allow-scripts"` and no same-origin, so
+ * the page lives in an opaque origin that cannot reach the app.
+ */
+export function artifactPageUrl(slug: string, path: string): string {
+  return `/api/outputs/${slug}/files/${encodeArtifactPath(path)}/page`;
+}
+
 export type ArtifactOpenKind = "rendered" | "inline" | "opaque";
 
 const _INLINE_EXT = [

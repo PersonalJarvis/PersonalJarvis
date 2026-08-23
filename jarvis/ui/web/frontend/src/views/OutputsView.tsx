@@ -7,8 +7,6 @@ import {
   ListChecks,
   FileQuestion,
   FileText,
-  ChevronRight,
-  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ViewHeader } from "@/views/ChatsView";
@@ -21,21 +19,16 @@ import {
   useOutputsList,
   usePlanForOutput,
   useArtifactsForOutput,
-  useArtifactFile,
   useCancelMission,
   useOutputsCapabilities,
-  useOpeners,
-  usePreferredOpener,
-  useSetPreferredOpener,
-  artifactOpenUrl,
-  revealArtifact,
-  openArtifactWith,
   type OutputSummary,
   type OutputStatus,
   type ArtifactSummary,
 } from "@/hooks/useOutputs";
-import { OpenWithDialog } from "@/components/OpenWithDialog";
-import { openExternalUrl } from "@/lib/openExternal";
+import {
+  ArtifactViewer,
+  deliverableDisplayPath,
+} from "@/components/outputs/ArtifactViewer";
 import { useT } from "@/i18n";
 import { applyMissionDragImage } from "@/lib/missionDragImage";
 import { useMissionDrag } from "@/store/missionDrag";
@@ -595,13 +588,6 @@ function isPlumbingArtifact(path: string): boolean {
   );
 }
 
-const ARCHIVED_DELIVERABLE_PREFIX = /^tasks\/[^/]+\/artifacts\/files\//;
-
-/** Hide archive plumbing from the label while retaining the full path for APIs. */
-function deliverableDisplayPath(path: string): string {
-  return path.replace(ARCHIVED_DELIVERABLE_PREFIX, "");
-}
-
 /** Put primary top-level files first, then group nested assets alphabetically. */
 function compareDeliverablePaths(a: ArtifactSummary, b: ArtifactSummary): number {
   const left = deliverableDisplayPath(a.path);
@@ -652,197 +638,14 @@ function ArtifactsSection({ slug }: { slug: string }) {
           {t("outputs_view.no_files")}
         </div>
       ) : (
-        <ul className="flex flex-col gap-1">
-          {files.map((f) => (
-            <ArtifactRow
-              key={f.path}
-              slug={slug}
-              file={f}
-              nativeActions={nativeActions}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function ArtifactRow({
-  slug,
-  file,
-  nativeActions,
-}: {
-  slug: string;
-  file: ArtifactSummary;
-  nativeActions: boolean;
-}) {
-  const t = useT();
-  const [expanded, setExpanded] = useState(false);
-  const [chooserOpen, setChooserOpen] = useState(false);
-  const full = useArtifactFile(slug, expanded ? file.path : null);
-  const openUrl = artifactOpenUrl(slug, file.path);
-  const openers = useOpeners();
-  const preferred = usePreferredOpener();
-  const setPreferred = useSetPreferredOpener();
-
-  // The render endpoint as an ABSOLUTE url. The open-external bridge resolves it
-  // through `open_url`, which validates an http(s) absolute url — a relative path
-  // would 400 there and leave only the (WebView2-dropped) window.open fallback.
-  const absoluteOpenUrl = openUrl
-    ? new URL(openUrl, window.location.origin).toString()
-    : null;
-
-  // Open the artifact's render url in the user's real default browser. Routes
-  // through openExternalUrl (the backend open-external bridge), NOT a bare
-  // window.open — the embedded WebView2 desktop shell silently drops
-  // window.open / target="_blank", which is exactly why the "Browser" opener did
-  // nothing on the desktop. The bridge opens the OS default browser on every OS
-  // and falls back to a window.open tab on a headless/remote host.
-  const openInBrowser = () => {
-    if (absoluteOpenUrl) void openExternalUrl(absoluteOpenUrl);
-  };
-
-  const openWithOpener = (opener: string) => {
-    if (opener === "browser" && absoluteOpenUrl) {
-      openInBrowser();
-      return;
-    }
-    void openArtifactWith(slug, file.path, opener).catch(() => {});
-  };
-
-  // Open the file with a specific app (desktop). Remembering persists the
-  // choice so the next "Open" click skips the chooser.
-  const pickOpener = (opener: string, remember: boolean) => {
-    openWithOpener(opener);
-    if (remember) setPreferred.mutate(opener);
-    setChooserOpen(false);
-  };
-
-  const handleOpen = () => {
-    if (!nativeActions) {
-      // Headless VPS / web: the UI is already a real browser tab. openExternalUrl
-      // asks the backend first (no display there -> opened:false) and falls back
-      // to a window.open tab, so the render URL opens in the user's own browser.
-      openInBrowser();
-      return;
-    }
-    const pref = preferred.data ?? "";
-    if (pref) {
-      openWithOpener(pref);
-    } else {
-      setChooserOpen(true); // first time: ask which app
-    }
-  };
-
-  const sizeLabel =
-    file.size < 1024
-      ? `${file.size} B`
-      : file.size < 1024 * 1024
-        ? `${(file.size / 1024).toFixed(1)} KiB`
-        : `${(file.size / (1024 * 1024)).toFixed(1)} MiB`;
-
-  const previewText = expanded
-    ? full.data?.text ?? file.preview ?? ""
-    : file.preview;
-
-  return (
-    <li className="rounded-lg border border-border/60 bg-background/40">
-      <div className="flex w-full items-center gap-1 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:bg-secondary/30"
-        >
-          {expanded ? (
-            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-          )}
-          <span
-            className="min-w-0 flex-1 truncate font-mono text-[11px]"
-            data-testid="artifact-path"
-            title={file.path}
-          >
-            {deliverableDisplayPath(file.path)}
-          </span>
-        </button>
-        <span className="shrink-0 text-[10px] text-muted-foreground">
-          {sizeLabel}
-        </span>
-        <div className="flex shrink-0 items-center gap-0.5">
-          {(nativeActions || openUrl) && (
-            <button
-              type="button"
-              title={t("outputs_view.open_action")}
-              onClick={handleOpen}
-              className="rounded p-1 hover:bg-secondary/40"
-            >
-              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          )}
-          {nativeActions && (
-            <button
-              type="button"
-              title={t("outputs_view.open_with_change")}
-              onClick={() => setChooserOpen(true)}
-              className="rounded p-1 hover:bg-secondary/40"
-            >
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          )}
-          {nativeActions && (
-            <button
-              type="button"
-              title={t("outputs_view.reveal_in_folder")}
-              onClick={() =>
-                void revealArtifact(slug, file.path).catch(() => {})
-              }
-              className="rounded p-1 hover:bg-secondary/40"
-            >
-              <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {chooserOpen && (
-        <OpenWithDialog
-          openers={openers.data ?? []}
-          onPick={pickOpener}
-          onClose={() => setChooserOpen(false)}
+        <ArtifactViewer
+          key={slug}
+          slug={slug}
+          files={files}
+          nativeActions={nativeActions}
         />
       )}
-
-      {expanded && (
-        <div className="border-t border-border/40 px-3 py-2">
-          {!file.is_text ? (
-            <div className="text-[11px] text-muted-foreground">
-              {t("outputs_view.binary_file_hint")}
-            </div>
-          ) : full.isLoading ? (
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              {t("outputs_view.loading_file")}
-            </div>
-          ) : full.isError ? (
-            <div className="text-[11px] text-destructive">
-              {t("common.error")}: {String(full.error)}
-            </div>
-          ) : (
-            <>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-[11px] font-mono text-foreground/90">
-                {previewText || ""}
-              </pre>
-              {full.data?.truncated && (
-                <div className="mt-1 text-[10px] text-muted-foreground">
-                  {t("outputs_view.file_truncated")}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </li>
+    </section>
   );
 }
 

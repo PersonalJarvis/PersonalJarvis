@@ -2213,6 +2213,14 @@
     "open_with_loading": "Detecting apps…",
     "opener_default": "System default app",
     "opener_browser": "Browser",
+    "view_mode": "View",
+    "view_rendered": "Rendered",
+    "view_source": "Source",
+    "copy_contents": "Copy contents",
+    "fullscreen": "Open as full-window reader",
+    "exit_fullscreen": "Close reader",
+    "csv_empty": "This table is empty.",
+    "csv_more_rows": "{n} more rows in the file.",
     "reveal_in_folder": "Reveal in folder"
   },
   "common": {
