@@ -139,7 +139,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const modelList = useMemo(() => {
     if (!provider) return [];
     const live = liveModels[provider.id];
-    return provider.models_source === "live" && live && live.length ? live : provider.curated_models;
+    return provider.models_source === "live" && live && live.length
+      ? live
+      : (provider.curated_models ?? []);
   }, [provider, liveModels]);
 
   const modelGroups = useMemo<ComboboxGroup[]>(() => {
@@ -165,7 +167,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     if (!provider) return [];
     const model = modelList.find((m) => m.id === draft.model);
     if (model && Array.isArray(model.efforts)) return model.efforts;
-    return provider.effort_levels;
+    return provider.effort_levels ?? [];
   }, [provider, modelList, draft.model]);
 
   useEffect(() => {
@@ -190,10 +192,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   );
 
   const permissionModes = useMemo(
-    () => (provider ? provider.permission_modes.filter((m) => m.id !== "plan") : []),
+    () => (provider?.permission_modes ?? []).filter((m) => m.id !== "plan"),
     [provider],
   );
-  const hasPlan = Boolean(provider?.permission_modes.some((m) => m.id === "plan"));
+  const hasPlan = Boolean((provider?.permission_modes ?? []).some((m) => m.id === "plan"));
   const planOn = draft.permissionMode === "plan";
   const permissionGroups = useMemo<ComboboxGroup[]>(
     () => [
@@ -207,7 +209,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   // While Plan is on, the permission pill shows the mode Build would return to.
   const permissionValue = planOn ? draft.buildMode || provider?.default_permission_mode || "" : draft.permissionMode;
   const permissionDescription =
-    provider?.permission_modes.find((m) => m.id === draft.permissionMode)?.description ?? "";
+    (provider?.permission_modes ?? []).find((m) => m.id === draft.permissionMode)?.description ?? "";
 
   const canSend = connected && Boolean(value.trim()) && !running && !busy && Boolean(provider?.connected);
   const placeholder = connected

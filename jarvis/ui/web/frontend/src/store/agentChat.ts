@@ -241,10 +241,25 @@ export const useAgentChatStore = create<AgentChatStore>((set, get) => {
 
     loadCatalog: async () => {
       try {
-        const [catalog, connections] = await Promise.all([
+        const [raw, connections] = await Promise.all([
           fetchAgentChatCatalog(),
           fetchAgentConnections().catch(() => [] as AgentConnectionRow[]),
         ]);
+        // A backend older than this bundle (the app not yet restarted after
+        // an update) may lack the newer arrays; an empty ladder is honest,
+        // a crash is not.
+        const catalog: AgentChatCatalog = {
+          ...raw,
+          providers: (raw.providers ?? []).map((p) => ({
+            ...p,
+            curated_models: Array.isArray(p.curated_models) ? p.curated_models : [],
+            effort_levels: Array.isArray(p.effort_levels) ? p.effort_levels : [],
+            permission_modes: Array.isArray(p.permission_modes) ? p.permission_modes : [],
+            default_permission_mode: p.default_permission_mode ?? "",
+            default_effort: p.default_effort ?? "",
+            default_model: p.default_model ?? "",
+          })),
+        };
         set({ catalog, connections, catalogError: null });
         // Settle the draft: an empty or unknown provider becomes the active
         // sub-agent (else the first connected one); blank picks take the
