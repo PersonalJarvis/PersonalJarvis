@@ -141,6 +141,19 @@ MAX_PROVIDER_TRIES = 3
 FAILURES_BEFORE_QUIET = 3
 QUIET_S = 600.0
 
+#: The same idea per PROVIDER. The pane-level guard above only engages when
+#: EVERY family fails, so a dead first family was paid on every single cycle
+#: as long as a later one still wrote the recap — live (2026-08-23, 12 panes):
+#: two ~14 s CLI turns whose answer never parsed, then two API calls that
+#: 402/429, on every refresh of every pane, for hours, before the subscription
+#: CLI wrote the sentence. A provider that failed this many summaries in a
+#: row is skipped for ``PROVIDER_QUIET_S``; one success clears it, and when
+#: every candidate is cooling the whole chain still runs (the pane-level
+#: guard is the one that decides then). The recap itself is unchanged — it
+#: only stops re-buying the failures.
+PROVIDER_FAILURES_BEFORE_QUIET = 3
+PROVIDER_QUIET_S = 600.0
+
 #: This is a DISPLAY budget, not merely a transport cap.  In a normal grid the
 #: call-sign and pane actions leave room for about 48 characters; a 90-character
 #: model instruction merely guaranteed that CSS would hide the distinguishing
@@ -369,6 +382,37 @@ class _PaneState:
 _panes: dict[str, _PaneState] = {}
 _tasks: set[asyncio.Task[None]] = set()
 _inflight = 0
+#: Per-provider circuit breaker (see PROVIDER_FAILURES_BEFORE_QUIET): consecutive
+#: failures and the monotonic time until which the provider is not asked.
+_provider_failures: dict[str, int] = {}
+_provider_quiet_until: dict[str, float] = {}
+
+
+def _provider_label(brain: Any) -> str:
+    """The name a brain is tracked (and logged) under — the model, else the type."""
+    return str(getattr(brain, "model", "") or getattr(brain, "name", "") or type(brain).__name__)
+
+
+def _provider_is_quiet(label: str, now: float) -> bool:
+    return _provider_quiet_until.get(label, 0.0) > now
+
+
+def _note_provider_failure(label: str, now: float) -> None:
+    count = _provider_failures.get(label, 0) + 1
+    _provider_failures[label] = count
+    if count >= PROVIDER_FAILURES_BEFORE_QUIET and not _provider_is_quiet(label, now):
+        _provider_quiet_until[label] = now + PROVIDER_QUIET_S
+        logger.info(
+            "Agentic IDE recap: {} failed {}x in a row — not asked again for {:.0f}s",
+            label,
+            count,
+            PROVIDER_QUIET_S,
+        )
+
+
+def _note_provider_success(label: str) -> None:
+    _provider_failures.pop(label, None)
+    _provider_quiet_until.pop(label, None)
 
 
 def describe_failure(exc: BaseException) -> str:
@@ -925,8 +969,21 @@ async def summarize_with_model(
     brains = await asyncio.to_thread(_resolve_brains)
     if not brains:
         return None
+    # Skip the families that keep failing (PROVIDER_FAILURES_BEFORE_QUIET). When
+    # every one of them is cooling the chain runs in full anyway: the pane-level
+    # guard — not this one — decides what an install with nothing working does.
+    now = time.monotonic()
+    eligible = [b for b in brains if not _provider_is_quiet(_provider_label(b), now)]
+    if not eligible:
+        eligible = list(brains)
+    elif len(eligible) < len(brains):
+        logger.debug(
+            "Agentic IDE recap: skipping {} cooling provider(s): {}",
+            len(brains) - len(eligible),
+            ", ".join(_provider_label(b) for b in brains if b not in eligible),
+        )
     first_failure: Exception | None = None
-    for brain in brains:
+    for brain in eligible:
         try:
             from .prompt_composer import compose_busy
 
@@ -935,15 +992,20 @@ async def summarize_with_model(
                 break
         except Exception:  # noqa: BLE001 - a missed pause never costs the brief
             logger.debug("Agentic IDE recap: compose-busy check failed", exc_info=True)
+        label = _provider_label(brain)
         try:
-            return await _summarize_on(brain, term, rows, folder=folder)
+            answer = await _summarize_on(brain, term, rows, folder=folder)
         except Exception as exc:  # noqa: BLE001 - the next family is the handling
             first_failure = first_failure or exc
+            _note_provider_failure(label, time.monotonic())
             logger.info(
                 "Agentic IDE recap: {} could not write it ({}) — crossing to the next provider",
-                getattr(brain, "model", "") or getattr(brain, "name", "") or type(brain).__name__,
+                label,
                 type(exc).__name__,
             )
+        else:
+            _note_provider_success(label)
+            return answer
     if first_failure is None:
         return None
     raise first_failure
@@ -1119,6 +1181,8 @@ def reset_for_tests() -> None:
     _panes.clear()
     _tasks.clear()
     _inflight = 0
+    _provider_failures.clear()
+    _provider_quiet_until.clear()
 
 
 __all__ = [
@@ -1135,6 +1199,8 @@ __all__ = [
     "STABLE_AFTER_LINES",
     "UNLABELLED_HEADLINE_CHARS",
     "NO_PROVIDER_NOTE",
+    "PROVIDER_FAILURES_BEFORE_QUIET",
+    "PROVIDER_QUIET_S",
     "WHY_DISABLED",
     "WHY_NOT_STARTED",
     "WHY_PINNED",

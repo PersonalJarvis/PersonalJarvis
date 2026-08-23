@@ -536,6 +536,105 @@ def test_when_every_family_fails_the_first_failure_is_reported(monkeypatch) -> N
         asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
 
 
+# ------------------------------------------------ the per-provider breaker
+
+
+class _CountingBrain:
+    """A protocol fake that counts how often it was asked, failing or writing."""
+
+    def __init__(self, model: str, *, fails: bool) -> None:
+        self.model = model
+        self.fails = fails
+        self.calls = 0
+
+    async def complete(self, request):  # noqa: ANN001, ANN202 - protocol fake
+        self.calls += 1
+        if self.fails:
+            raise RuntimeError(f"{self.model} cannot write today")
+        yield SimpleNamespace(
+            content=(
+                "HEADLINE: Pane recaps — provider breaker\n"
+                "DETAIL: The goal is a recap that stops paying for a dead first "
+                "family. The working family wrote this one."
+            )
+        )
+
+
+def test_a_provider_that_keeps_failing_is_skipped_after_three_strikes(monkeypatch) -> None:
+    """Live 2026-08-23: the first family burned two ~14 s CLI turns on EVERY
+    refresh of EVERY pane because a later family always rescued the recap, so
+    the pane-level quiet period never engaged. Three failures in a row now
+    bench that provider; the recap still lands, on the family that writes."""
+    dead = _CountingBrain("dead-first", fails=True)
+    alive = _CountingBrain("alive-second", fails=False)
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [dead, alive])
+
+    for _ in range(recap_engine.PROVIDER_FAILURES_BEFORE_QUIET):
+        answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+        assert answer is not None and answer.writer == "alive-second"
+    assert dead.calls == recap_engine.PROVIDER_FAILURES_BEFORE_QUIET
+
+    answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    assert answer is not None and answer.writer == "alive-second"
+    assert dead.calls == recap_engine.PROVIDER_FAILURES_BEFORE_QUIET  # not asked again
+    assert alive.calls == recap_engine.PROVIDER_FAILURES_BEFORE_QUIET + 1
+
+
+def test_a_benched_provider_is_asked_again_once_its_quiet_period_is_over(monkeypatch) -> None:
+    dead = _CountingBrain("dead-first", fails=True)
+    alive = _CountingBrain("alive-second", fails=False)
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [dead, alive])
+    for _ in range(recap_engine.PROVIDER_FAILURES_BEFORE_QUIET):
+        asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+    assert dead.calls == recap_engine.PROVIDER_FAILURES_BEFORE_QUIET
+
+    later = time.monotonic() + recap_engine.PROVIDER_QUIET_S + 1.0
+    monkeypatch.setattr(recap_engine.time, "monotonic", lambda: later)
+    asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    assert dead.calls == recap_engine.PROVIDER_FAILURES_BEFORE_QUIET + 1
+
+
+def test_one_success_clears_a_providers_strikes(monkeypatch) -> None:
+    flaky = _CountingBrain("flaky-first", fails=True)
+    alive = _CountingBrain("alive-second", fails=False)
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [flaky, alive])
+    for _ in range(recap_engine.PROVIDER_FAILURES_BEFORE_QUIET - 1):
+        asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+    flaky.fails = False
+    answer = asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+    assert answer is not None and answer.writer == "flaky-first"
+    flaky.fails = True
+
+    for _ in range(recap_engine.PROVIDER_FAILURES_BEFORE_QUIET - 1):
+        asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+    asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    # 2 strikes, a success (reset), then 2 more strikes + the third: the
+    # breaker only counts CONSECUTIVE failures, so the flaky family was asked
+    # on every call so far and is benched only now.
+    assert flaky.calls == 2 * recap_engine.PROVIDER_FAILURES_BEFORE_QUIET
+    asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+    assert flaky.calls == 2 * recap_engine.PROVIDER_FAILURES_BEFORE_QUIET
+
+
+def test_when_every_provider_is_cooling_the_chain_still_runs_in_full(monkeypatch) -> None:
+    """An install where nothing writes keeps today's behaviour: every family is
+    tried, the first failure is the one reported, and the PANE-level quiet
+    period is what stops the retries — the breaker never turns a broken
+    install into a silent one."""
+    first = _CountingBrain("first", fails=True)
+    second = _CountingBrain("second", fails=True)
+    monkeypatch.setattr(recap_engine, "_resolve_brains", lambda: [first, second])
+
+    for _ in range(recap_engine.PROVIDER_FAILURES_BEFORE_QUIET + 2):
+        with pytest.raises(RuntimeError, match="first cannot write today"):
+            asyncio.run(recap_engine.summarize_with_model(_pane(), _rows(20)))
+
+    assert first.calls == second.calls == recap_engine.PROVIDER_FAILURES_BEFORE_QUIET + 2
+
+
 def test_a_depleted_key_failure_reads_as_a_sentence_not_json() -> None:
     """The screenshot case: the card led with a wall of provider JSON."""
     note = recap_engine.describe_failure(
