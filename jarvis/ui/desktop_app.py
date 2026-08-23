@@ -1718,6 +1718,12 @@ class DesktopApp:
             bus=server.bus, db_path=default_chats_db_path(self.cfg.memory.data_dir)
         )
         chat_store.open()
+        # The reasoning trace of a chat turn (tool calls, worker dispatch, the
+        # brain's rationale) is recorded off the bus and stored next to the
+        # reply, so a reopened chat shows "Thought for 4s" + steps again.
+        from jarvis.state.turn_trace import TurnTraceCollector
+
+        turn_traces = TurnTraceCollector(server.bus)
         # Cap unbounded growth at startup (mirrors the session-store prune in
         # sessions/init.py). 365d is deliberately generous — the user wants "all
         # my chats"; voice sessions already prune at 30d and text is tiny — so
@@ -2035,6 +2041,9 @@ class DesktopApp:
                 return
 
             thread_id = evt.thread_id or "default"
+            # The turn's trace window opens with the user's words; everything
+            # the bus sees from here until the reply lands is this turn's.
+            turn_started_ms = time.time_ns() // 1_000_000
             # Persist the initiating turn before the reply. Older builds stored
             # only the assistant half, producing anonymous "New Thread" rows
             # that looked like text messages the user never sent.
@@ -2134,6 +2143,18 @@ class DesktopApp:
                 )
             except Exception:  # noqa: BLE001 — a missing ack must never block chat
                 logger.opt(exception=True).debug("chat instant ack not armed")
+            # Word-by-word preview of the reply for the chat column: the
+            # brain's text_consumer feeds a coalescing publisher, the UI
+            # shows the growing text and swaps in the final message.
+            from jarvis.core.text_stream import TextDeltaPublisher
+
+            delta_publisher = TextDeltaPublisher(
+                server.bus,
+                channel="chat",
+                thread_id=thread_id,
+                trace_id=evt.trace_id,
+                source_layer="ui.desktop.chat",
+            )
             try:
                 await supervisor.set_state("THINKING")
                 generate = getattr(brain, "generate", None)
@@ -2161,6 +2182,7 @@ class DesktopApp:
                         "source_layer": evt.source_layer,
                         "conversation_id": thread_id,
                         "allow_voice_confirm": True,
+                        "text_consumer": delta_publisher.feed,
                     }
                     reply = await _await_cancellable_chat_turn(
                         generate(
@@ -2177,6 +2199,7 @@ class DesktopApp:
                 detail = f"{type(exc).__name__}: {exc}"
                 message = f"Brain error: {detail}"
                 logger.opt(exception=exc).warning("BrainManager call failed")
+                delta_publisher.cancel()
                 if ack_task is not None and not ack_task.done():
                     ack_task.cancel()
                 await server.bus.publish(
@@ -2210,15 +2233,22 @@ class DesktopApp:
                 # The user pressed the bar's X mid-think — honour it and drop
                 # back to IDLE instead of speaking a half-finished turn.
                 logger.info("Chat turn aborted by the bar's X — back to IDLE.")
+                delta_publisher.cancel()
                 await supervisor.set_state("IDLE")
                 return
+            await delta_publisher.flush(done=True)
 
             try:
                 await supervisor.set_state("SPEAKING")
                 if reply:
                     role = "system" if _is_brain_diagnostic(reply) else "assistant"
+                    trace = (
+                        turn_traces.snapshot(turn_started_ms)
+                        if role == "assistant"
+                        else None
+                    )
                     await chat_store.add_message(
-                        thread_id=thread_id, role=role, text=reply
+                        thread_id=thread_id, role=role, text=reply, trace=trace
                     )
             finally:
                 await supervisor.set_state("IDLE")

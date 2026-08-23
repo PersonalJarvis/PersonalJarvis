@@ -37,6 +37,7 @@ from jarvis.state.conversation_constants import (
     CONVERSATION_KIND_VOICE,
     ConversationKind,
 )
+from jarvis.state.turn_trace import trace_from_events
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +75,11 @@ class ChatTurn(BaseModel):
     role: str
     text: str
     ts_ms: int = 0
+    # The reasoning trace behind an assistant reply — the event list
+    # ``jarvis.state.turn_trace`` stores (``{started_ms, ended_ms, events}``),
+    # replayed by the UI into the "Thought for Ns" steps. None for user and
+    # system lines and for replies recorded before traces were kept.
+    trace: dict[str, Any] | None = None
 
 
 class ConversationDetail(BaseModel):
@@ -175,6 +181,7 @@ def _normalized_messages(
                 role=m["role"],
                 text=m["text"],
                 ts_ms=int(m["timestamp_ns"]) // 1_000_000,
+                trace=m.get("trace") if m["role"] == "assistant" else None,
             )
             for m in thread["messages"]
         ]
@@ -185,6 +192,7 @@ def _normalized_messages(
         if session is None:
             return None
         turns = session_store.get_turns(cid)
+        events = _voice_events(session_store, cid)
         out: list[ChatTurn] = []
         for turn in turns:
             if getattr(turn, "user_text", ""):
@@ -197,10 +205,47 @@ def _normalized_messages(
                         role="assistant",
                         text=turn.jarvis_text,
                         ts_ms=int(turn.ended_ms or turn.started_ms),
+                        trace=_voice_turn_trace(turn, events),
                     )
                 )
         return out
     return None
+
+
+def _voice_events(session_store: Any, session_id: str) -> list[Any]:
+    """Every recorded event of a voice session; [] when the store cannot say."""
+    getter = getattr(session_store, "get_events", None)
+    if not callable(getter):
+        return []
+    try:
+        return list(getter(session_id) or [])
+    except Exception as exc:  # noqa: BLE001 — a trace is sugar, the transcript must load
+        log.debug("voice events unavailable for %s: %s", session_id, exc)
+        return []
+
+
+def _voice_turn_trace(turn: Any, events: list[Any]) -> dict[str, Any] | None:
+    """The reasoning trace of one voice turn, from the session recorder's rows.
+
+    Rows carry the turn they belong to; the ones that do not (a tool event
+    published before the recorder opened the turn) fall back to the turn's
+    time window. Either way the result is the same shape a typed turn stores,
+    so the history shows both alike.
+    """
+    turn_id = str(getattr(turn, "id", "") or "")
+    started = int(getattr(turn, "started_ms", 0) or 0)
+    ended = getattr(turn, "ended_ms", None)
+    until = int(ended) if ended else None
+    own = [e for e in events if turn_id and getattr(e, "turn_id", None) == turn_id]
+    if own:
+        # Keep the window generous around the recorder's turn bounds: a trace
+        # row tagged with this turn belongs to it wherever its clock says.
+        lo = min(started, min(int(getattr(e, "ts_ms", started)) for e in own))
+        hi = max(int(getattr(e, "ts_ms", lo)) for e in own)
+        return trace_from_events(own, since_ms=lo, until_ms=max(hi, until or hi))
+    if not started:
+        return None
+    return trace_from_events(events, since_ms=started, until_ms=until)
 
 
 def _seed_pairs(messages: list[ChatTurn]) -> list[tuple[str, str]]:

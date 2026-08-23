@@ -1822,6 +1822,34 @@ class ToolCallCompleted(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class AssistantTextDelta(Event):
+    """The assistant's reply while it is still being produced — word by word.
+
+    Published by every reply path that sees text before the whole answer is
+    in: the typed-chat bridge (``BrainManager.generate(text_consumer=…)``),
+    the classic speech pipeline's brain stream, and the realtime session's
+    output transcript. The UI shows it as the growing, muted answer and
+    replaces it with the authoritative final text (``MessageSent`` /
+    ``SpeechSpoken``) when the turn closes — so nothing here is history, and
+    a snapshot that never gets its ``done`` is simply discarded.
+
+    ``text`` is the CUMULATIVE snapshot so far, never a chunk: WebSocket
+    delivery is at-least-once and the desktop may run several windows, and a
+    snapshot is idempotent where a chunk would double up. Publishers coalesce
+    through :class:`jarvis.core.text_stream.TextDeltaPublisher` so the bus
+    sees a handful of events per second, not one per token (AP-9: nothing
+    here may weigh on the voice hot path).
+    """
+
+    text: str = ""
+    thread_id: str = ""
+    # Which reply path produced it: "chat" | "voice" | "realtime".
+    channel: str = ""
+    # The last snapshot of this turn — the UI may stop waiting for more.
+    done: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class JarvisAgentBackgroundCompleted(Event):
     """A background Jarvis-Agent task finished — TTS should speak proactively.
 

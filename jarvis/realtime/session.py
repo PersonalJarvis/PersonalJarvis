@@ -2690,6 +2690,10 @@ class RealtimeVoiceSession:
         self._call_had_semantic_turn = False
         self._failure_already_spoken = False
         self._output_transcript: list[str] = []
+        # The reply as it grows, for the UI (AssistantTextDelta) — one
+        # coalescing publisher per turn, closed when the turn completes.
+        self._reply_delta: Any = None
+        self._reply_delta_turn: str | None = None
         # BUG-089: text-level self-echo backstop. The realtime path's acoustic
         # gates leak on open speakers next to a built-in mic (macOS), so every
         # text this session makes audible is registered here and each final
@@ -5606,6 +5610,7 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     self._output_transcript.append(display)
+                    self._note_reply_delta()
                     if (
                         delegate_state is None
                         and self._external_update is None
@@ -7655,6 +7660,38 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001, S110
             pass
 
+    def _note_reply_delta(self) -> None:
+        """Hand the UI the reply as it grows (word by word, coalesced)."""
+        if self._bus is None:
+            return
+        try:
+            from jarvis.core.text_stream import TextDeltaPublisher
+
+            turn = str(self._turn_id or "")
+            if self._reply_delta is None or self._reply_delta_turn != turn:
+                self._reply_delta = TextDeltaPublisher(
+                    self._bus,
+                    channel="realtime",
+                    thread_id=self.session_id,
+                    trace_id=self._turn_trace_id,
+                    source_layer=f"realtime.{self.active_provider}",
+                )
+                self._reply_delta_turn = turn
+            self._reply_delta.set_text("".join(self._output_transcript))
+        except Exception:  # noqa: BLE001 — a live preview must never touch the turn
+            log.debug("realtime[%s] reply delta skipped", self.session_id, exc_info=True)
+
+    async def _close_reply_delta(self) -> None:
+        """Publish the last snapshot of the turn's reply with ``done=True``."""
+        publisher, self._reply_delta = self._reply_delta, None
+        self._reply_delta_turn = None
+        if publisher is None:
+            return
+        try:
+            await publisher.flush(done=True)
+        except Exception:  # noqa: BLE001
+            log.debug("realtime[%s] reply delta close skipped", self.session_id, exc_info=True)
+
     async def _publish_transcription(self, text: str, is_final: bool) -> None:
         if self._bus is None:
             return
@@ -9055,6 +9092,7 @@ class RealtimeVoiceSession:
             self._last_user_text = self._last_user_text_preview
             self._last_user_text_preview = ""
         answer = "".join(self._output_transcript).strip()
+        await self._close_reply_delta()
         delegate_state = self._delegate_turns.pop(self._turn_id, None)
         external_update = self._external_update
         if external_update is not None and delegate_state is not None:

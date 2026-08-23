@@ -256,3 +256,40 @@ describe("transcriptFromMessages", () => {
     ]);
   });
 });
+
+describe("transcriptFromMessages with stored traces", () => {
+  it("puts a folded steps line in front of a reply that carries a trace", () => {
+    const lines = transcriptFromMessages([
+      { role: "user", content: "Search my mail", ts: 1_000 },
+      {
+        role: "assistant",
+        content: "Found two.",
+        ts: 5_000,
+        trace: {
+          durationMs: 3_500,
+          steps: [
+            {
+              id: "x",
+              kind: "tool",
+              labelKey: "thinking.step_tool",
+              detail: "gmail_search",
+              status: "done",
+              startedTs: 1_200,
+              durationMs: 800,
+            },
+          ],
+        },
+      },
+      { role: "assistant", content: "No trace here.", ts: 9_000 },
+    ]);
+    expect(lines.map((l) => l.who)).toEqual(["user", "steps", "assistant", "assistant"]);
+    const steps = lines[1];
+    expect(steps.who).toBe("steps");
+    if (steps.who === "steps") {
+      expect(steps.live).toBe(false);
+      expect(steps.durationMs).toBe(3_500);
+      expect(steps.startedTs).toBe(1_500);
+      expect(steps.steps[0].detail).toBe("gmail_search");
+    }
+  });
+});

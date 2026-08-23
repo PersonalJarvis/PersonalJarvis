@@ -312,6 +312,27 @@ export function useWebSocket(): void {
           }
         }
 
+        // The typed chat's reply as it is written: cumulative snapshots
+        // from the chat bridge, shown muted under the live steps until the
+        // final MessageSent replaces them. Voice channels feed the home
+        // store's lane through `ingest` above.
+        if (env.event_name === "AssistantTextDelta") {
+          const p = env.payload as {
+            text?: string;
+            thread_id?: string;
+            channel?: string;
+            done?: boolean;
+          };
+          if (p.channel === "chat" && typeof p.text === "string") {
+            useEventStore.getState().setLiveReply({
+              text: p.text,
+              threadId: p.thread_id ?? "",
+              done: Boolean(p.done),
+              ts: Math.floor(env.timestamp_ns / 1_000_000),
+            });
+          }
+        }
+
         if (env.event_name === "DictationTranscript") {
           // In-app dictation. Interim partials overwrite the live tail; the
           // final one is delivered. Separate from TranscriptionUpdate so

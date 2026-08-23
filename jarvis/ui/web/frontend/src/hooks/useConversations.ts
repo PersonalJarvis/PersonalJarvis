@@ -4,6 +4,7 @@ import { useEventStore, type ChatMessage, type ConversationKind } from "@/store/
 import {
   deleteTextConversation,
   detailToMessages,
+  detailToTraces,
   fetchConversations,
   resumeConversation,
 } from "@/lib/chatsApi";
@@ -29,6 +30,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
   const setConversations = useEventStore((s) => s.setConversations);
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
+  const seedThinkingTraces = useEventStore((s) => s.seedThinkingTraces);
 
   const refresh = useCallback(async () => {
     try {
@@ -55,21 +57,28 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     async (kind: ConversationKind, id: string): Promise<ChatMessage[]> => {
       setActiveConversation(kind, id);
       let messages: ChatMessage[] = [];
+      let traces = {};
       try {
-        messages = detailToMessages(await resumeConversation(kind, id));
+        const detail = await resumeConversation(kind, id);
+        messages = detailToMessages(detail);
+        traces = detailToTraces(detail);
       } catch {
         /* unreachable / gone — an empty thread is the honest view */
       }
+      // The stored traces replace the previous conversation's, so a reply
+      // in the new thread never wears the steps of an old one.
+      seedThinkingTraces(traces);
       setMessages(messages);
       return messages;
     },
-    [setActiveConversation, setMessages],
+    [seedThinkingTraces, setActiveConversation, setMessages],
   );
 
   const newChat = useCallback(() => {
     setActiveConversation("text", null);
+    seedThinkingTraces({});
     setMessages([]);
-  }, [setActiveConversation, setMessages]);
+  }, [seedThinkingTraces, setActiveConversation, setMessages]);
 
   const removeConversation = useCallback(
     async (id: string) => {

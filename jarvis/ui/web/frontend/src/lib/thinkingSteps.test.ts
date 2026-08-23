@@ -7,6 +7,8 @@ import {
   finalizeThinkingSteps,
   MAX_THINKING_STEPS,
   reduceThinkingSteps,
+  replayTrace,
+  traceModel,
   type ThinkingStep,
 } from "@/lib/thinkingSteps";
 
@@ -181,5 +183,87 @@ describe("finalizeThinkingSteps", () => {
     const finalized = finalizeThinkingSteps(steps, T0 + 100);
     expect(finalized[0]).toMatchObject({ status: "done", durationMs: 10 });
     expect(finalized[1]).toMatchObject({ status: "done", durationMs: 80 });
+  });
+});
+
+describe("rationale, arguments and results", () => {
+  it("puts the model's rationale as a thought row in front of the tool row", () => {
+    const steps = run([
+      [
+        "ActionProposed",
+        {
+          tool_name: "wiki-recall",
+          args: { query: "Urlaub" },
+          rationale: "I'll look that up in the wiki.",
+        },
+      ],
+      ["ActionExecuted", { tool_name: "wiki-recall", success: true, duration_ms: 40, output_preview: "2 pages" }],
+    ]);
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toMatchObject({
+      kind: "thought",
+      detail: "I'll look that up in the wiki.",
+      status: "done",
+    });
+    expect(steps[1]).toMatchObject({
+      kind: "tool",
+      detail: "wiki-recall",
+      args: { query: "Urlaub" },
+      result: "2 pages",
+      status: "done",
+    });
+  });
+
+  it("keeps the error text of a failed or denied call", () => {
+    const failed = run([
+      ["ActionProposed", { tool_name: "open_app", args: { app: "Foo" } }],
+      ["ActionExecuted", { tool_name: "open_app", success: false, error: "not installed" }],
+    ]);
+    expect(failed[0]).toMatchObject({ status: "error", error: "not installed" });
+    const denied = run([
+      ["ActionProposed", { tool_name: "run_shell" }],
+      ["ActionDenied", { tool_name: "run_shell", reason: "blocked by policy" }],
+    ]);
+    expect(denied[0]).toMatchObject({ status: "error", error: "blocked by policy" });
+  });
+
+  it("names the provider that actually answered on the brain row", () => {
+    const steps = run([
+      ["BrainTurnStarted", { provider: "openai", model: "gpt-5" }],
+      ["BrainTurnStarted", { provider: "anthropic", model: "claude" }],
+      ["BrainTurnCompleted", { provider: "anthropic", model: "claude" }],
+    ]);
+    expect(traceModel(steps)).toBe("anthropic · claude");
+  });
+});
+
+describe("replayTrace", () => {
+  it("rebuilds a stored trace through the same reducer", () => {
+    const snapshot = replayTrace({
+      started_ms: T0,
+      ended_ms: T0 + 3_000,
+      events: [
+        { name: "ActionProposed", ts_ms: T0 + 100, payload: { tool_name: "search_web", args: { query: "x" } } },
+        { name: "ActionExecuted", ts_ms: T0 + 900, payload: { tool_name: "search_web", success: true } },
+        { name: "BrainTurnStarted", ts_ms: T0 + 1_000, payload: { provider: "p", model: "m" } },
+        { name: "BrainTurnCompleted", ts_ms: T0 + 2_900, payload: { provider: "p", model: "m" } },
+      ],
+    });
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.durationMs).toBe(3_000);
+    expect(snapshot!.model).toBe("p · m");
+    expect(snapshot!.steps.map((s) => s.kind)).toEqual(["tool", "brain"]);
+    expect(snapshot!.steps[0]).toMatchObject({ detail: "search_web", status: "done", durationMs: 800 });
+    expect(snapshot!.steps.every((s) => s.status !== "active")).toBe(true);
+  });
+
+  it("is null for nothing, and closes steps a stored turn never finished", () => {
+    expect(replayTrace(null)).toBeNull();
+    expect(replayTrace({ events: [] })).toBeNull();
+    expect(replayTrace({ events: [{ name: "MessageSent", ts_ms: 1, payload: {} }] })).toBeNull();
+    const open = replayTrace({
+      events: [{ name: "ActionProposed", ts_ms: T0, payload: { tool_name: "a" } }],
+    });
+    expect(open!.steps[0].status).toBe("done");
   });
 });

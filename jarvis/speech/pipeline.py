@@ -15136,6 +15136,21 @@ class SpeechPipeline:
         lookahead = max(1, int(lookahead))
         sentence_channels: asyncio.Queue = asyncio.Queue(maxsize=lookahead)
         synth_tasks: list[asyncio.Task] = []
+        # The answer as it forms, for the screen: each scrubbed sentence is
+        # handed to the UI the moment the brain finishes it — seconds before
+        # its audio is synthesised and SpeechSpoken confirms it. Scrubbed
+        # text only, so a leaked tool call or raw repr never flashes on screen.
+        reply_delta = None
+        if self._bus is not None:
+            from jarvis.core.text_stream import TextDeltaPublisher
+
+            _tracker = getattr(self, "_latency_tracker", None)
+            reply_delta = TextDeltaPublisher(
+                self._bus,
+                channel="voice",
+                trace_id=getattr(_tracker, "trace_id", None),
+                source_layer="speech.pipeline",
+            )
 
         async def _synth_into(channel: asyncio.Queue, sentence: str) -> None:
             """Synthesize one sentence, stream its chunks into ``channel``.
@@ -15251,6 +15266,8 @@ class SpeechPipeline:
                     lang, scrubbed.actions, sentence[:120],
                 )
                 return
+            if reply_delta is not None:
+                reply_delta.feed(cleaned if not reply_delta.text else f" {cleaned}")
             await _speak_sentence(cleaned)
 
         async def _produce() -> None:
@@ -15355,6 +15372,8 @@ class SpeechPipeline:
                 # in the finally guarantees playback of what was produced.
                 log.exception("Brain-Stream-Produktion fehlgeschlagen: %s", exc)
             finally:
+                if reply_delta is not None:
+                    await reply_delta.flush(done=True)
                 # End-of-turn sentinel — awaited so it lands even when the
                 # channel queue is at capacity (consumer keeps draining).
                 await sentence_channels.put(None)

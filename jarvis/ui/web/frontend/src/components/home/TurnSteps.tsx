@@ -1,36 +1,66 @@
 /**
  * The reasoning steps of one turn, the way the Claude desktop app shows
  * them: a muted "Thought for 10s" line that folds and unfolds the list, rows
- * hung on a thin vertical connector, and tool calls as rows carrying the
- * service's brand mark in a small tile. Not the model's thinking text — the
- * maintainer asked for the steps and the tool calls, nothing more.
+ * hung on a thin vertical connector, and every step as a line a person can
+ * read — "Looking in Wiki · Urlaub", "Creating artifact · Sales deck",
+ * "Running skill · daily-brief" — with the feature's own mark in front of
+ * it, or the service's brand logo for Gmail, Spotify, an MCP server…
+ *
+ * Row kinds:
+ *   thought  — the sentence the model wrote next to a tool call (its own
+ *              words for why it reaches for the tool); muted, italic.
+ *   tool     — the call: verb + detail, a spinner while it runs, the time
+ *              it took, red with "failed" when it did. Click a finished row
+ *              to unfold what went in (arguments) and what came back.
+ *   brain / computer / worker / note — the rest of the turn.
  *
  * Two modes share one renderer:
  *   live     — the turn is still running; the list is open, the active row
  *              spins, the header counts the seconds.
  *   finished — folded to the header by default, BUT the tool rows stay
  *              visible under it: what the assistant reached for is the part
- *              worth seeing without a click. Unfolding shows every row.
+ *              worth seeing without a click. Unfolding shows every row and,
+ *              when the turn said, which model answered.
  *
  * Presentational only: steps come in as props (the store keeps the live
  * list and the per-message snapshots), time comes in as `durationMs` — the
- * caller ticks. That keeps this usable from the chat column and the voice
- * lane alike, and testable without a store.
+ * caller ticks. That keeps this usable from the chat column, the voice lane
+ * and the history alike, and testable without a store.
  */
 import { useId, useState } from "react";
 import {
+  AppWindow,
+  BookMarked,
+  BookOpen,
+  Bookmark,
   Bot,
   Brain,
   ChevronRight,
   CircleAlert,
   Clock,
+  Compass,
+  Contact,
+  Cpu,
+  FilePlus2,
+  Globe,
   Info,
   MonitorDot,
+  MousePointerClick,
+  Phone,
+  Plug,
+  Puzzle,
+  ScanEye,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Terminal,
+  UserRound,
+  Wand2,
   type LucideIcon,
 } from "lucide-react";
 
 import type { ThinkingStep, ThinkingStepKind } from "@/lib/thinkingSteps";
-import { resolveToolBrand } from "@/lib/toolBrand";
+import { describeToolStep, type ToolFamily } from "@/lib/toolStepLabel";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +70,8 @@ export interface TurnStepsProps {
   live?: boolean;
   /** Total thinking time (finished: of the turn; live: elapsed so far), for the header. */
   durationMs?: number;
+  /** "provider · model" that answered, shown in the unfolded header of a finished turn. */
+  model?: string;
   /** Tighter rows (the voice lane). */
   compact?: boolean;
   /** Finished traces start folded; live ones start open. */
@@ -62,11 +94,39 @@ function formatStepDuration(ms: number): string {
   return formatThoughtDuration(ms);
 }
 
-const KIND_ICON: Record<Exclude<ThinkingStepKind, "tool">, LucideIcon> = {
+const KIND_ICON: Record<Exclude<ThinkingStepKind, "tool" | "thought">, LucideIcon> = {
   brain: Brain,
   computer: MonitorDot,
   worker: Bot,
   note: Info,
+};
+
+/** The feature's own mark for a tool row that has no brand logo. */
+const FAMILY_ICON: Record<ToolFamily, LucideIcon> = {
+  wiki: BookOpen,
+  wiki_write: BookMarked,
+  artifact: FilePlus2,
+  skill: Wand2,
+  skill_create: Sparkles,
+  web: Globe,
+  screen: ScanEye,
+  screen_recall: ScanEye,
+  control: MousePointerClick,
+  navigate: Compass,
+  app: AppWindow,
+  memory: Bookmark,
+  profile: UserRound,
+  contact: Contact,
+  call: Phone,
+  worker: Bot,
+  shell: Terminal,
+  model: Cpu,
+  mcp_admin: Plug,
+  settings: Settings2,
+  verify: ShieldCheck,
+  mcp: Plug,
+  service: Puzzle,
+  other: Puzzle,
 };
 
 /**
@@ -87,53 +147,61 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
-/** The tile at the left of a tool row: the brand SVG, or a two-letter monogram. */
-function BrandTile({
+/** The gutter box every mark sits in: opaque, so it masks the connector line. */
+function markBox(compact: boolean): string {
+  return cn(
+    "relative z-10 grid shrink-0 place-items-center bg-background",
+    compact ? "h-[18px] w-[18px]" : "h-5 w-5",
+  );
+}
+
+/** The tile at the left of a tool row: the brand SVG, or the family's icon. */
+function ToolMark({
   logoUrl,
-  monogram,
+  Icon,
   label,
+  active,
+  error,
   compact,
 }: {
   logoUrl?: string;
-  monogram: string;
+  Icon: LucideIcon;
   label: string;
+  active: boolean;
+  error: boolean;
   compact: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const showLogo = Boolean(logoUrl) && !failed;
-  return (
-    <span
-      data-testid="turn-step-brand"
-      data-brand-tier={showLogo ? "logo" : "monogram"}
-      title={label}
-      className={cn(
-        // Opaque page background first, so the tile masks the connector line
-        // behind it; the tint is a translucent plate on top of that.
-        "relative z-10 grid shrink-0 place-items-center overflow-hidden rounded-md bg-background",
-        compact ? "h-[18px] w-[18px]" : "h-5 w-5",
-      )}
-    >
+  const size = compact ? "h-3 w-3" : "h-3.5 w-3.5";
+  if (showLogo) {
+    return (
       <span
-        aria-hidden
-        className={cn(
-          "absolute inset-0 rounded-md border",
-          // A full-colour mark sits on a light plate (its own colours carry the
-          // brand); the monogram sits on the page's own secondary surface.
-          showLogo ? "border-sheen/10 bg-sheen/[0.07]" : "border-border/70 bg-secondary",
-        )}
-      />
-      {showLogo ? (
+        data-testid="turn-step-brand"
+        data-brand-tier="logo"
+        title={label}
+        className={cn(markBox(compact), "overflow-hidden rounded-md")}
+      >
+        <span aria-hidden className="absolute inset-0 rounded-md border border-sheen/10 bg-sheen/[0.07]" />
         <img
           src={logoUrl}
           alt=""
-          className={cn("relative", compact ? "h-3 w-3" : "h-3.5 w-3.5")}
+          className={cn("relative", size)}
           loading="lazy"
           onError={() => setFailed(true)}
         />
+      </span>
+    );
+  }
+  return (
+    <span data-testid="turn-step-brand" data-brand-tier="icon" title={label} className={markBox(compact)}>
+      {active ? (
+        <Spinner className={size} />
       ) : (
-        <span className="relative font-mono text-[8px] font-semibold leading-none text-muted-foreground">
-          {monogram}
-        </span>
+        <Icon
+          aria-hidden
+          className={cn(size, error ? "text-destructive" : "text-muted-foreground/80")}
+        />
       )}
     </span>
   );
@@ -142,10 +210,7 @@ function BrandTile({
 /** The gutter mark of a non-tool row: spinner while active, the kind's icon otherwise. */
 function KindMark({ step, compact }: { step: ThinkingStep; compact: boolean }) {
   const size = compact ? "h-3 w-3" : "h-3.5 w-3.5";
-  const box = cn(
-    "relative z-10 grid shrink-0 place-items-center bg-background",
-    compact ? "h-[18px] w-[18px]" : "h-5 w-5",
-  );
+  const box = markBox(compact);
   if (step.status === "active") {
     return (
       <span className={box}>
@@ -160,7 +225,7 @@ function KindMark({ step, compact }: { step: ThinkingStep; compact: boolean }) {
       </span>
     );
   }
-  const Icon = KIND_ICON[step.kind as Exclude<ThinkingStepKind, "tool">] ?? Info;
+  const Icon = KIND_ICON[step.kind as Exclude<ThinkingStepKind, "tool" | "thought">] ?? Info;
   return (
     <span className={box}>
       <Icon aria-hidden className={cn(size, "text-muted-foreground/70")} />
@@ -168,12 +233,181 @@ function KindMark({ step, compact }: { step: ThinkingStep; compact: boolean }) {
   );
 }
 
-function StepRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
+/** A muted, italic line in the model's own words — no mark, a quiet dot in the gutter. */
+function ThoughtRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
+  return (
+    <li
+      data-testid="turn-step"
+      data-kind="thought"
+      data-status={step.status}
+      className={cn("relative flex min-w-0 items-start", compact ? "gap-2 py-[3px]" : "gap-2.5 py-1")}
+    >
+      <span className={markBox(compact)}>
+        <span aria-hidden className="h-1 w-1 rounded-full bg-muted-foreground/50" />
+      </span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 italic leading-5 text-muted-foreground/85",
+          compact ? "text-xs" : "text-[13px]",
+        )}
+      >
+        {step.detail}
+      </span>
+    </li>
+  );
+}
+
+/** Arguments / result / error of a finished tool call, shown when a row is unfolded. */
+function ToolDetails({ step, compact }: { step: ThinkingStep; compact: boolean }) {
   const t = useT();
-  const isTool = step.kind === "tool";
+  const args = step.args ? Object.entries(step.args) : [];
+  return (
+    <div
+      data-testid="turn-step-details"
+      className={cn(
+        "mb-1 ml-[30px] mr-1 flex flex-col gap-1 rounded-md border border-border/70 bg-secondary/40 px-2.5 py-2",
+        compact ? "text-[11px]" : "text-xs",
+      )}
+    >
+      {args.length > 0 && (
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5">
+          {args.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="font-mono text-muted-foreground/70">{k}</dt>
+              <dd className="min-w-0 break-words text-foreground/85">{formatArg(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {step.result && (
+        <div className="flex min-w-0 gap-2">
+          <span className="shrink-0 text-muted-foreground/70">{t("turn_steps.result")}</span>
+          <span className="min-w-0 break-words text-foreground/85">{step.result}</span>
+        </div>
+      )}
+      {step.error && (
+        <div className="flex min-w-0 gap-2">
+          <span className="shrink-0 text-destructive/80">{t("turn_steps.error")}</span>
+          <span className="min-w-0 break-words text-destructive">{step.error}</span>
+        </div>
+      )}
+      {args.length === 0 && !step.result && !step.error && (
+        <span className="text-muted-foreground/70">{t("turn_steps.no_details")}</span>
+      )}
+    </div>
+  );
+}
+
+function formatArg(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function ToolRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
   const active = step.status === "active";
   const error = step.status === "error";
-  const brand = isTool ? resolveToolBrand(step.detail ?? "") : null;
+  const view = describeToolStep(step.detail ?? "", step.args);
+  const line = view.labelKey ? t(view.labelKey) : view.label;
+  const hasDetails = !active && (Boolean(step.args) || Boolean(step.result) || Boolean(step.error));
+  const Icon = FAMILY_ICON[view.family];
+  const detailsId = useId();
+
+  const body = (
+    <>
+      <ToolMark
+        logoUrl={view.brand?.logoUrl}
+        Icon={Icon}
+        label={line}
+        active={active}
+        error={error}
+        compact={compact}
+      />
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate leading-5",
+          compact ? "text-xs" : "text-[13px]",
+          error ? "text-destructive" : "text-foreground/85",
+          active && "thinking-shimmer font-medium",
+        )}
+      >
+        {line}
+        {view.detail && (
+          <span className={cn("ml-1.5 font-normal text-muted-foreground/80")}>· {view.detail}</span>
+        )}
+      </span>
+      {active && <Spinner className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />}
+      {error && (
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-destructive/80">
+          {t("turn_steps.failed")}
+        </span>
+      )}
+      {!active && step.durationMs !== undefined && step.durationMs > 0 && (
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
+          {formatStepDuration(step.durationMs)}
+        </span>
+      )}
+      {hasDetails && (
+        <ChevronRight
+          aria-hidden
+          className={cn(
+            "h-3 w-3 shrink-0 opacity-0 transition-transform duration-200 group-hover/row:opacity-60 motion-reduce:transition-none",
+            open && "rotate-90 opacity-60",
+          )}
+        />
+      )}
+    </>
+  );
+
+  return (
+    <li
+      data-testid="turn-step"
+      data-kind="tool"
+      data-family={view.family}
+      data-status={step.status}
+      className="relative flex min-w-0 flex-col"
+    >
+      {hasDetails ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={detailsId}
+          data-testid="turn-step-toggle"
+          className={cn(
+            "group/row -mx-1 flex min-w-0 items-center rounded-md px-1 text-left hover:bg-secondary/50",
+            compact ? "gap-2 py-[3px]" : "gap-2.5 py-1",
+          )}
+        >
+          {body}
+        </button>
+      ) : (
+        <div className={cn("flex min-w-0 items-center", compact ? "gap-2 py-[3px]" : "gap-2.5 py-1")}>
+          {body}
+        </div>
+      )}
+      {hasDetails && open && (
+        <div id={detailsId}>
+          <ToolDetails step={step} compact={compact} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+function StepRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
+  const t = useT();
+  if (step.kind === "tool") return <ToolRow step={step} compact={compact} />;
+  if (step.kind === "thought") return <ThoughtRow step={step} compact={compact} />;
+  const active = step.status === "active";
+  const error = step.status === "error";
 
   return (
     <li
@@ -185,45 +419,23 @@ function StepRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
         compact ? "gap-2 py-[3px]" : "gap-2.5 py-1",
       )}
     >
-      {isTool && brand ? (
-        <BrandTile
-          logoUrl={brand.logoUrl}
-          monogram={brand.monogram}
-          label={brand.label}
-          compact={compact}
-        />
-      ) : (
-        <KindMark step={step} compact={compact} />
-      )}
-
+      <KindMark step={step} compact={compact} />
       <span
         className={cn(
           "min-w-0 flex-1 truncate leading-5",
           compact ? "text-xs" : "text-[13px]",
-          error ? "text-destructive" : isTool ? "text-foreground/85" : "text-muted-foreground",
-          active && !isTool && "thinking-shimmer font-medium",
+          error ? "text-destructive" : "text-muted-foreground",
+          active && "thinking-shimmer font-medium",
         )}
       >
-        {isTool && brand ? (
-          <>
-            {brand.label}
-            {step.detail && (
-              <span className="ml-2 font-mono text-[10px] text-muted-foreground/70">
-                {step.detail}
-              </span>
-            )}
-          </>
-        ) : (
-          <>
-            {t(step.labelKey)}
-            {step.detail && (
-              <span className="ml-1.5 font-normal text-muted-foreground/80">{step.detail}</span>
-            )}
-          </>
+        {t(step.labelKey)}
+        {step.detail && (
+          <span className="ml-1.5 font-normal text-muted-foreground/80">{step.detail}</span>
+        )}
+        {error && step.error && (
+          <span className="ml-1.5 font-normal text-destructive/80">{step.error}</span>
         )}
       </span>
-
-      {isTool && active && <Spinner className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />}
       {error && (
         <span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-destructive/80">
           {t("turn_steps.failed")}
@@ -261,6 +473,7 @@ export function TurnSteps({
   steps,
   live = false,
   durationMs,
+  model,
   compact = false,
   defaultOpen,
   className,
@@ -279,6 +492,7 @@ export function TurnSteps({
     ? t("thinking.label")
     : thoughtFor(t("turn_steps.thought_for"), formatThoughtDuration(durationMs ?? 0));
   const elapsed = live && durationMs !== undefined ? formatThoughtDuration(durationMs) : null;
+  const modelLine = !live && open && model ? model : null;
 
   return (
     <div
@@ -309,6 +523,14 @@ export function TurnSteps({
         {elapsed && (
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/70">
             {elapsed}
+          </span>
+        )}
+        {modelLine && (
+          <span
+            data-testid="turn-steps-model"
+            className="truncate font-mono text-[10px] text-muted-foreground/60"
+          >
+            · {modelLine}
           </span>
         )}
         <ChevronRight

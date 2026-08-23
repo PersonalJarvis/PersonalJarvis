@@ -60,23 +60,91 @@ describe("TurnSteps", () => {
     expect(screen.getAllByTestId("turn-step")).toHaveLength(2);
   });
 
-  it("renders tool rows with the brand tile, the humanised label and the raw tool name", () => {
+  it("renders tool rows with the brand tile or the feature's icon and a readable line", () => {
     render(<TurnSteps steps={FINISHED} durationMs={10_400} />);
     const [gmail, shell] = screen.getAllByTestId("turn-step");
 
+    // A service tool: the brand logo and the brand's own label.
     const gmailTile = within(gmail).getByTestId("turn-step-brand");
     expect(gmailTile.getAttribute("data-brand-tier")).toBe("logo");
     expect(gmailTile.querySelector("img")?.getAttribute("src")).toMatch(/svg/);
     expect(gmail.textContent).toContain("Gmail · search");
-    expect(gmail.textContent).toContain("gmail_search");
     expect(gmail.textContent).toContain("0.8s");
+    expect(gmail.getAttribute("data-family")).toBe("service");
 
+    // A Jarvis tool: the family's icon (never a monogram) and the verb line.
     const shellTile = within(shell).getByTestId("turn-step-brand");
-    expect(shellTile.getAttribute("data-brand-tier")).toBe("monogram");
-    expect(shellTile.textContent).toBe("RS");
+    expect(shellTile.getAttribute("data-brand-tier")).toBe("icon");
+    expect(shellTile.querySelector("svg")).not.toBeNull();
+    expect(shell.getAttribute("data-family")).toBe("shell");
     expect(shell.getAttribute("data-status")).toBe("error");
     // The key may or may not be in the locale yet; both forms contain "failed".
     expect(shell.textContent).toMatch(/failed/i);
+  });
+
+  it("shows the model's own sentence as a muted thought row above the tool", () => {
+    const steps: ThinkingStep[] = [
+      step({
+        id: "th",
+        kind: "thought",
+        labelKey: "thinking.step_thought",
+        detail: "I'll check the wiki for that.",
+        durationMs: 0,
+      }),
+      step({ id: "w", kind: "tool", detail: "wiki-recall", args: { query: "Urlaub" }, durationMs: 400 }),
+    ];
+    render(<TurnSteps steps={steps} durationMs={2_000} defaultOpen />);
+    const rows = screen.getAllByTestId("turn-step");
+    expect(rows[0].getAttribute("data-kind")).toBe("thought");
+    expect(rows[0].textContent).toContain("I'll check the wiki for that.");
+    // The wiki row: family icon + the call's detail.
+    expect(rows[1].getAttribute("data-family")).toBe("wiki");
+    expect(rows[1].textContent).toContain("Urlaub");
+    // Folded, only tool rows stay — the thought goes with the header.
+    fireEvent.click(screen.getByTestId("turn-steps-toggle"));
+    expect(screen.getAllByTestId("turn-step")).toHaveLength(1);
+  });
+
+  it("unfolds a finished tool row into its arguments, result and error", () => {
+    const steps: ThinkingStep[] = [
+      step({
+        id: "s",
+        kind: "tool",
+        detail: "search_web",
+        args: { query: "weather Berlin", limit: 3 },
+        result: "3 results",
+        durationMs: 900,
+      }),
+      step({
+        id: "f",
+        kind: "tool",
+        detail: "open_app",
+        status: "error",
+        args: { app: "Spotify" },
+        error: "not installed",
+        durationMs: 50,
+      }),
+    ];
+    render(<TurnSteps steps={steps} durationMs={3_000} />);
+    const [search, app] = screen.getAllByTestId("turn-step");
+    expect(screen.queryByTestId("turn-step-details")).toBeNull();
+
+    fireEvent.click(within(search).getByTestId("turn-step-toggle"));
+    const details = within(search).getByTestId("turn-step-details");
+    expect(details.textContent).toContain("query");
+    expect(details.textContent).toContain("weather Berlin");
+    expect(details.textContent).toContain("3");
+    expect(details.textContent).toContain("3 results");
+
+    fireEvent.click(within(app).getByTestId("turn-step-toggle"));
+    expect(within(app).getByTestId("turn-step-details").textContent).toContain("not installed");
+  });
+
+  it("names the model in the unfolded header of a finished turn", () => {
+    render(<TurnSteps steps={FINISHED} durationMs={4_000} model="openai · gpt-5" />);
+    expect(screen.queryByTestId("turn-steps-model")).toBeNull();
+    fireEvent.click(screen.getByTestId("turn-steps-toggle"));
+    expect(screen.getByTestId("turn-steps-model").textContent).toContain("openai · gpt-5");
   });
 
   it("is open in live mode and spins on the active row", () => {

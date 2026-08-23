@@ -12,10 +12,15 @@
  * Labels are i18n keys (resolved at render time so a live language switch
  * re-labels past steps too); `detail` carries raw runtime text (tool names,
  * window titles) that is not translated.
+ *
+ * The same reducer replays a STORED trace (the event list the backend keeps
+ * next to a reply, jarvis/state/turn_trace.py) — `replayTrace` below — so a
+ * reopened chat shows exactly what the live turn showed.
  */
 
 export type ThinkingStepKind =
   | "brain"
+  | "thought"
   | "tool"
   | "computer"
   | "worker"
@@ -28,19 +33,37 @@ export interface ThinkingStep {
   kind: ThinkingStepKind;
   /** i18n key under "thinking.*" — resolved at render time. */
   labelKey: string;
-  /** Raw runtime detail (tool name, window title, ...). Never translated. */
+  /**
+   * Raw runtime detail, never translated: the tool's registry name for a
+   * tool row, the model's own sentence for a thought row, a window title…
+   */
   detail?: string;
   status: ThinkingStepStatus;
   /** Wall-clock ms when the step appeared (drives live duration). */
   startedTs: number;
   /** Filled when the step completes. */
   durationMs?: number;
+  /** Tool rows: the call's arguments (already redacted by the backend). */
+  args?: Record<string, unknown>;
+  /** Tool rows: a short preview of what came back. */
+  result?: string;
+  /** Tool / worker rows: why it failed, when it did. */
+  error?: string;
 }
 
 /** Finished trace attached to the assistant message that ended the turn. */
 export interface ThinkingTraceSnapshot {
   steps: ThinkingStep[];
   durationMs: number;
+  /** The model that answered ("anthropic · claude-sonnet-5"), when the turn said. */
+  model?: string;
+}
+
+/** A stored trace as the backend keeps it: the event list of one turn. */
+export interface StoredTrace {
+  started_ms?: number;
+  ended_ms?: number;
+  events: Array<{ name: string; ts_ms: number; payload?: unknown }>;
 }
 
 /** Hard cap — a runaway turn must not grow the array unbounded. */
@@ -122,7 +145,7 @@ function completeTool(
   steps: ThinkingStep[],
   name: string,
   tsMs: number,
-  opts: { durationMs?: number; error?: boolean },
+  opts: { durationMs?: number; error?: boolean; result?: string; errorText?: string },
 ): ThinkingStep[] | null {
   let idx = -1;
   for (let i = steps.length - 1; i >= 0; i--) {
@@ -140,8 +163,15 @@ function completeTool(
     ...next[idx],
     status: opts.error ? "error" : "done",
     durationMs: opts.durationMs ?? Math.max(0, tsMs - next[idx].startedTs),
+    ...(opts.result ? { result: opts.result } : {}),
+    ...(opts.errorText ? { error: opts.errorText } : {}),
   };
   return next;
+}
+
+function record(v: unknown): Record<string, unknown> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  return Object.keys(v as object).length ? (v as Record<string, unknown>) : undefined;
 }
 
 /**
@@ -204,8 +234,20 @@ export function reduceThinkingSteps(
       });
     }
 
-    case "BrainTurnCompleted":
-      return complete(steps, "brain", tsMs);
+    case "BrainTurnCompleted": {
+      // Completed names the provider that actually answered (Started fires
+      // once per fallback attempt); carry it onto the brain row.
+      const completed = complete(steps, "brain", tsMs);
+      const who = [str(p.provider), str(p.model)].filter(Boolean).join(" · ");
+      if (!completed || !who) return completed;
+      for (let i = completed.length - 1; i >= 0; i--) {
+        if (completed[i].kind === "brain") {
+          completed[i] = { ...completed[i], detail: who };
+          break;
+        }
+      }
+      return completed;
+    }
 
     // ActionProposed/Executed/Denied are what the ToolExecutor actually
     // publishes today; ToolCallStarted/Completed is the (currently unwired)
@@ -215,13 +257,30 @@ export function reduceThinkingSteps(
       const name = str(p.tool_name);
       // Dedupe in case both event families ever fire for the same call.
       if (name && hasActiveTool(steps, name)) return null;
-      return push(steps, {
+      // The sentence the model wrote next to the call ("I'll check the wiki
+      // for that") is the closest thing to its thinking we get for free —
+      // one muted line above the tool row, never spoken.
+      const rationale = clip(str(p.rationale), 200);
+      const withThought = rationale
+        ? push(steps, {
+            id: nextId(),
+            kind: "thought",
+            labelKey: "thinking.step_thought",
+            detail: rationale,
+            status: "done",
+            startedTs: tsMs,
+            durationMs: 0,
+          })
+        : steps;
+      const args = record(p.args);
+      return push(withThought, {
         id: nextId(),
         kind: "tool",
         labelKey: "thinking.step_tool",
         detail: name || undefined,
         status: "active",
         startedTs: tsMs,
+        ...(args ? { args } : {}),
       });
     }
 
@@ -231,6 +290,8 @@ export function reduceThinkingSteps(
       const opts = {
         durationMs: num(p.duration_ms) || undefined,
         error: p.success === false,
+        result: clip(str(p.output_preview), 200) || undefined,
+        errorText: clip(str(p.error), 200) || undefined,
       };
       const completed = completeTool(steps, name, tsMs, opts);
       if (completed) return completed;
@@ -245,6 +306,8 @@ export function reduceThinkingSteps(
           status: opts.error ? "error" : "done",
           startedTs: tsMs,
           durationMs: opts.durationMs,
+          ...(opts.result ? { result: opts.result } : {}),
+          ...(opts.errorText ? { error: opts.errorText } : {}),
         });
       }
       return null;
@@ -252,7 +315,10 @@ export function reduceThinkingSteps(
 
     case "ActionDenied": {
       const name = str(p.tool_name);
-      return completeTool(steps, name, tsMs, { error: true });
+      return completeTool(steps, name, tsMs, {
+        error: true,
+        errorText: clip(str(p.reason), 200) || undefined,
+      });
     }
 
     case "ObservationCaptured":
@@ -287,11 +353,21 @@ export function reduceThinkingSteps(
         startedTs: tsMs,
       });
 
-    case "JarvisAgentTaskCompleted":
-      return complete(steps, "worker", tsMs, {
+    case "JarvisAgentTaskCompleted": {
+      const completed = complete(steps, "worker", tsMs, {
         durationMs: num(p.duration_s) * 1000 || undefined,
         error: p.success === false,
       });
+      const why = clip(str(p.error), 200);
+      if (!completed || !why) return completed;
+      for (let i = completed.length - 1; i >= 0; i--) {
+        if (completed[i].kind === "worker") {
+          completed[i] = { ...completed[i], error: why };
+          break;
+        }
+      }
+      return completed;
+    }
 
     case "AnnouncementRequested": {
       // Progress announcements only — preambles already render as their own
@@ -325,4 +401,42 @@ export function finalizeThinkingSteps(
       ? { ...s, status: "done", durationMs: Math.max(0, tsMs - s.startedTs) }
       : s,
   );
+}
+
+/** "provider · model" of the brain row that answered, if the turn said. */
+export function traceModel(steps: ThinkingStep[]): string | undefined {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.kind === "brain" && s.detail) return s.detail;
+  }
+  return undefined;
+}
+
+/**
+ * Replay a stored trace (jarvis/state/turn_trace.py) into the snapshot the
+ * trace views render — the SAME reducer the live turn used, so history and
+ * live never disagree. Null when the record holds nothing to show.
+ */
+export function replayTrace(trace: StoredTrace | null | undefined): ThinkingTraceSnapshot | null {
+  if (!trace || !Array.isArray(trace.events) || trace.events.length === 0) return null;
+  let steps: ThinkingStep[] = [];
+  let first = Number.POSITIVE_INFINITY;
+  let last = 0;
+  for (const ev of trace.events) {
+    if (!ev || typeof ev.name !== "string") continue;
+    const ts = typeof ev.ts_ms === "number" ? ev.ts_ms : 0;
+    first = Math.min(first, ts);
+    last = Math.max(last, ts);
+    const next = reduceThinkingSteps(steps, ev.name, ev.payload ?? {}, ts);
+    if (next) steps = next;
+  }
+  if (steps.length === 0) return null;
+  const started = typeof trace.started_ms === "number" ? trace.started_ms : first;
+  const ended = typeof trace.ended_ms === "number" ? trace.ended_ms : last;
+  const end = Math.max(ended, last);
+  return {
+    steps: finalizeThinkingSteps(steps, end),
+    durationMs: Math.max(0, end - (Number.isFinite(started) ? started : end)),
+    model: traceModel(steps),
+  };
 }

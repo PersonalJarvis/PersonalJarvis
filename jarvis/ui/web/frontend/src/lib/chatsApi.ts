@@ -1,12 +1,19 @@
 // Thin client for the Chats conversation-manager REST API
 // (jarvis/ui/web/chats_routes.py).
 import type { ChatMessage, ConversationKind, ConversationSummary } from "@/store/events";
+import {
+  replayTrace,
+  type StoredTrace,
+  type ThinkingTraceSnapshot,
+} from "@/lib/thinkingSteps";
 import type { MessageRole } from "@/types/messages";
 
 export interface ChatTurn {
   role: string;
   text: string;
   ts_ms: number;
+  /** The stored reasoning trace behind an assistant reply, when one was kept. */
+  trace?: StoredTrace | null;
 }
 
 export interface ConversationDetail {
@@ -59,14 +66,41 @@ export async function deleteTextConversation(id: string): Promise<void> {
   if (!res.ok) throw new ChatsApiError("delete-failed", res.status);
 }
 
+/** The stable id of the i-th message of a loaded conversation. */
+function historyMessageId(detail: ConversationDetail, index: number): string {
+  return `hist-${detail.kind}-${detail.id}-${index}`;
+}
+
 /** Map a normalized transcript into store ChatMessages with stable ids
  *  (so the live pushMessage dedup never collides with a loaded transcript). */
 export function detailToMessages(detail: ConversationDetail): ChatMessage[] {
-  return detail.messages.map((m, i) => ({
-    id: `hist-${detail.kind}-${detail.id}-${i}`,
-    role: m.role as MessageRole,
-    content: m.text,
-    ts: m.ts_ms,
-    thread_id: detail.id,
-  }));
+  return detail.messages.map((m, i) => {
+    const message: ChatMessage = {
+      id: historyMessageId(detail, i),
+      role: m.role as MessageRole,
+      content: m.text,
+      ts: m.ts_ms,
+      thread_id: detail.id,
+    };
+    const trace = m.role === "assistant" && m.trace ? replayTrace(m.trace) : null;
+    if (trace) message.trace = trace;
+    return message;
+  });
+}
+
+/**
+ * The stored traces of a loaded conversation, keyed by the same ids
+ * `detailToMessages` hands out — replayed through the live reducer so the
+ * history shows "Thought for 4s" + steps exactly like the live turn did.
+ */
+export function detailToTraces(
+  detail: ConversationDetail,
+): Record<string, ThinkingTraceSnapshot> {
+  const out: Record<string, ThinkingTraceSnapshot> = {};
+  detail.messages.forEach((m, i) => {
+    if (m.role !== "assistant" || !m.trace) return;
+    const snapshot = replayTrace(m.trace);
+    if (snapshot) out[historyMessageId(detail, i)] = snapshot;
+  });
+  return out;
 }

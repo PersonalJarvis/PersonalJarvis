@@ -37,6 +37,7 @@ const VISIBLE_STEPS = 5;
 
 const KIND_ICON: Record<ThinkingStepKind, typeof Wrench> = {
   brain: Brain,
+  thought: Brain,
   tool: Wrench,
   computer: MonitorDot,
   worker: Bot,

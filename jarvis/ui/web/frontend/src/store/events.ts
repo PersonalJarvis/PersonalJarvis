@@ -4,9 +4,19 @@ import { readCachedAssistantName } from "@/lib/assistantNameCache";
 import {
   finalizeThinkingSteps,
   reduceThinkingSteps,
+  traceModel,
   type ThinkingStep,
   type ThinkingTraceSnapshot,
 } from "@/lib/thinkingSteps";
+
+/** The typed chat's reply while it is still being written. */
+export interface LiveReply {
+  text: string;
+  threadId: string;
+  /** The publisher said this is the last snapshot of the turn. */
+  done: boolean;
+  ts: number;
+}
 
 /**
  * Mirror of `jarvis/state/supervisor.py::SupervisorState`, lowercased.
@@ -263,6 +273,14 @@ export interface ChatMessage {
   content: string;
   ts: number;
   thread_id?: string;
+  /**
+   * The reasoning trace behind a stored assistant reply (replayed from the
+   * backend's record when a conversation is opened). Live replies carry
+   * theirs in `thinkingTraces` instead; this travels with a loaded message
+   * so every surface that seeds itself from the list — the voice lane, the
+   * chat column — can show the steps without a second lookup.
+   */
+  trace?: ThinkingTraceSnapshot;
 }
 
 // Mirror of jarvis/state/conversation_constants.py (5-layer anti-drift: this
@@ -423,7 +441,14 @@ interface EventStore {
   thinkingStartedTs: number | null;
   // Finished traces keyed by the assistant message id that ended the turn —
   // renders as the collapsible "Thought for Xs" disclosure above the reply.
+  // Seeded from the stored traces when a conversation is opened, so the
+  // history shows the steps behind each answer too.
   thinkingTraces: Record<string, ThinkingTraceSnapshot>;
+  // The reply of the typed chat while it is still being written —
+  // AssistantTextDelta snapshots (channel "chat"), shown muted under the
+  // live steps and replaced by the final MessageSent. Null when nothing
+  // is streaming.
+  liveReply: LiveReply | null;
   brainProvider: string;
   // The model id the active provider is configured to use (e.g.
   // "claude-opus-4-8"). Seeded from /api/brain/status on mount and refreshed on
@@ -498,6 +523,10 @@ interface EventStore {
   ingestThinkingEvent: (name: string, payload: unknown, tsMs: number) => void;
   /** Turn ended with an assistant reply: snapshot the trace onto that message. */
   finishThinking: (messageId: string) => void;
+  /** Stored traces of an opened conversation, keyed like its messages. */
+  seedThinkingTraces: (traces: Record<string, ThinkingTraceSnapshot>) => void;
+  /** An AssistantTextDelta for the typed chat: the reply so far. */
+  setLiveReply: (reply: LiveReply | null) => void;
   setBrainProvider: (p: string) => void;
   setBrainModel: (m: string) => void;
   setCodingMode: (m: CodingModeState) => void;
@@ -568,6 +597,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   thinkingSteps: [],
   thinkingStartedTs: null,
   thinkingTraces: {},
+  liveReply: null,
   brainProvider: "unknown",
   codingMode: { active: false, hasWorkspace: false, workspace: "" },
   brainModel: "",
@@ -720,9 +750,14 @@ export const useEventStore = create<EventStore>((set, get) => ({
       thinking
         ? // New turn: arm the live trace. A re-send while already thinking
           // restarts the trace — the old steps belonged to the superseded turn.
-          { chatThinking: true, thinkingSteps: [], thinkingStartedTs: Date.now() }
+          {
+            chatThinking: true,
+            thinkingSteps: [],
+            thinkingStartedTs: Date.now(),
+            liveReply: null,
+          }
         : // Timeout / brain error: discard the live trace without a snapshot.
-          { chatThinking: false, thinkingSteps: [], thinkingStartedTs: null },
+          { chatThinking: false, thinkingSteps: [], thinkingStartedTs: null, liveReply: null },
     ),
 
   ingestThinkingEvent: (name, payload, tsMs) => {
@@ -740,6 +775,8 @@ export const useEventStore = create<EventStore>((set, get) => ({
       chatThinking: false,
       thinkingSteps: [] as ThinkingStep[],
       thinkingStartedTs: null,
+      // The final message replaces the streamed preview.
+      liveReply: null,
     };
     // Fast turns with zero observed steps get no disclosure — a "Thought for
     // 0.4s · 0 steps" row on every smalltalk reply would be pure noise.
@@ -750,6 +787,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
     const snapshot: ThinkingTraceSnapshot = {
       steps: finalizeThinkingSteps(thinkingSteps, now),
       durationMs: Math.max(0, now - (thinkingStartedTs ?? now)),
+      model: traceModel(thinkingSteps),
     };
     const traces = { ...thinkingTraces, [messageId]: snapshot };
     const keys = Object.keys(traces);
@@ -757,6 +795,15 @@ export const useEventStore = create<EventStore>((set, get) => ({
       for (const k of keys.slice(0, keys.length - MAX_TRACES)) delete traces[k];
     }
     set({ ...idle, thinkingTraces: traces });
+  },
+
+  seedThinkingTraces: (traces) => set({ thinkingTraces: { ...traces } }),
+
+  setLiveReply: (reply) => {
+    // The preview belongs to the turn in flight; a stray snapshot after the
+    // reply landed (at-least-once delivery) must not resurrect it.
+    if (reply && !get().chatThinking) return;
+    set({ liveReply: reply });
   },
 
   setBrainProvider: (p) => set({ brainProvider: p }),

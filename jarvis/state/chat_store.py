@@ -22,6 +22,7 @@ appends and make message/thread order non-deterministic.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import uuid
@@ -43,6 +44,9 @@ class ChatMessage:
     role: str  # "user" | "assistant" | "system"
     text: str
     timestamp_ns: int
+    # The reasoning trace that produced an assistant reply (the event list
+    # ``jarvis.state.turn_trace`` records); None for every other message.
+    trace: dict[str, Any] | None = None
 
 
 # Titles we treat as auto-derivable: the first user message replaces them.
@@ -71,6 +75,14 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
     ON chat_messages(thread_id);
 """
 
+# Columns added after the first release, applied by ``_migrate`` when missing.
+# ``trace_json`` (2026-08-23): the reasoning trace behind an assistant reply —
+# tool calls, worker dispatch, the brain's rationale — as the JSON event list
+# the UI replays into "Thought for 4s" + steps when a chat is reopened.
+_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("chat_messages", "trace_json", "TEXT"),
+)
+
 
 def default_chats_db_path(data_dir: str = "./data") -> Path:
     """Resolve ``chats.db`` to sit beside ``sessions.db``: inside ``data_dir``.
@@ -92,6 +104,39 @@ def _derive_title(text: str) -> str:
     if len(single) <= _TITLE_MAX_CHARS:
         return single
     return single[: _TITLE_MAX_CHARS - 1].rstrip() + "…"
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add the columns a pre-existing ``chats.db`` lacks. Idempotent."""
+    for table, column, decl in _COLUMN_MIGRATIONS:
+        have = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def _dump_trace(trace: dict[str, Any] | None) -> str | None:
+    # A trace without events has nothing to show — store nothing.
+    if not trace or not trace.get("events"):
+        return None
+    try:
+        return json.dumps(trace, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "chat trace not serialisable — stored the message without it"
+        )
+        return None
+
+
+def _load_trace(raw: Any) -> dict[str, Any] | None:
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 class ChatStore:
@@ -132,6 +177,7 @@ class ChatStore:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.row_factory = sqlite3.Row
             conn.executescript(_SCHEMA)
+            _migrate(conn)
             self._conn = conn
             return conn
 
@@ -212,7 +258,7 @@ class ChatStore:
             if head is None:
                 return None
             msgs = conn.execute(
-                "SELECT message_id, thread_id, role, text, timestamp_ns "
+                "SELECT message_id, thread_id, role, text, timestamp_ns, trace_json "
                 "FROM chat_messages WHERE thread_id = ? ORDER BY rowid",
                 (thread_id,),
             ).fetchall()
@@ -229,6 +275,7 @@ class ChatStore:
                     "role": m["role"],
                     "text": m["text"],
                     "timestamp_ns": m["timestamp_ns"],
+                    "trace": _load_trace(m["trace_json"]),
                 }
                 for m in msgs
             ],
@@ -287,7 +334,15 @@ class ChatStore:
         role: str,
         text: str,
         publish_event: bool = True,
+        trace: dict[str, Any] | None = None,
     ) -> ChatMessage:
+        """Append a message; ``trace`` is the reasoning trace behind a reply.
+
+        The trace is stored as JSON next to the text and handed back by
+        :meth:`get_thread` so a reopened chat shows the steps again. It is
+        UI sugar, never history: a trace that fails to serialise is dropped
+        with a log line, the message itself always lands.
+        """
         await self.ensure_thread(thread_id)
         msg = ChatMessage(
             message_id=str(uuid.uuid4()),
@@ -295,14 +350,16 @@ class ChatStore:
             role=role,
             text=text,
             timestamp_ns=time_ns(),
+            trace=trace if trace and trace.get("events") else None,
         )
+        trace_json = _dump_trace(trace)
         conn = self._ensure_conn()
         with self._lock:
             conn.execute(
                 "INSERT INTO chat_messages "
-                "(message_id, thread_id, role, text, timestamp_ns) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (msg.message_id, thread_id, role, text, msg.timestamp_ns),
+                "(message_id, thread_id, role, text, timestamp_ns, trace_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (msg.message_id, thread_id, role, text, msg.timestamp_ns, trace_json),
             )
             conn.execute(
                 "UPDATE chat_threads SET updated_at_ns = ? WHERE thread_id = ?",

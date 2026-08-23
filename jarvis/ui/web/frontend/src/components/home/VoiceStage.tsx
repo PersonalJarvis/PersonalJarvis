@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Greeting } from "@/components/home/Greeting";
 import { JarvisBar } from "@/components/home/JarvisBar";
 import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
+import { traceModel } from "@/lib/thinkingSteps";
 
 /** How many finished lines the lane keeps above the bar. */
 const TRANSCRIPT_LINES = 8;
@@ -39,6 +40,7 @@ export function VoiceStage() {
   const assistantName = useEventStore((s) => s.assistantName);
   const voiceState = useEventStore((s) => s.voiceState);
   const transcript = useHomeStore((s) => s.transcript);
+  const liveReply = useHomeStore((s) => s.liveReply);
   const transcription = useEventStore((s) => s.transcription);
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
   const { connected, warming } = useVoiceReadiness();
@@ -60,13 +62,21 @@ export function VoiceStage() {
     [transcript],
   );
   const liveLine = transcription && !transcriptionFinal ? transcription : "";
+  // The answer as it is produced, until its spoken line replaces it. Hidden
+  // once the lane's last line already IS the answer (the final arrived and
+  // a late snapshot would only repeat it).
+  const lastLine = lines[lines.length - 1];
+  const liveAnswer =
+    liveReply && !(lastLine?.who === "assistant" && lastLine.text.startsWith(liveReply))
+      ? liveReply
+      : "";
   // A live turn keeps the lane pinned to its end as steps arrive.
   const liveSteps = lines.some((m) => m.who === "steps" && m.live);
 
   const laneEnd = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     laneEnd.current?.scrollIntoView({ block: "end" });
-  }, [lines, liveLine, liveSteps]);
+  }, [lines, liveLine, liveAnswer, liveSteps]);
 
   const phase = waveformPhase(voiceState, connected);
   const hint = hintFor({ connected, warming, connecting, voiceState, wakePhrase, t });
@@ -88,6 +98,7 @@ export function VoiceStage() {
                   steps={m.steps}
                   live={m.live}
                   durationMs={m.durationMs}
+                  model={traceModel(m.steps)}
                   compact
                   defaultOpen={m.live}
                 />
@@ -104,6 +115,9 @@ export function VoiceStage() {
           {liveLine && (
             <TranscriptLine who={t("home.transcript_you")} text={liveLine} user live />
           )}
+          {liveAnswer && (
+            <TranscriptLine who={assistantName} text={liveAnswer} user={false} live />
+          )}
           <div ref={laneEnd} />
         </div>
 
@@ -113,6 +127,11 @@ export function VoiceStage() {
   );
 }
 
+/**
+ * One line of the lane. A LIVE line (words still being said, an answer still
+ * being produced) is muted and italic with a cursor; the finished line it
+ * becomes is in full colour — the same words, settled.
+ */
 function TranscriptLine({
   who,
   text,
@@ -127,7 +146,8 @@ function TranscriptLine({
   return (
     <div
       className="grid grid-cols-[64px_1fr] items-baseline gap-x-4"
-      data-testid={live ? "transcript-live" : "transcript-line"}
+      data-testid={live ? (user ? "transcript-live" : "transcript-live-answer") : "transcript-line"}
+      data-who={user ? "user" : "assistant"}
     >
       <span className="truncate text-right font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
         {who}
@@ -135,7 +155,12 @@ function TranscriptLine({
       <span
         className={cn(
           "whitespace-pre-wrap",
-          user ? "text-[15px] text-muted-foreground" : "font-display text-[17px] leading-snug text-foreground",
+          user
+            ? cn("text-[15px]", live ? "text-muted-foreground/70" : "text-muted-foreground")
+            : cn(
+                "font-display text-[17px] leading-snug",
+                live ? "text-muted-foreground" : "text-foreground",
+              ),
           live && "italic",
         )}
       >

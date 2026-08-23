@@ -566,6 +566,11 @@ async def _run_headless(args) -> int:
     # conversation manager has durable, segmented history across restarts.
     chat_store = ChatStore(bus=server.bus, db_path=default_chats_db_path(cfg.memory.data_dir))
     chat_store.open()
+    # The reasoning trace of a chat turn, stored next to the reply (the desktop
+    # bridge does the same) so the history shows the steps behind an answer.
+    from jarvis.state.turn_trace import TurnTraceCollector
+
+    turn_traces = TurnTraceCollector(server.bus)
     # Cap unbounded growth at startup (mirrors the session-store prune in
     # sessions/init.py). 365d is deliberately generous — the user wants "all my
     # chats"; voice sessions already prune at 30d and text is tiny — so this only
@@ -620,6 +625,7 @@ async def _run_headless(args) -> int:
         if evt.source_layer in ("chat", "brain:mock"):
             return
         thread_id = evt.thread_id or "default"
+        turn_started_ms = time.time_ns() // 1_000_000
         # Persist the initiating turn before the reply. Older builds stored only
         # the assistant half, producing anonymous "New Thread" rows that looked
         # like text messages the user never sent.
@@ -684,6 +690,15 @@ async def _run_headless(args) -> int:
             import logging as _ack_logging
 
             _ack_logging.getLogger(__name__).debug("chat instant ack not armed", exc_info=True)
+        from jarvis.core.text_stream import TextDeltaPublisher
+
+        delta_publisher = TextDeltaPublisher(
+            server.bus,
+            channel="chat",
+            thread_id=thread_id,
+            trace_id=evt.trace_id,
+            source_layer="ui.web.chat",
+        )
         try:
             generate = getattr(brain, "generate", None)
             if callable(generate):
@@ -691,15 +706,26 @@ async def _run_headless(args) -> int:
                 # recap (ui.web.ws.mission_inject) from force-spawn — discussed
                 # inline, never re-dispatched (doom-loop fix 2026-06-16). This
                 # is the headless/web (VPS) bridge; desktop_app.py mirrors it.
-                reply = await generate(
-                    evt.text,
-                    trace_id=evt.trace_id,
-                    source_layer=evt.source_layer,
-                    conversation_id=thread_id,
-                )
+                try:
+                    reply = await generate(
+                        evt.text,
+                        trace_id=evt.trace_id,
+                        source_layer=evt.source_layer,
+                        conversation_id=thread_id,
+                        text_consumer=delta_publisher.feed,
+                    )
+                except TypeError:
+                    # An older brain shape without the streaming hook.
+                    reply = await generate(
+                        evt.text,
+                        trace_id=evt.trace_id,
+                        source_layer=evt.source_layer,
+                        conversation_id=thread_id,
+                    )
             else:
                 reply = await brain(evt.text)
         except Exception as exc:  # noqa: BLE001
+            delta_publisher.cancel()
             if ack_task is not None and not ack_task.done():
                 ack_task.cancel()
             detail = f"{type(exc).__name__}: {exc}"
@@ -720,9 +746,13 @@ async def _run_headless(args) -> int:
             return
         if ack_task is not None and not ack_task.done():
             ack_task.cancel()
+        await delta_publisher.flush(done=True)
         if reply:
             role = "system" if _is_brain_diagnostic(reply) else "assistant"
-            await chat_store.add_message(thread_id=thread_id, role=role, text=reply)
+            trace = turn_traces.snapshot(turn_started_ms) if role == "assistant" else None
+            await chat_store.add_message(
+                thread_id=thread_id, role=role, text=reply, trace=trace
+            )
 
     server.bus.subscribe(MessageSent, _on_user_message)
 
