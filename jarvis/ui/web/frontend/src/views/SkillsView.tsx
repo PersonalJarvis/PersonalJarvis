@@ -26,7 +26,6 @@ import {
   Link2,
   Eye,
   Code2,
-  ChevronDown,
   MoreHorizontal,
   Info,
   Copy,
@@ -60,7 +59,7 @@ import {
   formatShortDate,
   type Column,
 } from "@/components/extensions/primitives";
-import { MarkdownBody, ModeButton } from "@/components/extensions/FileCard";
+import { FileTree, MarkdownBody, ModeButton } from "@/components/extensions/FileCard";
 import { cn } from "@/lib/utils";
 import { robustCopy } from "@/lib/clipboard";
 import { fill, translate, useT, useUiLanguage } from "@/i18n";
@@ -77,7 +76,6 @@ import {
   useDeleteSkill,
   useBulkDeleteSkills,
   RESOURCE_KINDS,
-  RESOURCE_LABELS,
   type SkillSummary,
   type SkillState,
   type SkillTrigger,
@@ -1002,6 +1000,8 @@ function SkillDetailPage({
   const fileCount = 1 + resourceFiles.length;
   const openLabel =
     openFile.kind === "skill" ? "SKILL.md" : `${openFile.kind}/${openFile.filename}`;
+  const treePaths = ["SKILL.md", ...resourceFiles.map((f) => `${f.kind}/${f.filename}`)];
+  const OpenFileIcon = openFile.kind === "skill" ? FileText : KIND_ICON[openFile.kind];
 
   const menuActions = [
     {
@@ -1131,40 +1131,10 @@ function SkillDetailPage({
 
         <Panel className="mt-4">
           <div className="flex items-center gap-3 border-b border-border/70 px-3 py-2">
-            <ActionMenu
-              label={t("skills_view.files_menu")}
-              align="start"
-              actions={[
-                {
-                  id: "skill-md",
-                  label: "SKILL.md",
-                  icon: <FileText className="h-3.5 w-3.5" />,
-                  onSelect: () => setOpenFile({ kind: "skill" }),
-                },
-                ...resourceFiles.map((f, i) => {
-                  const Icon = KIND_ICON[f.kind];
-                  return {
-                    id: `${f.kind}/${f.filename}`,
-                    label: `${RESOURCE_LABELS[f.kind]} / ${f.filename}`,
-                    icon: <Icon className="h-3.5 w-3.5" />,
-                    separatorAbove: i === 0,
-                    onSelect: () => setOpenFile({ kind: f.kind, filename: f.filename }),
-                  };
-                }),
-              ]}
-              trigger={({ open, toggle }) => (
-                <button
-                  type="button"
-                  onClick={toggle}
-                  aria-expanded={open}
-                  aria-haspopup="menu"
-                  className="inline-flex h-8 max-w-[360px] items-center gap-2 rounded-md bg-sheen/[0.07] px-3 font-mono text-[13px] text-foreground hover:bg-sheen/[0.12]"
-                >
-                  <span className="truncate">{openLabel}</span>
-                  <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")} />
-                </button>
-              )}
-            />
+            <span className="inline-flex h-8 min-w-0 items-center gap-2 px-1 font-mono text-[13px] text-foreground">
+              <OpenFileIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{openLabel}</span>
+            </span>
             <span className="text-sm text-muted-foreground">
               {fileCount === 1 ? t("skills_view.file_one") : fill(t("skills_view.files"), { n: fileCount })}
             </span>
@@ -1204,6 +1174,22 @@ function SkillDetailPage({
             </div>
           </div>
 
+          <div className="flex min-h-[160px]">
+            <FileTree
+              className="w-56 shrink-0 border-r border-border/70 py-2"
+              rootLabel={data.name}
+              paths={treePaths}
+              openPath={openLabel}
+              onOpen={(path) => {
+                if (path === "SKILL.md") {
+                  setOpenFile({ kind: "skill" });
+                  return;
+                }
+                const hit = resourceFiles.find((f) => `${f.kind}/${f.filename}` === path);
+                if (hit) setOpenFile({ kind: hit.kind, filename: hit.filename });
+              }}
+            />
+            <div className="min-w-0 flex-1">
           {openFile.kind === "skill" ? (
             mode === "preview" ? (
               <div className="max-h-[60vh] overflow-auto px-6 py-5">
@@ -1261,6 +1247,8 @@ function SkillDetailPage({
               mode={mode}
             />
           )}
+            </div>
+          </div>
         </Panel>
       </div>
 

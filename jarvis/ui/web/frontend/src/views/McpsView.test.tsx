@@ -155,8 +155,12 @@ describe("McpsView — detail page", () => {
     expect(screen.getByText("notebook_list")).toBeTruthy();
     expect(screen.getByText("notebook_get")).toBeTruthy();
     expect(screen.getByText("python -m notebooklm_mcp.server")).toBeTruthy();
-    // The file card opens on the server's own mcp.json block.
-    await screen.findByText("mcp.json");
+    // The file card lists the server's files in its folder tree and opens on
+    // the server's own mcp.json block.
+    await waitFor(() => {
+      expect(screen.getAllByText("mcp.json").length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText("definition.json")).toBeTruthy();
     expect(screen.getByText("2 files")).toBeTruthy();
 
     // The overflow menu carries the connection check.

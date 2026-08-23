@@ -1403,6 +1403,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
 
       <FileCard
         className="mt-4"
+        rootLabel={plugin.id}
         files={filesQuery.data?.files ?? []}
         loading={filesQuery.isPending}
         error={filesQuery.error ? (filesQuery.error as Error).message : null}

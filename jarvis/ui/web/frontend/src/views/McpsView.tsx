@@ -564,6 +564,7 @@ function McpDetail({
 
       <FileCard
         className="mt-4"
+        rootLabel={server.name}
         files={filesQuery.data?.files ?? []}
         loading={filesQuery.isPending}
         error={filesQuery.error ? (filesQuery.error as Error).message : null}
