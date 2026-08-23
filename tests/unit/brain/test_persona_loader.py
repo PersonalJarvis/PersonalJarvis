@@ -145,11 +145,6 @@ def test_custom_override_wins_even_in_compact_mode(monkeypatch, tmp_path) -> Non
     """User autonomy outranks the latency optimization: their exact words
     stay, whatever profile the provider asked for."""
     invalidate_cache()
-    # The active MODE is appended by the loader and is real user state, so on a
-    # machine with a mode switched on this compared "My own words." against
-    # "My own words." plus the mode block. CI has no user state and stayed
-    # green; the developer's own box failed. Isolate what is not under test.
-    monkeypatch.setattr("jarvis.brain.modes.active_prompt_block", lambda: "")
     monkeypatch.setattr(pl, "read_custom_prompt", lambda: "My own words.")
     try:
         assert pl.load_effective_persona_prompt(compact=True) == "My own words."

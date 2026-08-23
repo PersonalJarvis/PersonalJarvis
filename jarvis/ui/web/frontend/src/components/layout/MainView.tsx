@@ -82,9 +82,6 @@ const JarvisAgentsView = lazyView(() =>
 const WikiView = lazyView(() =>
   import("@/views/WikiView").then((m) => ({ default: m.WikiView })),
 );
-const ModesView = lazyView(() =>
-  import("@/views/ModesView").then((m) => ({ default: m.ModesView })),
-);
 const ApiKeysView = lazyView(() =>
   import("@/views/ApiKeysView").then((m) => ({ default: m.ApiKeysView })),
 );
@@ -496,10 +493,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     // AROUND it looks like (see App.tsx).
     case "visualization":
       return <VisualizationView />;
-    // The assistant's character: which mode is active, and the workshop for
-    // building another one by talking to it.
-    case "modes":
-      return <ModesView />;
     // The marketplace storefront: everything the community published, in one
     // place, installable without leaving the app.
     case "marketplace":

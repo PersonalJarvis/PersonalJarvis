@@ -88,8 +88,6 @@ export type SectionId =
   // so the grid needs an id of its own — it still holds live panes and must
   // stay reachable while the new surface grows into full parity.
   | "agentic-ide-classic"
-  // The assistant's character: pick a mode, or build one by talking to it.
-  | "modes"
   // The Jarvis Marketplace, in the app: everything the community published —
   // plugins, skills and wallpapers — browsable and installable in one place
   // instead of scattered across three unrelated sections.
@@ -134,7 +132,6 @@ export const SECTION_IDS = [
   "agentic-ide",
   "chat-workspace",
   "agentic-ide-classic",
-  "modes",
   "marketplace",
 ] as const satisfies readonly SectionId[];
 
@@ -202,7 +199,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   "agentic-ide": "Agentic IDE",
   "chat-workspace": "Chat",
   "agentic-ide-classic": "Terminal grid",
-  modes: "Modes",
   marketplace: "Marketplace",
 };
 

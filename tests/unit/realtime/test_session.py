@@ -6839,14 +6839,11 @@ async def test_scrub_cancel_fallback_carries_the_active_voice_hint():
     await sess.end(reason="test")
 
 
-def test_active_provider_selection_falls_back_to_adapter_default_voice(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def test_active_provider_selection_falls_back_to_adapter_default_voice():
     """BUG-155: an empty card pin must still resolve a named live voice so
     surface TTS cannot fall through to Charon while the socket speaks Kore."""
     from types import SimpleNamespace
 
-    monkeypatch.setattr("jarvis.brain.modes.active_voice", lambda: "")
     sess = RealtimeVoiceSession(
         session_id="voice-default",
         send_binary=lambda _data: asyncio.sleep(0),

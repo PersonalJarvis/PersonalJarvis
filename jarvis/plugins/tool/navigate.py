@@ -61,10 +61,6 @@ KNOWN: frozenset[str] = frozenset(
         # grid" an unknown section to the brain.
         "agentic-ide-classic",
         "chat-workspace",
-        # The assistant's character screen. It was a valid SECTION_IDS entry
-        # from the day it shipped but never landed here, which left the parity
-        # guard red and made "open the modes" an unknown section.
-        "modes",
         # The marketplace, in the app: community plugins, skills and wallpapers
         # in one storefront.
         "marketplace",
@@ -203,12 +199,6 @@ _ALIASES: dict[str, str] = {
     "marktplatz": "marketplace",  # i18n-allow: input vocab
     "mercado": "marketplace",  # i18n-allow: input vocab
     "tienda": "marketplace",  # i18n-allow: input vocab
-    # The character screen, spoken. The bare id already resolves; these are the
-    # singular and localised forms.
-    "mode": "modes",
-    "modus": "modes",  # i18n-allow: input vocab
-    "modi": "modes",  # i18n-allow: input vocab
-    "modos": "modes",  # i18n-allow: input vocab
 }
 
 

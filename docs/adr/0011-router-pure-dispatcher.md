@@ -1096,6 +1096,18 @@ the process.
 - `tests/integration/test_modes_routes.py`
 - `tests/unit/brain/test_routing.py` (ROUTER_TOOLS exact set)
 
+### Retired (2026-08-23)
+
+The assistant-modes feature was removed on the maintainer's decision: the
+shelf of characters, `jarvis/brain/modes.py`, the `/api/modes` routes, the
+`jarvis modes` CLI group, the Modes section and the three router tools above
+are gone, and `ROUTER_TOOLS` no longer lists them. `load_effective_persona_prompt`
+is back to "custom override, else default" with no mode layer, and the Agentic
+IDE's focused coding mode no longer swaps the persona's character — it still
+adds the workspace facts to the prompt and gates spawns as before. This
+section stays as history; the reasoning above is what to re-read if a
+character layer is ever wanted again.
+
 ## Amendment: `create-skill` router tool (2026-08-18)
 
 `create-skill` joins `ROUTER_TOOLS`: the brain can now WRITE a new skill from

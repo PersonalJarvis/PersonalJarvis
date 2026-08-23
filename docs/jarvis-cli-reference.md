@@ -137,15 +137,6 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis missions show <mission_id>` — Show one mission with its events + verdicts.
 - `jarvis missions tool-approvals <mission_id>` — List supervisor tool calls waiting for approval in a mission.
 
-## modes
-
-- `jarvis modes create <name> --character --slug --emoji --description --voice --verbosity --proactivity` — Create or replace a mode. Does NOT switch to it — use `modes use` for that.
-- `jarvis modes delete <slug>` — Delete a mode you created. Built-ins are refused; a copy of one is not.
-- `jarvis modes list` — List every mode and show which one is active.
-- `jarvis modes restore <slug>` — Throw away your edits to a built-in mode and bring the shipped one back.
-- `jarvis modes show <slug>` — Show one mode in full, including its character text.
-- `jarvis modes use <slug>` — Switch the active mode. Applies on the next turn — no restart.
-
 ## outputs
 
 - `jarvis outputs files <slug>` — List the artifacts a mission produced.

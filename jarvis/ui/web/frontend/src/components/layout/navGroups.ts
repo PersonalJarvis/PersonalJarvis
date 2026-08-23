@@ -10,39 +10,38 @@
  * a section added here would silently never appear on the deck.
  */
 import {
-  BookOpen,
-  Boxes,
-  Contact,
-  Drama,
-  FolderOpen,
-  Frame,
-  Gauge,
-  KeyRound,
-  ListTodo,
-  MessageSquare,
-  MessageSquareWarning,
-  MessagesSquare,
-  Mic,
-  Notebook,
-  ScrollText,
-  Settings,
-  Share2,
-  Sparkles,
-  Store,
-  Terminal,
-  UserCircle2,
-  Users,
+  BookOpen,
+  Boxes,
+  Contact,
+  FolderOpen,
+  Frame,
+  Gauge,
+  KeyRound,
+  ListTodo,
+  MessageSquare,
+  MessageSquareWarning,
+  MessagesSquare,
+  Mic,
+  Notebook,
+  ScrollText,
+  Settings,
+  Share2,
+  Sparkles,
+  Store,
+  Terminal,
+  UserCircle2,
+  Users,
   Image as ImageIcon,
   type LucideIcon,
 } from "lucide-react";
 import type { SectionId } from "@/store/events";
 
-// Resolve a nav row's label, preferring the active-locale translation and
-// falling back to the English `fallbackLabel` when the key is not yet present
-// (the i18n resolver returns the key itself on a miss).
-export function resolveNavLabel(t: (key: string) => string, item: NavItem): string {
-  const resolved = t(item.labelKey);
-  return resolved === item.labelKey && item.fallbackLabel ? item.fallbackLabel : resolved;
+// Resolve a nav row's label, preferring the active-locale translation and
+// falling back to the English `fallbackLabel` when the key is not yet present
+// (the i18n resolver returns the key itself on a miss).
+export function resolveNavLabel(t: (key: string) => string, item: NavItem): string {
+  const resolved = t(item.labelKey);
+  return resolved === item.labelKey && item.fallbackLabel ? item.fallbackLabel : resolved;
 }
 
 export interface NavItem {
@@ -165,14 +164,6 @@ export const NAV_GROUPS: NavItem[][] = [
       fallbackLabel: "Voice",
     },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
-    // The assistant's character. Sits with the configuration group because it
-    // changes how the assistant behaves everywhere, not what any one page holds.
-    {
-      id: "modes",
-      labelKey: "nav.modes",
-      icon: Drama,
-      fallbackLabel: "Modes",
-    },
     // Appearance. Sits with the configuration group rather than with the
     // content views: it changes how the app looks, not what it holds.
     {

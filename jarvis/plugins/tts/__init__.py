@@ -360,17 +360,7 @@ def build_realtime_surface_tts(
             providers.get(provider_id) if isinstance(providers, dict) else None
         )
         config_voice = str(getattr(provider_cfg, "voice", "") or "").strip()
-        mode_voice = ""
-        try:
-            from jarvis.brain.modes import active_voice
-
-            mode_voice = str(active_voice() or "").strip()
-        except Exception as exc:  # noqa: BLE001 — a mode voice never blocks the fallback
-            log.debug("Mode voice not applied to the realtime surface TTS: %s", exc)
-            mode_voice = ""
-        session_voice = (
-            str(session_voice or "").strip() or mode_voice or config_voice
-        )
+        session_voice = str(session_voice or "").strip() or config_voice
         tts_cfg = getattr(cfg, "tts", None)
 
         if family in {"gemini-flash-tts", "vertex-tts"}:

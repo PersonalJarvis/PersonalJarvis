@@ -97,14 +97,6 @@ ROUTER_TOOLS = frozenset({
     # (two-turn voice confirm). Direct gated action, never a spawn — never in
     # a worker set (AP-5/AP-14). See ADR-0011 amendment "app-command tool".
     "app-command",
-    # Assistant modes (2026-08-13): the assistant's own character. Reading the
-    # list is a property read; switching changes tone and is visible on screen
-    # the moment it happens; saving is ask-tier because it writes a file every
-    # future turn will read. All three are direct gated actions, never a spawn
-    # — never in a worker set (AP-5/AP-14).
-    "list-modes",
-    "switch-mode",
-    "save-mode",
     # Phase A1: synchronous state read on the AwarenessManager (Plan §5).
     # NO brain call, NO IO — property read only.
     "awareness-snapshot",

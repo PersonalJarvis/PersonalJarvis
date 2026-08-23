@@ -7,7 +7,7 @@ three tool rounds — `jarvisctl --help`, `jarvisctl skills --help`,
 deadline ended the turn. The CLI catalog gives the tool six example commands;
 everything else the model had to discover at the user's expense, one slow
 provider round per `--help`. That is not a skills problem: it is the same for
-workflows, modes, tasks, wiki, board, contacts, missions — every group the CLI
+workflows, tasks, wiki, board, contacts, missions — every group the CLI
 has and the model cannot see.
 
 So the tool description carries the whole tree: one line per group, the
@@ -85,7 +85,6 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "kill <id>",
     ),
     "tasks": ("list", "get <id>", "create", "cancel <id>", "delete <id>"),
-    "modes": ("list", "show <slug>", "use <slug>", "create", "delete <slug>", "restore"),
     "workflows": ("list", "show <id>", "create", "run <id>", "delete <id>", "run-history"),
     "sessions": (
         "list",

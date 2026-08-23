@@ -175,17 +175,17 @@ def default_persona_prompt() -> str:
     return load_persona_prompt()
 
 
-def base_persona_prompt(*, compact: bool = False) -> str:
-    """The persona WITHOUT the active mode layered on: custom override, else default.
+def load_effective_persona_prompt(*, compact: bool = False) -> str:
+    """The persona block the brain should use: custom override if set, else default.
 
     The custom override wins EVEN in compact mode — the user chose those
     exact words for their assistant, and user autonomy outranks the latency
     optimization (the trade-off is documented on the settings surface).
 
-    Callers that build the brain's prompt want
-    :func:`load_effective_persona_prompt` instead; this one exists for the
-    settings surface, which edits the base text and must not show the user a
-    mode block they cannot edit there.
+    This is the ONE place the assistant's character is assembled: the typing
+    brain (``BrainManager._build_system_prompt``) and the speaking brain
+    (``jarvis.realtime.session``) both read it fresh on every turn, so an edit
+    reaches both without a restart.
     """
     custom = read_custom_prompt()
     if custom is not None:
@@ -193,35 +193,6 @@ def base_persona_prompt(*, compact: bool = False) -> str:
     if compact:
         return load_compact_persona_prompt()
     return default_persona_prompt()
-
-
-def load_effective_persona_prompt(*, compact: bool = False) -> str:
-    """The full persona the brain should use: the base plus the active mode.
-
-    This is the ONE place the assistant's character is assembled, which is why
-    a mode switch reaches the typing brain (``BrainManager._build_system_prompt``)
-    and the speaking brain (``jarvis.realtime.session``) at the same moment and
-    without a restart — both read this function fresh on every turn.
-
-    The mode is appended, never substituted. The base carries the standing rules
-    about honesty and about what is safe to say aloud; a mode that replaced it
-    would drop those rules the moment somebody picked a chattier character, and
-    the regression would read as a personality quirk rather than a safety bug.
-
-    The default ``assistant`` mode contributes an empty block, so an install
-    that never touches modes produces byte-identical prompts to before.
-    """
-    base = base_persona_prompt(compact=compact)
-    try:
-        from .modes import active_prompt_block
-
-        block = active_prompt_block()
-    except Exception as exc:  # noqa: BLE001 - a mode must never break a turn
-        log.warning("Mode layer unavailable (%s) — base persona only.", exc)
-        return base
-    if not block:
-        return base
-    return f"{base}\n\n{block}" if base else block
 
 
 def save_custom_prompt(text: str) -> None:

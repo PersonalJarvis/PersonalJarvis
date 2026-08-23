@@ -1906,10 +1906,6 @@ class Registry:
         """Bring ``session`` to the front. Caller holds the lock."""
         self._active = session.id
         session.last_active_at = time.time()
-        # A different workspace at the front can mean a different answer to
-        # "is coding mode on" — the flag is per workspace — so the persona
-        # follows the front, not only the toggle.
-        self._sync_coding_character()
 
     async def _open_locked(
         self,
@@ -2230,9 +2226,6 @@ class Registry:
         async with self._lock:
             if workspace_id is None:
                 self._active = None
-                # No workspace on screen is no coding mode, whatever the flags
-                # on the workspaces behind the wizard say.
-                self._sync_coding_character()
                 return None
             session = self._sessions.get(workspace_id)
             if session is None:
@@ -2441,12 +2434,6 @@ class Registry:
             self._active = survivor.id if survivor else None
             if survivor is not None:
                 self._focus_locked(survivor)
-            else:
-                # The last workspace is gone; the coding character must go
-                # with it. This is the second life of the bug this override was
-                # built against — coding mode stuck on for the whole session
-                # after the workspace it belonged to had been closed.
-                self._sync_coding_character()
         # Deliberately NOT re-written here. The restore point is refreshed by
         # activity — opening a workspace, adding a pane, connecting one — and
         # closing is not activity. Rewriting on close made the offer shrink one
@@ -2460,47 +2447,18 @@ class Registry:
     def set_focus_mode(self, enabled: bool) -> bool:
         """Turn the focused coding mode on/off. Returns the resulting state.
 
-        Also swaps the assistant's *character* to the built-in ``coding`` mode,
-        because "focused coding mode" was only ever half a mode: it added the
-        workspace facts to the prompt but left the tone alone. It is applied as
-        a SECTION OVERRIDE, which is in-memory and never persisted — so this
-        cannot overwrite the mode the user actually chose, and cannot survive a
-        restart the way the old sticky focus flag did.
+        The flag is per workspace and in-memory: it adds the workspace facts
+        to the assistant's prompt while the workspace is at the front, and it
+        does not survive a restart.
         """
         session = self.session
         if session is None:
             if enabled:
                 raise SessionError("No Agentic-IDE session is running — open one first.")
-            self._sync_coding_character()
             return False
         session.focus_mode = bool(enabled)
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
-        self._sync_coding_character()
         return session.focus_mode
-
-    def _sync_coding_character(self) -> None:
-        """Point the persona layer at the ``coding`` mode exactly while coding
-        mode is in effect — and at nothing the moment it is not.
-
-        Derived from the registry's own state (the workspace at the front AND
-        its focus flag, the same two halves ``coding_mode_active`` reads) rather
-        than passed in by the caller, so no transition can leave the persona
-        saying "coding" while the predicate says "no workspace". Called from
-        every place that state changes: the toggle, a workspace coming to the
-        front, the front being cleared, and the last workspace closing.
-
-        Best-effort by design: the workspace context block is the part users
-        depend on, so a missing or renamed ``coding`` mode costs the tone and
-        nothing else.
-        """
-        session = self.session
-        enabled = session is not None and bool(session.focus_mode)
-        try:
-            from jarvis.brain import modes
-
-            modes.set_section_override(modes.MODE_CODING if enabled else None)
-        except Exception as exc:  # noqa: BLE001 - never fail a toggle on the tone
-            logger.debug("Coding-mode character not applied: {}", exc)
 
     def set_surface_context(
         self,

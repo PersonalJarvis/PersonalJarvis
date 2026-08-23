@@ -18,14 +18,6 @@ from jarvis.brain import persona_loader
 def _isolate_data_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Point the override file at a throwaway dir so tests never touch real data."""
     monkeypatch.setattr(core_config, "DATA_DIR", tmp_path)
-    # Neutralise the active MODE too. ``load_effective_persona_prompt``
-    # appends the mode block, and the mode is real user state that lives
-    # outside DATA_DIR — so on any machine with a mode switched on these
-    # comparisons failed against the bare default while CI, which has no
-    # user state, stayed green. A test must not read the developer.
-    monkeypatch.setattr(
-        "jarvis.brain.modes.active_prompt_block", lambda: ""
-    )
     return tmp_path
 
 
