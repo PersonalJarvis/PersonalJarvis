@@ -56,6 +56,12 @@ versioning per [SemVer](https://semver.org/).
   what the config asked for, what really runs, and why, with a one-click
   install of the missing libraries. They are also available as the `cuda`
   install extra.
+- **Dictation text is tidied while you speak.** Each finished stretch is
+  formatted as soon as it is recognized, so after a long dictation only the
+  last few seconds are left to format when you let go.
+- **The on-device recognizer runs at full GPU speed.** On cards where the
+  int8 kernels crawl, it is built as float16 automatically — the local model
+  no longer takes a minute for three words.
 - **The wake word no longer fires on a stray single word.** Since the 20 Aug
   crash fix, the check that decides between "Hey George" and whatever was
   actually said had quietly lost its strongest comparison, so a lone word like
