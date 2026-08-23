@@ -62,7 +62,10 @@ def _page_title(file: Path) -> str:
     try:
         with file.open("r", encoding="utf-8", errors="replace") as handle:
             head = handle.read(_TITLE_PROBE_BYTES)
-    except OSError:
+    except OSError as exc:
+        # An unreadable page keeps its filename as the label — the listing
+        # must not fail over one locked file; the read is retried on open.
+        log.debug("artifact title probe failed %s: %s", file, exc)
         return file.stem
     match = _TITLE_RE.search(head)
     if match is None:
@@ -75,7 +78,10 @@ def _candidate_pages(root: Path) -> list[tuple[float, Path, Path]]:
     """``(mtime, run_dir, page)`` for every HTML deliverable of the newest runs."""
     try:
         run_dirs = [entry for entry in root.iterdir() if entry.is_dir()]
-    except OSError:
+    except OSError as exc:
+        # A root that vanished or is unreadable contributes nothing; the other
+        # roots are still scanned and the miss is reported as "no match".
+        log.debug("artifact scan cannot list %s: %s", root, exc)
         return []
     # Newest first by directory mtime — the same order the Outputs rail uses.
     run_dirs.sort(key=lambda d: d.stat().st_mtime if d.exists() else 0.0, reverse=True)

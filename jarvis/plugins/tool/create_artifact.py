@@ -282,10 +282,12 @@ class CreateArtifactTool:
             language,
             title=brief.title,
         )
+        # The protocol types ``artifacts`` as paths; the brain's tool loop reads
+        # this background marker as a dict (the spawn_worker precedent).
         return ToolResult(
             success=True,
             output=ack,
-            artifacts=(
+            artifacts=(  # type: ignore[arg-type]
                 {
                     "background_task": True,
                     "utterance": utterance,
