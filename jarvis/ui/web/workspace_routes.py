@@ -8,8 +8,10 @@ PTY inside the Jarvis project folder.
 Endpoints (prefix ``/api/workspace``):
 - ``GET  /agents``        → detect Claude Code + Codex (installed? version?)
 - ``POST /launch``        → validate + pre-trust + return the grid plan (slots)
+- ``POST /agents/{name}/recheck`` → probe ONE entry now (after an install)
 - ``WS   /pty/{key}``     → interactive PTY running one agent (or its installer)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +27,9 @@ from jarvis.workspace.agents import (
     build_install_argv,
     coding_agent_names,
     detect_agents,
+    invalidate_agent_detection,
     pty_available,
+    recheck_agent,
 )
 from jarvis.workspace.launcher import LAYOUT_CHOICES, plan_workspace, validate_split
 from jarvis.workspace.trust import ensure_trusted
@@ -56,6 +60,15 @@ class AgentsResponse(BaseModel):
     agents: list[AgentStatusModel]
 
 
+class AgentRecheckResponse(BaseModel):
+    """One entry, probed just now rather than read from the sweep's cache."""
+
+    name: str
+    display_name: str
+    installed: bool
+    version: str | None
+
+
 class LaunchRequest(BaseModel):
     layout: int
     split: dict[str, int] = Field(default_factory=dict)
@@ -84,6 +97,28 @@ async def get_agents() -> AgentsResponse:
             )
             for i in infos
         ],
+    )
+
+
+@router.post("/agents/{name}/recheck", response_model=AgentRecheckResponse)
+async def recheck(name: str) -> AgentRecheckResponse:
+    """Probe ONE entry now — "the install finished, did it work?".
+
+    Cheap enough to poll while a user watches an installer run, which is the
+    whole point: the full sweep behind ``GET /agents`` starts a subprocess per
+    registered CLI and answers from a 30-second cache, so it can neither be
+    polled nor tell the truth immediately after something appeared on disk.
+    This one probes the single entry, re-augments PATH first, and drops that
+    cache on the way through.
+    """
+    info = await recheck_agent(name)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"No agent named {name!r} is registered.")
+    return AgentRecheckResponse(
+        name=info.name,
+        display_name=info.display_name,
+        installed=info.installed,
+        version=info.version,
     )
 
 
@@ -159,14 +194,14 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
         async with send_lock:
             try:
                 await ws.send_json({"t": "o", "d": text})
-            except Exception:  # noqa: BLE001 - client gone; reader will stop
+            except Exception:  # noqa: BLE001, S110 - client gone; the reader stops
                 pass
 
     async def on_closed(_tid: str, code: int) -> None:
         async with send_lock:
             try:
                 await ws.send_json({"t": "exit", "code": code})
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 - client gone; nowhere to report
                 pass
 
     try:
@@ -196,7 +231,7 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
                 # AP-20: an unclean teardown raises RuntimeError, not
                 # WebSocketDisconnect — treat any read error as terminal.
                 break
-            except Exception:  # noqa: BLE001 - malformed frame; keep the PTY alive
+            except Exception:  # noqa: BLE001, S112 - malformed frame; keep the PTY alive
                 continue
             kind = msg.get("t")
             if kind == "i":
@@ -210,6 +245,13 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
             # other frames are ignored
     finally:
         mgr.close(session.terminal_id)
+        # An installer just ran to whatever end it reached, so the cached sweep
+        # is describing a machine that no longer exists. Dropped here rather
+        # than only in the recheck route, because the user may simply close the
+        # dialog — and then the NEXT full read is the one that has to be honest
+        # about what is installed.
+        if install:
+            invalidate_agent_detection()
 
 
 def _safe_int(value: object, default: int) -> int:

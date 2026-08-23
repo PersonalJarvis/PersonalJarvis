@@ -459,7 +459,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // What the grid's split menus offer — every entry the backend registered, so
   // the coding CLIs and the plain terminal, and anything registered later
   // without a change here. Uninstalled entries stay in the list but disabled,
-  // so their absence is visible rather than silently missing.
+  // so their absence is visible rather than silently missing — and carry their
+  // install command, which is what lets the menu offer to fix it on the spot.
   const splitChoices = useMemo(
     () =>
       agents.map((a) => ({
@@ -468,6 +469,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         installed: a.installed,
         kind: a.kind ?? "cli",
         logoUrl: a.logo_url || undefined,
+        installCommand: a.install_command || undefined,
         // For a plain terminal the useful second line is WHICH shell opens; a
         // CLI's name already says what it is, so it gets no line of its own.
         description:
@@ -888,6 +890,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             busy={busy}
             maxTerminals={maxTerminals}
             agents={splitChoices}
+            /* An install started from a split menu changes the one thing this
+               list answers, and the sweep behind it is cached — so the re-read
+               is explicit rather than waited for. */
+            onAgentsChanged={() => void reloadAgents()}
             onSessionChanged={setSession}
             accounts={ideAccounts}
             onStateChanged={applyStateFromSettings}

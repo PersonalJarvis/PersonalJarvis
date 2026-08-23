@@ -137,6 +137,14 @@ interface AgenticGridProps {
   maxTerminals?: number;
   /** Coding CLIs a split may start — the pane split menus offer these. */
   agents?: SplitAgentChoice[];
+  /**
+   * A split menu installed a CLI — the owner re-reads its agent list.
+   *
+   * The list is answered from a cached detection sweep, so without this the
+   * entry the user just installed keeps reading as missing for up to half a
+   * minute, which looks exactly like an installer that did nothing.
+   */
+  onAgentsChanged?: () => void;
   /** Adding or closing a pane changes the workspace — the owner re-reads it. */
   onSessionChanged?: (session: SessionState) => void;
   /**
@@ -663,6 +671,7 @@ export function AgenticGrid({
   busy = false,
   maxTerminals = 12,
   agents,
+  onAgentsChanged,
   onSessionChanged,
   accounts = [],
   onStateChanged,
@@ -2707,6 +2716,7 @@ export function AgenticGrid({
                 itemTestId={(agent) => `chat-rail-new-${agent}`}
                 className="left-2 top-full"
                 onDismiss={() => setPicking(null)}
+                onInstalled={() => onAgentsChanged?.()}
                 onPick={(agent) => {
                   setPicking(null);
                   void split(null, "right", agent);
@@ -3048,6 +3058,7 @@ export function AgenticGrid({
                     layoutBusy={layoutBusy}
                     splitDisabled={atLimit || busy || working}
                 agents={agents}
+                onAgentsChanged={onAgentsChanged}
                 onFocus={() => {
                   if (takesPrompts(term)) setTarget(term.name);
                 }}
@@ -3213,6 +3224,7 @@ export function AgenticGrid({
                   itemTestId={(agent) => `empty-workspace-new-${agent}`}
                   className="left-1/2 top-full mt-1 -translate-x-1/2"
                   onDismiss={() => setPicking(null)}
+                  onInstalled={() => onAgentsChanged?.()}
                   onPick={(agent) => {
                     setPicking(null);
                     void split(null, "right", agent);

@@ -4,6 +4,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentPickerMenu, offersAgentChoice } from "./AgentPicker";
 
+/*
+ * The install dialog embeds a real xterm pane, and xterm needs a canvas and a
+ * device-pixel ratio jsdom does not have. Stubbed here because these tests are
+ * about the MENU — whether the offer appears, for which entries, and what it
+ * reports back. What the terminal itself does is WorkspaceTerminal's own test.
+ */
+vi.mock("../workspace/WorkspaceTerminal", () => ({
+  WorkspaceTerminal: ({ installName }: { installName?: string }) => (
+    <div data-testid={`stub-install-pty-${installName}`} />
+  ),
+}));
+
 afterEach(cleanup);
 
 function PickerHarness({ onPick = vi.fn() }: { onPick?: (agent: string) => void }) {
@@ -180,5 +192,95 @@ describe("offersAgentChoice", () => {
         { name: "shell", displayName: "Plain Terminal", installed: true },
       ]),
     ).toBe(true);
+  });
+});
+
+describe("AgentPickerMenu install offer", () => {
+  function InstallHarness({
+    onInstalled = vi.fn(),
+  }: {
+    onInstalled?: (agent: string, installed: boolean) => void;
+  }) {
+    return (
+      <AgentPickerMenu
+        title="Open what?"
+        ariaLabel="Choose a terminal"
+        agents={[
+          { name: "codex", displayName: "Codex", installed: true },
+          {
+            name: "deepseek-harness",
+            displayName: "DeepSeek Harness",
+            installed: false,
+            installCommand: "npm install -g @deepseek-ai/dsh",
+          },
+          // A CLI the user added: not installed, and nothing this app knows how
+          // to install — its command is theirs to run.
+          { name: "mycli", displayName: "My CLI", installed: false },
+          // A host with no shell at all. Nothing to install here either, and
+          // the reason is a different one, so the wording must not be shared.
+          {
+            name: "shell",
+            displayName: "Plain Terminal",
+            installed: false,
+            kind: "shell",
+          },
+        ]}
+        onPick={vi.fn()}
+        onDismiss={vi.fn()}
+        onInstalled={onInstalled}
+        testId="picker"
+        itemTestId={(agent) => `pick-${agent}`}
+      />
+    );
+  }
+
+  it("offers to install exactly the entries an install command exists for", () => {
+    render(<InstallHarness />);
+
+    // The whole point: a missing CLI is now a button, not a dead label.
+    expect(screen.getByTestId("pick-deepseek-harness-install")).toBeTruthy();
+    // ...and the row it belongs to still says, by being disabled, that it
+    // cannot be opened yet.
+    expect(
+      screen.getByTestId("pick-deepseek-harness").hasAttribute("disabled"),
+    ).toBe(true);
+
+    // No install command, no button — offering one would run nothing.
+    expect(screen.queryByTestId("pick-mycli-install")).toBeNull();
+    expect(screen.queryByTestId("pick-shell-install")).toBeNull();
+    // Those two keep the label, and each keeps its OWN reason.
+    expect(screen.getByText("not installed")).toBeTruthy();
+    expect(screen.getByText("no shell here")).toBeTruthy();
+  });
+
+  it("does not repeat the label beside the button it made redundant", () => {
+    render(<InstallHarness />);
+    // One label, and it belongs to the custom CLI — not two, which in a 272px
+    // menu would cost an entry's description its line to say nothing new.
+    expect(screen.getAllByText("not installed")).toHaveLength(1);
+  });
+
+  it("opens the installer for the entry whose button was pressed", () => {
+    render(<InstallHarness />);
+    fireEvent.click(screen.getByTestId("pick-deepseek-harness-install"));
+    expect(
+      screen.getByTestId("agent-install-dialog-deepseek-harness"),
+    ).toBeTruthy();
+  });
+
+  it("tells the host what happened, so the row can stop saying 'not installed'", () => {
+    const onInstalled = vi.fn();
+    render(<InstallHarness onInstalled={onInstalled} />);
+    fireEvent.click(screen.getByTestId("pick-deepseek-harness-install"));
+    fireEvent.click(
+      screen.getByTestId("agent-install-dismiss-deepseek-harness"),
+    );
+    // False here is not a failure report — nothing probed positive while the
+    // dialog was open. The host re-reads either way; what it must never do is
+    // believe an install happened because a dialog was closed.
+    expect(onInstalled).toHaveBeenCalledWith("deepseek-harness", false);
+    expect(
+      screen.queryByTestId("agent-install-dialog-deepseek-harness"),
+    ).toBeNull();
   });
 });

@@ -451,6 +451,8 @@ interface AgenticTerminalProps {
    * choose, so the split buttons act immediately instead of opening a menu.
    */
   agents?: SplitAgentChoice[];
+  /** The split menu installed one of them — the grid re-reads its list. */
+  onAgentsChanged?: () => void;
   /**
    * Give this pane another call-sign.
    *
@@ -527,6 +529,7 @@ export function AgenticTerminal({
   onToggleMaximize,
   onSplit,
   agents,
+  onAgentsChanged,
   onRename,
   onClose,
   splitDisabled = false,
@@ -2139,6 +2142,7 @@ export function AgenticTerminal({
         onToggleMaximize={onToggleMaximize}
         onSplit={onSplit}
         agents={agents}
+        onAgentsChanged={onAgentsChanged}
         onRename={onRename}
         onClose={onClose}
         splitDisabled={splitDisabled}
@@ -2282,6 +2286,7 @@ function PaneHeader({
   onToggleMaximize,
   onSplit,
   agents,
+  onAgentsChanged,
   onRename,
   onClose,
   splitDisabled,
@@ -2306,6 +2311,7 @@ function PaneHeader({
   onToggleMaximize?: () => void;
   onSplit?: (direction: SplitDirection, agent?: string) => void;
   agents?: SplitAgentChoice[];
+  onAgentsChanged?: () => void;
   onRename?: (name: string) => Promise<boolean>;
   onClose?: () => void;
   splitDisabled: boolean;
@@ -2868,6 +2874,7 @@ function PaneHeader({
           // the header when the pane sits at the bottom of the screen.
           anchorTo={headerRef.current}
           onDismiss={() => setPicking(null)}
+          onInstalled={() => onAgentsChanged?.()}
           onPick={(agent) => {
             setPicking(null);
             onSplit?.(picking, agent);

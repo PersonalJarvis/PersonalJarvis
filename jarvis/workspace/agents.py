@@ -1233,25 +1233,38 @@ async def detect_agents(
     return list(infos)
 
 
-def _on_path(binary: str) -> bool:
-    """Is ``binary`` resolvable the way a pane would resolve it?
+def _augment_path() -> None:
+    """Put the places CLIs install themselves onto this process's PATH.
 
-    The whole detection story for a user-added entry. No subprocess: see
-    :func:`_custom_agent` for why a stranger's ``--version`` is not something
-    this sweep may run. ``ensure_cli_paths`` first, because a GUI-launched
-    process starts with a minimal PATH and would otherwise report a correctly
-    installed CLI as missing on macOS and Linux.
+    A GUI-launched process starts with a minimal PATH, so a correctly installed
+    CLI reads as missing on macOS and Linux — and a CLI installed WHILE the app
+    runs is invisible on every OS until something re-reads the environment. Both
+    are the same call, and it is idempotent, so every detection path makes it
+    rather than hoping an earlier one did.
+
+    Best-effort by design: PATH augmentation failing must degrade to "detection
+    sees whatever the process already had", never to no detection at all.
     """
-    import shutil
-
-    if not binary:
-        return False
     try:
         from jarvis.core.path_augment import ensure_cli_paths
 
         ensure_cli_paths()
     except Exception:  # noqa: BLE001, S110 - PATH augmentation is best-effort
         pass
+
+
+def _on_path(binary: str) -> bool:
+    """Is ``binary`` resolvable the way a pane would resolve it?
+
+    The whole detection story for a user-added entry. No subprocess: see
+    :func:`_custom_agent` for why a stranger's ``--version`` is not something
+    this sweep may run.
+    """
+    import shutil
+
+    if not binary:
+        return False
+    _augment_path()
     return shutil.which(binary) is not None
 
 
@@ -1268,6 +1281,7 @@ async def _sweep_agents(prober: CliStatusProber) -> list[AgentInfo]:
       question a ``--version`` probe can ask.
     """
     registry = _registry()
+    _augment_path()
     specs = [a.spec for a in registry.values() if a.spec is not None]
     statuses = await prober.probe_all(specs) if specs else {}
     shell = default_shell()
@@ -1276,55 +1290,100 @@ async def _sweep_agents(prober: CliStatusProber) -> list[AgentInfo]:
     if unspecced:
         found = await asyncio.to_thread(lambda: {a.name: _on_path(a.executable) for a in unspecced})
 
-    out: list[AgentInfo] = []
-    for agent in registry.values():
-        if agent.spec is None and agent.is_coding_agent:
-            out.append(
-                AgentInfo(
-                    name=agent.name,
-                    display_name=agent.display_name,
-                    installed=found.get(agent.name, False),
-                    # Deliberately none. Asking would be the subprocess this
-                    # path exists to avoid, and a made-up number beside
-                    # someone's own command is worse than a blank one.
-                    version=None,
-                    install_command=None,
-                    launch_command=agent.launch_command or "",
-                    kind=agent.kind,
-                    description=agent.description,
-                    custom=agent.custom,
-                    logo_url=agent.logo_url,
-                )
-            )
-            continue
-        if agent.spec is None:
-            out.append(
-                AgentInfo(
-                    name=agent.name,
-                    display_name=agent.display_name,
-                    installed=shell is not None,
-                    version=shell.label if shell else None,
-                    install_command=None,
-                    launch_command="",
-                    kind=agent.kind,
-                    description=agent.description,
-                )
-            )
-            continue
-        st = statuses.get(agent.name)
-        out.append(
-            AgentInfo(
-                name=agent.name,
-                display_name=agent.display_name,
-                installed=bool(st and st.installed),
-                version=st.version if st else None,
-                install_command=install_command(agent.name),
-                launch_command=agent.launch_command or "",
-                kind=agent.kind,
-                description=agent.description,
-            )
+    return [
+        _agent_info(
+            agent,
+            status=statuses.get(agent.name),
+            shell=shell,
+            on_path=found.get(agent.name, False),
         )
-    return out
+        for agent in registry.values()
+    ]
+
+
+def _agent_info(
+    agent: WorkspaceAgent,
+    *,
+    status: Any | None,
+    shell: Any | None,
+    on_path: bool,
+) -> AgentInfo:
+    """One entry's status row, from whichever of the three answers applies.
+
+    Shared by the full sweep and the single-entry recheck, so the row a user
+    sees right after installing something cannot disagree with the row the next
+    sweep produces — the two used to be the same three branches written twice,
+    which is exactly the shape that drifts.
+    """
+    if agent.spec is None and agent.is_coding_agent:
+        return AgentInfo(
+            name=agent.name,
+            display_name=agent.display_name,
+            installed=on_path,
+            # Deliberately none. Asking would be the subprocess this path
+            # exists to avoid, and a made-up number beside someone's own
+            # command is worse than a blank one.
+            version=None,
+            install_command=None,
+            launch_command=agent.launch_command or "",
+            kind=agent.kind,
+            description=agent.description,
+            custom=agent.custom,
+            logo_url=agent.logo_url,
+        )
+    if agent.spec is None:
+        return AgentInfo(
+            name=agent.name,
+            display_name=agent.display_name,
+            installed=shell is not None,
+            version=shell.label if shell else None,
+            install_command=None,
+            launch_command="",
+            kind=agent.kind,
+            description=agent.description,
+        )
+    return AgentInfo(
+        name=agent.name,
+        display_name=agent.display_name,
+        installed=bool(status and status.installed),
+        version=status.version if status else None,
+        install_command=install_command(agent.name),
+        launch_command=agent.launch_command or "",
+        kind=agent.kind,
+        description=agent.description,
+    )
+
+
+async def recheck_agent(name: str) -> AgentInfo | None:
+    """Probe ONE entry right now, and forget the cached sweep.
+
+    What "the install finished, did it work?" needs. The alternative —
+    ``detect_agents(force=True)`` — answers the same question by starting a
+    subprocess for every registered CLI, which is far too heavy for something
+    a dialog polls every few seconds while a user watches npm run.
+
+    Re-augments PATH first, because the binary that has just appeared may live
+    somewhere a GUI-launched process never had on its PATH (an npm global
+    prefix, ``~/.local/bin``). Without that the install genuinely succeeds and
+    the app keeps reporting the entry as missing, which reads as a broken
+    installer.
+
+    Returns ``None`` for a name that is not registered. Always invalidates the
+    sweep cache, even on a negative answer: whatever the user just did, the
+    cached list is no longer something to trust.
+    """
+    agent = get_agent(name)
+    if agent is None:
+        return None
+    invalidate_agent_detection()
+    await asyncio.to_thread(_augment_path)
+    if agent.spec is not None:
+        status = await CliStatusProber().probe(agent.spec)
+        return _agent_info(agent, status=status, shell=None, on_path=False)
+    if agent.is_coding_agent:
+        on_path = await asyncio.to_thread(_on_path, agent.executable)
+        return _agent_info(agent, status=None, shell=None, on_path=on_path)
+    return _agent_info(agent, status=None, shell=default_shell(), on_path=False)
 
 
 def _build_pty_argv(command: str) -> tuple[str, ...] | None:
@@ -1449,6 +1508,7 @@ __all__ = [
     "needs_trust",
     "plain_terminal_argv",
     "pty_available",
+    "recheck_agent",
     "refresh_custom_agents",
     "register_agent",
     "reserved_call_signs",

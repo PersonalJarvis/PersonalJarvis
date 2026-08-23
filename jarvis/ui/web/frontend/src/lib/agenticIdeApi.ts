@@ -545,6 +545,33 @@ export function fetchIdeAgents(): Promise<AgentsResponse> {
   return getJson<AgentsResponse>("/api/agentic-ide/agents");
 }
 
+/** One entry, probed just now — what an install dialog watches for. */
+export interface AgentRecheck {
+  name: string;
+  display_name: string;
+  installed: boolean;
+  version: string | null;
+}
+
+/**
+ * Ask about ONE CLI right now, bypassing the sweep's cache.
+ *
+ * Lives beside the IDE reads because the IDE's install dialog is what polls it,
+ * but it is a workspace route: detection belongs to the registry both surfaces
+ * share. `fetchIdeAgents` cannot answer this question — it probes every
+ * registered CLI at once and serves a 30-second cache, so polling it while an
+ * installer runs would spend a burst of subprocesses to be told what the app
+ * believed half a minute ago.
+ */
+export async function recheckAgent(name: string): Promise<AgentRecheck> {
+  const res = await fetch(
+    `/api/workspace/agents/${encodeURIComponent(name)}/recheck`,
+    { method: "POST", cache: "no-store" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as AgentRecheck;
+}
+
 /**
  * What each pane of a workspace is doing right now.
  *

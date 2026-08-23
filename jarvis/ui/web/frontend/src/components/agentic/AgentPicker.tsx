@@ -19,11 +19,17 @@
  * CLIs: a plain terminal (this machine's own shell, no agent around it) sits in
  * the same menu, and a CLI registered later appears here without a change on
  * this side. An entry that is not installed stays listed but disabled, so the
- * absence is visible and explains itself rather than silently not being there.
+ * absence is visible and explains itself rather than silently not being there —
+ * and where an install command exists it carries an Install button, so the
+ * absence is fixable from the menu instead of only from the CLIs page
+ * (maintainer, 2026-08-23). The install runs in a real terminal the user can
+ * read, and "installed" is a fresh probe rather than an exit code; see
+ * `AgentInstallDialog` for why both of those matter.
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import { AgentInstallDialog } from "./AgentInstallDialog";
 import { AgentMark } from "./AgentMark";
 
 /** A coding CLI an "open a terminal" action may start. */
@@ -46,6 +52,15 @@ export interface SplitAgentChoice {
    * Absent for everything else, where `AgentMark`'s own table answers.
    */
   logoUrl?: string;
+  /**
+   * The command that would install this entry, when one exists.
+   *
+   * Present is what turns the row's dead "NOT INSTALLED" label into an Install
+   * button, so the menu offers the fix where the user meets the problem. Absent
+   * for the plain terminal (a host without a shell is not something an install
+   * fixes) and for a user-added CLI, whose command is theirs to run.
+   */
+  installCommand?: string;
 }
 
 /**
@@ -109,6 +124,7 @@ export function AgentPickerMenu({
   itemTestId,
   className,
   anchorTo,
+  onInstalled,
 }: {
   /** The line above the entries — "Open beside — what?". */
   title: string;
@@ -133,9 +149,23 @@ export function AgentPickerMenu({
    * the thing it was opened from. Absent, the menu stays where it always was.
    */
   anchorTo?: HTMLElement | null;
+  /**
+   * Called once an install started from this menu ended, with whether the CLI
+   * is now there. The host re-reads its agent list; without it the install
+   * still works and the row catches up at the next natural read.
+   */
+  onInstalled?: (agent: string, installed: boolean) => void;
 }) {
   const first = agents.find((a) => a.installed);
   const [placement, setPlacement] = useState<FixedPlacement | null>(null);
+  /*
+   * The entry whose installer is running, owned HERE rather than handed up to
+   * every caller. Three surfaces open this menu (a pane's split buttons, the
+   * chat rail, an empty workspace) and none of them has anything to add to an
+   * install — threading dialog state through all three would be three copies
+   * of the same wiring and three chances for one of them to drift.
+   */
+  const [installing, setInstalling] = useState<SplitAgentChoice | null>(null);
 
   /*
    * Re-measure while the menu is open, not once when it opened.
@@ -218,9 +248,25 @@ export function AgentPickerMenu({
         <p className="mb-1 border-b border-border/60 px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-foreground/70">
           {title}
         </p>
-        {agents.map((agent) => (
+        {agents.map((agent) => {
+          /*
+           * A missing entry is only a dead end when nothing can be done
+           * about it. A CLI that ships an install command gets a button
+           * instead of the old label; the plain terminal on a host with no
+           * shell keeps the label, because there is nothing to install.
+           */
+          const installable =
+            !agent.installed && agent.kind !== "shell" && Boolean(agent.installCommand);
+          return (
+            <div
+              key={agent.name}
+              /* `none` and not `presentation`: this wrapper exists only so
+                 the row can hold two menu items side by side, and it must
+                 not take a place of its own in the menu's structure. */
+              role="none"
+              className="flex items-stretch gap-1"
+            >
           <button
-            key={agent.name}
             type="button"
             role="menuitem"
             autoFocus={agent === first}
@@ -237,7 +283,7 @@ export function AgentPickerMenu({
                listed. State now reads from the ink COLOUR (muted rather than
                foreground) with only a slight dim on top, so it is plainly
                unavailable and still says why. */
-            className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-80 disabled:hover:bg-transparent"
+            className="flex min-w-0 flex-1 items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-80 disabled:hover:bg-transparent"
           >
             {/* The mark, at list weight rather than as a framed tile: this is a
                 menu of choices, and forty boxes down a column read as a grid
@@ -263,14 +309,55 @@ export function AgentPickerMenu({
                 </span>
               )}
             </span>
-            {!agent.installed && (
+            {/* The label survives only where it is the whole answer. Where an
+                Install button sits beside the row, repeating "not installed"
+                in a 272px menu costs the entry's description its line and says
+                nothing the button does not. */}
+            {!agent.installed && !installable && (
               <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {agent.kind === "shell" ? "no shell here" : "not installed"}
               </span>
             )}
           </button>
-        ))}
+              {installable && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid={`${itemTestId(agent.name)}-install`}
+                  title={agent.installCommand}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setInstalling(agent);
+                  }}
+                  /* Outlined rather than filled: it is the row's secondary
+                     action, and a column of solid buttons would read as the
+                     menu itself being about installing. Its colours are theme
+                     tokens, so it follows light and dark. */
+                  className="my-0.5 shrink-0 self-center rounded-md border border-border px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10"
+                >
+                  Install
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
+      {/* The installer, over the menu rather than instead of it: closing the
+          dialog puts the user back in front of the list they were picking
+          from, with the entry they just installed now pickable. */}
+      {installing && (
+        <AgentInstallDialog
+          agent={installing.name}
+          displayName={installing.displayName}
+          command={installing.installCommand}
+          logoUrl={installing.logoUrl}
+          onClose={(installed) => {
+            const name = installing.name;
+            setInstalling(null);
+            onInstalled?.(name, installed);
+          }}
+        />
+      )}
     </>
   );
 

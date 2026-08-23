@@ -335,3 +335,100 @@ async def test_an_explicit_prober_never_reads_or_fills_the_cache(
     infos = {i.name: i for i in await detect_agents(mine)}
     assert infos["claude"].version == "9.9.9"
     assert registry._detection_cache is None
+
+
+# ------------------------------------------------- one entry, probed on demand
+
+
+class OneProber:
+    """Answers a single probe, and counts how many entries it was asked about."""
+
+    def __init__(self, status: CliStatus) -> None:
+        self.status = status
+        self.probed: list[str] = []
+
+    async def probe(self, spec) -> CliStatus:  # noqa: ANN001
+        self.probed.append(spec.name)
+        return self.status
+
+    async def probe_all(self, specs) -> dict[str, CliStatus]:  # noqa: ANN001
+        raise AssertionError("a single-entry recheck must never run the full sweep")
+
+
+@pytest.mark.asyncio
+async def test_a_recheck_probes_one_entry_and_not_the_others(
+    monkeypatch, _no_cached_detection
+) -> None:
+    """The reason this exists at all.
+
+    ``detect_agents(force=True)`` answers the same question by starting a
+    subprocess for every registered CLI. An install dialog polls this every few
+    seconds while someone watches npm run, so a sweep per ask would spend seven
+    processes to learn one fact — and stall the loop the wake microphone is
+    delivered on while doing it.
+    """
+    from jarvis.workspace import agents as registry
+
+    prober = OneProber(CliStatus(installed=True, version="0.1.1"))
+    monkeypatch.setattr(registry, "CliStatusProber", lambda: prober)
+
+    info = await registry.recheck_agent("deepseek-harness")
+
+    assert info is not None
+    assert info.installed is True
+    assert info.version == "0.1.1"
+    assert prober.probed == ["deepseek-harness"]
+
+
+@pytest.mark.asyncio
+async def test_a_recheck_drops_the_cached_sweep(monkeypatch, _no_cached_detection) -> None:
+    """Whatever the user just did, the cached list is no longer trustworthy.
+
+    Without this the entry they installed keeps reading as missing for up to
+    the TTL everywhere ELSE in the app — which looks exactly like an installer
+    that did nothing.
+    """
+    from jarvis.workspace import agents as registry
+
+    counting = CountingProber()
+    monkeypatch.setattr(registry, "CliStatusProber", lambda: counting)
+    await detect_agents()
+    assert counting.sweeps == 1
+    await detect_agents()
+    assert counting.sweeps == 1, "precondition: the second read came from the cache"
+
+    monkeypatch.setattr(
+        registry, "CliStatusProber", lambda: OneProber(CliStatus(installed=True, version="1.0.0"))
+    )
+    await registry.recheck_agent("deepseek-harness")
+
+    monkeypatch.setattr(registry, "CliStatusProber", lambda: counting)
+    await detect_agents()
+    assert counting.sweeps == 2
+
+
+@pytest.mark.asyncio
+async def test_a_recheck_answers_for_every_kind_of_entry(monkeypatch) -> None:
+    """A shell and a user-added CLI are not probed with ``--version``.
+
+    The recheck reuses the sweep's own three branches rather than a second
+    copy, so an entry that has no spec answers the way it always did instead of
+    reaching for a subprocess that would never work on it.
+    """
+    from jarvis.workspace import agents as registry
+
+    monkeypatch.setattr(registry, "CliStatusProber", lambda: OneProber(CliStatus(installed=False)))
+    shell = await registry.recheck_agent(PLAIN_TERMINAL)
+    assert shell is not None
+    assert shell.kind == "shell"
+    # Whatever this host has, the answer came from the shell lookup and not
+    # from a probe — a shell cannot answer ``--version``.
+    assert shell.installed is (plain_terminal_argv() is not None)
+
+
+@pytest.mark.asyncio
+async def test_a_recheck_of_something_unregistered_is_not_an_answer() -> None:
+    """``None``, so the route can 404 rather than invent a row."""
+    from jarvis.workspace import agents as registry
+
+    assert await registry.recheck_agent("no-such-cli") is None
