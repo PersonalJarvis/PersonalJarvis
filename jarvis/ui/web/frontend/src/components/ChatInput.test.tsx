@@ -1,8 +1,18 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { ChatInput } from "@/components/ChatInput";
 import { useEventStore } from "@/store/events";
+
+// The composer names the model that will answer (useVoiceEngineDisplay →
+// useVoiceMode, a query), so it mounts under a query client like the app.
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 describe("ChatInput offline/warming placeholder", () => {
   beforeEach(() => {

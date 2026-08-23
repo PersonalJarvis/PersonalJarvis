@@ -115,9 +115,10 @@ describe("Sidebar voice header", () => {
     expect(container.querySelector(".gigi-bubble")).toBeNull();
   });
 
-  test("still shows the live transcription in its own box while listening", () => {
-    // The transcript is already surfaced by the sidebar's dedicated box, so
-    // dropping the mascot bubble loses no information.
+  test("no longer shows the live transcription — that lane moved to the voice stage", () => {
+    // Since 2026-08-23 the transcript is read on the front page itself
+    // (components/home/VoiceStage), where it has the room to be read; the
+    // sidebar box would be a second, cramped copy of the same words.
     useEventStore.setState({
       voiceState: "listening",
       transcription: "auflegen",
@@ -126,9 +127,13 @@ describe("Sidebar voice header", () => {
 
     renderSidebar();
 
-    // getByText throws if absent or if it matches more than once — so a single
-    // hit proves the transcript survives exactly once (no duplicate bubble).
-    expect(screen.getByText("auflegen")).toBeTruthy();
+    expect(screen.queryByText("auflegen")).toBeNull();
+  });
+
+  test("carries the Voice | Chat switch and a New chat button", () => {
+    renderSidebar();
+    expect(screen.getByTestId("home-surface-switch")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-new-chat")).toBeTruthy();
   });
 });
 
@@ -175,7 +180,9 @@ describe("Sidebar header avatar", () => {
 
       act(() => {
         logo.dispatchEvent(new Event("error"));
-        vi.runAllTimers();
+        // Past the first retry delay only: the sidebar also owns a polling
+        // interval (recent chats), so running ALL timers would never return.
+        vi.advanceTimersByTime(2_000);
       });
 
       expect(logo.getAttribute("src")).toBe("/jarvis-logo.png?retry=1");

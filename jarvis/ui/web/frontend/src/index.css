@@ -420,30 +420,37 @@
    * exist for; each is a bare `R G B` list meant for `rgb(var(--x) / <alpha>)`.
    */
   :root {
-    /* --- Light: warm paper, dark gold ------------------------------------ */
-    --background: 42 33% 96%; /* warm ivory behind the artwork */
-    --foreground: 240 9% 18%; /* #2B2B33 warm near-black */
-    --card: 42 33% 96%; /* ivory glass, never a white plastic rectangle */
-    --card-foreground: 240 9% 18%;
-    --popover: 42 33% 97%;
-    --popover-foreground: 240 9% 18%;
+    /* --- Light: warm paper, dark gold ------------------------------------
+       The ground is a solid colour by default (2026-08-23, maintainer: the
+       app no longer opens on a wallpaper). Warm paper rather than pure
+       white, a white card ON the paper so surfaces read as surfaces, and
+       hairlines a touch warmer than grey. */
+    --background: 48 33% 97%; /* #FAF9F5 warm paper */
+    --foreground: 60 2% 8%; /* #141413 ink */
+    --card: 0 0% 100%; /* white card on paper */
+    --card-foreground: 60 2% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 60 2% 8%;
     /* #A86B00. The signal-yellow of the dark theme is 1.4:1 on paper — a
        button nobody can read. This is the same gold the light terminal theme
        already uses for its cursor, at 5.1:1 against --background. */
     --primary: 38 100% 33%;
     --primary-foreground: 0 0% 100%; /* white on gold */
-    --secondary: 42 22% 90%; /* warm recessed surface */
-    --secondary-foreground: 240 9% 18%;
-    --muted: 42 22% 90%;
-    --muted-foreground: 240 6% 30%;
+    --secondary: 52 29% 95%; /* #F5F4ED recessed surface, hover */
+    --secondary-foreground: 60 2% 8%;
+    --muted: 52 29% 95%;
+    --muted-foreground: 51 6% 40%; /* #6C6A5F */
     --accent: 38 100% 33%;
     --accent-foreground: 0 0% 100%;
     --destructive: 6 63% 46%; /* #C0392B — the light terminal's red */
     --destructive-foreground: 0 0% 100%;
-    --border: 40 14% 72%;
-    --input: 42 22% 90%;
+    --border: 50 21% 89%; /* #E8E6DC */
+    --input: 52 29% 95%;
     --ring: 38 100% 33%;
     --radius: 0.75rem;
+    /* The navigation column's own ground — a shade below the paper, so the
+       rail reads as a rail without a border doing all the work. */
+    --sidebar: 48 25% 92%; /* #F0EEE6 */
 
     /* --- Effect channels (see the note above) ---------------------------- */
     /* The accent as raw channels, for glows / grid lines / halos. */
@@ -458,7 +465,7 @@
     --sheen-rgb: 43 43 51;
     /* The ground colour of the app shell as channels, for glass pills that
        must read as "the app, blurred" rather than a grey rectangle. */
-    --shell-rgb: 246 242 232;
+    --shell-rgb: 250 249 245;
 
     /* Light mode changes the interface ink, not the chosen wallpaper. Fully
        transparent surfaces were tried first, but with user-chosen wallpapers
@@ -514,31 +521,35 @@
   }
 
   .dark {
-    /* --- Dark: matte black, signal yellow — the product default ---------- */
-    --background: 0 0% 4%; /* #0A0A0A matte-black */
-    --foreground: 0 0% 96%; /* #F4F4F5 */
-    --card: 0 0% 6%; /* #0F0F0F */
-    --card-foreground: 0 0% 96%;
-    --popover: 0 0% 6%;
-    --popover-foreground: 0 0% 96%;
+    /* --- Dark: warm charcoal, signal yellow — the product default --------
+       Not pure black any more (2026-08-23): a warm charcoal ground, a rail
+       one step darker, a card one step lighter. Same family as the light
+       paper, so toggling the theme changes the value, not the temperature. */
+    --background: 60 3% 15%; /* #262624 charcoal */
+    --foreground: 48 23% 95%; /* #F5F4EF */
+    --card: 60 2% 18%; /* #30302E */
+    --card-foreground: 48 23% 95%;
+    --popover: 60 2% 18%;
+    --popover-foreground: 48 23% 95%;
     --primary: 50 100% 52%; /* #FFD60A signal-yellow */
     --primary-foreground: 0 0% 4%; /* black on yellow */
-    --secondary: 0 0% 10%; /* #1A1A1A */
-    --secondary-foreground: 0 0% 96%;
-    --muted: 0 0% 10%;
-    --muted-foreground: 0 0% 56%; /* #8F8F8F */
+    --secondary: 60 2% 21%; /* #363634 recessed surface, hover */
+    --secondary-foreground: 48 23% 95%;
+    --muted: 60 2% 21%;
+    --muted-foreground: 47 5% 59%; /* #9C9A92 */
     --accent: 50 100% 52%;
     --accent-foreground: 0 0% 4%;
     --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 96%;
-    --border: 0 0% 14%; /* #242424 */
-    --input: 0 0% 10%;
+    --destructive-foreground: 48 23% 95%;
+    --border: 40 3% 23%; /* #3B3A38 */
+    --input: 60 2% 21%;
     --ring: 50 100% 52%;
+    --sidebar: 30 3% 12%; /* #1F1E1D */
 
     --accent-rgb: 255 214 10;
     --scrim-rgb: 0 0 0;
     --sheen-rgb: 255 255 255;
-    --shell-rgb: 10 10 10;
+    --shell-rgb: 38 38 36;
 
     --surface-card-alpha: 0.6;
     --surface-panel-alpha: 0.58;
@@ -3039,5 +3050,89 @@
     animation: none !important;
     opacity: 0.35;
     transform: none !important;
+  }
+}
+
+/*
+ * ===========================================================================
+ * Solid ground — the default since 2026-08-23
+ * ===========================================================================
+ *
+ * The app opens on a plain theme colour now; a wallpaper is an opt-in
+ * (`lib/backgroundMode.ts`, toggled by the Wallpaper section). The whole
+ * readability floor above — glass alphas, text halos, SVG outline rings,
+ * token floors — exists to keep ink legible over arbitrary artwork, and
+ * every one of those treatments is a defect on a flat colour: a halo around
+ * text on paper reads as a printing error, and a 60 % glass card on its own
+ * ground is just a slightly wrong card.
+ *
+ * So the floor is switched off as a whole wherever <html> lacks the
+ * `jarvis-wallpaper` class (set by the boot script in index.html and kept in
+ * step by the wallpaper store). Placed in the utilities layer on purpose:
+ * a later layer beats an earlier one regardless of specificity, so these
+ * few rules undo the components-layer floor without having to out-specify
+ * each of its selectors one by one. Rules that live in the utilities layer
+ * themselves are matched at equal specificity and simply come later.
+ */
+@layer utilities {
+  :root:not(.jarvis-wallpaper) {
+    /* Opaque surfaces: the card tokens ARE the surface hierarchy now. */
+    --surface-card-alpha: 1;
+    --surface-panel-alpha: 1;
+    --surface-control-alpha: 1;
+    --surface-stage-alpha: 1;
+    --surface-wiki-pane-alpha: 1;
+    --surface-wiki-stage-alpha: 1;
+  }
+
+  /* No halos, no outline rings, no re-floored tokens. `inherit` hands the
+     custom property back to the value <html> carries for the active theme. */
+  :root:not(.jarvis-wallpaper) .jarvis-section-stage,
+  :root:not(.jarvis-wallpaper) .jarvis-nav-surface,
+  :root:not(.jarvis-wallpaper) .jarvis-shell-surface,
+  :root:not(.jarvis-wallpaper) [data-testid="agentic-toolbar"],
+  :root:not(.jarvis-wallpaper) [data-testid="agentic-chat-rail"] {
+    --muted-foreground: inherit;
+    --border: inherit;
+    text-shadow: none;
+  }
+
+  :root:not(.jarvis-wallpaper) .jarvis-nav-surface svg,
+  :root:not(.jarvis-wallpaper) .jarvis-shell-surface svg,
+  :root:not(.jarvis-wallpaper) [data-testid="agentic-toolbar"] svg,
+  :root:not(.jarvis-wallpaper) [data-testid="agentic-chat-rail"] svg {
+    filter: none;
+  }
+
+  /* The chrome gets a ground of its own on a flat colour: the nav column
+     one step below the page, the top bar on the page itself. */
+  :root:not(.jarvis-wallpaper) .jarvis-nav-surface {
+    background: hsl(var(--sidebar));
+  }
+
+  :root:not(.jarvis-wallpaper) .jarvis-shell-surface {
+    background: hsl(var(--background));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  /* The glass surfaces become the plain card / control / panel they stand
+     for. No blur: there is nothing behind them to blur. */
+  :root:not(.jarvis-wallpaper) .jarvis-message-surface,
+  :root:not(.jarvis-wallpaper) .jarvis-panel-surface {
+    background: hsl(var(--card));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  :root:not(.jarvis-wallpaper) .jarvis-input-surface {
+    background: hsl(var(--input));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  /* The pictures-only stage keeps its own flat ground either way. */
+  :root:not(.jarvis-wallpaper) .jarvis-visualization-stage {
+    background: hsl(var(--background));
   }
 }

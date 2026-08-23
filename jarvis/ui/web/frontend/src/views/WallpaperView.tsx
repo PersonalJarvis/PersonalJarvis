@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 
-import { translate, useLocaleChunk } from "@/i18n";
+import { translate, useLocaleChunk, useT } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ViewHeader } from "@/views/ChatsView";
@@ -88,14 +88,17 @@ function SegmentButton({
   onClick,
   children,
   "aria-label": ariaLabel,
+  "data-testid": testId,
 }: {
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
   "aria-label"?: string;
+  "data-testid"?: string;
 }) {
   return (
     <button
+      data-testid={testId}
       type="button"
       onClick={onClick}
       aria-label={ariaLabel}
@@ -524,6 +527,7 @@ function WallpaperPreview({
  * as it actually is.
  */
 export function WallpaperView() {
+  const t = useT();
   const { data, isLoading } = useWallpaperCatalog();
   const { data: uploads } = useWallpaperUploads();
   const { add, setTheme: retheme, remove } = useUploadMutations();
@@ -534,6 +538,8 @@ export function WallpaperView() {
   const selectedId = useWallpaperStore((state) => state.selections[activeTheme]);
   const favorites = useWallpaperStore((state) => state.favorites);
   const mascotOn = useWallpaperStore((state) => state.mascotOn);
+  const background = useWallpaperStore((state) => state.background);
+  const setBackground = useWallpaperStore((state) => state.setBackground);
   const toggleFavorite = useWallpaperStore((state) => state.toggleFavorite);
   const setMascotOn = useWallpaperStore((state) => state.setMascotOn);
   const forget = useWallpaperStore((state) => state.forget);
@@ -793,6 +799,35 @@ export function WallpaperView() {
       )}
 
       {!data?.libraryAvailable && <LibraryDownloadBanner />}
+
+      {/* The ground itself: a flat theme colour (the default since 2026-08-23)
+          or the chosen picture. Picking any tile below switches to the
+          picture; this is the way back. The picks survive either way. */}
+      <div
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3"
+        data-testid="wallpaper-background-mode"
+      >
+        <span className="text-xs font-medium text-foreground">{t("home.background_label")}</span>
+        <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+          <SegmentButton
+            active={background === "solid"}
+            onClick={() => setBackground("solid")}
+            data-testid="background-solid"
+          >
+            {t("home.background_solid")}
+          </SegmentButton>
+          <SegmentButton
+            active={background === "wallpaper"}
+            onClick={() => setBackground("wallpaper")}
+            data-testid="background-wallpaper"
+          >
+            {t("home.background_wallpaper")}
+          </SegmentButton>
+        </div>
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+          {t("home.background_hint")}
+        </span>
+      </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3">
         <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">

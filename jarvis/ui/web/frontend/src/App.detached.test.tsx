@@ -2,7 +2,6 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "@/App";
-import { useDeckStore } from "@/store/deck";
 import { useEventStore } from "@/store/events";
 import { useWallpaperStore } from "@/store/wallpaper";
 
@@ -70,11 +69,10 @@ beforeEach(() => {
     solo: false,
     detachedViews: [],
   });
-  useWallpaperStore.setState({ mascotOn: true });
-  // Classic chat is a normal section: the live mascot stays on the ground.
-  // The mission deck hides it (see the test below) — defaulting to classic
-  // here keeps the wallpaper assertions about "a normal section" honest.
-  useDeckStore.setState({ mode: "classic" });
+  // The ground is a flat colour by default (2026-08-23); these tests are
+  // about the wallpaper layer, so they switch it on. The solid default has
+  // its own test below.
+  useWallpaperStore.setState({ mascotOn: true, background: "wallpaper" });
 });
 
 afterEach(() => {
@@ -101,12 +99,17 @@ describe("App shell around detached coding views", () => {
     expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
   });
 
-  it("hides the live mascot while the mission deck is on stage", () => {
-    useDeckStore.setState({ mode: "deck" });
+  it("paints no wallpaper layer at all on the solid ground (the default)", () => {
+    useWallpaperStore.setState({ background: "solid" });
     render(<App />);
 
-    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(screen.queryByTestId("jarvis-desktop-wallpaper")).toBeNull();
     expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
+    // The stage class stays: the solid-ground overrides in index.css key on
+    // the root class, not on the stage being absent.
+    expect(
+      screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
+    ).toBe(true);
   });
 
   it("hides the live mascot on every section except Chats", () => {

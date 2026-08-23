@@ -1,7 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { isSectionId, useEventStore } from "@/store/events";
-import { useDeckStore } from "@/store/deck";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
@@ -64,6 +63,11 @@ const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
 function DesktopWallpaper({ hideMascot = false }: { hideMascot?: boolean }) {
   const wallpaperUrl = useDesktopWallpaper();
   const mascotOn = useWallpaperStore((state) => state.mascotOn);
+  const background = useWallpaperStore((state) => state.background);
+  // A flat theme colour is the default ground (lib/backgroundMode.ts): the
+  // picture, its veil and the mascot layer exist only once a wallpaper is
+  // switched on. index.css keys the readability floor on the same choice.
+  if (background !== "wallpaper") return null;
   return (
     <div
       aria-hidden
@@ -226,23 +230,22 @@ export default function App() {
   });
 
   /*
-   * The sidebar starts COLLAPSED.
-   *
-   * Navigation is how you get to the thing, never the thing itself, and the
-   * window is at its most useful when the work has the width. The icons stay on
-   * screen, each with its label on hover, so nothing becomes unreachable — this
-   * is a narrower sidebar, not a hidden one.
+   * The sidebar starts EXPANDED (2026-08-23 — it used to start as the icon
+   * rail). The front page's own controls live in it now: the Voice | Chat
+   * switch, "New chat", the recent runs and chats. A rail would hide the one
+   * switch the page is built around. Collapsing is still one click away and
+   * is remembered.
    *
    * Persisted separately from the drag width on purpose: expanding restores the
    * column the user sized, not the designed default. A storage read that throws
-   * (private-mode WebView, storage disabled) degrades to the collapsed default
+   * (private-mode WebView, storage disabled) degrades to the expanded default
    * rather than taking the shell down with it.
    */
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
     try {
-      return window.localStorage.getItem(NAV_COLLAPSED_KEY) !== "false";
+      return window.localStorage.getItem(NAV_COLLAPSED_KEY) === "true";
     } catch {
-      return true;
+      return false;
     }
   });
   const toggleNav = useCallback(() => {
@@ -277,16 +280,6 @@ export default function App() {
   const activeSection = useEventStore((s) => s.activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
-  const deckMode = useDeckStore((s) => s.mode);
-
-  /*
-   * The mission deck is a full stage: it brings its own section dock, so the
-   * sidebar (and the resizer that belongs to it) steps aside while the deck is
-   * on screen. Every other section — and the classic chat view behind the
-   * deck's switch — keeps the sidebar exactly as before; a section reached
-   * from the dock lands there.
-   */
-  const deckOnStage = activeSection === "chats" && deckMode === "deck";
 
   /*
    * The realtime broker must exist exactly ONCE across all windows: it
@@ -315,11 +308,10 @@ export default function App() {
    */
   /*
    * Gigi belongs on the Chats ground only. Every other section was painting
-   * the same live ghost into empty corners (Tasks, Wiki, Profile, …) and the
-   * deck already hides him for the same reason as before: two heroes in one
-   * corner. The wallpaper picture stays; only the mascot layer steps off.
+   * the same live ghost into empty corners (Tasks, Wiki, Profile, …). The
+   * wallpaper picture stays; only the mascot layer steps off.
    */
-  const hideMascot = activeSection !== "chats" || deckOnStage;
+  const hideMascot = activeSection !== "chats";
 
   if (solo) {
     return (
@@ -349,24 +341,20 @@ export default function App() {
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <DesktopWallpaper hideMascot={hideMascot} />
 
-      {!deckOnStage && (
-        <>
-          <Sidebar
-            width={sidebar.size}
-            collapsed={navCollapsed}
-            onToggleCollapsed={toggleNav}
-          />
+      <Sidebar
+        width={sidebar.size}
+        collapsed={navCollapsed}
+        onToggleCollapsed={toggleNav}
+      />
 
-          <PaneResizer
-            orientation="vertical"
-            onPointerDown={startSidebarResize}
-            onDoubleClick={sidebar.reset}
-            onNudge={sidebar.nudge}
-            active={sidebar.isResizing}
-            title="Drag to resize the sidebar — double-click to reset"
-          />
-        </>
-      )}
+      <PaneResizer
+        orientation="vertical"
+        onPointerDown={startSidebarResize}
+        onDoubleClick={sidebar.reset}
+        onNudge={sidebar.nudge}
+        active={sidebar.isResizing}
+        title="Drag to resize the sidebar — double-click to reset"
+      />
 
       {/*
         The stage column carries NO z-index, and must not get one back.

@@ -27,10 +27,16 @@ import { useWallpaperStore } from "@/store/wallpaper";
  */
 export function useApplyWallpaper(): (item: WallpaperEntry | null) => void {
   const select = useWallpaperStore((state) => state.select);
+  const setBackground = useWallpaperStore((state) => state.setBackground);
   const { theme: current, setPreference } = useTheme();
 
   return useCallback(
     (item: WallpaperEntry | null) => {
+      // Picking a picture is the act of wanting a wallpaper: the app paints
+      // on a flat colour by default, and this is the one place that turns the
+      // artwork on (lib/backgroundMode.ts). The "Solid colour" control in the
+      // Wallpaper section is the way back.
+      setBackground("wallpaper");
       if (item === null) {
         select(null, current);
         return;
@@ -45,6 +51,6 @@ export function useApplyWallpaper(): (item: WallpaperEntry | null) => void {
       select(item.isDefault ? null : item.id, item.theme);
       setPreference(item.theme);
     },
-    [select, setPreference, current],
+    [select, setBackground, setPreference, current],
   );
 }

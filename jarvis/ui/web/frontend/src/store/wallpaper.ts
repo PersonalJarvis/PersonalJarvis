@@ -1,6 +1,13 @@
 import { create } from "zustand";
 
 import { cachedTheme, type Theme } from "@/hooks/useTheme";
+import {
+  BACKGROUND_MODE_KEY,
+  applyBackgroundClass,
+  readBackgroundMode,
+  writeBackgroundMode,
+  type BackgroundMode,
+} from "@/lib/backgroundMode";
 import { bundledWallpaperUrl } from "@/lib/bundledWallpapers";
 
 /**
@@ -180,6 +187,12 @@ function readFavorites(): string[] {
 }
 
 interface WallpaperStore {
+  /**
+   * Whether the app is painted on a wallpaper at all, or on the flat theme
+   * colour (the default). Independent of WHICH picture is picked: the picks
+   * survive a switch to solid, and come back when the wallpaper returns.
+   */
+  background: BackgroundMode;
   /** Each theme's chosen wallpaper id, or null for the bundled default. */
   selections: Record<Theme, string | null>;
   /** Favourited wallpaper ids, oldest first. Shared by both themes. */
@@ -190,6 +203,8 @@ interface WallpaperStore {
   select: (id: string | null, theme: Theme) => void;
   /** Show or hide the live mascot on the wallpaper. */
   setMascotOn: (on: boolean) => void;
+  /** Paint on the flat colour, or on the chosen wallpaper. */
+  setBackground: (mode: BackgroundMode) => void;
   /**
    * Drop one wallpaper everywhere it is remembered — every theme slot and the
    * favourites. For a picture that no longer exists: an id kept for a deleted
@@ -215,6 +230,7 @@ interface WallpaperStore {
 }
 
 export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
+  background: readBackgroundMode(),
   selections: readSelections(),
   favorites: readFavorites(),
   mascotOn: readMascotOn(),
@@ -273,12 +289,21 @@ export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
     }
     set({ mascotOn: on });
   },
-  adopt: () =>
+  setBackground: (mode) => {
+    writeBackgroundMode(mode);
+    applyBackgroundClass(mode);
+    set({ background: mode });
+  },
+  adopt: () => {
+    const background = readBackgroundMode();
+    applyBackgroundClass(background);
     set({
+      background,
       selections: readSelections(),
       favorites: readFavorites(),
       mascotOn: readMascotOn(),
-    }),
+    });
+  },
   reconcile: (themeOf) => {
     try {
       for (const slot of ["light", "dark"] as Theme[]) {
@@ -317,7 +342,12 @@ export function installWallpaperSync(): () => void {
     THEME_KEYS.dark,
     FAVORITES_KEY,
     MASCOT_KEY,
+    BACKGROUND_MODE_KEY,
   ]);
+  // The boot script already stamped the class for the first paint; this
+  // re-applies it once the store exists, which is also what heals a document
+  // whose boot script could not read storage.
+  applyBackgroundClass(useWallpaperStore.getState().background);
   const onStorage = (event: StorageEvent) => {
     if (event.key !== null && !watched.has(event.key)) return;
     useWallpaperStore.getState().adopt();

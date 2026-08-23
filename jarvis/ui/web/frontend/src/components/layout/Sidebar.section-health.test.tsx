@@ -8,7 +8,8 @@
  * fresh install isn't permanently flagged.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render as rtlRender, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { SectionHealth } from "@/hooks/useProviders";
 
@@ -43,6 +44,15 @@ vi.mock("@/hooks/useProviders", async (importOriginal) => {
 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useEventStore } from "@/store/events";
+
+// The sidebar carries the recent-runs block (a query) since 2026-08-23, so it
+// mounts under a query client like the app does.
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 beforeEach(() => {
   mockHealth = {};

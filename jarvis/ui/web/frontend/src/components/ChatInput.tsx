@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Mic, Send, Square } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowUp, Mic, Square } from "lucide-react";
 import { getWSClient } from "@/hooks/useWebSocket";
+import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -11,10 +11,22 @@ import { useT } from "@/i18n";
 // wait state permanently.
 const THINKING_TIMEOUT_MS = 60_000;
 
+/**
+ * The composer — a card with the text box and, on its bottom row, dictation,
+ * the model that will answer (click to change it) and send.
+ *
+ * Restyled 2026-08-23 for the new front page (maintainer sketch): one
+ * rounded card in the Claude layout. The behaviour is unchanged — same send
+ * path, same thread routing, same dictation mirror; only the frame moved.
+ */
 export function ChatInput() {
   const t = useT();
   const [value, setValue] = useState("");
   const connected = useEventStore((s) => s.connected);
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
+  // What will answer: the classic brain, or the realtime engine when voice
+  // mode is realtime — the same resolver the header and the sidebar use.
+  const engine = useVoiceEngineDisplay();
   const wsWarming = useEventStore((s) => s.wsWarming);
   const chatThinking = useEventStore((s) => s.chatThinking);
   const setChatThinking = useEventStore((s) => s.setChatThinking);
@@ -154,11 +166,19 @@ export function ChatInput() {
     }
   }
 
+  const canSend = connected && Boolean(value.trim());
+
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      data-testid="chat-composer"
+      className={cn(
+        "flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
+        "focus-within:border-primary/40",
+      )}
+    >
       {chatThinking && (
         <div
-          className="flex min-w-0 items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary"
+          className="flex min-w-0 items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary"
           role="status"
           aria-live="polite"
         >
@@ -175,7 +195,7 @@ export function ChatInput() {
       )}
       {dictating && (
         <div
-          className="flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary"
+          className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary"
           role="status"
           aria-live="polite"
         >
@@ -186,48 +206,71 @@ export function ChatInput() {
           <span className="font-medium">{t("chats_view.dictation_listening")}</span>
         </div>
       )}
-      <div className="flex items-end gap-2">
-        <textarea
-          // Marks the composer as the app's fallback dictation sink. The
-          // delivery path needs to know whether it is on screen at all before
-          // it hands a transcript to a component that may be unmounted — see
-          // lib/dictationTarget.ts.
-          data-jarvis-chat-input=""
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={
-            connected
-              ? t("chats_view.input_placeholder")
-              : wsWarming
-                ? t("voice_state.booting")
-                : t("voice_state.offline")
-          }
-          disabled={!connected}
-          rows={2}
-          className="jarvis-input-surface flex-1 resize-none rounded-md border border-input px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-        />
-        <Button
+      <textarea
+        // Marks the composer as the app's fallback dictation sink. The
+        // delivery path needs to know whether it is on screen at all before
+        // it hands a transcript to a component that may be unmounted — see
+        // lib/dictationTarget.ts.
+        data-jarvis-chat-input=""
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={
+          connected
+            ? t("chats_view.input_placeholder")
+            : wsWarming
+              ? t("voice_state.booting")
+              : t("voice_state.offline")
+        }
+        disabled={!connected}
+        rows={2}
+        className="max-h-48 w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
+      />
+      <div className="flex items-center gap-1.5">
+        <button
           type="button"
           data-jarvis-dictation-trigger
           onClick={toggleDictation}
           disabled={!connected}
-          size="icon"
-          variant={dictating ? "default" : "outline"}
           aria-label={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
           title={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
-          className={cn(dictating && "animate-jarvis-pulse")}
+          className={cn(
+            "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors disabled:opacity-50",
+            dictating
+              ? "animate-jarvis-pulse border-primary/50 bg-primary/15 text-primary"
+              : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+          )}
         >
           {dictating ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-        </Button>
-        <Button
-          onClick={send}
-          disabled={!connected || !value.trim()}
-          size="icon"
-          aria-label="Send"
+        </button>
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setActiveSection("apikeys")}
+          title={t("home.model_hint")}
+          data-testid="composer-model"
+          className="inline-flex h-8 max-w-[280px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
-          <Send className="h-4 w-4" />
-        </Button>
+          <span className="truncate font-medium text-foreground">{engine.providerLabel}</span>
+          {engine.model && (
+            <span className="truncate font-mono text-[10px] text-muted-foreground">{engine.model}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={send}
+          disabled={!canSend}
+          aria-label="Send"
+          data-testid="composer-send"
+          className={cn(
+            "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+            canSend
+              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : "bg-secondary text-muted-foreground/60",
+          )}
+        >
+          <ArrowUp className="h-4 w-4" />
+        </button>
       </div>
     </div>
   );

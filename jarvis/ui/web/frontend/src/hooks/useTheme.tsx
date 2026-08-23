@@ -208,6 +208,16 @@ export function useTheme(): ThemeCtx {
 }
 
 /**
+ * The theme switch WHEN there is one. For a control that flips the theme but
+ * is carried by chrome that also renders in isolation (the top-bar actions,
+ * reused by views and their unit tests): undefined outside the provider, so
+ * the control can step aside instead of taking its whole bar down.
+ */
+export function useOptionalTheme(): ThemeCtx | undefined {
+  return useContext(Ctx);
+}
+
+/**
  * The current theme for components that merely want to MATCH it.
  *
  * `useTheme` throws without a provider, which is right for anything that

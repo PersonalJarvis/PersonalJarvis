@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar, TopBarActions } from "./TopBar";
 import { useEventStore } from "@/store/events";
-import { useDeckStore } from "@/store/deck";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
@@ -12,16 +11,16 @@ vi.mock("@/components/MascotGigi", () => ({
 }));
 
 // The bar is section-aware now, so every test below states which screen it is
-// on rather than inheriting whatever a previous one left behind. Classic
-// chat keeps the global bar; the mission deck renders no bar of its own
-// (the actions live in that header — see the deck describe below).
+// on rather than inheriting whatever a previous one left behind. The front
+// page ("chats") renders no bar of its own — its header carries the actions
+// (see the front-page describe below); a detachable section that keeps the
+// bar stands in for the general case.
 beforeEach(() => {
   useEventStore.setState({
-    activeSection: "chats",
+    activeSection: "dictation",
     solo: false,
     detachedViews: [],
   });
-  useDeckStore.setState({ mode: "classic" });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -152,16 +151,15 @@ describe("TopBar restart button", () => {
  * through that Restart button, so a refactor that quietly drops it from the IDE
  * would leave the section with no way to pick up its own rebuild.
  */
-describe("TopBar on the mission deck", () => {
-  it("renders no bar of its own there — the deck header carries the actions", () => {
-    useDeckStore.setState({ mode: "deck" });
+describe("TopBar on the front page", () => {
+  it("renders no bar of its own there — the home header carries the actions", () => {
+    useEventStore.setState({ activeSection: "chats" });
     const { container } = render(<TopBar />);
     expect(container.firstChild).toBeNull();
   });
 
   it("restores the global bar in the main window while chats is detached", () => {
-    useDeckStore.setState({ mode: "deck" });
-    useEventStore.setState({ detachedViews: ["chats"] });
+    useEventStore.setState({ activeSection: "chats", detachedViews: ["chats"] });
     const { container } = render(<TopBar />);
     expect(container.firstChild).not.toBeNull();
     expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();

@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppWindow, Download, RotateCw } from "lucide-react";
 
 import { useEventStore, type SectionId } from "@/store/events";
-import { useDeckStore } from "@/store/deck";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { openExternalUrl } from "@/lib/openExternal";
 
@@ -52,7 +52,6 @@ export function TopBar() {
   const activeSection = useEventStore((s) => s.activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
-  const deckMode = useDeckStore((s) => s.mode);
   // The coding workspace takes the actions into its own toolbar row, under
   // every id that reaches it. The rule is "the section carries the actions
   // itself" — a section that does not would lose Restart, which is the one
@@ -66,14 +65,13 @@ export function TopBar() {
   }
 
   /*
-   * The deck already has a header. A second empty strip above it was the
-   * boring row. Same rule as the IDE: this bar steps aside, the actions
-   * move into that header (`MissionDeckView`). While chats is detached the
-   * main window is a placeholder and needs the bar back.
+   * The front page already has a header. A second empty strip above it was
+   * the boring row. Same rule as the IDE: this bar steps aside, the actions
+   * move into that header (`HomeView`). While chats is detached the main
+   * window is a placeholder and needs the bar back.
    */
-  const deckOnStage = activeSection === "chats" && deckMode === "deck";
   const chatsDetached = !solo && detachedViews.includes("chats");
-  if (deckOnStage && !chatsDetached) {
+  if (activeSection === "chats" && !chatsDetached) {
     return null;
   }
 
@@ -99,6 +97,7 @@ export function TopBar() {
 export function TopBarActions() {
   return (
     <>
+      <ThemeToggle />
       <DetachButton />
       <UpdateButton />
       <RestartButton />

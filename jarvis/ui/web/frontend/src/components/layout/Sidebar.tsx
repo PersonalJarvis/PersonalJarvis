@@ -3,6 +3,7 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
 } from "lucide-react";
 import {
   NAV_GROUPS,
@@ -20,6 +21,11 @@ import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
+import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
+import { RecentRuns } from "@/components/home/RecentRuns";
+import { RecentChats } from "@/components/home/RecentChats";
+import { useConversations } from "@/hooks/useConversations";
+import { useHomeStore } from "@/store/home";
 import { PRODUCT_NAME } from "@/lib/branding";
 
 // A logo request that fails once (backend restarting, dist mid-rebuild) would
@@ -99,8 +105,15 @@ export function Sidebar({
   const setActive = useEventStore((s) => s.setActiveSection);
   const voiceState = useEventStore((s) => s.voiceState);
   const assistantName = useEventStore((s) => s.assistantName);
-  const transcription = useEventStore((s) => s.transcription);
-  const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
+  // "+ New chat" lands on the chat surface of the front page with an empty
+  // thread — the sidebar owns the history now, so it owns this too.
+  const { newChat } = useConversations();
+  const setSurface = useHomeStore((s) => s.setSurface);
+  const startNewChat = () => {
+    newChat();
+    setSurface("chat");
+    setActive("chats");
+  };
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
 
@@ -289,30 +302,21 @@ export function Sidebar({
         </div>
         {!railed && (
           <>
-            <div className="jarvis-input-surface mt-3 min-h-[20px] rounded-md px-2 py-1.5 text-xs text-muted-foreground">
-              {transcription ? (
-                <span
-                  className={cn(
-                    "font-mono",
-                    !transcriptionFinal && "italic text-foreground/70",
-                  )}
-                >
-                  {tailTruncate(transcription, 48)}
-                  {!transcriptionFinal && (
-                    <span
-                      className="ml-px animate-pulse motion-reduce:animate-none"
-                      aria-hidden="true"
-                    >
-                      ▍
-                    </span>
-                  )}
-                </span>
-              ) : (
-                <span className="text-muted-foreground/50">
-                  {t("sidebar.wake_hint")}
-                </span>
-              )}
-            </div>
+            {/* The front page's one switch (maintainer sketch, 2026-08-23):
+                Voice or Chat. The live transcript that used to sit here moved
+                onto the voice stage itself, where it has the room to be read. */}
+            <SurfaceSwitch className="mt-3" />
+            <button
+              type="button"
+              onClick={startNewChat}
+              data-testid="sidebar-new-chat"
+              className="mt-2 flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <span className="flex h-4 w-4 items-center justify-center rounded bg-primary text-primary-foreground">
+                <Plus aria-hidden className="h-3 w-3" />
+              </span>
+              {t("sidebar.new_chat")}
+            </button>
             <BrowserRealtimeControl />
           </>
         )}
@@ -325,6 +329,9 @@ export function Sidebar({
         <DockRail className="min-h-0 flex-1" />
       ) : (
         <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
+          <RecentRuns />
+          <RecentChats />
+          <div className="mx-1 mb-1 mt-2 border-t border-border/60" aria-hidden />
           {NAV_GROUPS.map((group, groupIndex) => (
             <ul
               key={groupIndex}
@@ -501,15 +508,3 @@ function NavRow({
     </li>
   );
 }
-
-/** Keep the NEWEST words of a growing transcript visible.
- *
- * Head truncation froze the line on the first 48 characters the moment a
- * sentence outgrew the box: the user kept talking and the display stopped
- * moving, which reads as "it stopped hearing me". Dropping the oldest end
- * instead makes the line scroll along with the speech. */
-function tailTruncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return "…" + s.slice(s.length - (n - 1));
-}
-

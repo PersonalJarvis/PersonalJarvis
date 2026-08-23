@@ -119,12 +119,19 @@ function VoiceWaveformImpl({
   phase,
   count = LIVE_BAR_COUNT,
   className,
+  frame = true,
 }: {
   /** Normalized 0..1 microphone level, written by the audio callback. */
   levelRef: MutableRefObject<number>;
   phase: WaveformPhase;
   count?: number;
   className?: string;
+  /**
+   * Draw the pill around the bars. Off when the bars sit inside a frame the
+   * caller already drew (the front page's Jarvis bar), so the waveform does
+   * not arrive as a capsule inside a capsule.
+   */
+  frame?: boolean;
 }) {
   // One ref on the group rather than one per bar: an inline ref callback is a
   // new function on every render, so React would detach and re-attach all
@@ -242,19 +249,21 @@ function VoiceWaveformImpl({
       data-phase={phase}
       aria-hidden="true"
     >
-      <rect
-        x={PILL_X}
-        y={PILL_Y}
-        width={PILL_W}
-        height={PILL_H}
-        rx={PILL_R}
-        strokeWidth={1.6}
-        className={cn("fill-card", tone.rim)}
-        style={{
-          strokeOpacity: tone.rimOpacity,
-          transition: "stroke 300ms ease, stroke-opacity 300ms ease",
-        }}
-      />
+      {frame && (
+        <rect
+          x={PILL_X}
+          y={PILL_Y}
+          width={PILL_W}
+          height={PILL_H}
+          rx={PILL_R}
+          strokeWidth={1.6}
+          className={cn("fill-card", tone.rim)}
+          style={{
+            strokeOpacity: tone.rimOpacity,
+            transition: "stroke 300ms ease, stroke-opacity 300ms ease",
+          }}
+        />
+      )}
       <g
         ref={row}
         className={tone.bars}
