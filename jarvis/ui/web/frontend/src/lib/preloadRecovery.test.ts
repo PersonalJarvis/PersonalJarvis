@@ -15,6 +15,7 @@ import {
   SETTLE_MS,
   handlePreloadError,
   installPreloadRecovery,
+  isChunkLoadError,
   type PreloadRecoveryDeps,
 } from "./preloadRecovery";
 
@@ -96,7 +97,7 @@ describe("preload recovery", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("listens for the preload error and keeps Vite from reloading on its own", () => {
+  it("listens for the preload error and reloads on it", () => {
     const { deps, reload } = makeDeps();
     const listeners: EventListener[] = [];
     installPreloadRecovery(deps, {
@@ -108,8 +109,58 @@ describe("preload recovery", () => {
     const preventDefault = vi.fn();
     listeners[0]({ preventDefault } as unknown as Event);
 
-    expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("NEVER cancels the event, so the failed import still rejects", () => {
+    // The regression this pins (2026-08-23): the listener cancelled the event
+    // unconditionally. Vite's preload helper is installed as
+    // `import(...).catch(handler)` and only rethrows when the event was not
+    // cancelled — so cancelling made every failed dynamic import RESOLVE WITH
+    // `undefined`. The caller's `.then((mod) => ({ default: mod.WikiGraph }))`
+    // then died as "Cannot read properties of undefined (reading
+    // 'WikiGraph')", which is how a rebuild during an open window was reported
+    // as a crash in the wiki system.
+    //
+    // Both passes matter: the one that reloads and the one the guard stops.
+    const { deps } = makeDeps();
+    const listeners: EventListener[] = [];
+    installPreloadRecovery(deps, {
+      addEventListener: ((_name: string, fn: EventListener) => {
+        listeners.push(fn);
+      }) as Window["addEventListener"],
+    });
+
+    const preventDefault = vi.fn();
+    listeners[0]({ preventDefault } as unknown as Event);
+    listeners[0]({ preventDefault } as unknown as Event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  describe("isChunkLoadError", () => {
+    it.each([
+      // Chromium — the message the desktop WebView actually produces.
+      "Failed to fetch dynamically imported module: http://127.0.0.1:47821/assets/WikiGraph-ZXJsF_pi.js",
+      // Firefox.
+      "error loading dynamically imported module",
+      // WebKit.
+      "Importing a module script failed.",
+      // Vite's own preload helper.
+      "Unable to preload CSS for /assets/AgenticIdeView-CFbL2ovg.css",
+    ])("recognises %s", (message) => {
+      expect(isChunkLoadError(new Error(message))).toBe(true);
+    });
+
+    it("does not claim a real component bug is a stale chunk", () => {
+      expect(
+        isChunkLoadError(
+          new TypeError("Cannot read properties of undefined (reading 'nodes')"),
+        ),
+      ).toBe(false);
+      expect(isChunkLoadError(undefined)).toBe(false);
+      expect(isChunkLoadError("boom")).toBe(false);
+    });
   });
 
   it("never reloads when the guard cannot be remembered", () => {

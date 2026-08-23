@@ -43,6 +43,34 @@ export const RELOAD_GUARD_KEY = "jarvis:preload-reloaded";
  */
 export const SETTLE_MS = 30_000;
 
+/**
+ * Phrases every engine uses for "that chunk did not load".
+ *
+ * There is no error type to test — a failed dynamic import is a plain
+ * `TypeError` whose message is the only distinguishing mark, and each engine
+ * words it differently. Vite's own CSS preload failure is in here too, because
+ * it reaches a view through exactly the same import.
+ */
+const CHUNK_LOAD_PHRASES = [
+  "failed to fetch dynamically imported module", // Chromium
+  "error loading dynamically imported module", // Firefox
+  "importing a module script failed", // WebKit
+  "unable to preload css for", // Vite's own preload helper
+];
+
+/**
+ * Is this crash a chunk that is no longer on disk?
+ *
+ * Used by the view error boundary to tell "the app was rebuilt under this
+ * window" apart from a real component bug — the two need opposite messages,
+ * and only the first one heals by itself.
+ */
+export function isChunkLoadError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error ?? ""))
+    .toLowerCase();
+  return CHUNK_LOAD_PHRASES.some((phrase) => message.includes(phrase));
+}
+
 export interface PreloadRecoveryDeps {
   /** Where the one-reload-per-incident mark lives. Survives a reload. */
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -94,10 +122,21 @@ export function installPreloadRecovery(
 ): void {
   if (!target) return;
 
-  target.addEventListener("vite:preloadError", ((event: Event) => {
-    // Vite's default for an unhandled preload error is to reload the page
-    // itself; preventing it keeps the decision here, where it is bounded.
-    event.preventDefault();
+  target.addEventListener("vite:preloadError", ((_event: Event) => {
+    // The event is deliberately NOT cancelled.
+    //
+    // Vite does not reload on its own for a preload failure — its helper only
+    // rethrows the error unless the event is cancelled. Cancelling therefore
+    // buys nothing and costs the failure itself: the helper is installed as
+    // `import(...).catch(handler)`, so a handler that does not throw makes the
+    // dynamic import RESOLVE WITH `undefined`. The caller's
+    // `.then((mod) => ({ default: mod.WikiGraph }))` then dies as
+    // "Cannot read properties of undefined (reading 'WikiGraph')" — a message
+    // that points at the view instead of at the missing chunk, and the reason
+    // clicking Wiki during a rebuild reported as a crash in the wiki system.
+    //
+    // Letting the error travel keeps the view's error boundary honest while
+    // the reload below heals the window underneath it.
     handlePreloadError(deps);
   }) as EventListener);
 

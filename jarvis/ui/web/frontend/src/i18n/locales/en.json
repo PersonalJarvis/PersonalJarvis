@@ -2446,6 +2446,9 @@
     "back_to_chats": "Back to Chats",
     "group_title": "This section could not be loaded",
     "group_hint": "Every other setting on this page still works.",
+    "stale_title": "The interface has been rebuilt",
+    "stale_hint": "This window is still running the previous version. Reloading picks up the current one.",
+    "stale_action": "Reload",
     "group_retry": "Try again"
   },
   "view_loading": {

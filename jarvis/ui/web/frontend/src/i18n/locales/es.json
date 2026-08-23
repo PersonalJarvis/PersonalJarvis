@@ -2446,6 +2446,9 @@
     "back_to_chats": "Volver a los chats",
     "group_title": "No se pudo cargar esta sección",
     "group_hint": "El resto de los ajustes de esta página siguen funcionando.",
+    "stale_title": "La interfaz se ha vuelto a compilar",
+    "stale_hint": "Esta ventana sigue ejecutando la versión anterior. Al recargar se obtiene la actual.",
+    "stale_action": "Recargar",
     "group_retry": "Intentar de nuevo"
   },
   "view_loading": {

@@ -2446,6 +2446,9 @@
     "back_to_chats": "Zurueck zu Chats",
     "group_title": "Dieser Bereich konnte nicht geladen werden",
     "group_hint": "Alle anderen Einstellungen auf dieser Seite funktionieren weiterhin.",
+    "stale_title": "Die Oberfläche wurde neu gebaut",
+    "stale_hint": "Dieses Fenster läuft noch auf der vorherigen Version. Neu laden holt die aktuelle.",
+    "stale_action": "Neu laden",
     "group_retry": "Erneut versuchen"
   },
   "view_loading": {
