@@ -35,6 +35,21 @@
 /** Marks the server's holding page. Mirrors `HOLDING_MARKER` in spa_build.py. */
 export const HOLDING_MARKER = "jarvis-build-holding";
 
+/**
+ * How the holding page carries its marker — and the ONLY form a document is
+ * tested against.
+ *
+ * The bare word is not enough: the real `index.html` ships an inline watchdog
+ * that names the marker in its own source, so a test for the word alone takes
+ * every genuine build for the holding page and never reloads into it. That is
+ * what kept every open window on a stale build from 2026-08-22 to 2026-08-23
+ * (bundle watch, preload recovery and the stale-chunk card all funnel through
+ * here). The attribute form appears on the holding page's own element and
+ * nowhere else; `index.html` composes it at runtime for the same reason. See
+ * the pinning test in safeReload.test.ts and bootWatchdog.test.ts.
+ */
+export const HOLDING_ATTRIBUTE = `data-state="${HOLDING_MARKER}"`;
+
 /** Delay between checks while a build is in flight. */
 export const RETRY_MS = 700;
 
@@ -74,7 +89,7 @@ export function entryAssets(html: string): string[] {
  * exactly the failure this module exists for.
  */
 export function looksBootable(html: string): boolean {
-  if (!html || html.includes(HOLDING_MARKER)) return false;
+  if (!html || html.includes(HOLDING_ATTRIBUTE)) return false;
   return entryAssets(html).length > 0;
 }
 

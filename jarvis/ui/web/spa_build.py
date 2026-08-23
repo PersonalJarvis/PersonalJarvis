@@ -35,13 +35,28 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-__all__ = ["referenced_assets", "build_is_complete", "holding_page_html", "HOLDING_MARKER"]
+__all__ = [
+    "referenced_assets",
+    "build_is_complete",
+    "holding_page_html",
+    "HOLDING_ATTRIBUTE",
+    "HOLDING_MARKER",
+]
 
 # Present in the holding page and in nothing else, so a page that is waiting
 # for a build can tell — from the document alone — whether the server is ready
 # to hand it a real one yet. Both the page below and the frontend's automatic
 # reloads test for it.
 HOLDING_MARKER = "jarvis-build-holding"
+
+# The ONLY form a document is ever tested against. The bare word is not safe:
+# the real index.html ships an inline watchdog that names the marker in its own
+# source, so a test for the word alone took every genuine build for the
+# holding page — this page then never reloaded into the app, and the
+# frontend's own reloads (src/lib/safeReload.ts) never fired (2026-08-22/23).
+# The attribute form lives on the holding page's element and nowhere else;
+# index.html composes it at runtime so it can never contain it literally.
+HOLDING_ATTRIBUTE = f'data-state="{HOLDING_MARKER}"'
 
 # Every hashed build output index.html points at. Mirrors the frontend's own
 # `bundleFingerprint` (src/lib/bundleWatch.ts) — keep the two patterns in
@@ -144,7 +159,7 @@ def holding_page_html() -> str:
         "tries++;"
         "fetch('/',{cache:'no-store',headers:{Accept:'text/html'}})"
         f".then(function(r){{return r.ok?r.text():'{HOLDING_MARKER}';}})"
-        f".then(function(t){{if(t.indexOf('{HOLDING_MARKER}')===-1){{"
+        f".then(function(t){{if(t.indexOf('{HOLDING_ATTRIBUTE}')===-1){{"
         "location.reload();return;}"
         "setTimeout(look, tries<20?700:3000);})"
         "['catch'](function(){setTimeout(look, tries<20?700:3000);});"

@@ -1,11 +1,27 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   entryAssets,
+  HOLDING_ATTRIBUTE,
   HOLDING_MARKER,
   looksBootable,
   reloadWhenServable,
   type SafeReloadDeps,
 } from "./safeReload";
+
+/** The real entry document this app ships — the one every reload fetches. */
+function realIndexHtml(): string {
+  let dir = process.cwd();
+  for (;;) {
+    const candidate = resolve(dir, "index.html");
+    if (existsSync(candidate)) return readFileSync(candidate, "utf8");
+    const up = dirname(dir);
+    if (up === dir)
+      throw new Error("index.html not found above " + process.cwd());
+    dir = up;
+  }
+}
 
 const INDEX = `<!doctype html><html><head>
 <script type="module" crossorigin src="/assets/index-abc123.js"></script>
@@ -22,7 +38,8 @@ function harness(pages: string[], assets: (url: string) => boolean) {
   let waits = 0;
   const asked: string[] = [];
   const deps: SafeReloadDeps = {
-    fetchIndex: () => Promise.resolve(pages.length > 1 ? pages.shift()! : pages[0]),
+    fetchIndex: () =>
+      Promise.resolve(pages.length > 1 ? pages.shift()! : pages[0]),
     assetOk: (url) => {
       asked.push(url);
       return Promise.resolve(assets(url));
@@ -70,9 +87,27 @@ describe("looksBootable", () => {
   });
 
   test("the server's holding page is not — it says a build is in flight", () => {
-    expect(looksBootable(`<html><div data-state="${HOLDING_MARKER}"></div></html>`)).toBe(
-      false,
+    expect(
+      looksBootable(`<html><div data-state="${HOLDING_MARKER}"></div></html>`),
+    ).toBe(false);
+  });
+
+  test("the REAL index.html is, although its inline watchdog names the marker", () => {
+    // The regression of 2026-08-22/23: index.html carries a watchdog script
+    // that spells out the holding marker, a check for the bare word took every
+    // genuine build for the holding page, and no window ever reloaded again.
+    // Only the attribute form on the holding page's element counts — and the
+    // real document must never contain that form.
+    const source = realIndexHtml();
+    expect(source).toContain(HOLDING_MARKER);
+    expect(source).not.toContain(HOLDING_ATTRIBUTE);
+    // What Vite makes of it: the same document with hashed entry assets.
+    const built = source.replace(
+      "</head>",
+      '<script type="module" crossorigin src="/assets/index-abc123.js"></script></head>',
     );
+    expect(entryAssets(built).length).toBeGreaterThan(0);
+    expect(looksBootable(built)).toBe(true);
   });
 });
 
@@ -82,7 +117,10 @@ describe("reloadWhenServable", () => {
     reloadWhenServable(h.deps);
     await settle();
     expect(h.reloads()).toBe(1);
-    expect(h.asked()).toEqual(["/assets/index-abc123.js", "/assets/index-def456.css"]);
+    expect(h.asked()).toEqual([
+      "/assets/index-abc123.js",
+      "/assets/index-def456.css",
+    ]);
   });
 
   test("an index whose entry bundle 404s is NOT reloaded into", async () => {
@@ -96,7 +134,10 @@ describe("reloadWhenServable", () => {
   });
 
   test("the holding page is waited out, never reloaded into", async () => {
-    const h = harness([`<html><div data-state="${HOLDING_MARKER}"></div></html>`], () => true);
+    const h = harness(
+      [`<html><div data-state="${HOLDING_MARKER}"></div></html>`],
+      () => true,
+    );
     reloadWhenServable(h.deps);
     await settle();
     expect(h.reloads()).toBe(0);

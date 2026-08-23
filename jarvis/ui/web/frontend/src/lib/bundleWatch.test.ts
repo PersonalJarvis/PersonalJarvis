@@ -8,6 +8,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
+  HIDDEN_EVERY_N_TICKS,
+  STALE_INFLIGHT_TICKS,
   bundleFingerprint,
   installBundleWatch,
   shouldReload,
@@ -89,7 +91,9 @@ describe("bundleFingerprint", () => {
     );
     const reordered =
       '<link href="/assets/index-AAA.css"><script src="/assets/index-AAA.js">';
-    expect(bundleFingerprint(reordered)).toBe(bundleFingerprint(indexHtml("AAA")));
+    expect(bundleFingerprint(reordered)).toBe(
+      bundleFingerprint(indexHtml("AAA")),
+    );
   });
 
   it("has no fingerprint for a document with no bundle behind it", () => {
@@ -128,13 +132,23 @@ describe("shouldReload", () => {
 
   it("never reloads for an unchanged or unreadable answer", () => {
     expect(
-      shouldReload({ baseline, seen: baseline, confirmed: baseline, idleMs: null }),
+      shouldReload({
+        baseline,
+        seen: baseline,
+        confirmed: baseline,
+        idleMs: null,
+      }),
     ).toBe(false);
     expect(
       shouldReload({ baseline, seen: "", confirmed: "", idleMs: null }),
     ).toBe(false);
     expect(
-      shouldReload({ baseline: "", seen: "new", confirmed: "new", idleMs: null }),
+      shouldReload({
+        baseline: "",
+        seen: "new",
+        confirmed: "new",
+        idleMs: null,
+      }),
     ).toBe(false);
   });
 });
@@ -193,6 +207,52 @@ describe("installBundleWatch", () => {
     app.serve(indexHtml("BBB"));
     await app.tick();
     await app.tick();
+    expect(app.reload).toHaveBeenCalledOnce();
+  });
+
+  it("still picks up a rebuild in a window that claims to be hidden forever", async () => {
+    // The desktop shell's engine was measured reporting an on-screen window as
+    // hidden for minutes (2026-08-23). A watch that trusts it never polls again
+    // and the window runs a stale build through every later rebuild.
+    const app = harness(indexHtml("AAA"));
+    installBundleWatch(app.deps);
+    await app.tick();
+
+    app.hide(true);
+    app.serve(indexHtml("BBB"));
+    for (let i = 0; i < HIDDEN_EVERY_N_TICKS * 2; i += 1) {
+      await app.tick();
+    }
+
+    expect(app.reload).toHaveBeenCalledOnce();
+  });
+
+  it("does not let one check that never answers hold the watch forever", async () => {
+    const app = harness(indexHtml("AAA"));
+    let first = true;
+    const stalling: BundleWatchDeps = {
+      ...app.deps,
+      fetchIndex: () => {
+        if (first) {
+          first = false;
+          return new Promise<string>(() => {
+            /* never settles */
+          });
+        }
+        return app.deps.fetchIndex();
+      },
+    };
+    installBundleWatch(stalling);
+    // The opening check is the one that hangs.
+    for (let i = 0; i < STALE_INFLIGHT_TICKS; i += 1) {
+      await app.tick();
+    }
+    // By now a fresh check has established the baseline; a rebuild gets seen.
+    await app.tick();
+    app.serve(indexHtml("BBB"));
+    await app.tick();
+    await app.tick();
+
     expect(app.reload).toHaveBeenCalledOnce();
   });
 

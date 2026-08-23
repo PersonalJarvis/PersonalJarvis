@@ -20,7 +20,8 @@ function indexHtmlPath(): string {
     const candidate = resolve(dir, "index.html");
     if (existsSync(candidate)) return candidate;
     const up = dirname(dir);
-    if (up === dir) throw new Error("index.html not found above " + process.cwd());
+    if (up === dir)
+      throw new Error("index.html not found above " + process.cwd());
     dir = up;
   }
 }
@@ -31,7 +32,8 @@ const HTML = readFileSync(indexHtmlPath(), "utf8");
 function watchdogSource(): string {
   const scripts = HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? [];
   const found = scripts.find((s) => s.includes("jarvis:blank-reloaded"));
-  if (!found) throw new Error("index.html no longer carries the blank-window watchdog");
+  if (!found)
+    throw new Error("index.html no longer carries the blank-window watchdog");
   return found.replace(/^<script>/, "").replace(/<\/script>$/, "");
 }
 
@@ -122,6 +124,22 @@ describe("the blank-window watchdog in index.html", () => {
     expect(run.reloads()).toBe(1);
   });
 
+  test("it reloads into the REAL index.html, whose own script names the holding marker", async () => {
+    // The regression of 2026-08-22/23: this very document spells out the
+    // holding marker in the watchdog's source, so a test for the bare word
+    // took every genuine build for the holding page and no window ever
+    // reloaded again. The served document here is index.html itself, shaped
+    // as the build ships it (a hashed entry asset in its head).
+    const built = HTML.replace(
+      "</head>",
+      '<script type="module" crossorigin src="/assets/index-abc.js"></script></head>',
+    );
+    setRoot("");
+    const run = runWatchdog({ served: built });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(run.reloads()).toBe(1);
+  });
+
   test("an emptied root is a crash, and does not wait twenty seconds for it", async () => {
     setRoot("");
     const run = runWatchdog();
@@ -174,7 +192,9 @@ describe("the blank-window watchdog in index.html", () => {
     const run = runWatchdog();
     run.store.set("jarvis:blank-reloaded", "1");
     window.dispatchEvent(
-      new ErrorEvent("error", { message: "Failed to fetch dynamically imported module" }),
+      new ErrorEvent("error", {
+        message: "Failed to fetch dynamically imported module",
+      }),
     );
     vi.advanceTimersByTime(3_000);
     expect(run.reloads()).toBe(0);

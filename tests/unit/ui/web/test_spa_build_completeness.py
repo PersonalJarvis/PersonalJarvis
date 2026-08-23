@@ -26,6 +26,7 @@ import pytest
 
 from jarvis.ui.web.fast_bootstrap import FastBootstrap
 from jarvis.ui.web.spa_build import (
+    HOLDING_ATTRIBUTE,
     HOLDING_MARKER,
     build_is_complete,
     holding_page_html,
@@ -36,7 +37,7 @@ _INDEX = (
     "<!doctype html><html><head>"
     '<script type="module" crossorigin src="/assets/index-abc123.js"></script>'
     '<link rel="stylesheet" href="/assets/index-def456.css">'
-    "</head><body><div id=\"root\"></div></body></html>"
+    '</head><body><div id="root"></div></body></html>'
 )
 
 
@@ -77,9 +78,7 @@ class TestBuildIsComplete:
         dist = _dist(tmp_path, index=False)
         assert build_is_complete(dist / "index.html", dist) is False
 
-    def test_it_is_never_cached_because_the_files_move_under_it(
-        self, tmp_path: Path
-    ) -> None:
+    def test_it_is_never_cached_because_the_files_move_under_it(self, tmp_path: Path) -> None:
         # index.html stays byte-identical while dist/assets is emptied — a
         # result keyed on its mtime would be exactly wrong here.
         dist = _dist(tmp_path)
@@ -97,6 +96,22 @@ class TestBuildIsComplete:
 class TestHoldingPage:
     def test_it_carries_the_marker_a_waiting_window_looks_for(self) -> None:
         assert HOLDING_MARKER in holding_page_html()
+        assert HOLDING_ATTRIBUTE in holding_page_html()
+
+    def test_it_tells_itself_apart_from_the_real_index_by_the_attribute_form(self) -> None:
+        # The real index.html names the bare marker in its inline watchdog, so
+        # a page polling for the bare word would take every genuine build for
+        # itself and spin on "Updating…" forever (2026-08-22/23). The poll
+        # tests for the attribute form, which the real document never carries.
+        page = holding_page_html()
+        assert f"indexOf('{HOLDING_ATTRIBUTE}')" in page
+        assert f"indexOf('{HOLDING_MARKER}')" not in page
+        root = Path(__file__).resolve().parents[4]
+        source = (root / "jarvis" / "ui" / "web" / "frontend" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        assert HOLDING_MARKER in source
+        assert HOLDING_ATTRIBUTE not in source
 
     def test_it_never_reloads_on_a_blind_timer(self) -> None:
         # A meta refresh reloads into the same half-written build over and over.
@@ -149,9 +164,7 @@ class TestFastBootstrapServesTheHoldingPage:
         assert b"index-abc123.js" in body
 
     @pytest.mark.asyncio
-    async def test_a_half_written_build_gets_the_holding_page(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_a_half_written_build_gets_the_holding_page(self, tmp_path: Path) -> None:
         dist = _dist(tmp_path)
         (dist / "assets" / "index-abc123.js").unlink()
         bs = FastBootstrap(dist_dir=dist)

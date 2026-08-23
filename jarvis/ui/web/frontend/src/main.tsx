@@ -6,7 +6,7 @@ import { ThemeProvider } from "./hooks/useTheme";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
-import { installBundleWatch } from "./lib/bundleWatch";
+import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
 import "./index.css";
 
@@ -45,9 +45,16 @@ installPreloadRecovery({
   }
   installBundleWatch({
     fetchIndex: () =>
-      fetch("/", { cache: "no-store", headers: { Accept: "text/html" } }).then(
-        (response) => (response.ok ? response.text() : ""),
-      ),
+      fetch("/", {
+        cache: "no-store",
+        headers: { Accept: "text/html" },
+        // A request the engine never settles must not outlive the next tick;
+        // the watch treats a late answer as lost, this makes sure it IS lost.
+        signal:
+          typeof AbortSignal.timeout === "function"
+            ? AbortSignal.timeout(POLL_MS - 500)
+            : undefined,
+      }).then((response) => (response.ok ? response.text() : "")),
     reload: () => reloadWhenServable(browserSafeReloadDeps()),
     idleFor: () => (lastInput === null ? null : Date.now() - lastInput),
     visible: () => document.visibilityState !== "hidden",

@@ -22,6 +22,23 @@
  *   reloading into that is the flicker loop preloadRecovery was written for;
  * * the user must be idle for a moment, because a reload in the middle of a
  *   sentence loses the sentence.
+ *
+ * And two rules keep it from quietly dying, which is the failure that was
+ * actually reported (2026-08-23: the desktop window ran a morning-old build
+ * through two rebuilds and showed every section it had not visited yet as a
+ * crash):
+ *
+ * * a window that says it is hidden is still checked, only slower. The
+ *   desktop shell's engine (WebView2 under pywebview) was measured reporting
+ *   an on-screen, on-top window as `visibilityState === "hidden"` for minutes
+ *   at a time; a watch that trusts that verdict never polls again. One request
+ *   every half minute is nothing, and a reload of a window nobody is looking at
+ *   costs nothing either;
+ * * a check that never answers does not hold the watch. The single in-flight
+ *   guard protected against stacking, but a request the engine never settles —
+ *   a server mid-restart, a socket the machine slept through — turned it into
+ *   a permanent lock. An answer that is late past a few ticks is treated as
+ *   lost and a fresh check goes out.
  */
 
 /** How often the served bundle is checked, while the window is visible. */
@@ -29,6 +46,12 @@ export const POLL_MS = 5_000;
 
 /** Quiet time required before a reload is allowed to interrupt. */
 export const IDLE_MS = 2_000;
+
+/** A window that reports itself hidden still checks, every this many ticks. */
+export const HIDDEN_EVERY_N_TICKS = 6;
+
+/** A check still unanswered after this many ticks no longer blocks the next. */
+export const STALE_INFLIGHT_TICKS = 3;
 
 /**
  * What the running document would have to load to be current.
@@ -50,7 +73,7 @@ export interface BundleWatchDeps {
   reload: () => void;
   /** Milliseconds since the last keystroke or pointer press, or null if none. */
   idleFor: () => number | null;
-  /** Is this window on screen? A hidden window polls nothing. */
+  /** Is this window on screen? A hidden window polls {@link HIDDEN_EVERY_N_TICKS}× slower. */
   visible: () => boolean;
   /** Schedule the repeating check. Returns a handle for {@link stop}. */
   every: (fn: () => void, ms: number) => number;
@@ -93,21 +116,43 @@ export function shouldReload({
 export function installBundleWatch(deps: BundleWatchDeps): () => void {
   let baseline = "";
   let confirmed: string | null = null;
-  let busy = false;
+  // Ticks the current check has been waiting for its answer; 0 = none open.
+  let inflightTicks = 0;
+  // Which check is current. An answer from a check that was given up on must
+  // not be mistaken for fresh information.
+  let generation = 0;
+  let hiddenTicks = 0;
 
   const check = () => {
-    if (busy || !deps.visible()) return;
-    busy = true;
+    if (inflightTicks > 0 && inflightTicks < STALE_INFLIGHT_TICKS) {
+      // One check at a time — a slow answer is not a reason to stack another.
+      inflightTicks += 1;
+      return;
+    }
+    if (!deps.visible()) {
+      // Hidden is a hint to go easy, never a reason to stop: the verdict is
+      // wrong in at least one engine this app ships in (see the module note).
+      hiddenTicks += 1;
+      if (hiddenTicks % HIDDEN_EVERY_N_TICKS !== 0) return;
+    } else {
+      hiddenTicks = 0;
+    }
+    inflightTicks = 1;
+    generation += 1;
+    const mine = generation;
     void deps
       .fetchIndex()
       .then((html) => {
+        if (mine !== generation) return;
         const seen = bundleFingerprint(html);
         if (!seen) return;
         if (!baseline) {
           baseline = seen;
           return;
         }
-        if (shouldReload({ baseline, seen, confirmed, idleMs: deps.idleFor() })) {
+        if (
+          shouldReload({ baseline, seen, confirmed, idleMs: deps.idleFor() })
+        ) {
           deps.reload();
           return;
         }
@@ -118,7 +163,7 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
         // poll asks again. A window must never reload because a request failed.
       })
       .finally(() => {
-        busy = false;
+        if (mine === generation) inflightTicks = 0;
       });
   };
 

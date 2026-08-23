@@ -186,8 +186,13 @@
         var RETRY_MS = 700;
         var SLOW_RETRY_MS = 3000;
         var FAST_TRIES = 20;
-        // Mirrors HOLDING_MARKER in jarvis/ui/web/spa_build.py.
+        // Mirrors HOLDING_MARKER in jarvis/ui/web/spa_build.py. Tested for in
+        // its attribute form only, composed here so this very script never
+        // contains it: this document IS what a reload fetches, and a test for
+        // the bare word found it in these lines and never reloaded anything
+        // (2026-08-22/23). Mirrors HOLDING_ATTRIBUTE in src/lib/safeReload.ts.
         var HOLDING = "jarvis-build-holding";
+        var HOLDING_ATTR = 'data-state="' + HOLDING + '"';
         var KEY = "jarvis:blank-reloaded";
         var started = Date.now();
         var lastError = "";
@@ -234,7 +239,7 @@
                 return r.ok ? r.text() : "";
               })
               .then(function (html) {
-                if (!html || html.indexOf(HOLDING) !== -1) {
+                if (!html || html.indexOf(HOLDING_ATTR) !== -1) {
                   again();
                   return;
                 }
