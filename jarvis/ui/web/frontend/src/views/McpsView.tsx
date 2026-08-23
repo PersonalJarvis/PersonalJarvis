@@ -1,29 +1,67 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Plug,
   FileJson,
   X,
   Copy,
   RefreshCw,
+  Search,
+  Download,
+  MoreHorizontal,
+  Trash2,
+  Activity,
+  Cable,
 } from "lucide-react";
-import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import {
+  ActionMenu,
+  BackLink,
+  Cell,
+  ClampedText,
+  DetailHeader,
+  EmptyRow,
+  FactRows,
+  IconButton,
+  InlineSearch,
+  MenuPill,
+  Panel,
+  PanelHeader,
+  StatusDot,
+  Table,
+  TableHead,
+  TableRow,
+  type Column,
+} from "@/components/extensions/primitives";
 import { useEventStore } from "@/store/events";
 import { robustCopy } from "@/lib/clipboard";
-import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
+
+// ---------------------------------------------------------------------------
+// Wire types — mirror /api/mcps
+// ---------------------------------------------------------------------------
+
+interface McpTool {
+  name: string;
+  description: string;
+}
 
 interface McpServer {
   name: string;
   display: string;
+  description?: string;
+  transport?: string;
+  mandatory?: boolean;
+  platform_notes?: string;
+  install_command?: string[];
+  is_bootstrap?: boolean;
   enabled: boolean;
   status: "running" | "stopped" | "not-initialized";
   error: string | null;
-  tools: { name: string; description: string }[];
+  tools: McpTool[];
   credentials_complete: boolean;
+  credentials_status?: Record<string, boolean>;
   required_auth: string[];
 }
 
@@ -57,40 +95,31 @@ async function postJson<T>(
   return res.json();
 }
 
-type StatusLabel = string;
+type Tone = "ok" | "off" | "warn" | "error" | "busy";
 
-function statusOf(server: McpServer, pending: boolean, t: (k: string) => string): {
-  label: StatusLabel;
-  color: string;
-  dotClass: string;
-} {
-  if (pending) {
-    return {
-      label: t("mcps_view.status.checking"),
-      color: "text-muted-foreground",
-      dotClass: "bg-muted-foreground animate-jarvis-pulse",
-    };
-  }
-  if (server.error) {
-    return {
-      label: t("mcps_view.status.error"),
-      color: "text-destructive",
-      dotClass: "bg-destructive",
-    };
-  }
+function statusOf(
+  server: McpServer,
+  pending: boolean,
+  t: (k: string) => string,
+): { label: string; tone: Tone } {
+  if (pending) return { label: t("mcps_view.status.checking"), tone: "busy" };
+  if (server.error) return { label: t("common.error"), tone: "error" };
   if (server.status === "running" && server.enabled) {
-    return {
-      label: t("mcps_view.status.connected"),
-      color: "text-primary",
-      dotClass: "bg-primary shadow-[0_0_8px_rgba(255,214,10,0.6)]",
-    };
+    return { label: t("mcps_view.connected"), tone: "ok" };
   }
-  return {
-    label: t("mcps_view.status.disconnected"),
-    color: "text-muted-foreground",
-    dotClass: "bg-muted-foreground/40",
-  };
+  if (!server.credentials_complete) {
+    return { label: t("mcps_view.credentials_incomplete"), tone: "warn" };
+  }
+  return { label: t("mcps_view.disconnected"), tone: "off" };
 }
+
+function toolCountLabel(n: number, t: (k: string) => string): string {
+  return n === 1 ? t("mcps_view.tool_one") : fill(t("mcps_view.tools"), { n });
+}
+
+// ---------------------------------------------------------------------------
+// View
+// ---------------------------------------------------------------------------
 
 export function McpsView() {
   const t = useT();
@@ -98,8 +127,12 @@ export function McpsView() {
   const pushToast = useEventStore((s) => s.pushToast);
   const [showConfig, setShowConfig] = useState(false);
   const [checkingName, setCheckingName] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState<McpServer | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["mcps"],
     queryFn: fetchMcps,
     refetchInterval: 5_000,
@@ -133,7 +166,9 @@ export function McpsView() {
       if (res.ok) {
         pushToast(
           "success",
-          vars.enable ? t("mcps_toast.connected").replace("{0}", vars.name) : `${vars.name} ${t("mcps_view.disconnected").toLowerCase()}`,
+          vars.enable
+            ? t("mcps_toast.connected").replace("{0}", vars.name)
+            : `${vars.name} ${t("mcps_view.disconnected").toLowerCase()}`,
         );
       } else if (res.error) {
         pushToast("error", `${vars.name}: ${res.error}`);
@@ -144,179 +179,482 @@ export function McpsView() {
     },
   });
 
+  const check = useMutation({
+    mutationFn: async (name: string) => {
+      setCheckingName(name);
+      return postJson<{ ok: boolean; tools_count: number; error: string | null }>(
+        `/api/mcps/${name}/check`,
+      );
+    },
+    onSettled: () => setCheckingName(null),
+    onSuccess: (res, name) => {
+      qc.invalidateQueries({ queryKey: ["mcps"] });
+      if (res.ok) {
+        pushToast("success", `${name}: ${fill(t("mcps_view.check_ok"), { n: res.tools_count })}`);
+      } else {
+        pushToast("error", `${name}: ${res.error ?? t("mcps_view.check_failed")}`);
+      }
+    },
+    onError: (err, name) => {
+      pushToast("error", `${name}: ${(err as Error).message}`);
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: async (name: string) =>
+      postJson<{ ok: boolean; removed?: boolean }>(`/api/mcps/${name}`, undefined, "DELETE"),
+    onSuccess: (_res, name) => {
+      qc.invalidateQueries({ queryKey: ["mcps"] });
+      setConfirmRemove(null);
+      if (selected === name) setSelected(null);
+      pushToast("success", fill(t("mcps_view.removed"), { name }));
+    },
+    onError: (err, name) => {
+      pushToast("error", `${name}: ${(err as Error).message}`);
+    },
+  });
+
   const servers = data?.servers ?? [];
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return servers;
+    return servers.filter((s) =>
+      [s.name, s.display, s.description ?? "", s.transport ?? ""].join(" ").toLowerCase().includes(q),
+    );
+  }, [servers, query]);
+
+  const closeSearch = () => {
+    setQuery("");
+    setSearchOpen(false);
+  };
+
+  const dialogs = (
+    <>
+      {showConfig && <ConfigModal onClose={() => setShowConfig(false)} />}
+      {confirmRemove && (
+        <RemoveConfirmDialog
+          server={confirmRemove}
+          pending={remove.isPending}
+          onCancel={() => setConfirmRemove(null)}
+          onConfirm={() => remove.mutate(confirmRemove.name)}
+        />
+      )}
+    </>
+  );
+
+  // ---- Detail page -------------------------------------------------------
+  const current = selected ? servers.find((s) => s.name === selected) ?? null : null;
+  if (selected) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ScrollArea className="flex-1">
+          <div className="mx-auto w-full max-w-4xl px-8 py-6">
+            <BackLink label={t("mcps_view.title")} onClick={() => setSelected(null)} />
+            {current ? (
+              <McpDetail
+                server={current}
+                pending={checkingName === current.name}
+                onToggle={(enable) => toggle.mutate({ name: current.name, enable })}
+                onCheck={() => check.mutate(current.name)}
+                onRemove={() => setConfirmRemove(current)}
+                onEditConfig={() => setShowConfig(true)}
+              />
+            ) : (
+              <div className="mt-6 text-sm text-muted-foreground">
+                {isLoading ? t("common.loading") : t("mcps_view.not_found")}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+        {dialogs}
+      </div>
+    );
+  }
+
+  // ---- List page ---------------------------------------------------------
+  const columns: Column[] = [
+    { id: "name", label: t("mcps_view.col_server") },
+    { id: "transport", label: t("mcps_view.col_transport"), width: "96px" },
+    { id: "status", label: t("mcps_view.col_status"), width: "150px" },
+    { id: "enabled", label: t("mcps_view.col_enabled"), width: "44px", srOnly: true, align: "right" },
+  ];
+
+  const subtitle =
+    !isLoading && !error
+      ? fill(t("mcps_view.count"), { running: data?.running ?? 0, total: data?.total ?? 0 })
+      : undefined;
 
   return (
-    <div className="flex h-full flex-col">
-      <ViewHeader
-        icon={<Plug className="h-4 w-4 text-primary" />}
-        title={t("mcps_view.title")}
-        subtitle={
-          data
-            ? `${data.running} ${t("mcps_view.connected")} · ${data.total}`
-            : t("common.loading")
-        }
-        right={
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowConfig(true)}
-              title={t("mcps_view.edit_tooltip")}
-            >
-              <FileJson className="h-3.5 w-3.5" />
-              <span className="ml-1.5 text-xs">mcp.json</span>
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => refetch()}
-              title={t("mcps_view.reload_tooltip")}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        }
-      />
-
+    <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="flex-1">
-        <div className="p-6">
-          {isLoading && (
-            <div className="text-sm text-muted-foreground">{t("common.loading")}</div>
-          )}
+        <div className="mx-auto w-full max-w-4xl px-8 py-6">
+          <PanelHeader
+            title={t("mcps_view.title")}
+            subtitle={subtitle}
+            actions={
+              <>
+                <IconButton
+                  label={t("mcps_view.search_placeholder")}
+                  active={searchOpen}
+                  onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+                >
+                  <Search className="h-4 w-4" />
+                </IconButton>
+                <IconButton
+                  label={t("mcps_view.reload_tooltip")}
+                  onClick={() => void refetch()}
+                  busy={isFetching && !data}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </IconButton>
+                <IconButton label={t("mcps_view.edit_tooltip")} onClick={() => setShowConfig(true)} className="ml-1">
+                  <FileJson className="h-4 w-4" />
+                </IconButton>
+                <ActionMenu
+                  label={t("mcps_view.add")}
+                  actions={[
+                    {
+                      id: "import",
+                      label: t("mcps_view.import_claude"),
+                      icon: <Download className="h-3.5 w-3.5" />,
+                      disabled: importClaude.isPending,
+                      onSelect: () => importClaude.mutate(),
+                    },
+                    {
+                      id: "edit",
+                      label: t("mcps_view.add_edit"),
+                      icon: <FileJson className="h-3.5 w-3.5" />,
+                      onSelect: () => setShowConfig(true),
+                    },
+                  ]}
+                  trigger={({ open, toggle: toggleMenu }) => (
+                    <MenuPill open={open} toggle={toggleMenu}>
+                      {t("mcps_view.add")}
+                    </MenuPill>
+                  )}
+                />
+              </>
+            }
+          />
 
-          {error && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-              {(error as Error).message}
+          {searchOpen && (
+            <div className="mt-4 flex items-center gap-2">
+              <div className="flex-1">
+                <InlineSearch
+                  value={query}
+                  onChange={setQuery}
+                  placeholder={t("mcps_view.search_placeholder")}
+                  autoFocus
+                />
+              </div>
+              <IconButton label={t("common.close")} onClick={closeSearch}>
+                <X className="h-4 w-4" />
+              </IconButton>
             </div>
           )}
 
-          {!isLoading && !error && servers.length === 0 && (
-            <EmptyState
-              onOpenConfig={() => setShowConfig(true)}
-              onImportClaude={() => importClaude.mutate()}
-              importPending={importClaude.isPending}
-            />
-          )}
-
-          {servers.length > 0 && (
-            <>
-              <p className="mb-4 max-w-xl text-xs leading-relaxed text-muted-foreground">
-                {t("mcps_view.intro")}
-              </p>
-              <ul className="space-y-1.5">
-                {servers.map((s) => (
-                  <ServerRow
-                    key={s.name}
-                    server={s}
-                    pending={checkingName === s.name}
-                    onToggle={(enable) => toggle.mutate({ name: s.name, enable })}
-                  />
-                ))}
-              </ul>
-            </>
-          )}
+          <div className="mt-4">
+            {isLoading && (
+              <div className="py-8 text-center text-sm text-muted-foreground">{t("common.loading")}</div>
+            )}
+            {error && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {t("common.error")}: {(error as Error).message}
+              </div>
+            )}
+            {!isLoading && !error && servers.length === 0 && (
+              <EmptyState
+                onOpenConfig={() => setShowConfig(true)}
+                onImport={() => importClaude.mutate()}
+                importing={importClaude.isPending}
+              />
+            )}
+            {!isLoading && !error && servers.length > 0 && (
+              <Table label={t("mcps_view.title")}>
+                <TableHead columns={columns} />
+                {visible.map((s) => {
+                  const pending = checkingName === s.name;
+                  const st = statusOf(s, pending, t);
+                  return (
+                    <TableRow
+                      key={s.name}
+                      columns={columns}
+                      onClick={() => setSelected(s.name)}
+                      ariaLabel={s.name}
+                    >
+                      <Cell>
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-[13px] font-medium">{s.name}</span>
+                          {s.tools.length > 0 && (
+                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                              {toolCountLabel(s.tools.length, t)}
+                            </span>
+                          )}
+                        </div>
+                        {s.description && (
+                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={s.description}>
+                            {s.description}
+                          </p>
+                        )}
+                      </Cell>
+                      <Cell muted>
+                        <span className="font-mono text-[11px]">{s.transport ?? "—"}</span>
+                      </Cell>
+                      <Cell>
+                        <span title={s.error ?? undefined}>
+                          <StatusDot tone={st.tone} label={st.label} pulse={pending} />
+                        </span>
+                      </Cell>
+                      <Cell align="right" stop>
+                        <Switch
+                          checked={s.enabled}
+                          disabled={pending}
+                          onCheckedChange={(next) => toggle.mutate({ name: s.name, enable: next })}
+                          aria-label={`${s.name}: ${s.enabled ? t("mcps_view.status.connected") : t("mcps_view.status.disconnected")}`}
+                        />
+                      </Cell>
+                    </TableRow>
+                  );
+                })}
+                {visible.length === 0 && <EmptyRow>{t("mcps_view.search_no_hits")}</EmptyRow>}
+              </Table>
+            )}
+          </div>
         </div>
       </ScrollArea>
-
-      {showConfig && <ConfigModal onClose={() => setShowConfig(false)} />}
+      {dialogs}
     </div>
   );
 }
 
-function ServerRow({
+// ---------------------------------------------------------------------------
+// Detail page
+// ---------------------------------------------------------------------------
+
+function McpDetail({
   server,
   pending,
   onToggle,
+  onCheck,
+  onRemove,
+  onEditConfig,
 }: {
   server: McpServer;
   pending: boolean;
   onToggle: (enable: boolean) => void;
+  onCheck: () => void;
+  onRemove: () => void;
+  onEditConfig: () => void;
 }) {
   const t = useT();
-  const status = statusOf(server, pending, t);
-  const tooltip = server.error
-    ? server.error
-    : server.required_auth.length > 0 && !server.credentials_complete
-      ? `${t("mcps_view.credentials_incomplete")}: ${server.required_auth.join(", ")}`
-      : "";
+  const st = statusOf(server, pending, t);
+  const missing = (server.required_auth ?? []).filter(
+    (k) => server.credentials_status && server.credentials_status[k] === false,
+  );
+  const command = (server.install_command ?? []).join(" ");
 
   return (
-    <li
-      className={cn(
-        "flex items-center gap-4 rounded-lg border border-border bg-card/40 px-4 py-2.5 transition-colors",
-        server.status === "running" && server.enabled && "border-primary/30 bg-card/60",
-        server.error && "border-destructive/30 bg-destructive/5",
+    <div className="mt-5">
+      <DetailHeader
+        leading={
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border bg-sheen/[0.05]">
+            <Cable className="h-4 w-4 text-muted-foreground" />
+          </span>
+        }
+        title={server.name}
+        byline={
+          <span className="inline-flex items-center gap-2">
+            <StatusDot tone={st.tone} label={st.label} pulse={pending} />
+            {server.tools.length > 0 && <span>· {toolCountLabel(server.tools.length, t)}</span>}
+          </span>
+        }
+        actions={
+          <>
+            <Switch
+              checked={server.enabled}
+              disabled={pending}
+              onCheckedChange={onToggle}
+              aria-label={`${server.name}: ${server.enabled ? t("mcps_view.status.connected") : t("mcps_view.status.disconnected")}`}
+            />
+            <ActionMenu
+              label={t("mcps_view.more_actions")}
+              actions={[
+                {
+                  id: "check",
+                  label: t("mcps_view.check"),
+                  icon: <Activity className="h-3.5 w-3.5" />,
+                  disabled: pending,
+                  onSelect: onCheck,
+                },
+                {
+                  id: "edit",
+                  label: t("mcps_view.add_edit"),
+                  icon: <FileJson className="h-3.5 w-3.5" />,
+                  onSelect: onEditConfig,
+                },
+                {
+                  id: "remove",
+                  label: t("mcps_view.remove"),
+                  icon: <Trash2 className="h-3.5 w-3.5" />,
+                  destructive: true,
+                  separatorAbove: true,
+                  disabled: Boolean(server.mandatory),
+                  onSelect: onRemove,
+                },
+              ]}
+              trigger={({ open, toggle }) => (
+                <IconButton label={t("mcps_view.more_actions")} onClick={toggle} active={open}>
+                  <MoreHorizontal className="h-4 w-4" />
+                </IconButton>
+              )}
+            />
+          </>
+        }
+      />
+
+      {server.description && (
+        <ClampedText
+          className="mt-4"
+          text={server.description}
+          moreLabel={t("common.see_more")}
+          lessLabel={t("common.see_less")}
+        />
       )}
-    >
-      <span
-        className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)}
-        aria-hidden
-      />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{server.name}</div>
-      </div>
-      <span
-        className={cn("text-xs tabular-nums", status.color)}
-        title={tooltip}
-      >
-        {status.label}
-      </span>
-      <Switch
-        checked={server.enabled}
-        disabled={pending}
-        onCheckedChange={(v) => onToggle(Boolean(v))}
-      />
-    </li>
+
+      {server.error && (
+        <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+          {server.error}
+        </div>
+      )}
+
+      <Panel className="mt-4">
+        <div className="px-5 py-4">
+          <FactRows
+            rows={[
+              { label: t("mcps_view.col_status"), value: st.label },
+              { label: t("mcps_view.col_transport"), value: server.transport ?? null },
+              {
+                label: t("mcps_view.command"),
+                value: command ? <code className="font-mono text-xs">{command}</code> : null,
+              },
+              {
+                label: t("mcps_view.credentials"),
+                value:
+                  (server.required_auth ?? []).length === 0
+                    ? null
+                    : missing.length > 0
+                      ? fill(t("mcps_view.credentials_missing"), { list: missing.join(", ") })
+                      : t("mcps_view.credentials_ok"),
+              },
+              { label: t("mcps_view.platform_notes"), value: server.platform_notes || null },
+              {
+                label: t("mcps_view.origin"),
+                value: server.is_bootstrap ? t("mcps_view.origin_bootstrap") : t("mcps_view.origin_config"),
+              },
+            ]}
+          />
+        </div>
+      </Panel>
+
+      <Panel className="mt-4">
+        <div className="flex items-center gap-2 border-b border-border/70 px-5 py-2.5">
+          <span className="text-xs font-medium">{t("mcps_view.tools_heading")}</span>
+          <span className="text-xs text-muted-foreground">{server.tools.length}</span>
+        </div>
+        {server.tools.length === 0 ? (
+          <p className="px-5 py-4 text-xs text-muted-foreground">{t("mcps_view.no_tools")}</p>
+        ) : (
+          <ul className="divide-y divide-border/70">
+            {server.tools.map((tool) => (
+              <li key={tool.name} className="px-5 py-2.5">
+                <p className="font-mono text-xs">{tool.name}</p>
+                {tool.description && (
+                  <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground" title={tool.description}>
+                    {tool.description}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+    </div>
   );
 }
 
-function EmptyState({
-  onOpenConfig,
-  onImportClaude,
-  importPending,
+function RemoveConfirmDialog({
+  server,
+  pending,
+  onCancel,
+  onConfirm,
 }: {
-  onOpenConfig: () => void;
-  onImportClaude: () => void;
-  importPending: boolean;
+  server: McpServer;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
 }) {
   const t = useT();
   return (
-    <div className="flex flex-col items-center justify-center gap-5 py-16 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-card/60">
-        <Plug className="h-7 w-7 text-muted-foreground" />
-      </div>
-      <div className="max-w-lg space-y-3">
-        <h3 className="font-display text-xl font-semibold tracking-tight">
-          {t("mcps_view.empty_title")}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60"
+      role="dialog"
+      aria-label={t("mcps_view.remove_title")}
+    >
+      <div className="w-[420px] rounded-lg border border-border bg-card p-6 shadow-xl">
+        <h3 className="flex items-center gap-2 text-base font-semibold">
+          <Trash2 className="h-4 w-4 text-destructive" />
+          {t("mcps_view.remove_title")}
         </h3>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          {t("mcps_view.empty_description")}
-        </p>
-        <p className="text-xs italic text-muted-foreground/70">
-          {t("mcps_view.empty_tip")}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <Button onClick={onOpenConfig} className="btn-primary px-5 py-2">
-          <FileJson className="h-4 w-4" />
-          <span className="ml-1.5">{t("mcps_view.open_config")}</span>
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={onImportClaude}
-          disabled={importPending}
-          className="px-4 py-2"
-        >
-          {importPending ? t("mcps_view.importing") : t("mcps_view.import_claude")}
-        </Button>
+        <p className="mt-2 text-sm text-muted-foreground">{t("mcps_view.remove_body")}</p>
+        <p className="mt-1 font-mono text-sm font-medium">{server.name}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={pending}>
+            {t("common.cancel")}
+          </Button>
+          <Button size="sm" variant="destructive" onClick={onConfirm} disabled={pending}>
+            {t("mcps_view.remove_confirm")}
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
 // ------------------------------------------------------------------
-// Config-Editor-Modal
+// Empty state
+// ------------------------------------------------------------------
+
+function EmptyState({
+  onOpenConfig,
+  onImport,
+  importing,
+}: {
+  onOpenConfig: () => void;
+  onImport: () => void;
+  importing: boolean;
+}) {
+  const t = useT();
+  return (
+    <EmptyRow>
+      <p className="font-medium text-foreground">{t("mcps_view.empty_title")}</p>
+      <p className="mx-auto mt-2 max-w-md text-xs">{t("mcps_view.empty_description")}</p>
+      <div className="mt-4 flex justify-center gap-2">
+        <Button size="sm" variant="outline" onClick={onOpenConfig} className="gap-1.5">
+          <FileJson className="h-3.5 w-3.5" />
+          {t("mcps_view.open_config")}
+        </Button>
+        <Button size="sm" onClick={onImport} disabled={importing} className="gap-1.5">
+          <Download className="h-3.5 w-3.5" />
+          {importing ? t("mcps_view.importing") : t("mcps_view.import_claude")}
+        </Button>
+      </div>
+      <p className="mt-4 text-[11px] text-muted-foreground/80">{t("mcps_view.empty_tip")}</p>
+    </EmptyRow>
+  );
+}
+
+// ------------------------------------------------------------------
+// Config editor modal
 // ------------------------------------------------------------------
 
 function ConfigModal({ onClose }: { onClose: () => void }) {
@@ -344,7 +682,7 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
       try {
         parsed = JSON.parse(editing);
       } catch (err) {
-        throw new Error(`JSON-Syntax: ${(err as Error).message}`);
+        throw new Error(`JSON syntax: ${(err as Error).message}`);
       }
       return postJson<{ ok: boolean; servers: number }>(
         "/api/mcps/config/raw",
@@ -375,7 +713,7 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
-      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-border bg-card shadow-[0_0_60px_rgba(255,214,10,0.1)]">
+      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-border bg-card shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b border-border p-6">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -399,6 +737,7 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
+            aria-label={t("common.close")}
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
@@ -424,7 +763,6 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
           </Button>
           <Button
             type="button"
-            className="btn-primary"
             onClick={() => save.mutate()}
             disabled={save.isPending}
           >

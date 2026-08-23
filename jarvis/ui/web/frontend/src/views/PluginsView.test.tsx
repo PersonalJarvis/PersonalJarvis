@@ -80,30 +80,32 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("PluginsView has no roadmap tab", () => {
-  it("exposes only Browse and Installed tabs and drops the hardcoded Codex list", async () => {
+describe("PluginsView lists the catalog as a table", () => {
+  it("shows one row per plugin, a Browse button and the All/Installed filter", async () => {
     installCatalogFetchMock();
 
     renderPluginsView();
 
+    // One row per catalog entry, named after the plugin.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Browse\b/i })).toBeDefined();
+      expect(screen.getByRole("row", { name: "GitHub" })).toBeDefined();
     });
-
+    expect(screen.getByRole("row", { name: "Vercel" })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^Browse\b/i })).toBeDefined();
+    // The status filter is a small tab strip, not a second page.
+    expect(screen.getByRole("tab", { name: /^All\b/ })).toBeDefined();
+    expect(screen.getByRole("tab", { name: /^Installed\b/ })).toBeDefined();
+    // Nothing needs attention in this catalog, so that tab stays hidden.
+    expect(screen.queryByRole("tab", { name: /Needs attention/ })).toBeNull();
     // The roadmap tab carried a static "AVAILABLE" list of Codex plugins that
     // were never installable in Jarvis — it has been removed entirely.
-    expect(screen.getByRole("button", { name: /^Installed\b/i })).toBeDefined();
     expect(screen.queryByRole("button", { name: /^Roadmap\b/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Vote on the roadmap/i })).toBeNull();
     expect(screen.queryByText("ChatGPT Codex plugins")).toBeNull();
-    expect(screen.queryByText("Planned Jarvis integrations")).toBeNull();
-    expect(screen.queryByText("OpenAI Developers")).toBeNull();
-    expect(screen.queryByText("Documents")).toBeNull();
   });
 });
 
 describe("PluginsView live badge", () => {
-  it("shows the Live badge for a connected plugin with live_callable: true", async () => {
+  it("shows the Live state for a connected plugin with live_callable: true", async () => {
     installCatalogFetchMock();
 
     renderPluginsView();
@@ -114,8 +116,10 @@ describe("PluginsView live badge", () => {
       expect(screen.getByText(/available.*connected/i)).toBeDefined();
     });
 
-    // GitHub is connected + live_callable: true → the Live badge must appear
-    expect(screen.getByText("· Live")).toBeDefined();
+    // GitHub is connected + live_callable: true → the status column says so.
+    expect(screen.getByText("Connected · Live")).toBeDefined();
+    // Vercel is not connected and must not carry the Live mark.
+    expect(screen.getByText("Not connected")).toBeDefined();
   });
 });
 
@@ -213,26 +217,31 @@ describe("ConnectIconButton reconnect state", () => {
 // Hitting a 28px "+" is the wrong ask for "I want this plugin". The whole card
 // starts the same connect flow — except a connected one, where a stray click
 // must never disconnect anything.
-describe("plugin card click", () => {
-  it("starts the connect flow when the card body is clicked", async () => {
+describe("plugin row click", () => {
+  it("opens the detail page, whose Connect button starts the connect flow", async () => {
     installCatalogFetchMock();
 
     renderPluginsView();
 
     await waitFor(() => {
-      expect(
-        screen.getByText("Deployments, runtime logs, domains and env-vars"),
-      ).toBeDefined();
+      expect(screen.getByRole("row", { name: "Vercel" })).toBeDefined();
     });
     expect(screen.queryByRole("dialog")).toBeNull();
 
+    // A row opens the detail page — it never starts a flow by itself.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("row", { name: "Vercel" }));
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Plugins" })).toBeDefined();
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Deployments, runtime logs, domains and env-vars")).toBeDefined();
+
     // Vercel is not_connected + pat_paste → the paste dialog IS its connect flow.
     await act(async () => {
-      fireEvent.click(
-        screen.getByText("Deployments, runtime logs, domains and env-vars"),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     });
-
     await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
   });
 
@@ -242,17 +251,18 @@ describe("plugin card click", () => {
     renderPluginsView();
 
     await waitFor(() => {
-      expect(
-        screen.getByText("Repos, issues, pull requests and Actions runs"),
-      ).toBeDefined();
+      expect(screen.getByRole("row", { name: "GitHub" })).toBeDefined();
     });
 
     await act(async () => {
-      fireEvent.click(
-        screen.getByText("Repos, issues, pull requests and Actions runs"),
-      );
+      fireEvent.click(screen.getByRole("row", { name: "GitHub" }));
     });
 
+    // The detail page states the connection; nothing destructive fires.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Plugins" })).toBeDefined();
+    });
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
     const urls = (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
@@ -261,9 +271,6 @@ describe("plugin card click", () => {
   });
 });
 
-// The PKCE pre-connect dialog is the in-app path to run your OWN production
-// OAuth client (the durable fix for the 7-day Google revocation) without env
-// vars, plus the honest provider-side hint.
 describe("PkceConnectDialog own-client + production hint", () => {
   const gmail = {
     id: "gmail",
@@ -665,12 +672,14 @@ describe("PluginsView keeps revoked plugins visible", () => {
 
     renderPluginsView();
 
-    // Open the Installed tab — the revoked plugin must be there, not hidden in
-    // Browse as if never connected.
+    // Open the Installed filter — the revoked plugin must be there, not hidden
+    // in the full list as if never connected.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Installed\b/i })).toBeDefined();
+      expect(screen.getByRole("tab", { name: /^Installed\b/i })).toBeDefined();
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Installed\b/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Installed\b/i }));
+    // The attention filter appears as soon as something needs reconnecting.
+    expect(screen.getByRole("tab", { name: /Needs attention/ })).toBeDefined();
 
     await waitFor(() => {
       expect(screen.getByText("Gmail")).toBeDefined();
@@ -778,24 +787,25 @@ describe("PluginsView category sections are data-driven", () => {
     // The previous fixed record threw on `byCat[category].push(...)`, which
     // blanked the entire view behind its error boundary. A backend-only
     // taxonomy change must not be able to do that.
-    catalogWith([row("mystery", "Something Brand New")], ["Developer"]);
+    catalogWith(
+      [row("mystery", "Something Brand New"), row("known", "Developer")],
+      ["Developer"],
+    );
 
     renderPluginsView();
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Something Brand New", level: 2 }),
-      ).toBeDefined();
+      expect(screen.getByRole("row", { name: "mystery" })).toBeDefined();
     });
-    expect(screen.getByText("mystery")).toBeDefined();
-    // The filter menu is fed by the same data, so it offers the new category too.
-    fireEvent.click(screen.getByRole("combobox", { name: "Plugin category" }));
+    expect(screen.getByText("Something Brand New")).toBeDefined();
+    // The category menu is fed by the same data, so it offers the new one too.
+    fireEvent.click(screen.getByRole("combobox", { name: "Category" }));
     expect(
       screen.getByRole("option", { name: "Something Brand New" }),
     ).toBeDefined();
   });
 
-  it("orders sections by the catalog's category_order", async () => {
+  it("orders rows by the catalog's category_order", async () => {
     catalogWith(
       [row("b", "Second"), row("a", "First")],
       ["First", "Second"],
@@ -804,12 +814,13 @@ describe("PluginsView category sections are data-driven", () => {
     renderPluginsView();
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "First", level: 2 })).toBeDefined();
+      expect(screen.getByRole("row", { name: "a" })).toBeDefined();
     });
-    const headings = screen
-      .getAllByRole("heading", { level: 2 })
-      .map((h) => h.textContent);
-    expect(headings.indexOf("First")).toBeLessThan(headings.indexOf("Second"));
+    const names = screen
+      .getAllByRole("row")
+      .map((r) => r.getAttribute("aria-label"))
+      .filter(Boolean);
+    expect(names.indexOf("a")).toBeLessThan(names.indexOf("b"));
   });
 
   it("states how long the connection lasts before the user connects", async () => {
@@ -824,9 +835,20 @@ describe("PluginsView category sections are data-driven", () => {
     renderPluginsView();
 
     await waitFor(() => {
+      expect(screen.getByRole("row", { name: "limited" })).toBeDefined();
+    });
+    // The detail page carries the longevity fact sheet.
+    fireEvent.click(screen.getByRole("row", { name: "limited" }));
+    await waitFor(() => {
+      expect(screen.getByText("Sign in again periodically")).toBeDefined();
+    });
+    expect(screen.getByText("Google asks again every 7 days in Testing mode.")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+    fireEvent.click(await screen.findByRole("row", { name: "forever" }));
+    await waitFor(() => {
       expect(screen.getByText("Stays connected")).toBeDefined();
     });
-    expect(screen.getByText("Sign in again periodically")).toBeDefined();
   });
 });
 
@@ -936,16 +958,20 @@ describe("plugin status filter", () => {
 });
 
 describe("PluginsView search and filter controls", () => {
-  it("offers a connection-status menu next to the category menu", async () => {
+  function openSearch() {
+    fireEvent.click(screen.getByRole("button", { name: "Search plugins…" }));
+    return screen.getByPlaceholderText("Search plugins…");
+  }
+
+  it("offers the status filter as tabs next to the search", async () => {
     installCatalogFetchMock();
     renderPluginsView();
 
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Connection status" })).toBeDefined();
+      expect(screen.getByRole("tablist", { name: "Show" })).toBeDefined();
     });
-    fireEvent.click(screen.getByRole("combobox", { name: "Connection status" }));
-    for (const label of ["Any status", "Connected", "Not connected", "Needs attention"]) {
-      expect(screen.getByRole("option", { name: label })).toBeDefined();
+    for (const label of [/^All\b/, /^Installed\b/]) {
+      expect(screen.getByRole("tab", { name: label })).toBeDefined();
     }
   });
 
@@ -957,18 +983,16 @@ describe("PluginsView search and filter controls", () => {
       expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
     });
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
-    expect(screen.queryByText(/plugins?$/)).toBeNull();
+    expect(screen.queryByText(/matches$/)).toBeNull();
 
-    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
-      target: { value: "deployments" },
-    });
+    fireEvent.change(openSearch(), { target: { value: "deployments" } });
 
     // Vercel's description carries "Deployments"; GitHub's does not.
     await waitFor(() => {
-      expect(screen.getByText("1 plugin")).toBeDefined();
+      expect(screen.getByText("1 matches")).toBeDefined();
     });
-    expect(screen.getByText("Vercel")).toBeDefined();
-    expect(screen.queryByText("GitHub")).toBeNull();
+    expect(screen.getByRole("row", { name: "Vercel" })).toBeDefined();
+    expect(screen.queryByRole("row", { name: "GitHub" })).toBeNull();
     expect(screen.getByRole("button", { name: "Clear filters" })).toBeDefined();
   });
 
@@ -979,11 +1003,9 @@ describe("PluginsView search and filter controls", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
     });
-    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
-      target: { value: "kubernetes" },
-    });
+    fireEvent.change(openSearch(), { target: { value: "kubernetes" } });
     await waitFor(() => {
-      expect(screen.getByText("0 plugins")).toBeDefined();
+      expect(screen.getByText("0 matches")).toBeDefined();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
@@ -992,21 +1014,39 @@ describe("PluginsView search and filter controls", () => {
       expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     });
     expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
-    expect(screen.getAllByText("Vercel").length).toBeGreaterThan(0);
+    expect(screen.getByRole("row", { name: "Vercel" })).toBeDefined();
   });
 
   it("explains an empty result from a non-text filter instead of blanking", async () => {
     // Filtering by connection state alone can empty the list. That path used
     // to render nothing at all — no message, no way back.
-    installCatalogFetchMock();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ...CATALOG,
+            connected: 0,
+            plugins: CATALOG.plugins.map((p) => ({
+              ...p,
+              status: "not_connected",
+              live_callable: false,
+            })),
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
     renderPluginsView();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+      expect(screen.getByRole("row", { name: "GitHub" })).toBeDefined();
     });
 
-    fireEvent.click(screen.getByRole("combobox", { name: "Connection status" }));
-    fireEvent.click(screen.getByRole("option", { name: "Needs attention" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Installed\b/ }));
 
     await waitFor(() => {
       expect(screen.getByText("No plugin matches the current filters.")).toBeDefined();
@@ -1014,7 +1054,7 @@ describe("PluginsView search and filter controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show all plugins" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+      expect(screen.getByRole("row", { name: "GitHub" })).toBeDefined();
     });
   });
 
@@ -1025,10 +1065,8 @@ describe("PluginsView search and filter controls", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Installed/ }));
-    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
-      target: { value: "kubernetes" },
-    });
+    fireEvent.click(screen.getByRole("tab", { name: /^Installed\b/ }));
+    fireEvent.change(openSearch(), { target: { value: "kubernetes" } });
 
     await waitFor(() => {
       expect(screen.getByText(/No plugin matches/)).toBeDefined();
@@ -1036,34 +1074,16 @@ describe("PluginsView search and filter controls", () => {
     expect(screen.queryByText("Nothing connected yet")).toBeNull();
   });
 
-  it("hides the promo carousel while a filter narrows the list", async () => {
-    // The carousel is a fixed promo strip: leaving it up during a search put
-    // GitHub on screen while the list below held only Vercel.
+  it("lists every plugin exactly once — no promo strip, no Coming-soon decoy", async () => {
+    // The carousel used to put GitHub on screen a second time, and the
+    // Coming-soon strip listed names that had long had real catalog entries.
     installCatalogFetchMock();
     renderPluginsView();
 
     await waitFor(() => {
-      expect(screen.getAllByText("GitHub").length).toBeGreaterThan(1);
+      expect(screen.getByRole("row", { name: "GitHub" })).toBeDefined();
     });
-
-    fireEvent.change(screen.getByPlaceholderText("Search plugins"), {
-      target: { value: "deployments" },
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByText("GitHub")).toBeNull();
-    });
-  });
-
-  it("drops the dead Coming-soon strip", async () => {
-    // Every name the strip listed now has a real catalog entry, so it could
-    // never render again. It stayed as a decoy for the next connector.
-    installCatalogFetchMock();
-    renderPluginsView();
-
-    await waitFor(() => {
-      expect(screen.getByText("GitHub")).toBeDefined();
-    });
+    expect(screen.getAllByText("GitHub")).toHaveLength(1);
     expect(screen.queryByText("Coming soon")).toBeNull();
   });
 });

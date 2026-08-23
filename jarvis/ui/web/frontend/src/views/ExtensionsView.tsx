@@ -1,52 +1,100 @@
-import { useEventStore } from "@/store/events";
-import { SectionTabBar, type SectionTab } from "@/components/layout/SectionTabBar";
+import { Blocks, Cable, Sparkles, type LucideIcon } from "lucide-react";
+import { useEventStore, type SectionId } from "@/store/events";
+import { usePluginAttention } from "@/hooks/usePluginAttention";
+import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { SkillsView } from "@/views/SkillsView";
 import { PluginsView } from "@/views/PluginsView";
 import { McpsView } from "@/views/McpsView";
 
 /**
- * Combined "Skills & Tools" section (sidebar label "Skills & Tools").
+ * Combined "Skills, Plugins & MCPs" section.
  *
- * Merges the three sidebar entries — Skills, Plugins and MCPs — behind a single
- * sidebar entry with one flat top tab bar:
- *
- *   [ Skills ] [ Plugins ] [ MCPs ]
- *
- * CLIs were split out into their own "CLIs" section (see ClisHubView), which
- * pairs the CLIs list with the CLI Test Hub.
+ * One settings-style surface: a narrow navigation column on the left (the
+ * three areas under one "Customize" heading) and the chosen area on the right.
+ * Each area is a quiet table — name, a couple of facts, an on/off switch — and
+ * opens a detail page in place when a row is clicked.
  *
  * Design note — why this is a thin wrapper, not a rewrite:
  * The active sidebar section id (`activeSection` in the event store) *is* the
- * tab state. We deliberately keep the section ids (`skills`, `plugins`, `mcps`)
- * alive in the five-layer nav enum — see `jarvis/plugins/tool/navigate.py` +
- * `store/events.ts` + the parity test `tests/unit/plugins/tool/test_navigate.py`.
- * Only the *sidebar presentation* collapses to one entry; routing, deep-links
- * and voice navigation ("öffne Plugins") keep working unchanged and land on the i18n-allow
- * right tab. The child views are embedded verbatim — they rehydrate their own
- * state from React Query / the store, so the unmount/remount on tab switch is
- * harmless.
+ * navigation state. We deliberately keep the section ids (`skills`, `plugins`,
+ * `mcps`) alive in the five-layer nav enum — see `jarvis/plugins/tool/navigate.py`
+ * + `store/events.ts` + the parity test `tests/unit/plugins/tool/test_navigate.py`.
+ * Only the *presentation* collapses to one entry; routing, deep-links and voice
+ * navigation ("öffne Plugins") keep working unchanged and land on the i18n-allow
+ * right area. The child views rehydrate their own state from React Query / the
+ * store, so the unmount/remount on a switch is harmless.
  *
- * The file/component name stays `ExtensionsView` for continuity; only the
- * user-facing label is "Skills & Tools".
+ * The file/component name stays `ExtensionsView` for continuity.
  */
 
-const TABS = [
-  { id: "skills", labelKey: "nav.skills" },
-  { id: "plugins", labelKey: "nav.plugins" },
-  { id: "mcps", labelKey: "nav.mcps" },
-] as const satisfies readonly SectionTab[];
+interface AreaSpec {
+  id: SectionId;
+  labelKey: string;
+  icon: LucideIcon;
+}
+
+const AREAS = [
+  { id: "skills", labelKey: "nav.skills", icon: Sparkles },
+  { id: "plugins", labelKey: "nav.plugins", icon: Blocks },
+  { id: "mcps", labelKey: "nav.mcps", icon: Cable },
+] as const satisfies readonly AreaSpec[];
+
+type AreaId = (typeof AREAS)[number]["id"];
 
 export function ExtensionsView() {
+  const t = useT();
   const active = useEventStore((s) => s.activeSection);
+  const setActive = useEventStore((s) => s.setActiveSection);
+  const attention = usePluginAttention();
 
   // The router only mounts us for skills/plugins/mcps; any other value is
-  // unexpected — fall back to the Skills tab defensively.
-  const current = TABS.some((tab) => tab.id === active) ? active : "skills";
+  // unexpected — fall back to Skills defensively.
+  const current: AreaId = AREAS.some((a) => a.id === active) ? (active as AreaId) : "skills";
 
   return (
-    <div className="flex h-full flex-col">
-      <SectionTabBar tabs={TABS} />
-      <div className="min-h-0 flex-1 overflow-hidden">
+    <div className="flex h-full min-h-0">
+      <nav
+        aria-label={t("extensions.group_label")}
+        className="flex w-[200px] shrink-0 flex-col border-r border-border px-3 py-5"
+      >
+        <p className="px-2.5 pb-2 text-[11px] font-medium text-muted-foreground">
+          {t("extensions.group_label")}
+        </p>
+        <ul className="space-y-0.5">
+          {AREAS.map((area) => {
+            const Icon = area.icon;
+            const isActive = area.id === current;
+            const dot = area.id === "plugins" && attention.count > 0;
+            return (
+              <li key={area.id}>
+                <button
+                  type="button"
+                  onClick={() => setActive(area.id)}
+                  aria-current={isActive ? "page" : undefined}
+                  className={cn(
+                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors",
+                    isActive
+                      ? "bg-sheen/[0.08] font-medium text-foreground"
+                      : "text-foreground/75 hover:bg-sheen/[0.05] hover:text-foreground",
+                  )}
+                >
+                  <Icon className={cn("h-4 w-4 shrink-0", isActive ? "text-foreground" : "text-muted-foreground")} />
+                  <span className="flex-1 truncate">{t(area.labelKey)}</span>
+                  {dot && (
+                    <span
+                      aria-label={t("extensions.attention_dot")}
+                      title={t("extensions.attention_dot")}
+                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                    />
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+      <div className="min-h-0 min-w-0 flex-1">
         {current === "skills" && <SkillsView />}
         {current === "plugins" && <PluginsView />}
         {current === "mcps" && <McpsView />}

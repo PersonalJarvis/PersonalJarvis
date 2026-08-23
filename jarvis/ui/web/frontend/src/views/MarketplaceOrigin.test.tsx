@@ -82,9 +82,9 @@ describe("an installed community plugin is findable", () => {
     );
 
     // The shipped catalog is always "available", so a community plugin that
-    // only showed up in Browse was indistinguishable from the ones the app
-    // came with — Installed is where somebody looks for what they added.
-    const installedTab = await screen.findByRole("button", { name: /^Installed\b/i });
+    // only showed up in the full list was indistinguishable from the ones the
+    // app came with — Installed is where somebody looks for what they added.
+    const installedTab = await screen.findByRole("tab", { name: /^Installed\b/i });
     await waitFor(() => {
       expect(installedTab.textContent).toContain("1");
     });

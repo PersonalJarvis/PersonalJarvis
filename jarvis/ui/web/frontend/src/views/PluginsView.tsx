@@ -7,8 +7,6 @@ import {
 } from "@tanstack/react-query";
 import { useEventStore } from "@/store/events";
 import {
-  Blocks,
-  ArrowRight,
   ExternalLink,
   Search,
   RefreshCw,
@@ -16,32 +14,45 @@ import {
   Plus,
   Check,
   Copy,
-  Sparkles,
   X,
   Loader2,
   AlertTriangle,
   Upload,
+  Store,
+  MoreHorizontal,
+  ArrowRight,
 } from "lucide-react";
-import { ViewHeader } from "@/views/ChatsView";
 import { CommunityTab } from "@/views/PluginsCommunity";
 import { PluginUploadDialog } from "@/views/PluginUploadDialog";
-import { translate } from "@/i18n";
+import { fill, translate } from "@/i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
+import {
+  ActionMenu,
+  BackLink,
+  Cell,
+  ClampedText,
+  DetailHeader,
+  EmptyRow,
+  FactRows,
+  IconButton,
+  InlineSearch,
+  MenuPill,
+  Panel,
+  PanelHeader,
+  SegmentedFilter,
+  SoftButton,
+  StatusDot,
+  Table,
+  TableHead,
+  TableRow,
+  type Column,
+} from "@/components/extensions/primitives";
 import { cn } from "@/lib/utils";
 import { MarketplaceBadge } from "@/components/MarketplaceBadge";
 import { openExternalUrl } from "@/lib/openExternal";
 import { robustCopy } from "@/lib/clipboard";
 import { PRODUCT_NAME } from "@/lib/branding";
-
-// Wave hero image restored. The previous "kill image entirely" attempt
-// felt too flat; the CSS-only gradient lacked atmospheric depth. Edge
-// artefacts are killed by a brutal pair of inset shadows on the section
-// (see CarouselBanner): an almost-black 180px shadow eats the visible
-// rim, then a faint gold 140px shadow restores premium glow. The wave
-// stays vivid in the centre.
-const CAROUSEL_BG_URL = "/plugin-assets/carousel-hero.png";
 
 // ---------------------------------------------------------------------------
 // Wire types — mirror the JSON shape served by /api/marketplace/plugins.
@@ -420,16 +431,8 @@ function loopbackRedirectUri(plugin: Plugin): string | undefined {
   return `http://127.0.0.1:${port}${path}`;
 }
 
-type TabId = "browse" | "installed" | "community";
 type FilterId = "all" | Category;
 export type StatusFilterId = "all" | "connected" | "not_connected" | "attention";
-
-const STATUS_FILTER_LABEL: Record<StatusFilterId, string> = {
-  all: "Any status",
-  connected: "Connected",
-  not_connected: "Not connected",
-  attention: "Needs attention",
-};
 
 /** Section order for the store, straight from the catalog. Any category the
  *  backend serves that the order does not mention is appended, so a new
@@ -484,20 +487,24 @@ export function matchesStatus(plugin: Plugin, status: StatusFilterId): boolean {
   }
 }
 
+export type ListFilter = "all" | "installed" | "attention";
+
 export function PluginsView() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<TabId>("browse");
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const [view, setView] = useState<"list" | "community">("list");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [listFilter, setListFilter] = useState<ListFilter>("all");
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
-  const [statusFilter, setStatusFilter] = useState<StatusFilterId>("all");
   const [connectingPlugin, setConnectingPlugin] = useState<Plugin | null>(null);
   // PKCE plugin awaiting the pre-connect dialog (own-client + keep-connected hint).
   const [pkceSetupPlugin, setPkceSetupPlugin] = useState<Plugin | null>(null);
   // Plugin awaiting a "really disconnect?" confirmation. Removing a plugin is
   // destructive (tokens dropped, brain tools re-expanded), so it must ask first.
   const [disconnectingPlugin, setDisconnectingPlugin] = useState<Plugin | null>(null);
-
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["marketplace-plugins"],
     queryFn: fetchCatalog,
@@ -698,19 +705,21 @@ export function PluginsView() {
     () => data?.plugins.map(adapt) ?? [],
     [data],
   );
+  const handleDisconnect = (id: string) =>
+    setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null);
   const categoryOrder = useMemo(
     () => orderedCategories(data, allPlugins),
     [data, allPlugins],
   );
   // "Installed" keeps every plugin the user ever connected — including a revoked
   // (needs_reauth) or errored one — so a dead token surfaces a Reconnect prompt
-  // here instead of silently dropping back into Browse as a plain "+".
+  // here instead of silently dropping back into the full list as a plain "+".
   //
   // A plugin installed from the marketplace belongs here from the moment it is
   // installed, connected or not: the shipped catalog is always "available", so
-  // a community plugin that only appeared in Browse was indistinguishable from
-  // the twenty the app came with — somebody who had just installed one had no
-  // place to look for it.
+  // a community plugin that only appeared in the full list was indistinguishable
+  // from the twenty the app came with — somebody who had just installed one had
+  // no place to look for it.
   const installed = useMemo(
     () =>
       allPlugins.filter(
@@ -726,46 +735,8 @@ export function PluginsView() {
     () => allPlugins.filter((p) => p.status === "connected").length,
     [allPlugins],
   );
-  const needsAttentionCount = useMemo(
-    () =>
-      allPlugins.filter(
-        (p) => p.status === "needs_reauth" || p.status === "error",
-      ).length,
-    [allPlugins],
-  );
-
-  const visible = useMemo(() => {
-    const base = tab === "installed" ? installed : allPlugins;
-    return base.filter((p) => {
-      if (filter !== "all" && p.category !== filter) return false;
-      if (!matchesStatus(p, statusFilter)) return false;
-      return matchesQuery(p, query);
-    });
-  }, [tab, query, filter, statusFilter, allPlugins, installed]);
-
-  const filtersActive =
-    query.trim() !== "" || filter !== "all" || statusFilter !== "all";
-  const resetFilters = () => {
-    setQuery("");
-    setFilter("all");
-    setStatusFilter("all");
-  };
-
-  const searchControls: SearchControlsProps = {
-    query,
-    setQuery,
-    filter,
-    setFilter,
-    statusFilter,
-    setStatusFilter,
-    matchCount: visible.length,
-    filtersActive,
-    onReset: resetFilters,
-  };
-
   // Every plugin that needs a reconnect (revoked/expired token) or errored —
-  // the ones the "needs attention" banner names and the "Jump to it" button
-  // scrolls to.
+  // the ones the "needs attention" banner names and the attention filter shows.
   const attentionPlugins = useMemo(
     () =>
       allPlugins.filter(
@@ -774,132 +745,46 @@ export function PluginsView() {
     [allPlugins],
   );
 
-  // "Jump to it": clear any active search/filter so the target row is
-  // guaranteed rendered, then hand its id to the effect below, which scrolls to
-  // it once React has painted it. Two-step (state + effect) rather than an
-  // inline scroll because the row may not exist in the DOM until the filter
-  // reset re-renders the list.
-  const [scrollTarget, setScrollTarget] = useState<string | null>(null);
-  const jumpToFirstProblem = () => {
-    const target = attentionPlugins[0];
-    if (!target) return;
+  const visible = useMemo(() => {
+    const base =
+      listFilter === "installed"
+        ? installed
+        : listFilter === "attention"
+          ? attentionPlugins
+          : allPlugins;
+    const ranked = [...base].sort(
+      (a, b) => categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category),
+    );
+    return ranked.filter((p) => {
+      if (filter !== "all" && p.category !== filter) return false;
+      return matchesQuery(p, query);
+    });
+  }, [listFilter, query, filter, allPlugins, installed, attentionPlugins, categoryOrder]);
+
+  const filtersActive = query.trim() !== "" || filter !== "all";
+  const resetFilters = () => {
+    setQuery("");
+    setFilter("all");
+  };
+  const closeSearch = () => {
     resetFilters();
-    setScrollTarget(target.id);
+    setSearchOpen(false);
   };
 
-  useEffect(() => {
-    if (!scrollTarget) return;
-    const el = document.getElementById(`plugin-row-${scrollTarget}`);
-    // Not painted yet — a later render (after the filter reset) re-runs this
-    // effect via the `visible` dependency and finds the row then.
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    // Brief amber flash so the eye lands on the right card.
-    const flash = ["ring-2", "ring-amber-500/70", "ring-offset-2", "ring-offset-background"];
-    el.classList.add(...flash);
-    const timer = window.setTimeout(() => el.classList.remove(...flash), 2000);
-    setScrollTarget(null);
-    return () => window.clearTimeout(timer);
-  }, [scrollTarget, visible]);
+  const selectedPlugin = selectedId
+    ? allPlugins.find((p) => p.id === selectedId) ?? null
+    : null;
 
-  return (
-    <div className="flex h-full flex-col bg-transparent">
-      <ViewHeader
-        icon={<Blocks className="h-4 w-4 text-primary" />}
-        title="Plugins"
-        subtitle={
-          isLoading
-            ? "Loading catalog…"
-            : error
-              ? "Backend unreachable"
-              : `${allPlugins.length} available · ${connectedCount} connected${
-                  needsAttentionCount > 0
-                    ? ` · ${needsAttentionCount} need reconnect`
-                    : ""
-                }`
-        }
-        right={
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setUploadOpen(true)}
-              className="gap-1.5"
-            >
-              <Upload className="h-3.5 w-3.5" />
-              {translate("plugin_upload.button")}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title="Refresh catalog"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
-            </Button>
-          </div>
-        }
-      />
-
+  const dialogs = (
+    <>
       <PluginUploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
         onInstalled={() => {
-          setTab("installed");
+          setListFilter("installed");
           void refetch();
         }}
       />
-
-      <div className="flex items-center gap-6 border-b border-border px-6">
-        <Tab
-          label="Browse"
-          count={allPlugins.length}
-          active={tab === "browse"}
-          onClick={() => setTab("browse")}
-        />
-        <Tab
-          label="Installed"
-          count={installed.length}
-          active={tab === "installed"}
-          onClick={() => setTab("installed")}
-        />
-        <Tab
-          label="Community"
-          active={tab === "community"}
-          onClick={() => setTab("community")}
-        />
-      </div>
-
-      <ScrollArea className="flex-1">
-        <div className="relative mx-auto max-w-3xl px-6 pb-20 pt-14">
-          <AttentionBanner plugins={attentionPlugins} onJump={jumpToFirstProblem} />
-          {tab === "community" ? (
-            <CommunityTab />
-          ) : tab === "browse" ? (
-            <BrowseLayout
-              plugins={visible}
-              categoryOrder={categoryOrder}
-              {...searchControls}
-              onConnect={handleConnect}
-              onDisconnect={(id) =>
-                setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null)
-              }
-            />
-          ) : (
-            <InstalledLayout
-              plugins={visible}
-              totalAvailable={allPlugins.length}
-              categoryOrder={categoryOrder}
-              {...searchControls}
-              onConnect={handleConnect}
-              onDisconnect={(id) =>
-                setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null)
-              }
-            />
-          )}
-        </div>
-      </ScrollArea>
 
       {connectingPlugin && (
         <PatConnectDialog
@@ -984,6 +869,526 @@ export function PluginsView() {
           }}
         />
       )}
+    </>
+  );
+
+  const shell = (content: React.ReactNode) => (
+    <div className="flex h-full min-h-0 flex-col bg-transparent">
+      <ScrollArea className="flex-1">
+        <div className="mx-auto w-full max-w-4xl px-8 py-6">{content}</div>
+      </ScrollArea>
+      {dialogs}
+    </div>
+  );
+
+  // ---- Community marketplace (the "Browse" page) --------------------------
+  if (view === "community") {
+    return shell(
+      <>
+        <BackLink label={translate("plugins_view.title")} onClick={() => setView("list")} />
+        <div className="mt-5">
+          <CommunityTab />
+        </div>
+      </>,
+    );
+  }
+
+  // ---- Detail page -------------------------------------------------------
+  if (selectedId) {
+    return shell(
+      <>
+        <BackLink label={translate("plugins_view.title")} onClick={() => setSelectedId(null)} />
+        {selectedPlugin ? (
+          <PluginDetail
+            plugin={selectedPlugin}
+            onConnect={handleConnect}
+            onDisconnect={handleDisconnect}
+          />
+        ) : (
+          <p className="mt-6 text-sm text-muted-foreground">
+            {isLoading ? translate("plugins_view.loading") : translate("plugins_view.not_found")}
+          </p>
+        )}
+      </>,
+    );
+  }
+
+  // ---- List page ---------------------------------------------------------
+  const subtitle = isLoading
+    ? translate("plugins_view.loading")
+    : error
+      ? translate("plugins_view.unreachable")
+      : fill(translate("plugins_view.count"), {
+          n: allPlugins.length,
+          connected: connectedCount,
+        });
+
+  return shell(
+    <>
+      <PanelHeader
+        title={translate("plugins_view.title")}
+        subtitle={subtitle}
+        actions={
+          <>
+            <IconButton
+              label={translate("plugins_view.search_placeholder")}
+              active={searchOpen}
+              onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+            >
+              <Search className="h-4 w-4" />
+            </IconButton>
+            <IconButton
+              label={translate("plugins_view.refresh")}
+              onClick={() => void refetch()}
+              busy={isFetching && !data}
+            >
+              <RefreshCw className="h-4 w-4" />
+            </IconButton>
+            <SoftButton onClick={() => setView("community")} className="ml-1">
+              {translate("plugins_view.browse")}
+            </SoftButton>
+            <ActionMenu
+              label={translate("plugins_view.add")}
+              actions={[
+                {
+                  id: "upload",
+                  label: translate("plugins_view.add_upload"),
+                  icon: <Upload className="h-3.5 w-3.5" />,
+                  onSelect: () => setUploadOpen(true),
+                },
+                {
+                  id: "community",
+                  label: translate("plugins_view.add_community"),
+                  icon: <Store className="h-3.5 w-3.5" />,
+                  onSelect: () => setView("community"),
+                },
+                {
+                  id: "marketplace",
+                  label: translate("plugins_view.add_marketplace"),
+                  icon: <ExternalLink className="h-3.5 w-3.5" />,
+                  separatorAbove: true,
+                  onSelect: () => setActiveSection("marketplace"),
+                },
+              ]}
+              trigger={({ open, toggle }) => (
+                <MenuPill open={open} toggle={toggle}>
+                  {translate("plugins_view.add")}
+                </MenuPill>
+              )}
+            />
+          </>
+        }
+      />
+
+      {searchOpen && (
+        <div className="mt-4 flex items-center gap-2">
+          <div className="flex-1">
+            <InlineSearch
+              value={query}
+              onChange={setQuery}
+              placeholder={translate("plugins_view.search_placeholder")}
+              autoFocus
+            />
+          </div>
+          <IconButton label={translate("common.close")} onClick={closeSearch}>
+            <X className="h-4 w-4" />
+          </IconButton>
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <SegmentedFilter<ListFilter>
+          label={translate("plugins_view.filter_label")}
+          value={listFilter}
+          onChange={setListFilter}
+          options={[
+            { id: "all", label: translate("plugins_view.filter_all"), count: allPlugins.length },
+            { id: "installed", label: translate("plugins_view.filter_installed"), count: installed.length },
+            ...(attentionPlugins.length > 0
+              ? [{ id: "attention" as const, label: translate("plugins_view.filter_attention"), count: attentionPlugins.length }]
+              : []),
+          ]}
+        />
+        <div className="ml-auto flex items-center gap-2">
+          {filtersActive && (
+            <>
+              <span className="text-[11px] text-muted-foreground">
+                {fill(translate("plugins_view.matches"), { n: visible.length })}
+              </span>
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                {translate("plugins_view.clear_filters")}
+              </button>
+            </>
+          )}
+          {categoryOrder.length > 1 && (
+            <BrandedSelect
+              value={filter}
+              onValueChange={(v) => setFilter((v || "all") as FilterId)}
+              ariaLabel={translate("plugins_view.col_category")}
+              className="h-7 w-auto rounded-md px-2 py-0 text-[11px]"
+              options={[
+                { value: "all", label: translate("plugins_view.all_categories") },
+                ...categoryOrder.map((c) => ({ value: c, label: c })),
+              ]}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <AttentionBanner
+          plugins={attentionPlugins}
+          onJump={() => {
+            const target = attentionPlugins[0];
+            if (target) setSelectedId(target.id);
+          }}
+        />
+        {error && (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            {(error as Error).message}
+          </div>
+        )}
+        {!error && (
+          <PluginTable
+            plugins={visible}
+            loading={isLoading}
+            filtersActive={filtersActive || listFilter !== "all"}
+            onOpen={(id) => setSelectedId(id)}
+            onConnect={handleConnect}
+            onDisconnect={handleDisconnect}
+            onReset={() => {
+              resetFilters();
+              setListFilter("all");
+            }}
+          />
+        )}
+      </div>
+    </>,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Status vocabulary shared by the table and the detail page
+// ---------------------------------------------------------------------------
+
+function statusTone(status: PluginStatus): "ok" | "off" | "warn" | "error" {
+  switch (status) {
+    case "connected":
+      return "ok";
+    case "needs_reauth":
+      return "warn";
+    case "error":
+      return "error";
+    default:
+      return "off";
+  }
+}
+
+function statusLabel(plugin: Plugin): string {
+  switch (plugin.status) {
+    case "connected":
+      return plugin.liveCallable
+        ? `${translate("plugins_view.status_connected")} · ${translate("plugins_view.status_live")}`
+        : translate("plugins_view.status_connected");
+    case "needs_reauth":
+      return translate("plugins_view.status_reauth");
+    case "error":
+      return translate("plugins_view.status_error");
+    default:
+      return translate("plugins_view.status_not_connected");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Table
+// ---------------------------------------------------------------------------
+
+function PluginTable({
+  plugins,
+  loading,
+  filtersActive,
+  onOpen,
+  onConnect,
+  onDisconnect,
+  onReset,
+}: {
+  plugins: Plugin[];
+  loading: boolean;
+  filtersActive: boolean;
+  onOpen: (id: string) => void;
+  onReset: () => void;
+} & ConnectHandlers) {
+  const columns: Column[] = [
+    { id: "plugin", label: translate("plugins_view.col_plugin") },
+    { id: "category", label: translate("plugins_view.col_category"), width: "130px" },
+    { id: "status", label: translate("plugins_view.col_status"), width: "170px" },
+    { id: "action", label: translate("plugins_view.col_action"), width: "36px", srOnly: true, align: "right" },
+  ];
+
+  if (loading) {
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground">
+        {translate("plugins_view.loading")}
+      </div>
+    );
+  }
+
+  return (
+    <Table label={translate("plugins_view.title")}>
+      <TableHead columns={columns} />
+      {plugins.map((plugin) => (
+        <PluginTableRow
+          key={plugin.id}
+          plugin={plugin}
+          columns={columns}
+          onOpen={() => onOpen(plugin.id)}
+          onConnect={onConnect}
+          onDisconnect={onDisconnect}
+        />
+      ))}
+      {plugins.length === 0 && (
+        <EmptyRow>
+          <p>
+            {filtersActive
+              ? translate("plugins_view.no_hits")
+              : translate("plugins_view.empty")}
+          </p>
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={onReset}
+              className="mt-3 text-xs text-primary hover:underline"
+            >
+              {translate("plugins_view.show_all")}
+            </button>
+          )}
+        </EmptyRow>
+      )}
+    </Table>
+  );
+}
+
+function PluginTableRow({
+  plugin,
+  columns,
+  onOpen,
+  onConnect,
+  onDisconnect,
+}: { plugin: Plugin; columns: Column[]; onOpen: () => void } & ConnectHandlers) {
+  return (
+    <TableRow
+      id={`plugin-row-${plugin.id}`}
+      columns={columns}
+      onClick={onOpen}
+      ariaLabel={plugin.name}
+    >
+      <Cell>
+        <div className="flex items-center gap-3">
+          <BrandTile plugin={plugin} size="sm" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-[13px] font-medium">{plugin.name}</span>
+              {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
+              {plugin.selfUploaded && (
+                <span
+                  className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-amber-500"
+                  title={translate("plugin_upload.unreviewed")}
+                >
+                  {translate("plugin_upload.self_badge")}
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={plugin.description}>
+              {plugin.status === "needs_reauth" ? (
+                <ReauthExplanation plugin={plugin} inline />
+              ) : (
+                plugin.description
+              )}
+            </p>
+          </div>
+        </div>
+      </Cell>
+      <Cell muted>
+        <span className="truncate">{plugin.category}</span>
+      </Cell>
+      <Cell>
+        <StatusDot tone={statusTone(plugin.status)} label={statusLabel(plugin)} />
+      </Cell>
+      <Cell align="right" stop>
+        <ConnectIconButton
+          status={plugin.status}
+          onConnect={() => onConnect(plugin)}
+          onDisconnect={() => onDisconnect(plugin.id)}
+        />
+      </Cell>
+    </TableRow>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Detail page
+// ---------------------------------------------------------------------------
+
+function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & ConnectHandlers) {
+  const { busy, run } = useConnectLock(() => onConnect(plugin));
+  const connected = plugin.status === "connected";
+  const needsReconnect = plugin.status === "needs_reauth" || plugin.status === "error";
+  const family = oauthClientFamily(plugin);
+
+  const menuActions = [
+    ...(plugin.sourceUrl
+      ? [
+          {
+            id: "source",
+            label: translate("plugins_view.view_source"),
+            icon: <ExternalLink className="h-3.5 w-3.5" />,
+            onSelect: () => void openExternalUrl(plugin.sourceUrl ?? ""),
+          },
+        ]
+      : []),
+    ...(connected || needsReconnect
+      ? [
+          {
+            id: "disconnect",
+            label: translate("plugins_view.disconnect"),
+            icon: <X className="h-3.5 w-3.5" />,
+            destructive: true,
+            separatorAbove: Boolean(plugin.sourceUrl),
+            onSelect: () => onDisconnect(plugin.id),
+          },
+        ]
+      : []),
+  ];
+
+  return (
+    <div className="mt-5">
+      <DetailHeader
+        leading={<BrandTile plugin={plugin} />}
+        title={plugin.name}
+        titleAccessory={
+          <>
+            {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
+            {plugin.selfUploaded && (
+              <span
+                className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] font-medium uppercase tracking-wider text-amber-500"
+                title={translate("plugin_upload.unreviewed")}
+              >
+                {translate("plugin_upload.self_badge")}
+              </span>
+            )}
+          </>
+        }
+        byline={
+          <span className="inline-flex items-center gap-2">
+            <StatusDot tone={statusTone(plugin.status)} label={statusLabel(plugin)} />
+            <span>· {plugin.category}</span>
+            {plugin.publisher && (
+              <span>· {fill(translate("plugins_view.by"), { publisher: plugin.publisher })}</span>
+            )}
+          </span>
+        }
+        actions={
+          <>
+            {connected ? (
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary/15 px-3 text-xs font-medium text-primary">
+                <Check className="h-3.5 w-3.5" />
+                {translate("plugins_view.status_connected")}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void run()}
+                disabled={busy}
+                aria-busy={busy}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                  needsReconnect
+                    ? "border border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90",
+                )}
+              >
+                {busy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : needsReconnect ? (
+                  <RotateCw className="h-3.5 w-3.5" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                {needsReconnect ? translate("plugins_view.reconnect") : translate("plugins_view.connect")}
+              </button>
+            )}
+            {menuActions.length > 0 && (
+              <ActionMenu
+                label={translate("plugins_view.more_actions")}
+                actions={menuActions}
+                trigger={({ open, toggle }) => (
+                  <IconButton label={translate("plugins_view.more_actions")} onClick={toggle} active={open}>
+                    <MoreHorizontal className="h-4 w-4" />
+                  </IconButton>
+                )}
+              />
+            )}
+          </>
+        }
+      />
+
+      {plugin.status === "needs_reauth" ? (
+        <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
+          <ReauthExplanation plugin={plugin} />
+        </div>
+      ) : null}
+
+      {plugin.description && (
+        <ClampedText
+          className="mt-4"
+          text={plugin.description}
+          moreLabel={translate("common.see_more")}
+          lessLabel={translate("common.see_less")}
+        />
+      )}
+
+      <Panel className="mt-4">
+        <div className="px-5 py-4">
+          <FactRows
+            rows={[
+              { label: translate("plugins_view.col_status"), value: statusLabel(plugin) },
+              { label: translate("plugins_view.fact_signin"), value: AUTH_LABELS[plugin.authMode] },
+              {
+                label: translate("plugins_view.fact_connection"),
+                value: (
+                  <span className={cn(plugin.longevity === "provider_limited" && "text-amber-500")}>
+                    {LONGEVITY_LABEL[plugin.longevity]}
+                    {plugin.longevityNote ? (
+                      <span className="block text-xs text-muted-foreground">{plugin.longevityNote}</span>
+                    ) : null}
+                  </span>
+                ),
+              },
+              {
+                label: translate("plugins_view.fact_oauth_client"),
+                value: family
+                  ? plugin.oauthClientConfigured
+                    ? fill(translate("plugins_view.oauth_client_own"), { family: family.label })
+                    : fill(translate("plugins_view.oauth_client_placeholder"), { family: family.label })
+                  : null,
+              },
+              { label: translate("plugins_view.fact_publisher"), value: plugin.publisher ?? null },
+              {
+                label: translate("plugins_view.fact_source"),
+                value: plugin.selfUploaded
+                  ? translate("plugin_upload.unreviewed")
+                  : plugin.fromMarketplace
+                    ? translate("marketplace_origin.tooltip")
+                    : null,
+              },
+            ]}
+          />
+        </div>
+      </Panel>
     </div>
   );
 }
@@ -1011,10 +1416,10 @@ function AttentionBanner({
     : `${plugins.length} connections need reconnecting`;
 
   return (
-    <div className="mb-8 flex items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+    <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2">
       <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{headline}</p>
+        <p className="truncate text-[13px] font-medium text-foreground">{headline}</p>
         <p className="truncate text-xs text-muted-foreground">
           {one
             ? // The banner is the first thing the user reads, so it states the
@@ -1032,7 +1437,7 @@ function AttentionBanner({
       <button
         type="button"
         onClick={onJump}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-500 transition-colors hover:bg-amber-500/20"
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 text-xs font-medium text-amber-500 transition-colors hover:bg-amber-500/20"
       >
         {one ? "Jump to it" : "Jump to first"}
         <ArrowRight className="h-3.5 w-3.5" />
@@ -1053,512 +1458,18 @@ interface ConnectHandlers {
   onDisconnect: (id: string) => void;
 }
 
-// ---------------------------------------------------------------------------
-// Layout shells
-// ---------------------------------------------------------------------------
-
-interface SearchControlsProps {
-  query: string;
-  setQuery: (v: string) => void;
-  filter: FilterId;
-  setFilter: (f: FilterId) => void;
-  statusFilter: StatusFilterId;
-  setStatusFilter: (s: StatusFilterId) => void;
-  /** How many plugins survived the filters — shown next to the reset button so
-   *  a narrow result set never reads as "the catalog shrank". */
-  matchCount: number;
-  filtersActive: boolean;
-  onReset: () => void;
-}
-
-function BrowseLayout({
-  plugins,
-  categoryOrder,
-  onConnect,
-  onDisconnect,
-  ...controls
-}: { plugins: Plugin[]; categoryOrder: string[] } & SearchControlsProps &
-  ConnectHandlers) {
-  const { query, filtersActive, onReset } = controls;
-  return (
-    <>
-      <Hero {...controls} />
-      {/* The carousel promotes a fixed set of plugins regardless of the
-          filters. Once the user is searching, that is noise at best and
-          actively misleading at worst — it showed GitHub while the list below
-          held only Vercel. Hide it whenever a filter narrows the view. */}
-      {!filtersActive && <CarouselBanner />}
-      <CategorizedList
-        plugins={plugins}
-        query={query}
-        filtersActive={filtersActive}
-        onReset={onReset}
-        categoryOrder={categoryOrder}
-        onConnect={onConnect}
-        onDisconnect={onDisconnect}
-      />
-    </>
-  );
-}
-
-function InstalledLayout({
-  plugins,
-  totalAvailable,
-  categoryOrder,
-  onConnect,
-  onDisconnect,
-  ...controls
-}: {
-  plugins: Plugin[];
-  totalAvailable: number;
-  categoryOrder: string[];
-} & SearchControlsProps &
-  ConnectHandlers) {
-  const { query, filtersActive, onReset } = controls;
-  // "Nothing connected yet" is only true when nothing is connected. With a
-  // filter narrowing the tab, an empty list means the filter excluded the
-  // user's plugins — saying they have none would be a lie they cannot undo.
-  const emptyBecauseOfFilters = plugins.length === 0 && filtersActive;
-  return (
-    <>
-      <Hero
-        // Not "connected" any more: a plugin installed from the marketplace
-        // belongs here before it is connected, and a heading that claims
-        // otherwise is wrong about the very row underneath it.
-        title="What you have added"
-        subtitle="Connect one before it can do anything. Disconnect or remove it from its own row when you no longer need it."
-        {...controls}
-      />
-      {plugins.length === 0 && !emptyBecauseOfFilters ? (
-        <EmptyInstalled totalAvailable={totalAvailable} />
-      ) : (
-        <CategorizedList
-          plugins={plugins}
-          query={query}
-          filtersActive={filtersActive}
-          onReset={onReset}
-          categoryOrder={categoryOrder}
-          onConnect={onConnect}
-          onDisconnect={onDisconnect}
-        />
-      )}
-    </>
-  );
-}
-
-function Hero({
-  title = "Connect your assistant to your services",
-  subtitle,
-  query,
-  setQuery,
-  filter,
-  setFilter,
-  statusFilter,
-  setStatusFilter,
-  matchCount,
-  filtersActive,
-  onReset,
-}: { title?: string; subtitle?: string } & SearchControlsProps) {
-  return (
-    <header className="mb-10 text-center">
-      <h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-      {subtitle && (
-        <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-muted-foreground">
-          {subtitle}
-        </p>
-      )}
-      <div className="mx-auto mt-6 flex max-w-2xl flex-wrap items-center justify-center gap-2">
-        <SearchInput value={query} onChange={setQuery} />
-        <FilterMenu filter={filter} setFilter={setFilter} />
-        <StatusFilterMenu statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
-      </div>
-      {filtersActive && (
-        <div className="mx-auto mt-3 flex items-center justify-center gap-3 text-xs text-muted-foreground">
-          <span aria-live="polite" className="tabular-nums">
-            {matchCount === 1 ? "1 plugin" : `${matchCount} plugins`}
-          </span>
-          <button
-            type="button"
-            onClick={onReset}
-            className="rounded-full border border-border/60 px-3 py-1 font-medium transition-colors hover:border-primary/40 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
-          >
-            Clear filters
-          </button>
-        </div>
-      )}
-    </header>
-  );
-}
-
-function SearchInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="relative flex-1">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Search plugins"
-        className="h-9 w-full rounded-full border border-border bg-card/60 pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/30"
-      />
-    </div>
-  );
-}
-
-function FilterMenu({ filter, setFilter }: { filter: FilterId; setFilter: (f: FilterId) => void }) {
-  // Reads the already-cached catalog rather than taking the categories through
-  // three intermediate components. React Query dedupes on the shared key, so
-  // this subscribes to existing data and issues no extra request.
-  const { data } = useQuery({ queryKey: ["marketplace-plugins"], queryFn: fetchCatalog });
-  const categories = orderedCategories(data, (data?.plugins ?? []).map(adapt));
-  return (
-    <div>
-      <BrandedSelect
-        value={filter}
-        onValueChange={(value) => setFilter(value as FilterId)}
-        ariaLabel="Plugin category"
-        className="h-9 w-auto rounded-full bg-card/60 px-4 text-xs font-medium"
-        options={[
-          { value: "all", label: "All" },
-          ...categories.map((category) => ({
-            value: category,
-            label: category,
-          })),
-        ]}
-      />
-    </div>
-  );
-}
-
-/** Filters by connection state. Sits next to the category menu because the two
- *  questions a user arrives with are "what kind of thing is it" and "is it
- *  already hooked up" — the second one had no answer before. */
-function StatusFilterMenu({
-  statusFilter,
-  setStatusFilter,
-}: {
-  statusFilter: StatusFilterId;
-  setStatusFilter: (s: StatusFilterId) => void;
-}) {
-  return (
-    <div>
-      <BrandedSelect
-        value={statusFilter}
-        onValueChange={(value) => setStatusFilter(value as StatusFilterId)}
-        ariaLabel="Connection status"
-        className="h-9 w-auto rounded-full bg-card/60 px-4 text-xs font-medium"
-        options={(Object.keys(STATUS_FILTER_LABEL) as StatusFilterId[]).map((id) => ({
-          value: id,
-          label: STATUS_FILTER_LABEL[id],
-        }))}
-      />
-    </div>
-  );
-}
-
-function Tab({
-  label,
-  count,
-  active,
-  onClick,
-}: { label: string; count?: number; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "relative py-3 text-sm font-medium transition-colors",
-        active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      <span className="flex items-center gap-2">
-        {label}
-        {count !== undefined && (
-          <span
-            className={cn(
-              "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
-              active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
-            )}
-          >
-            {count}
-          </span>
-        )}
-      </span>
-      {active && (
-        <span
-          aria-hidden
-          className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary shadow-[0_0_8px_rgba(255,214,10,0.6)]"
-        />
-      )}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Auto-rotating hero carousel
-// ---------------------------------------------------------------------------
-
-interface CarouselSlide {
-  pluginId: string;
-  pluginName: string;
-  example: string;
-  iconUrl: string;
-  iconBoost?: boolean;
-  accent: string;
-}
-
-const SLIDES: CarouselSlide[] = [
-  {
-    pluginId: "google_calendar",
-    pluginName: "Google Calendar",
-    example: "Schedule a meeting for tomorrow at 3pm",
-    iconUrl: "https://cdn.simpleicons.org/googlecalendar/F4F4F5",
-    accent: "border-blue-400/40",
-  },
-  {
-    pluginId: "github",
-    pluginName: "GitHub",
-    example: "Triage open issues on my main repo",
-    iconUrl: "https://cdn.simpleicons.org/github/F4F4F5",
-    accent: "border-zinc-400/40",
-  },
-  {
-    pluginId: "vercel",
-    pluginName: "Vercel",
-    example: "Deploy my project to production",
-    iconUrl: "https://cdn.simpleicons.org/vercel/F4F4F5",
-    accent: "border-primary/50",
-  },
-  {
-    pluginId: "supabase",
-    pluginName: "Supabase",
-    example: "Snapshot all my Supabase projects",
-    iconUrl: "https://cdn.simpleicons.org/supabase",
-    accent: "border-emerald-400/40",
-  },
-  {
-    pluginId: "notion",
-    pluginName: "Notion",
-    example: "Find pages mentioning the Q3 plan",
-    iconUrl: "https://cdn.simpleicons.org/notion/F4F4F5",
-    accent: "border-zinc-300/40",
-  },
-  {
-    pluginId: "slack",
-    pluginName: "Slack",
-    example: "Search messages mentioning the launch plan",
-    iconUrl: "/plugin-assets/slack-logo.svg",
-    iconBoost: true,
-    accent: "border-purple-400/40",
-  },
-];
-
-const SLIDE_INTERVAL_MS = 3500;
-
-function CarouselBanner() {
-  const [active, setActive] = useState(0);
-  const [manualOverride, setManualOverride] = useState(false);
-  const timerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (manualOverride) {
-      const t = window.setTimeout(() => setManualOverride(false), SLIDE_INTERVAL_MS * 2);
-      return () => window.clearTimeout(t);
-    }
-    timerRef.current = window.setInterval(() => {
-      setActive((i) => (i + 1) % SLIDES.length);
-    }, SLIDE_INTERVAL_MS);
-    return () => {
-      if (timerRef.current !== null) window.clearInterval(timerRef.current);
-    };
-  }, [manualOverride]);
-
-  return (
-    <section
-      // Wave hero restored. Two stacked inset shadows do the edge-kill:
-      //   - 180px black-92% inset → eats the rounded-3xl rim, the wave's
-      //     hard edges are gone before they reach the visible boundary.
-      //   - 140px gold-10% inset → faint warm glow so the rim doesn't
-      //     read as a dead frame.
-      // bg-size 180% over-zooms the image deeply so only the brightest
-      // mid-band is visible; whatever rim survives the zoom is then
-      // swallowed by the black inset. This combo proved the only one
-      // that actually kills the artefact — radial gradients alone left
-      // a visible diagonal cut, the flat-only version felt sloppy.
-      className="relative mb-12 aspect-[16/7] w-full overflow-hidden rounded-3xl shadow-[inset_0_0_180px_rgba(0,0,0,0.92),inset_0_0_140px_rgba(255,214,10,0.10)]"
-      aria-roledescription="carousel"
-      style={{
-        backgroundImage: `url(${CAROUSEL_BG_URL})`,
-        backgroundSize: "180%",
-        backgroundPosition: "center 60%",
-        backgroundRepeat: "no-repeat",
-        backgroundColor: "#0a0a0a",
-      }}
-    >
-      {SLIDES.map((slide, i) => (
-        <CarouselSlideView key={slide.pluginId} slide={slide} active={active === i} />
-      ))}
-      <div className="absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-2">
-        {SLIDES.map((s, i) => (
-          <button
-            key={s.pluginId}
-            type="button"
-            onClick={() => {
-              setActive(i);
-              setManualOverride(true);
-            }}
-            aria-label={`Show ${s.pluginName} example`}
-            className={cn(
-              "h-1.5 w-1.5 rounded-full transition-all duration-300",
-              active === i
-                ? "scale-125 bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]"
-                : "bg-sheen/30 hover:bg-sheen/60",
-            )}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CarouselSlideView({ slide, active }: { slide: CarouselSlide; active: boolean }) {
-  return (
-    <div
-      className={cn(
-        "absolute inset-0 flex items-center justify-center",
-        "transition-[opacity,transform] duration-500 ease-out",
-        active
-          ? "translate-y-0 scale-100 opacity-100 z-10"
-          : "translate-y-2 scale-[0.96] opacity-0 z-0",
-      )}
-      aria-hidden={!active}
-    >
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded-full border bg-scrim/55 px-4 py-2 text-xs shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md",
-          slide.accent,
-        )}
-      >
-        <img
-          src={slide.iconUrl}
-          alt=""
-          className={cn(slide.iconBoost ? "h-5 w-5" : "h-3.5 w-3.5")}
-          loading="lazy"
-        />
-        <span className="font-medium text-foreground">{slide.pluginName}</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground">{slide.example}</span>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Categorized list
-// ---------------------------------------------------------------------------
-
-function CategorizedList({
-  plugins,
-  query,
-  filtersActive,
-  onReset,
-  categoryOrder,
-  onConnect,
-  onDisconnect,
-}: {
-  plugins: Plugin[];
-  query: string;
-  filtersActive: boolean;
-  onReset: () => void;
-  categoryOrder: string[];
-} & ConnectHandlers) {
-  if (plugins.length === 0) {
-    // Keyed on the filters, not on the query alone: narrowing by category or
-    // connection state can empty the list just as easily, and that used to
-    // render nothing at all — a blank page with no way back.
-    if (!filtersActive) return null;
-    return <EmptyHits query={query} onReset={onReset} />;
-  }
-
-  const featured = plugins.filter((p) => p.featured);
-  // Built from the data, not from a fixed record. The previous fixed record
-  // meant a category the backend added but the UI did not know threw on
-  // `byCat[p.category].push(...)` and blanked the whole view behind its error
-  // boundary.
-  const byCat = new Map<string, Plugin[]>();
-  for (const p of plugins) {
-    if (p.featured) continue;
-    const bucket = byCat.get(p.category);
-    if (bucket) bucket.push(p);
-    else byCat.set(p.category, [p]);
-  }
-  const sections = [
-    ...categoryOrder.filter((c) => byCat.has(c)),
-    ...[...byCat.keys()].filter((c) => !categoryOrder.includes(c)).sort(),
-  ];
-
-  return (
-    <div className="space-y-10">
-      {featured.length > 0 && (
-        <Section title="Featured">
-          {featured.map((p) => (
-            <PluginRow
-              key={p.id}
-              plugin={p}
-              onConnect={onConnect}
-              onDisconnect={onDisconnect}
-            />
-          ))}
-        </Section>
-      )}
-      {sections.map((c) => (
-        <Section key={c} title={c}>
-          {(byCat.get(c) ?? []).map((p) => (
-            <PluginRow
-              key={p.id}
-              plugin={p}
-              onConnect={onConnect}
-              onDisconnect={onDisconnect}
-            />
-          ))}
-        </Section>
-      ))}
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section>
-      <h2 className="mb-3 font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-        {title}
-      </h2>
-      <div className="grid gap-2 sm:grid-cols-2">{children}</div>
-    </section>
-  );
-}
-
-/** The card's brand mark.
- *
- *  A full-colour asset carries the brand itself and sits on a neutral surface.
- *  A single-colour glyph sits ON the brand's own colour — that inversion is
- *  what makes the store read as a product catalog rather than a settings list;
- *  a dark glyph on a white square reads as a placeholder.
- *
- *  When the mark cannot load at all — offline, a locked-down network, or an
- *  icon the CDN has dropped — the tile falls back to a monogram instead of a
- *  broken image, so a card is never blank.
- */
-export function BrandTile({ plugin }: { plugin: Plugin }) {
+export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm" | "md" }) {
   const [failed, setFailed] = useState(false);
   const tile = brandTile(plugin);
   const fullColour = isFullColourMark(plugin);
   const showMonogram = failed || !plugin.logoSlug;
+  const small = size === "sm";
 
   return (
     <div
       className={cn(
-        "grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border",
+        "grid shrink-0 place-items-center overflow-hidden rounded-lg border",
+        small ? "h-7 w-7 rounded-md" : "h-10 w-10",
         // A bundled mark sits on a dark plate, not a white one: a row of white
         // squares reads as pasted-in on this UI. The plate is a touch lighter
         // than the card so the mark still has something to sit on. Brands whose
@@ -1572,7 +1483,7 @@ export function BrandTile({ plugin }: { plugin: Plugin }) {
     >
       {showMonogram ? (
         <span
-          className="text-sm font-semibold"
+          className={cn("font-semibold", small ? "text-xs" : "text-sm")}
           style={{ color: `#${glyphColor(tile)}` }}
         >
           {plugin.name.slice(0, 1).toUpperCase()}
@@ -1581,7 +1492,9 @@ export function BrandTile({ plugin }: { plugin: Plugin }) {
         <img
           src={resolveLogoUrl(plugin)}
           alt=""
-          className={cn(fullColour ? "h-7 w-7" : "h-5 w-5")}
+          className={cn(
+            fullColour ? (small ? "h-5 w-5" : "h-7 w-7") : small ? "h-3.5 w-3.5" : "h-5 w-5",
+          )}
           loading="lazy"
           onError={() => setFailed(true)}
         />
@@ -1594,9 +1507,9 @@ export function BrandTile({ plugin }: { plugin: Plugin }) {
  *
  *  Most providers keep a connection alive indefinitely; a few force a periodic
  *  re-login and no amount of engineering on our side can extend that. Saying so
- *  on the card is the difference between an informed choice and a connection
- *  that quietly dies weeks later. `provider_limited` carries a note explaining
- *  how often — a warning without an answer would be worse than none.
+ *  is the difference between an informed choice and a connection that quietly
+ *  dies weeks later. `provider_limited` carries a note explaining how often — a
+ *  warning without an answer would be worse than none.
  */
 export function LongevityBadge({ plugin }: { plugin: Plugin }) {
   const limited = plugin.longevity === "provider_limited";
@@ -1614,7 +1527,7 @@ export function LongevityBadge({ plugin }: { plugin: Plugin }) {
 }
 
 // ---------------------------------------------------------------------------
-// PluginRow — brand tile + status and longevity badges
+// Reauth explanation — why a connection died, in the user's terms
 // ---------------------------------------------------------------------------
 
 /** Why this connection died, in place of the description it replaces.
@@ -1625,7 +1538,7 @@ export function LongevityBadge({ plugin }: { plugin: Plugin }) {
  *  carries the actual fix (publish the OAuth app so Google stops expiring the
  *  grant every 7 days) — buried in a tooltip it never reached anyone.
  */
-export function ReauthExplanation({ plugin }: { plugin: Plugin }) {
+export function ReauthExplanation({ plugin, inline }: { plugin: Plugin; inline?: boolean }) {
   const reason = plugin.reauthReason;
   const explanation =
     reason && reason in REAUTH_EXPLANATION
@@ -1637,6 +1550,10 @@ export function ReauthExplanation({ plugin }: { plugin: Plugin }) {
   const headline = ago ? `${explanation} · ${ago}` : explanation;
   const retrying = retriesItself(reason);
   const fix = plugin.longevity === "provider_limited" ? plugin.longevityNote : undefined;
+
+  if (inline) {
+    return <span className="text-amber-500/90">{headline}</span>;
+  }
 
   return (
     <>
@@ -1652,119 +1569,6 @@ export function ReauthExplanation({ plugin }: { plugin: Plugin }) {
       </p>
       {fix && <p className="truncate text-[11px] text-muted-foreground" title={fix}>{fix}</p>}
     </>
-  );
-}
-
-function PluginRow({
-  plugin,
-  onConnect,
-  onDisconnect,
-}: { plugin: Plugin } & ConnectHandlers) {
-  const isConnected = plugin.status === "connected";
-  const needsReauth = plugin.status === "needs_reauth";
-  const isError = plugin.status === "error";
-
-  // "I want this plugin" should not require hitting a 28px "+". The whole card
-  // starts the same flow. A CONNECTED card stays inert on purpose: disconnecting
-  // is destructive and must remain a deliberate click on the check.
-  const { busy, run } = useConnectLock(() => onConnect(plugin));
-  const cardStartsConnect = !isConnected;
-
-  return (
-    <article
-      // Stable DOM id so the "Jump to it" affordance in AttentionBanner can
-      // scrollIntoView + flash this exact row. `scroll-mt-24` leaves headroom
-      // under the sticky tab bar so the scrolled-to row isn't hidden beneath it.
-      id={`plugin-row-${plugin.id}`}
-      onClick={cardStartsConnect ? () => void run() : undefined}
-      className={cn(
-        "group flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-[colors,box-shadow] scroll-mt-24",
-        isConnected && "border-primary/30",
-        needsReauth && "border-amber-500/40",
-        isError && "border-destructive/40",
-        !isConnected &&
-          !needsReauth &&
-          !isError &&
-          "border-border hover:border-primary/40 hover:bg-card/70",
-        cardStartsConnect && "cursor-pointer",
-        busy && "cursor-wait",
-      )}
-    >
-      <BrandTile plugin={plugin} />
-
-      <div className="min-w-0 flex-1">
-        {/* `flex-wrap` + `shrink-0` badges: when a connected plugin's
-            "· Connected · Live" badges don't fit beside the name, they wrap to
-            the next line instead of squeezing the (truncating) name down to
-            "GitH…"/"Gm…". The name keeps priority and only truncates on a
-            genuinely long name. */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <h3 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
-            {plugin.name}
-          </h3>
-          {isConnected && (
-            <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-primary">
-              · Connected
-            </span>
-          )}
-          {isConnected && plugin.liveCallable && (
-            <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-emerald-400">
-              · Live
-            </span>
-          )}
-          {needsReauth && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-amber-500">
-              <AlertTriangle className="h-2.5 w-2.5" />
-              <span>Reconnect needed</span>
-            </span>
-          )}
-          {isError && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-destructive">
-              <AlertTriangle className="h-2.5 w-2.5" />
-              <span>Error</span>
-            </span>
-          )}
-          {plugin.fromMarketplace && (
-            <MarketplaceBadge publisher={plugin.publisher} />
-          )}
-          {plugin.selfUploaded && (
-            // Without this a plugin the owner dropped in themselves would
-            // read exactly like one the app ships — same card, same absence
-            // of a badge. The mark is what keeps "reviewed by nobody"
-            // visible after the install dialog is long gone.
-            <span
-              title={translate("plugin_upload.unreviewed")}
-              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300"
-            >
-              <Upload className="h-3 w-3" aria-hidden />
-              {translate("plugin_upload.self_badge")}
-            </span>
-          )}
-        </div>
-        {needsReauth ? (
-          <ReauthExplanation plugin={plugin} />
-        ) : (
-          <p className="truncate text-xs text-muted-foreground">{plugin.description}</p>
-        )}
-      </div>
-
-      <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
-        <span
-          className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/70"
-          title={plugin.category}
-        >
-          {AUTH_LABELS[plugin.authMode]}
-        </span>
-        <LongevityBadge plugin={plugin} />
-      </div>
-
-      <ConnectIconButton
-        status={plugin.status}
-        onConnect={run}
-        busy={busy}
-        onDisconnect={() => onDisconnect(plugin.id)}
-      />
-    </article>
   );
 }
 
@@ -1882,47 +1686,6 @@ export function ConnectIconButton({
         <Plus className="h-3.5 w-3.5" />
       )}
     </button>
-  );
-}
-
-function EmptyHits({ query, onReset }: { query: string; onReset: () => void }) {
-  return (
-    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-12 text-center">
-      <p className="text-sm text-muted-foreground">
-        {query.trim() ? (
-          <>
-            No plugin matches <span className="font-mono text-foreground">"{query}"</span>.
-          </>
-        ) : (
-          "No plugin matches the current filters."
-        )}
-      </p>
-      <button
-        type="button"
-        onClick={onReset}
-        className="mt-4 rounded-full border border-border/60 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
-      >
-        Show all plugins
-      </button>
-    </div>
-  );
-}
-
-function EmptyInstalled({ totalAvailable }: { totalAvailable: number }) {
-  const assistantName = useEventStore((s) => s.assistantName);
-  return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40 px-8 py-14 text-center">
-      <div className="mb-4 grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
-        <Sparkles className="h-5 w-5" />
-      </div>
-      <h3 className="font-display text-base font-semibold tracking-tight">
-        Nothing connected yet
-      </h3>
-      <p className="mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
-        Pick one of the {totalAvailable} services in the Browse tab to give {assistantName} hands beyond
-        your local machine.
-      </p>
-    </div>
   );
 }
 

@@ -56,6 +56,9 @@ export interface SkillSummary {
   portable?: boolean;
   /** The frontmatter keys that adapter did not read. */
   ignored_fields?: string[];
+  /** ISO stamp of the last SKILL.md write — the "Last updated" column. Absent
+   *  on an older backend. */
+  updated_at?: string | null;
 }
 
 export interface SkillDetail extends SkillSummary {

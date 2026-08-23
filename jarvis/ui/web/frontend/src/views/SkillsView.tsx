@@ -1,7 +1,7 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { Reorder, useDragControls } from "framer-motion";
+import { useMemo, useState, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
-  Puzzle,
   RefreshCw,
   Lock,
   AlertTriangle,
@@ -9,15 +9,10 @@ import {
   Keyboard,
   Clock,
   Save,
-  FolderOpen,
-  ChevronRight,
-  ChevronDown,
   FileText,
   FileCode,
   FileBox,
   UserSquare,
-  X,
-  Sparkles,
   Plus,
   Search,
   X as XIcon,
@@ -27,23 +22,49 @@ import {
   BookOpen,
   Github,
   Trash2,
-  GripVertical,
   ListChecks,
   Check,
   Upload,
+  Link2,
+  Eye,
+  Code2,
+  ChevronDown,
+  MoreHorizontal,
+  Info,
+  Copy,
 } from "lucide-react";
 import { SkillFinderDialog } from "@/views/SkillFinderDialog";
 import { SkillCreateDialog } from "@/views/SkillCreateDialog";
 import { SkillUploadDialog } from "@/views/SkillUploadDialog";
-import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MarketplaceBadge } from "@/components/MarketplaceBadge";
 import { Switch } from "@/components/ui/switch";
 import { BrandedSelect } from "@/components/ui/select";
+import {
+  ActionMenu,
+  BackLink,
+  Cell,
+  ClampedText,
+  DetailHeader,
+  EmptyRow,
+  FactRows,
+  IconButton,
+  InlineSearch,
+  MenuPill,
+  Panel,
+  PanelHeader,
+  SoftButton,
+  Table,
+  TableHead,
+  TableRow,
+  formatShortDate,
+  type Column,
+} from "@/components/extensions/primitives";
 import { cn } from "@/lib/utils";
-import { translate, useT } from "@/i18n";
+import { robustCopy } from "@/lib/clipboard";
+import { fill, translate, useT, useUiLanguage } from "@/i18n";
 import {
   useSkillsList,
   useSkillDetail,
@@ -55,7 +76,6 @@ import {
   useSkillLinkHealth,
   useDeleteSkill,
   useBulkDeleteSkills,
-  useReorderSkills,
   RESOURCE_KINDS,
   RESOURCE_LABELS,
   type SkillSummary,
@@ -83,16 +103,6 @@ function stateLabel(state: SkillState): string {
   }
 }
 
-const STATE_VARIANT: Record<
-  SkillState,
-  "default" | "secondary" | "destructive" | "outline"
-> = {
-  active: "default",
-  validated: "secondary",
-  draft: "secondary",
-  disabled: "outline",
-};
-
 const TRIGGER_ICON: Record<SkillTrigger["type"], typeof Mic> = {
   voice: Mic,
   hotkey: Keyboard,
@@ -116,6 +126,15 @@ function isBrokenDraft(skill: {
   return skill.state === "draft" && Boolean(skill.error);
 }
 
+/** "You" / "Built-in" / the marketplace publisher — the Author column. */
+function authorLabel(skill: Pick<SkillSummary, "is_builtin" | "origin">): string {
+  if (skill.is_builtin) return translate("skills_view.author_builtin");
+  if (skill.origin?.source === "marketplace") {
+    return skill.origin.publisher || translate("marketplace_origin.badge");
+  }
+  return translate("skills_view.author_you");
+}
+
 // In-memory admin pass — holds the pass for the session so the user doesn't
 // have to re-enter it on every edit. Deliberately not localStorage: whoever
 // closes the app has to re-enter the pass on the next start.
@@ -126,45 +145,38 @@ export function SkillsView() {
   const { data, isLoading, error, refetch, isRefetching } = useSkillsList();
   const reload = useReloadSkills();
   const setEnabled = useSetSkillEnabled();
-  const reorder = useReorderSkills();
   const del = useDeleteSkill();
   const bulkDel = useBulkDeleteSkills();
   const [selected, setSelected] = useState<string | null>(null);
   const [finderOpen, setFinderOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadMode, setUploadMode] = useState<"choose" | "link">("choose");
   const [confirmDelete, setConfirmDelete] = useState<SkillSummary | null>(null);
 
-  // Multi-select: a "selection mode" turns the per-row drag handle into a
-  // checkbox so the user can tick several skills and delete them in ONE
-  // confirmed batch (instead of repeating the single-delete flow per skill).
-  // Built-ins are never selectable — they can't be deleted anyway.
+  // Multi-select: a "selection mode" adds a checkbox column so the user can
+  // tick several skills and delete them in ONE confirmed batch (instead of
+  // repeating the single-delete flow per skill). Built-ins are never
+  // selectable — they can't be deleted anyway.
   const [selectionMode, setSelectionMode] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [confirmBulk, setConfirmBulk] = useState(false);
 
+  const [searchOpen, setSearchOpen] = useState(false);
   const [queryInput, setQueryInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [ownerFilter, setOwnerFilter] = useState<"all" | "user" | "builtin">("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
-  // Local, drag-reorderable copy of the server list. The server already returns
-  // skills in the user's saved order; we mirror it so a drag updates instantly
-  // and the persisted order (PUT /order) confirms it on drop.
+  // Local copy of the server list so a switch flips instantly; the refetch
+  // confirms.
   const [items, setItems] = useState<SkillSummary[]>([]);
   useEffect(() => {
     if (data?.skills) setItems(data.skills);
   }, [data]);
 
-  const itemsRef = useRef<SkillSummary[]>([]);
-  itemsRef.current = items;
-  const persistOrder = useCallback(() => {
-    reorder.mutate(itemsRef.current.map((s) => s.name));
-  }, [reorder]);
-
   const onToggle = useCallback(
     (name: string, on: boolean) => {
-      // Optimistic flip so the switch responds instantly; the refetch confirms.
       setItems((prev) =>
         prev.map((it) =>
           it.name === name ? { ...it, state: on ? "active" : "disabled" } : it,
@@ -222,7 +234,7 @@ export function SkillsView() {
     });
   }, [checked, bulkDel, selected, exitSelection]);
 
-  // Debounce: 250ms nach letztem Tastendruck
+  // Debounce: 250 ms after the last keystroke.
   useEffect(() => {
     const tmr = setTimeout(() => setDebouncedQuery(queryInput.trim()), 250);
     return () => clearTimeout(tmr);
@@ -233,8 +245,8 @@ export function SkillsView() {
     ownerFilter !== "all" ||
     categoryFilter !== null;
 
-  // Search and selection don't mix (selection acts on the ordered full list),
-  // so a search starting mid-selection drops us back out of selection mode.
+  // Search and selection don't mix (selection acts on the full list), so a
+  // search starting mid-selection drops us back out of selection mode.
   useEffect(() => {
     if (searchActive) exitSelection();
   }, [searchActive, exitSelection]);
@@ -272,88 +284,30 @@ export function SkillsView() {
     setCategoryFilter(null);
   };
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ViewHeader
-        icon={<Puzzle className="h-4 w-4 text-primary" />}
-        title={t("skills_view.title")}
-        subtitle={t("skills_view.subtitle")}
-        right={
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="default"
-              onClick={() => setCreateOpen(true)}
-              className="gap-1.5"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Neuer Skill
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setUploadOpen(true)}
-              className="gap-1.5"
-            >
-              <Upload className="h-3.5 w-3.5" />
-              {t("skill_upload.button")}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setFinderOpen(true)}
-              className="gap-1.5"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Skill suchen
-            </Button>
-            {!searchActive && items.length > 0 && (
-              <Button
-                size="sm"
-                variant={selectionMode ? "secondary" : "ghost"}
-                onClick={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
-                className="gap-1.5"
-              >
-                <ListChecks className="h-3.5 w-3.5" />
-                {selectionMode
-                  ? t("skills_view.delete_cancel")
-                  : t("skills_view.select")}
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleRefresh}
-              disabled={isRefetching || reload.isPending}
-            >
-              <RefreshCw
-                className={cn(
-                  "h-4 w-4",
-                  (isRefetching || reload.isPending) && "animate-spin",
-                )}
-              />
-            </Button>
-          </div>
-        }
-      />
+  const closeSearch = () => {
+    clearFilters();
+    setSearchOpen(false);
+  };
 
-      <SkillFinderDialog
-        open={finderOpen}
-        onClose={() => setFinderOpen(false)}
-      />
+  const openUpload = (mode: "choose" | "link") => {
+    setUploadMode(mode);
+    setUploadOpen(true);
+  };
 
+  const dialogs = (
+    <>
+      <SkillFinderDialog open={finderOpen} onClose={() => setFinderOpen(false)} />
       <SkillCreateDialog
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={(name) => setSelected(name)}
       />
-
       <SkillUploadDialog
         open={uploadOpen}
+        initialMode={uploadMode}
         onClose={() => setUploadOpen(false)}
         onInstalled={(name) => setSelected(name)}
       />
-
       {confirmDelete && (
         <DeleteConfirmDialog
           skill={confirmDelete}
@@ -372,7 +326,6 @@ export function SkillsView() {
           }
         />
       )}
-
       {confirmBulk && (
         <BulkDeleteConfirmDialog
           names={Array.from(checked)}
@@ -381,90 +334,177 @@ export function SkillsView() {
           onConfirm={handleBulkDelete}
         />
       )}
+    </>
+  );
 
-      <div className="flex min-h-0 flex-1">
-        {/* Left column: list */}
-        <div className="flex w-[340px] flex-col border-r border-border">
-          {/* Search bar + filter chips */}
-          <div className="space-y-2 border-b border-border bg-muted/20 px-3 py-2.5">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="text"
-                value={queryInput}
-                onChange={(e) => setQueryInput(e.target.value)}
-                placeholder={t("skills_view.search_placeholder")}
-                className="w-full rounded-md border border-border bg-background py-1.5 pl-7 pr-7 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              {queryInput && (
-                <button
-                  type="button"
-                  onClick={() => setQueryInput("")}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  aria-label={t("skills_view.clear_search")}
+  // ---- Detail page -------------------------------------------------------
+  if (selected) {
+    const summary = items.find((s) => s.name === selected) ?? null;
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ScrollArea className="flex-1">
+          <div className="mx-auto w-full max-w-4xl px-8 py-6">
+            <SkillDetailPage
+              name={selected}
+              summary={summary}
+              onBack={() => setSelected(null)}
+              onDelete={() => {
+                if (summary) setConfirmDelete(summary);
+              }}
+            />
+          </div>
+        </ScrollArea>
+        {dialogs}
+      </div>
+    );
+  }
+
+  // ---- List page ---------------------------------------------------------
+  const columns: Column[] = [
+    ...(selectionMode
+      ? [{ id: "check", label: t("skills_view.select"), width: "20px", srOnly: true }]
+      : []),
+    { id: "name", label: t("skills_view.col_skill") },
+    { id: "updated", label: t("skills_view.col_updated"), width: "110px" },
+    { id: "author", label: t("skills_view.col_author"), width: "130px" },
+    { id: "enabled", label: t("skills_view.col_enabled"), width: "44px", srOnly: true, align: "right" },
+    { id: "actions", label: t("skills_view.col_actions"), width: "28px", srOnly: true, align: "right" },
+  ];
+
+  const rows: (SkillSummary | LocalSkillHit)[] = searchActive
+    ? (search.data?.skills ?? [])
+    : items;
+
+  const countLabel = fill(t("skills_view.count"), { n: items.length });
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <ScrollArea className="flex-1">
+        <div className="mx-auto w-full max-w-4xl px-8 py-6">
+          <PanelHeader
+            title={t("skills_view.title")}
+            subtitle={!isLoading && !error ? countLabel : undefined}
+            actions={
+              <>
+                <IconButton
+                  label={t("skills_view.search_placeholder")}
+                  active={searchOpen}
+                  onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
                 >
-                  <XIcon className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1">
-              <FilterChip
-                label={t("skills_view.filter_all")}
-                active={ownerFilter === "all"}
-                onClick={() => setOwnerFilter("all")}
-              />
-              <FilterChip
-                label={t("skills_view.filter_mine")}
-                active={ownerFilter === "user"}
-                onClick={() => setOwnerFilter("user")}
-              />
-              <FilterChip
-                label="Builtin"
-                active={ownerFilter === "builtin"}
-                onClick={() => setOwnerFilter("builtin")}
-              />
-              {categoryOptions.length > 0 && (
-                <BrandedSelect
-                  value={categoryFilter ?? ""}
-                  onValueChange={(value) => setCategoryFilter(value || null)}
-                  ariaLabel={t("skills_view.all_categories")}
-                  className="w-auto rounded-full px-2 py-0.5 text-[10px]"
-                  options={[
+                  <Search className="h-4 w-4" />
+                </IconButton>
+                {!searchActive && items.length > 0 && (
+                  <IconButton
+                    label={selectionMode ? t("skills_view.delete_cancel") : t("skills_view.select")}
+                    active={selectionMode}
+                    onClick={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
+                  >
+                    <ListChecks className="h-4 w-4" />
+                  </IconButton>
+                )}
+                <IconButton
+                  label={t("skills_view.reload")}
+                  onClick={handleRefresh}
+                  busy={isRefetching || reload.isPending}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </IconButton>
+                <SoftButton onClick={() => setFinderOpen(true)} className="ml-1">
+                  {t("skills_view.browse")}
+                </SoftButton>
+                <ActionMenu
+                  label={t("skills_view.add")}
+                  actions={[
                     {
-                      value: "",
-                      label: t("skills_view.all_categories"),
+                      id: "create",
+                      label: t("skills_view.add_create"),
+                      icon: <Plus className="h-3.5 w-3.5" />,
+                      onSelect: () => setCreateOpen(true),
                     },
-                    ...categoryOptions.map((category) => ({
-                      value: category,
-                      label: category,
-                    })),
+                    {
+                      id: "upload",
+                      label: t("skills_view.add_upload"),
+                      icon: <Upload className="h-3.5 w-3.5" />,
+                      onSelect: () => openUpload("choose"),
+                    },
+                    {
+                      id: "import",
+                      label: t("skills_view.add_import"),
+                      icon: <Link2 className="h-3.5 w-3.5" />,
+                      onSelect: () => openUpload("link"),
+                    },
                   ]}
+                  trigger={({ open, toggle }) => (
+                    <MenuPill open={open} toggle={toggle}>
+                      {t("skills_view.add")}
+                    </MenuPill>
+                  )}
                 />
-              )}
-              {searchActive && (
-                <button
-                  type="button"
-                  onClick={clearFilters}
-                  className="ml-auto text-[10px] text-muted-foreground underline hover:text-foreground"
-                >
-                  {t("skills_view.reset_filters")}
-                </button>
-              )}
-            </div>
-            {searchActive && search.data && (
-              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                <span>
-                  {search.data.total} {t("skills_view.matches")}
-                </span>
-                {search.data.brain_used && (
-                  <span className="flex items-center gap-1">
-                    <Sparkle className="h-2.5 w-2.5" />
-                    {t("skills_view.ai_ranked")}
+              </>
+            }
+          />
+
+          {searchOpen && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <InlineSearch
+                    value={queryInput}
+                    onChange={setQueryInput}
+                    placeholder={t("skills_view.search_placeholder")}
+                    autoFocus
+                  />
+                </div>
+                <IconButton label={t("skills_view.clear_search")} onClick={closeSearch}>
+                  <XIcon className="h-4 w-4" />
+                </IconButton>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <FilterChip
+                  label={t("skills_view.filter_all")}
+                  active={ownerFilter === "all"}
+                  onClick={() => setOwnerFilter("all")}
+                />
+                <FilterChip
+                  label={t("skills_view.filter_mine")}
+                  active={ownerFilter === "user"}
+                  onClick={() => setOwnerFilter("user")}
+                />
+                <FilterChip
+                  label={t("skills_view.author_builtin")}
+                  active={ownerFilter === "builtin"}
+                  onClick={() => setOwnerFilter("builtin")}
+                />
+                {categoryOptions.length > 0 && (
+                  <BrandedSelect
+                    value={categoryFilter ?? ""}
+                    onValueChange={(value) => setCategoryFilter(value || null)}
+                    ariaLabel={t("skills_view.all_categories")}
+                    className="w-auto rounded-full px-2 py-0.5 text-[11px]"
+                    options={[
+                      { value: "", label: t("skills_view.all_categories") },
+                      ...categoryOptions.map((category) => ({
+                        value: category,
+                        label: category,
+                      })),
+                    ]}
+                  />
+                )}
+                {searchActive && search.data && (
+                  <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+                    {search.data.total} {t("skills_view.matches")}
+                    {search.data.brain_used && (
+                      <span className="flex items-center gap-1">
+                        <Sparkle className="h-2.5 w-2.5" />
+                        {t("skills_view.ai_ranked")}
+                      </span>
+                    )}
                   </span>
                 )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
           {selectionMode && (
             <SelectionToolbar
               total={deletableNames.length}
@@ -474,240 +514,168 @@ export function SkillsView() {
               onDelete={() => setConfirmBulk(true)}
             />
           )}
-          <ScrollArea className="flex-1">
-            <div className="space-y-3 p-4">
-              {isLoading && (
-                <div className="text-sm text-muted-foreground">{t("skills_view.loading")}</div>
-              )}
-              {error && (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                  {t("skills_view.load_error")}: {(error as Error).message}
-                </div>
-              )}
-              {searchActive ? (
-                <SearchResults
-                  isPending={search.isPending || search.isFetching}
-                  error={search.error as Error | null}
-                  results={search.data?.skills ?? []}
-                  selected={selected}
-                  onSelect={setSelected}
-                />
-              ) : (
-                <>
-                  {!isLoading && !error && items.length === 0 && <EmptyList />}
-                  <Reorder.Group
-                    axis="y"
-                    values={items}
-                    onReorder={setItems}
-                    as="ul"
-                    className="space-y-1.5"
-                  >
-                    {items.map((s) => (
-                      <SkillRowDraggable
-                        key={s.name}
-                        skill={s}
-                        selected={selected === s.name}
-                        selectionMode={selectionMode}
-                        checked={checked.has(s.name)}
-                        onCheckChange={() => toggleChecked(s.name)}
-                        onSelect={() => setSelected(s.name)}
-                        onToggle={(on) => onToggle(s.name, on)}
-                        onDelete={() => setConfirmDelete(s)}
-                        onDragEnd={persistOrder}
-                      />
-                    ))}
-                  </Reorder.Group>
-                </>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
 
-        {/* Right column: detail panel */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          {selected ? (
-            <SkillDetailPanel name={selected} />
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              {t("skills_view.select_from_list")}
-            </div>
-          )}
+          <div className="mt-4">
+            {isLoading && (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                {t("skills_view.loading")}
+              </div>
+            )}
+            {error && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {t("skills_view.load_error")}: {(error as Error).message}
+              </div>
+            )}
+            {!isLoading && !error && (
+              <Table label={t("skills_view.title")}>
+                <TableHead columns={columns} />
+                {searchActive && (search.isPending || search.isFetching) && rows.length === 0 && (
+                  <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                    {t("skills_view.searching")}
+                  </div>
+                )}
+                {searchActive && search.error && (
+                  <div className="m-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                    {t("skills_view.search_failed")}: {(search.error as Error).message}
+                  </div>
+                )}
+                {rows.map((s) => (
+                  <SkillRow
+                    key={s.name}
+                    skill={s}
+                    columns={columns}
+                    selectionMode={selectionMode}
+                    checked={checked.has(s.name)}
+                    onCheckChange={() => toggleChecked(s.name)}
+                    onOpen={() => setSelected(s.name)}
+                    onToggle={(on) => onToggle(s.name, on)}
+                    onDelete={() => setConfirmDelete(s)}
+                  />
+                ))}
+                {rows.length === 0 && !searchActive && <EmptyList />}
+                {rows.length === 0 &&
+                  searchActive &&
+                  !search.isPending &&
+                  !search.isFetching &&
+                  !search.error && (
+                    <EmptyRow>{t("skills_view.search_no_hits")}</EmptyRow>
+                  )}
+              </Table>
+            )}
+          </div>
         </div>
-      </div>
+      </ScrollArea>
+      {dialogs}
     </div>
   );
 }
 
 // ----------------------------------------------------------------------
-// Left column — draggable list row (On/Off switch + delete)
+// Table row
 // ----------------------------------------------------------------------
 
-function SkillRowDraggable({
+function SkillRow({
   skill,
-  selected,
+  columns,
   selectionMode,
   checked,
   onCheckChange,
-  onSelect,
+  onOpen,
   onToggle,
   onDelete,
-  onDragEnd,
 }: {
-  skill: SkillSummary;
-  selected: boolean;
+  skill: SkillSummary | LocalSkillHit;
+  columns: Column[];
   selectionMode: boolean;
   checked: boolean;
   onCheckChange: () => void;
-  onSelect: () => void;
+  onOpen: () => void;
   onToggle: (on: boolean) => void;
   onDelete: () => void;
-  onDragEnd: () => void;
 }) {
   const t = useT();
-  const controls = useDragControls();
+  const locale = useUiLanguage();
   const broken = isBrokenDraft(skill);
   const on = isSkillOn(skill.state);
-  // In selection mode the whole row body toggles the checkbox (built-ins are
-  // protected and stay inert); otherwise it opens the detail panel.
   const selectable = selectionMode && !skill.is_builtin;
-  const onBodyClick = selectionMode
-    ? selectable
-      ? onCheckChange
-      : () => {}
-    : onSelect;
+  const reason = "reason" in skill ? skill.reason : undefined;
 
   return (
-    <Reorder.Item
-      value={skill}
-      dragListener={false}
-      dragControls={controls}
-      onDragEnd={onDragEnd}
-      as="li"
+    <TableRow
+      columns={columns}
+      onClick={selectionMode ? (selectable ? onCheckChange : undefined) : onOpen}
+      className={cn(selectionMode && skill.is_builtin && "opacity-50")}
+      selected={checked}
+      ariaLabel={skill.name}
     >
-      <div
-        className={cn(
-          "flex items-start gap-1.5 rounded-md border p-2.5 transition-colors",
-          selected
-            ? "border-primary/60 bg-primary/5"
-            : checked
-              ? "border-primary/60 bg-primary/10"
-              : "border-border hover:bg-muted/40",
-          // Built-ins can't be deleted — recede them visually in selection mode.
-          selectionMode && skill.is_builtin && "opacity-50",
-        )}
-      >
-        {selectionMode ? (
-          /* Selection mode: a styled checkbox replaces the drag handle. Built-ins
-             can't be deleted, so they get an inert spacer (the lock next to the
-             name already marks them protected) instead of a second lock icon. */
-          skill.is_builtin ? (
-            <span className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+      {selectionMode && (
+        <Cell stop>
+          {skill.is_builtin ? (
+            <span className="block h-4 w-4" aria-hidden="true" />
           ) : (
             <SelectBox
               checked={checked}
               onChange={onCheckChange}
               label={`${t("skills_view.select")} ${skill.name}`}
-              className="mt-0.5"
             />
-          )
+          )}
+        </Cell>
+      )}
+      <Cell>
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-[13px] font-medium">{skill.name}</span>
+          {skill.is_builtin && (
+            <Lock className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-label={t("skills_view.author_builtin")} />
+          )}
+          {skill.origin?.source === "marketplace" && (
+            <MarketplaceBadge compact publisher={skill.origin.publisher} />
+          )}
+          {skill.triggers.map((tr, i) => {
+            const Icon = TRIGGER_ICON[tr.type];
+            return <Icon key={i} className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label={tr.type} />;
+          })}
+        </div>
+        {(skill.description || reason) && (
+          <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={skill.description}>
+            {reason ? <span className="italic">{reason}</span> : skill.description}
+          </p>
+        )}
+      </Cell>
+      <Cell muted>{formatShortDate(skill.updated_at, locale)}</Cell>
+      <Cell muted>
+        <span className="truncate">{authorLabel(skill)}</span>
+      </Cell>
+      <Cell align="right" stop>
+        {broken ? (
+          <span
+            className="flex items-center gap-1 text-[11px] font-medium text-destructive"
+            title={skill.error ?? undefined}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {t("skills_view.error")}
+          </span>
         ) : (
-          /* Drag handle — only this starts a reorder (dragListener is off). */
+          <Switch
+            checked={on}
+            onCheckedChange={onToggle}
+            aria-label={`${skill.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
+          />
+        )}
+      </Cell>
+      <Cell align="right" stop>
+        {!skill.is_builtin && !selectionMode && (
           <button
             type="button"
-            onPointerDown={(e) => controls.start(e)}
-            className="mt-0.5 cursor-grab touch-none text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
-            title={t("skills_view.drag_hint")}
-            aria-label={t("skills_view.drag_hint")}
+            onClick={onDelete}
+            aria-label={t("skills_view.delete")}
+            title={t("skills_view.delete")}
+            className="rounded p-1 text-muted-foreground/0 transition-colors hover:bg-destructive/10 hover:text-destructive group-hover:text-muted-foreground/70 focus-visible:text-muted-foreground"
           >
-            <GripVertical className="h-3.5 w-3.5" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
-
-        {/* Select area */}
-        <button
-          type="button"
-          onClick={onBodyClick}
-          className="min-w-0 flex-1 text-left"
-        >
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-medium">{skill.name}</span>
-            {skill.is_builtin && (
-              <Lock
-                className="h-3 w-3 flex-shrink-0 text-muted-foreground"
-                aria-label="Builtin"
-              />
-            )}
-            {skill.origin?.source === "marketplace" && (
-              <MarketplaceBadge
-                compact
-                publisher={skill.origin.publisher}
-              />
-            )}
-          </div>
-          {skill.description && (
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-              {skill.description}
-            </p>
-          )}
-          <div className="mt-2 flex items-center gap-1.5">
-            {skill.triggers.map((tr, i) => {
-              const Icon = TRIGGER_ICON[tr.type];
-              return (
-                <Icon
-                  key={i}
-                  className="h-3 w-3 text-muted-foreground"
-                  aria-label={tr.type}
-                />
-              );
-            })}
-            {skill.triggers.length === 0 && (
-              <span className="text-[10px] text-muted-foreground">
-                no auto-trigger
-              </span>
-            )}
-          </div>
-        </button>
-
-        {/* Right rail: On/Off switch (or error lock) + delete. Hidden in
-            selection mode — the bulk toolbar owns deletion there. A healthy
-            draft still gets a switch (off) so the user can promote it. */}
-        {!selectionMode && (
-          <div className="flex flex-shrink-0 items-center gap-1.5">
-            {broken ? (
-              <span
-                className="flex items-center gap-1 text-[10px] font-medium text-destructive"
-                title={skill.error ?? undefined}
-              >
-                <AlertTriangle className="h-3.5 w-3.5" />
-                {t("skills_view.error")}
-              </span>
-            ) : (
-              <Switch
-                checked={on}
-                onCheckedChange={onToggle}
-                aria-label={`${skill.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
-              />
-            )}
-            {skill.is_builtin ? (
-              <Lock
-                className="h-3.5 w-3.5 text-muted-foreground/40"
-                aria-label={t("skills_view.builtin_protected")}
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={onDelete}
-                aria-label={t("skills_view.delete")}
-                title={t("skills_view.delete")}
-                className="rounded p-1 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    </Reorder.Item>
+      </Cell>
+    </TableRow>
   );
 }
 
@@ -772,7 +740,7 @@ function SelectionToolbar({
   const t = useT();
   const hasSelection = checkedCount > 0;
   return (
-    <div className="flex items-center gap-2.5 border-b border-border bg-muted/20 px-3 py-2">
+    <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-border bg-sheen/[0.04] px-3 py-2">
       <SelectBox
         checked={allChecked}
         onChange={onToggleAll}
@@ -905,13 +873,29 @@ function DeleteConfirmDialog({
 }
 
 // ----------------------------------------------------------------------
-// Right column — detail panel
+// Detail page — header, description, file card (preview / source)
 // ----------------------------------------------------------------------
 
-function SkillDetailPanel({ name }: { name: string }) {
+type ViewMode = "preview" | "source";
+
+/** The file currently shown in the card: SKILL.md itself or a bundle resource. */
+type OpenFile = { kind: "skill" } | { kind: ResourceKind; filename: string };
+
+function SkillDetailPage({
+  name,
+  summary,
+  onBack,
+  onDelete,
+}: {
+  name: string;
+  summary: SkillSummary | null;
+  onBack: () => void;
+  onDelete: () => void;
+}) {
   const { data, isLoading, error, refetch } = useSkillDetail(name);
   const save = useSaveSkill();
   const setEnabled = useSetSkillEnabled();
+  const pushToast = useEventStore((s) => s.pushToast);
 
   // Only load link health when the frontmatter actually contains URLs —
   // otherwise the endpoint would fire on every skill opening, which
@@ -929,18 +913,16 @@ function SkillDetailPanel({ name }: { name: string }) {
   const [showAdminDialog, setShowAdminDialog] = useState(false);
   const [adminPassInput, setAdminPassInput] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [openResource, setOpenResource] = useState<{
-    kind: ResourceKind;
-    filename: string;
-  } | null>(null);
+  const [mode, setMode] = useState<ViewMode>("preview");
+  const [openFile, setOpenFile] = useState<OpenFile>({ kind: "skill" });
 
   useEffect(() => {
-    // Reset the draft + resource viewer when the loaded skill changes
+    // Reset the draft + file viewer when the loaded skill changes
     if (data) {
       setDraft(buildSkillMdText(data));
       setDirty(false);
       setSaveError(null);
-      setOpenResource(null);
+      setOpenFile({ kind: "skill" });
     }
   }, [data]);
 
@@ -981,73 +963,101 @@ function SkillDetailPanel({ name }: { name: string }) {
     void handleSave();
   };
 
-  if (isLoading || !data) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        {t("skills_view.loading_skill")}
-      </div>
-    );
-  }
+  const copyPath = async () => {
+    if (!data) return;
+    const ok = await robustCopy(data.path);
+    pushToast(ok ? "success" : "error", ok ? t("skills_view.path_copied") : t("common.error"));
+  };
+
   if (error) {
     return (
-      <div className="p-6 text-sm text-destructive">
-        {t("common.error")}: {(error as Error).message}
-      </div>
+      <>
+        <BackLink label={t("skills_view.title")} onClick={onBack} />
+        <div className="mt-6 text-sm text-destructive">
+          {t("common.error")}: {(error as Error).message}
+        </div>
+      </>
+    );
+  }
+  if (isLoading || !data) {
+    return (
+      <>
+        <BackLink label={t("skills_view.title")} onClick={onBack} />
+        <div className="mt-6 text-sm text-muted-foreground">{t("skills_view.loading_skill")}</div>
+      </>
     );
   }
 
   const broken = isBrokenDraft(data);
   const on = isSkillOn(data.state);
+  const fm = (data.frontmatter ?? {}) as Record<string, unknown>;
+  const resourceFiles: { kind: ResourceKind; filename: string }[] = RESOURCE_KINDS.flatMap(
+    (kind) => (data.resources[kind] ?? []).map((filename) => ({ kind, filename })),
+  );
+  const fileCount = 1 + resourceFiles.length;
+  const openLabel =
+    openFile.kind === "skill" ? "SKILL.md" : `${openFile.kind}/${openFile.filename}`;
+
+  const menuActions = [
+    {
+      id: "copy-path",
+      label: t("skills_view.copy_path"),
+      icon: <Copy className="h-3.5 w-3.5" />,
+      onSelect: () => void copyPath(),
+    },
+    ...(data.origin?.source === "marketplace" && data.origin.source_url
+      ? [
+          {
+            id: "listing",
+            label: t("marketplace_origin.view_source"),
+            icon: <ExternalLink className="h-3.5 w-3.5" />,
+            onSelect: () => window.open(data.origin?.source_url ?? "", "_blank", "noopener,noreferrer"),
+          },
+        ]
+      : []),
+    ...(!data.is_builtin
+      ? [
+          {
+            id: "delete",
+            label: t("skills_view.delete"),
+            icon: <Trash2 className="h-3.5 w-3.5" />,
+            destructive: true,
+            separatorAbove: true,
+            onSelect: onDelete,
+          },
+        ]
+      : []),
+  ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-border px-6 py-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="truncate text-lg font-semibold">{data.name}</h2>
-              <Badge variant={STATE_VARIANT[data.state]}>
-                {stateLabel(data.state)}
-              </Badge>
-              {data.is_builtin && (
-                <Badge variant="outline" className="gap-1">
-                  <Lock className="h-3 w-3" />
-                  builtin
-                </Badge>
-              )}
+    <>
+      <BackLink label={t("skills_view.title")} onClick={onBack} />
+
+      <div className="mt-5">
+        <DetailHeader
+          title={data.name}
+          titleAccessory={
+            <span
+              className="grid h-5 w-5 place-items-center text-muted-foreground"
+              title={`${stateLabel(data.state)} · v${data.version} · ${data.category}\n${data.path}`}
+              aria-label={`${stateLabel(data.state)} · v${data.version} · ${data.category} · ${data.path}`}
+            >
+              <Info className="h-3.5 w-3.5" />
+            </span>
+          }
+          byline={
+            <span className="inline-flex items-center gap-2">
+              {data.is_builtin
+                ? t("skills_view.author_builtin")
+                : fill(t("skills_view.by"), { author: authorLabel(summary ?? data) })}
               {data.origin?.source === "marketplace" && (
-                <MarketplaceBadge publisher={data.origin.publisher} />
+                <MarketplaceBadge compact publisher={data.origin.publisher} />
               )}
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              v{data.version} · {data.category} · {data.path}
-            </p>
-            {data.origin?.source === "marketplace" && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("marketplace_origin.tooltip")}
-                {data.origin.publisher ? ` · ${data.origin.publisher}` : ""}
-                {data.origin.source_url ? (
-                  <>
-                    {" · "}
-                    <a
-                      href={data.origin.source_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline underline-offset-2 hover:text-foreground"
-                    >
-                      {t("marketplace_origin.view_source")}
-                    </a>
-                  </>
-                ) : null}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            {!broken && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {on ? t("skills_view.on") : t("skills_view.off")}
-                </span>
+            </span>
+          }
+          actions={
+            <>
+              {!broken && (
                 <Switch
                   checked={on}
                   disabled={setEnabled.isPending}
@@ -1059,21 +1069,31 @@ function SkillDetailPanel({ name }: { name: string }) {
                   }
                   aria-label={`${data.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
                 />
-              </div>
-            )}
-            <Button
-              size="sm"
-              onClick={handleSaveClick}
-              disabled={!dirty || save.isPending}
-            >
-              <Save className="mr-1.5 h-3.5 w-3.5" />
-              {save.isPending ? t("common.saving") : t("common.save")}
-            </Button>
-          </div>
-        </div>
+              )}
+              <ActionMenu
+                label={t("skills_view.more_actions")}
+                actions={menuActions}
+                trigger={({ open, toggle }) => (
+                  <IconButton label={t("skills_view.more_actions")} onClick={toggle} active={open}>
+                    <MoreHorizontal className="h-4 w-4" />
+                  </IconButton>
+                )}
+              />
+            </>
+          }
+        />
+
+        {data.description && (
+          <ClampedText
+            className="mt-4"
+            text={data.description}
+            moreLabel={t("common.see_more")}
+            lessLabel={t("common.see_less")}
+          />
+        )}
 
         {data.error && (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+          <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
             {t("skills_view.validation_error")}: {data.error}
           </div>
         )}
@@ -1082,7 +1102,7 @@ function SkillDetailPanel({ name }: { name: string }) {
             the dropped keys, because the owner of the file has to be able to
             see what this app did not read. */}
         {data.portable && (
-          <div className="mt-3 rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground">
+          <div className="mt-4 rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground">
             {t("skills_view.portable_notice")}
             {data.ignored_fields && data.ignored_fields.length > 0 && (
               <span className="mt-1 block font-mono text-[11px]">
@@ -1093,7 +1113,7 @@ function SkillDetailPanel({ name }: { name: string }) {
           </div>
         )}
         {saveError && !showAdminDialog && (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+          <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
             {saveError}
           </div>
         )}
@@ -1103,53 +1123,140 @@ function SkillDetailPanel({ name }: { name: string }) {
             health={linkHealth.data?.fields ?? null}
           />
         )}
-      </div>
 
-      <div className="flex min-h-0 flex-1">
-        {/* Left sub-column: editor */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-border px-6 py-2">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              SKILL.md
+        <Panel className="mt-4">
+          <div className="flex items-center gap-3 border-b border-border/70 px-3 py-2">
+            <ActionMenu
+              label={t("skills_view.files_menu")}
+              align="start"
+              actions={[
+                {
+                  id: "skill-md",
+                  label: "SKILL.md",
+                  icon: <FileText className="h-3.5 w-3.5" />,
+                  onSelect: () => setOpenFile({ kind: "skill" }),
+                },
+                ...resourceFiles.map((f, i) => {
+                  const Icon = KIND_ICON[f.kind];
+                  return {
+                    id: `${f.kind}/${f.filename}`,
+                    label: `${RESOURCE_LABELS[f.kind]} / ${f.filename}`,
+                    icon: <Icon className="h-3.5 w-3.5" />,
+                    separatorAbove: i === 0,
+                    onSelect: () => setOpenFile({ kind: f.kind, filename: f.filename }),
+                  };
+                }),
+              ]}
+              trigger={({ open, toggle }) => (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-expanded={open}
+                  aria-haspopup="menu"
+                  className="inline-flex h-7 max-w-[320px] items-center gap-1.5 rounded-md bg-sheen/[0.07] px-2.5 font-mono text-xs text-foreground hover:bg-sheen/[0.12]"
+                >
+                  <span className="truncate">{openLabel}</span>
+                  <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")} />
+                </button>
+              )}
+            />
+            <span className="text-xs text-muted-foreground">
+              {fileCount === 1 ? t("skills_view.file_one") : fill(t("skills_view.files"), { n: fileCount })}
             </span>
-            {data.is_builtin && (
-              <span className="text-[10px] text-muted-foreground">
-                {t("skills_view.builtin_admin_needed")}
-              </span>
-            )}
+            <div className="ml-auto flex items-center gap-1">
+              {data.is_builtin && mode === "source" && (
+                <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">
+                  {t("skills_view.builtin_admin_needed")}
+                </span>
+              )}
+              {dirty && (
+                <Button
+                  size="sm"
+                  className="mr-1 h-7 gap-1.5"
+                  onClick={handleSaveClick}
+                  disabled={save.isPending}
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {save.isPending ? t("common.saving") : t("common.save")}
+                </Button>
+              )}
+              <div className="flex items-center rounded-md bg-sheen/[0.05] p-0.5" role="tablist" aria-label={t("skills_view.view_mode")}>
+                <ModeButton
+                  active={mode === "preview"}
+                  label={t("skills_view.view_preview")}
+                  onClick={() => setMode("preview")}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </ModeButton>
+                <ModeButton
+                  active={mode === "source"}
+                  label={t("skills_view.view_source")}
+                  onClick={() => setMode("source")}
+                >
+                  <Code2 className="h-3.5 w-3.5" />
+                </ModeButton>
+              </div>
+            </div>
           </div>
-          <textarea
-            className={cn(
-              "flex-1 resize-none bg-background p-6 font-mono text-xs",
-              "focus:outline-none",
-            )}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setDirty(e.target.value !== buildSkillMdText(data));
-            }}
-            spellCheck={false}
-          />
-        </div>
 
-        {/* Right sub-column: bundle tree + optional resource viewer */}
-        {data.resource_count > 0 && (
-          <div className="flex w-[320px] flex-col border-l border-border">
-            {openResource ? (
-              <ResourceViewer
-                skillName={data.name}
-                kind={openResource.kind}
-                filename={openResource.filename}
-                onClose={() => setOpenResource(null)}
-              />
+          {openFile.kind === "skill" ? (
+            mode === "preview" ? (
+              <div className="max-h-[60vh] overflow-auto px-6 py-5">
+                <FactRows
+                  className="mb-6"
+                  rows={[
+                    { label: t("skills_view.fact_state"), value: stateLabel(data.state) },
+                    { label: t("skills_view.fact_version"), value: data.version },
+                    { label: t("skills_view.fact_category"), value: data.category },
+                    {
+                      label: t("skills_view.fact_license"),
+                      value: typeof fm.license === "string" ? fm.license : null,
+                    },
+                    {
+                      label: t("skills_view.fact_tags"),
+                      value:
+                        data.tags.length > 0 ? (
+                          <span className="flex flex-wrap gap-1">
+                            {data.tags.map((tag) => (
+                              <Badge key={tag} variant="outline" className="font-normal">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </span>
+                        ) : null,
+                    },
+                    {
+                      label: t("skills_view.fact_triggers"),
+                      value: data.triggers.length > 0 ? <TriggerList triggers={data.triggers} /> : null,
+                    },
+                  ]}
+                />
+                <MarkdownBody text={data.body} />
+              </div>
             ) : (
-              <ResourceTree
-                resources={data.resources}
-                onOpen={(kind, filename) => setOpenResource({ kind, filename })}
+              <textarea
+                className={cn(
+                  "block min-h-[420px] w-full resize-y bg-transparent px-6 py-5 font-mono text-xs leading-relaxed",
+                  "focus:outline-none",
+                )}
+                aria-label="SKILL.md"
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setDirty(e.target.value !== buildSkillMdText(data));
+                }}
+                spellCheck={false}
               />
-            )}
-          </div>
-        )}
+            )
+          ) : (
+            <ResourceBody
+              skillName={data.name}
+              kind={openFile.kind}
+              filename={openFile.filename}
+              mode={mode}
+            />
+          )}
+        </Panel>
       </div>
 
       {showAdminDialog && (
@@ -1168,7 +1275,112 @@ function SkillDetailPanel({ name }: { name: string }) {
           errorHint={saveError}
         />
       )}
-    </div>
+    </>
+  );
+}
+
+function ModeButton({
+  active,
+  label,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        "grid h-6 w-7 place-items-center rounded transition-colors",
+        active ? "bg-sheen/[0.12] text-foreground" : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TriggerList({ triggers }: { triggers: SkillTrigger[] }) {
+  return (
+    <ul className="space-y-0.5">
+      {triggers.map((tr, i) => {
+        const Icon = TRIGGER_ICON[tr.type];
+        const detail = tr.pattern ?? tr.combo ?? tr.cron ?? "";
+        return (
+          <li key={i} className="flex items-center gap-2 text-sm">
+            <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-label={tr.type} />
+            <span className="font-mono text-xs">{detail || tr.type}</span>
+            {tr.language && tr.language.length > 0 && (
+              <span className="text-[11px] text-muted-foreground">{tr.language.join(", ")}</span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Rendered markdown — the body of SKILL.md or a bundled .md resource. */
+function MarkdownBody({ text }: { text: string }) {
+  return (
+    <article className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-headings:font-display prose-headings:tracking-tight prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-a:text-primary prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card/80">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children, ...props }) => (
+            <a href={href} target="_blank" rel="noreferrer noopener" {...props}>
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </article>
+  );
+}
+
+function ResourceBody({
+  skillName,
+  kind,
+  filename,
+  mode,
+}: {
+  skillName: string;
+  kind: ResourceKind;
+  filename: string;
+  mode: ViewMode;
+}) {
+  const t = useT();
+  const { data, isLoading, error } = useSkillResource(skillName, kind, filename);
+  const isMarkdown = /\.(md|markdown)$/i.test(filename);
+
+  if (isLoading) {
+    return <div className="px-6 py-5 text-xs text-muted-foreground">{t("skills_view.loading_skill")}</div>;
+  }
+  if (error) {
+    return <div className="px-6 py-5 text-xs text-destructive">{(error as Error).message}</div>;
+  }
+  if (data == null) return null;
+  if (mode === "preview" && isMarkdown) {
+    return (
+      <div className="max-h-[60vh] overflow-auto px-6 py-5">
+        <MarkdownBody text={data} />
+      </div>
+    );
+  }
+  return (
+    <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-[11px] leading-relaxed">
+      {data}
+    </pre>
   );
 }
 
@@ -1328,10 +1540,6 @@ function formatScalar(val: unknown): string {
   return str;
 }
 
-// ----------------------------------------------------------------------
-// Bundle-Resource-Tree + Viewer
-// ----------------------------------------------------------------------
-
 const KIND_ICON: Record<ResourceKind, typeof FileText> = {
   references: FileText,
   scripts: FileCode,
@@ -1339,151 +1547,25 @@ const KIND_ICON: Record<ResourceKind, typeof FileText> = {
   agents: UserSquare,
 };
 
-function ResourceTree({
-  resources,
-  onOpen,
-}: {
-  resources: Record<ResourceKind, string[]>;
-  onOpen: (kind: ResourceKind, filename: string) => void;
-}) {
-  const [expanded, setExpanded] = useState<Record<ResourceKind, boolean>>({
-    references: true,
-    scripts: false,
-    assets: false,
-    agents: false,
-  });
-
-  return (
-    <>
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-        <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          Bundle
-        </span>
-      </div>
-      <ScrollArea className="flex-1">
-        <div className="px-3 py-2">
-          {RESOURCE_KINDS.map((kind) => {
-            const files = resources[kind];
-            if (!files || files.length === 0) return null;
-            const isOpen = expanded[kind];
-            const Icon = KIND_ICON[kind];
-            return (
-              <div key={kind} className="mb-1">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setExpanded((p) => ({ ...p, [kind]: !p[kind] }))
-                  }
-                  className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-xs hover:bg-muted/50"
-                >
-                  {isOpen ? (
-                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                  )}
-                  <Icon className="h-3 w-3 text-muted-foreground" />
-                  <span className="font-medium">
-                    {RESOURCE_LABELS[kind]}
-                  </span>
-                  <span className="ml-auto text-[10px] text-muted-foreground">
-                    {files.length}
-                  </span>
-                </button>
-                {isOpen && (
-                  <ul className="mt-0.5 ml-5 space-y-0.5">
-                    {files.map((f) => (
-                      <li key={f}>
-                        <button
-                          type="button"
-                          onClick={() => onOpen(kind, f)}
-                          className="w-full truncate rounded px-2 py-0.5 text-left text-[11px] font-mono hover:bg-muted/50"
-                        >
-                          {f}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
-    </>
-  );
-}
-
-function ResourceViewer({
-  skillName,
-  kind,
-  filename,
-  onClose,
-}: {
-  skillName: string;
-  kind: ResourceKind;
-  filename: string;
-  onClose: () => void;
-}) {
-  const t = useT();
-  const { data, isLoading, error } = useSkillResource(skillName, kind, filename);
-  const Icon = KIND_ICON[kind];
-
-  return (
-    <>
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-        <span className="truncate text-xs font-mono" title={`${kind}/${filename}`}>
-          {kind}/{filename}
-        </span>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="ml-auto h-6 w-6 p-0"
-          onClick={onClose}
-          title={t("skills_toast.back_to_list")}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-      {isLoading && (
-        <div className="p-4 text-xs text-muted-foreground">{t("skills_view.loading_skill")}</div>
-      )}
-      {error && (
-        <div className="p-4 text-xs text-destructive">
-          {(error as Error).message}
-        </div>
-      )}
-      {data && (
-        <ScrollArea className="flex-1">
-          <pre className="whitespace-pre-wrap break-words p-4 font-mono text-[11px] leading-relaxed">
-            {data}
-          </pre>
-        </ScrollArea>
-      )}
-    </>
-  );
-}
-
 function EmptyList() {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   return (
-    <div className="space-y-3 text-sm text-muted-foreground">
+    <EmptyRow>
       <p>{t("skills_view.empty_list_title")}</p>
-      <p className="text-xs">
+      <p className="mt-2 text-xs">
         {t("skills_view.empty_list_body_a")} {assistantName}{" "}
         {t("skills_view.empty_list_body_b")}
         <br />
         <code>%LOCALAPPDATA%\Jarvis\skills</code>.{" "}
         {t("skills_view.empty_list_body_c")}
       </p>
-    </div>
+    </EmptyRow>
   );
 }
 
 // ----------------------------------------------------------------------
-// Skill-Links (homepage / source / docs) mit Health-Chip
+// Skill links (homepage / source / docs) with health chip
 // ----------------------------------------------------------------------
 
 interface LinkFieldSpec {
@@ -1509,7 +1591,7 @@ function SkillLinks({
   const visible = LINK_FIELDS.filter((f) => Boolean(frontmatter[f.key]));
   if (visible.length === 0) return null;
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-3">
+    <div className="mt-4 flex flex-wrap items-center gap-2">
       {visible.map((f) => {
         const url = String(frontmatter[f.key]);
         const h = health?.[f.key] ?? null;
@@ -1520,7 +1602,7 @@ function SkillLinks({
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="group flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted/40"
+            className="group flex items-center gap-1.5 rounded-md border border-border bg-background/60 px-2 py-1 text-xs text-foreground hover:bg-muted/40"
             title={url}
           >
             <Icon className="h-3 w-3 text-muted-foreground" />
@@ -1557,7 +1639,7 @@ function LinkHealthChip({ entry }: { entry: LinkHealthEntry | null }) {
 }
 
 // ----------------------------------------------------------------------
-// Search-Ergebnis-Liste (flach, mit Score-Reason)
+// Small bits
 // ----------------------------------------------------------------------
 
 function FilterChip({
@@ -1574,110 +1656,13 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-2 py-0.5 text-[10px] transition-colors",
+        "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
         active
           ? "border-primary/60 bg-primary/10 text-primary"
-          : "border-border bg-background hover:bg-muted/40",
+          : "border-border bg-background/60 hover:bg-muted/40",
       )}
     >
       {label}
     </button>
-  );
-}
-
-function SearchResults({
-  isPending,
-  error,
-  results,
-  selected,
-  onSelect,
-}: {
-  isPending: boolean;
-  error: Error | null;
-  results: LocalSkillHit[];
-  selected: string | null;
-  onSelect: (name: string) => void;
-}) {
-  const t = useT();
-  if (isPending && results.length === 0) {
-    return <div className="text-xs text-muted-foreground">Searching…</div>;
-  }
-  if (error) {
-    return (
-      <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-        Search failed: {error.message}
-      </div>
-    );
-  }
-  if (results.length === 0) {
-    return (
-      <div className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
-        {t("skills_view.search_no_hits")}
-      </div>
-    );
-  }
-  return (
-    <ul className="space-y-1.5">
-      {results.map((s) => (
-        <SkillRowWithScore
-          key={s.name}
-          skill={s}
-          selected={selected === s.name}
-          onClick={() => onSelect(s.name)}
-        />
-      ))}
-    </ul>
-  );
-}
-
-function SkillRowWithScore({
-  skill,
-  selected,
-  onClick,
-}: {
-  skill: LocalSkillHit;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        className={cn(
-          "w-full rounded-md border p-2.5 text-left transition-colors",
-          selected
-            ? "border-primary/60 bg-primary/5"
-            : "border-border hover:bg-muted/40",
-        )}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-sm font-medium">{skill.name}</span>
-              {skill.is_builtin && (
-                <Lock
-                  className="h-3 w-3 flex-shrink-0 text-muted-foreground"
-                  aria-label="Builtin"
-                />
-              )}
-            </div>
-            {skill.description && (
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                {skill.description}
-              </p>
-            )}
-            {skill.reason && (
-              <p className="mt-1 truncate text-[10px] italic text-muted-foreground/70">
-                {skill.reason}
-              </p>
-            )}
-          </div>
-          <Badge variant="outline" className="flex-shrink-0 text-[10px]">
-            {Math.round(skill.score * 100)}
-          </Badge>
-        </div>
-      </button>
-    </li>
   );
 }

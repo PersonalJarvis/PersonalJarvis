@@ -116,7 +116,25 @@ def _skill_to_summary(s: Skill) -> dict[str, Any]:
         # it, which is the whole difference between tolerant and sloppy.
         "portable": s.portable,
         "ignored_fields": list(s.ignored_fields),
+        # When SKILL.md was last written, for the "Last updated" column of the
+        # desktop list. Null when the file cannot be stat-ed (a skill parsed
+        # from memory in tests, or one deleted between list and stat).
+        "updated_at": _skill_updated_at(s),
     }
+
+
+def _skill_updated_at(s: Skill) -> str | None:
+    """ISO-8601 UTC stamp of the SKILL.md mtime, or None when unavailable."""
+    from datetime import UTC, datetime
+
+    path = getattr(s, "path", None)
+    if path is None:
+        return None
+    try:
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(mtime, tz=UTC).isoformat(timespec="seconds")
 
 
 def _skill_to_detail(s: Skill) -> dict[str, Any]:

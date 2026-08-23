@@ -50,10 +50,14 @@ export function SkillUploadDialog({
   open,
   onClose,
   onInstalled,
+  initialMode = "choose",
 }: {
   open: boolean;
   onClose: () => void;
   onInstalled?: (name: string) => void;
+  /** Which step the dialog opens on — the "Add ▾" menu jumps straight to the
+   *  link importer; the default lets the owner choose. */
+  initialMode?: Mode;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -80,7 +84,8 @@ export function SkillUploadDialog({
 
   useEffect(() => {
     if (!open) reset();
-  }, [open, reset]);
+    else setMode(initialMode);
+  }, [open, reset, initialMode]);
 
   const inspect = useCallback(
     async (files: PickedFile[]) => {
