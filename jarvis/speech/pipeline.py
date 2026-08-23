@@ -332,6 +332,32 @@ def _looks_like_long_composition(partial: str | None) -> bool:
     return len(partial.split()) >= _LONG_COMPOSITION_MIN_WORDS
 
 
+#: The local endpointer's own window, used whenever the config asks for
+#: "automatic" (``speech.vad_silence_ms = 0``). A realtime transport resolves
+#: automatic to the PROVIDER's factory turn detection; a local VAD has no
+#: vendor to defer to, so it keeps the 1.5 s rule this pipeline shipped with.
+_LOCAL_SILENCE_WINDOW_DEFAULT_MS = 1500
+
+
+def _local_silence_window_ms(ms: int | None) -> int:
+    """Resolve a configured silence window for the LOCAL VAD.
+
+    0 / None / a negative value all mean "automatic" and resolve to the
+    pipeline's own window; anything else is an explicit user choice and is
+    clamped to the config field's bounds so a typo cannot cut a talker off
+    between words.
+    """
+    try:
+        raw = int(ms) if ms is not None else 0
+    except (TypeError, ValueError):
+        # A non-numeric config value is a typo, not a fault: the built-in
+        # window keeps endpointing usable.
+        raw = 0
+    if raw <= 0:
+        return _LOCAL_SILENCE_WINDOW_DEFAULT_MS
+    return max(500, min(5000, raw))
+
+
 def _should_extend_silence_for_composition(partial: str | None) -> bool:
     """Single entry point for the adaptive-patience decision: widen the silence
     window when the user is composing a delegation OR any long / open-ended
@@ -2616,7 +2642,11 @@ class SpeechPipeline:
         self._pending_context_flush_s = max(0.5, float(pending_context_flush_s))
         self._pending_flush_task: asyncio.Task[None] | None = None
         self._vad = SileroEndpointer(
-            silence_ms=vad_silence_ms,
+            # 0 is the config's "automatic" setting: every voice engine keeps
+            # its own factory timing, and for a local VAD that IS this
+            # pipeline's built-in window — a local endpointer has no vendor
+            # default to inherit, so "automatic" resolves to the 1.5 s rule.
+            silence_ms=_local_silence_window_ms(vad_silence_ms),
             # Hard-cap of one captured chunk. The old 2026-05-09 value of 8 s
             # assumed a cap-hit DISPATCHED (so it "felt too long"), but a
             # ``max_utterance`` cut now carry-merges (``FORCED_CUT_REASONS`` →
@@ -3231,7 +3261,7 @@ class SpeechPipeline:
         vad = getattr(self, "_vad", None)
         setter = getattr(vad, "set_silence_window_ms", None)
         if callable(setter):
-            setter(int(ms))
+            setter(_local_silence_window_ms(ms))
 
     def set_tts_volume(self, volume: float) -> None:
         """Live-apply a new master TTS output volume (0.0–1.0) — no restart.

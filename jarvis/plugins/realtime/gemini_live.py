@@ -1166,7 +1166,10 @@ class GeminiLiveProvider:
         # silence window. The user's Thinking pause (``turn_pause_ms``, the
         # same Settings value the classic pipeline endpoints on) is folded in
         # here; an explicit ``silence_duration_ms`` override still wins, and
-        # with neither set Gemini keeps deciding turn ends on its own timing.
+        # with neither set — the DEFAULT since 2026-08-23 — Gemini keeps
+        # deciding turn ends on its own timing, which is the whole point: a
+        # window layered on top of native endpointing made every finished
+        # sentence wait twice as long as the vendor's own client does.
         # A user who resumes inside the window continues the SAME activity —
         # the words append, nothing is submitted twice (2026-08-18).
         silence_ms = getattr(cfg, "silence_duration_ms", None) or getattr(

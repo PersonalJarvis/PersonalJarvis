@@ -179,14 +179,58 @@ async def test_pause_reaches_every_provider_family_as_turn_pause_ms():
         await session.end(reason="test")
 
 
+@pytest.mark.asyncio
+async def test_automatic_sends_no_turn_detection_to_the_provider():
+    """The default (0 = automatic) leaves the provider's factory timing alone.
+
+    Neither the window nor the end-of-speech patience travels, so a transport
+    that endpoints natively answers on exactly the boundary its own API ships
+    with. A window layered on top of that detection made every finished
+    sentence wait audibly longer than the vendor's own client (maintainer
+    2026-08-23) — the patience of 2026-08-18 is now an opt-in.
+    """
+    provider = _Provider("factory-timing")
+    session = _build(provider, pause_ms=0, session_id="automatic-pause")
+
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    try:
+        assert provider.opened_with.turn_pause_ms is None
+        assert provider.opened_with.silence_duration_ms is None
+        assert provider.opened_with.end_of_speech_sensitivity is None
+    finally:
+        await session.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_pause_carries_its_patience_with_it():
+    """Opting into a window opts into the sensitivity that protects it.
+
+    Half the intent is the worst outcome: the wait without the protection it
+    was added for (a mid-sentence pause read as end-of-turn, live 2026-08-13).
+    """
+    provider = _Provider("patient")
+    session = _build(provider, pause_ms=2_500, session_id="explicit-pause")
+
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    try:
+        assert provider.opened_with.turn_pause_ms == 2_500
+        assert provider.opened_with.end_of_speech_sensitivity == "low"
+    finally:
+        await session.end(reason="test")
+
+
 def test_pause_is_clamped_to_the_settings_bounds():
     session = _build(_Provider("p"), pause_ms=99_999, session_id="clamp-high")
     assert session._turn_pause_ms() == session_module._TURN_PAUSE_MAX_MS
     session = _build(_Provider("p"), pause_ms=1, session_id="clamp-low")
     assert session._turn_pause_ms() == session_module._TURN_PAUSE_MIN_MS
+    # No speech config at all, and an explicit zero, both mean AUTOMATIC: the
+    # provider's own turn detection decides and nothing is layered on top.
     session = _build(_Provider("p"), pause_ms=1_500, session_id="clamp-none")
     session._config = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
-    assert session._turn_pause_ms() == session_module._TURN_PAUSE_DEFAULT_MS
+    assert session._turn_pause_ms() is None
+    session = _build(_Provider("p"), pause_ms=0, session_id="clamp-auto")
+    assert session._turn_pause_ms() is None
 
 
 @pytest.mark.asyncio

@@ -4,14 +4,21 @@ import { useCallback, useEffect, useState } from "react";
 export interface SilenceWindowConfig {
   ms: number;
   default: number;
+  /** 0 — the automatic setting, where every voice mode keeps its factory timing. */
   min: number;
   max: number;
+  /** Lowest value that is a real window rather than "automatic". */
+  manual_min: number;
+  /** True while the current value IS the automatic setting. */
+  automatic: boolean;
 }
 
 export interface SilenceWindowSaveResult {
   ok: boolean;
   ms: number;
   default: number;
+  manual_min: number;
+  automatic: boolean;
   persisted: boolean;
   applied_live: boolean;
   restart_required: boolean;

@@ -624,7 +624,9 @@ async def test_thinking_pause_becomes_geminis_silence_window(
     back once the turn is closed — so "wait for a clear pause before you take
     the turn" (maintainer 2026-08-18) can only be Gemini's own silence window.
     A user who resumes inside it continues the same activity: the words
-    append, nothing is submitted twice. LOW sensitivity stays alongside.
+    append, nothing is submitted twice. LOW sensitivity travels alongside it —
+    the session sends both or neither, because the window without the patience
+    is the wait with none of the protection it was added for.
     """
     from google.genai import types
 
@@ -632,7 +634,9 @@ async def test_thinking_pause_becomes_geminis_silence_window(
     provider = GeminiLiveProvider(api_key="test-key")
 
     session = await provider.open_session(
-        RealtimeSessionConfig(voice="Puck", turn_pause_ms=1_500)
+        RealtimeSessionConfig(
+            voice="Puck", turn_pause_ms=1_500, end_of_speech_sensitivity="low"
+        )
     )
     _selected, config = holder["client"].aio.live.connect_calls[0]
     detection = config.realtime_input_config.automatic_activity_detection
@@ -661,27 +665,24 @@ async def test_explicit_silence_window_outranks_the_thinking_pause(
 
 
 @pytest.mark.asyncio
-async def test_default_config_asks_gemini_to_sit_through_a_pause(
+async def test_default_config_sends_no_turn_detection_at_all(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without a configured pause the session is patient, not fixed-windowed.
+    """The default session leaves Gemini's factory turn detection alone.
 
-    Live 2026-08-13 16:46/16:47: Gemini's own default read a mid-sentence
-    pause as end-of-turn and a coding pane was briefed with a quarter of the
-    sentence. LOW fixes that; with no ``turn_pause_ms`` and no explicit
-    override, silence_duration_ms stays unset (the provider's own timing).
+    Nothing is sent — no window, no sensitivity, no activity-detection block
+    — so the turn ends exactly when Gemini decides it does, which is the
+    latency a caller gets straight from the vendor's API. A 1.5 s window
+    layered on top of native endpointing made every finished sentence wait
+    audibly longer than the vendor's own client (maintainer 2026-08-23); the
+    patience of 2026-08-13 is now an explicit opt-in, not the default.
     """
-    from google.genai import types
-
     holder = _patch_genai_client(monkeypatch)
     provider = GeminiLiveProvider(api_key="test-key")
 
     session = await provider.open_session(RealtimeSessionConfig(voice="Puck"))
     _selected, config = holder["client"].aio.live.connect_calls[0]
-    detection = config.realtime_input_config.automatic_activity_detection
-    assert detection.end_of_speech_sensitivity == types.EndSensitivity.END_SENSITIVITY_LOW
-    assert detection.silence_duration_ms is None
-    assert detection.disabled is False
+    assert config.realtime_input_config is None
     await session.close()
 
 

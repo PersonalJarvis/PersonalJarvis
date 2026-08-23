@@ -2830,13 +2830,42 @@ class SpeechConfig(BaseModel):
 
     completeness: CompletenessConfig = Field(default_factory=CompletenessConfig)
 
-    # Voice endpoint silence window: how long the VAD waits in silence before
-    # treating an utterance as finished. User-tunable "think buffer" (desktop
-    # Settings → Voice slider). Range-clamped 500–5000 ms; default 1500 ms
-    # ("1.5s rule"). Read at SpeechPipeline construction and live-applied via the
+    # Voice endpoint silence window: how long a voice engine waits in silence
+    # before treating an utterance as finished. User-tunable "think buffer"
+    # (desktop Settings → Voice slider).
+    #
+    # 0 = AUTOMATIC and the default: every engine keeps its own factory turn
+    # detection. For the classic pipeline that is the built-in 1.5 s window; for
+    # a realtime transport it means Jarvis sends NO turn-detection override at
+    # all, so the provider ends the turn on its own timing — the same latency a
+    # caller gets straight from the vendor's API. A fixed window layered on top
+    # of a provider that already endpoints natively made every finished
+    # sentence wait twice (maintainer, 2026-08-23: "it should just be what the
+    # API does out of the box").
+    #
+    # Any other value (500–5000 ms) is an EXPLICIT patience override and
+    # applies to both engines: the classic VAD uses it directly, and a realtime
+    # session forwards it as the provider's silence window plus the "read a
+    # pause as a pause" sensitivity. That is the 2026-08-18 behaviour, kept as
+    # an opt-in for a user who would rather wait than be cut off mid-sentence.
+    #
+    # Read at SpeechPipeline construction and live-applied via the
     # /api/settings/silence-window route. extra="allow" already on SpeechConfig
     # keeps the self-mod pre-validate pipeline safe (AP-16).
-    vad_silence_ms: int = Field(default=1500, ge=500, le=5000)
+    vad_silence_ms: int = Field(default=0, ge=0, le=5000)
+
+    @field_validator("vad_silence_ms")
+    @classmethod
+    def _bound_silence_window(cls, value: int) -> int:
+        """0 stays 0 (automatic); anything positive lands inside 500–5000 ms.
+
+        The gap below 500 ms is not a valid patience setting — it would cut a
+        talker off between words — so a stray small value is raised to the
+        floor rather than rejected: a typo must never make the app unbootable.
+        """
+        if value <= 0:
+            return 0
+        return max(500, min(5000, int(value)))
 
 
 #: Every language the speech recogniser can transcribe, as ISO-639-1 codes (a

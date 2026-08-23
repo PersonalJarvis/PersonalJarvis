@@ -1388,12 +1388,15 @@ def set_realtime_fallback_provider(provider: str, *, path: Path = DEFAULT_CONFIG
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
 
-    Clamps to the same 500–5000 ms bounds the config field enforces, so a stray
-    value can never wedge endpointing. TOML-only by design (not in the
-    drift-guard's reference snapshot, like :func:`set_overlay_style`); the
-    Settings route applies the change live, this persists the boot default.
+    Clamps exactly as the config field does: 0 means AUTOMATIC (every voice
+    engine keeps its own factory turn detection) and survives untouched, while
+    any positive value lands inside 500–5000 ms, so a stray value can never
+    wedge endpointing. TOML-only by design (not in the drift-guard's reference
+    snapshot, like :func:`set_overlay_style`); the Settings route applies the
+    change live, this persists the boot default.
     """
-    clamped = max(500, min(5000, int(ms)))
+    raw = int(ms)
+    clamped = 0 if raw <= 0 else max(500, min(5000, raw))
     _patch_table(path, "speech", "vad_silence_ms", clamped)
 
 

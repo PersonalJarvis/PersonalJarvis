@@ -10,10 +10,33 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function mockGet(ms = 1500) {
+function mockGet(ms = 0) {
   fetchMock.mockResolvedValueOnce({
     ok: true,
-    json: async () => ({ ms, default: 1500, min: 500, max: 5000 }),
+    json: async () => ({
+      ms,
+      default: 0,
+      min: 0,
+      max: 5000,
+      manual_min: 500,
+      automatic: ms === 0,
+    }),
+  });
+}
+
+function mockPut(ms: number) {
+  fetchMock.mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({
+      ok: true,
+      ms,
+      default: 0,
+      manual_min: 500,
+      automatic: ms === 0,
+      persisted: true,
+      applied_live: true,
+      restart_required: false,
+    }),
   });
 }
 
@@ -27,15 +50,21 @@ describe("SilenceWindowGroup", () => {
     expect(screen.getByText("1.5 s")).toBeTruthy();
   });
 
+  it("labels the default as automatic rather than a duration", async () => {
+    // 0 is the shipped default: every voice engine keeps its factory timing,
+    // so the slider must not imply a 0.0 s window (maintainer 2026-08-23).
+    mockGet(0);
+    render(<SilenceWindowGroup />);
+    const slider = (await screen.findByRole("slider")) as HTMLInputElement;
+    expect(slider.value).toBe("0");
+    expect(screen.queryByText("0.0 s")).toBeNull();
+    // The word appears in the value badge and again in the caption below it.
+    expect(screen.getAllByText(/automat/i).length).toBeGreaterThan(0); // i18n-allow: multilingual label stem
+  });
+
   it("sends one PUT on commit, not per tick", async () => {
     mockGet(1500);
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        ok: true, ms: 2500, default: 1500,
-        persisted: true, applied_live: true, restart_required: false,
-      }),
-    });
+    mockPut(2500);
     render(<SilenceWindowGroup />);
     const slider = (await screen.findByRole("slider")) as HTMLInputElement;
     // drag (onChange) updates the label but does not PUT yet
@@ -49,19 +78,30 @@ describe("SilenceWindowGroup", () => {
     expect(JSON.parse(putCall[1].body)).toMatchObject({ ms: 2500 });
   });
 
-  it("reset commits 1500", async () => {
+  it("snaps the dead gap below the floor to the nearer end", async () => {
+    // Between automatic (0) and the lowest real window (500) there is nothing
+    // valid, so a drag through the gap must land on one side or the other —
+    // never on a value the backend would have to correct behind the user.
+    mockGet(1500);
+    mockPut(500);
+    render(<SilenceWindowGroup />);
+    const slider = (await screen.findByRole("slider")) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: "100" } });
+    expect(slider.value).toBe("0"); // nearer to automatic
+    fireEvent.change(slider, { target: { value: "400" } });
+    expect(slider.value).toBe("500"); // nearer to the floor
+    fireEvent.mouseUp(slider);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ ms: 500 });
+  });
+
+  it("reset commits the automatic default", async () => {
     mockGet(3000);
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        ok: true, ms: 1500, default: 1500,
-        persisted: true, applied_live: true, restart_required: false,
-      }),
-    });
+    mockPut(0);
     render(<SilenceWindowGroup />);
     await screen.findByRole("slider");
     fireEvent.click(screen.getByRole("button", { name: /reset|zurück|restablecer/i })); // i18n-allow: multilingual button-name regex
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ ms: 1500 });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ ms: 0 });
   });
 });

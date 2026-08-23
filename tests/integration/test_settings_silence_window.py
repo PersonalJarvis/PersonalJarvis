@@ -44,7 +44,14 @@ def _no_toml_write(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 def test_get_returns_current_and_bounds(server: WebServer) -> None:
     with TestClient(server.app) as client:
         body = client.get("/api/settings/silence-window").json()
-        assert body == {"ms": 1500, "default": 1500, "min": 500, "max": 5000}
+        assert body == {
+            "ms": 0,
+            "default": 0,
+            "min": 0,
+            "max": 5000,
+            "manual_min": 500,
+            "automatic": True,
+        }
 
 
 def test_put_persists_and_applies_live(server: WebServer) -> None:
@@ -67,11 +74,32 @@ def test_put_out_of_range_is_rejected(server: WebServer) -> None:
         # Body validation (Pydantic Field ge/le) → FastAPI 422; both 400 and 422
         # are correct "rejected" semantics.
         assert client.put(
-            "/api/settings/silence-window", json={"ms": 100}
+            "/api/settings/silence-window", json={"ms": -1}
         ).status_code in (400, 422)
         assert client.put(
             "/api/settings/silence-window", json={"ms": 9000}
         ).status_code in (400, 422)
+
+
+def test_put_snaps_the_gap_below_the_floor_up(server: WebServer) -> None:
+    """100 ms is inside the dead gap a drag passes through, not a choice.
+
+    It snaps up to the lowest real window instead of being rejected, so a
+    slider release mid-gap can never fail the save.
+    """
+    with TestClient(server.app) as client:
+        body = client.put("/api/settings/silence-window", json={"ms": 100}).json()
+        assert body["ms"] == 500
+        assert body["automatic"] is False
+
+
+def test_put_automatic_is_accepted(server: WebServer) -> None:
+    """0 means "let every engine use its own factory timing" — a valid save."""
+    with TestClient(server.app) as client:
+        body = client.put("/api/settings/silence-window", json={"ms": 0}).json()
+        assert body["ms"] == 0
+        assert body["automatic"] is True
+        assert server.app.state.config.speech.vad_silence_ms == 0
 
 
 def test_put_without_pipeline_reports_restart_required(server: WebServer) -> None:

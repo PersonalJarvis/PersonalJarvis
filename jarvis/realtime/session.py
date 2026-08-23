@@ -425,7 +425,13 @@ _UTTERANCE_TAIL_SETTLE_S = 2.5
 # receives the same value as its native silence window instead
 # (``RealtimeSessionConfig.turn_pause_ms``). Maintainer directive
 # 2026-08-18: "wait for a clear pause; when I keep talking, append."
-_TURN_PAUSE_DEFAULT_MS = 1_500
+#
+# There is no DEFAULT window any more: unset (``speech.vad_silence_ms = 0``)
+# means automatic, and automatic means the provider's factory turn detection
+# decides alone — nothing is sent to it and nothing is held back here. These
+# bounds apply only to a value the user chose deliberately (maintainer
+# 2026-08-23: the layered window made every finished sentence wait twice as
+# long as the vendor's own client).
 _TURN_PAUSE_MIN_MS = 500
 _TURN_PAUSE_MAX_MS = 5_000
 # How often the pause waiter re-checks the microphone. Fine enough that a
@@ -3620,6 +3626,9 @@ class RealtimeVoiceSession:
             _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S, declared_total
         )
         last_failed_provider = ""
+        # Read the Thinking pause ONCE per open so the window and the
+        # sensitivity that belongs to it can never disagree mid-handshake.
+        turn_pause_ms = self._turn_pause_ms()
         for provider in self._providers:
             if not self._provider_is_available(provider):
                 continue
@@ -3667,7 +3676,16 @@ class RealtimeVoiceSession:
                 # transport ignores it because THIS session waits out the
                 # same pause on the microphone before requesting the response
                 # (``_turn_pause_settled``). One setting, both engines.
-                turn_pause_ms=self._turn_pause_ms(),
+                #
+                # None is the DEFAULT and means factory turn detection: no
+                # window, and no end-of-speech patience either. Both knobs
+                # move together because they are one intent — "be patient
+                # with my pauses" — and half of it is the worst of both: the
+                # wait without the protection it was added for. Sending
+                # neither is exactly what a caller gets from the vendor's own
+                # API, which is what the maintainer asked for on 2026-08-23.
+                turn_pause_ms=turn_pause_ms,
+                end_of_speech_sensitivity="low" if turn_pause_ms else None,
                 tools=self._declared_tools(),
                 # Empty at the first open of a call; after an in-place
                 # transport rebuild (or a mid-call cross-family fallback) it
@@ -4061,23 +4079,33 @@ class RealtimeVoiceSession:
     # The Thinking pause: how long the user may pause before the turn is taken
     # ------------------------------------------------------------------
 
-    def _turn_pause_ms(self) -> int:
-        """The user's Thinking pause in ms, read live from the config.
+    def _turn_pause_ms(self) -> int | None:
+        """The user's Thinking pause in ms, or None for the provider's own timing.
 
         The Settings → Voice slider writes ``speech.vad_silence_ms`` into the
         running config, so a manual-response transport picks a new value up on
         the very next turn; an automatic-response transport bakes it into its
-        native turn detection at open and follows on the next call. Clamped to
-        the field's own bounds — a stray value can slow a call, never wedge it.
+        native turn detection at open and follows on the next call.
+
+        ZERO — the default — means AUTOMATIC and returns None: no window is
+        sent to the provider and none is waited out here, so the turn ends
+        exactly when the provider's factory detection says it does. A window
+        layered on top of a transport that already endpoints natively made
+        every finished sentence wait twice, and the extra wait was audible
+        (maintainer, 2026-08-23). A positive value is an explicit patience
+        override and is clamped to the field's own bounds — a stray value can
+        slow a call, never wedge it.
         """
         speech_cfg = getattr(self._config, "speech", None)
         raw = getattr(speech_cfg, "vad_silence_ms", None)
         try:
-            ms = int(raw) if raw is not None else _TURN_PAUSE_DEFAULT_MS
+            ms = int(raw) if raw is not None else 0
         except (TypeError, ValueError):
             # A non-numeric slider value is a config typo, not a fault: the
-            # default keeps the call usable, and the clamp below bounds it.
-            ms = _TURN_PAUSE_DEFAULT_MS
+            # provider's own timing keeps the call usable and fast.
+            ms = 0
+        if ms <= 0:
+            return None
         return max(_TURN_PAUSE_MIN_MS, min(_TURN_PAUSE_MAX_MS, ms))
 
     def _turn_pause_settled(self) -> bool:
@@ -4104,11 +4132,16 @@ class RealtimeVoiceSession:
         """
         if self._user_speech_active:
             return False
+        pause_ms = self._turn_pause_ms()
+        if pause_ms is None:
+            # Automatic: the provider's own end-of-turn detection is the only
+            # authority, so there is nothing here to wait for.
+            return True
         stamp = self._last_voiced_input_monotonic
         if not stamp:
             return True
         now = time.monotonic()
-        if (now - stamp) < self._turn_pause_ms() / 1000.0:
+        if (now - stamp) < pause_ms / 1000.0:
             return False
         stream_age = now - self._last_input_frame_monotonic
         return not (_MIC_FRAME_STALL_S < stream_age < _MIC_STREAM_GONE_S)
@@ -4139,7 +4172,10 @@ class RealtimeVoiceSession:
             max(0.0, time.monotonic() - self._last_voiced_input_monotonic)
             if self._last_voiced_input_monotonic
             else 0.0,
-            self._turn_pause_ms() / 1000.0,
+            # Unreachable with an automatic pause (a settled pause never
+            # reaches this hold), but the log must not be the thing that
+            # raises if that ever changes.
+            (self._turn_pause_ms() or 0) / 1000.0,
         )
         self._turn_pause_waiter = asyncio.create_task(
             self._request_native_response_after_pause(turn_id),

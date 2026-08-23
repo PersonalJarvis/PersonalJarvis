@@ -110,14 +110,17 @@ class RealtimeSessionConfig:
     silence_duration_ms: int | None = None
     # How eagerly the provider's native VAD may declare the user finished.
     # "low" = read a pause as a pause; "high" = the provider's own eager
-    # default; None = send nothing and inherit whatever the provider ships.
-    # End-of-speech sensitivity changes only how a PAUSE is interpreted, so a
-    # finished short sentence still commits immediately while a hesitation
-    # inside a long order no longer ends the turn (live 2026-08-13
-    # 16:46/16:47: a spoken brief for a coding pane was closed twice
-    # mid-sentence and delivered truncated). Providers without the concept
-    # ignore it.
-    end_of_speech_sensitivity: str | None = "low"
+    # default; None — the DEFAULT — = send nothing and inherit whatever the
+    # provider ships. End-of-speech sensitivity changes only how a PAUSE is
+    # interpreted, so a finished short sentence still commits immediately
+    # while a hesitation inside a long order no longer ends the turn (live
+    # 2026-08-13 16:46/16:47: a spoken brief for a coding pane was closed
+    # twice mid-sentence and delivered truncated). It travels WITH
+    # ``turn_pause_ms``: the session sends "low" only when the user has asked
+    # for a patience window, because patience without the window is a
+    # half-measure and the window without patience is the wait with none of
+    # its protection. Providers without the concept ignore it.
+    end_of_speech_sensitivity: str | None = None
     # How long the user may PAUSE before their turn is taken — the Settings
     # "Thinking pause" (SpeechConfig.vad_silence_ms), one value for both voice
     # engines since 2026-08-18. Which lever applies is a transport
@@ -142,7 +145,13 @@ class RealtimeSessionConfig:
     # asked for the opposite — wait for a clear pause, and keep listening
     # while the sentence continues — so the pause is back, as the SAME
     # setting the classic pipeline uses, adjustable in Settings → Voice.
-    # None = the provider's own timing (tests, callers without a config).
+    # None — the DEFAULT — = the provider's own timing: no window is sent and
+    # none is waited out locally, so a turn ends exactly when the provider's
+    # factory detection says it does. Layering a window on a transport that
+    # already endpoints natively made every finished sentence wait twice and
+    # the extra wait was audible against the vendor's own client, so the
+    # Settings slider now starts at "automatic" and only an explicit value
+    # travels (maintainer, 2026-08-23).
     turn_pause_ms: int | None = None
     tools: tuple[dict[str, Any], ...] = ()
     # Bounded transcript of the call so far, oldest first, as

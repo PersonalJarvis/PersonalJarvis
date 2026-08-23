@@ -3129,38 +3129,63 @@ async def put_wiki_provider(body: WikiProviderBody, request: Request) -> dict[st
 # PUT to change. Persisted to jarvis.toml [speech].vad_silence_ms AND live-applied
 # to the running SpeechPipeline (set_silence_window_ms → SileroEndpointer), so a
 # change takes effect immediately without a restart; a headless/down pipeline
-# falls back to "applies on next start". Range 500–5000 ms, default 1500.
+# falls back to "applies on next start".
+#
+# 0 = AUTOMATIC and is the default: every voice engine keeps its own factory
+# turn detection — the local VAD its 1.5 s rule, a realtime provider whatever
+# its API does out of the box (no override is sent at all). A positive value
+# is an explicit patience override and lives in 500–5000 ms.
 # ---------------------------------------------------------------------------
 
+_SILENCE_WINDOW_AUTOMATIC = 0
 _SILENCE_WINDOW_MIN = 500
 _SILENCE_WINDOW_MAX = 5000
-_SILENCE_WINDOW_DEFAULT = 1500
+_SILENCE_WINDOW_DEFAULT = _SILENCE_WINDOW_AUTOMATIC
+
+
+def _normalise_silence_window_ms(ms: int) -> int:
+    """0 stays automatic; anything positive lands inside the slider's bounds."""
+    raw = int(ms)
+    if raw <= 0:
+        return _SILENCE_WINDOW_AUTOMATIC
+    return max(_SILENCE_WINDOW_MIN, min(_SILENCE_WINDOW_MAX, raw))
 
 
 class SilenceWindowBody(BaseModel):
-    ms: int = Field(..., ge=_SILENCE_WINDOW_MIN, le=_SILENCE_WINDOW_MAX)
+    # 0 is accepted alongside the 500-5000 band: it is the automatic setting,
+    # not a 0 ms window. Values between the two are snapped up to the floor by
+    # the normaliser rather than rejected — the slider can only produce them
+    # while a drag passes through the gap.
+    ms: int = Field(..., ge=_SILENCE_WINDOW_AUTOMATIC, le=_SILENCE_WINDOW_MAX)
     persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
 
 
 def _current_silence_window_ms(request: Request) -> int:
     cfg = _config(request)
     speech = getattr(cfg, "speech", None)
-    return int(getattr(speech, "vad_silence_ms", _SILENCE_WINDOW_DEFAULT))
+    return _normalise_silence_window_ms(
+        int(getattr(speech, "vad_silence_ms", _SILENCE_WINDOW_DEFAULT))
+    )
 
 
 @router.get("/silence-window")
 async def get_silence_window(request: Request) -> dict[str, object]:
+    ms = _current_silence_window_ms(request)
     return {
-        "ms": _current_silence_window_ms(request),
+        "ms": ms,
         "default": _SILENCE_WINDOW_DEFAULT,
-        "min": _SILENCE_WINDOW_MIN,
+        "min": _SILENCE_WINDOW_AUTOMATIC,
         "max": _SILENCE_WINDOW_MAX,
+        # The lowest value that is a real window rather than the automatic
+        # setting, so the slider knows where the gap it must skip ends.
+        "manual_min": _SILENCE_WINDOW_MIN,
+        "automatic": ms == _SILENCE_WINDOW_AUTOMATIC,
     }
 
 
 @router.put("/silence-window")
 async def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[str, object]:
-    ms = int(body.ms)  # already range-validated by the Pydantic Field
+    ms = _normalise_silence_window_ms(body.ms)
 
     # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.
     cfg = _config(request)
@@ -3197,8 +3222,13 @@ async def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[
         "ok": True,
         "ms": ms,
         "default": _SILENCE_WINDOW_DEFAULT,
+        "manual_min": _SILENCE_WINDOW_MIN,
+        "automatic": ms == _SILENCE_WINDOW_AUTOMATIC,
         "persisted": persisted,
         "applied_live": applied_live,
+        # A realtime call reads the value when it opens, so the classic
+        # pipeline's live-apply is the only thing a restart could be needed
+        # for; an automatic setting needs nothing beyond the next turn.
         "restart_required": not applied_live,
     }
 

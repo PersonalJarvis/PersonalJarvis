@@ -9,6 +9,18 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A voice call answers on the provider's own timing again.** The Thinking
+  pause now starts at *Automatic*, and automatic means Jarvis sends no
+  turn-detection override at all: a realtime model ends the turn exactly when
+  its own API does, and the classic pipeline keeps its 1.5 s rule. The fixed
+  1.5 s window added on 2026-08-18 sat on top of turn detection the provider
+  already does, so every finished sentence waited twice and a call felt
+  noticeably slower than the vendor's own client. Waiting longer is still one
+  click away: any value on the slider sends both the window and the
+  "read a pause as a pause" sensitivity that protects it.
+
 ### Added
 
 - **Grok Build in the Open-beside menu.** The official `grok` CLI is now a
