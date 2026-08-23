@@ -2115,11 +2115,30 @@ async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[st
     Legacy values from a not-yet-rebuilt client (``whisper_bar`` before the
     rename, ``orb`` before the procedural renderer was removed) are normalized
     rather than rejected.
+
+    Only the default instance of the app answers this (``jarvis.core.instance``):
+    a dev instance beside it draws no overlay, and both read ONE ``jarvis.toml``
+    — a pick made there would silently change what the default app shows on its
+    next restart (the 2026-08-23 "my bar is gone" case). It answers 409 and says
+    where the switch lives instead.
     """
     style = normalize_overlay_style(body.style)
     if style is None:
         raise HTTPException(
             status_code=400, detail=f"Unknown overlay style '{body.style.strip()}'"
+        )
+
+    from jarvis.core.instance import current_instance
+
+    instance = current_instance()
+    if not instance.owns_ambient_duties:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The on-screen overlay belongs to the default app; the {instance.label} "
+                "instance draws none and does not change the shared setting. Switch the "
+                "style in the regular Personal Jarvis app."
+            ),
         )
 
     # Best-effort in-memory cfg update so a later read agrees pre-restart.

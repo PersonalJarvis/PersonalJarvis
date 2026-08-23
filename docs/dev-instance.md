@@ -19,6 +19,7 @@ working on the app from inside the app.
 | Window title / taskbar / tray | Personal Jarvis, mascot icon | Personal Jarvis **Dev**, mascot with a yellow **DEV** tag, own taskbar group, own tray entry; the sidebar shows a small **DEV** badge |
 | Wake word, global hotkeys | as configured | **off** — the microphone and the key combos belong to the default app (the in-window mic button and chat still work) |
 | Chat channels (Telegram/Discord), autostart | as configured | **off** — a second poller on the same bot token would collide; the dev app never touches the login autostart entry |
+| On-screen overlay (Jarvis Bar / orb) | as configured | **off** — the dev app draws no bar or orb and its Settings refuse to switch the style (HTTP 409): both apps read ONE `jarvis.toml`, and a second bar on the same spot that someone then switched off once took the default app's bar away on its next restart (2026-08-23) |
 | Agentic-IDE resume offer | `last_session.json` | `last_session.dev.json` — a restarted dev app never offers to resume panes that are alive in the default app |
 
 ## How it is selected
@@ -39,7 +40,9 @@ else asks it (`current_instance()`): `jarvis.core.config.DATA_DIR`,
 `load_config` (port offsets, `memory.data_dir`), `jarvis.ui.icon_utils` (AUMID,
 shortcut, branded exe, icon), `jarvis.ui.desktop_app.WINDOW_TITLE`, the tray,
 `jarvis.setup.state`, the Agentic-IDE resume store, `SpeechPipeline` (wake word,
-hotkeys), the Friends stack (channels), and the launcher (autostart).
+hotkeys), the Friends stack (channels), the launcher (autostart), and
+`jarvis.ui.desktop_app.boot_overlay_style` + the overlay-style settings route
+(on-screen overlay).
 
 ## Shortcuts
 

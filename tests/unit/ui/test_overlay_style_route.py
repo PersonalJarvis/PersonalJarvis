@@ -87,3 +87,37 @@ def test_put_without_desktop_app_persists_but_needs_restart(monkeypatch):
     body = r.json()
     assert body["applied_live"] is False
     assert body["restart_required"] is True
+
+
+def test_put_in_a_dev_instance_is_refused_and_touches_nothing(monkeypatch):
+    # Both instances read ONE jarvis.toml. A pick made in the dev app would
+    # silently change what the default app shows on its next restart — the
+    # 2026-08-23 "my bar is gone" case — so the dev instance answers 409, persists
+    # nothing and never reaches the live swap.
+    import jarvis.core.config_writer as cw
+    from jarvis.core.instance import INSTANCE_ENV_VAR
+
+    monkeypatch.setenv(INSTANCE_ENV_VAR, "dev")
+    persisted = {}
+    monkeypatch.setattr(
+        cw, "set_overlay_style", lambda style, **k: persisted.setdefault("v", style)
+    )
+    swapped = {}
+    desktop = SimpleNamespace(swap_overlay=lambda style: swapped.setdefault("v", style))
+
+    r = _client(orb_style="jarvis_bar", desktop=desktop).put(
+        "/api/settings/overlay-style", json={"style": "none", "persist": True}
+    )
+    assert r.status_code == 409
+    assert "default app" in r.json()["detail"]
+    assert persisted == {}
+    assert swapped == {}
+
+
+def test_get_in_a_dev_instance_still_reads_the_shared_style(monkeypatch):
+    from jarvis.core.instance import INSTANCE_ENV_VAR
+
+    monkeypatch.setenv(INSTANCE_ENV_VAR, "dev")
+    r = _client(orb_style="jarvis_bar").get("/api/settings/overlay-style")
+    assert r.status_code == 200
+    assert r.json()["style"] == "jarvis_bar"

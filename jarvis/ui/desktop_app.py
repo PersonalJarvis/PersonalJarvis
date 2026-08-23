@@ -122,6 +122,22 @@ _REALTIME_WARM_MIN_INTERVAL_S = 20.0
 _BACKEND_MIN_UPTIME_FOR_RECOVERY_S = 120.0
 
 
+def boot_overlay_style(configured: str | None, *, instance: Any | None = None) -> str:
+    """The on-screen overlay style this process boots with.
+
+    The screen is an ambient duty (``jarvis.core.instance``): only the default
+    app draws the Jarvis Bar / orb. A dev instance beside it would put a second
+    bar on the very same spot — and, both apps reading ONE ``jarvis.toml``,
+    switching that duplicate off persisted ``orb_style = "none"`` and took the
+    default app's bar away on its next restart (2026-08-23). So a non-default
+    instance always boots the NullOverlay, at runtime only: the configured
+    value is left exactly as it is for the app that owns it.
+    """
+    configured = configured or "jarvis_bar"
+    identity = instance if instance is not None else current_instance()
+    return configured if identity.owns_ambient_duties else "none"
+
+
 def _local_voice_permission_granted(
     *,
     platform_name: str | None = None,
@@ -3626,8 +3642,17 @@ class DesktopApp:
 
             from jarvis.platform.probes import has_overlay
 
-            orb_style = self.cfg.ui.orb_style or "jarvis_bar"
+            configured_style = self.cfg.ui.orb_style or "jarvis_bar"
+            orb_style = boot_overlay_style(configured_style)
             overlay_ok = has_overlay()
+
+            if orb_style != configured_style:
+                # The screen belongs to the default app (see boot_overlay_style).
+                logger.info(
+                    "On-screen overlay stays with the default app — the {} instance "
+                    "draws none (configured style={}).",
+                    current_instance().label, configured_style,
+                )
 
             if not overlay_ok:
                 # Headless / no display: no surface, no bridge. A later settings

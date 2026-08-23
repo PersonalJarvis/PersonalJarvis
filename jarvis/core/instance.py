@@ -16,8 +16,10 @@ processes cannot share is separated here:
   Windows AppUserModelID / Start-Menu shortcut / branded launcher exe, so the two
   apps never group under one taskbar button and never focus each other's window;
 * the *ambient duties* — only the default instance arms the wake word, the
-  global hotkeys, the chat channels and reconciles autostart. Two apps answering
-  "Hey Jarvis" at once is a defect, not a feature.
+  global hotkeys, the chat channels, reconciles autostart and draws the
+  on-screen overlay (Jarvis Bar / orb). Two apps answering "Hey Jarvis" at
+  once — or two bars stacked on one spot of the screen — is a defect, not a
+  feature.
 
 The instance is chosen by the ``JARVIS_INSTANCE`` environment variable (the
 launcher's ``--instance`` flag sets it before anything else is imported). It is
@@ -109,9 +111,14 @@ class InstanceIdentity:
 
     @property
     def owns_ambient_duties(self) -> bool:
-        """May this instance arm the wake word, global hotkeys, chat channels
-        and autostart? Only the default app does; a second listener on the same
-        microphone / bot token / key combo is a collision, not redundancy."""
+        """May this instance arm the wake word, global hotkeys, chat channels,
+        autostart and the on-screen overlay (Jarvis Bar / orb)? Only the default
+        app does; a second listener on the same microphone / bot token / key
+        combo — or a second bar on the same spot of the screen — is a collision,
+        not redundancy. The overlay is the sharpest case: both instances read
+        ONE ``jarvis.toml``, so a dev app that drew its own bar and then had it
+        switched off wrote ``orb_style = "none"`` into the shared file and took
+        the default app's bar away on its next restart (2026-08-23)."""
         return self.is_default
 
     # ---- naming ---------------------------------------------------------
