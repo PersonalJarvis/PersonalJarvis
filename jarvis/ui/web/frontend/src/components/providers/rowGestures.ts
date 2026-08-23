@@ -1,27 +1,37 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback } from "react";
 import type React from "react";
 
 /**
- * The two pointer gestures a provider row understands.
+ * The one pointer gesture a provider row understands: a click SELECTS it.
  *
- * One click opens or closes the editor body; a double click activates the
- * provider (maintainer request 2026-08-23: "double-click a block anywhere —
- * Realtime, Tool Model, Voice, the agents — and it is selected"). The two
- * have to be told apart, because a double click is delivered as click, click,
- * dblclick: toggling on each click would flash the body open and shut (and
- * mount its panels, which poll) before the activation even fires.
+ * Selecting means two things at once — the editor body opens, and the
+ * provider becomes the active one (maintainer request 2026-08-23: "one
+ * click on a row is enough — the row that is open is the active one"; this
+ * replaced the earlier click-to-open / double-click-to-activate split, which
+ * made every switch a two-gesture affair). The "Use" control still switches
+ * without touching the body.
  *
- * So a single click waits out the double-click window before it toggles, and
- * the second click of a double cancels it. The window is short enough to
- * read as immediate and long enough for a normal double click; keyboard
- * activation (Enter/Space) never waits — it is unambiguous.
+ * The caller decides whether a row can be activated by a click at all: it
+ * passes `onActivate` only for a row that would switch SILENTLY (a key is
+ * saved, the row is not already active, the tier allows the switch). A row
+ * that would only answer with a "save a key first" warning gets no
+ * `onActivate`, so clicking it just opens the key field — which is what that
+ * click was for.
+ *
+ * Click semantics, in order:
+ *   closed row            → open it, then activate (if it can)
+ *   open row, activatable → activate, keep it open (the open row IS the
+ *                           active one; e.g. after a failed switch)
+ *   open row, otherwise   → close it
+ *
+ * A double click is delivered as click, click, dblclick; the second click
+ * (`detail >= 2`) is ignored so a quick double does not open-then-close the
+ * row. No timer, no wait: the first click acts immediately.
  *
  * Clicks on the row's own controls — the Use radio, a button, a link, an
  * input, or anything marked `data-agent-card-control` — belong to those
  * controls and are ignored here.
  */
-const DOUBLE_CLICK_WINDOW_MS = 220;
-
 const CONTROL_SELECTOR =
   "input, label, button, a, select, textarea, summary, [data-agent-card-control]";
 
@@ -30,54 +40,40 @@ export function isRowControlTarget(target: EventTarget | null): boolean {
 }
 
 export function useRowGestures({
+  expanded,
   onToggle,
   onActivate,
 }: {
+  /** Whether the body is currently open. */
+  expanded: boolean;
   /** Open/close the body; absent when the row has nothing to open. */
   onToggle?: () => void;
-  /** Make this provider the active one; absent when the row cannot switch. */
+  /** Make this provider the active one; absent when a click must not
+   *  switch (the row is already active, cannot switch, or would only warn). */
   onActivate?: () => void;
 }) {
-  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const cancelPending = useCallback(() => {
-    if (pending.current !== null) {
-      clearTimeout(pending.current);
-      pending.current = null;
+  const select = useCallback(() => {
+    if (!expanded) {
+      onToggle?.();
+      onActivate?.();
+      return;
     }
-  }, []);
-
-  // A row that unmounts mid-window (a refetch re-keyed the list) must not
-  // toggle a component that no longer exists.
-  useEffect(() => cancelPending, [cancelPending]);
+    if (onActivate) {
+      onActivate();
+      return;
+    }
+    onToggle?.();
+  }, [expanded, onToggle, onActivate]);
 
   const onClick = useCallback(
     (e: React.MouseEvent) => {
       if (isRowControlTarget(e.target)) return;
-      // The second click of a double: the first one is still waiting — drop
-      // it, the dblclick handler takes over.
-      if (e.detail >= 2) {
-        cancelPending();
-        return;
-      }
-      if (!onToggle) return;
-      cancelPending();
-      pending.current = setTimeout(() => {
-        pending.current = null;
-        onToggle();
-      }, DOUBLE_CLICK_WINDOW_MS);
+      // The second click of a double: the first already selected the row.
+      if (e.detail >= 2) return;
+      select();
     },
-    [onToggle, cancelPending],
+    [select],
   );
 
-  const onDoubleClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (isRowControlTarget(e.target)) return;
-      cancelPending();
-      onActivate?.();
-    },
-    [onActivate, cancelPending],
-  );
-
-  return { onClick, onDoubleClick };
+  return { onClick, select };
 }

@@ -1613,7 +1613,7 @@
     "model_picker_activate_hint": "Aktiviere diesen Provider, um seine Stimme oder sein Modell zu wählen.",
     "active_tooltip": "Bereits aktiv",
     "click_to_activate": "Klick aktiviert diesen Provider",
-    "double_click_to_activate": "Doppelklick aktiviert diesen Provider · Klick öffnet die Einstellungen",
+    "click_to_activate": "Klick aktiviert diesen Provider und öffnet die Einstellungen",
     "provider_active": "Aktiv",
     "provider_set_active": "Aktivieren",
     "provider_activating": "Wird aktiviert…",

@@ -296,9 +296,8 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
       screen.getByText("Connect"),
     );
     expect((connectBtn.closest("button") as HTMLButtonElement).disabled).toBe(true);
-    // The install hint sits in the row body; open the row first. A single
-    // click waits out the double-click window before it opens (a double click
-    // activates), so the hint arrives a beat later.
+    // The install hint sits in the row body; open the row first. The row
+    // has no login yet, so the click only opens it — no switch.
     fireEvent.click(screen.getByText("Antigravity"));
     expect(
       await screen.findByText("Install Antigravity or the Gemini CLI before connecting."),

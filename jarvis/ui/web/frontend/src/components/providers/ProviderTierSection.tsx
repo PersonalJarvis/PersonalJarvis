@@ -1244,16 +1244,20 @@ export function ProviderCard({
     }
   }
 
-  // One click on the row opens or closes the editor body; a double click
-  // activates the provider — the same path as the Use control, with the same
-  // guards and the same warning when a key is missing. A card that cannot be
-  // switched (an agents-only brain, a Codex login that is not a brain) has no
-  // double-click action. See rowGestures.ts for why a single click waits out
-  // the double-click window.
+  // One click on the row selects it: the editor body opens AND the provider
+  // becomes the active one — the same path as the Use control. A click only
+  // switches when the switch would be silent: a card without a key, a card
+  // that cannot be switched (an agents-only brain, a Codex login that is not
+  // a brain) or the already-active card just opens/closes — otherwise every
+  // click to paste a key would answer with a "save a key first" warning. See
+  // rowGestures.ts for the click semantics.
   const canSwitch = isBrainSwitchable && !isCodexBrain;
+  const switchesOnClick =
+    canSwitch && !descriptor.active && descriptor.configured && !activating;
   const rowGestures = useRowGestures({
+    expanded,
     onToggle: onToggleExpanded,
-    onActivate: canSwitch ? () => void activate() : undefined,
+    onActivate: switchesOnClick ? () => void activate() : undefined,
   });
 
   // Called by ApiKeyForm as soon as a key has been saved for a previously
@@ -1325,7 +1329,7 @@ export function ProviderCard({
     : !isBrainSwitchable
       ? t("apikeys_view.agents_only_short").replace("{0}", agentsBrand(assistantName))
       : descriptor.configured
-        ? t("apikeys_view.double_click_to_activate")
+        ? t("apikeys_view.click_to_activate")
         : descriptor.auth_mode === "codex"
           ? t("apikeys_view.needs_codex")
           : descriptor.auth_mode === "antigravity"
@@ -1358,13 +1362,12 @@ export function ProviderCard({
         aria-controls={collapsible ? `provider-body-${descriptor.id}` : undefined}
         data-testid={`provider-row-${descriptor.id}`}
         onClick={rowGestures.onClick}
-        onDoubleClick={rowGestures.onDoubleClick}
         onKeyDown={(e) => {
           if (!collapsible) return;
           if (e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onToggleExpanded?.();
+            rowGestures.select();
           }
         }}
         title={rowTitle}

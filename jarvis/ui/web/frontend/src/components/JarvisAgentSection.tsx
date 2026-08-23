@@ -700,16 +700,18 @@ function AgentRow({
   active?: boolean;
   expanded?: boolean;
   onToggle?: () => void;
-  /** Double-click action: make this the worker (the Use control's path). */
+  /** Click action: make this the worker (the Use control's path). Absent
+   *  when a click must not switch — the row is active, or lacks its key. */
   onActivate?: () => void;
   /** Native hover tooltip for the row header. */
   tooltip?: string;
   testId?: string;
 }) {
   const collapsible = Boolean(body && onToggle);
-  // One click opens the body, a double click makes this the worker — the
-  // same path as the Use control (see rowGestures.ts).
+  // One click selects the row: the body opens AND this becomes the worker —
+  // the same path as the Use control (see rowGestures.ts).
   const rowGestures = useRowGestures({
+    expanded,
     onToggle: collapsible ? onToggle : undefined,
     onActivate,
   });
@@ -731,12 +733,11 @@ function AgentRow({
         tabIndex={collapsible ? 0 : undefined}
         aria-expanded={collapsible ? expanded : undefined}
         onClick={rowGestures.onClick}
-        onDoubleClick={rowGestures.onDoubleClick}
         onKeyDown={(e) => {
           if (!collapsible || e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onToggle?.();
+            rowGestures.select();
           }
         }}
         title={tooltip}
@@ -992,7 +993,7 @@ function CodexConnectionCard({
 } & RowDisclosure) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
-  const { activating, activate } = useSubagentActivate(row, onChanged);
+  const { activating, activate, clickActivates } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected);
   const installed = status?.installed ?? false;
   const isActive = Boolean(row?.is_active_brain);
@@ -1043,7 +1044,7 @@ function CodexConnectionCard({
   return (
     <AgentRow
       testId="agent-row-openai-codex"
-      onActivate={() => void activate()}
+      onActivate={clickActivates ? () => void activate() : undefined}
       label="OpenAI Codex"
       slug={row?.jarvis}
       title="OpenAI Codex"
@@ -1121,7 +1122,7 @@ function AntigravityConnectionCard({
   const pushToast = useEventStore((s) => s.pushToast);
   const brand = useAgentBrand();
   const [pending, setPending] = useState(false);
-  const { activating, activate } = useSubagentActivate(row, onChanged);
+  const { activating, activate, clickActivates } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected && status.mode === "oauth-personal");
   const installed = status?.installed ?? false;
   const apiKeyReady = Boolean(installed && row?.api_key_set);
@@ -1175,7 +1176,7 @@ function AntigravityConnectionCard({
   return (
     <AgentRow
       testId="agent-row-antigravity"
-      onActivate={() => void activate()}
+      onActivate={clickActivates ? () => void activate() : undefined}
       label="Antigravity"
       slug={row?.jarvis}
       title="Antigravity"
@@ -1237,7 +1238,7 @@ function GrokBuildConnectionCard({
 } & RowDisclosure) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
-  const { activating, activate } = useSubagentActivate(row, onChanged);
+  const { activating, activate, clickActivates } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected && status.mode === "subscription");
   const installed = status?.installed ?? false;
   const usable = Boolean(installed && row?.key_set);
@@ -1285,7 +1286,7 @@ function GrokBuildConnectionCard({
   return (
     <AgentRow
       testId="agent-row-grok-build"
-      onActivate={() => void activate()}
+      onActivate={clickActivates ? () => void activate() : undefined}
       label="Grok Build"
       slug={row?.jarvis}
       title="Grok Build"
@@ -1345,7 +1346,7 @@ function ClaudeConnectionCard({
 } & RowDisclosure) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
-  const { activating, activate } = useSubagentActivate(row, onChanged);
+  const { activating, activate, clickActivates } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected && status.mode === "subscription");
   const installed = status?.installed ?? false;
   // Claude has ONE subagent slug (claude-api) reached by EITHER the Claude Max
@@ -1400,7 +1401,7 @@ function ClaudeConnectionCard({
   return (
     <AgentRow
       testId="agent-row-claude-subscription"
-      onActivate={() => void activate()}
+      onActivate={clickActivates ? () => void activate() : undefined}
       label="Anthropic Claude"
       slug={row?.jarvis}
       title="Anthropic Claude"
@@ -1471,7 +1472,7 @@ function ClaudeApiCard({
   row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
 } & RowDisclosure) {
-  const { activating, activate } = useSubagentActivate(row, onChanged);
+  const { activating, activate, clickActivates } = useSubagentActivate(row, onChanged);
   const brand = useAgentBrand();
   // OAuth unlocks the subscription sibling only. This API row reflects an
   // actual API key, so a Claude Max login cannot paint it falsely ready.
@@ -1481,7 +1482,7 @@ function ClaudeApiCard({
   return (
     <AgentRow
       testId="agent-row-claude-api"
-      onActivate={() => void activate()}
+      onActivate={clickActivates ? () => void activate() : undefined}
       label="Anthropic Claude"
       slug={row?.jarvis}
       title="Anthropic Claude"
@@ -1492,7 +1493,7 @@ function ClaudeApiCard({
         isActive
           ? `This ${brand} provider is active`
           : keySet
-            ? `Double-click to make this the ${brand} provider`
+            ? `Click to make this the ${brand} provider`
             : `Save a dedicated Claude ${brand} key first`
       }
       state={isActive ? "active" : keySet ? STATE_KEY_SAVED : STATE_NO_KEY}
@@ -1579,7 +1580,13 @@ function useSubagentActivate(
     }
   }, [row, activating, pushToast, onSwitched]);
 
-  return { activating, activate };
+  // Whether a click on the row may switch SILENTLY: a row without its key
+  // would only answer with the "save a key first" warning above, and the
+  // click that opened it was there to add that key. The active row and an
+  // in-flight switch are excluded too.
+  const clickActivates = Boolean(row?.key_set) && !row?.is_active_brain && !activating;
+
+  return { activating, activate, clickActivates };
 }
 
 /**
@@ -1599,12 +1606,12 @@ function SubagentProviderCard({
 } & RowDisclosure) {
   const label = row.label ?? PROVIDER_LABELS[row.jarvis] ?? row.jarvis;
   const brand = useAgentBrand();
-  const { activating, activate } = useSubagentActivate(row, onSwitched);
+  const { activating, activate, clickActivates } = useSubagentActivate(row, onSwitched);
 
   return (
     <AgentRow
       testId={`agent-row-${row.jarvis}`}
-      onActivate={() => void activate()}
+      onActivate={clickActivates ? () => void activate() : undefined}
       label={label}
       slug={row.jarvis}
       title={label}
@@ -1615,7 +1622,7 @@ function SubagentProviderCard({
         row.is_active_brain
           ? `This ${brand} provider is active`
           : row.key_set
-            ? `Double-click to make this the ${brand} provider`
+            ? `Click to make this the ${brand} provider`
             : "Set an API key first"
       }
       // A keyless row has no key to wait for: it is ready as soon as it is
@@ -1708,7 +1715,7 @@ function SubagentActiveControl({
   const labelTitle = isActive
     ? `This ${brand} provider is active`
     : row.key_set
-      ? `Double-click to make this the ${brand} provider`
+      ? `Click to make this the ${brand} provider`
       : "Set an API key first";
 
   return (

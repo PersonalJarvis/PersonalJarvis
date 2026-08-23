@@ -1613,7 +1613,7 @@
     "model_picker_activate_hint": "Activa este proveedor para elegir su voz o modelo.",
     "active_tooltip": "Ya activo",
     "click_to_activate": "Clic para activar este proveedor",
-    "double_click_to_activate": "Doble clic para activar este proveedor · clic para abrir sus ajustes",
+    "click_to_activate": "Clic para activar este proveedor y abrir sus ajustes",
     "provider_active": "Activo",
     "provider_set_active": "Activar",
     "provider_activating": "Activando…",

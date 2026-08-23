@@ -119,7 +119,7 @@ describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
     });
   });
 
-  it("makes a worker the active one on a double click of its row", async () => {
+  it("makes a worker the active one on a single click of its row", async () => {
     const status = {
       ...STATUS,
       mapping: [{ ...OPENAI_AGENT_ROW, key_set: true, dedicated_key_set: true }],
@@ -137,7 +137,8 @@ describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
 
     render(<JarvisAgentSection />);
     const title = await screen.findByText("OpenAI");
-    // A real double click is click, click, dblclick — exactly one switch.
+    // A real double click is click, click, dblclick — the first click already
+    // selected the row, the rest is ignored: exactly one switch.
     fireEvent.click(title);
     fireEvent.click(title, { detail: 2 });
     fireEvent.doubleClick(title);

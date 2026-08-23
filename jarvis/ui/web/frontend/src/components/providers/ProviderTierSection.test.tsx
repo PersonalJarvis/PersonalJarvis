@@ -187,12 +187,13 @@ describe("ProviderCard — dictation polish activation", () => {
     cleanup();
   });
 
-  it("activates on a double click of the row, never on a single click", async () => {
+  it("activates on a single click of the row; a double click switches once", async () => {
     const calls = installFetchMock();
 
     renderCard(dictationCard());
     const title = screen.getByText("OpenAI: dictation polish");
-    // A real double click: click, click, dblclick — one activation.
+    // A real double click: click, click, dblclick — the first click already
+    // selected the row, the rest is ignored: one activation.
     fireEvent.click(title);
     fireEvent.click(title, { detail: 2 });
     fireEvent.doubleClick(title);
