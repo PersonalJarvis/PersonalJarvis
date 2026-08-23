@@ -23,8 +23,14 @@ import { AgentInstallDialog } from "./AgentInstallDialog";
 // installer prints is WorkspaceTerminal's own test; this file is about what
 // the dialog concludes from the probe.
 vi.mock("../workspace/WorkspaceTerminal", () => ({
-  WorkspaceTerminal: ({ installName }: { installName?: string }) => (
-    <div data-testid={`stub-install-pty-${installName}`} />
+  WorkspaceTerminal: ({
+    installName,
+    banner,
+  }: {
+    installName?: string;
+    banner?: string;
+  }) => (
+    <div data-testid={`stub-install-pty-${installName}`} data-banner={banner} />
   ),
 }));
 
@@ -73,6 +79,30 @@ describe("AgentInstallDialog", () => {
     // Readable BEFORE it matters: a user who would rather run it in their own
     // shell can take it from here and close this.
     expect(screen.getByText("npm install -g @deepseek-ai/dsh")).toBeTruthy();
+  });
+
+  it("prints the command into the pane so it is never an empty box", () => {
+    // The bug this exists for: a package manager can be silent for ten seconds
+    // or more, and a black rectangle is how a user reads "nothing happened".
+    // The banner is written locally, before the socket has even connected.
+    open();
+    const pane = screen.getByTestId("stub-install-pty-deepseek-harness");
+    expect(pane.getAttribute("data-banner")).toContain(
+      "npm install -g @deepseek-ai/dsh",
+    );
+  });
+
+  it("still says something when the entry has no command to show", () => {
+    render(
+      <AgentInstallDialog
+        agent="mystery"
+        displayName="Mystery CLI"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByTestId("stub-install-pty-mystery").getAttribute("data-banner"),
+    ).toContain("Mystery CLI");
   });
 
   it("stays honest while the probe keeps saying no", async () => {

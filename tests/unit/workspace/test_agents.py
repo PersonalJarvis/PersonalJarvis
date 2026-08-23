@@ -86,12 +86,25 @@ def test_install_commands_are_runnable_or_honestly_absent() -> None:
         assert command is None or command.strip()
     # The built-ins keep their exact commands: these are what the user is shown
     # and what gets run in a terminal, so a silent change is a real change.
-    assert install_command("claude") == "npm install -g @anthropic-ai/claude-code"
-    assert install_command("codex") == "npm install -g @openai/codex"
-    assert install_command("opencode") == "npm install -g opencode-ai"
-    assert install_command("kimi") == "npm install -g @moonshot-ai/kimi-code"
+    #
+    # The npm flags are load-bearing, not decoration. At its default log level
+    # `npm install -g` prints nothing for the first ten-odd seconds and then
+    # redraws a one-character spinner, which in a terminal the user is watching
+    # is indistinguishable from an installer that never started.
+    assert (
+        install_command("claude")
+        == "npm install -g @anthropic-ai/claude-code --loglevel=http --no-fund"
+    )
+    assert install_command("codex") == "npm install -g @openai/codex --loglevel=http --no-fund"
+    assert install_command("opencode") == "npm install -g opencode-ai --loglevel=http --no-fund"
+    assert (
+        install_command("kimi") == "npm install -g @moonshot-ai/kimi-code --loglevel=http --no-fund"
+    )
     # A launch profile installs the binary it borrows.
-    assert install_command("glm") == "npm install -g @anthropic-ai/claude-code"
+    assert (
+        install_command("glm")
+        == "npm install -g @anthropic-ai/claude-code --loglevel=http --no-fund"
+    )
     grok_install = install_command("grok-build")
     assert grok_install is not None
     if sys.platform == "win32":
@@ -183,7 +196,9 @@ async def test_detect_reports_installed_and_version() -> None:
     assert infos["claude"].installed is True
     assert infos["claude"].version == "2.1.195"
     assert infos["codex"].installed is False
-    assert infos["codex"].install_command == "npm install -g @openai/codex"
+    assert (
+        infos["codex"].install_command == "npm install -g @openai/codex --loglevel=http --no-fund"
+    )
 
 
 @pytest.mark.asyncio
@@ -221,7 +236,7 @@ async def test_a_registered_cli_is_detected_and_launchable_like_the_built_ins() 
         assert isinstance(entry, WorkspaceAgent)
         assert "acme" in agent_names()
         assert "acme" in coding_agent_names()
-        assert install_command("acme") == "npm install -g @acme/agent"
+        assert install_command("acme") == "npm install -g @acme/agent --loglevel=http --no-fund"
         argv = build_agent_argv("acme")
         assert argv is not None and any("acme" in part for part in argv)
 

@@ -35,6 +35,16 @@ interface WorkspaceTerminalProps {
   agentName?: string;
   /** Run an agent's installer by name; mutually exclusive with agentName. */
   installName?: string;
+  /**
+   * A line to print before anything the process says.
+   *
+   * For a pane whose process is SLOW to speak: an installer can be silent for
+   * ten seconds or more, and an empty black rectangle is how a user reads
+   * "nothing is happening". Printed locally the moment the terminal exists, so
+   * it is on screen before the socket has even connected. Newlines may be
+   * plain `\n`. Absent for an agent pane, which draws its own UI at once.
+   */
+  banner?: string;
   /** Header label shown above the terminal. */
   title: string;
 }
@@ -52,6 +62,7 @@ export function WorkspaceTerminal({
   agentName,
   installName,
   title,
+  banner,
 }: WorkspaceTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -63,6 +74,11 @@ export function WorkspaceTerminal({
   // restart the agent. Recolouring happens in its own effect below.
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
+  // Read through a ref for the same reason as the theme above: the banner is
+  // printed once during setup, and making it a dependency there would tear the
+  // PTY down and restart the installer whenever the string changed identity.
+  const bannerRef = useRef(banner);
+  bannerRef.current = banner;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -94,6 +110,11 @@ export function WorkspaceTerminal({
     // the same kind of agent prompt on the other end (see
     // ../agentic/terminalNewline).
     const disposeNewlineBridge = installNewlineBridge(term);
+    // Before the socket, deliberately: the gap this fills is the one at the
+    // very start, and a banner that waited for `ready` would arrive after it.
+    if (bannerRef.current) {
+      term.write(`${bannerRef.current.replace(/\n/g, "\r\n")}\r\n`);
+    }
     try {
       fit.fit();
     } catch {

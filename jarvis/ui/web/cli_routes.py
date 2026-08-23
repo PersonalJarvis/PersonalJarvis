@@ -284,43 +284,33 @@ def _summary_for(spec: CliSpec, status: CliStatus | None, usage_count_7d: int) -
 
 
 def _install_methods_of(spec: CliSpec) -> tuple[list[InstallMethodInfo], str | None]:
+    """Every way this CLI can be installed, worded exactly as it will run.
+
+    The package-manager commands come from ``CliInstaller.build_command``, the
+    same function that builds the argv actually executed. They used to be
+    assembled here a second time, and the copy drifted the moment the npm line
+    grew its verbosity flags: the page then showed one command and the terminal
+    ran another. A script install still shows its URL rather than the download
+    one-liner wrapped around it — that is the useful thing to read, and it is
+    the URL a user would check before running it.
+    """
+    from jarvis.clis.installer import CliInstaller
+
+    builder = CliInstaller()
     methods: list[InstallMethodInfo] = []
     i = spec.install
-    if i.winget_id:
-        methods.append(
-            InstallMethodInfo(
-                manager="winget",
-                command=f"winget install --id {i.winget_id} -e --silent",
-            )
-        )
-    if i.scoop_package:
-        methods.append(
-            InstallMethodInfo(
-                manager="scoop",
-                command=f"scoop install {i.scoop_package}",
-            )
-        )
-    if i.npm_package:
-        methods.append(
-            InstallMethodInfo(
-                manager="npm",
-                command=f"npm install -g {i.npm_package}",
-            )
-        )
-    if i.pip_package:
-        methods.append(
-            InstallMethodInfo(
-                manager="pip",
-                command=f"pip install --upgrade {i.pip_package}",
-            )
-        )
-    if i.cargo_package:
-        methods.append(
-            InstallMethodInfo(
-                manager="cargo",
-                command=f"cargo install {i.cargo_package}",
-            )
-        )
+    for manager, declared in (
+        ("winget", i.winget_id),
+        ("scoop", i.scoop_package),
+        ("npm", i.npm_package),
+        ("pip", i.pip_package),
+        ("cargo", i.cargo_package),
+    ):
+        if not declared:
+            continue
+        argv = builder.build_command(spec, manager)  # type: ignore[arg-type]
+        if argv:
+            methods.append(InstallMethodInfo(manager=manager, command=" ".join(argv)))
     if i.script_url:
         methods.append(
             InstallMethodInfo(

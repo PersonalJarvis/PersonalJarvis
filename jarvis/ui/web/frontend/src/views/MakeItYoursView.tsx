@@ -35,7 +35,7 @@ type Counts = Record<string, number>;
 type Step = 0 | 1 | 2;
 type Session =
   | { kind: "grid"; slots: Slot[]; cwd: string }
-  | { kind: "install"; name: string; display: string }
+  | { kind: "install"; name: string; display: string; command?: string }
   | null;
 
 function gridCols(n: number): number {
@@ -99,7 +99,14 @@ export function MakeItYoursView() {
 
   const onInstall = (name: string) => {
     const a = agentsByName[name];
-    setSession({ kind: "install", name, display: a?.display_name ?? name });
+    setSession({
+      kind: "install",
+      name,
+      display: a?.display_name ?? name,
+      // Shown in the pane before the installer says anything — see the banner
+      // on InstallPanel's terminal below.
+      command: a?.install_command ?? undefined,
+    });
   };
 
   const onLaunch = async () => {
@@ -132,7 +139,13 @@ export function MakeItYoursView() {
   }
   if (session?.kind === "install") {
     return (
-      <InstallPanel t={t} name={session.name} display={session.display} onDone={endSession} />
+      <InstallPanel
+        t={t}
+        name={session.name}
+        display={session.display}
+        command={session.command}
+        onDone={endSession}
+      />
     );
   }
 
@@ -285,11 +298,14 @@ function InstallPanel({
   t,
   name,
   display,
+  command,
   onDone,
 }: {
   t: (k: string) => string;
   name: string;
   display: string;
+  /** The command about to run, printed before the installer speaks. */
+  command?: string;
   onDone: () => void;
 }) {
   return (
@@ -307,7 +323,19 @@ function InstallPanel({
         </button>
       </div>
       <div className="flex-1 overflow-hidden p-3">
-        <WorkspaceTerminal paneKey={`install-${name}`} installName={name} title={`install ${name}`} />
+        <WorkspaceTerminal
+          paneKey={`install-${name}`}
+          installName={name}
+          title={`install ${name}`}
+          /* A package manager can be silent for several seconds, and an
+             empty black pane is how that reads. Dim, because it is this
+             app talking rather than the installer. */
+          banner={
+            command
+              ? `\x1b[2m$ ${command}\x1b[0m`
+              : `\x1b[2mStarting the installer for ${display}…\x1b[0m`
+          }
+        />
       </div>
     </div>
   );

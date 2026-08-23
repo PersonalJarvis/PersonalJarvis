@@ -173,6 +173,15 @@ export function AgentInstallDialog({
             paneKey={`install-${agent}`}
             installName={agent}
             title={`Installing ${displayName}`}
+            /* The pane must never be an empty black rectangle. A package
+               manager can take several seconds to say its first word, and in
+               that gap the only honest thing on screen is what is about to
+               run. Dim, because it is this app talking, not the installer. */
+            banner={
+              command
+                ? `\x1b[2m$ ${command}\x1b[0m`
+                : `\x1b[2mStarting the installer for ${displayName}…\x1b[0m`
+            }
           />
         </div>
 

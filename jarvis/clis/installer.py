@@ -109,7 +109,16 @@ class CliInstaller:
         if method == "scoop" and i.scoop_package:
             return ["scoop", "install", i.scoop_package]
         if method == "npm" and i.npm_package:
-            return ["npm", "install", "-g", i.npm_package]
+            # Verbose ON PURPOSE. At its default log level `npm install -g`
+            # prints nothing at all for the first ten-odd seconds and then
+            # redraws a ONE-CHARACTER spinner in column 1 — measured 2026-08-23
+            # against @deepseek-ai/dsh in the workspace PTY. In a terminal the
+            # user is watching that is indistinguishable from an installer that
+            # never started, and it is the only thing they have to go on.
+            # `http` prints a line per package fetched, so the pane moves from
+            # the first second; `--no-fund` drops the donation footer, which is
+            # the one part of the output nobody is waiting for.
+            return ["npm", "install", "-g", i.npm_package, "--loglevel=http", "--no-fund"]
         if method == "pip" and i.pip_package:
             return ["pip", "install", "--upgrade", i.pip_package]
         if method == "cargo" and i.cargo_package:
