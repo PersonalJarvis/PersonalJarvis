@@ -294,6 +294,33 @@ class ConductorStore:
         await cur.close()
         return [dict(r) for r in rows]
 
+    async def failure_streak(self, job_id: str, *, cap: int = 64) -> int:
+        """How many of the job's most recent terminal runs failed in a row.
+
+        Walks the run history newest-first and counts ``failed`` until the
+        first ``completed`` / ``cancelled`` run. Runs still ``pending`` or
+        ``running`` are skipped, never counted. Capped at ``cap`` — the
+        notify rule only compares against a small threshold, so nothing
+        needs the exact length of a months-long outage.
+        """
+        conn = self._require_conn()
+        cur = await conn.execute(
+            "SELECT state FROM runs WHERE job_id = ? "
+            "ORDER BY started_at_ns DESC, rowid DESC LIMIT ?",
+            (job_id, max(1, int(cap))),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+        streak = 0
+        for row in rows:
+            state = str(row["state"] or "").strip().lower()
+            if state in ("pending", "running"):
+                continue
+            if state != "failed":
+                break
+            streak += 1
+        return streak
+
     async def cleanup_interrupted_runs(self) -> int:
         """Startup: all running/pending → failed (app-exit detected)."""
         conn = self._require_conn()

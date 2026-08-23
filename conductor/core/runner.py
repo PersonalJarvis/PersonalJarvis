@@ -21,7 +21,7 @@ import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..jobs import HANDLERS
-from .notify import NEWS_EVENT, classify_run
+from .notify import NEWS_EVENT, classify_run, failures_to_announce
 from .schema import JobSpec
 
 if TYPE_CHECKING:
@@ -44,6 +44,11 @@ class Runner:
     ) -> None:
         self._store = store
         self._on_event = on_event
+        # Job ids whose current breakage THIS runner announced as "failing".
+        # A recovery is only news when the breakage was (see ``notify.py``);
+        # in-memory on purpose — a "working again" about an outage nobody in
+        # this session was told about is stale chatter, not news.
+        self._failing_announced: set[str] = set()
 
     def set_callback(self, on_event: EventCallback) -> None:
         self._on_event = on_event
@@ -192,6 +197,17 @@ class Runner:
         """
         job_id = job_row["id"]
         await self._store.set_last_run(job_id, time.time_ns(), new_state)
+        # The run's own terminal state is already persisted (every caller
+        # writes ``update_run`` first), so the streak read back includes it.
+        streak = 0
+        if new_state == "failed":
+            try:
+                streak = await self._store.failure_streak(job_id)
+            except Exception as exc:  # noqa: BLE001 — counting must never
+                # silence a real breakage; without a count, fall back to the
+                # plain state change.
+                log.warning("failure_streak(%s) failed: %s", job_id, exc)
+                streak = 1 if previous_state != "failed" else 2
         news = classify_run(
             job_id=job_id,
             job_name=job_row.get("name") or "",
@@ -200,9 +216,19 @@ class Runner:
             previous_state=previous_state,
             new_state=new_state,
             error=error,
+            failure_streak=max(1, streak),
+            failures_required=failures_to_announce(
+                job_row.get("schedule_type"), job_row.get("schedule_expr")
+            ),
+            failing_was_announced=job_id in self._failing_announced,
         )
-        if news is not None:
-            self._emit(NEWS_EVENT, news.as_payload())
+        if new_state == "completed":
+            self._failing_announced.discard(job_id)
+        if news is None:
+            return
+        if news.kind == "failing":
+            self._failing_announced.add(job_id)
+        self._emit(NEWS_EVENT, news.as_payload())
 
     # ------------------------------------------------------------------
 

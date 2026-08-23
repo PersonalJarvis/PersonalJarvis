@@ -11644,3 +11644,65 @@ Plugin: the confirm loop runs on a wall-clock deadline, reads with a 3 s bound
 moment the work between sleeps can block; bound by the clock, and bound every
 blocking read inside it tighter than the loop. A sequential command channel
 must never run a call that can block for longer than its own client's timeout.
+
+
+## BUG-169: "The scheduled job GitHub-API Zen has started failing" keeps interrupting — one 504, one 403 or one DNS drop on the 5-minute demo healthcheck was spoken twice, as a breakage and as a recovery (MEDIUM, FIXED 2026-08-23)
+
+**Symptom (maintainer, 2026-08-23).** Jarvis kept speaking an English sentence
+about a job the maintainer had never set up — heard as "the job kit up API
+started failing / is successful". `data/jarvis_desktop.log` has the exact
+wording: `📢 Announcement: 'The scheduled job GitHub-API Zen has started
+failing.'` at 19:38:24, `'… is working again.'` at 19:44:24, `'… has started
+failing.'` again at 21:02:27 and at 09:17:12 the next morning. "GitHub-API Zen"
+is the Conductor seed job `conductor/seed/url_healthcheck.yaml` — a demo HTTP
+monitor that GETs `https://api.github.com/zen` every 300 s and expects a 2xx.
+
+**Root cause.** `conductor.core.notify.classify_run` (audit AU-01) announced
+every change of terminal state: `completed → failed` was "failing",
+`failed → completed` was "recovered", with no confirmation window at all.
+`~/.conductor/conductor.sqlite` shows what that did on a real network over seven
+days: 91 runs, 29 failed — 21 × `ConnectError: [Errno 11001] getaddrinfo failed`
+(the box was offline 21:02–23:32), 6 × `timeout after 10.0s`, one
+`status 504`, one `status 403` (GitHub's unauthenticated rate limit, 60/h per
+IP shared with every other tool on the box). The 504 and the 403 were single
+blips between healthy runs, and each one produced TWO spoken announcements six
+minutes apart. No monitoring product people keep installed alerts on a single
+failed check; every one of them confirms across consecutive checks first. The
+voice was right that it was English — a background job has no user turn to read
+a language off, so `resolve_output_language` fell through to `DEFAULT_LOCALE`
+("en") until the first conversation of the session — but the English was not
+the defect, the alert was.
+
+**Fix.** Two rules, both in `conductor/core/notify.py`, both pure:
+
+1. *A single blip is not a breakage.* `failures_to_announce(schedule_type,
+   schedule_expr)` returns 3 for an interval job that runs at least every
+   15 minutes (`FREQUENT_INTERVAL_MAX_S`) and 1 for everything else — a daily
+   cron, a manual or webhook job cannot wait three runs, three days of silence
+   about a broken daily report is worse than a false alarm. "Failing" is news
+   exactly when the consecutive-failure streak EQUALS the threshold: not before
+   (unconfirmed), not after (same breakage, already announced — which also
+   keeps a process restart from re-announcing an old outage).
+2. *A recovery is only news when the breakage was.* `Runner` keeps the set of
+   job ids it announced as failing, in memory on purpose, and passes
+   `failing_was_announced`; a "working again" about a blip that was never
+   spoken — or about an outage a previous process announced — answers a
+   question nobody heard.
+
+`ConductorStore.failure_streak(job_id)` walks the run history newest-first and
+counts `failed` until the first `completed`/`cancelled` (skipping
+pending/running), so the count survives restarts and needs no schema change.
+`Runner._finish` reads it after `update_run` has persisted this run's own state.
+
+**Tests.** `tests/unit/conductor/test_run_news.py` — `a_single_blip_on_a_frequent_job_is_not_news`,
+`the_third_consecutive_failure_is_the_news`, `a_recovery_nobody_heard_the_breakage_of_is_silent`,
+`a_rare_job_announces_on_the_first_failure`, and the real-runner pins
+`a_frequent_job_blip_never_reaches_the_user`,
+`a_frequent_job_announces_once_the_failure_is_confirmed`,
+`a_runner_restart_does_not_replay_a_stale_recovery`,
+`a_runner_restart_does_not_reannounce_an_old_outage`.
+
+**Lesson.** A state machine that speaks is a monitoring product, and the first
+question about any alert is "how many confirmations?". "Announce on change"
+sounds like the minimum-noise rule and is the maximum-noise rule on a flaky
+network: every blip is two changes.
