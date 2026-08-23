@@ -28,6 +28,10 @@ ENTRY_POINT_GROUP = "jarvis.stt"
 # left untouched (unknown / third-party entry-points cannot be probed).
 _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "groq-api": (("groq_api_key", "GROQ_API_KEY"),),
+    # Deepgram is the one entry here with a DEDICATED key: nothing else reads
+    # deepgram_api_key, so its presence means someone deliberately set up
+    # speech-to-text rather than configuring a brain that happens to transcribe.
+    "deepgram-api": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
     # OpenRouter STT reuses the SAME key slot as the OpenRouter brain, so a user
     # who configured OpenRouter for chat gets cloud STT for free. The id is
     # ``openrouter-stt`` (distinct from the ``openrouter`` brain id) to avoid a
@@ -90,6 +94,11 @@ def _stt_keyless_credential(provider_name: str) -> bool:
 # a host that set Vertex up has a paid Cloud project rather than a free-tier key,
 # so it is the better takeover of the two Google entries.
 _STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
+    # Deepgram leads because its key is the only unambiguous one. Every other
+    # slot here is shared with a brain or a TTS tier, so finding a key there
+    # means "this person configured a provider", not "this person chose a
+    # recognizer" — deepgram_api_key can only have been set for speech input.
+    "deepgram-api",
     "openrouter-stt", "openai-api", "vertex-stt", "gemini-api", "groq-api",
 )
 

@@ -646,7 +646,9 @@ STT_CATALOG: dict[str, list[ModelInfo]] = {
             "whisper-1",
         ]
     ),
-    "deepgram": _ids(["nova-3", "nova-2", "nova-2-general", "enhanced", "base"]),
+    # Keyed by the ENTRY-POINT id. It read "deepgram" while the plugin did not
+    # exist, so the picker offered models for a provider nothing could build.
+    "deepgram-api": _ids(["nova-3", "nova-2", "nova-2-general", "enhanced", "base"]),
     # OpenRouter STT — the model picker offers ONLY transcription models. This
     # curated snapshot mirrors the live `?output_modalities=transcription` list
     # (verified 2026-07-02); audio-in chat models are excluded. The default

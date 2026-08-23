@@ -531,6 +531,11 @@ openai-api = "jarvis.plugins.stt.openai_api:OpenAIWhisperAPI"
 # Gemini AI-Studio key; the Gemini-only downloader gets voice input with no
 # second credential.
 gemini-api = "jarvis.plugins.stt.gemini_api:GeminiSTT"
+# Deepgram Nova-3 cloud transcription. Batch REST, not the WebSocket streaming
+# lane: nothing in the speech pipeline consumes interim transcripts yet, so a
+# socket would add complexity and deliver no lower latency. Uses its own
+# deepgram_api_key, which the setup wizard already knows how to store.
+deepgram-api = "jarvis.plugins.stt.deepgram_api:DeepgramSTT"
 # Same recognizer on Google Cloud Vertex AI — reuses the shared Vertex
 # credential, so setting Vertex up once serves brain, voice input and voice out.
 vertex-stt = "jarvis.plugins.stt.gemini_api:VertexSTT"

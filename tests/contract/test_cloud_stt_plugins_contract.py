@@ -1,4 +1,4 @@
-"""Contract tests for the OpenAI + Gemini cloud STT plugins.
+"""Contract tests for the OpenAI, Gemini and Deepgram cloud STT plugins.
 
 New STT providers MUST pass ``tests/contract/``. These assert the two plugins
 added to close the single-key STT gap (an OpenAI-only or Gemini-only downloader
@@ -25,12 +25,14 @@ from pathlib import Path
 import pytest
 
 from jarvis.core.protocols import STTProvider
+from jarvis.plugins.stt.deepgram_api import DeepgramSTT
 from jarvis.plugins.stt.gemini_api import GeminiSTT
 from jarvis.plugins.stt.openai_api import OpenAIWhisperAPI
 
 _CASES = [
     ("openai-api", OpenAIWhisperAPI, "jarvis.plugins.stt.openai_api"),
     ("gemini-api", GeminiSTT, "jarvis.plugins.stt.gemini_api"),
+    ("deepgram-api", DeepgramSTT, "jarvis.plugins.stt.deepgram_api"),
 ]
 
 
@@ -53,6 +55,10 @@ def test_openai_instance_is_stt_provider() -> None:
 
 def test_gemini_instance_is_stt_provider() -> None:
     assert isinstance(GeminiSTT(api_key="dummy"), STTProvider)
+
+
+def test_deepgram_instance_is_stt_provider() -> None:
+    assert isinstance(DeepgramSTT(api_key="dummy"), STTProvider)
 
 
 @pytest.mark.parametrize("name,_cls,mod_name", _CASES)

@@ -1,6 +1,12 @@
 # Deepgram STT — Research Dossier (2026-05-20)
 
-**Status:** Research-only. No code written, no plugins built, no tests run.
+**Status:** Research-only when written. **Item 1 of the implementation list
+was built on 2026-08-23** — `jarvis/plugins/stt/deepgram_api.py`, batch REST
+against Nova-3, registered as the `deepgram-api` entry point and wired into the
+STT credential table and cross-family takeover order. Items 2-4 (a separate
+Nova-3 module, the Flux WebSocket plugin, and the pipeline rewiring that
+streaming would need to be worth anything) are still open, and item 4 is the
+one that gates the other two.
 **Trigger:** User wants Deepgram STT brought to the same level as the Groq integration. Two explicit research questions:
 1. Is Deepgram's **token / auth flow** different from Groq's simple static API key?
 2. Is Deepgram **agent-friendly** — does it deliver transcript tokens *while* the user is speaking (streaming / interim), not only after the utterance finishes?

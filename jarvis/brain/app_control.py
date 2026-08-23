@@ -92,6 +92,8 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "openrouter": "openrouter",
     "groq": "groq",
     "groq-api": "groq",
+    # Dedicated slot — Deepgram shares its key with nothing else.
+    "deepgram-api": "deepgram",
     "gemini": "gemini",
     "gemini-flash-tts": "gemini",
     "gemini-live": "gemini-live",
