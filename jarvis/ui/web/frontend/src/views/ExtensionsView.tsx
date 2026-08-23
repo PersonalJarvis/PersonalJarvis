@@ -1,4 +1,4 @@
-import { Blocks, ScrollText } from "lucide-react";
+import { Blocks, GraduationCap } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { McpLogo } from "@/components/extensions/McpLogo";
 import { useEventStore, type SectionId } from "@/store/events";
@@ -37,7 +37,9 @@ interface AreaSpec {
 }
 
 const AREAS = [
-  { id: "skills", labelKey: "nav.skills", icon: ScrollText },
+  // A learned ability, not a scroll — the scroll glyph is the one another
+  // assistant vendor uses for its skills feature, so it stays out of here.
+  { id: "skills", labelKey: "nav.skills", icon: GraduationCap },
   { id: "plugins", labelKey: "nav.plugins", icon: Blocks },
   // The official Model Context Protocol mark, not a generic plug.
   { id: "mcps", labelKey: "nav.mcps", icon: McpLogo },
