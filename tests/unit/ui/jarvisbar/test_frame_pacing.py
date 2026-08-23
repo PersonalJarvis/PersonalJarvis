@@ -392,3 +392,103 @@ def test_target_frame_is_25fps_not_60():
     from the old 16 ms target on a layered window whose DWM ceiling was ~31/s,
     and costs a third of the wake-ups."""
     assert TARGET_FRAME_MS == 40
+
+
+# --------------------------------------------------------- one photo per bar
+
+
+class _SizedImage:
+    """Stands in for the PIL frame: only its ``size`` matters to the loop."""
+
+    def __init__(self, size: tuple[int, int]) -> None:
+        self.size = size
+
+
+class _SizedRenderer:
+    def __init__(self, size: tuple[int, int]) -> None:
+        self.size = size
+        self.calls = 0
+
+    def render(self, *a: object, **k: object) -> _SizedImage:  # noqa: ANN201
+        self.calls += 1
+        return _SizedImage(self.size)
+
+
+class _FakePhoto:
+    """A Tk photo that remembers its geometry and counts in-place pastes."""
+
+    created = 0
+
+    def __init__(self, img: _SizedImage, **_kwargs: object) -> None:
+        _FakePhoto.created += 1
+        self._w, self._h = img.size
+        self.pastes = 0
+
+    def width(self) -> int:
+        return self._w
+
+    def height(self) -> int:
+        return self._h
+
+    def paste(self, img: _SizedImage) -> None:
+        assert img.size == (self._w, self._h)
+        self.pastes += 1
+
+
+def test_an_audible_bar_reuses_one_tk_photo_and_pastes_new_pixels(monkeypatch):
+    """Building a PhotoImage per frame cost 2-4 ms a tick on the real layered
+    window (a Tcl image create + canvas swap + image delete); pasting the new
+    pixels into the one photo the bar owns is ~1 ms for identical output.
+    The loop therefore creates the photo once and pastes thereafter."""
+    monkeypatch.setattr("PIL.ImageTk.PhotoImage", _FakePhoto)
+    _FakePhoto.created = 0
+    renderer_obj = _SizedRenderer((82, 35))
+    bar, _root, canvas = _bare_bar(renderer_obj, mode="listen")
+    bar._ext_level = 0.6
+    monkeypatch.setattr(renderer, "effective_ext_level", lambda level, age: level, raising=True)
+
+    for _ in range(12):
+        bar._schedule_frame()
+
+    assert renderer_obj.calls == 12
+    assert _FakePhoto.created == 1, "a new Tk photo was built for a same-size frame"
+    assert bar._photo.pastes == 11
+    assert canvas.create_image_calls == 1
+    assert canvas.itemconfig_calls == 0, "the canvas item never needs re-pointing"
+
+
+def test_a_resized_bar_gets_a_fresh_tk_photo(monkeypatch):
+    """``paste`` needs matching geometry: after a size change (the Bar-size
+    slider) the next frame rebuilds the photo and re-points the canvas item,
+    exactly the pre-existing path."""
+    monkeypatch.setattr("PIL.ImageTk.PhotoImage", _FakePhoto)
+    _FakePhoto.created = 0
+    renderer_obj = _SizedRenderer((82, 35))
+    bar, _root, canvas = _bare_bar(renderer_obj, mode="listen")
+    bar._ext_level = 0.6
+    monkeypatch.setattr(renderer, "effective_ext_level", lambda level, age: level, raising=True)
+    for _ in range(3):
+        bar._schedule_frame()
+    first = bar._photo
+
+    renderer_obj.size = (120, 50)
+    bar._schedule_frame()
+
+    assert _FakePhoto.created == 2
+    assert bar._photo is not first
+    assert (bar._photo.width(), bar._photo.height()) == (120, 50)
+    assert canvas.itemconfig_calls == 1
+    assert first.pastes == 2
+
+
+def test_a_photo_stand_in_without_paste_takes_the_create_path(monkeypatch):
+    """The other tests in this file replace PhotoImage with a passthrough that
+    has no ``paste``; the loop must keep working with such a stand-in."""
+    renderer_obj = _CountingRenderer()
+    bar, _root, canvas = _bare_bar(renderer_obj, mode="listen")
+    bar._ext_level = 0.6
+    monkeypatch.setattr(renderer, "effective_ext_level", lambda level, age: level, raising=True)
+    for _ in range(4):
+        bar._schedule_frame()
+    assert canvas.create_image_calls == 1
+    assert canvas.itemconfig_calls == 3
