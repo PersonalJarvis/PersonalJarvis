@@ -22,9 +22,9 @@ The CLI is a **thin HTTP client over the REST API**, in two layers:
    reachable.
 2. **Curated layer (`jarvis <group> <command>`)** — hand-written, ergonomic
    commands for the common domains: `brain`, `config`, `missions`, `wiki`,
-   `sessions`, `skills`, `outputs`, `board`, `workflows`, `conductor`, `contacts`,
-   `telephony`, `marketplace`, `mcps`, `docs`, `frontier`, plus `auth`, `system`,
-   `tasks`.
+   `sessions`, `skills`, `outputs`, `board`, `costs`, `workflows`, `conductor`,
+   `contacts`, `telephony`, `marketplace`, `mcps`, `docs`, `frontier`, plus
+   `auth`, `system`, `tasks`.
 
 Because the CLI only ever calls the same routes the WebUI calls, it inherits all
 of Jarvis's safety machinery (risk tiers, the atomic config-write pipeline, the

@@ -30,6 +30,7 @@ import {
   Terminal,
   UserCircle2,
   Users,
+  Wallet,
   Image as ImageIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -119,6 +120,10 @@ export const NAV_GROUPS: NavItem[][] = [
     { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
     { id: "sessions", labelKey: "nav.sessions", icon: Mic },
     { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
+    // Spend & Tokens — every token the app spent, priced per provider,
+    // model and role. Sits with the other things the user reads back
+    // rather than with the settings: it reports, it does not configure.
+    { id: "costs", labelKey: "nav.costs", icon: Wallet, fallbackLabel: "Spend" },
     // Artifacts — everything a run produced: the pages and pictures on a
     // full-size stage, and every other run (its files, status and controls)
     // in the same rail. The Outputs section that used to list the runs

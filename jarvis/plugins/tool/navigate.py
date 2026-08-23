@@ -31,6 +31,8 @@ KNOWN: frozenset[str] = frozenset(
         "tasks",
         "sessions",
         "run_inspector",
+        # Spend & Tokens.
+        "costs",
         "clis",
         "cli-test-hub",
         "board",
@@ -110,6 +112,17 @@ _ALIASES: dict[str, str] = {
     "transcription": "sessions",
     "session": "sessions",
     "cli": "clis",
+    "kosten": "costs",  # i18n-allow: input vocab
+    "kostenübersicht": "costs",  # i18n-allow: input vocab
+    "verbrauch": "costs",  # i18n-allow: input vocab
+    "token-kosten": "costs",  # i18n-allow: input vocab
+    "token": "costs",
+    "tokens": "costs",
+    "spend": "costs",
+    "spending": "costs",
+    "billing": "costs",
+    "costes": "costs",  # i18n-allow: input vocab
+    "gastos": "costs",  # i18n-allow: input vocab
     "cli test hub": "cli-test-hub",
     "test hub": "cli-test-hub",
     "testhub": "cli-test-hub",

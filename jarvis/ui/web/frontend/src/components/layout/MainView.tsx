@@ -112,6 +112,9 @@ const DocsView = lazyView(() =>
 const BoardView = lazyView(() =>
   import("@/views/BoardView").then((m) => ({ default: m.BoardView })),
 );
+const CostsView = lazyView(() =>
+  import("@/views/CostsView").then((m) => ({ default: m.CostsView })),
+);
 const RunInspectorView = lazyView(() =>
   import("@/views/RunInspectorView").then((m) => ({
     default: m.RunInspectorView,
@@ -436,6 +439,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <SessionsView />;
     case "run_inspector":
       return <RunInspectorView />;
+    case "costs":
+      return <CostsView />;
     case "board":
       return <BoardView />;
     case "profile":

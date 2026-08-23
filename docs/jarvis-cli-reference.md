@@ -78,6 +78,12 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis contacts list` — List contacts.
 - `jarvis contacts show <slug>` — Show one contact.
 
+## costs
+
+- `jarvis costs entries --days --provider --model --role --surface --search --sort --limit --offset` — The individual model calls behind the totals.
+- `jarvis costs rates --days` — The rate card per model — and which models have no published rate.
+- `jarvis costs summary --days --provider --model --role --surface --search` — Totals plus the breakdown by provider, model, role, surface and day.
+
 ## docs
 
 - `jarvis docs list` — List documentation pages.

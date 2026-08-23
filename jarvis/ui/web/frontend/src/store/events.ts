@@ -61,6 +61,8 @@ export type SectionId =
   | "tasks"
   | "sessions"
   | "run_inspector"
+  // Spend & Tokens — what every provider, model and role actually cost.
+  | "costs"
   | "clis"
   | "cli-test-hub"
   | "board"
@@ -112,6 +114,7 @@ export const SECTION_IDS = [
   "tasks",
   "sessions",
   "run_inspector",
+  "costs",
   "clis",
   "cli-test-hub",
   "board",
@@ -199,6 +202,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   tasks: "Tasks",
   sessions: "Transcription",
   run_inspector: "Run Inspector",
+  costs: "Spend",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
   board: "Board",

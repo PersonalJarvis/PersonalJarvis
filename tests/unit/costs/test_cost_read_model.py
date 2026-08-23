@@ -1,0 +1,395 @@
+"""Tests for the Spend & Tokens read model (``jarvis/costs``).
+
+The section makes four claims that are easy to get quietly wrong, so each has
+a test of its own:
+
+1. **No double counting.** A voice turn whose model calls are also in the
+   event stream must be counted from the events OR from the turn row, never
+   from both — the turn row is the fallback for pre-event history.
+2. **The role split is real.** Inside one realtime turn, audio usage and the
+   delegated tool model land on different roles; outside one, a brain call is
+   the pipeline.
+3. **Zero is not automatically free.** A recorded 0.0 with tokens on it is a
+   pricing GAP for a metered provider, a genuine 0.0 for a local one, and a
+   re-derived price when the rate tables know the model.
+4. **Sources are optional.** A fresh install has none of these databases and
+   the section must still answer.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from jarvis.costs import CostSources, build_report, collect_entries
+from jarvis.costs.aggregate import filter_entries
+from jarvis.costs.model import price_entry
+
+# ---------------------------------------------------------------------------
+# Fixtures — minimal replicas of the real schemas
+# ---------------------------------------------------------------------------
+
+_SESSIONS_DDL = """
+CREATE TABLE voice_turns (
+    id TEXT PRIMARY KEY, session_id TEXT, idx INTEGER, started_ms INTEGER,
+    ended_ms INTEGER, user_text TEXT, user_lang TEXT, jarvis_text TEXT,
+    jarvis_lang TEXT, tier TEXT, provider TEXT, model TEXT,
+    tokens_in INTEGER, tokens_out INTEGER, cost_usd REAL,
+    latency_total_ms INTEGER
+);
+CREATE TABLE voice_events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, turn_id TEXT,
+    ts_ms INTEGER, kind TEXT, payload_json TEXT
+);
+"""
+
+_MISSIONS_DDL = """
+CREATE TABLE missions (
+    id TEXT PRIMARY KEY, prompt TEXT, state TEXT, created_ms INTEGER,
+    cost_usd REAL
+);
+CREATE TABLE mission_events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT, worker_id TEXT,
+    event_type TEXT, ts_ms INTEGER, payload_json TEXT
+);
+"""
+
+_AGENT_CHAT_DDL = """
+CREATE TABLE agent_chat_sessions (
+    session_id TEXT PRIMARY KEY, title TEXT, provider TEXT, model TEXT,
+    created_ms INTEGER, updated_ms INTEGER
+);
+CREATE TABLE agent_chat_events (
+    session_id TEXT, seq INTEGER, ts_ms INTEGER, kind TEXT, payload TEXT
+);
+"""
+
+T0 = 1_780_000_000_000
+
+
+def _sessions_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_SESSIONS_DDL)
+    # A realtime turn that delegated one tool call: two model calls, one turn.
+    conn.execute(
+        "INSERT INTO voice_turns (id, session_id, started_ms, tier, provider, model, "
+        "tokens_in, tokens_out, cost_usd, user_text) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("turn-1", "sess-1", T0, "realtime", "gemini-live", "gemini-3.1-flash-live-preview",
+         50_000, 300, 0.4, "what is on my calendar"),
+    )
+    # A classic pipeline turn with no event rows — the fallback path.
+    conn.execute(
+        "INSERT INTO voice_turns (id, session_id, started_ms, tier, provider, model, "
+        "tokens_in, tokens_out, cost_usd, user_text) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("turn-2", "sess-1", T0 + 60_000, "deep", "anthropic", "claude-opus-4-7-20251022",
+         1_000, 200, 0.05, "summarise the meeting"),
+    )
+    for turn_id, payload in (
+        (
+            "turn-1",
+            {
+                "provider": "gemini-live",
+                "model": "gemini-3.1-flash-live-preview",
+                "tokens_in": 50_000,
+                "tokens_out": 300,
+                "cost_usd": 0.4,
+                "finish_reason": "realtime_usage",
+            },
+        ),
+        (
+            "turn-1",
+            {
+                "provider": "grok",
+                "model": "grok-4.3",
+                "tokens_in": 8_000,
+                "tokens_out": 120,
+                "cost_usd": 0.0,
+                "finish_reason": "stop",
+            },
+        ),
+    ):
+        conn.execute(
+            "INSERT INTO voice_events (session_id, turn_id, ts_ms, kind, payload_json) "
+            "VALUES (?,?,?,?,?)",
+            ("sess-1", turn_id, T0 + 1_000, "BrainTurnCompleted", json.dumps(payload)),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _missions_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_MISSIONS_DDL)
+    conn.execute(
+        "INSERT INTO missions (id, prompt, state, created_ms, cost_usd) VALUES (?,?,?,?,?)",
+        ("m-1", "refactor the parser", "done", T0, 0.0),
+    )
+    # A worker that reported its own price...
+    conn.execute(
+        "INSERT INTO mission_events (mission_id, worker_id, event_type, ts_ms, payload_json) "
+        "VALUES (?,?,?,?,?)",
+        ("m-1", "w-1", "WorkerDraftReady", T0 + 5_000,
+         json.dumps({"tokens_used": 26_000, "cost_usd": 1.25})),
+    )
+    # ...and one that reported tokens but no price and no model, which is what
+    # a CLI-driven worker actually emits. Those tokens are a real accounting
+    # gap and must be visible as such.
+    conn.execute(
+        "INSERT INTO mission_events (mission_id, worker_id, event_type, ts_ms, payload_json) "
+        "VALUES (?,?,?,?,?)",
+        ("m-1", "w-2", "WorkerDraftReady", T0 + 6_000,
+         json.dumps({"tokens_used": 33_000, "cost_usd": 0.0})),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _agent_chat_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_AGENT_CHAT_DDL)
+    conn.execute(
+        "INSERT INTO agent_chat_sessions (session_id, title, provider, model, created_ms, "
+        "updated_ms) VALUES (?,?,?,?,?,?)",
+        ("chat-1", "Fix the build", "claude", "claude-opus-4-7-20251022", T0, T0),
+    )
+    conn.execute(
+        "INSERT INTO agent_chat_events (session_id, seq, ts_ms, kind, payload) VALUES (?,?,?,?,?)",
+        ("chat-1", 1, T0 + 10_000, "turn_finished", json.dumps({
+            "status": "done",
+            "cost_usd": 0.31,
+            "usage": {
+                "input_tokens": 4_000,
+                "output_tokens": 900,
+                "cache_read_input_tokens": 12_000,
+            },
+        })),
+    )
+    conn.commit()
+    conn.close()
+
+
+@pytest.fixture()
+def sources(tmp_path: Path) -> CostSources:
+    sessions = tmp_path / "sessions.db"
+    missions = tmp_path / "missions.db"
+    agent_chat = tmp_path / "agent_chat.db"
+    _sessions_db(sessions)
+    _missions_db(missions)
+    _agent_chat_db(agent_chat)
+    return CostSources(sessions_db=sessions, missions_db=missions, agent_chat_db=agent_chat)
+
+
+# ---------------------------------------------------------------------------
+# Collection
+# ---------------------------------------------------------------------------
+
+
+def test_collects_every_source(sources: CostSources) -> None:
+    entries = collect_entries(sources)
+    surfaces = {e.surface for e in entries}
+    assert surfaces == {"voice", "agent-chat", "mission"}
+
+
+def test_event_backed_turn_is_not_counted_twice(sources: CostSources) -> None:
+    """turn-1 has two events; its own row must not add a third entry."""
+    voice = [e for e in collect_entries(sources) if e.surface == "voice"]
+    # 2 events for turn-1 + 1 fallback row for the event-less turn-2.
+    assert len(voice) == 3
+    realtime_cost = sum(e.cost_usd for e in voice if e.role == "realtime")
+    assert realtime_cost == pytest.approx(0.4)
+
+
+def test_role_split_inside_one_realtime_turn(sources: CostSources) -> None:
+    voice = [e for e in collect_entries(sources) if e.surface == "voice"]
+    roles = {e.role: e for e in voice}
+    assert roles["realtime"].provider == "gemini-live"
+    # The delegated text model inside the realtime turn is the TOOL model...
+    assert roles["tool"].model == "grok-4.3"
+    # ...while a brain call in a non-realtime tier is the pipeline.
+    assert roles["pipeline"].model == "claude-opus-4-7-20251022"
+
+
+def test_agent_chat_usage_is_bucketed_by_direction(sources: CostSources) -> None:
+    entry = next(e for e in collect_entries(sources) if e.surface == "agent-chat")
+    assert entry.role == "agent"
+    assert entry.tokens_in == 4_000
+    assert entry.tokens_out == 900
+    # Cache reads are their own bucket — billed at a fraction of input.
+    assert entry.tokens_cached == 12_000
+    assert entry.cost_usd == pytest.approx(0.31)
+
+
+def test_missing_sources_are_skipped(tmp_path: Path) -> None:
+    empty = CostSources(sessions_db=tmp_path / "nope.db")
+    assert collect_entries(empty) == []
+    report = build_report([], since_ms=0, until_ms=1)
+    assert report.totals["cost_usd"] == 0.0
+    assert report.by_provider == []
+
+
+def test_range_filter_excludes_older_rows(sources: CostSources) -> None:
+    assert collect_entries(sources, since_ms=T0 + 100_000) == []
+
+
+# ---------------------------------------------------------------------------
+# Pricing honesty
+# ---------------------------------------------------------------------------
+
+
+def test_recorded_price_wins() -> None:
+    cost, source = price_entry(
+        provider="gemini-live", model="x", tokens_in=1, tokens_out=1, recorded_usd=0.5
+    )
+    assert (cost, source) == (0.5, "recorded")
+
+
+def test_local_provider_is_free_not_a_gap() -> None:
+    cost, source = price_entry(
+        provider="local-realtime", model="", tokens_in=9_000, tokens_out=10, recorded_usd=0.0
+    )
+    assert (cost, source) == (0.0, "free")
+
+
+def test_free_model_suffix_is_free() -> None:
+    _, source = price_entry(
+        provider="openrouter",
+        model="nvidia/nemotron-3-ultra-550b-a55b:free",
+        tokens_in=1_000,
+        tokens_out=10,
+        recorded_usd=0.0,
+    )
+    assert source == "free"
+
+
+def test_unknown_model_is_a_gap_not_a_zero_bill() -> None:
+    cost, source = price_entry(
+        provider="acme",
+        model="totally-unknown-model-9000",
+        tokens_in=500_000,
+        tokens_out=1_000,
+        recorded_usd=0.0,
+    )
+    assert (cost, source) == (0.0, "unknown")
+
+
+def test_known_model_is_re_derived() -> None:
+    cost, source = price_entry(
+        provider="anthropic",
+        model="claude-opus-4-7-20251022",
+        tokens_in=1_000_000,
+        tokens_out=0,
+        recorded_usd=0.0,
+    )
+    assert source == "derived"
+    assert cost > 0
+
+
+def test_no_tokens_no_gap() -> None:
+    """A 0.0 with nothing consumed is not a pricing hole."""
+    assert price_entry(
+        provider="acme", model="unknown", tokens_in=0, tokens_out=0, recorded_usd=0.0
+    ) == (0.0, "recorded")
+
+
+# ---------------------------------------------------------------------------
+# Aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_report_totals_and_breakdowns(sources: CostSources) -> None:
+    entries = collect_entries(sources)
+    report = build_report(entries, since_ms=T0 - 1, until_ms=T0 + 100_000)
+
+    totals = report.totals
+    assert totals["entries"] == len(entries)
+    assert totals["cost_usd"] == pytest.approx(sum(e.cost_usd for e in entries))
+    assert totals["tokens_total"] == sum(e.tokens_total for e in entries)
+
+    # Every dimension sums back to the same money.
+    for dimension in (report.by_provider, report.by_model, report.by_role, report.by_surface):
+        assert sum(row["cost_usd"] for row in dimension) == pytest.approx(
+            totals["cost_usd"], abs=1e-6
+        )
+
+    # Ranked by cost, so the top row is the biggest spender.
+    costs = [row["cost_usd"] for row in report.by_provider]
+    assert costs == sorted(costs, reverse=True)
+
+
+def test_gap_tokens_are_reported_not_hidden(sources: CostSources) -> None:
+    entries = collect_entries(sources)
+    report = build_report(entries, since_ms=0, until_ms=T0 + 100_000)
+    # grok-4.3 IS in the price table; the gap is the model-less worker draft
+    # that reported tokens without a price.
+    gap = report.totals["gap_tokens"]
+    assert gap == sum(e.tokens_total for e in entries if e.is_gap)
+    assert gap == 33_000
+    assert report.totals["gap_entries"] == 1
+    # The gap is NOT quietly folded into the money as if it were free.
+    assert report.totals["cost_usd"] == pytest.approx(sum(e.cost_usd for e in entries))
+
+
+def test_series_buckets_by_day_over_a_long_range(sources: CostSources) -> None:
+    report = build_report(
+        collect_entries(sources), since_ms=T0 - 30 * 86_400_000, until_ms=T0 + 86_400_000
+    )
+    assert report.bucket == "day"
+    assert len(report.series) >= 1
+    assert all(len(row["key"]) == len("2026-08-23") for row in report.series)
+
+
+def test_series_fills_quiet_days(sources: CostSources) -> None:
+    """A day with no spend still gets a bucket, or the axis lies about time."""
+    entries = collect_entries(sources)
+    # Two entries a week apart: the days between them must appear as zeroes.
+    spread = [
+        *entries,
+    ]
+    far = entries[0]
+    spread.append(
+        type(far)(
+            ts_ms=far.ts_ms + 7 * 86_400_000,
+            surface=far.surface,
+            role=far.role,
+            provider=far.provider,
+            model=far.model,
+            tokens_in=10,
+            tokens_out=1,
+            tokens_cached=0,
+            cost_usd=0.01,
+            price_source="recorded",
+            ref_id=far.ref_id,
+            label=far.label,
+        )
+    )
+    report = build_report(spread, since_ms=0, until_ms=far.ts_ms + 8 * 86_400_000)
+    assert report.bucket == "day"
+    assert len(report.series) == 8
+    assert sum(1 for row in report.series if row["entries"] == 0) == 6
+
+
+def test_series_buckets_by_hour_over_a_short_range(sources: CostSources) -> None:
+    report = build_report(collect_entries(sources), since_ms=T0, until_ms=T0 + 3_600_000)
+    assert report.bucket == "hour"
+
+
+def test_breakdown_carries_the_second_dimension(sources: CostSources) -> None:
+    report = build_report(collect_entries(sources), since_ms=0, until_ms=T0 + 100_000)
+    day = report.series[0]
+    assert set(day["breakdown"]).issubset({"realtime", "tool", "pipeline", "agent", "worker"})
+
+
+def test_filters_narrow_the_entries(sources: CostSources) -> None:
+    entries = collect_entries(sources)
+    assert all(e.role == "tool" for e in filter_entries(entries, roles={"tool"}))
+    assert all(e.provider == "grok" for e in filter_entries(entries, providers={"grok"}))
+    assert filter_entries(entries, search="nothing matches this") == []
+    # Search reaches the label, not only the ids.
+    assert filter_entries(entries, search="calendar")
+
+
+def test_empty_filters_keep_everything(sources: CostSources) -> None:
+    entries = collect_entries(sources)
+    assert filter_entries(entries) == entries

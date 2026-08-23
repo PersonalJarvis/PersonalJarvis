@@ -348,6 +348,7 @@ class WebServer:
         from .computer_use_routes import router as computer_use_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
+        from .costs_routes import router as costs_router
         from .deck_routes import router as deck_router
         from .desktop_routes import router as desktop_router
         from .diagnostics_routes import router as diagnostics_router
@@ -446,6 +447,8 @@ class WebServer:
         app.include_router(skills_router)
         app.include_router(docs_router)
         app.include_router(cli_router)
+        # Spend & Tokens — a read model over sessions/missions/agent-chat.
+        app.include_router(costs_router)
         # Command Registry — the one machine-readable catalog of app commands
         # (consumed by the app-command brain tool, the UI, CLI, and docs gen).
         app.include_router(commands_router)
