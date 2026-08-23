@@ -452,19 +452,15 @@
     "indicator_label": "Voice state"
   },
   "sidebar": {
-    "collapse": "Collapse the navigation",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
     "surface_hint": "Switch the front page between voice and typed chat",
     "new_chat": "New chat",
-    "recent_runs": "Recent runs",
     "recent_chats": "Recent chats",
     "show_all": "Show all",
     "show_less": "Show less",
-    "no_runs": "No runs yet",
     "no_chats": "No conversations yet",
-    "run_meta": "{turns} turns · {duration}",
-    "run_live": "live",
+    "collapse": "Collapse the navigation",
     "expand": "Expand the navigation",
     "wake_hint": "Say your wake word…",
     "brain_label": "Brain",
@@ -506,7 +502,10 @@
     "subscription_or_api": "Subscription login or API key",
     "local": "Local, no key needed"
   },
-  "chats_view": {
+  "turn_steps": {
+    "thought_for": "Thought for {duration}",
+    "failed": "failed"
+  },
   "home": {
     "greeting_morning": "Good morning{name_part}",
     "greeting_afternoon": "Good afternoon{name_part}",
@@ -525,6 +524,7 @@
     "hint_error": "Voice ran into a problem — tap the bar to try again",
     "bar_start": "Tap to start the conversation",
     "bar_stop": "Tap to end the conversation",
+    "bar_end": "End",
     "chat_empty_title": "How can I help?",
     "composer_hint": "Enter to send · Shift+Enter for a new line",
     "model_hint": "Model in use — click to change it",
@@ -535,6 +535,7 @@
     "background_wallpaper": "Wallpaper",
     "background_hint": "The app paints on a plain colour by default. Pick a picture below to use it as your wallpaper; “Solid colour” brings the plain ground back."
   },
+  "chats_view": {
     "title": "Chat",
     "subtitle": "Talk to your assistant or type — both go through the same event bus.",
     "thinking_aria": "Your assistant is thinking",

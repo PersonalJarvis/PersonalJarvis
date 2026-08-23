@@ -22,7 +22,6 @@ import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
-import { RecentRuns } from "@/components/home/RecentRuns";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
@@ -69,8 +68,10 @@ export interface SidebarProps {
   onToggleCollapsed?: () => void;
 }
 
-/** Width the sidebar was designed at, and the one a double-click restores. */
-export const SIDEBAR_DEFAULT_WIDTH = 280;
+/** Width the sidebar was designed at, and the one a double-click restores.
+ *  320 since 2026-08-23: the front page's controls live in this column now
+ *  and the maintainer dragged it wider on first use — that is the default. */
+export const SIDEBAR_DEFAULT_WIDTH = 320;
 
 /**
  * Narrowest the sidebar goes: the nav icons, and nothing else.
@@ -329,7 +330,9 @@ export function Sidebar({
         <DockRail className="min-h-0 flex-1" />
       ) : (
         <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
-          <RecentRuns />
+          {/* One list, not two: a voice session IS a run, and showing it as
+              "recent run" and "recent chat" read as a duplicate (maintainer,
+              2026-08-23). The Run Inspector keeps the run view. */}
           <RecentChats />
           <div className="mx-1 mb-1 mt-2 border-t border-border/60" aria-hidden />
           {NAV_GROUPS.map((group, groupIndex) => (

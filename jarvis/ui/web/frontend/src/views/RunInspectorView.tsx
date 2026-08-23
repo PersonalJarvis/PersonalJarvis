@@ -3,16 +3,11 @@ import { useT } from "@/i18n";
 import { useRuns } from "@/hooks/useRuns";
 import { RunList } from "@/components/runs/RunList";
 import { RunDetail } from "@/components/runs/RunDetail";
-import { useRunFocusStore } from "@/store/runFocus";
 
 export function RunInspectorView() {
   const t = useT();
   const { data: runs, isError } = useRuns();
-  // A run handed over from elsewhere (the sidebar's recent-runs block) is
-  // the first pick; otherwise the newest run, as before.
-  const [selected, setSelected] = useState<string | null>(() =>
-    useRunFocusStore.getState().take(),
-  );
+  const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
     if (selected === null && runs && runs.length > 0) setSelected(runs[0].session_id);

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { hintFor, recentLines, waveformPhase } from "@/components/home/VoiceStage";
+import { stateKey } from "@/components/home/JarvisBar";
 import { greetingKey } from "@/components/home/Greeting";
-import { reduceTranscript, type TranscriptLine } from "@/lib/homeTranscript";
+import type { TranscriptTextLine } from "@/lib/homeTranscript";
 
 const t = (key: string) => key;
 
-function line(who: TranscriptLine["who"], text: string, i: number): TranscriptLine {
+function line(who: TranscriptTextLine["who"], text: string, i: number): TranscriptTextLine {
   return { id: `m${i}`, who, text, ts: i };
 }
 
@@ -50,34 +51,11 @@ describe("VoiceStage helpers", () => {
   });
 });
 
-describe("homeTranscript reducer", () => {
-  it("turns heard words and spoken answers into lines, joining the answer's pieces", () => {
-    let lines: TranscriptLine[] = [];
-    lines = reduceTranscript(lines, "TranscriptFinal", { transcript: { text: "  what time is it " } }, 1000);
-    // The final TranscriptionUpdate of the same utterance is not a second line.
-    lines = reduceTranscript(lines, "TranscriptionUpdate", { text: "what time is it", is_final: true }, 1200);
-    lines = reduceTranscript(lines, "TranscriptionUpdate", { text: "what time", is_final: false }, 1300);
-    lines = reduceTranscript(lines, "SpeechSpoken", { text: "It is ten past nine." }, 2000);
-    lines = reduceTranscript(lines, "SpeechSpoken", { text: "Shall I set a timer?" }, 3000);
-    expect(lines.map((l) => [l.who, l.text])).toEqual([
-      ["user", "what time is it"],
-      ["assistant", "It is ten past nine. Shall I set a timer?"],
-    ]);
-  });
-
-  it("takes typed turns from MessageSent and ignores everything else", () => {
-    let lines: TranscriptLine[] = [];
-    const same = lines;
-    lines = reduceTranscript(lines, "BrainTurnCompleted", { tokens_in: 1 }, 1);
-    expect(lines).toBe(same);
-    lines = reduceTranscript(lines, "MessageSent", { role: "user", text: "hello" }, 10);
-    lines = reduceTranscript(lines, "MessageSent", { role: "system", text: "note" }, 11);
-    lines = reduceTranscript(lines, "MessageSent", { role: "assistant", text: "hi there" }, 12);
-    // A reply that is also spoken is one line, not two.
-    lines = reduceTranscript(lines, "SpeechSpoken", { text: "hi there" }, 13);
-    expect(lines.map((l) => [l.who, l.text])).toEqual([
-      ["user", "hello"],
-      ["assistant", "hi there"],
-    ]);
+describe("JarvisBar state word", () => {
+  it("says offline before anything else, connecting over a stale state", () => {
+    expect(stateKey("speaking", false, false)).toBe("offline");
+    expect(stateKey("idle", true, true)).toBe("connecting");
+    expect(stateKey("listening", false, true)).toBe("listening");
+    expect(stateKey("speaking", false, true)).toBe("speaking");
   });
 });

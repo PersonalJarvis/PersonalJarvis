@@ -1,0 +1,170 @@
+import { useCallback, type KeyboardEvent, type MouseEvent } from "react";
+import { PhoneOff } from "lucide-react";
+
+import { useEventStore, type VoiceState } from "@/store/events";
+import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
+import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
+import { useVoiceCall } from "@/components/agentic/useVoiceCall";
+import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
+import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
+import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
+
+/** Bars across the card — wide enough to read as a waveform, not a meter. */
+const BAR_COUNT = 40;
+
+/**
+ * The Jarvis bar — the front page's one voice control, drawn as a card in
+ * the chat composer's language (components/ChatInput.tsx: rounded-2xl,
+ * bg-card, a hairline border, the same soft shadow) so the two surfaces
+ * read as siblings.
+ *
+ * Top row: the live waveform, large. Bottom row: the state (dot + word) on
+ * the left; on the right the engine pill — provider and model, click to
+ * change it — and, only while a conversation is running, an End button.
+ * The whole card is the start/stop control (maintainer, 2026-08-23: no
+ * microphone button — you tap the bar or say the wake word); the pills stop
+ * the click from reaching the card so changing the model never starts a
+ * call by accident.
+ *
+ * A `div` with the button role rather than a `<button>`: a button may not
+ * contain the two inner buttons, and nesting them is how a screen reader
+ * would announce one control three times.
+ */
+export function JarvisBar({ phase }: { phase: WaveformPhase }) {
+  const t = useT();
+  const voiceState = useEventStore((s) => s.voiceState);
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const { connected } = useVoiceReadiness();
+  const engine = useVoiceEngineDisplay();
+  const { active: callActive, busy: callBusy, connecting, toggleCall } = useVoiceCall();
+
+  const disabled = callBusy || connecting || !connected;
+  const label = callActive ? t("home.bar_stop") : t("home.bar_start");
+  const stateWord = t(`voice_state.${stateKey(voiceState, connecting, connected)}`);
+
+  const onCardClick = useCallback(() => {
+    if (disabled) return;
+    void toggleCall();
+  }, [disabled, toggleCall]);
+
+  const onCardKey = useCallback(
+    (ev: KeyboardEvent<HTMLDivElement>) => {
+      if (ev.target !== ev.currentTarget) return; // a pill has its own keys
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        onCardClick();
+      }
+    },
+    [onCardClick],
+  );
+
+  const onEngineClick = useCallback(
+    (ev: MouseEvent<HTMLButtonElement>) => {
+      ev.stopPropagation();
+      setActiveSection("apikeys");
+    },
+    [setActiveSection],
+  );
+
+  const onEndClick = useCallback(
+    (ev: MouseEvent<HTMLButtonElement>) => {
+      ev.stopPropagation();
+      if (callBusy) return;
+      void toggleCall();
+    },
+    [callBusy, toggleCall],
+  );
+
+  return (
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled || undefined}
+      aria-label={label}
+      title={label}
+      onClick={onCardClick}
+      onKeyDown={onCardKey}
+      data-testid="jarvis-bar"
+      data-phase={phase}
+      data-active={callActive || undefined}
+      className={cn(
+        "group flex w-full cursor-pointer select-none flex-col gap-2 rounded-2xl border border-border bg-card p-3 text-left",
+        "shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
+        "hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "aria-disabled:cursor-default aria-disabled:opacity-80 aria-disabled:hover:border-border",
+        callActive && "border-primary/50",
+      )}
+    >
+      <VoiceWaveform
+        levelRef={voiceInputLevelRef}
+        phase={phase}
+        count={BAR_COUNT}
+        frame={false}
+        className="h-14 w-full"
+      />
+      <div className="flex items-center gap-1.5">
+        <span
+          className={cn(
+            "flex min-w-0 items-center gap-2 px-1 font-mono text-[10px] uppercase tracking-[0.16em]",
+            callActive ? "text-primary" : "text-muted-foreground",
+          )}
+          data-testid="jarvis-bar-state"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full",
+              voiceState === "error"
+                ? "bg-destructive"
+                : callActive
+                  ? "bg-primary animate-jarvis-pulse"
+                  : "bg-muted-foreground/40",
+            )}
+          />
+          <span className="truncate">{stateWord}</span>
+        </span>
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={onEngineClick}
+          title={t("home.model_hint")}
+          data-testid="jarvis-bar-engine"
+          className="inline-flex h-8 max-w-[280px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="truncate font-medium text-foreground">{engine.providerLabel}</span>
+          {engine.model && (
+            <span className="hidden truncate font-mono text-[10px] text-muted-foreground sm:inline">
+              {engine.model}
+            </span>
+          )}
+        </button>
+        {callActive && (
+          <button
+            type="button"
+            onClick={onEndClick}
+            disabled={callBusy}
+            aria-label={t("home.bar_end")}
+            title={t("home.bar_end")}
+            data-testid="jarvis-bar-end"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <PhoneOff className="h-3.5 w-3.5" aria-hidden />
+            {t("home.bar_end")}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Which `voice_state.*` word the bar shows. Offline wins over whatever the
+ * store last heard; the call being negotiated wins over the stale state
+ * before it.
+ */
+export function stateKey(state: VoiceState, connecting: boolean, connected: boolean): string {
+  if (!connected) return "offline";
+  if (connecting) return "connecting";
+  return state;
+}

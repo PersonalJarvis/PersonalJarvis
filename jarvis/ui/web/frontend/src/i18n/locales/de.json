@@ -452,19 +452,15 @@
     "indicator_label": "Sprachstatus"
   },
   "sidebar": {
-    "collapse": "Navigation einklappen",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
     "surface_hint": "Startseite zwischen Sprache und getipptem Chat umschalten",
     "new_chat": "Neuer Chat",
-    "recent_runs": "Letzte Runs",
     "recent_chats": "Letzte Chats",
     "show_all": "Alle anzeigen",
     "show_less": "Weniger anzeigen",
-    "no_runs": "Noch keine Runs",
     "no_chats": "Noch keine Unterhaltungen",
-    "run_meta": "{turns} Turns · {duration}",
-    "run_live": "live",
+    "collapse": "Navigation einklappen",
     "expand": "Navigation ausklappen",
     "wake_hint": "Sag dein Wake-Word…",
     "brain_label": "Brain",
@@ -506,7 +502,10 @@
     "subscription_or_api": "Subscription-Login oder API-Key",
     "local": "Lokal, kein Key nötig"
   },
-  "chats_view": {
+  "turn_steps": {
+    "thought_for": "{duration} nachgedacht",
+    "failed": "fehlgeschlagen"
+  },
   "home": {
     "greeting_morning": "Guten Morgen{name_part}",
     "greeting_afternoon": "Guten Tag{name_part}",
@@ -525,6 +524,7 @@
     "hint_error": "Voice hat ein Problem — tippe auf die Leiste, um es erneut zu versuchen",
     "bar_start": "Tippen, um die Unterhaltung zu starten",
     "bar_stop": "Tippen, um die Unterhaltung zu beenden",
+    "bar_end": "Beenden",
     "chat_empty_title": "Wie kann ich helfen?",
     "composer_hint": "Enter sendet · Shift+Enter für eine neue Zeile",
     "model_hint": "Verwendetes Modell — zum Ändern klicken",
@@ -535,6 +535,7 @@
     "background_wallpaper": "Hintergrundbild",
     "background_hint": "Die App zeichnet standardmäßig auf einer einfarbigen Fläche. Wähle unten ein Bild, um es als Hintergrund zu nutzen; „Einfarbig“ bringt die schlichte Fläche zurück."
   },
+  "chats_view": {
     "title": "Chat",
     "subtitle": "Rede mit deinem Assistenten oder schreibe — beides landet im selben Event-Bus.",
     "thinking_aria": "Dein Assistent denkt nach",

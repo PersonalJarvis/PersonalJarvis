@@ -452,19 +452,15 @@
     "indicator_label": "Estado de voz"
   },
   "sidebar": {
-    "collapse": "Contraer la navegación",
     "surface_voice": "Voz",
     "surface_chat": "Chat",
     "surface_hint": "Cambiar la página de inicio entre voz y chat escrito",
     "new_chat": "Nuevo chat",
-    "recent_runs": "Últimas ejecuciones",
     "recent_chats": "Chats recientes",
     "show_all": "Mostrar todo",
     "show_less": "Mostrar menos",
-    "no_runs": "Aún no hay ejecuciones",
     "no_chats": "Aún no hay conversaciones",
-    "run_meta": "{turns} turnos · {duration}",
-    "run_live": "en vivo",
+    "collapse": "Contraer la navegación",
     "expand": "Expandir la navegación",
     "wake_hint": "Di tu palabra de activación…",
     "brain_label": "Cerebro",
@@ -506,7 +502,10 @@
     "subscription_or_api": "Inicio de sesión con suscripción o clave API",
     "local": "Local, no necesita clave"
   },
-  "chats_view": {
+  "turn_steps": {
+    "thought_for": "Pensó durante {duration}",
+    "failed": "falló"
+  },
   "home": {
     "greeting_morning": "Buenos días{name_part}",
     "greeting_afternoon": "Buenas tardes{name_part}",
@@ -525,6 +524,7 @@
     "hint_error": "La voz tuvo un problema — toca la barra para intentarlo de nuevo",
     "bar_start": "Toca para iniciar la conversación",
     "bar_stop": "Toca para terminar la conversación",
+    "bar_end": "Terminar",
     "chat_empty_title": "¿En qué puedo ayudar?",
     "composer_hint": "Enter envía · Shift+Enter para una nueva línea",
     "model_hint": "Modelo en uso — haz clic para cambiarlo",
@@ -535,6 +535,7 @@
     "background_wallpaper": "Fondo de pantalla",
     "background_hint": "La app se dibuja sobre un color liso por defecto. Elige una imagen abajo para usarla de fondo; «Color sólido» devuelve la superficie lisa."
   },
+  "chats_view": {
     "title": "Chat",
     "subtitle": "Habla con tu asistente o escribe — ambos pasan por el mismo bus de eventos.",
     "thinking_aria": "Tu asistente está pensando",

@@ -3,18 +3,18 @@ import { useEffect, useMemo, useRef } from "react";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import type { TranscriptLine as TranscriptEntry } from "@/lib/homeTranscript";
-import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
-import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
+import type { WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
-import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { Greeting } from "@/components/home/Greeting";
+import { JarvisBar } from "@/components/home/JarvisBar";
+import { TurnSteps } from "@/components/home/TurnSteps";
 
 /** How many finished lines the lane keeps above the bar. */
-const TRANSCRIPT_LINES = 6;
+const TRANSCRIPT_LINES = 8;
 
 /**
  * The voice stage — what the front page opens on.
@@ -26,10 +26,13 @@ const TRANSCRIPT_LINES = 6;
  * the IDE's voice bubble uses, so there is exactly one way voice begins.
  *
  * The transcript lane reads the home store's transcript (lib/homeTranscript:
- * heard words, spoken answers and typed turns merged into one list) plus the
- * live, not-yet-final transcription, so what you are saying appears while
- * you say it. Older lines scroll away; this is the live turn, not an archive
- * — the archive is one click away in the sidebar's recent chats.
+ * heard words, the turn's reasoning steps, spoken answers and typed turns
+ * merged into one list) plus the live, not-yet-final transcription, so what
+ * you are saying appears while you say it. A turn's steps render between
+ * your words and the answer — live while the turn runs, folded afterwards
+ * (components/home/TurnSteps). Older lines scroll away; this is the live
+ * turn, not an archive — the archive is one click away in the sidebar's
+ * recent chats.
  */
 export function VoiceStage() {
   const t = useT();
@@ -39,23 +42,22 @@ export function VoiceStage() {
   const transcription = useEventStore((s) => s.transcription);
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
   const { connected, warming } = useVoiceReadiness();
-  const engine = useVoiceEngineDisplay();
-  const { active: callActive, busy: callBusy, connecting, toggleCall } = useVoiceCall();
+  const { connecting } = useVoiceCall();
   const { config: wakeConfig } = useWakeWord();
   const wakePhrase = wakeConfig?.phrase.trim() || "";
 
   const lines = useMemo(() => recentLines(transcript, TRANSCRIPT_LINES), [transcript]);
   const liveLine = transcription && !transcriptionFinal ? transcription : "";
+  // A live turn keeps the lane pinned to its end as steps arrive.
+  const liveSteps = lines.some((m) => m.who === "steps" && m.live);
 
   const laneEnd = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     laneEnd.current?.scrollIntoView({ block: "end" });
-  }, [lines.length, liveLine]);
+  }, [lines, liveLine, liveSteps]);
 
   const phase = waveformPhase(voiceState, connected);
-  const pressDisabled = callBusy || connecting || !connected;
   const hint = hintFor({ connected, warming, connecting, voiceState, wakePhrase, t });
-  const barLabel = callActive ? t("home.bar_stop") : t("home.bar_start");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center overflow-hidden" data-testid="voice-stage">
@@ -63,18 +65,30 @@ export function VoiceStage() {
         <Greeting subtitle={t("home.voice_subtitle")} muted={lines.length > 0 || Boolean(liveLine)} />
 
         <div
-          className="flex max-h-[40vh] min-h-[96px] flex-col justify-end gap-3 overflow-y-auto px-1 scrollbar-jarvis"
+          className="flex max-h-[44vh] min-h-[96px] flex-col justify-end gap-3 overflow-y-auto px-1 scrollbar-jarvis"
           data-testid="voice-transcript"
           aria-live="polite"
         >
-          {lines.map((m) => (
-            <TranscriptLine
-              key={m.id}
-              who={m.who === "user" ? t("home.transcript_you") : assistantName}
-              text={m.text}
-              user={m.who === "user"}
-            />
-          ))}
+          {lines.map((m) =>
+            m.who === "steps" ? (
+              <div key={m.id} className="pl-[80px]" data-testid="transcript-steps">
+                <TurnSteps
+                  steps={m.steps}
+                  live={m.live}
+                  durationMs={m.durationMs}
+                  compact
+                  defaultOpen={m.live}
+                />
+              </div>
+            ) : (
+              <TranscriptLine
+                key={m.id}
+                who={m.who === "user" ? t("home.transcript_you") : assistantName}
+                text={m.text}
+                user={m.who === "user"}
+              />
+            ),
+          )}
           {liveLine && (
             <TranscriptLine who={t("home.transcript_you")} text={liveLine} user live />
           )}
@@ -82,47 +96,7 @@ export function VoiceStage() {
         </div>
 
         <div className="flex flex-col items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void toggleCall()}
-            disabled={pressDisabled}
-            aria-label={barLabel}
-            title={barLabel}
-            data-testid="jarvis-bar"
-            data-phase={phase}
-            className={cn(
-              "group relative flex h-16 w-full items-center gap-4 rounded-full border border-border bg-card pl-5 pr-3 text-left shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.06),0_12px_32px_rgb(var(--scrim-rgb)/0.08)] transition-[box-shadow,border-color]",
-              "hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              "disabled:cursor-default disabled:opacity-80",
-              callActive && "border-primary/50",
-            )}
-          >
-            <span
-              className={cn(
-                "flex shrink-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em]",
-                callActive ? "text-primary" : "text-muted-foreground",
-              )}
-            >
-              <span
-                aria-hidden
-                className={cn(
-                  "h-2 w-2 rounded-full",
-                  callActive ? "bg-primary animate-jarvis-pulse" : "bg-muted-foreground/40",
-                )}
-              />
-              {t(`voice_state.${connecting ? "connecting" : voiceState}`)}
-            </span>
-            <VoiceWaveform
-              levelRef={voiceInputLevelRef}
-              phase={phase}
-              count={32}
-              frame={false}
-              className="h-14 min-w-0 flex-1"
-            />
-            <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground sm:flex">
-              {engine.providerLabel}
-            </span>
-          </button>
+          <JarvisBar phase={phase} />
           <p
             className="font-mono text-[11px] tracking-[0.04em] text-muted-foreground"
             data-testid="voice-hint"

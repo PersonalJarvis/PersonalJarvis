@@ -28,17 +28,10 @@ export function ChatInput() {
   // mode is realtime — the same resolver the header and the sidebar use.
   const engine = useVoiceEngineDisplay();
   const wsWarming = useEventStore((s) => s.wsWarming);
-  const chatThinking = useEventStore((s) => s.chatThinking);
+  // The turn's progress is no longer mirrored in the composer — the chat
+  // column renders the live steps (components/home/TurnSteps) as the
+  // in-progress assistant turn. The composer only arms the wait state.
   const setChatThinking = useEventStore((s) => s.setChatThinking);
-  // Most recent live reasoning step — the pill mirrors what the trace card
-  // shows ("Using tool · wiki-recall") instead of a static "thinking…" label.
-  // The selector returns a stable object ref while that step is unchanged.
-  const activeStep = useEventStore((s) => {
-    for (let i = s.thinkingSteps.length - 1; i >= 0; i--) {
-      if (s.thinkingSteps[i].status === "active") return s.thinkingSteps[i];
-    }
-    return undefined;
-  });
   // Mic-dictation: live transcript streams into the box as the user speaks.
   const dictating = useEventStore((s) => s.dictating);
   const dictationText = useEventStore((s) => s.dictationText);
@@ -176,23 +169,6 @@ export function ChatInput() {
         "focus-within:border-primary/40",
       )}
     >
-      {chatThinking && (
-        <div
-          className="flex min-w-0 items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary"
-          role="status"
-          aria-live="polite"
-        >
-          <span
-            aria-hidden
-            className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary"
-          />
-          <span className="thinking-shimmer min-w-0 truncate font-medium">
-            {activeStep
-              ? `${t(activeStep.labelKey)}${activeStep.detail ? ` · ${activeStep.detail}` : ""}`
-              : t("thinking.label")}
-          </span>
-        </div>
-      )}
       {dictating && (
         <div
           className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary"
