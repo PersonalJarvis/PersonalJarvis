@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { TurnSteps, formatThoughtDuration } from "@/components/home/TurnSteps";
+import { TurnSteps, formatThoughtDuration, traceWorthShowing } from "@/components/home/TurnSteps";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 
 function step(over: Partial<ThinkingStep> & Pick<ThinkingStep, "id" | "kind">): ThinkingStep {
@@ -104,5 +104,27 @@ describe("formatThoughtDuration", () => {
     expect(formatThoughtDuration(400)).toBe("1s");
     expect(formatThoughtDuration(10_400)).toBe("10s");
     expect(formatThoughtDuration(65_000)).toBe("1m 05s");
+  });
+});
+
+describe("traceWorthShowing", () => {
+  const brain: ThinkingStep = {
+    id: "b1", kind: "brain", labelKey: "thinking.step_brain", status: "done", startedTs: 0, durationMs: 200,
+  };
+  const tool: ThinkingStep = {
+    id: "t1", kind: "tool", labelKey: "thinking.step_tool", detail: "gmail_search", status: "done", startedTs: 0, durationMs: 400,
+  };
+
+  it("hides a finished sub-second brain-only turn — no 'Thought for 0s'", () => {
+    expect(traceWorthShowing([brain], 200, false)).toBe(false);
+    expect(traceWorthShowing([], 0, false)).toBe(false);
+    const { container } = render(<TurnSteps steps={[brain]} durationMs={200} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("keeps turns with a tool, a real thinking time, or that are still live", () => {
+    expect(traceWorthShowing([brain, tool], 200, false)).toBe(true);
+    expect(traceWorthShowing([brain], 3200, false)).toBe(true);
+    expect(traceWorthShowing([], 0, true)).toBe(true);
   });
 });

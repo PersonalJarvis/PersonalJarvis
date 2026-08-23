@@ -238,6 +238,25 @@ function StepRow({ step, compact }: { step: ThinkingStep; compact: boolean }) {
   );
 }
 
+/**
+ * Is a finished trace worth a line on screen?
+ *
+ * A turn that only saw the brain call come and go within a second — no tool,
+ * no worker, no computer use — has nothing to show, and "Thought for 0s"
+ * above an answer is noise, not information (maintainer, 2026-08-23). Live
+ * traces are always shown: the person should see the assistant is working.
+ */
+export function traceWorthShowing(
+  steps: ThinkingStep[],
+  durationMs: number | undefined,
+  live: boolean,
+): boolean {
+  if (live) return true;
+  if (steps.length === 0) return false;
+  const substantial = steps.some((s) => s.kind !== "brain" && s.kind !== "note");
+  return substantial || (durationMs ?? 0) >= 1000;
+}
+
 export function TurnSteps({
   steps,
   live = false,
@@ -252,7 +271,7 @@ export function TurnSteps({
 
   // A finished turn with nothing observed has nothing to say; a live one
   // still shows its header so the person sees the assistant is working.
-  if (!live && steps.length === 0) return null;
+  if (!traceWorthShowing(steps, durationMs, live)) return null;
 
   const toolRows = steps.filter((s) => s.kind === "tool");
   const visible = open ? steps : toolRows;

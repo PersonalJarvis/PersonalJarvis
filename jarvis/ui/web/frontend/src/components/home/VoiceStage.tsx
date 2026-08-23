@@ -11,7 +11,7 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { Greeting } from "@/components/home/Greeting";
 import { JarvisBar } from "@/components/home/JarvisBar";
-import { TurnSteps } from "@/components/home/TurnSteps";
+import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
 
 /** How many finished lines the lane keeps above the bar. */
 const TRANSCRIPT_LINES = 8;
@@ -46,7 +46,19 @@ export function VoiceStage() {
   const { config: wakeConfig } = useWakeWord();
   const wakePhrase = wakeConfig?.phrase.trim() || "";
 
-  const lines = useMemo(() => recentLines(transcript, TRANSCRIPT_LINES), [transcript]);
+  // Steps blocks with nothing to show (a sub-second brain call, no tools)
+  // are dropped BEFORE the lane is cut to its last lines, so an empty block
+  // never takes a slot — or leaves a blank gap — in the lane.
+  const lines = useMemo(
+    () =>
+      recentLines(
+        transcript.filter(
+          (m) => m.who !== "steps" || traceWorthShowing(m.steps, m.durationMs, m.live),
+        ),
+        TRANSCRIPT_LINES,
+      ),
+    [transcript],
+  );
   const liveLine = transcription && !transcriptionFinal ? transcription : "";
   // A live turn keeps the lane pinned to its end as steps arrive.
   const liveSteps = lines.some((m) => m.who === "steps" && m.live);
@@ -95,15 +107,7 @@ export function VoiceStage() {
           <div ref={laneEnd} />
         </div>
 
-        <div className="flex flex-col items-center gap-3">
-          <JarvisBar phase={phase} />
-          <p
-            className="font-mono text-[11px] tracking-[0.04em] text-muted-foreground"
-            data-testid="voice-hint"
-          >
-            {hint}
-          </p>
-        </div>
+        <JarvisBar phase={phase} hint={hint} />
       </div>
     </div>
   );

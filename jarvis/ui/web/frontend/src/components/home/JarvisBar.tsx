@@ -2,7 +2,8 @@ import { useCallback, type KeyboardEvent, type MouseEvent } from "react";
 import { PhoneOff } from "lucide-react";
 
 import { useEventStore, type VoiceState } from "@/store/events";
-import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
+import type { WaveformPhase } from "@/components/overlay/VoiceWaveform";
+import { StageWaveform } from "@/components/home/StageWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
@@ -10,17 +11,17 @@ import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-/** Bars across the card — wide enough to read as a waveform, not a meter. */
-const BAR_COUNT = 40;
-
 /**
  * The Jarvis bar — the front page's one voice control, drawn as a card in
  * the chat composer's language (components/ChatInput.tsx: rounded-2xl,
  * bg-card, a hairline border, the same soft shadow) so the two surfaces
  * read as siblings.
  *
- * Top row: the live waveform, large. Bottom row: the state (dot + word) on
- * the left; on the right the engine pill — provider and model, click to
+ * Top row: the waveform, filling the card's width (components/home/
+ * StageWaveform — breathing at rest, the microphone while listening).
+ * Bottom row: the state (dot + word) and, in the same breath, what to do
+ * or what is happening ("Say “Hey George” or tap to start", "Listening…")
+ * on the left; on the right the engine pill — provider and model, click to
  * change it — and, only while a conversation is running, an End button.
  * The whole card is the start/stop control (maintainer, 2026-08-23: no
  * microphone button — you tap the bar or say the wake word); the pills stop
@@ -31,7 +32,7 @@ const BAR_COUNT = 40;
  * contain the two inner buttons, and nesting them is how a screen reader
  * would announce one control three times.
  */
-export function JarvisBar({ phase }: { phase: WaveformPhase }) {
+export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string }) {
   const t = useT();
   const voiceState = useEventStore((s) => s.voiceState);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
@@ -89,21 +90,17 @@ export function JarvisBar({ phase }: { phase: WaveformPhase }) {
       data-phase={phase}
       data-active={callActive || undefined}
       className={cn(
-        "group flex w-full cursor-pointer select-none flex-col gap-2 rounded-2xl border border-border bg-card p-3 text-left",
+        "group flex w-full cursor-pointer select-none flex-col gap-2 rounded-2xl border border-border bg-card px-4 pb-2.5 pt-4 text-left",
         "shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
         "hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         "aria-disabled:cursor-default aria-disabled:opacity-80 aria-disabled:hover:border-border",
         callActive && "border-primary/50",
       )}
     >
-      <VoiceWaveform
-        levelRef={voiceInputLevelRef}
-        phase={phase}
-        count={BAR_COUNT}
-        frame={false}
-        className="h-14 w-full"
-      />
-      <div className="flex items-center gap-1.5">
+      <div className="h-14 w-full">
+        <StageWaveform levelRef={voiceInputLevelRef} phase={phase} />
+      </div>
+      <div className="flex items-center gap-2">
         <span
           className={cn(
             "flex min-w-0 items-center gap-2 px-1 font-mono text-[10px] uppercase tracking-[0.16em]",
@@ -122,9 +119,14 @@ export function JarvisBar({ phase }: { phase: WaveformPhase }) {
                   : "bg-muted-foreground/40",
             )}
           />
-          <span className="truncate">{stateWord}</span>
+          <span className="shrink-0">{stateWord}</span>
         </span>
-        <span className="flex-1" />
+        <span
+          className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+          data-testid="voice-hint"
+        >
+          {hint}
+        </span>
         <button
           type="button"
           onClick={onEngineClick}
