@@ -1,4 +1,4 @@
-import { Blocks, Zap } from "lucide-react";
+import { Blocks, ClipboardList } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { McpLogo } from "@/components/extensions/McpLogo";
 import { useEventStore, type SectionId } from "@/store/events";
@@ -37,10 +37,11 @@ interface AreaSpec {
 }
 
 const AREAS = [
-  // A bolt — an ability Jarvis can fire. Not the scroll glyph another assistant
-  // vendor uses for its skills feature, and not a graduation cap (reads as a
-  // school app, not a skill).
-  { id: "skills", labelKey: "nav.skills", icon: Zap },
+  // A written-down, repeatable procedure — a sheet with the steps on it. Not
+  // the scroll glyph another assistant vendor uses for its skills feature, not
+  // a graduation cap (reads as a school app) and not a bolt (reads as an
+  // action, while a skill is a routine).
+  { id: "skills", labelKey: "nav.skills", icon: ClipboardList },
   { id: "plugins", labelKey: "nav.plugins", icon: Blocks },
   // The official Model Context Protocol mark, not a generic plug.
   { id: "mcps", labelKey: "nav.mcps", icon: McpLogo },
