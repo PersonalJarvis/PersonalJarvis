@@ -8,10 +8,16 @@ reads — the one text that decides whether what comes back is a real artifact
 scaffold with a README.
 
 Everything a finished artifact must be is stated HERE, because the worker
-shares none of the app's context. The rules are the sandbox's rules: the page
-is framed with scripts allowed but every network request blocked, so an
-external font, CDN script or remote image is not "slightly slower" — it is a
-broken page. Stated once, in the brief, is the only place that can prevent it.
+shares none of the app's context. Two kinds of rule ride together:
+
+* the sandbox's rules — the page is framed with scripts allowed but every
+  network request blocked, so an external font, CDN script or remote image is
+  not "slightly slower", it is a broken page;
+* the design standard (:mod:`jarvis.artifacts.design_guide`) — the app's own
+  tokens to paste, how to read the request so the form follows the ask, the
+  chart method, and the explicit list of what reads as generated. Without it a
+  worker reaches for the defaults every model reaches for, and the result is
+  the gradient-hero page our archive was full of (2026-08-23).
 
 Pure function of its inputs: no clock, no filesystem, no randomness. What the
 worker receives for a given request is byte-identical across runs, which is
@@ -24,7 +30,15 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
-from jarvis.visuals.brand import BRAND
+from jarvis.artifacts.design_guide import (
+    AVOID,
+    CHARTS,
+    DESIGN_SYSTEM,
+    DONE_MEANS,
+    READ_THE_REQUEST,
+    THEME_BOOTSTRAP_JS,
+    THEME_CSS,
+)
 
 # How much of a previous version rides along on a revision. The worker rewrites
 # the whole file from it, so the cap is generous — but a page that outgrew it
@@ -126,7 +140,6 @@ def build_artifact_brief(
     )
     lang_name = _language_name(language)
     lang_code = (language or "").strip().lower() or "en"
-    b = BRAND
 
     sections: list[str] = [
         _QUALITY_LEAD,
@@ -154,38 +167,29 @@ def build_artifact_brief(
                 "never navigate away, and must work with no network at all.",
                 f"- The visible content is written in {lang_name} — every heading, "
                 "label, caption and note. Code identifiers and comments stay English.",
+                "- Responsive from 360 px to 1600 px; the page never scrolls sideways.",
+                "- Real content, never filler: the numbers, facts and data the request "
+                "names go into the page; a missing fact becomes a clearly labelled "
+                "assumption — never lorem ipsum, never 'TODO'.",
             ]
         ),
+        READ_THE_REQUEST,
+        DESIGN_SYSTEM,
         "\n".join(
             [
-                "## Design",
-                "- Dark brand look by default: page background "
-                f"{b['bg']}, cards {b['bg_card']}, text {b['text']}, muted text "
-                f"{b['text_muted']}, accent {b['primary']}, borders {b['border']}. "
-                "Add an `@media (prefers-color-scheme: light)` block with a "
-                "matching light palette (paper background, near-black text, the "
-                "same accent) so the page reads well in both modes.",
-                "- Calm typography on a system-ui font stack, generous spacing, "
-                "12–14 px rounded cards, 1 px borders, no gratuitous animation.",
-                "- Responsive: readable from 360 px to 1600 px; wide tables, code "
-                "and diagrams scroll inside their own container, never the page "
-                "sideways.",
-                "- Real content, never filler: put the numbers, facts and data the "
-                "request names into the page. When something needed is missing, "
-                "make a clearly labelled assumption — never lorem ipsum, never "
-                "'TODO'.",
+                "```html",
+                "<style>",
+                THEME_CSS,
+                "</style>",
+                "<script>",
+                THEME_BOOTSTRAP_JS,
+                "</script>",
+                "```",
             ]
         ),
-        "\n".join(
-            [
-                "## Done means",
-                "- The file opens from disk, with no network, and renders "
-                "correctly with no console errors.",
-                "- The page shows what was asked for — the title, the content, the "
-                "data — and says nothing about how it was built.",
-                "- Nothing else was created or changed.",
-            ]
-        ),
+        CHARTS,
+        AVOID,
+        DONE_MEANS,
     ]
 
     if revision:

@@ -20,6 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { RunGraphPanel } from "@/components/visualization/RunGraphPanel";
 import { ViewHeader } from "@/views/ChatsView";
 import { useT } from "@/i18n";
+import { useThemeValue } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -407,9 +408,10 @@ function ArtifactToolbar({
     }
   }, [visual, pushToast, t]);
 
+  const theme = useThemeValue();
   const externalUrl =
     visual.kind === "page"
-      ? artifactPageUrl(visual.slug, visual.path)
+      ? `${artifactPageUrl(visual.slug, visual.path)}?theme=${theme}`
       : visual.url;
 
   const tabs: Array<{ id: StageMode; label: string; Icon: typeof Eye; show: boolean }> = [
@@ -530,6 +532,10 @@ function ArtifactToolbar({
  */
 function ArtifactStage({ visual }: { visual: VisualArtifact }) {
   const t = useT();
+  /* The page follows the APP's theme, not the OS's: the artifact brief has every
+   * page stamp `data-theme` from this query (design_guide.THEME_BOOTSTRAP_JS),
+   * so a light app shows a light artifact even on a dark-mode machine. */
+  const theme = useThemeValue();
   const [failed, setFailed] = useState(false);
   const id = visualId(visual);
   // A new file must not inherit the previous file's failure verdict.
@@ -563,8 +569,8 @@ function ArtifactStage({ visual }: { visual: VisualArtifact }) {
     return (
       <div className="flex h-full flex-col">
         <iframe
-          key={id}
-          src={artifactPageUrl(visual.slug, visual.path)}
+          key={`${id}:${theme}`}
+          src={`${artifactPageUrl(visual.slug, visual.path)}?theme=${theme}`}
           title={visual.title}
           data-testid="visualization-frame"
           onError={() => setFailed(true)}

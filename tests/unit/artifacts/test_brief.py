@@ -9,13 +9,15 @@ rail strips, and the revision block that carries the previous page.
 
 from __future__ import annotations
 
+import re
+
 from jarvis.artifacts.brief import (
     MAX_PREVIOUS_HTML_CHARS,
     artifact_filename,
     build_artifact_brief,
 )
+from jarvis.artifacts.design_guide import THEME_BOOTSTRAP_JS, THEME_CSS
 from jarvis.missions.stream_evidence import clean_request_body
-from jarvis.visuals.brand import BRAND
 
 
 def test_filename_comes_from_the_title_and_stays_short() -> None:
@@ -40,9 +42,36 @@ def test_brief_states_the_single_file_and_no_network_contract() -> None:
     assert "`<title>` that names the artifact: `Plan comparison`" in prompt
     assert "written in English" in prompt
     assert "Compare the three plans by price and features." in prompt
-    # Brand palette rides along so the page matches the app.
-    assert BRAND["primary"] in prompt and BRAND["bg"] in prompt
-    assert "prefers-color-scheme: light" in prompt
+    # The app's own design system rides along, verbatim, so the page matches it.
+    assert THEME_CSS in prompt and THEME_BOOTSTRAP_JS in prompt
+    assert "## Read the request first" in prompt
+    assert "## Charts and diagrams" in prompt
+    assert "## What reads as generated" in prompt
+    assert "## Done means" in prompt
+
+
+def test_theme_tokens_are_defined_in_every_scope() -> None:
+    """The classic unreadable-artifact bug is a token that exists in one theme
+    only. Every `--name` in the dark root block must also exist in the OS-light
+    block and in the explicit light stamp."""
+    blocks = re.findall(r"\{([^{}]*?--[^{}]*)\}", THEME_CSS)
+    scoped = [b for b in blocks if "--bg:" in b]
+    assert len(scoped) == 3, "dark root, OS-light, explicit-light"
+    names = [set(re.findall(r"(--[a-z0-9-]+):", b)) for b in scoped]
+    assert names[0] >= names[1] and names[1] == names[2]
+    # The chart palettes documented as validated are the ones shipped.
+    dark = "--s1:#C98500;--s2:#4F8EF7;--s3:#E0633F;--s4:#1F9E7F;--s5:#9085E9;--s6:#C84E8A"
+    light = "--s1:#A86B00;--s2:#2A6FD0;--s3:#D4532E;--s4:#158F6B;--s5:#5B46C2;--s6:#C23F86"
+    assert dark in THEME_CSS and light in THEME_CSS
+
+
+def test_the_brief_names_the_forms_the_user_can_ask_for() -> None:
+    prompt = build_artifact_brief("x", title="T", language="en").prompt
+    for phrase in ("Balken", "Vergleich", "erklär mir", "dashboard", "timeline", "landing page"):
+        assert phrase in prompt, phrase
+    # And the things our own archive got wrong are named as forbidden.
+    for phrase in ("gradient", "Tailwind rainbow", "emoji", "dual axes", "Web fonts"):
+        assert phrase in prompt, phrase
 
 
 def test_language_code_lands_in_the_html_lang_and_the_content_rule() -> None:
@@ -81,7 +110,8 @@ def test_an_oversized_previous_page_is_clipped_head_and_tail() -> None:
     brief = build_artifact_brief("Tweak.", title="Huge", language="en", previous_html=huge)
     assert "middle of the previous version omitted" in brief.prompt
     assert brief.prompt.rstrip("`\n").endswith("ZEND")
-    assert len(brief.prompt) < MAX_PREVIOUS_HTML_CHARS + 6_000
+    # The guide itself is ~12k chars; the clipped page adds the cap, not more.
+    assert len(brief.prompt) < MAX_PREVIOUS_HTML_CHARS + 20_000
 
 
 def test_brief_is_deterministic() -> None:
