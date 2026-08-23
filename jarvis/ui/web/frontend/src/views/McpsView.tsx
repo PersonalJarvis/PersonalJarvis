@@ -34,6 +34,7 @@ import {
   TableRow,
   type Column,
 } from "@/components/extensions/primitives";
+import { FileCard, type CardFile } from "@/components/extensions/FileCard";
 import { useEventStore } from "@/store/events";
 import { robustCopy } from "@/lib/clipboard";
 import { fill, useT } from "@/i18n";
@@ -426,6 +427,12 @@ export function McpsView() {
 // Detail page
 // ---------------------------------------------------------------------------
 
+async function fetchMcpFiles(name: string): Promise<{ files: CardFile[]; config_path: string }> {
+  const res = await fetch(`/api/mcps/${encodeURIComponent(name)}/files`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 function McpDetail({
   server,
   pending,
@@ -442,6 +449,10 @@ function McpDetail({
   onEditConfig: () => void;
 }) {
   const t = useT();
+  const filesQuery = useQuery({
+    queryKey: ["mcp-files", server.name],
+    queryFn: () => fetchMcpFiles(server.name),
+  });
   const st = statusOf(server, pending, t);
   const missing = (server.required_auth ?? []).filter(
     (k) => server.credentials_status && server.credentials_status[k] === false,
@@ -530,7 +541,7 @@ function McpDetail({
               { label: t("mcps_view.col_transport"), value: server.transport ?? null },
               {
                 label: t("mcps_view.command"),
-                value: command ? <code className="font-mono text-xs">{command}</code> : null,
+                value: command ? <code className="font-mono text-[13px]">{command}</code> : null,
               },
               {
                 label: t("mcps_view.credentials"),
@@ -551,20 +562,27 @@ function McpDetail({
         </div>
       </Panel>
 
+      <FileCard
+        className="mt-4"
+        files={filesQuery.data?.files ?? []}
+        loading={filesQuery.isPending}
+        error={filesQuery.error ? (filesQuery.error as Error).message : null}
+      />
+
       <Panel className="mt-4">
         <div className="flex items-center gap-2 border-b border-border/70 px-5 py-2.5">
-          <span className="text-xs font-medium">{t("mcps_view.tools_heading")}</span>
-          <span className="text-xs text-muted-foreground">{server.tools.length}</span>
+          <span className="text-sm font-medium">{t("mcps_view.tools_heading")}</span>
+          <span className="text-sm text-muted-foreground">{server.tools.length}</span>
         </div>
         {server.tools.length === 0 ? (
           <p className="px-5 py-4 text-xs text-muted-foreground">{t("mcps_view.no_tools")}</p>
         ) : (
           <ul className="divide-y divide-border/70">
             {server.tools.map((tool) => (
-              <li key={tool.name} className="px-5 py-2.5">
-                <p className="font-mono text-xs">{tool.name}</p>
+              <li key={tool.name} className="px-5 py-3">
+                <p className="font-mono text-[13px]">{tool.name}</p>
                 {tool.description && (
-                  <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground" title={tool.description}>
+                  <p className="mt-0.5 line-clamp-2 text-[13px] text-muted-foreground" title={tool.description}>
                     {tool.description}
                   </p>
                 )}

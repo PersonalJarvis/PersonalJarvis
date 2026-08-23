@@ -1010,6 +1010,87 @@ def _plugin_manifest_files(entry: Any) -> list[dict[str, Any]]:
     return files
 
 
+def _mask_env_literals(block: dict[str, Any]) -> dict[str, Any]:
+    """A copy of an MCP server block with literal ``env`` values hidden.
+
+    ``$NAME`` references are resolved from the credential store and safe to
+    show; anything else in ``env`` may be a pasted token and is not.
+    """
+    out = dict(block)
+    env = out.get("env")
+    if isinstance(env, dict):
+        out["env"] = {
+            k: (v if isinstance(v, str) and v.startswith("$") else "••••••")
+            for k, v in env.items()
+        }
+    return out
+
+
+@router.get("/plugins/{plugin_id}/files", openapi_extra={"x-jarvis-readonly": True})
+async def plugin_files(plugin_id: str, response: Response) -> dict[str, Any]:
+    """What a plugin is made of, as readable files — the detail page's file card.
+
+    A plugin is a catalog entry, not a folder on disk, so the "files" are the
+    pieces that decide what it may do, written out the way a plugin folder
+    would hold them: ``plugin.json`` (the spec without secrets — the schema
+    already excludes client secrets), ``mcp.json`` when it talks to an MCP
+    server (literal env values masked), and ``USAGE.md`` — the usage card the
+    brain reads when it calls the plugin. For a community plugin the
+    published manifests follow under ``source/``. Nothing is written.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    spec = load_catalog().by_id(plugin_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found")
+
+    dump = spec.model_dump(mode="json", exclude_none=True)
+    mcp_block = dump.pop("mcp_server", None)
+    files = [_text_file("plugin.json", json.dumps(dump, indent=2, ensure_ascii=False))]
+    if isinstance(mcp_block, dict):
+        files.append(
+            _text_file(
+                "mcp.json",
+                json.dumps(
+                    {"mcpServers": {spec.id: _mask_env_literals(mcp_block)}},
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
+        )
+
+    from jarvis.marketplace.usage_cards.loader import _resolve_card_path
+
+    card = _resolve_card_path(spec.id)
+    if card is not None:
+        try:
+            files.append(_text_file("USAGE.md", card.read_text(encoding="utf-8")))
+        except OSError as exc:
+            log.warning("usage card for %s unreadable: %s", spec.id, exc)
+
+    if spec.source == "community":
+        from jarvis.marketplace import community_source
+
+        try:
+            index, _ = await community_source.get_index()
+        except Exception as exc:  # noqa: BLE001 — the card must still open
+            log.warning("community index unavailable for %s files: %s", spec.id, exc)
+            index = None
+        entry = (
+            next((e for e in index.plugins if e.name == spec.id), None)
+            if index is not None
+            else None
+        )
+        if entry is not None:
+            for f in _plugin_manifest_files(entry):
+                files.append({**f, "path": f"source/{f['path']}"})
+
+    return {
+        "id": spec.id,
+        "source": spec.source,
+        "files": files,
+    }
+
+
 @router.get("/community/{item_id}/contents", openapi_extra={"x-jarvis-readonly": True})
 async def community_contents(item_id: str, response: Response) -> dict[str, Any]:
     """What one published entry actually contains — skill, plugin or wallpaper.

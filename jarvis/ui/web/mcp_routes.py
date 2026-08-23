@@ -450,6 +450,68 @@ async def set_credentials(
     }
 
 
+def _mask_env_literals(block: dict[str, Any]) -> dict[str, Any]:
+    """A copy of an mcp.json server block with literal ``env`` values hidden.
+
+    ``$NAME`` references resolve from the credential store and are safe to
+    show; anything else may be a pasted token and is not.
+    """
+    out = dict(block)
+    env = out.get("env")
+    if isinstance(env, dict):
+        out["env"] = {
+            k: (v if isinstance(v, str) and v.startswith("$") else "••••••")
+            for k, v in env.items()
+        }
+    return out
+
+
+@router.get("/{name}/files", openapi_extra={"x-jarvis-readonly": True})
+async def mcp_files(name: str, request: Request) -> dict[str, Any]:
+    """What defines one MCP server, as readable files — the detail page's file card.
+
+    ``mcp.json`` is the server's own block from the user's config (absent for a
+    built-in default that was never written there); ``definition.json`` is the
+    spec the registry actually runs — command, transport, URL, required
+    credentials, platform notes — so a built-in server is readable too.
+    Secrets never appear: env literals are masked and headers are omitted.
+    """
+    import json
+
+    registry = _get_registry(request)
+    spec = registry.get_spec(name) if registry is not None else None
+    spec = spec or next((s for s in BOOTSTRAP_SERVERS if s.name == name), None)
+    entry = mcp_state.get_server_entry(name)
+    if spec is None and entry is None:
+        raise HTTPException(404, f"MCP server '{name}' unknown.")
+
+    files: list[dict[str, Any]] = []
+    if entry is not None:
+        text = json.dumps(
+            {"mcpServers": {name: _mask_env_literals(entry)}}, indent=2, ensure_ascii=False
+        )
+        files.append({"path": "mcp.json", "size": len(text.encode("utf-8")), "text": text})
+    if spec is not None:
+        definition = {
+            "name": spec.name,
+            "display": spec.display,
+            "description": spec.description,
+            "transport": spec.transport,
+            "install_command": list(spec.install_command),
+            "url": spec.url,
+            "required_auth": list(spec.required_auth),
+            "platform_notes": spec.platform_notes,
+            "mandatory": spec.mandatory,
+        }
+        text = json.dumps(definition, indent=2, ensure_ascii=False)
+        files.append({"path": "definition.json", "size": len(text.encode("utf-8")), "text": text})
+    return {
+        "name": name,
+        "config_path": str(mcp_state._active_mcp_json_path()),  # noqa: SLF001 — same helper the info route uses
+        "files": files,
+    }
+
+
 @router.get("/config/info")
 async def config_info() -> dict[str, Any]:
     """Path + existence + raw content of mcp.json (for the UI editor)."""

@@ -439,10 +439,10 @@ export function DetailHeader({
         {leading}
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-base font-semibold leading-tight">{title}</h3>
+            <h3 className="truncate text-xl font-semibold leading-tight">{title}</h3>
             {titleAccessory}
           </div>
-          {byline ? <p className="mt-0.5 text-xs text-muted-foreground">{byline}</p> : null}
+          {byline ? <p className="mt-1 text-sm text-muted-foreground">{byline}</p> : null}
         </div>
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
@@ -475,7 +475,7 @@ export function ClampedText({
 
   if (!text) return null;
   return (
-    <div className={cn("text-[13px] leading-relaxed text-foreground/85", className)}>
+    <div className={cn("text-[15px] leading-relaxed text-foreground/85", className)}>
       <p ref={ref} className={cn(!expanded && "line-clamp-2")}>
         {text}
         {expanded && overflows && (
@@ -495,7 +495,7 @@ export function ClampedText({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="mt-0.5 text-xs text-primary hover:underline"
+          className="mt-0.5 text-sm text-primary hover:underline"
         >
           {moreLabel}
         </button>
@@ -529,11 +529,11 @@ export function FactRows({
   const visible = rows.filter((r) => r.value !== null && r.value !== undefined && r.value !== "");
   if (visible.length === 0) return null;
   return (
-    <dl className={cn("grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm", className)}>
+    <dl className={cn("grid grid-cols-[max-content_minmax(0,1fr)] gap-x-8 gap-y-2.5 text-[15px]", className)}>
       {visible.map((r) => (
         <div key={r.label} className="contents">
-          <dt className="text-xs leading-5 text-muted-foreground">{r.label}</dt>
-          <dd className="min-w-0 break-words leading-5">{r.value}</dd>
+          <dt className="text-sm leading-6 text-muted-foreground">{r.label}</dt>
+          <dd className="min-w-0 break-words leading-6">{r.value}</dd>
         </div>
       ))}
     </dl>

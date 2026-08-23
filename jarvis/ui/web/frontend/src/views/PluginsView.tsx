@@ -48,6 +48,7 @@ import {
   TableRow,
   type Column,
 } from "@/components/extensions/primitives";
+import { FileCard, type CardFile } from "@/components/extensions/FileCard";
 import { cn } from "@/lib/utils";
 import { MarketplaceBadge } from "@/components/MarketplaceBadge";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -1231,8 +1232,20 @@ function PluginTableRow({
 // Detail page
 // ---------------------------------------------------------------------------
 
+async function fetchPluginFiles(pluginId: string): Promise<{ files: CardFile[] }> {
+  const res = await fetch(`/api/marketplace/plugins/${encodeURIComponent(pluginId)}/files`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & ConnectHandlers) {
   const { busy, run } = useConnectLock(() => onConnect(plugin));
+  const filesQuery = useQuery({
+    queryKey: ["marketplace-plugin-files", plugin.id],
+    queryFn: () => fetchPluginFiles(plugin.id),
+  });
   const connected = plugin.status === "connected";
   const needsReconnect = plugin.status === "needs_reauth" || plugin.status === "error";
   const family = oauthClientFamily(plugin);
@@ -1387,6 +1400,13 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
           />
         </div>
       </Panel>
+
+      <FileCard
+        className="mt-4"
+        files={filesQuery.data?.files ?? []}
+        loading={filesQuery.isPending}
+        error={filesQuery.error ? (filesQuery.error as Error).message : null}
+      />
     </div>
   );
 }

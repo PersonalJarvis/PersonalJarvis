@@ -74,6 +74,15 @@ function installFetchMock(): Call[] {
         text: async () => JSON.stringify(body),
       }) as Response;
     if (method === "GET" && url === "/api/mcps") return respond(SERVERS);
+    if (method === "GET" && url.endsWith("/files")) {
+      return respond({
+        config_path: "/tmp/mcp.json",
+        files: [
+          { path: "mcp.json", text: '{ "mcpServers": {} }', size: 20 },
+          { path: "definition.json", text: "{}", size: 2 },
+        ],
+      });
+    }
     if (method === "POST" && url.endsWith("/disable")) return respond({ ok: true, enabled: false });
     if (method === "POST" && url.endsWith("/enable")) return respond({ ok: true, enabled: true });
     if (method === "POST" && url.endsWith("/check")) {
@@ -146,6 +155,9 @@ describe("McpsView — detail page", () => {
     expect(screen.getByText("notebook_list")).toBeTruthy();
     expect(screen.getByText("notebook_get")).toBeTruthy();
     expect(screen.getByText("python -m notebooklm_mcp.server")).toBeTruthy();
+    // The file card opens on the server's own mcp.json block.
+    await screen.findByText("mcp.json");
+    expect(screen.getByText("2 files")).toBeTruthy();
 
     // The overflow menu carries the connection check.
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));

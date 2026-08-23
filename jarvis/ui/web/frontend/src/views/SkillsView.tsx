@@ -1,6 +1,4 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   RefreshCw,
   Lock,
@@ -62,6 +60,7 @@ import {
   formatShortDate,
   type Column,
 } from "@/components/extensions/primitives";
+import { MarkdownBody, ModeButton } from "@/components/extensions/FileCard";
 import { cn } from "@/lib/utils";
 import { robustCopy } from "@/lib/clipboard";
 import { fill, translate, useT, useUiLanguage } from "@/i18n";
@@ -1159,14 +1158,14 @@ function SkillDetailPage({
                   onClick={toggle}
                   aria-expanded={open}
                   aria-haspopup="menu"
-                  className="inline-flex h-7 max-w-[320px] items-center gap-1.5 rounded-md bg-sheen/[0.07] px-2.5 font-mono text-xs text-foreground hover:bg-sheen/[0.12]"
+                  className="inline-flex h-8 max-w-[360px] items-center gap-2 rounded-md bg-sheen/[0.07] px-3 font-mono text-[13px] text-foreground hover:bg-sheen/[0.12]"
                 >
                   <span className="truncate">{openLabel}</span>
                   <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")} />
                 </button>
               )}
             />
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               {fileCount === 1 ? t("skills_view.file_one") : fill(t("skills_view.files"), { n: fileCount })}
             </span>
             <div className="ml-auto flex items-center gap-1">
@@ -1192,14 +1191,14 @@ function SkillDetailPage({
                   label={t("skills_view.view_preview")}
                   onClick={() => setMode("preview")}
                 >
-                  <Eye className="h-3.5 w-3.5" />
+                  <Eye className="h-4 w-4" />
                 </ModeButton>
                 <ModeButton
                   active={mode === "source"}
                   label={t("skills_view.view_source")}
                   onClick={() => setMode("source")}
                 >
-                  <Code2 className="h-3.5 w-3.5" />
+                  <Code2 className="h-4 w-4" />
                 </ModeButton>
               </div>
             </div>
@@ -1242,7 +1241,7 @@ function SkillDetailPage({
             ) : (
               <textarea
                 className={cn(
-                  "block min-h-[420px] w-full resize-y bg-transparent px-6 py-5 font-mono text-xs leading-relaxed",
+                  "block min-h-[420px] w-full resize-y bg-transparent px-6 py-5 font-mono text-[13px] leading-relaxed",
                   "focus:outline-none",
                 )}
                 aria-label="SKILL.md"
@@ -1285,35 +1284,6 @@ function SkillDetailPage({
   );
 }
 
-function ModeButton({
-  active,
-  label,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className={cn(
-        "grid h-6 w-7 place-items-center rounded transition-colors",
-        active ? "bg-sheen/[0.12] text-foreground" : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 function TriggerList({ triggers }: { triggers: SkillTrigger[] }) {
   return (
     <ul className="space-y-0.5">
@@ -1331,26 +1301,6 @@ function TriggerList({ triggers }: { triggers: SkillTrigger[] }) {
         );
       })}
     </ul>
-  );
-}
-
-/** Rendered markdown — the body of SKILL.md or a bundled .md resource. */
-function MarkdownBody({ text }: { text: string }) {
-  return (
-    <article className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-headings:font-display prose-headings:tracking-tight prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-a:text-primary prose-code:text-foreground prose-pre:border prose-pre:border-border prose-pre:bg-card/80">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ href, children, ...props }) => (
-            <a href={href} target="_blank" rel="noreferrer noopener" {...props}>
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </article>
   );
 }
 
@@ -1384,7 +1334,7 @@ function ResourceBody({
     );
   }
   return (
-    <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-[11px] leading-relaxed">
+    <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-[13px] leading-relaxed">
       {data}
     </pre>
   );

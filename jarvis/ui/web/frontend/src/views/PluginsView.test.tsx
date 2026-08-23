@@ -55,6 +55,13 @@ function installCatalogFetchMock() {
         json: async () => CATALOG,
       } as Response;
     }
+    if (/^\/api\/marketplace\/plugins\/[^/]+\/files$/.test(url)) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ files: [{ path: "plugin.json", text: "{}", size: 2 }] }),
+      } as Response;
+    }
     throw new Error(`unexpected fetch ${url}`);
   });
   (globalThis as unknown as { fetch: typeof fetch }).fetch =
@@ -267,7 +274,12 @@ describe("plugin row click", () => {
     const urls = (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     ).mock.calls.map((c: unknown[]) => String(c[0]));
-    expect(urls.every((u: string) => u === "/api/marketplace/plugins")).toBe(true);
+    // Only reads: the catalog and the plugin's own files — never a DELETE.
+    expect(
+      urls.every(
+        (u: string) => u === "/api/marketplace/plugins" || u === "/api/marketplace/plugins/github/files",
+      ),
+    ).toBe(true);
   });
 });
 
