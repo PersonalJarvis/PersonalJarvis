@@ -264,6 +264,16 @@ _CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 _ADC_LOCK = threading.Lock()
 _ADC_CACHE: dict[str, Any] = {}
+#: A resolution that RAISED is remembered too — (monotonic deadline, reason) —
+#: so the next call answers "no credential" in microseconds instead of paying
+#: google-auth's 5-8 s probe again. Live 2026-08-22 18:40 and 18:42: a Tool
+#: Model pinned to Vertex on a host with no gcloud login paid 7.4-9.5 s per
+#: delegated voice turn for the identical DefaultCredentialsError, on EVERY
+#: turn, before the chain even reached a provider that could answer. A login
+#: that appears later is still picked up: the miss expires, and
+#: :func:`reset_vertex_credentials_cache` (login changes) clears it at once.
+_ADC_MISSING: dict[str, tuple[float, str]] = {}
+_ADC_RETRY_AFTER_S = 600.0
 
 
 def _adc_cache_key() -> str:
@@ -298,28 +308,36 @@ def vertex_credentials() -> Any | None:
 
     BLOCKING on the first call (see the measurement above) — call it from a
     worker thread, never on the event loop. Later calls answer from the cache.
-    ``None`` means google-auth could not resolve a credential; nothing is
-    cached for that case, so a login that appears later is picked up, and the
-    caller leaves the SDK's own lazy resolution in place, which surfaces
-    Google's honest error on the first real call.
+    ``None`` means google-auth could not resolve a credential. A resolution
+    that RAISED is remembered for ``_ADC_RETRY_AFTER_S`` (see ``_ADC_MISSING``)
+    so the miss is not re-paid on every turn; :func:`vertex_credentials_missing_reason`
+    exposes it and the project-path client builder fails fast on it. A login
+    that appears later is picked up once the miss expires or the cache is reset.
     """
     key = _adc_cache_key()
     cached = _ADC_CACHE.get(key)
     if cached is not None:
         return cached
+    if vertex_credentials_missing_reason(key):
+        return None
     with _ADC_LOCK:
         cached = _ADC_CACHE.get(key)  # a concurrent loader may have won
         if cached is not None:
             return cached
+        if vertex_credentials_missing_reason(key):
+            return None
         started = time.perf_counter()
         try:
             credentials = _load_application_default_credentials()
         except Exception as exc:  # noqa: BLE001 — auth trouble surfaces on the first call
+            reason = f"{type(exc).__name__}: {exc}"
+            _ADC_MISSING[key] = (time.monotonic() + _ADC_RETRY_AFTER_S, reason)
             log.info(
-                "Vertex AI: Application Default Credentials not resolvable (%s: %s) — "
-                "the SDK resolves auth on the first call instead.",
-                type(exc).__name__,
-                exc,
+                "Vertex AI: Application Default Credentials not resolvable (%s) — "
+                "remembered for %.0f s so no call pays this probe again; the "
+                "Vertex project path is unavailable until a login appears.",
+                reason,
+                _ADC_RETRY_AFTER_S,
             )
             return None
         if credentials is None:
@@ -383,10 +401,27 @@ def warm_vertex_credentials() -> bool:
     return bool(getattr(credentials, "valid", False))
 
 
+def vertex_credentials_missing_reason(key: str | None = None) -> str:
+    """Why the last ADC resolution failed, or ``""`` when none is remembered.
+
+    Lock-free and instant (a dict read): the event loop and the client
+    builders ask this before anything that could block. An expired miss reads
+    as "not remembered" so the next resolution probes google-auth again.
+    """
+    entry = _ADC_MISSING.get(_adc_cache_key() if key is None else key)
+    if entry is None:
+        return ""
+    deadline, reason = entry
+    if time.monotonic() >= deadline:
+        return ""
+    return reason
+
+
 def reset_vertex_credentials_cache() -> None:
-    """Forget the shared credentials (tests; login changes)."""
+    """Forget the shared credentials AND any remembered miss (tests; login changes)."""
     with _ADC_LOCK:
         _ADC_CACHE.clear()
+        _ADC_MISSING.clear()
 
 
 # ── one TLS trust store per process ──────────────────────────────────────────
@@ -794,6 +829,21 @@ def build_vertex_client(
         settings = settings.for_realtime()
     kwargs = _client_kwargs(api_key, "vertex", _with_shared_tls(http_options), settings)
     if "project" in kwargs:
+        missing = vertex_credentials_missing_reason()
+        if missing:
+            # Fail NOW, in microseconds, with the reason google-auth gave the
+            # last time. Building the client anyway would let the SDK resolve
+            # auth itself on the first call — the same 5-8 s probe, the same
+            # DefaultCredentialsError — on every turn (live 2026-08-22 18:40).
+            # The wording is what the brain chain dead-lists on (missing_key):
+            # a provider without a credential must not lead the chain again.
+            raise RuntimeError(
+                "Vertex AI is not configured on this host: Application Default "
+                f"Credentials were not found ({missing}). Run `gcloud auth "
+                "application-default login` or point GOOGLE_APPLICATION_CREDENTIALS "
+                "at a service-account file; the project path is retried after "
+                f"{_ADC_RETRY_AFTER_S:.0f} s."
+            )
         credentials = _adc_for_sync_build()
         if credentials is not None:
             kwargs["credentials"] = credentials

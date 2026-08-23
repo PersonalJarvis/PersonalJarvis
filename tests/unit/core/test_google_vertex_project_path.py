@@ -411,8 +411,15 @@ def test_credentials_are_loaded_once_and_shared(adc: dict) -> None:
     assert adc["loads"] == 1, "google.auth.default() must run once per process"
 
 
-def test_a_failed_resolution_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A login that appears later must be picked up, not shadowed by a miss."""
+def test_a_failed_resolution_is_remembered_for_a_bounded_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The miss is paid ONCE, not on every turn — and a login that appears
+    later is still picked up: the miss expires, and a cache reset clears it.
+
+    Live 2026-08-22 18:40/18:42: the Tool Model pinned to Vertex on a host
+    without a gcloud login re-ran google-auth's 5-8 s probe on every delegated
+    voice turn for the identical DefaultCredentialsError."""
     attempts = {"n": 0}
 
     def _boom():
@@ -423,7 +430,54 @@ def test_a_failed_resolution_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> N
     assert gg.vertex_credentials() is None
     assert gg.cached_vertex_credentials() is None
     assert gg.vertex_credentials() is None
+    assert attempts["n"] == 1, "the second call must answer from the remembered miss"
+    assert "no ADC on this host" in gg.vertex_credentials_missing_reason()
+
+    # The miss expires → google-auth is asked again (a login may be there now).
+    now = {"t": 0.0}
+    monkeypatch.setattr(gg.time, "monotonic", lambda: now["t"])
+    gg.reset_vertex_credentials_cache()
+    assert gg.vertex_credentials() is None
     assert attempts["n"] == 2
+    now["t"] = gg._ADC_RETRY_AFTER_S + 1.0
+    assert gg.vertex_credentials_missing_reason() == ""
+    assert gg.vertex_credentials() is None
+    assert attempts["n"] == 3
+
+    # A reset (login changes) forgets the miss at once.
+    gg.reset_vertex_credentials_cache()
+    assert gg.vertex_credentials_missing_reason() == ""
+
+
+def test_the_project_client_fails_fast_on_a_remembered_miss(
+    monkeypatch: pytest.MonkeyPatch, stub_genai: _StubGenaiModule
+) -> None:
+    """With the miss remembered, building the project-path client raises at
+    once — the SDK must not get to re-run the same probe on its first call —
+    and the message carries the wording the brain chain dead-lists on."""
+
+    def _boom():
+        raise RuntimeError("DefaultCredentialsError: Your default credentials were not found")
+
+    monkeypatch.setattr(gg, "_load_application_default_credentials", _boom)
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project("prod-proj", "global"))
+    assert gg.vertex_credentials() is None  # the one paid probe
+
+    with pytest.raises(RuntimeError, match="Application Default Credentials were not found"):
+        gg.build_vertex_client("")
+    assert stub_genai.calls == [], "no client may be built without a credential"
+
+    from jarvis.brain.manager import _DEAD_LIST_KINDS, _classify_provider_error
+
+    try:
+        gg.build_vertex_client("")
+    except RuntimeError as exc:
+        assert _classify_provider_error(str(exc), default="call_fail") in _DEAD_LIST_KINDS
+
+    # An express key never consults the miss: it authenticates by the key.
+    monkeypatch.setattr(gg, "vertex_project_settings", lambda: _project(None))
+    gg.build_vertex_client("AQ.express")
+    assert len(stub_genai.calls) == 1
 
 
 def test_the_project_client_is_handed_the_shared_credentials(

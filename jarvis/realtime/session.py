@@ -630,7 +630,13 @@ class _LoopLagProbe:
 # classify and the upper cap for every bridge (tests pin it low). A
 # capability-limited provider hands every action to the slower orchestrator,
 # so its cap is tighter still. Ready results pre-empt the bridge lifecycle.
-_DELEGATE_BRIDGE_DELAY_S = 6.0
+# Same number as the short-work grace (3 s) since 2026-08-22: an unclassified
+# delegated turn sat 6.0 s mute before its first sign of life (live 18:40:12,
+# "unclassified line requested 6.00 s after dispatch") while the maintainer's
+# benchmark — a phone assistant — answers outright in 1-3 s. Whatever the turn
+# is, the user hears SOMETHING within three seconds; a result ready before
+# that still pre-empts the line.
+_DELEGATE_BRIDGE_DELAY_S = SHORT_GRACE_S
 _CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S = 1.0
 # One source of truth for the short-work grace: the shared core's constant
 # (3 s since 2026-08-18, ADR-0033). Kept as a module attribute so tests can

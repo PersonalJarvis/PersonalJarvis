@@ -12790,6 +12790,14 @@ def _is_missing_key_exc(msg: str) -> bool:
         "not configured",
         "api-key nicht gesetzt", "apikey missing",
         "not logged in", "please run /login", "credentials.json",
+        # Vertex AI's Google Cloud project path signs with Application Default
+        # Credentials; a host without a gcloud login or service account raises
+        # google-auth's DefaultCredentialsError ("Your default credentials were
+        # not found"). Live 2026-08-22 18:40/18:42: classified as call_fail,
+        # the keyless Tool Model led the chain on EVERY delegated voice turn and
+        # paid 7-10 s for the same miss before a working provider was tried.
+        "default credentials were not found", "defaultcredentialserror",
+        "application default credentials were not found",
     ))
 
 
