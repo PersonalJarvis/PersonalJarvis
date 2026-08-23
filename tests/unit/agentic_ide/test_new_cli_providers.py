@@ -14,6 +14,10 @@ they are worth testing together rather than one file per product:
 * **Grok Build** is a standalone native CLI that accepts a client UUID at
   launch, so it proves the mint-at-start resume path works for something that
   is not Claude Code.
+* **DeepSeek Harness** keeps its interface OUT of the terminal — the pane boots
+  a server and the chat is in the browser — so it proves an entry can be
+  offered, detected and launched like every other while declining the one thing
+  a terminal agent normally grants: being typed into.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ from jarvis.workspace import agents as workspace_agents
 
 def test_every_new_provider_is_launchable_and_installable() -> None:
     """A registered entry must answer the three questions a pane asks of it."""
-    for name in ("opencode", "kimi", "glm", "grok-build"):
+    for name in ("opencode", "kimi", "glm", "grok-build", "deepseek-harness"):
         entry = workspace_agents.get_agent(name)
         assert entry is not None, f"{name} is not registered"
         assert entry.is_coding_agent
@@ -820,3 +824,70 @@ def test_a_booting_pane_of_a_new_cli_is_not_prompted_yet() -> None:
     assert _ready_for_prompt(_Pane("codex", ("» Ask Codex anything",))) is True
     # The one measured exception keeps its fast path.
     assert _ready_for_prompt(_Pane("claude", ("anything",))) is True
+
+
+# ----------------------------------------------------- DeepSeek Harness
+
+
+def test_the_harness_pane_boots_the_profile_that_has_an_interface() -> None:
+    """``dsh`` is a profile launcher, so a bare binary would open nothing.
+
+    The harness ships two profiles: ``web``, which serves its UI, and
+    ``headless``, which answers one task and exits. A pane that ran ``dsh`` with
+    no profile would exit on the launcher's own "--profile is required" error,
+    which reads to every readiness check as a CLI that crashed on startup.
+    """
+    entry = workspace_agents.get_agent("deepseek-harness")
+    assert entry is not None
+    assert entry.launch_args == ("web",)
+    # The workspace launcher opens an OS terminal from the command string
+    # rather than the argv, so the two have to agree.
+    assert entry.launch_command == "dsh web"
+
+
+def test_a_pane_whose_interface_is_elsewhere_is_never_typed_into() -> None:
+    """The harness owns the pane's stdin; an injected line would vanish into it.
+
+    Reported as "prompt delivered" it would be a lie the user only discovers by
+    watching nothing happen, so every surface that types — the prompt bar, the
+    voice fan-out, the CLI — asks this one function first.
+    """
+    from jarvis.agentic_ide.session import accepts_prompts
+
+    assert accepts_prompts("deepseek-harness") is False
+    # Not a blanket "new CLIs are silent": the terminal agents still take one,
+    # and a plain shell still refuses for its own, older reason.
+    assert accepts_prompts("claude") is True
+    assert accepts_prompts("grok-build") is True
+    assert accepts_prompts(workspace_agents.PLAIN_TERMINAL) is False
+
+
+def test_declining_prompts_is_opt_out_so_a_later_cli_keeps_its_channel() -> None:
+    """Registering an entry must not cost it the keystroke channel by omission."""
+    for entry in workspace_agents.coding_agents():
+        if entry.name == "deepseek-harness":
+            continue
+        assert entry.accepts_typed_prompts, f"{entry.name} lost its prompt channel"
+
+
+def test_the_harness_is_spawnable_by_voice_in_both_languages() -> None:
+    """An unmatched product word drops the whole spawn group it appeared in."""
+    from jarvis.agentic_ide import intent
+
+    for utterance in (
+        "open a deepseek harness",
+        "öffne einen DeepSeek",  # i18n-allow: spoken-input vocabulary under test
+        "starte ein DeepSeek Harness",  # i18n-allow: spoken-input vocabulary under test
+    ):
+        request = intent.detect_spawn(utterance)
+        assert request is not None, utterance
+        assert request.agent == "deepseek-harness", utterance
+
+    # And it survives standing next to another product, which is where a
+    # half-matched alias shows up as a silently dropped group.
+    mixed = intent.detect_spawn("open two claudes and a deep seek")
+    assert mixed is not None
+    assert [(g.count, g.agent) for g in mixed.groups] == [
+        (2, "claude"),
+        (1, "deepseek-harness"),
+    ]

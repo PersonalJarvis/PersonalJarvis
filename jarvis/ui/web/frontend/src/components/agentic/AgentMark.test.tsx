@@ -44,6 +44,18 @@ describe("AgentMark", () => {
     expect(mark("grok-build").querySelector("img")).toBeNull();
   });
 
+  it("knows the harness whose own interface is not the terminal", () => {
+    // Registered like every other CLI, so the picker must not fall back to a
+    // two-letter monogram for it — an unbranded tile in a list of brands reads
+    // as the entry being half-finished.
+    render(<AgentMark agent="deepseek-harness" label="DeepSeek Harness" />);
+    expect(mark("deepseek-harness").getAttribute("data-ground")).toBe("ink");
+    expect(mark("deepseek-harness").getAttribute("data-logo")).toBe(
+      "/agent-logos/deepseek.svg",
+    );
+    expect(mark("deepseek-harness").querySelector("img")).toBeNull();
+  });
+
   it("gives a lockup with a white background the dark ground it was drawn on", () => {
     // OpenCode is a white square with a dark inner shape. On paper the square
     // IS the paper and the mark collapsed to an unlabelled grey dot.

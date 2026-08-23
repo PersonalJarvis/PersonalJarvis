@@ -35,6 +35,7 @@ interface LogoAsset {
 const AGENT_LOGOS: Record<string, LogoAsset> = {
   claude: { url: "/provider-logos/claude.svg", ground: "ink" },
   codex: { url: "/provider-logos/openai.svg", ground: "ink" },
+  "deepseek-harness": { url: "/agent-logos/deepseek.svg", ground: "ink" },
   glm: { url: "/agent-logos/zai.svg", ground: "any" },
   "grok-build": { url: "/provider-logos/grok.svg", ground: "ink" },
   kimi: { url: "/agent-logos/kimi.svg", ground: "dark" },

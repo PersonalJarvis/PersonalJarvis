@@ -231,6 +231,18 @@ class WorkspaceAgent:
     resume_adapter: str = ""
     #: How a dropped file is written into the prompt: ``@path`` or ``"path"``.
     file_reference: Literal["at", "quoted"] = "quoted"
+    #: True when this entry reads a prompt from the pane's keystroke channel —
+    #: i.e. when Jarvis may type into it from the prompt bar, voice or the CLI.
+    #:
+    #: Every terminal agent does, which is why it defaults on. What it exists
+    #: for is an agent whose OWN interface is somewhere else: DeepSeek Harness
+    #: boots a server in the pane and puts its chat in the browser, so the
+    #: pane's stdin belongs to that server and a typed line would vanish into
+    #: it. Saying so once here is what keeps the prompt bar, the voice fan-out,
+    #: the recap and the interrupted-pane offer from each pretending otherwise
+    #: — see :func:`jarvis.agentic_ide.session.accepts_prompts`, the single
+    #: reader.
+    accepts_typed_prompts: bool = True
     #: True when a pane must show its input line before a prompt may be typed.
     #: Every CLI observed so far swallows a paste that arrives while it is still
     #: booting, so this defaults on; an entry proven not to needs it off.
@@ -724,6 +736,54 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # the short spelling and leaves "build" as an unmatched word, which
         # drops the whole spawn group.
         spoken_aliases=("grok", "groc", "grock", "grok build"),
+    ),
+    "deepseek-harness": make_cli_agent(
+        "deepseek-harness",
+        "DeepSeek Harness",
+        binary="dsh",
+        npm_package="@deepseek-ai/dsh",
+        homepage="https://deepseek.com/harness",
+        description="DeepSeek's agent harness — the pane runs it, the chat is in the browser.",
+        # `dsh` is a profile launcher, not a chat command: the profile decides
+        # which front door boots. `web` is the only interactive one that ships
+        # (checked 2026-08-22: the harness dropped its terminal UI, and no
+        # `@deepseek-ai/dsh-tui*` bundle is published), so the pane boots the
+        # web profile and the harness opens its own UI in the browser. The
+        # other shipped profile, `headless`, answers one task and exits, which
+        # is not a pane.
+        launch_command="dsh web",
+        launch_args=("web",),
+        # A server, not a TUI — nothing here reads the pane's keystrokes.
+        accepts_typed_prompts=False,
+        # Both of these describe a terminal agent's input line, and this entry
+        # never draws one. Waiting for it would wait forever.
+        needs_input_line_wait=False,
+        # No trust dialog to skip: the workspace is picked inside the web UI,
+        # and the harness's own permission policy is what gates execution.
+        needs_trust=False,
+        # DELIBERATELY no AccountSpec and no spawn_env_factory. The harness
+        # takes its DeepSeek key in its own Settings screen and stores it
+        # itself, so there is no environment for this app to hand it — and a
+        # seat switcher over a store whose layout has not been verified against
+        # a live install would report switches that did not happen.
+        win_shim=WinShim(
+            relative_path=("node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
+            kind="node",
+        ),
+        instruction_filename="AGENTS.md",
+        # "deep" on its own is an ordinary word and "seek" is a verb, so only
+        # the joined forms mean the product. ASR writes the name apart as often
+        # as together, and an unmatched word drops the whole spawn group.
+        spoken_aliases=(
+            "deepseek",
+            "deep seek",
+            "deepseek harness",
+            "deep seek harness",
+            "dipsik",
+            "deepsick",
+            "deep sick",
+            "dsh",
+        ),
     ),
     PLAIN_TERMINAL: WorkspaceAgent(
         name=PLAIN_TERMINAL,

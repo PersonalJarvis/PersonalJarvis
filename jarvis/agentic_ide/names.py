@@ -15,7 +15,7 @@ it bought robustness with two costs the position scheme simply does not have:
    its header, then saying a name that means nothing — and getting it wrong
    sent work to a different agent;
 2. **given names collide with ordinary speech.** Measured against the old pool,
-   "allen" scores 0.750 against "Alex", "unten" reaches "Hunter", "keine"  <!-- i18n-allow: quoted transcript tokens as measurement data -->
+   "allen" scores 0.750 against "Alex", "unten" reaches "Hunter", "keine"  <!-- i18n-allow -->
    reaches "Kai" — all above or near the acting threshold. Half of ``clarify.py`` (stop-word tables,
    capitalization heuristics, surname detection) exists to tell a spoken pane
    name apart from the sentence around it. A call-sign of the shape ``T3``
@@ -57,7 +57,18 @@ _POSITION_NAME_RE = re.compile(rf"^{CALL_SIGN_PREFIX}(\d{{1,3}})$", re.IGNORECAS
 #: merely has installed — so the list is deliberately WIDER than the registry.
 #: Positional call-signs cannot collide with any of them.
 _KNOWN_PRODUCTS: frozenset[str] = frozenset(
-    {"jarvis", "claude", "codex", "gemini", "copilot", "cursor", "aider", "grok"}
+    {
+        "jarvis",
+        "claude",
+        "codex",
+        "gemini",
+        "copilot",
+        "cursor",
+        "aider",
+        "grok",
+        "deepseek",
+        "dsh",
+    }
 )
 
 

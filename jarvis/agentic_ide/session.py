@@ -178,8 +178,15 @@ def accepts_prompts(agent: str) -> bool:
     the one keystroke channel this app exposes into arbitrary command execution
     by voice. That is precisely the boundary the module docstring's rule 1 draws,
     and it is why a plain terminal is typed into by hand or not at all.
+
+    An agent may also decline the channel: one whose own interface is not the
+    terminal (DeepSeek Harness boots a server in the pane and chats in the
+    browser) has no reader for a typed line. Answering "yes" there would cost a
+    silent no-op reported to the user as a delivered prompt, so the registry
+    entry says so and this is the one place that reads it.
     """
-    return is_coding_agent(agent)
+    spec = workspace_agents.get_agent(agent)
+    return spec is not None and spec.is_coding_agent and spec.accepts_typed_prompts
 
 
 def _unavailable(agent: str) -> str:
