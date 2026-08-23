@@ -11609,6 +11609,8 @@ instructions for the model (``run-skill``, ``answer_instruction`` lookups,
 mission directives) is a hand-off, and every reader that turns results into a
 completion claim — prompts and canned lines alike — must classify it as such.
 
+---
+
 ## BUG-166: "play some music" takes three minutes and the player window never appears — the host sat in pywebview's loaded gate and the parent counted naps, not time (HIGH, FIXED 2026-08-22)
 
 **Symptom (maintainer, 2026-08-22 20:01–20:05).** "Play nice music with
@@ -11644,6 +11646,234 @@ Plugin: the confirm loop runs on a wall-clock deadline, reads with a 3 s bound
 moment the work between sleeps can block; bound by the clock, and bound every
 blocking read inside it tighter than the loop. A sequential command channel
 must never run a call that can block for longer than its own client's timeout.
+
+## BUG-165: the spoken answer stops mid-sentence after a web search, and the rest never comes — Gemini Live closes a tool call with `interrupted` first, which erased the BUG-160 evidence (CRITICAL, FIXED 2026-08-22)
+
+**Symptom (maintainer, 2026-08-22 18:44).** "Erzähl mir mehr zu den 30 <!-- i18n-allow: quoted live German output under forensic analysis -->
+Bundesstaaten und der Klage." <!-- i18n-allow: quoted live German utterance under forensic analysis -->
+The reply was "Gerne. Diese Klage von den Bundesstaaten wirft Meta vor, dass <!-- i18n-allow: quoted live German output under forensic analysis -->
+sie ihre Plattformen" — and silence. The maintainer hung up eight seconds later
+and reported, with the session transcript, that Jarvis "keeps delivering
+incomplete sentences". The same transcript shows the opening line restarted
+("Guten Abend, bei mir ist alles entspannt und ich bin" / "bei mir läuft <!-- i18n-allow: quoted live German output under forensic analysis -->
+alles, ich bin bereit …") and a mid-call "Alles klar, die Klage gegen" that <!-- i18n-allow: quoted live German output under forensic analysis -->
+ended in the canned "Ich habe die Infos, konnte sie aber gerade nicht <!-- i18n-allow: quoted live German output under forensic analysis -->
+vorlesen. Soll ich es nochmal versuchen?". <!-- i18n-allow: quoted live German output under forensic analysis -->
+
+**Timeline of the marked turn (`data/jarvis_desktop.log`).**
+
+```
+18:43:57.842  gemini-live: function call(s) search_web
+18:43:59.971  gemini-live: tool response sent for search_web (model_generating=True)
+18:43:59.972  gemini-live: interrupted — audio=0.0s transcript=0 chars function_calls=1
+18:43:59.972  gemini-live: turn complete — audio=0.0s transcript=0 chars function_calls=0
+18:43:59.973  realtime[…] provider completed a direct-tool turn without output;
+              retrying speech from the existing tool result
+18:43:59.973  gemini-live: text input sent (526 chars; model_generating=False …)
+18:43:59.974  gemini-live: generation started 0.00s after the last text input
+18:44:00.003  gemini-live: interrupted — audio=4.6s transcript=82 chars   <- the answer, cut
+18:44:04.253  gemini-live: generation started 4.28s after the last text input
+18:44:04.253  realtime[…] discarding a provider generation that started 0.00s after the
+              delivered readback with no new user input … (delivered reply: Ich habe die
+              Infos, konnte sie aber gerade nicht vorlesen. …) <!-- i18n-allow: quoted live German output under forensic analysis -->
+18:44:06.261  realtime[…] withholding provider audio (106 event(s) so far this window)
+18:44:12.448  request_hangup
+```
+
+**Root cause.** Gemini Live closes a generation that handed out a function
+call with an `interrupted` edge IMMEDIATELY followed by `turn_complete` — two
+server-content messages, sent the moment the call goes out. On the wire the
+session reads both right after it sends the tool result, because the receive
+loop is busy running the tool in between (hence "1 ms after the tool response"
+in every log). BUG-160 made the adapter withhold that `turn_complete` on the
+per-generation function-call counter — but the `interrupted` branch runs
+first, calls the same boundary logger, and that logger RESETS the counter. By
+the time `turn_complete` arrives the evidence is gone, and the boundary leaks
+exactly as before BUG-160. Count for this day: 12 function calls, 1 boundary
+withheld, 7 leaked; in the 18:39 session 7 of 7 tool calls produced the
+`interrupted`+`turn_complete` pair and 0 were withheld.
+
+Every leak sets off the chain the timeline shows: the session takes the empty
+boundary for a mute provider → sends its "say the tool result" retry text →
+that text is a USER-side realtime input, and the server had already begun
+streaming the real answer from the tool result → the server interrupts its own
+answer (4.6 s / 82 characters had been sent; that is the sentence the user
+heard end) → the model then answers the retry text a few seconds later →
+the stale-generation guard (BUG-143/148), armed because the retry registered a
+delegate readback, discards that second answer as a phantom. Net result: half
+a sentence, then nothing, on a turn where the model had a complete answer.
+
+A sibling race exists on the same wire and is NOT fixed here: the per-turn
+mode line (`update_session` → `_flush_steering`) is sent in reaction to the
+FINAL input transcript, which on Gemini arrives at the very moment the server
+starts generating; in 2 of the 4 turns with immediate audio the steering text
+interrupted the reply in flight, and the regenerated reply followed 2.5 s
+later — the "Guten Abend … und ich bin / bei mir läuft alles" restart above <!-- i18n-allow: quoted live German output under forensic analysis -->
+(`interrupted — … 0.07s after the last steering text input`). The session
+plays both halves. That race is a product decision (keep the turn-scoped mode
+line on Gemini and accept a restart, or drop the partial, or send the line
+only while the user is still audibly speaking) and is left documented.
+
+**Fix.** `jarvis/plugins/realtime/gemini_live.py`: an `interrupted` edge that
+arrives for a generation that handed out a function call is the first half of
+the tool boundary, not a barge-in. The adapter withholds the edge from the
+session and carries the function-call evidence across it
+(`_tool_boundary_pending`), so the `turn_complete` half is withheld too. The
+pending flag is cleared by that `turn_complete`, or by spoken output of a new
+generation (a server that skipped the second half must never mute the real
+end of the answer). A real barge-in during a tool run still confirms itself
+through the user's input transcript, as it always has; an `interrupted` edge
+on a generation without a function call is forwarded unchanged.
+
+**Guards.** `tests/unit/realtime/test_gemini_live.py::test_tool_boundary_survives_the_interrupted_edge_the_server_sends_first`
+(the real wire shape), `::test_tool_boundary_pair_packed_into_one_message_is_withheld_whole`,
+`::test_a_chained_tool_call_keeps_withholding_until_the_spoken_answer`,
+`::test_spoken_output_after_a_lone_interrupted_edge_releases_the_withhold`
+(the safety net), `::test_a_real_barge_in_without_a_tool_call_still_interrupts`
+(the counterweight). The BUG-160 tests keep passing; their fixtures never sent
+the `interrupted` half, which is why the regression was invisible to them.
+
+**Lesson (BUG-160 family, third instance).** A transport boundary is evidence
+only in the exact shape the server sends it. Twice now the Gemini tool
+boundary was "handled" against a shape the tests invented (per-message, then
+per-generation-without-`interrupted`) and the live wire never matched. When a
+guard is written from a log, the test fixture must replay the log's message
+sequence, edge for edge — not a tidied version of it.
+
+## BUG-167: "Drop to put it in front of T2" sits over live agents for the rest of the session — every drop target waited for an event a drag that ends elsewhere never sends (MEDIUM, FIXED 2026-08-23)
+
+**Symptom (maintainer, 2026-08-23 08:45).** After one drag that was released
+somewhere other than a terminal pane, several panes in the Agentic IDE kept
+showing the dimmed "Drop to put it in front of **Tn**" overlay — over agents
+that were running. The count grew with each further drag, and the same thing
+happened in more than one workspace. Nothing but a reload took the overlays
+back down.
+
+**Cause (one defect, five copies).** A pane arms on `dragenter` and expected
+to disarm on `dragleave`, `drop` or `dragend`. All three can be absent:
+`drop` fires only when the release happens in THIS document, `dragend` fires
+only on the drag's source element — which a drag out of Explorer or Finder
+does not have in the page at all — and `dragleave` is not owed to a target the
+drag never left by moving (Escape, a release outside the window, another
+window taking the drag). The one heuristic that was there (a `dragleave` with
+a null `relatedTarget` while the cursor sits on the viewport edge) covers a
+drag walked slowly out of the window and nothing else.
+
+What made it PERMANENT rather than momentary was the second half:
+`usePaneFileDrag` counts enter/leave pairs so a drag crossing child elements
+does not flicker. A drag that ended without its leave left that count at 1, so
+every later drag over the same pane needed one leave more than it fired — the
+pane could never reach zero again, and each new drag stranded one more pane on
+its way past. The identical arm-and-hope pattern existed in `WorkspaceBar`
+(tab highlight), `JarvisDock` (bloom), `VoiceBubble` (orb hover) and
+`FolderPicker` (which had no backstop whatsoever).
+
+**Fix (2026-08-23).** `components/agentic/dragSessionEnd.ts` — the end of a
+drag is detected by ABSENCE instead of awaited. While a drag is over the
+document the browser repeats `dragover` on its own (the HTML drag-and-drop
+processing model runs roughly every 350 ms, cursor moving or not); that
+repetition is a heartbeat, and 1.2 s of silence means the drag is gone,
+whatever ended it and whichever event went missing. Nothing has to be
+delivered for this to work, so nothing can be swallowed. The fast signals
+(`drop`, `dragend`, the viewport-edge `dragleave`) are kept alongside it for
+same-frame disarm, all in the CAPTURE phase so a `stopPropagation()` in the
+tree cannot hide them; `pointerdown` and `keydown` end the session too, since
+neither reaches the page while a drag runs — which is what makes a stranded
+overlay heal itself the moment the user touches the app again. Watchers are
+shared, so ONE drag ending takes every armed surface down together. All five
+call sites now use `useDragSessionEnd(armed, disarm)`, and `disarm` zeroes the
+pane's enter/leave count, so it can no longer outlive the drag that raised it.
+
+**Guards.** `src/components/agentic/paneFileDrag.test.ts::disarms when the drag
+simply stops existing — no drop, no dragend, no leave`, `::heals on the next
+click when a drag stranded it`, `::does not carry a stale enter count into the
+next drag`, `::takes every armed pane down together`. The pre-existing tests
+for the drop path and the child-crossing count keep passing unchanged.
+
+**Lesson.** A UI state armed by a browser event must never be disarmed by
+another browser event alone — drag, pointer capture and focus all have exits
+that send nothing. Detect the end by the absence of the signal that only
+exists while the gesture does, and make the shared teardown reach every
+surface the gesture armed, not just the one it happened to leave last.
+
+## BUG-168: clicking Wiki says "Cannot read properties of undefined (reading 'WikiGraph')" — cancelling `vite:preloadError` turned a missing chunk into a dynamic import that RESOLVED WITH `undefined` (HIGH, FIXED 2026-08-23)
+
+**Symptom (maintainer, 2026-08-22 20:56, repeatedly before that).** Opening the
+Wiki section of the desktop app painted the view error boundary: "View could not
+be loaded / memory crashed. George stays usable." with
+`Cannot read properties of undefined (reading 'WikiGraph')` in the detail box.
+Nothing in the wiki system was involved — the vault, `/api/wiki/graph` and
+`WikiGraph.tsx` were all healthy. The report recurred often enough to read as a
+chronic fault in that section.
+
+**Root cause.** Two mechanisms met.
+
+1. *The trigger.* `npm run build` runs with `emptyOutDir`, so every hashed chunk
+   in `dist/assets/` is deleted and rewritten under any window that is already
+   open. That window still holds the old entry chunk, which knows the previous
+   hashes. Reproduced live while diagnosing this: `WikiGraph-ZXJsF_pi.js`
+   existed at the start of the investigation and was `WikiGraph-CFi_aciO.js`
+   four commands later. Wiki is the section that shows it first because
+   `WikiView` opens on a lazily imported graph, and it carries four dynamic
+   imports — more than any other section.
+
+2. *The disguise, and the actual defect.* `installPreloadRecovery` called
+   `event.preventDefault()` on every `vite:preloadError`, on the belief that
+   "Vite's default for an unhandled preload error is to reload the page itself".
+   Vite does no such thing. Its helper, verbatim from the built bundle, is
+
+   ```js
+   function o(l){const d=new Event("vite:preloadError",{cancelable:!0});
+     if(d.payload=l, window.dispatchEvent(d), !d.defaultPrevented) throw l}
+   return r.then(l=>{ /* … */ return t().catch(o) })
+   ```
+
+   `o` is the `.catch` handler of the dynamic import itself. Cancelling the
+   event means `o` returns instead of throwing, so the import RESOLVES — with
+   `undefined`. The caller's
+   `import("@/components/wiki/WikiGraph").then((mod) => ({ default: mod.WikiGraph }))`
+   then dereferences `undefined`, and the boundary shows a message naming the
+   component instead of the missing file. Every one of ~40 lazy views in this
+   app had the same trap armed; Wiki was only the one that kept springing it.
+
+   The cancel also hid the failure from the boundary in the one case where the
+   recovery does nothing: `handlePreloadError` spends one reload per incident,
+   and the idle view prefetch warms 20+ chunks at once, so a rebuild burns that
+   reload on the first of them and every later failure inside the 30 s settle
+   window is silent by design — but silent as `undefined`, not as an error.
+
+**Fix.** `jarvis/ui/web/frontend/src/lib/preloadRecovery.ts` — never cancel the
+event. The reload still happens; the rejection travels on, so what reaches the
+boundary is the real cause. `isChunkLoadError()` moved in beside it, matching
+the four wordings the engines use ("Failed to fetch dynamically imported
+module", "error loading dynamically imported module", "Importing a module script
+failed", "Unable to preload CSS for") — there is no error type to test, a failed
+dynamic import is a plain `TypeError` and the message is the only mark.
+
+`components/ViewErrorBoundary.tsx` — a stale chunk is a rebuild, not a fault, so
+it gets its own card: neutral colour, no raw engine message, `console.info`
+instead of `console.error`, and a Reload button through `reloadWhenServable`
+(which waits for a whole build rather than landing in a half-written `dist/`)
+instead of "Back to Chats", which never fixed anything here.
+
+**Tests.**
+- `lib/preloadRecovery.test.ts::NEVER cancels the event, so the failed import
+  still rejects` — asserts `preventDefault` is untouched on both passes, the one
+  that reloads and the one the guard stops.
+- `lib/preloadRecovery.test.ts::isChunkLoadError` — the four engine wordings,
+  and that a genuine `Cannot read properties of undefined` is NOT claimed as a
+  stale chunk.
+- `components/ViewErrorBoundary.test.tsx` — the stale card offers reload rather
+  than recovery, never prints the chunk URL, does not log a crash; a real
+  component bug still shows its message, recovers, and logs.
+
+**Lesson.** A handler attached to a cancellable error event may be sitting in
+the failure path of the very promise that failed. Cancelling it does not "keep
+the decision local" — it decides that the operation SUCCEEDED, and hands the
+caller whatever the handler returned. Before cancelling any event, read what the
+dispatcher does with `defaultPrevented`; if that code path is a `catch`, the
+cancel is a silent success and the crash surfaces later, somewhere unrelated,
+naming the wrong component.
 
 
 ## BUG-169: "The scheduled job GitHub-API Zen has started failing" keeps interrupting — one 504, one 403 or one DNS drop on the 5-minute demo healthcheck was spoken twice, as a breakage and as a recovery (MEDIUM, FIXED 2026-08-23)
@@ -11706,3 +11936,70 @@ pending/running), so the count survives restarts and needs no schema change.
 question about any alert is "how many confirmations?". "Announce on change"
 sounds like the minimum-noise rule and is the maximum-noise rule on a flaky
 network: every blip is two changes.
+
+## BUG-170: after a web-search answer Jarvis stops hearing the user — "I muted, unmuted, and then I could not speak until I closed the bar"; the answer spoken INSIDE the tool generation had its `turn_complete` withheld (CRITICAL, FIXED 2026-08-23)
+
+**Symptom (maintainer, 2026-08-23 09:25).** During a voice call Jarvis
+searched the web and spoke the answer. The maintainer double-clicked the bar
+to mute their microphone while it was speaking, unmuted again — and from then
+on nothing they said reached Jarvis. The call stayed open with the bar on the
+speaking look; only closing the bar (hangup) brought the microphone back. The
+mute was a bystander: the same deafness happened at 09:04:55, 09:23:42 and
+09:24:38 the same morning without any mute, escaped each time only by a
+shouted barge-in (`barge-in confirmed by local CPU VAD`) or by hanging up.
+
+**Timeline (`data/jarvis_desktop.log`, session 4b885d9d).**
+
+```
+09:25:18.501  gemini-live: function call(s) search_web
+09:25:20.354  🔇 Voice mute ENABLED (source=orb_dblclick_double)
+09:25:20.696  gemini-live: interrupted (function call, edge withheld) — audio=0.0s … function_calls=1
+09:25:20.697  gemini-live: turn complete (function call, boundary withheld) — audio=0.0s
+09:25:20.697  gemini-live: generation started 0.00s after the last tool response input
+09:25:20.697  gemini-live: function call(s) search_web          ← second call, SAME generation continues
+09:25:22.228  gemini-live: tool response sent for search_web (model_generating=True)
+09:25:23.592  turn-state: PROCESSING -> JARVIS_SPEAKING         ← the answer, spoken in place
+09:25:39.350  🔇 Voice mute disabled (source=orb_dblclick_double)
+09:25:41.902  gemini-live: turn complete (function call, boundary withheld) — audio=18.6s transcript=365 chars function_calls=1
+              (no "Realtime echo tail armed", no "JARVIS_SPEAKING -> LISTENING" — ever)
+09:25:53.470  📵 request_hangup — closing the voice session
+09:25:56.038  turn-state: JARVIS_SPEAKING -> IDLE
+```
+
+**Root cause.** BUG-160/165 taught the Gemini Live adapter to withhold the
+boundary of a generation that handed out a function call, because the server
+closes such a generation (empty `interrupted` + `turn_complete`) so the tool
+result can travel and then opens a NEW generation with the spoken answer. The
+live wire has a second shape the fixtures never replayed: the model keeps the
+SAME generation after the tool result and speaks the answer in place — 18.6 s
+of audio, one `turn_complete` at the end, no boundary in between. The
+per-generation evidence ("this generation called a tool") was true for that
+boundary too, so the adapter withheld the turn's real end. Downstream the
+desktop pipeline closes its speaking segment only on that `turn_complete`
+(`_close_output_segment` → echo tail → LISTENING); without it `speaking` stays
+True, every microphone frame goes to the local barge-in detector only, and the
+provider never hears the user again. The session's turn-stall watchdog cannot
+rescue this: a turn that already produced audio is excused from it forever
+(`_output_samples_sent > 0`), by design.
+
+**Fix.** `jarvis/plugins/realtime/gemini_live.py`: a boundary is a tool
+boundary only while nothing has been spoken since the generation's most
+recent function call (`_gen_output_since_tool`, reset on every tool call,
+counting audio bytes and transcript chars afterwards). Both halves use the
+same predicate (`_boundary_is_tool_boundary`): the `interrupted` edge of a
+generation that already spoke past its tool call is a barge-in again, and
+its `turn_complete` reaches the session as the turn's end (logged as
+`turn complete (function call answered in place)`). Words spoken BEFORE the
+call ("Moment …") do not count — that boundary still belongs to the hand-off.
+
+**Guards.** `tests/unit/realtime/test_gemini_live.py::test_an_answer_spoken_in_the_tool_generation_closes_the_turn`
+(the live shape), `::test_a_barge_in_over_an_answer_spoken_in_the_tool_generation_interrupts`,
+`::test_a_preamble_before_the_tool_call_does_not_release_the_withhold`. The
+BUG-160/165 suites keep passing.
+
+**Lesson (BUG-160 family, fourth instance).** "This generation called a tool"
+is not the evidence; "nothing was spoken since the call" is. A withhold keyed
+on what a generation once did, rather than on what it has done since, turns
+the first counter-example into a stuck turn — and a stuck SPEAKING turn is
+the worst failure the voice path has, because nothing the user does with
+their voice can end it.

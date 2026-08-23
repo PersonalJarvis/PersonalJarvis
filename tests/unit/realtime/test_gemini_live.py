@@ -1033,6 +1033,303 @@ async def test_a_real_mute_after_a_tool_still_reaches_the_session() -> None:
     assert [event.type for event in events] == ["tool_call", "turn_complete"]
 
 
+def _server_content(
+    *,
+    output_text: str | None = None,
+    interrupted: bool = False,
+    turn_complete: bool = False,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        output_transcription=(
+            SimpleNamespace(text=output_text) if output_text is not None else None
+        ),
+        input_transcription=None,
+        interrupted=interrupted,
+        turn_complete=turn_complete,
+    )
+
+
+def _tool_call_message(name: str = "search_web") -> SimpleNamespace:
+    return _fake_message(
+        tool_call=SimpleNamespace(
+            function_calls=[SimpleNamespace(id="call-1", name=name, args={})]
+        )
+    )
+
+
+def _session_over(sdk_turns: list[list[SimpleNamespace]]) -> _GeminiLiveSession:
+    receive_calls = 0
+
+    async def fake_receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        turn_index = receive_calls - 1
+        if turn_index < len(sdk_turns):
+            for message in sdk_turns[turn_index]:
+                yield message
+
+    return _GeminiLiveSession(
+        session=SimpleNamespace(receive=fake_receive),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="wire-shape",
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_boundary_survives_the_interrupted_edge_the_server_sends_first() -> None:
+    """The REAL wire shape: ``interrupted`` then ``turn_complete`` after a tool call.
+
+    Gemini Live closes a generation that handed out a function call with an
+    ``interrupted`` edge immediately followed by ``turn_complete`` (all 7 tool
+    calls of the 2026-08-22 18:39 session). The ``interrupted`` boundary reset
+    the per-generation function-call counter, so the ``turn_complete`` withhold
+    of the two tests above — which keys on that counter — never fired against
+    the real server: 12 tool calls that day, 1 withheld, 7 leaked. Every leak
+    became "provider completed a direct-tool turn without output; retrying
+    speech", and that retry text interrupted the answer already streaming
+    ("Gerne. Diese Klage von den Bundesstaaten wirft Meta vor, dass sie ihre  # i18n-allow
+    Plattformen" was the whole reply). Neither edge of the pair is a barge-in
+    and neither may reach the session.
+    """
+    session = _session_over(
+        [
+            [
+                _tool_call_message(),
+                # Read right after the tool result was sent; the server emitted
+                # both edges the moment it handed out the call.
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ],
+            [
+                # The answer generation — THIS boundary is the turn's real end.
+                _fake_message(
+                    server_content=_server_content(
+                        output_text="Gerne. Diese Klage …", turn_complete=True
+                    )
+                )
+            ],
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "tool_call",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_boundary_pair_packed_into_one_message_is_withheld_whole() -> None:
+    session = _session_over(
+        [
+            [
+                _tool_call_message(),
+                _fake_message(
+                    server_content=_server_content(
+                        interrupted=True, turn_complete=True
+                    )
+                ),
+            ],
+            [
+                _fake_message(
+                    server_content=_server_content(
+                        output_text="Es gibt zwei Verfahren …", turn_complete=True
+                    )
+                )
+            ],
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "tool_call",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_chained_tool_call_keeps_withholding_until_the_spoken_answer() -> None:
+    """Tool → pair → second tool → pair → answer: only the answer's end reaches us."""
+    session = _session_over(
+        [
+            [
+                _tool_call_message("search_web"),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ],
+            [
+                _tool_call_message("search_web"),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ],
+            [
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ],
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "tool_call",
+        "tool_call",
+        "audio_delta",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_spoken_output_after_a_lone_interrupted_edge_releases_the_withhold() -> None:
+    """A server that skips the ``turn_complete`` half must not mute the answer's end.
+
+    Safety net for the carried evidence: if spoken output follows the tool
+    generation's ``interrupted`` edge directly, that output opens a new
+    generation, and its ``turn_complete`` is the real boundary the session's
+    turn record needs (otherwise only the 20 s stall watchdog would close it).
+    """
+    session = _session_over(
+        [
+            [
+                _tool_call_message(),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ]
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "tool_call",
+        "audio_delta",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_real_barge_in_without_a_tool_call_still_interrupts() -> None:
+    """The withhold is scoped to tool generations; a user's voice stays a barge-in."""
+    session = _session_over(
+        [
+            [
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ]
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "audio_delta",
+        "interrupted",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_answer_spoken_in_the_tool_generation_closes_the_turn() -> None:
+    """Tool call → result → the answer in the SAME generation → its end must reach us.
+
+    Gemini does not always open a new generation for the answer. Live
+    2026-08-23 09:25 (and 09:04, 09:23, 09:24 the same morning): the model
+    called search_web, took the result, and spoke 18.6 s of answer without a
+    generation boundary in between — then sent one ``turn_complete``. The
+    per-generation withhold read "this generation called a tool" and swallowed
+    it; the desktop pipeline never left JARVIS_SPEAKING, half-duplex kept the
+    microphone shut, and the user was deaf until they closed the bar. Spoken
+    output AFTER the tool call is what makes this boundary the turn's real end.
+    """
+    session = _session_over(
+        [
+            [
+                _tool_call_message(),
+                # The tool result travelled; the model kept the generation
+                # and answered in place.
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(
+                    server_content=_server_content(output_text="The song is called …")
+                ),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ]
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "tool_call",
+        "audio_delta",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_barge_in_over_an_answer_spoken_in_the_tool_generation_interrupts() -> None:
+    """Once the tool generation is speaking its answer, the user's voice is a barge-in again."""
+    session = _session_over(
+        [
+            [
+                _tool_call_message(),
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ]
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "tool_call",
+        "audio_delta",
+        "interrupted",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_preamble_before_the_tool_call_does_not_release_the_withhold() -> None:
+    """"Moment …" → tool call → pair: the words BEFORE the call are not its answer."""
+    session = _session_over(
+        [
+            [
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(server_content=_server_content(output_text="Moment …")),
+                _tool_call_message(),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ],
+            [
+                _fake_message(
+                    server_content=_server_content(
+                        output_text="Here is the answer.", turn_complete=True
+                    )
+                )
+            ],
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "audio_delta",
+        "output_transcript_delta",
+        "tool_call",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+
+
 # --- BUG-088: conversation-history seeding into a fresh session -------------
 
 

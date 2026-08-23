@@ -270,6 +270,25 @@ class _GeminiLiveSession:
         self._gen_started_at = 0.0
         self._last_input_kind = "connect"
         self._last_input_at = time.monotonic()
+        # A generation that handed out a function call is closed by the server
+        # with ``interrupted`` AND ``turn_complete`` — two edges, usually two
+        # messages. The ``interrupted`` edge resets the per-generation counters
+        # above, so by the time ``turn_complete`` arrives the function-call
+        # evidence is gone. This flag carries it across (see ``receive``).
+        self._tool_boundary_pending = False
+        # Spoken output (audio bytes + transcript chars) produced AFTER the
+        # generation's most recent function call. Gemini does not always open
+        # a new generation for the answer: when the model keeps the same
+        # generation after the tool result and speaks the answer in place, its
+        # ``turn_complete`` is the turn's real end — withholding it because the
+        # generation once called a tool left the desktop pipeline in
+        # JARVIS_SPEAKING with the microphone half-duplexed shut until the user
+        # hung up (live 2026-08-23 09:25:41: "turn complete (function call,
+        # boundary withheld) — audio=18.6s", no LISTENING edge ever followed;
+        # same shape at 09:04:55, 09:23:42 and 09:24:38, escaped only by a
+        # shouted barge-in). A boundary is a tool boundary only while this
+        # counter is zero.
+        self._gen_output_since_tool = 0
 
     def _note_input_sent(self, kind: str) -> None:
         self._last_input_kind = kind
@@ -285,9 +304,36 @@ class _GeminiLiveSession:
                 self._gen_started_at - self._last_input_at,
                 self._last_input_kind,
             )
+            if not calls:
+                # Spoken output opens a NEW generation: whatever boundary
+                # follows it is this generation's own and must reach the
+                # session. A tool boundary still marked pending here belongs
+                # to a server that skipped the ``turn_complete`` half of the
+                # pair; never let it withhold the real end of the answer.
+                self._tool_boundary_pending = False
         self._gen_audio_bytes += audio_bytes
         self._gen_transcript_chars += transcript_chars
         self._gen_function_calls += calls
+        if calls:
+            # A new tool call opens a fresh "did it answer afterwards" window.
+            self._gen_output_since_tool = 0
+        else:
+            self._gen_output_since_tool += audio_bytes + transcript_chars
+
+    def _boundary_is_tool_boundary(self, function_calls: tuple[Any, ...]) -> bool:
+        """Whether a boundary closes a tool hand-off rather than a spoken reply.
+
+        True only when this generation handed out a function call (or the
+        evidence was carried across the ``interrupted`` edge) AND nothing has
+        been spoken since that call. A generation that called a tool and then
+        answered in place owns its boundary like any other.
+        """
+        called_tool = (
+            bool(function_calls)
+            or self._gen_function_calls > 0
+            or self._tool_boundary_pending
+        )
+        return called_tool and self._gen_output_since_tool == 0
 
     def _log_generation_boundary(self, *, kind: str, reason: str = "") -> None:
         started = self._gen_started_at
@@ -306,6 +352,7 @@ class _GeminiLiveSession:
         self._gen_audio_bytes = 0
         self._gen_transcript_chars = 0
         self._gen_function_calls = 0
+        self._gen_output_since_tool = 0
         self._gen_started_at = 0.0
 
     async def send_audio(self, chunk: Any) -> None:
@@ -418,8 +465,41 @@ class _GeminiLiveSession:
                         # A barge-in ends the generation, so the channel is
                         # free again for the user turn that just started.
                         self._model_generating = False
-                        self._log_generation_boundary(kind="interrupted")
-                        yield _ProviderEvent(type="interrupted")
+                        if self._boundary_is_tool_boundary(function_calls):
+                            # NOT a barge-in. The server closes a generation
+                            # that handed out a function call with
+                            # ``interrupted`` immediately followed by
+                            # ``turn_complete`` — observed on every one of the
+                            # 7 tool calls of the 2026-08-22 18:39 session,
+                            # and on the wire the pair arrives while the tool
+                            # is still running (the session reads it right
+                            # after it sends the tool result). The boundary
+                            # logger below resets the function-call counter,
+                            # so the ``turn_complete`` withhold further down —
+                            # which keys on that counter — never once fired:
+                            # 12 tool calls today, 1 withheld, 7 leaked. Each
+                            # leak made the session take the empty boundary
+                            # for a mute provider and send its "retry the
+                            # speech" text; when the answer generation was
+                            # already streaming, that text interrupted it
+                            # server-side ("Gerne. Diese Klage von den  # i18n-allow
+                            # Bundesstaaten wirft Meta vor, dass sie ihre
+                            # Plattformen" — end of reply), and the model's
+                            # second answer was then discarded as a stale
+                            # generation. Keep the evidence across the edge
+                            # and withhold the edge itself: a real barge-in
+                            # during a tool run still confirms itself through
+                            # the user's input transcript moments later. An
+                            # edge AFTER the generation already spoke past
+                            # its tool call is not this pair — the model
+                            # answered in place — so it stays a barge-in.
+                            self._tool_boundary_pending = True
+                            self._log_generation_boundary(
+                                kind="interrupted (function call, edge withheld)"
+                            )
+                        else:
+                            self._log_generation_boundary(kind="interrupted")
+                            yield _ProviderEvent(type="interrupted")
 
                     input_transcription = getattr(
                         content, "input_transcription", None
@@ -489,15 +569,38 @@ class _GeminiLiveSession:
                         # If the model never generates again, the session's own
                         # turn-stall watchdog closes the turn honestly; it is
                         # not this adapter's job to fake a boundary.
-                        tool_generation = bool(function_calls) or (
-                            self._gen_function_calls > 0
+                        # ``_tool_boundary_pending`` is the same evidence
+                        # carried across the ``interrupted`` edge the server
+                        # emits first (see above): without it the counter is
+                        # already zero here and the boundary leaks.
+                        # The converse leak is just as real: the model does
+                        # NOT always open a new generation for the answer.
+                        # When it keeps the same generation after the tool
+                        # result and speaks in place, this boundary IS the
+                        # turn's end; withholding it because the generation
+                        # once called a tool froze the desktop pipeline in
+                        # JARVIS_SPEAKING with the microphone shut (live
+                        # 2026-08-23 09:25:41, audio=18.6s, no LISTENING edge
+                        # until the user hung up). Spoken output since the
+                        # last tool call is what tells the two apart.
+                        answered_in_place = (
+                            bool(function_calls) or self._gen_function_calls > 0
+                        ) and self._gen_output_since_tool > 0
+                        tool_generation = self._boundary_is_tool_boundary(
+                            function_calls
                         )
+                        self._tool_boundary_pending = False
                         self._log_generation_boundary(
                             kind=(
                                 "turn complete (function call, boundary "
                                 "withheld)"
                                 if tool_generation
-                                else "turn complete"
+                                else (
+                                    "turn complete (function call answered "
+                                    "in place)"
+                                    if answered_in_place
+                                    else "turn complete"
+                                )
                             ),
                             reason=reason_name,
                         )
