@@ -17,7 +17,7 @@ Dev instance (a second, freely restartable desktop app — see
 
     python scripts/install_shortcuts.py --dev
 
-  → Desktop\Personal Jarvis Dev.lnk (DEV-badged icon, ``--instance dev``);
+  → Desktop\\Personal Jarvis Dev.lnk (DEV-badged icon, ``--instance dev``);
     never touches autostart.
 
 Uninstall:
