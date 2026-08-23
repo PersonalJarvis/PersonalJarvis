@@ -829,6 +829,11 @@ jarvis = [
     "ui/web/dist/**/*",
     "ui/web/dist/*",
     "assets/**/*",
+    # The original brand marks (+ their LOGOS.md provenance ledgers) the
+    # artifact brief inlines for a worker (jarvis/artifacts/brand_marks.py).
+    # Read via repo_root() at dispatch time, so a wheel install needs them too.
+    "ui/web/frontend/src/assets/providers/*",
+    "ui/web/frontend/src/assets/brands/*",
     # Node bot scripts shipped alongside their Python bridge tools (e.g. the
     # google_calendar bot). Not Python, so packages.find won't pick them up.
     "plugins/tool/*.mjs",

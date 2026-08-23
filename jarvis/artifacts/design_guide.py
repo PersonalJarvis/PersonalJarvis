@@ -192,6 +192,10 @@ AVOID: Final = """\
 page; gradient text; glows, blurred colour blobs, radial backdrops; a gradient anywhere.
 - Pills and chips as decoration (an "eyebrow pill" above the headline, emoji chips as \
 filters); emoji as section markers or icons; 01/02/03 markers on non-sequences.
+- A stand-in for a logo: a lettered tile ("G", "OA", "A" in a coloured square), an emoji, \
+an invented glyph or a generic "AI" spark beside a vendor's name — the original mark \
+(supplied in the brief when the request names the brand) or the name in plain text, \
+nothing in between.
 - The Tailwind rainbow (#3b82f6, #a855f7, #8b5cf6, #06b6d4, #10b981, #f59e0b, #f43f5e, \
 slate greys) and any palette not in the token block; near-black with one acid-green \
 or neon accent; purple-to-blue gradients.

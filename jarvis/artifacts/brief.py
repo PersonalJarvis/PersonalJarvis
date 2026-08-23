@@ -27,9 +27,11 @@ what lets a golden test pin the contract.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from jarvis.artifacts.brand_marks import BrandMark, brand_marks_section
 from jarvis.artifacts.design_guide import (
     AVOID,
     CHARTS,
@@ -117,6 +119,7 @@ def build_artifact_brief(
     language: str,
     previous_html: str | None = None,
     previous_filename: str | None = None,
+    brand_marks: Sequence[BrandMark] = (),
 ) -> ArtifactBrief:
     """Compose the worker instruction for one artifact.
 
@@ -131,6 +134,10 @@ def build_artifact_brief(
             rewrites the whole file with the change applied).
         previous_filename: the previous page's filename, kept on a revision so
             the new version lands under the same name.
+        brand_marks: the original marks for the brands the request names
+            (:func:`jarvis.artifacts.brand_marks.find_brand_marks`), inlined
+            so the page never draws a lettered tile in a logo's place. The
+            caller resolves them; this function stays free of the filesystem.
     """
     clean_title = " ".join((title or "").split()) or "Artifact"
     clean_request = (request or "").strip()
@@ -188,6 +195,7 @@ def build_artifact_brief(
             ]
         ),
         CHARTS,
+        brand_marks_section(list(brand_marks)),
         AVOID,
         DONE_MEANS,
     ]

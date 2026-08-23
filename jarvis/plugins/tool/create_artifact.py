@@ -30,6 +30,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final
 
+from jarvis.artifacts.brand_marks import find_brand_marks
 from jarvis.artifacts.brief import build_artifact_brief
 from jarvis.artifacts.locate import locate_artifact
 from jarvis.core.bus import EventBus
@@ -223,12 +224,16 @@ class CreateArtifactTool:
                 error=action_phrase("spawn_no_runner", language),
             )
 
+        # The original marks for the brands the request names ride along in the
+        # brief (the worker's workspace holds no repo); a request that names
+        # none adds one rule: text, never a lettered tile in a logo's place.
         brief = build_artifact_brief(
             request,
             title=previous.title if previous else title,
             language=language,
             previous_html=previous.html if previous else None,
             previous_filename=previous.file.name if previous else None,
+            brand_marks=find_brand_marks(f"{title} {request}"),
         )
         kontrollierer = self._resolve_kontrollierer()
         utterance = _utterance(ctx) or request

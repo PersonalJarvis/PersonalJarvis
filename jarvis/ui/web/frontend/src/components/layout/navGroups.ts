@@ -14,7 +14,6 @@ import {
   Boxes,
   Contact,
   FolderOpen,
-  Frame,
   Gauge,
   KeyRound,
   ListTodo,
@@ -25,6 +24,7 @@ import {
   Notebook,
   ScrollText,
   Settings,
+  Shapes,
   Share2,
   Sparkles,
   Store,
@@ -35,6 +35,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { SectionId } from "@/store/events";
+import type { HomeSurface } from "@/lib/homeSurface";
 
 // Resolve a nav row's label, preferring the active-locale translation and
 // falling back to the English `fallbackLabel` when the key is not yet present
@@ -42,6 +43,22 @@ import type { SectionId } from "@/store/events";
 export function resolveNavLabel(t: (key: string) => string, item: NavItem): string {
   const resolved = t(item.labelKey);
   return resolved === item.labelKey && item.fallbackLabel ? item.fallbackLabel : resolved;
+}
+
+/**
+ * The front page is ONE section ("chats") with two faces — the voice stage
+ * and the typed chat — picked by the `Voice | Chat` switch at the top of the
+ * sidebar. Its nav row says which face it currently is: Mic + "Voice" or
+ * bubble + "Chat", the same two words the switch uses. A fixed "Chats" label
+ * under a switch that says "Voice" read as a contradiction (maintainer,
+ * 2026-08-23). Every other row passes through unchanged. Pure, so the
+ * sidebar and the rail present the row identically.
+ */
+export function presentNavItem(item: NavItem, surface: HomeSurface): NavItem {
+  if (item.id !== "chats") return item;
+  return surface === "voice"
+    ? { ...item, labelKey: "sidebar.surface_voice", icon: Mic, fallbackLabel: "Voice" }
+    : { ...item, labelKey: "sidebar.surface_chat", icon: MessageSquare, fallbackLabel: "Chat" };
 }
 
 export interface NavItem {
@@ -109,7 +126,7 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "visualization",
       labelKey: "nav.visualization",
-      icon: Frame,
+      icon: Shapes,
       fallbackLabel: "Visualization",
     },
     { id: "board", labelKey: "nav.board", icon: Sparkles },

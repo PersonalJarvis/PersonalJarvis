@@ -7,10 +7,10 @@ import {
   FileImage,
   FileText,
   FolderOpen,
-  Frame,
   Globe,
   Loader2,
   RefreshCw,
+  Shapes,
   ShieldCheck,
   Workflow,
 } from "lucide-react";
@@ -219,7 +219,7 @@ export function VisualizationView() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ViewHeader
-        icon={<Frame className="h-4 w-4 text-primary" aria-hidden />}
+        icon={<Shapes className="h-4 w-4 text-primary" aria-hidden />}
         title={t("visualization.title")}
         subtitle={t("visualization.subtitle")}
         right={
@@ -669,7 +669,7 @@ function EmptyStage({ loading, error }: { loading: boolean; error: boolean }) {
       {loading && !error ? (
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
       ) : (
-        <Frame className="h-6 w-6 text-muted-foreground" aria-hidden />
+        <Shapes className="h-6 w-6 text-muted-foreground" aria-hidden />
       )}
       <p className="text-sm font-medium">
         {t(error ? "visualization.error_title" : "visualization.empty_title")}
