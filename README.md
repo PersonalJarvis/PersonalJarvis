@@ -542,7 +542,7 @@ PersonalJarvis/
 | [`docs/architecture-overview.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) | The full architecture: layers, module catalog, data flow |
 | [`docs/LLM-CONTEXT.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/LLM-CONTEXT.md) | Dense project snapshot, built to paste into an LLM chat whole |
 | [`CLAUDE.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CLAUDE.md) | Binding contributor guide: conventions, doctrine, anti-patterns |
-| [`CLAUDE.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CLAUDE.md) | Cross-platform, provider-agnostic design doctrine + the contributor rules |
+| [`docs/headless-vps-deployment.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md) | Running it headless on a VPS: install, keys, systemd, browser voice, what degrades |
 | [`docs/adr/`](https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs/adr/) | Architecture Decision Records |
 | [`docs/BUGS.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/BUGS.md) | The recurring-bug register |
 | [`docs/BRAND.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/BRAND.md) | Brand guidelines: colors, typography, the wordmark |
