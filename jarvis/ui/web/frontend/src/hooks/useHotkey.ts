@@ -345,7 +345,15 @@ const _NORMALIZE_FOLD: Record<string, string> = {
   win: "window",
   super: "window",
   meta: "window",
-  cmd: "command",
+  // The Mac names fold onto the SAME token as win/super/meta, because they are
+  // the same physical key and the backend's _KEY_MAP folds all five together.
+  // This used to send cmd to "command" instead, so the two halves disagreed:
+  // the UI believed cmd+j and win+j were two different registrations and
+  // happily accepted both, while the backend registered one and the other died
+  // silently at register time — a bound-looking row that does nothing, which is
+  // the exact failure the comment above this table describes.
+  cmd: "window",
+  command: "window",
 };
 
 /** The key set a combo ACTUALLY registers as — mirrors the backend's

@@ -73,6 +73,18 @@ _KEY_MAP = {
     # matches, instead of arming a combo that never fires.
     "super": "window",
     "meta": "window",
+    # The Mac names for the SAME key. Both are first-class modifier spellings
+    # everywhere else in the stack — jarvis.trigger.hotkey._MODIFIER_TOKENS
+    # validates them, the UI's MODIFIER_TOKENS renders them as modifiers — but
+    # neither was folded here, so they travelled through _normalize_combo
+    # untouched. "command" then reached every backend as a literal key token
+    # that matches nothing: on macOS the CGEventFlags word only ever sets
+    # shift/ctrl/alt/cmd, and on Windows the library knows no such key. The
+    # shortcut saved, rendered as bound, and never fired once, with no error
+    # anywhere in the chain. "cmd" happened to survive on macOS by coincidence
+    # (the flag token is spelled the same) and was equally dead on Windows.
+    "cmd": "window",
+    "command": "window",
     "shift": "shift",
     **_MOUSE_ALIASES,
 }

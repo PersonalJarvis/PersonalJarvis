@@ -233,3 +233,166 @@ def test_stop_is_idempotent_without_start() -> None:
     backend.stop()
     backend.stop()
     assert backend._started is False
+
+
+# ----------------------------------------------------------------------
+# Modifier-only chords, end to end (issue #98)
+#
+# The report is that on macOS the modifier keys "cannot be assigned" — Option,
+# Command and Control refuse to be recorded, alone or in combination. These
+# tests walk the WHOLE backend half of that path with the exact strings the
+# recorder produces, so the half that is fine can be ruled out by evidence
+# instead of by reading.
+#
+# The path is longer than it looks and every hop renames the tokens:
+#
+#   recorder combo ("right_alt")
+#     -> _normalize_combo   (folds right_alt/left_alt/altgr -> alt,
+#                            win/super/meta -> window, ctrl -> control)
+#     -> _parse_combo_tokens (window -> cmd, control -> ctrl, right_control
+#                            -> ctrl_r)
+#     -> QuartzHotkeyBackend.register (ctrl_r -> ctrl: the flags word has no
+#                            portable left/right distinction)
+#     -> _handle_flags       (the CGEventFlags word -> shift/ctrl/alt/cmd)
+#
+# A token that survives any hop unfolded reaches _held and matches nothing, and
+# nothing anywhere reports an error — the user sees a shortcut that saved,
+# renders as bound, and never fires. That is the failure shape these pin.
+# ----------------------------------------------------------------------
+
+_FLAG_SHIFT = 1 << 17
+_FLAG_CMD = 1 << 20
+
+_FLAG_FOR_TOKEN = {mask_token: mask for mask, mask_token in _FLAG_MASK_TO_TOKEN}
+
+
+def _fires(combo: str, *flag_tokens: str) -> bool:
+    """Whether ``combo``, as the recorder writes it, fires on those flags."""
+    from jarvis.trigger.backends.global_hotkeys import _normalize_combo
+
+    fired: list[str] = []
+    backend = _backend_with_permission()
+    backend.register([[_normalize_combo(combo), lambda: fired.append("press"), None]])
+    mask = 0
+    for token in flag_tokens:
+        mask |= _FLAG_FOR_TOKEN[token]
+    backend._handle_flags(mask)
+    return bool(fired)
+
+
+def test_every_lone_modifier_the_recorder_can_produce_fires() -> None:
+    # Both Option keys, both Control keys, Command under each of its spellings,
+    # and Shift. A Mac user pressing one key and nothing else must get a live
+    # shortcut, which is precisely what #98 says they do not.
+    assert _fires("alt", "alt"), "left Option"
+    assert _fires("left_alt", "alt"), "left Option, explicit spelling"
+    assert _fires("right_alt", "alt"), "right Option"
+    assert _fires("altgr", "alt"), "AltGr spelling from a PC-written config"
+    assert _fires("ctrl", "ctrl"), "Control"
+    assert _fires("right_ctrl", "ctrl"), "right Control"
+    assert _fires("shift", "shift"), "Shift"
+    assert _fires("cmd", "cmd"), "Command"
+    assert _fires("command", "cmd"), "Command, long spelling"
+    assert _fires("meta", "cmd"), "Command as meta"
+    assert _fires("super", "cmd"), "Command as super"
+    assert _fires("win", "cmd"), "a config written on Windows, opened on a Mac"
+
+
+def test_modifier_only_combinations_fire() -> None:
+    assert _fires("cmd+alt", "cmd", "alt")
+    assert _fires("ctrl+alt", "ctrl", "alt")
+    assert _fires("cmd+shift", "cmd", "shift")
+    assert _fires("ctrl+cmd+alt+shift", "ctrl", "cmd", "alt", "shift")
+
+
+def test_a_modifier_only_chord_does_not_fire_on_a_different_modifier() -> None:
+    # The matcher is a subset test, so a chord must not be satisfied by a
+    # modifier it did not ask for.
+    assert not _fires("cmd", "alt")
+    assert not _fires("cmd+alt", "cmd")
+
+
+def test_a_modifier_only_chord_releases_and_can_fire_again() -> None:
+    fired: list[str] = []
+    backend = _backend_with_permission()
+    backend.register([["alt", lambda: fired.append("press"), None]])
+
+    backend._handle_flags(_FLAG_ALT)
+    assert fired == ["press"]
+    backend._handle_flags(0)  # every modifier up
+    backend._handle_flags(_FLAG_ALT)
+    assert fired == ["press", "press"], "a second press must fire again"
+
+
+def test_a_modifier_only_chord_fires_its_release_edge() -> None:
+    events: list[str] = []
+    backend = _backend_with_permission()
+    backend.register(
+        [["cmd", lambda: events.append("down"), lambda: events.append("up")]]
+    )
+
+    backend._handle_flags(_FLAG_CMD)
+    backend._handle_flags(0)
+    assert events == ["down", "up"], "push-to-talk on a lone Command needs both edges"
+
+
+def test_no_modifier_spelling_survives_normalization_unfolded() -> None:
+    """Every modifier token the UI can emit must reduce to a flag this backend
+    actually sets. A survivor is the silent-dead-shortcut bug, so this asserts
+    the property rather than the eleven examples above.
+    """
+    from jarvis.trigger.backends.global_hotkeys import _normalize_combo
+    from jarvis.trigger.backends.pynput import _parse_combo_tokens
+
+    ui_modifier_tokens = [
+        "ctrl", "control", "right_ctrl", "right_control",
+        "alt", "right_alt", "left_alt", "altgr",
+        "shift", "win", "window", "super", "meta", "cmd", "command",
+    ]
+    flag_tokens = {token for _mask, token in _FLAG_MASK_TO_TOKEN}
+    for token in ui_modifier_tokens:
+        parsed = _parse_combo_tokens(_normalize_combo(token))
+        assert len(parsed) == 1, f"{token} did not stay a single token"
+        # register() applies the one fold this backend does itself.
+        resolved = "ctrl" if parsed[0] == "ctrl_r" else parsed[0]
+        assert resolved in flag_tokens, (
+            f"{token!r} reduces to {resolved!r}, which no CGEventFlags mask "
+            f"sets — a chord using it would save, render as bound and never fire"
+        )
+
+
+def test_the_frontend_fold_table_mirrors_the_backend_one() -> None:
+    """The UI's ``_NORMALIZE_FOLD`` claims to mirror the backend's ``_KEY_MAP``.
+
+    When it does not, the UI decides two differently-spelled combos are two
+    registrations while the backend registers one — so a second binding is
+    accepted, saved, rendered as bound, and then dies silently at register
+    time. That is the failure the UI table's own comment describes, and it is
+    what happened to ``cmd`` (folded to ``command`` in the UI, to ``window`` in
+    the backend).
+
+    Read out of the TypeScript source rather than duplicated here: a copy of
+    the table in this file would be a third thing to keep in sync.
+    """
+    from jarvis.trigger.backends.global_hotkeys import _KEY_MAP
+
+    source = (
+        Path(__file__).resolve().parents[3]
+        / "jarvis" / "ui" / "web" / "frontend" / "src" / "hooks" / "useHotkey.ts"
+    ).read_text(encoding="utf-8")
+
+    block = re.search(
+        r"_NORMALIZE_FOLD: Record<string, string> = \{(.*?)\n\};", source, re.S
+    )
+    assert block, "the UI fold table moved — update this test with it"
+    ui_fold = dict(re.findall(r"^\s*(\w+):\s*\"([^\"]+)\",", block.group(1), re.M))
+    assert ui_fold, "parsed no entries out of the UI fold table"
+
+    for token, folded in ui_fold.items():
+        assert token in _KEY_MAP, (
+            f"the UI folds {token!r} but the backend's _KEY_MAP does not know "
+            f"it, so the two disagree about what registers"
+        )
+        assert _KEY_MAP[token] == folded, (
+            f"{token!r}: UI folds to {folded!r}, backend to {_KEY_MAP[token]!r}"
+        )
