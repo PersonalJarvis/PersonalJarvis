@@ -461,5 +461,5 @@ docs/commands-reference.md
 #     impossible inside a docstring (reason 3, same rationale as
 #     navigation_intent.py / local_action_gate.py). Its hide-wiring test feeds
 #     German voice fixtures — content under test (reason 4). ---
-jarvis/brain/visualize_gate.py
-tests/unit/brain/test_visualize_tool_hide.py
+jarvis/brain/artifact_gate.py
+tests/unit/brain/test_artifact_tool_hide.py

@@ -1,13 +1,15 @@
-"""Explicit-request gate for the ``visualize`` tool (ask-only, never ambient).
+"""Explicit-request gate for the ``create_artifact`` tool (ask-only, never ambient).
 
-Drawing a picture is the one capability a user must be able to switch on with
-their own words. An assistant that decides on its own when an answer "would be
-clearer as a diagram" produces a stream of pictures nobody asked for, and every
-one of them costs a tool call, a rendered artifact on disk, and a jump of the
-UI to another section. So the tool is not merely *discouraged* ambiently — it is
-withheld from the model's tool set on every turn that did not ask for it (see
-``BrainManager._hide_visualize_tool_without_request``), which also keeps its
-schema out of the request on the ~99% of turns that are about something else.
+Building an artifact — a page, a dashboard, a diagram the user looks at — is
+the one capability a user must be able to switch on with their own words. An
+assistant that decides on its own when an answer "would be clearer as a page"
+produces a stream of artifacts nobody asked for, and every one of them costs a
+background mission on the strongest model, a file in the archive, and a jump
+of the UI to another section. So the tool is not merely *discouraged*
+ambiently — it is withheld from the model's tool set on every turn that did
+not ask for it (see ``BrainManager._hide_artifact_tool_without_request``),
+which also keeps its schema out of the request on the ~99% of turns that are
+about something else.
 
 Regex-only, provider-agnostic, no model in the detection path (AP-11): the gate
 runs on every single turn, so an LLM here would tax exactly the turns this
@@ -15,18 +17,20 @@ module exists to keep cheap.
 
 Three rules, in order:
 
-1. A **navigation** utterance is never a request to draw. "Zeig mir die
-   Visualisierungen" opens the section that lists what already exists — the
+1. A **navigation** utterance is never a request to build. "Zeig mir die
+   Artefakte" opens the section that lists what already exists — the
    ``navigate`` tool owns that, and it must not be shadowed by a tool that
-   would produce a brand-new picture instead of showing the old ones.
-2. A **definition question** ("was ist eine Visualisierung?") is answered with
+   would produce a brand-new page instead of showing the old ones.
+2. A **definition question** ("was ist ein Artefakt?") is answered with
    words. The word appearing in a question about the word is not a request.
-3. Otherwise: an explicit drawing VERB on its own, or a build/show verb
-   together with a visual NOUN, is a request.
+3. Otherwise: an explicit artifact VERB or NOUN on its own ("visualisier",
+   "Artefakt", "Dashboard"), or a build/show verb together with a visual NOUN
+   ("mach mir ein Diagramm", "show me that as a page"), is a request.
 
-A false negative is cheap and self-correcting — the user says "visualisier mir
-das" and gets it on the next turn. A false positive is the whole problem this
-module was written for, so every pattern here is deliberately narrow.
+A false negative is cheap and self-correcting — the user says "mach ein
+Artefakt draus" and gets it on the next turn. A false positive is the whole
+problem this module was written for, so every pattern here is deliberately
+narrow.
 
 Every literal below is input-matching vocabulary in the user's spoken languages
 (DE/EN/ES), which the language policy allows on the input surface.
@@ -51,7 +55,8 @@ _NAV_ARTICLES = (
 )
 _NAV_SECTION_NOUNS = (
     r"visualisierung(?:s\w*)?(?:en)?|"  # i18n-allow: input vocab
-    r"visualiz(?:ation|aciones|aci[oó]n)s?|visualisations?|visuals"
+    r"visualiz(?:ation|aciones|aci[oó]n)s?|visualisations?|visuals|"
+    r"artefakte?|artifacts?|artefactos?"  # i18n-allow: input vocab
 )
 _NAV_SUFFIX = (
     r"(?:\s*[-–]?\s*"
@@ -78,9 +83,10 @@ _DEFINITION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# --- 3a. Drawing verbs strong enough on their own ----------------------------
-# "visualisier mir das", "visualize this", "mach eine Mindmap draus". Each of
-# these names the ACT of drawing; no second signal is needed. Stems are matched
+# --- 3a. Words strong enough on their own -------------------------------------
+# "visualisier mir das", "visualize this", "mach eine Mindmap draus", "ein
+# Artefakt bitte", "als Dashboard". Each of these names the ACT of building a
+# picture or the artifact itself; no second signal is needed. Stems are matched
 # so every inflection is covered ("visualisiere", "visualizing", "visualízalo").
 _EXPLICIT_RE = re.compile(
     r"\b(?:"
@@ -90,7 +96,11 @@ _EXPLICIT_RE = re.compile(
     r"veranschaulich\w*|skizzier\w*|"  # i18n-allow: input vocab
     r"schaubild|flussdiagramm|ablaufdiagramm|organigramm|"  # i18n-allow: input vocab
     r"mindmap|mind\s+map|flowchart|flow\s+chart|org\s+chart|"
-    r"esquematiza\w*|diagrama\s+de\s+flujo"  # i18n-allow: input vocab
+    r"esquematiza\w*|diagrama\s+de\s+flujo|"  # i18n-allow: input vocab
+    # The artifact by name, and the page shapes that ARE artifacts.
+    r"artefakte?s?|artifacts?|artefactos?|"  # i18n-allow: input vocab
+    r"dashboards?|infografik\w*|infographics?|infograf[ií]as?|"  # i18n-allow: input vocab
+    r"landing\s*pages?|one-?pagers?"
     r")\b",
     re.IGNORECASE,
 )
@@ -120,17 +130,24 @@ _NOUN_RE = re.compile(
     r"diagram|chart|graphic|timeline|infographic|"
     r"visually|graphically|as\s+(?:a\s+)?(?:picture|image|drawing)|"
     r"diagrama|gr[áa]fic[oa]s?|l[íi]nea\s+de\s+tiempo|"  # i18n-allow: input vocab
-    r"visualmente|gr[áa]ficamente"  # i18n-allow: input vocab
+    r"visualmente|gr[áa]ficamente|"  # i18n-allow: input vocab
+    # Page shapes — a request only next to a build/show verb ("mach mir eine
+    # Seite dazu", "build me a report page"), never on their own: "die Seite
+    # war langsam" is conversation.
+    r"html(?:-?(?:seite|datei|page|file))?|webseite|websites?|web\s*pages?|"  # i18n-allow
+    r"p[áa]ginas?(?:\s+web)?|als\s+seite|as\s+a\s+page|"  # i18n-allow: input vocab
+    r"bericht(?:sseite)?|reports?|informes?|"  # i18n-allow: input vocab
+    r"übersicht(?:sseite)?|uebersicht|overview\s+page"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )
 
 
-def wants_visualization(text: str) -> bool:
-    """True when the utterance explicitly asks for a picture to be drawn.
+def wants_artifact(text: str) -> bool:
+    """True when the utterance explicitly asks for an artifact to be built.
 
-    The single decision point for offering the ``visualize`` tool at all. See
-    the module docstring for the three rules and why each one is narrow.
+    The single decision point for offering the ``create_artifact`` tool at
+    all. See the module docstring for the three rules and why each is narrow.
     """
     t = (text or "").strip()
     if not t:
@@ -144,4 +161,4 @@ def wants_visualization(text: str) -> bool:
     return bool(_VERB_RE.search(t) and _NOUN_RE.search(t))
 
 
-__all__ = ["wants_visualization"]
+__all__ = ["wants_artifact"]

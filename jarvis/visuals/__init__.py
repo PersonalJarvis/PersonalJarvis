@@ -1,33 +1,14 @@
-"""On-demand visualisations — the pictures a user explicitly asked for.
+"""The brand palette shared by every server-rendered page.
 
-Three small pieces, deliberately separable:
-
-* :mod:`~jarvis.visuals.spec` — the shape a caller has to supply, and the
-  validation that turns loose model-authored JSON into it.
-* :mod:`~jarvis.visuals.render` — spec in, one self-contained HTML page out.
-  Pure function, no filesystem, no network: trivially testable.
-* :mod:`~jarvis.visuals.store` — where that page is written so the existing
-  Outputs/Visualization surfaces find it without a new REST route.
-
-The gate that decides whether any of this runs at all lives elsewhere, in
-:mod:`jarvis.brain.visualize_gate` — rendering is only ever reached on a turn
-that asked for a picture in so many words.
+Once the home of the on-demand visualisation renderer (spec → HTML, five fixed
+shapes). That was retired on 2026-08-23 in favour of artifacts — whole pages a
+mission worker writes on the strongest model (:mod:`jarvis.artifacts`). What
+stays is the one thing both the mission map and the artifact brief still need:
+the palette.
 """
 
 from __future__ import annotations
 
 from jarvis.visuals.brand import BRAND
-from jarvis.visuals.render import render_visual_html
-from jarvis.visuals.spec import VisualItem, VisualSpec, VisualSpecError, parse_spec
-from jarvis.visuals.store import StoredVisual, store_visual
 
-__all__ = [
-    "BRAND",
-    "StoredVisual",
-    "VisualItem",
-    "VisualSpec",
-    "VisualSpecError",
-    "parse_spec",
-    "render_visual_html",
-    "store_visual",
-]
+__all__ = ["BRAND"]

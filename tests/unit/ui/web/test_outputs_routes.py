@@ -1329,6 +1329,36 @@ def test_download_inline_html_has_csp(app):
     assert "default-src 'none'" in r.headers.get("content-security-policy", "")
 
 
+def test_artifact_page_allows_inline_scripts_but_no_network(app):
+    """The Artifacts section frames HTML through ``/page``: the page's own JS
+    runs (the iframe is sandboxed to an opaque origin on the client side), while
+    every way out — network, forms, frames, navigation — stays shut."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(
+        root, "019ed2dfd0fab1234", "dash.html", "<script>document.title='ok'</script>"
+    )
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/page")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    csp = r.headers.get("content-security-policy", "")
+    assert "script-src 'unsafe-inline'" in csp
+    assert "connect-src 'none'" in csp
+    assert "default-src 'none'" in csp
+    assert r.headers.get("cache-control") == "no-store"
+    assert "document.title" in r.text
+
+
+def test_artifact_page_refuses_non_html(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "notes.md", "# not a page")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/page")
+    assert r.status_code == 415
+
+
 def test_download_attachment_html_no_csp_needed(app):
     # Attachment (download to disk) is not rendered, so no CSP is required.
     root = Path(app.state.outputs_root)

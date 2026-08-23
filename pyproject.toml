@@ -750,13 +750,14 @@ inspect-pointer = "jarvis.plugins.tool.inspect_pointer:InspectPointerTool"
 # Publishes NavigateSidebar; the frontend switches the section. Never a spawn
 # (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
 navigate = "jarvis.plugins.tool.navigate:NavigateTool"
-# On-demand visualisation (2026-08-11) — draw the thing under discussion when
-# the user explicitly asks to SEE it ("visualisier mir das", "draw me a
-# flowchart"). Router-tier, risk safe: renders one HTML artifact into the run
-# archive and publishes NavigateSidebar. ASK-ONLY — withheld from the tool set
-# on every turn that did not ask (jarvis/brain/visualize_gate.py). Never a
-# spawn (AP-5/AP-14).
-visualize = "jarvis.plugins.tool.visualize:VisualizeTool"
+# On-demand artifact (2026-08-23) — build one self-contained HTML page when
+# the user explicitly asks to SEE something ("visualisier mir das", "mach mir
+# ein Dashboard", "build me an artifact"). Router-tier dispatch to the mission
+# stack (a worker on the strongest model writes the page), risk monitor like
+# spawn-worker; publishes NavigateSidebar. ASK-ONLY — withheld from the tool
+# set on every turn that did not ask (jarvis/brain/artifact_gate.py). Never in
+# a worker set (AP-5/AP-14).
+create-artifact = "jarvis.plugins.tool.create_artifact:CreateArtifactTool"
 # Command Registry executor (2026-07-09) — run ONE curated app command
 # (provider switch, wake word, language, volume, missions/tasks, restart)
 # through the SAME REST endpoint the UI uses, in-process via ASGI. Enum-

@@ -147,9 +147,15 @@ _ALIASES: dict[str, str] = {
     "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
     "task bar": "taskbar",
     "taskleiste": "taskbar",
-    # The Visualization board. The English id is a mouthful in the other two
-    # locales, so the spoken forms carry more weight here than for a section
-    # whose name is already a common noun.
+    # The Artifacts section (section id kept as "visualization" — its 2026-08
+    # name — because the id crosses the navigate parity test, the detachable
+    # view registry and deep links). Spoken forms: the new name first.
+    "artifacts": "visualization",
+    "artifact": "visualization",
+    "artefakte": "visualization",  # i18n-allow: input vocab
+    "artefakt": "visualization",  # i18n-allow: input vocab
+    "artefactos": "visualization",  # i18n-allow: input vocab
+    "artefacto": "visualization",  # i18n-allow: input vocab
     "visualisation": "visualization",
     "visuals": "visualization",
     "charts": "visualization",

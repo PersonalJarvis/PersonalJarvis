@@ -382,6 +382,23 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I can't start the task right now. Please restart me.",
         "es": "No puedo iniciar la tarea ahora. Reiníciame, por favor.",
     },
+    # ``create_artifact`` handed the page to a background agent. The promise
+    # names the artifact and says the result will be announced — the tool's
+    # fallback when the brain supplied no ``spoken_ack`` of its own.
+    "artifact_building": {
+        "de": (  # i18n-allow
+            "Ich baue „{title}“ im Hintergrund und sage Bescheid, sobald es fertig ist."
+        ),
+        "en": "I'm building “{title}” in the background and will tell you when it's ready.",
+        "es": "Estoy creando «{title}» en segundo plano y te aviso cuando esté listo.",
+    },
+    "artifact_revising": {
+        "de": (  # i18n-allow
+            "Ich überarbeite „{title}“ im Hintergrund und sage Bescheid, sobald es fertig ist."
+        ),
+        "en": "I'm revising “{title}” in the background and will tell you when it's ready.",
+        "es": "Estoy revisando «{title}» en segundo plano y te aviso cuando esté listo.",
+    },
     # Scheduled-routine failures (jarvis/workflows). A broken routine used to
     # vanish into a log line, which is the maintainer's exact complaint: "you
     # tell him something and nothing happens" (AU-12 / AU-13). ``{name}`` is the

@@ -77,16 +77,19 @@ ROUTER_TOOLS = frozenset({
     # never in a worker set (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
     "navigate",
     # On-demand visualisation (2026-08-11): draw what is under discussion as a
-    # flow / hierarchy / comparison / timeline / bar chart, archive it, and
-    # open the Visualization section. Router-tier, risk safe, NO spawn — never
-    # in a worker set (AP-5/AP-14).
+    # On-demand artifact (2026-08-23, rebuilt from the 2026-08-11 visualize
+    # tool): build ONE self-contained HTML page — dashboard, report, diagram,
+    # small tool — through the mission stack on the strongest model, archived
+    # as the run's deliverable and shown full-size in the Artifacts section.
+    # Router-tier dispatch (risk monitor, like spawn-worker) — never in a
+    # worker set (AP-5/AP-14).
     #
     # ASK-ONLY, and enforced structurally rather than by prompt: the tool is
     # removed from the tool set on every turn whose utterance does not
-    # explicitly ask for a picture (BrainManager
-    # ._hide_visualize_tool_without_request over jarvis/brain/visualize_gate).
+    # explicitly ask for an artifact (BrainManager
+    # ._hide_artifact_tool_without_request over jarvis/brain/artifact_gate).
     # Membership here is what makes it REACHABLE; the gate decides WHEN.
-    "visualize",
+    "create-artifact",
     # Command Registry executor (2026-07-09): run ONE curated app command
     # (jarvis/commands/registry.py) through the SAME REST endpoint the UI
     # uses, in-process via ASGI transport. Enum-constrained command_id +
@@ -514,11 +517,18 @@ def _load_tools_for_tier(
                 # which the WS forwarder streams to the frontend (event_name
                 # "NavigateSidebar") to switch the active section.
                 inst = cls(bus=bus)
-            elif ep.name == "visualize":
-                # Same bus, same event: after archiving the rendered picture the
-                # tool publishes NavigateSidebar("visualization") so the section
-                # showing it comes to the front.
-                inst = cls(bus=bus)
+            elif ep.name == "create-artifact":
+                # The artifact is written by a mission worker (strongest model),
+                # so the tool needs the same lazy mission-stack resolvers as
+                # spawn-worker (AD-OC1: the stack bootstraps after the brain).
+                # Publishes NavigateSidebar("visualization") on dispatch so the
+                # Artifacts section shows the build as it happens.
+                inst = cls(
+                    bus=bus,
+                    manager=mission_manager,
+                    manager_resolver=_resolve_mission_manager,
+                    kontrollierer_resolver=_resolve_kontrollierer,
+                )
             elif ep.name == "whoami":
                 inst = cls(profile=user_profile, people=people)
             elif ep.name == "awareness-snapshot":

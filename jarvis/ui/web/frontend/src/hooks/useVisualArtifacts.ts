@@ -1,13 +1,12 @@
 /**
- * The visual artifacts a run left behind — the data behind the Visualization
- * section.
+ * The artifacts a run left behind — the data behind the Artifacts section.
  *
  * No new REST surface: `/api/outputs` already lists the runs and
  * `/api/outputs/{slug}/artifacts` already lists their files, so this hook is a
  * read over what the Outputs view reads too. What it adds is the SELECTION —
  * which of those files are things a person can look at — and a flat, newest-
  * first list across runs, because "show me what came out of this" is a question
- * about pictures, not about directories.
+ * about pages and pictures, not about directories.
  *
  * The scan is BOUNDED (`DEFAULT_RUN_SCAN_LIMIT`). One artifact listing per run
  * is one filesystem walk on the backend, and a machine with three hundred
@@ -21,11 +20,12 @@ import {
   useOutputsList,
   type ArtifactSummary,
   type ArtifactsResponse,
+  type OutputStatus,
   type OutputSummary,
 } from "@/hooks/useOutputs";
 
 /** How a visual is put on screen — one branch of the stage per kind. */
-export type VisualKind = "image" | "vector" | "page" | "document" | "map";
+export type VisualKind = "image" | "vector" | "page" | "document";
 
 /**
  * Extension → kind. Deliberately narrow: everything here must render inside the
@@ -62,14 +62,22 @@ export interface VisualArtifact {
   slug: string;
   /** What the user asked for, when the run recorded it. */
   utterance?: string;
+  /** The run's status — a page from a run that failed its review still shows. */
+  status?: OutputStatus;
   /** Artifact path relative to the run directory. */
   path: string;
-  /** Last path segment — what the tile is labelled with. */
+  /** Last path segment — the fallback label. */
   name: string;
+  /**
+   * What the rail calls it: a page's own `<title>` when the listing's preview
+   * carries one, otherwise the filename. The title is what the user asked for
+   * in their words ("Umsatz-Dashboard"), the filename is its slug.
+   */
+  title: string;
   kind: VisualKind;
   size: number;
   mtime: number;
-  /** Ready-to-use `src` for an `<img>`/`<iframe>` (served inline). */
+  /** Ready-to-use `src` for an `<img>`/`<iframe>` (served inline, no scripts). */
   url: string;
 }
 
@@ -94,50 +102,61 @@ export function visualUrl(slug: string, path: string): string {
   )}/download?disposition=inline`;
 }
 
+/**
+ * The ARTIFACT PAGE url of an HTML deliverable: served with scripts allowed
+ * and every network path shut (`ARTIFACT_PAGE_CSP`, outputs_routes.py). The
+ * stage frames it with `sandbox="allow-scripts"` and no same-origin, so the
+ * page's own JavaScript runs — a dashboard filters, a chart draws — inside an
+ * opaque origin that cannot reach the app. Non-HTML files keep `visualUrl`.
+ */
+export function artifactPageUrl(slug: string, path: string): string {
+  return `/api/outputs/${encodeURIComponent(slug)}/files/${encodeArtifactPath(path)}/page`;
+}
+
 /** A stable identity for one artifact — the selection key and the React key. */
 export function visualId(artifact: Pick<VisualArtifact, "slug" | "path">): string {
   return `${artifact.slug}::${artifact.path}`;
 }
-
-/**
- * The synthetic path of a run's mission map. Real deliverable paths always
- * start with `tasks/`, so this can never collide with a listed file.
- */
-export const MISSION_MAP_PATH = "::mission-map::";
 
 /** The server-rendered node-graph page for one run (no JS, brand-themed). */
 export function missionMapUrl(slug: string): string {
   return `/api/outputs/${encodeURIComponent(slug)}/graph`;
 }
 
+const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i;
+
+/** A page's `<title>` from the listing's text preview, or null. */
+export function pageTitleFromPreview(preview: string | null | undefined): string | null {
+  if (!preview) return null;
+  const match = TITLE_RE.exec(preview);
+  if (!match) return null;
+  const title = match[1].replace(/\s+/g, " ").trim();
+  return title.length > 0 ? decodeEntities(title) : null;
+}
+
+/** The handful of entities a `<title>` realistically carries. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'");
+}
+
 function toVisuals(run: OutputSummary, files: ArtifactSummary[]): VisualArtifact[] {
-  // Every successfully listed run leads with its mission map — the n8n-style
-  // node graph of what ran and what came out. It shares the run's newest
-  // mtime, and the stable sort below keeps it AHEAD of that file, so opening
-  // the section stages the newest run's map: the overview first, then its
-  // pictures. A run whose deliverables are all text still gets a visual this
-  // way, which is precisely when "what happened" needs drawing the most.
-  const newest = files.reduce((max, file) => Math.max(max, file.mtime), 0);
-  const visuals: VisualArtifact[] = [
-    {
-      slug: run.slug,
-      utterance: run.utterance,
-      path: MISSION_MAP_PATH,
-      name: "Mission map", // display label is localized in the view
-      kind: "map",
-      size: 0,
-      mtime: newest,
-      url: missionMapUrl(run.slug),
-    },
-  ];
+  const visuals: VisualArtifact[] = [];
   for (const file of files) {
     const kind = classifyVisual(file.path);
     if (kind === null) continue;
+    const name = file.path.split("/").pop() ?? file.path;
     visuals.push({
       slug: run.slug,
       utterance: run.utterance,
+      status: run.status,
       path: file.path,
-      name: file.path.split("/").pop() ?? file.path,
+      name,
+      title: (kind === "page" ? pageTitleFromPreview(file.preview) : null) ?? name,
       kind,
       size: file.size,
       mtime: file.mtime,
@@ -189,10 +208,13 @@ export function useVisualArtifacts(
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
       },
-      // No poll: a gallery that re-listed ten run directories every few seconds
-      // would keep a disk busy for pictures that almost never change. The header
-      // carries an explicit refresh instead.
-      staleTime: 30_000,
+      // No poll for finished runs: a gallery that re-listed ten run
+      // directories every few seconds would keep a disk busy for pages that
+      // never change. A RUNNING run is the exception — its artifact is the
+      // thing the user is waiting for, so that one listing follows the build
+      // and the page appears the moment the worker archives it.
+      staleTime: run.status === "running" ? 0 : 30_000,
+      refetchInterval: run.status === "running" ? 4_000 : false,
     })),
     combine: (results) => {
       const visuals = results.flatMap((result, index) =>

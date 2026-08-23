@@ -1203,3 +1203,61 @@ automation request → skill-creator), `tests/unit/commands/test_registry_parity
   skeleton, collision suffix)
 - `tests/unit/ui/web/test_skills_routes.py`, `tests/unit/cli_ctl/test_commands_wave23.py`
 - `tests/fixtures/skill_routing/golden.yaml` (forensic positive)
+
+## Amendment: `create-artifact` router tool (2026-08-23)
+
+`create-artifact` joins `ROUTER_TOOLS` and replaces the 2026-08-11 `visualize`
+tool: the brain can have ONE self-contained page built — a dashboard, a
+report, a diagram, a small interactive tool — and shown full-size in the
+Artifacts section (`jarvis/plugins/tool/create_artifact.py`).
+
+### Context
+
+`visualize` let the model supply a STRUCTURE (one of five fixed shapes, a
+dozen labels) and had Python render the page. That kept a picture cheap and
+deterministic, but it is also why every result looked like the same five
+cards, and why the section that showed them was a run graph with the page
+hidden in a 288 px inspector frame. The maintainer's decision (2026-08-23):
+an artifact is a whole page the model writes — the way Claude artifacts work
+— and writing one well takes the strongest model the install has and longer
+than a voice turn can hold. So the page is written by a mission worker, not
+by the router brain.
+
+### Decision
+
+- `create_artifact(title, request, revise?, spoken_ack?)` composes the worker
+  brief (`jarvis/artifacts/brief.py`: one HTML file, all assets inline, no
+  network, brand palette, light/dark, the user's language; on a revision the
+  previous page verbatim) and dispatches it through the mission stack — the
+  same `MissionManager.dispatch` → `Kontrollierer.run_mission` path as
+  `spawn_worker`, with the same lazy resolvers (AD-OC1) and the same spoken
+  failure on every dead end (AU-11). The call returns within the voice budget
+  with a spoken promise; completion reaches the user through the mission
+  voice listener. Risk `monitor`, like `spawn_worker`; never in a worker set
+  (AP-5/AP-14).
+- **Ask-only, structurally.** `BrainManager._hide_artifact_tool_without_request`
+  removes the tool from every turn that does not ask for an artifact
+  (`jarvis/brain/artifact_gate.py`: explicit word — visualisier / Artefakt /
+  Dashboard / Infografik — or a build verb next to a page noun; navigation to
+  the section and definition questions never open it). Regex only (AP-11).
+- The Artifacts section (`VisualizationView`, section id unchanged) shows the
+  page full-size from `/api/outputs/{slug}/files/{path}/page`, served with
+  `ARTIFACT_PAGE_CSP` (inline scripts allowed, every network path shut) inside
+  `sandbox="allow-scripts"` without `allow-same-origin`. Source under "Code",
+  the run graph that used to be the section under "Run".
+- `jarvis/visuals/{spec,render,store}.py` and the gallery-as-pseudo-run store
+  are retired; `jarvis/visuals/brand.py` stays (mission map + brief palette).
+
+### Regression guards
+
+- `tests/unit/brain/test_artifact_gate.py` (vocabulary, navigation beats the
+  verb, definition questions, page nouns only next to a verb)
+- `tests/unit/brain/test_artifact_tool_hide.py` (placement in the manager,
+  fail-open)
+- `tests/unit/plugins/tool/test_create_artifact.py` (brief reaches the
+  manager verbatim, Kontrollierer runs it, NavigateSidebar, spoken failure on
+  no runner / crash, revision from the archive)
+- `tests/unit/artifacts/test_brief.py`, `tests/unit/artifacts/test_locate.py`
+- `tests/unit/ui/web/test_outputs_routes.py::test_artifact_page_*`
+- frontend: `VisualizationView.test.tsx`, `RunGraphPanel.test.tsx`
+- `tests/unit/brain/test_routing.py` (`create-artifact` in `ROUTER_TOOLS`)

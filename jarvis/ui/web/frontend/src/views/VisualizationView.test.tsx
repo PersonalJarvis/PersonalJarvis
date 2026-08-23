@@ -1,26 +1,30 @@
 /**
- * The Visualization section — the run graph it draws, what it admits, and
- * what a node click reveals.
+ * The Artifacts section — every page and picture a run produced, full-size.
  *
  * Contracts worth pinning:
- * - a run renders as connected nodes (request → steps → result, deliverables
- *   on their own track), never as a flat file list,
- * - a pre-feature archive with no step records still gets a graph (request +
- *   deliverables) and SAYS that the steps are missing,
- * - clicking a node opens the inspector; an image deliverable previews via
- *   `<img>`, a page via an inert sandboxed frame,
- * - the server-rendered mission map stays one click away ("open as page"),
- * - only files the WebView can draw are offered a preview (`classifyVisual`),
- * - a failed step alarms from its card frame, not from a 6px dot alone,
- * - the inspector surfaces the archived timing (`duration_s`) of a step.
+ * - the newest artifact is on stage when the section opens; the rail lists
+ *   every artifact newest-first and labels a page by its own <title>,
+ * - a PAGE is framed from `/page` with `sandbox="allow-scripts"` and no
+ *   same-origin (its scripts run, the app stays out of reach); an image goes
+ *   through <img>; a PDF through an empty sandbox,
+ * - "Code" shows the page's source, "Run" the node graph of the run that made
+ *   it — the graph is one tab away, never in front of the page,
+ * - a `create_artifact` mission still running shows as a "building…" row and
+ *   stage, recognised by the brief's "Artifact:" lead line,
+ * - `?run=<slug>` pre-selects that run's artifact; a click wins over newest,
+ * - only files the WebView can draw are offered (`classifyVisual`).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SectionStage } from "@/App";
-import { VisualizationView } from "@/views/VisualizationView";
-import { classifyVisual, visualUrl } from "@/hooks/useVisualArtifacts";
+import { VisualizationView, parseArtifactUtterance } from "@/views/VisualizationView";
+import {
+  classifyVisual,
+  pageTitleFromPreview,
+  visualUrl,
+} from "@/hooks/useVisualArtifacts";
 import type {
   ArtifactSummary,
   OutputSummary,
@@ -43,6 +47,7 @@ function installFetchMock(
   runs: OutputSummary[],
   artifactsBySlug: Record<string, ArtifactSummary[]>,
   plansBySlug: Record<string, PlanResponse> = {},
+  rawBySlug: Record<string, string> = {},
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -60,6 +65,20 @@ function installFetchMock(
         ok: true,
         status: 200,
         json: async () => plansBySlug[slug] ?? { plan: null, steps: [] },
+      };
+    }
+    const raw = /\/api\/outputs\/([^/]+)\/files\/.+\/raw/.exec(url);
+    if (raw) {
+      const slug = decodeURIComponent(raw[1]);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          path: "x",
+          size: 1,
+          text: rawBySlug[slug] ?? "",
+          truncated: false,
+        }),
       };
     }
     const artifacts = /\/api\/outputs\/([^/]+)\/artifacts/.exec(url);
@@ -102,232 +121,201 @@ function file(path: string, over: Partial<ArtifactSummary> = {}): ArtifactSummar
   };
 }
 
-const CHART_PLAN: PlanResponse = {
-  plan: { plan_id: "run-new", vision: "Draw the architecture", status: "complete" },
-  steps: [
-    {
-      step_id: "t1:0",
-      name: "python plot.py",
-      tool_name: "Bash",
-      status: "done",
-      output: "wrote diagram.svg",
-      duration_s: 3.2,
-    },
-    {
-      step_id: "t1:1",
-      name: "out/diagram.svg",
-      tool_name: "Write",
-      status: "done",
-      writes: ["out/diagram.svg"],
-    },
-  ],
-  final_answer: "Architecture drawn.",
+const DASH_HTML =
+  "<!doctype html><html><head><title>Umsatz-Dashboard</title></head>" +
+  "<body><script>document.title='x'</script></body></html>";
+
+const ARTIFACT_UTTERANCE =
+  "Artifact: Umsatz-Dashboard\nUmsatz pro Monat 2026 als Balken.\n\n## What to build\n…";
+
+const DASH_RUN: OutputSummary = {
+  slug: "mission_dash",
+  utterance: ARTIFACT_UTTERANCE,
+  status: "success",
 };
+
+const DASH_FILE = file("tasks/t1/artifacts/files/umsatz-dashboard.html", {
+  is_text: true,
+  preview: DASH_HTML,
+  mtime: 1_700_000_900,
+});
 
 describe("classifyVisual", () => {
   it("accepts what the WebView can draw", () => {
-    expect(classifyVisual("chart.png")).toBe("image");
-    expect(classifyVisual("out/PHOTO.JPEG")).toBe("image");
-    expect(classifyVisual("diagram.svg")).toBe("vector");
+    expect(classifyVisual("a/b/chart.PNG")).toBe("image");
+    expect(classifyVisual("x.svg")).toBe("vector");
     expect(classifyVisual("report.html")).toBe("page");
-    expect(classifyVisual("paper.pdf")).toBe("document");
+    expect(classifyVisual("deck.pdf")).toBe("document");
   });
 
   it("rejects everything else, however data-shaped", () => {
-    // These are real deliverables — they get a node and file actions, just no
-    // rendered preview the WebView could only coin-flip on.
-    for (const name of ["run.log", "data.csv", "notes.md", "result.json", "app.py"]) {
-      expect(classifyVisual(name)).toBeNull();
-    }
+    expect(classifyVisual("data.json")).toBeNull();
+    expect(classifyVisual("notes.md")).toBeNull();
+    expect(classifyVisual("archive.zip")).toBeNull();
+    expect(classifyVisual("noext")).toBeNull();
   });
 
   it("encodes each path segment, so '#' in a filename survives", () => {
-    // encodeURI would leave the '#' raw and the server would see a fragment.
-    expect(visualUrl("run-1", "figs/chart#2.png")).toContain("chart%232.png");
+    expect(visualUrl("run-1", "tasks/t/artifacts/files/chart#2.png")).toContain(
+      "chart%232.png",
+    );
+  });
+});
+
+describe("pageTitleFromPreview", () => {
+  it("reads a page's own title and decodes the common entities", () => {
+    expect(pageTitleFromPreview(DASH_HTML)).toBe("Umsatz-Dashboard");
+    expect(pageTitleFromPreview("<title>  A &amp; B\n  </title>")).toBe("A & B");
+    expect(pageTitleFromPreview("<html><body>no title</body></html>")).toBeNull();
+    expect(pageTitleFromPreview(null)).toBeNull();
+  });
+});
+
+describe("parseArtifactUtterance", () => {
+  it("recognises the brief's lead line and returns title + request", () => {
+    expect(parseArtifactUtterance(ARTIFACT_UTTERANCE)).toEqual({
+      title: "Umsatz-Dashboard",
+      request: "Umsatz pro Monat 2026 als Balken.",
+    });
+    expect(parseArtifactUtterance("Build a flask app")).toBeNull();
+    expect(parseArtifactUtterance(undefined)).toBeNull();
   });
 });
 
 describe("VisualizationView", () => {
-  it("draws the newest run as request → steps → result plus deliverables", async () => {
-    installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [file("tasks/t1/artifacts/files/out/diagram.svg")] },
-      { "run-new": CHART_PLAN },
-    );
+  it("stages the newest artifact full-size, labelled by its page title", async () => {
+    installFetchMock([DASH_RUN], { mission_dash: [DASH_FILE] });
 
     renderView();
-
-    await screen.findByTestId("graph-node-start");
-    await waitFor(() =>
-      expect(screen.getAllByTestId("graph-node-step")).toHaveLength(2),
-    );
-    expect(screen.getByTestId("graph-node-result")).toBeTruthy();
-    expect(screen.getAllByTestId("graph-node-artifact")).toHaveLength(1);
-    // The graph replaced the gallery: no flat file list anywhere.
-    expect(screen.queryByTestId("visualization-gallery")).toBeNull();
-  });
-
-  it("still graphs a pre-feature archive and admits the steps are gone", async () => {
-    installFetchMock(
-      [{ slug: "run-old", utterance: "Summarise the logs", status: "unknown" }],
-      { "run-old": [file("tasks/t1/artifacts/files/old-chart.png")] },
-      // No plan entry -> the endpoint's stub contract {plan: null, steps: []}.
-    );
-
-    renderView();
-
-    await screen.findByTestId("graph-node-start");
-    await waitFor(() =>
-      expect(screen.getAllByTestId("graph-node-artifact")).toHaveLength(1),
-    );
-    expect(screen.queryAllByTestId("graph-node-step")).toHaveLength(0);
-    // The honesty line: missing step records are stated, not glossed over.
-    await screen.findByText(/No step records survived/);
-  });
-
-  it("opens the inspector with an image preview when a deliverable is clicked", async () => {
-    installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [file("tasks/t1/artifacts/files/out/diagram.svg")] },
-      { "run-new": CHART_PLAN },
-    );
-
-    renderView();
-
-    fireEvent.click(await screen.findByTestId("graph-node-artifact"));
-
-    await screen.findByTestId("visualization-inspector");
-    const image = await screen.findByTestId("visualization-image");
-    expect(image.getAttribute("src")).toContain("diagram.svg");
-  });
-
-  it("frames a page deliverable inertly rather than drawing it as an image", async () => {
-    installFetchMock(
-      [{ slug: "run-1", utterance: "Build a report", status: "success" }],
-      { "run-1": [file("tasks/t1/artifacts/files/report.html")] },
-    );
-
-    renderView();
-
-    fireEvent.click(await screen.findByTestId("graph-node-artifact"));
 
     const frame = await screen.findByTestId("visualization-frame");
-    // Inert preview: an empty sandbox is an opaque origin with no scripts, on
-    // top of the no-script CSP the backend already sends for inline HTML.
-    expect(frame.getAttribute("sandbox")).toBe("");
-    expect(screen.queryByTestId("visualization-image")).toBeNull();
+    // The artifact-page route: scripts allowed server-side …
+    expect(frame.getAttribute("src")).toContain("/files/tasks/t1/artifacts/files/umsatz-dashboard.html/page");
+    // … and client-side the page runs in an opaque origin — scripts yes,
+    // same-origin never.
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(screen.getByTestId("visualization-title").textContent).toBe("Umsatz-Dashboard");
+    // The rail row carries the same title, not the filename.
+    const rows = screen.getAllByTestId("visualization-artifact-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("Umsatz-Dashboard");
+    expect(rows[0].textContent).toContain("Umsatz pro Monat 2026 als Balken.");
+    // The run graph is a tab away, not on stage.
+    expect(screen.queryByTestId("graph-node-start")).toBeNull();
   });
 
-  it("shows a step's real call and output in the inspector", async () => {
+  it("lists every artifact newest-first and switches on click", async () => {
     installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [] },
-      { "run-new": CHART_PLAN },
+      [
+        { slug: "run-a", utterance: "Draw the architecture", status: "success" },
+        { slug: "run-b", utterance: "Summarise", status: "success" },
+      ],
+      {
+        "run-a": [file("tasks/t1/artifacts/files/diagram.svg", { mtime: 1_700_000_500 })],
+        "run-b": [file("tasks/t1/artifacts/files/old-chart.png", { mtime: 1_700_000_100 })],
+      },
     );
 
     renderView();
 
-    fireEvent.click((await screen.findAllByTestId("graph-node-step"))[0]);
-
-    const inspector = await screen.findByTestId("visualization-inspector");
-    expect(inspector.textContent).toContain("python plot.py");
-    expect(inspector.textContent).toContain("wrote diagram.svg");
-    // The archived timing is shown, not discarded.
-    expect(inspector.textContent).toContain("3.2 s");
+    const rows = await screen.findAllByTestId("visualization-artifact-row");
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining("diagram.svg"),
+      expect.stringContaining("old-chart.png"),
+    ]);
+    // Newest on stage first …
+    expect((await screen.findByTestId("visualization-image")).getAttribute("src")).toContain(
+      "diagram.svg",
+    );
+    // … a click moves to the older one.
+    fireEvent.click(rows[1]);
+    await waitFor(() =>
+      expect(screen.getByTestId("visualization-image").getAttribute("src")).toContain(
+        "old-chart.png",
+      ),
+    );
   });
 
-  it("draws a reasoning step as a dashed thought card, text in the inspector", async () => {
+  it("shows the source under Code and the run graph under Run", async () => {
     installFetchMock(
-      [{ slug: "run-think", utterance: "Explain the plan", status: "success" }],
-      { "run-think": [] },
+      [DASH_RUN],
+      { mission_dash: [DASH_FILE] },
       {
-        "run-think": {
-          plan: { plan_id: "run-think", vision: "Explain", status: "complete" },
+        mission_dash: {
+          plan: { plan_id: "mission_dash", vision: "Build it", status: "complete" },
           steps: [
-            {
-              step_id: "t1:0",
-              name: "Check the logs first.",
-              tool_name: null,
-              kind: "reasoning",
-              status: "done",
-              output: "Check the logs first, then decide.",
-            },
-            { step_id: "t1:1", name: "tail app.log", tool_name: "Bash", status: "done" },
+            { step_id: "t1:0", name: "umsatz-dashboard.html", tool_name: "Write", status: "done" },
           ],
           final_answer: "Done.",
         },
       },
+      { mission_dash: DASH_HTML },
     );
 
     renderView();
+    await screen.findByTestId("visualization-frame");
 
-    const nodes = await screen.findAllByTestId("graph-node-step");
-    const thought = nodes.find(
-      (n) => n.getAttribute("data-category") === "reasoning",
-    );
-    expect(thought).toBeTruthy();
-    // A thought is not an action — its card frame says so at a glance.
-    expect(thought!.className).toContain("border-dashed");
+    fireEvent.click(screen.getByTestId("visualization-tab-code"));
+    const source = await screen.findByTestId("visualization-source");
+    expect(source.textContent).toContain("<title>Umsatz-Dashboard</title>");
+    expect(screen.queryByTestId("visualization-frame")).toBeNull();
 
-    fireEvent.click(thought!);
-    const inspector = await screen.findByTestId("visualization-inspector");
-    // The full thought, not tool telemetry that never existed.
-    expect(inspector.textContent).toContain("Check the logs first, then decide.");
-    expect(inspector.textContent).not.toContain("Tool");
+    fireEvent.click(screen.getByTestId("visualization-tab-run"));
+    await screen.findByTestId("graph-node-start");
+    await screen.findByTestId("graph-node-step");
+    // The no-JS mission map stays one click away from the graph.
+    expect(screen.getByTestId("visualization-open-map")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("visualization-tab-preview"));
+    await screen.findByTestId("visualization-frame");
   });
 
-  it("frames a failed step in the alarm colour, not just a dot", async () => {
+  it("frames a PDF in an empty sandbox and draws an image through <img>", async () => {
     installFetchMock(
-      [{ slug: "run-bad", utterance: "Deploy the site", status: "error" }],
-      { "run-bad": [] },
+      [{ slug: "run-1", utterance: "Export", status: "success" }],
       {
-        "run-bad": {
-          plan: { plan_id: "run-bad", vision: "Deploy", status: "failed" },
-          steps: [
-            {
-              step_id: "t1:0",
-              name: "npm run deploy",
-              tool_name: "Bash",
-              status: "failed",
-              error: "exit 1",
-            },
-          ],
-        },
+        "run-1": [
+          file("tasks/t1/artifacts/files/deck.pdf", { mtime: 1_700_000_200 }),
+          file("tasks/t1/artifacts/files/cover.png", { mtime: 1_700_000_100 }),
+        ],
       },
     );
 
     renderView();
 
-    const node = await screen.findByTestId("graph-node-step");
-    expect(node.className).toContain("border-destructive");
+    const frame = await screen.findByTestId("visualization-frame");
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("src")).toContain("deck.pdf");
+    // No Code tab for a PDF — there is no source to show.
+    expect(screen.queryByTestId("visualization-tab-code")).toBeNull();
+
+    fireEvent.click(screen.getAllByTestId("visualization-artifact-row")[1]);
+    const image = await screen.findByTestId("visualization-image");
+    expect(image.getAttribute("src")).toContain("cover.png");
   });
 
-  it("offers a fit-to-view zoom next to the step buttons", async () => {
+  it("shows a running artifact build as a row and a stage until the page lands", async () => {
     installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [] },
-      { "run-new": CHART_PLAN },
+      [
+        { slug: "mission_building", utterance: ARTIFACT_UTTERANCE, status: "running" },
+        { slug: "mission_other", utterance: "Refactor the parser", status: "running" },
+        DASH_RUN,
+      ],
+      { mission_building: [], mission_other: [], mission_dash: [DASH_FILE] },
     );
 
     renderView();
 
-    // jsdom has no layout (clientWidth 0) — the fit guard must keep the
-    // click a harmless no-op rather than zooming to nonsense.
-    fireEvent.click(await screen.findByTestId("visualization-zoom-fit"));
-    expect(screen.getByText("100%")).toBeTruthy();
-  });
-
-  it("keeps the server-rendered mission map one click away", async () => {
-    installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [] },
-      { "run-new": CHART_PLAN },
-    );
-
-    renderView();
-
-    // The no-JS sibling of this canvas — shareable, printable, CSP-inert.
-    await screen.findByTestId("visualization-open-map");
+    // Only the artifact build shows as building — an unrelated running
+    // mission is not posing as a page in the making.
+    const building = await screen.findAllByTestId("visualization-building-row");
+    expect(building).toHaveLength(1);
+    expect(building[0].textContent).toContain("Umsatz-Dashboard");
+    // With nothing picked, the newest build is what the stage shows.
+    await screen.findByTestId("visualization-building");
+    // The finished artifact is still in the rail, one click away.
+    fireEvent.click(screen.getByTestId("visualization-artifact-row"));
+    await screen.findByTestId("visualization-frame");
   });
 
   it("pre-selects the run named by ?run= in the URL", async () => {
@@ -336,142 +324,34 @@ describe("VisualizationView", () => {
         { slug: "run-new", utterance: "Draw the architecture", status: "success" },
         { slug: "run-old", utterance: "Summarise the logs", status: "success" },
       ],
-      { "run-new": [], "run-old": [] },
-      { "run-new": CHART_PLAN },
+      {
+        "run-new": [file("tasks/t1/artifacts/files/new.svg", { mtime: 1_700_000_900 })],
+        "run-old": [file("tasks/t1/artifacts/files/old.png", { mtime: 1_700_000_100 })],
+      },
     );
     window.history.replaceState(null, "", "/?view=visualization&run=run-old");
 
     try {
       renderView();
       // The deep-linked run wins over the newest-first default.
-      const start = await screen.findByTestId("graph-node-start");
-      expect(start.textContent).toContain("Summarise the logs");
+      const image = await screen.findByTestId("visualization-image");
+      expect(image.getAttribute("src")).toContain("old.png");
     } finally {
       window.history.replaceState(null, "", "/");
     }
   });
 
-  it("says so when there are no runs at all", async () => {
-    installFetchMock([], {});
+  it("says so when there are no artifacts at all", async () => {
+    installFetchMock(
+      [{ slug: "run-text", utterance: "Write notes", status: "success" }],
+      { "run-text": [file("tasks/t1/artifacts/files/notes.md", { is_text: true })] },
+    );
 
     renderView();
 
     await screen.findByTestId("visualization-empty");
-    expect(screen.queryByTestId("visualization-canvas")).toBeNull();
-  });
-
-  it("zooms with ctrl+wheel and leaves plain scrolling alone", async () => {
-    installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [] },
-      { "run-new": CHART_PLAN },
-    );
-
-    renderView();
-
-    const canvas = await screen.findByTestId("visualization-canvas");
-    // A bare wheel is scrolling, not zooming — it must stay untouched.
-    fireEvent.wheel(canvas, { deltaY: -100 });
-    expect(screen.getByText("100%")).toBeTruthy();
-    // Ctrl+wheel (also how browsers deliver a trackpad pinch) zooms in.
-    fireEvent.wheel(canvas, { deltaY: -100, ctrlKey: true });
-    expect(screen.getByText("122%")).toBeTruthy();
-  });
-
-  it("pans the canvas with a pointer drag on the background", async () => {
-    installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [] },
-      { "run-new": CHART_PLAN },
-    );
-
-    renderView();
-
-    const canvas = await screen.findByTestId("visualization-canvas");
-    // jsdom has no PointerEvent constructor — a MouseEvent under the pointer
-    // event's name carries the coordinates the pan handlers read.
-    fireEvent(
-      canvas,
-      new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 90 }),
-    );
-    fireEvent(
-      canvas,
-      new MouseEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70 }),
-    );
-    expect(canvas.scrollLeft).toBe(40);
-    expect(canvas.scrollTop).toBe(20);
-
-    // Releasing ends the pan: further movement no longer scrolls.
-    fireEvent(canvas, new MouseEvent("pointerup", { bubbles: true }));
-    fireEvent(
-      canvas,
-      new MouseEvent("pointermove", { bubbles: true, clientX: 0, clientY: 0 }),
-    );
-    expect(canvas.scrollLeft).toBe(40);
-  });
-
-  it("points every edge with an arrowhead, alarm-coloured after a failure", async () => {
-    installFetchMock(
-      [{ slug: "run-new", utterance: "Deploy it", status: "error" }],
-      { "run-new": [] },
-      {
-        "run-new": {
-          plan: { plan_id: "run-new", vision: "Deploy it", status: "failed" },
-          steps: [
-            {
-              step_id: "t1:0",
-              name: "npm run deploy",
-              tool_name: "Bash",
-              status: "failed",
-              error: "exit 1",
-            },
-          ],
-        },
-      },
-    );
-
-    renderView();
-
-    await screen.findByTestId("graph-node-step");
-    const edges = screen.getAllByTestId("graph-edge");
-    expect(edges.length).toBeGreaterThan(0);
-    // Since the track wraps, an edge can run back to the left — only a
-    // pointed end keeps the flow readable, on every single edge.
-    for (const edge of edges) {
-      expect(edge.getAttribute("marker-end")).toMatch(/url\(#viz-arrow/);
-    }
-    // The edge into the failed step wears the alarm arrow, not the brand one.
-    expect(
-      edges.some(
-        (e) => e.getAttribute("marker-end") === "url(#viz-arrow-failed)",
-      ),
-    ).toBe(true);
-  });
-
-  it("keeps a press on a node a click, never a pan", async () => {
-    installFetchMock(
-      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
-      { "run-new": [] },
-      { "run-new": CHART_PLAN },
-    );
-
-    renderView();
-
-    const canvas = await screen.findByTestId("visualization-canvas");
-    const node = await screen.findByTestId("graph-node-start");
-    fireEvent(
-      node,
-      new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 90 }),
-    );
-    fireEvent(
-      canvas,
-      new MouseEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70 }),
-    );
-    // The press began on a card, so the canvas never grabbed it…
-    expect(canvas.scrollLeft).toBe(0);
-    // …and the click still opens the inspector.
-    fireEvent.click(node);
-    await screen.findByTestId("visualization-inspector");
+    expect(screen.queryByTestId("visualization-frame")).toBeNull();
+    expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0);
   });
 });
 
@@ -492,7 +372,7 @@ describe("SectionStage", () => {
     const stage = container.firstElementChild;
     expect(stage?.className).toContain("jarvis-visualization-stage");
     // Never both: the halo is inherited by every descendant, which is exactly
-    // what must not happen over a rendered picture.
+    // what must not happen over a rendered page.
     expect(stage?.className).not.toContain("jarvis-section-stage");
   });
 });

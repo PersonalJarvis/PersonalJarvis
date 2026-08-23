@@ -37,7 +37,7 @@ from jarvis.missions.standalone_run import read_marker as read_standalone_marker
 from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.platform import detect_platform
-from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
+from jarvis.ui.web.artifact_view import ARTIFACT_PAGE_CSP, VIEW_CSP, render_artifact_html
 from jarvis.ui.web.mission_graph import build_mission_graph, render_mission_graph_html
 from jarvis.ui.web.run_plan import build_run_plan
 
@@ -1067,6 +1067,36 @@ async def download_output_artifact(
         filename=target.name,
         content_disposition_type=disposition,
         headers=headers,
+    )
+
+
+@router.get("/{slug}/files/{path:path}/page")
+async def serve_artifact_page(slug: str, path: str, request: Request) -> FileResponse:
+    """Serve an HTML deliverable as an ARTIFACT PAGE — scripts allowed, network shut.
+
+    The Artifacts section frames the file from here inside an iframe with
+    ``sandbox="allow-scripts"`` (no ``allow-same-origin``): the page's own
+    JavaScript runs, so a dashboard filters and a chart draws, while the
+    opaque origin plus :data:`ARTIFACT_PAGE_CSP` keep it from reaching the
+    app, the network or the user's files. Only ``.html``/``.htm`` are served
+    this way; everything else keeps the inline-download path and its
+    no-script policy.
+    """
+    target = _resolve_artifact_target(request, slug, path)
+    if target.suffix.lower() not in (".html", ".htm"):
+        raise HTTPException(status_code=415, detail="only an HTML deliverable is an artifact page")
+    return FileResponse(
+        target,
+        media_type="text/html",
+        filename=target.name,
+        content_disposition_type="inline",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": ARTIFACT_PAGE_CSP,
+            # A page is edited by revision, not cached across versions: the
+            # same filename can hold a newer page a minute later.
+            "Cache-Control": "no-store",
+        },
     )
 
 

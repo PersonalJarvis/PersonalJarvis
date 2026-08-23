@@ -23,6 +23,29 @@ _MARKDOWN_EXT = (".md", ".markdown")
 # XSS from artifact content rendered in the app origin.
 VIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:;"
 
+# The artifact-page CSP (``/files/{path}/page`` in outputs_routes): an artifact
+# is a self-contained page a worker wrote to be LOOKED AT and used — tabs,
+# filters, a chart drawn on canvas — so inline scripts run. What stays shut is
+# every way out: no network of any kind (no fetch, no remote script, font,
+# image or frame), no forms posting anywhere, no navigation. The frontend
+# frames such a page with ``sandbox="allow-scripts"`` and WITHOUT
+# ``allow-same-origin``, so the script runs in an opaque origin that cannot
+# reach the app's cookies, storage or API — the same model Claude artifacts
+# use. ``/view`` and inline downloads keep VIEW_CSP: those are arbitrary
+# worker files, not artifacts.
+ARTIFACT_PAGE_CSP = (
+    "default-src 'none'; "
+    "script-src 'unsafe-inline'; "
+    "style-src 'unsafe-inline'; "
+    "img-src data: blob:; "
+    "font-src data:; "
+    "media-src data: blob:; "
+    "connect-src 'none'; "
+    "form-action 'none'; "
+    "frame-src 'none'; "
+    "base-uri 'none';"
+)
+
 # Brand theme (matte black + signal yellow), kept in lockstep with the desktop
 # app's dark tokens (frontend/src/index.css) and video/src/intro/theme.ts. The
 # app is dark-first and this page opens from inside it, so it commits to the
@@ -87,4 +110,4 @@ def render_artifact_html(filename: str, text: str) -> str:
     return _shell(filename, f"<pre>{html.escape(text)}</pre>")
 
 
-__all__ = ["VIEW_CSP", "render_artifact_html"]
+__all__ = ["ARTIFACT_PAGE_CSP", "VIEW_CSP", "render_artifact_html"]

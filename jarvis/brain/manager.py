@@ -888,11 +888,11 @@ _SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
 # Deliberately NOT listed: ``agentic-ide-status`` (answers "nothing is open"
 # honestly) and ``agentic-ide-resume`` (the command that OPENS a workspace
 # by voice — hiding it would strand the feature).
-# The on-demand visualisation tool. Offered ONLY on a turn that explicitly asks
-# for a picture (see _hide_visualize_tool_without_request): the maintainer's
-# rule is that a visualisation is something the user asks for, never something
-# the assistant decides an answer deserves.
-_VISUALIZE_TOOL_NAME: str = "visualize"
+# The on-demand artifact tool. Offered ONLY on a turn that explicitly asks for
+# a page/picture (see _hide_artifact_tool_without_request): the maintainer's
+# rule is that an artifact is something the user asks for, never something the
+# assistant decides an answer deserves.
+_ARTIFACT_TOOL_NAME: str = "create_artifact"
 
 # Agentic-IDE pane tools that only make sense RELATIVE TO AN OPEN WORKSPACE.
 _AGENTIC_IDE_WORKSPACE_TOOL_NAMES: frozenset[str] = frozenset({
@@ -4828,7 +4828,7 @@ class BrainManager:
         and the cached system prefix survives an ordinary turn.
 
         Renders the ATTACHED surface (``self._tools``), not the turn's gated
-        subset: the per-turn gates (screenshot / visualize / inspect-pointer)
+        subset: the per-turn gates (screenshot / create_artifact / inspect-pointer)
         drop tools on most turns, so following them would rewrite the system
         prefix nearly every turn and cost the provider prompt cache far more
         than the precision is worth. Hence "aktuell angeschlossen", never
@@ -6415,38 +6415,33 @@ class BrainManager:
             log.debug("agentic-ide workspace tool gate failed", exc_info=True)
             return tools
 
-    def _hide_visualize_tool_without_request(
+    def _hide_artifact_tool_without_request(
         self, tools: dict[str, Tool], user_text: str
     ) -> dict[str, Tool]:
-        """Drop ``visualize`` from every turn that did not ask for a picture.
+        """Drop ``create_artifact`` from every turn that did not ask for one.
 
-        Maintainer mandate (2026-08-11): a visualisation happens when the user
-        says they want to understand something visually — never because the
-        assistant judged an answer would look nicer as a diagram. Prompt wording
-        alone does not hold that line; a tool the model cannot see is a line it
-        cannot cross, so the enforcement is structural.
+        Maintainer mandate (2026-08-11, renewed 2026-08-23 for artifacts): a
+        page or picture is built when the user says they want to see
+        something — never because the assistant judged an answer would look
+        nicer as a dashboard. Prompt wording alone does not hold that line; a
+        tool the model cannot see is a line it cannot cross, so the
+        enforcement is structural. It also keeps a background mission on the
+        strongest model from being started on a whim.
 
-        It also pays for itself on the turns it fires: the tool's schema is the
-        largest of the router's UI tools (five kinds, nested items), and it
-        would otherwise ride along on every single loop iteration of every
-        unrelated turn.
-
-        The gate is ``jarvis.brain.visualize_gate.wants_visualization`` — pure
-        regex, no model in the detection path (AP-11). Defensive: any fault
-        returns the tools unchanged, so a gate bug can never blind the brain.
+        The gate is ``jarvis.brain.artifact_gate.wants_artifact`` — pure regex,
+        no model in the detection path (AP-11). Defensive: any fault returns
+        the tools unchanged, so a gate bug can never blind the brain.
         """
-        if not isinstance(tools, dict) or _VISUALIZE_TOOL_NAME not in tools:
+        if not isinstance(tools, dict) or _ARTIFACT_TOOL_NAME not in tools:
             return tools
         try:
-            from jarvis.brain.visualize_gate import (  # noqa: PLC0415
-                wants_visualization,
-            )
+            from jarvis.brain.artifact_gate import wants_artifact  # noqa: PLC0415
 
-            if wants_visualization(user_text or ""):
+            if wants_artifact(user_text or ""):
                 return tools
-            return {n: tool for n, tool in tools.items() if n != _VISUALIZE_TOOL_NAME}
+            return {n: tool for n, tool in tools.items() if n != _ARTIFACT_TOOL_NAME}
         except Exception:  # noqa: BLE001 — gate must never blind the brain
-            log.debug("visualize request gate failed", exc_info=True)
+            log.debug("artifact request gate failed", exc_info=True)
             return tools
 
     @staticmethod
@@ -11404,13 +11399,13 @@ class BrainManager:
                 _turn_tools = self._hide_agentic_ide_tools_without_workspace(
                     _turn_tools
                 )
-            # A picture is drawn when the user asks to SEE something, never
-            # because an answer might look nicer as a diagram (maintainer
-            # mandate 2026-08-11). Structural, not prompt-level: on a turn that
-            # did not ask, the model never sees the tool — and never pays for
-            # its schema.
+            # An artifact is built when the user asks to SEE something, never
+            # because an answer might look nicer as a page (maintainer mandate
+            # 2026-08-11). Structural, not prompt-level: on a turn that did not
+            # ask, the model never sees the tool — and never pays for its schema
+            # or starts a background mission.
             if isinstance(_turn_tools, dict):
-                _turn_tools = self._hide_visualize_tool_without_request(
+                _turn_tools = self._hide_artifact_tool_without_request(
                     _turn_tools, user_text
                 )
             # A referential follow-up that inherited a currently registered

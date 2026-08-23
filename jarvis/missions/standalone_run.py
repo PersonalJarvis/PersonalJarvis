@@ -7,11 +7,11 @@ sibling that carries its identity — and listing both produced the "two agents
 for one task" cards reported on 2026-05-26. Hiding the slug directory is the
 right call for that case.
 
-It is the wrong call for a directory that has no sibling. An on-demand
-visualisation (:mod:`jarvis.visuals.store`) is a complete run in one directory:
-nothing is diffed, nothing is reviewed, and there is no mission row anywhere.
-Under the old rule it would be written successfully and then never appear —
-which is indistinguishable, from the user's side, from not being drawn at all.
+It is the wrong call for a directory that has no sibling: a complete run in one
+directory, nothing diffed, nothing reviewed, no mission row anywhere (the
+2026-08-11 on-demand visualisation wrote such runs; the archive still holds
+them). Under the old rule it would be written successfully and then never
+appear — indistinguishable, from the user's side, from not being drawn at all.
 
 So the exception is made explicit rather than inferred. A standalone run drops
 this small JSON file at its root; the list treats a directory carrying it as a
