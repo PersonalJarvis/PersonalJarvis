@@ -75,6 +75,15 @@ class RealtimeEvent:
     # orchestrator reads its own cancellation as a barge-in and arms the
     # user-speech state against a user who never said anything.
     self_initiated: bool = False
+    # True when the PROVIDER abandoned the generation this ``interrupted``
+    # closes and is regenerating the same answer. Distinct from
+    # ``self_initiated``: nobody cancelled locally, so nothing has been drained
+    # and the orchestrator still owns the cleanup — but the partial reply is
+    # dead text the far end will never finish, so playing it out is wrong. A
+    # transport whose text inputs double as user turns (Gemini Live) does this
+    # to itself whenever a per-turn directive lands on an answer already in
+    # flight; without the flag the session heard both halves as two replies.
+    superseded: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -11713,6 +11713,9 @@ later — the "Guten Abend … und ich bin / bei mir läuft alles" restart above
 plays both halves. That race is a product decision (keep the turn-scoped mode
 line on Gemini and accept a restart, or drop the partial, or send the line
 only while the user is still audibly speaking) and is left documented.
+**Settled in BUG-171 (2026-08-23), second option:** the restart stands, the
+partial is dropped. The race itself is still there — only its audible half is
+gone.
 
 **Fix.** `jarvis/plugins/realtime/gemini_live.py`: an `interrupted` edge that
 arrives for a generation that handed out a function call is the first half of
@@ -12003,3 +12006,89 @@ on what a generation once did, rather than on what it has done since, turns
 the first counter-example into a stuck turn — and a stuck SPEAKING turn is
 the worst failure the voice path has, because nothing the user does with
 their voice can end it.
+
+## BUG-171: one question, two spoken answers — the per-turn directive interrupts the reply the server has already started, and both halves are played (HIGH, FIXED 2026-08-23)
+
+**Symptom (maintainer, 2026-08-23 10:06).** A reply ended mid-sentence and a
+different one followed it a beat later, sounding like a second speaker cutting
+the first off: "Alles klar. Wenn du nachher noch was brauchst, sag" — then <!-- i18n-allow: quoted live German output under forensic analysis -->
+"Dann wünsche ich dir einen entspannten Start in die neue Woche!". Every turn <!-- i18n-allow: quoted live German output under forensic analysis -->
+of that call had the shape; the transcript recorded each half as its own turn,
+the second with an empty `user_text`.
+
+**Timeline (`data/sessions.db` + `data/jarvis_desktop.log`, one turn).**
+
+```
+10:05:58.588  delivered a per-turn steering delta (turn; 642 chars)
+10:05:58.597  generation started 0.01s after the last steering text input
+10:05:58.614  interrupted — audio=2.4s transcript=50 chars generation=0.02s;
+              0.03s after the last steering text input
+10:05:58.614  deferred an unconfirmed provider interruption; waiting for the
+              user's own words before cutting the reply
+10:05:58.652  turn complete — audio=0.0s transcript=0 chars
+10:06:00.588  generation started 2.00s after the last steering text input
+10:06:02.534  turn complete — audio=3.0s transcript=63 chars
+```
+
+Both generations answer the same utterance ("Nee, nicht wirklich."), and the <!-- i18n-allow: quoted live German output under forensic analysis -->
+first is 50 characters of a sentence the model never got to finish.
+
+**Root cause.** On Gemini Live a text input IS a user turn — there is no
+configuration channel. `update_session` therefore delivers the per-turn mode
+line as a realtime text at the FINAL input transcript, which on this transport
+arrives in the same millisecond the server starts generating. `_flush_steering`
+guards on `_model_generating`, but that flag is set by the first output the
+adapter READS; the server had already decided. When the text loses the race it
+lands on an answer in flight, the server abandons that answer (`interrupted`),
+closes it with an empty `turn_complete`, and regenerates two seconds later.
+3 of the 9 directives delivered that day did this (09:24, 10:05, 10:06).
+
+The session then made it audible. RT-09 defers an `interrupted` edge that no
+user words confirm — correct for a cough, wrong here: nobody was ever going to
+confirm an edge caused by our own text, so the dead half played out in full,
+was recorded as a turn, and the replacement was spoken after it. The gap is
+that the edge was *knowable*: the adapter logs the attribution ("0.03s after
+the last steering text input") and then threw it away.
+
+**Fix (2026-08-23).** The adapter names the edge instead of logging it:
+`_interrupt_is_our_own_text_input` marks an `interrupted` that follows one of
+our own text inputs within 1.5 s as `superseded` on the provider event (a real
+barge-in cannot land there — the user's final transcript arrived milliseconds
+earlier), and withholds the empty `turn_complete` that closes the abandoned
+generation, exactly as the BUG-165 tool boundary is withheld. Spoken output
+from the replacement releases the withhold; the user's next words release it
+too; a second empty boundary passes through, so a turn can never latch open.
+`_drop_superseded_generation` in the session drops what the far end abandoned
+— buffered PCM, partial transcript, surface queue — and keeps the turn open
+for the replacement. It deliberately does NOT arm
+`_drop_provider_output_until_new_response`: that guard is released by the next
+locally grounded final transcript, and a regeneration comes with no new user
+input at all, so arming it would swallow the very answer being cleared for
+(the 2026-08-10 shape — three complete replies discarded, 23.3 s to first
+audio). Straggling frames of the dead generation are kept out by retiring its
+response id instead.
+
+Nothing is audibly lost: the edge lands 30–90 ms after the first audio chunk,
+against a device output latency of 0.41 s, so on both live incidents the cut
+half had not reached the speaker yet.
+
+**Guards.** `tests/unit/realtime/test_gemini_live.py::test_our_own_steering_text_interrupting_a_reply_supersedes_it`
+(the live message sequence, edge for edge),
+`::test_a_barge_in_long_after_our_own_text_still_interrupts` (the
+counterweight), `::test_a_second_empty_boundary_after_a_supersede_is_not_withheld`
+(the anti-latch), and
+`tests/unit/realtime/test_session_noise_interrupt.py::test_a_superseded_generation_is_dropped_and_its_replacement_speaks`,
+which pins the sharper half: the replacement must still arrive.
+
+**Not fixed here.** The race itself stands. The mode line depends on the turn
+plan, which depends on what the user just said, so it cannot be sent earlier
+than the final transcript; sending it later would provoke an unprompted reply.
+Removing the race for good means owning the turn boundary — manual activity
+detection, where the client sends the directive and only then declares the
+user finished — which is a turn-taking change with its own latency and
+barge-in risk, not a bug fix.
+
+**Lesson.** RT-09's "wait for the user's words" is the right default for an
+edge whose cause is unknown. It is the wrong one for an edge whose cause is
+US, and the adapter knew the cause well enough to write it into the log. An
+attribution that is good enough to diagnose from is good enough to act on.

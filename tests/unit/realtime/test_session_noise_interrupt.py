@@ -269,3 +269,52 @@ async def test_stale_interrupt_cannot_cancel_speaker_drain():
     assert "and warm." in _assistant_text(jsons)
     assert not any(item.get("type") == "tts_cancel" for item in jsons)
     assert sess._unconfirmed_interruptions == 1
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_generation_is_dropped_and_its_replacement_speaks():
+    """An edge the ADAPTER attributed to our own text is not deferred (RT-10).
+
+    On a transport whose text inputs are user turns, a per-turn directive that
+    reaches the server while it is already answering makes it abandon that
+    answer and generate another. Deferring here — correct for an ambiguous
+    edge — played the dead half out in full, recorded it as a turn of its own,
+    and then played the replacement too: one question, two spoken replies,
+    the first cut mid-sentence (live 2026-08-23 10:05 and 10:06).
+
+    Both halves of the fix are pinned: what the far end abandoned is cancelled
+    on the surface, and what it sent instead still arrives. The second is the
+    sharper edge — clearing the way with the post-barge-in withhold would have
+    swallowed the replacement, which no new user transcript ever comes to
+    release.
+    """
+
+    async def script():
+        yield RealtimeEvent(type="input_transcript", text=OPENING, is_final=True)
+        yield RealtimeEvent(type="output_transcript_delta", text="Sure thing, if")
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=HEAD, sample_rate=24_000, timestamp_ns=0),
+        )
+        # Our own steering text landed on the answer in flight.
+        yield RealtimeEvent(type="interrupted", superseded=True)
+        # The server's replacement, under the same turn and with no new user
+        # input in between.
+        yield RealtimeEvent(type="output_transcript_delta", text="Have a good week.")
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=TAIL, sample_rate=24_000, timestamp_ns=0),
+        )
+        yield RealtimeEvent(type="turn_complete")
+
+    binaries, jsons = [], []
+    provider = _scripted(script)
+    sess = await _run(provider, binaries=binaries, jsons=jsons)
+
+    assert TAIL in binaries, "the regenerated answer must not be withheld"
+    assert any(item.get("type") == "tts_cancel" for item in jsons)
+    assert sess._superseded_generations == 1
+    # The edge was answered, not parked: nothing is left waiting for words
+    # that are never coming.
+    assert sess._unconfirmed_interruptions == 0
+    assert sess._deferred_provider_speech_start is False

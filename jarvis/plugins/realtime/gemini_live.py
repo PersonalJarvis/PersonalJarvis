@@ -84,6 +84,21 @@ _STEERING_HEADER = (
 )
 
 
+# Inputs this adapter sends ITSELF, as named by ``_note_input_sent``. A text
+# on this transport is a user-side realtime input, so any one of them can
+# interrupt an answer the server had already started.
+_SELF_TEXT_INPUT_KINDS = frozenset({"steering text", "text"})
+
+# How long after one of our own text inputs an ``interrupted`` edge is that
+# input rather than a barge-in. Measured on the wire: 0.03 s, 0.09 s and
+# 0.17 s in the three cut replies of 2026-08-23 (09:24, 10:05, 10:06). A real
+# barge-in cannot land in this window — the user's final transcript arrived
+# only milliseconds before the text went out, so nobody had started speaking
+# again. Generous enough to cover a slow round trip, far below the ~2 s a new
+# utterance needs to reach the server VAD.
+_SELF_TEXT_INTERRUPT_WINDOW_S = 1.5
+
+
 def _end_of_speech_sensitivity(types: Any, preference: str | None) -> Any | None:
     """Resolve the requested end-of-speech patience, or None on an old SDK.
 
@@ -180,6 +195,12 @@ class _ProviderEvent:
     # The Live channel was previously the only brain path whose spend was
     # invisible to the recorder — 100% of Live-API tokens went unmetered.
     usage: dict[str, int] | None = None
+    # This ``interrupted`` closes a generation the SERVER abandoned in favour
+    # of its own retry, not one the user talked over. Mirrors the field of the
+    # same name on ``jarvis.realtime.protocol.ProviderEvent``, which this
+    # adapter may not import (plugins carry no ``jarvis.*`` dependency); the
+    # session reads it by attribute, so the two only have to agree by name.
+    superseded: bool = False
 
 
 class _GeminiLiveSession:
@@ -289,10 +310,41 @@ class _GeminiLiveSession:
         # shouted barge-in). A boundary is a tool boundary only while this
         # counter is zero.
         self._gen_output_since_tool = 0
+        # An ``interrupted`` edge this adapter attributed to its OWN text input
+        # (see ``_interrupt_is_our_own_text_input``). The server closes such a
+        # generation the way it closes a tool hand-off: the edge, then an empty
+        # ``turn_complete``, then — seconds later — the regenerated answer.
+        # That middle boundary ends nothing, and forwarding it made the session
+        # treat a turn that was still coming as finished: on the 2026-08-23
+        # 10:05 call the abandoned half was recorded as a turn of its own and
+        # spoken before the real reply ("Alles klar. Wenn du nachher noch was  # i18n-allow
+        # brauchst, sag" / "Dann wünsche ich dir einen entspannten Start in  # i18n-allow
+        # die neue Woche!"). Carried across exactly like
+        # ``_tool_boundary_pending`` and released by the same evidence: spoken
+        # output from the generation that replaced it.
+        self._superseded_pending = False
 
     def _note_input_sent(self, kind: str) -> None:
         self._last_input_kind = kind
         self._last_input_at = time.monotonic()
+
+    def _interrupt_is_our_own_text_input(self) -> bool:
+        """Whether this ``interrupted`` edge is our own text, not a barge-in.
+
+        A text input on this transport is a user turn, so one that reaches the
+        server while a reply is already streaming makes the server abandon
+        that reply and answer again. There is no flag for it on the wire: the
+        edge is byte-identical to a barge-in. What tells them apart is that a
+        barge-in needs the user to speak, and the user's words reach this
+        adapter as an input transcript — which is precisely what has NOT
+        arrived when the last thing on the wire was our own text, milliseconds
+        ago.
+        """
+        if self._last_input_kind not in _SELF_TEXT_INPUT_KINDS:
+            return False
+        return (
+            time.monotonic() - self._last_input_at
+        ) <= _SELF_TEXT_INTERRUPT_WINDOW_S
 
     def _note_generation_output(
         self, *, audio_bytes: int = 0, transcript_chars: int = 0, calls: int = 0
@@ -311,6 +363,9 @@ class _GeminiLiveSession:
                 # to a server that skipped the ``turn_complete`` half of the
                 # pair; never let it withhold the real end of the answer.
                 self._tool_boundary_pending = False
+                # Same reasoning for the superseded half: this IS the
+                # regenerated answer, so its own boundary is the turn's end.
+                self._superseded_pending = False
         self._gen_audio_bytes += audio_bytes
         self._gen_transcript_chars += transcript_chars
         self._gen_function_calls += calls
@@ -498,8 +553,30 @@ class _GeminiLiveSession:
                                 kind="interrupted (function call, edge withheld)"
                             )
                         else:
-                            self._log_generation_boundary(kind="interrupted")
-                            yield _ProviderEvent(type="interrupted")
+                            # Not a tool boundary — but possibly not a barge-in
+                            # either. Our own per-turn directive travels as a
+                            # realtime text input at the final-transcript
+                            # boundary, which is the same millisecond the
+                            # server starts answering; when it loses that race
+                            # the server abandons the reply it had already
+                            # streamed and generates a fresh one. Both halves
+                            # used to be spoken, the first cut mid-sentence.
+                            # Naming the edge is the whole fix on this side:
+                            # the session drops what the far end abandoned.
+                            superseded = self._interrupt_is_our_own_text_input()
+                            self._log_generation_boundary(
+                                kind=(
+                                    f"interrupted (our own {self._last_input_kind} "
+                                    "input; the generation is superseded)"
+                                    if superseded
+                                    else "interrupted"
+                                )
+                            )
+                            if superseded:
+                                self._superseded_pending = True
+                            yield _ProviderEvent(
+                                type="interrupted", superseded=superseded
+                            )
 
                     input_transcription = getattr(
                         content, "input_transcription", None
@@ -514,6 +591,12 @@ class _GeminiLiveSession:
                         # orchestrator reacts to the transcript, so the delta
                         # is in context for the reply this turn produces.
                         self._user_turn_open = True
+                        # The user's words end every withhold that keys on
+                        # "the far end is about to speak again": whatever the
+                        # server was regenerating, this turn supersedes it,
+                        # and a boundary held for the old one must not close
+                        # the new one instead.
+                        self._superseded_pending = False
                         await self._flush_steering()
                         yield _ProviderEvent(
                             type="input_transcript", text=input_text, is_final=True
@@ -590,21 +673,42 @@ class _GeminiLiveSession:
                             function_calls
                         )
                         self._tool_boundary_pending = False
+                        # The other half of the superseded pair. A generation
+                        # the server abandoned in favour of its own retry is
+                        # closed by an EMPTY boundary — the regenerated answer
+                        # arrives seconds later under its own. Forwarding this
+                        # one ends a turn whose reply has not been spoken yet;
+                        # the session then reads the silence as a mute
+                        # provider and sends a re-ask text, which is one more
+                        # input racing the very generation everyone is waiting
+                        # for. Spoken output releases the flag above, so a
+                        # boundary that follows the retry is never the one
+                        # withheld here, and a second empty boundary passes
+                        # unchanged rather than latching the turn open.
+                        superseded_boundary = (
+                            self._superseded_pending and not tool_generation
+                        )
+                        self._superseded_pending = False
                         self._log_generation_boundary(
                             kind=(
                                 "turn complete (function call, boundary "
                                 "withheld)"
                                 if tool_generation
                                 else (
-                                    "turn complete (function call answered "
-                                    "in place)"
-                                    if answered_in_place
-                                    else "turn complete"
+                                    "turn complete (superseded generation, "
+                                    "boundary withheld)"
+                                    if superseded_boundary
+                                    else (
+                                        "turn complete (function call "
+                                        "answered in place)"
+                                        if answered_in_place
+                                        else "turn complete"
+                                    )
                                 )
                             ),
                             reason=reason_name,
                         )
-                        if not tool_generation:
+                        if not tool_generation and not superseded_boundary:
                             yield _ProviderEvent(type="turn_complete")
 
                 go_away = getattr(message, "go_away", None)

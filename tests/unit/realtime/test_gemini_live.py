@@ -1673,3 +1673,167 @@ def test_real_router_tool_schemas_survive_sanitizing(
     assert result.get("type") == schema.get("type")
     if "properties" in schema:
         assert set(result["properties"]) == set(schema["properties"])
+
+
+def _session_over_with_text_channel(
+    sdk_turns: list[list[SimpleNamespace]],
+) -> tuple[_GeminiLiveSession, list[str]]:
+    """A wire the adapter can also SEND text on, recording what went out."""
+    sent: list[str] = []
+    receive_calls = 0
+
+    async def fake_receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        turn_index = receive_calls - 1
+        if turn_index < len(sdk_turns):
+            for message in sdk_turns[turn_index]:
+                yield message
+
+    async def fake_send_realtime_input(*, text: str = "", **_: object) -> None:
+        sent.append(text)
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(
+            receive=fake_receive,
+            send_realtime_input=fake_send_realtime_input,
+        ),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="steering-race",
+    )
+    return session, sent
+
+
+def _input_transcript_content(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        output_transcription=None,
+        input_transcription=SimpleNamespace(text=text),
+        interrupted=False,
+        turn_complete=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_our_own_steering_text_interrupting_a_reply_supersedes_it() -> None:
+    """The live shape of 2026-08-23 10:05 and 10:06, message for message.
+
+    The per-turn directive travels at the final-transcript boundary, which on
+    this transport is the same millisecond the server starts answering. When
+    it loses that race the text lands as a user turn on an answer already
+    streaming: the server abandons that answer (``interrupted``), closes it
+    with an EMPTY ``turn_complete``, and generates a replacement seconds
+    later. Both halves used to be spoken and recorded as two turns — the
+    first cut mid-sentence ("Alles klar. Wenn du nachher noch was brauchst,
+    sag" / "Dann wünsche ich dir einen entspannten Start in die neue
+    Woche!"). The edge must name itself superseded and the empty boundary
+    must not close a turn whose reply has not been spoken yet.
+    """
+    session, sent = _session_over_with_text_channel(
+        [
+            [
+                # The user's words open the one window steering may travel in.
+                _fake_message(server_content=_input_transcript_content("Nee.")),
+                # The server had already started answering; its audio and
+                # transcript arrive before it reads our text.
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(
+                    server_content=_server_content(output_text="Alles klar.")
+                ),
+                # Our text lands: the server drops its own answer …
+                _fake_message(server_content=_server_content(interrupted=True)),
+                # … and closes the abandoned generation with an empty boundary.
+                _fake_message(server_content=_server_content(turn_complete=True)),
+                # Seconds later, the answer it really means.
+                _fake_message(data=b"\x02\x03"),
+                _fake_message(
+                    server_content=_server_content(output_text="Dann wünsche ich …")
+                ),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ]
+        ]
+    )
+    await session.update_session(language="de", turn_directive="Mode: chat.")
+
+    events = [event async for event in session.receive()]
+
+    assert sent, "the queued steering delta must travel on the user's turn"
+    assert [event.type for event in events] == [
+        "input_transcript",
+        "audio_delta",
+        "output_transcript_delta",
+        "interrupted",
+        # No turn_complete here: the abandoned generation ends nothing.
+        "audio_delta",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+    interrupted = next(event for event in events if event.type == "interrupted")
+    assert interrupted.superseded is True
+
+
+@pytest.mark.asyncio
+async def test_a_barge_in_long_after_our_own_text_still_interrupts() -> None:
+    """The counterweight: our text explains only the edges that follow it closely.
+
+    Same wire, but the user talks over a reply seconds after the directive
+    went out. That is a real barge-in — it must keep cutting the answer, and
+    its boundary must keep closing the turn.
+    """
+    session, _sent = _session_over_with_text_channel(
+        [
+            [
+                _fake_message(server_content=_input_transcript_content("Ja.")),
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ]
+        ]
+    )
+    await session.send_text("a delegate readback")
+    # Age our own input past the attribution window without touching the clock
+    # every other assertion here depends on.
+    session._last_input_at -= 60.0
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "input_transcript",
+        "audio_delta",
+        "interrupted",
+        "turn_complete",
+    ]
+    interrupted = next(event for event in events if event.type == "interrupted")
+    assert interrupted.superseded is False
+
+
+@pytest.mark.asyncio
+async def test_a_second_empty_boundary_after_a_supersede_is_not_withheld() -> None:
+    """The withhold is spent by the boundary it was armed for, never latched.
+
+    A server that closes the abandoned generation twice — or that never
+    produces the replacement — must not leave the turn open forever: that is
+    the shape that froze the desktop pipeline in JARVIS_SPEAKING with the
+    microphone shut (2026-08-23 09:25, the tool-boundary sibling).
+    """
+    session, _sent = _session_over_with_text_channel(
+        [
+            [
+                _fake_message(server_content=_input_transcript_content("Nee.")),
+                _fake_message(data=b"\x00\x01"),
+                _fake_message(server_content=_server_content(interrupted=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+                _fake_message(server_content=_server_content(turn_complete=True)),
+            ]
+        ]
+    )
+    await session.update_session(language="de", turn_directive="Mode: chat.")
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "input_transcript",
+        "audio_delta",
+        "interrupted",
+        "turn_complete",
+    ]

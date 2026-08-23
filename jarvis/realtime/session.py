@@ -2568,6 +2568,11 @@ class RealtimeVoiceSession:
         self._interruption_deferred_at = 0.0
         self._interruption_settle_task: asyncio.Task[None] | None = None
         self._unconfirmed_interruptions = 0
+        # Generations the PROVIDER abandoned and replaced on its own (RT-10).
+        # Its counterpart above counts edges we could not attribute; this one
+        # counts edges the adapter attributed to our own text input, where the
+        # partial reply is dead and dropping it is the correct answer.
+        self._superseded_generations = 0
         self._external_update: _ExternalUpdateState | None = None
         # from_brain returns None when no public supervisor gateway is ready.
         # Say so, or a tool-less session is indistinguishable from a healthy one.
@@ -5777,6 +5782,41 @@ class RealtimeVoiceSession:
                     # decides when it is over. A silence timer would abandon
                     # exactly the turn this branch exists to protect.
                     self._deferred_provider_speech_start = True
+                elif event.type == "interrupted" and getattr(
+                    event, "superseded", False
+                ):
+                    # NOT ambiguous: the adapter attributed this edge to an
+                    # input JARVIS itself sent, so no user spoke and there is
+                    # nothing to wait for words about. The far end abandoned
+                    # the reply it was streaming and is generating another one.
+                    # Deferring here — the branch below — is what let both
+                    # halves be spoken: the dead partial played out in full,
+                    # was recorded as a turn of its own, and the regenerated
+                    # answer followed it two seconds later, so one question got
+                    # two spoken replies with the first cut mid-sentence (live
+                    # 2026-08-23 10:05 and 10:06, "…brauchst, sag" / "Dann  # i18n-allow
+                    # wünsche ich dir…"; 3 of 9 per-turn directives that day).  # i18n-allow
+                    # The provider already made the decision; follow it.
+                    if not self._reply_is_in_flight():
+                        # The race went the other way and the edge arrived
+                        # before anything was produced. Nothing to drop, and
+                        # no deferral either: a backstop armed here would
+                        # later cut the very reply that is still coming
+                        # (BUG-152).
+                        log.info(
+                            "realtime[%s] provider superseded a generation "
+                            "that had produced nothing yet",
+                            self.session_id,
+                        )
+                        self._clear_deferred_interruption()
+                    else:
+                        log.info(
+                            "realtime[%s] dropping a reply the provider "
+                            "abandoned for its own retry; the regenerated "
+                            "answer owns this turn",
+                            self.session_id,
+                        )
+                        await self._drop_superseded_generation()
                 elif event.type == "interrupted":
                     # The SAME ambiguity, now while a reply is actually being
                     # spoken. Acting on the edge alone cancelled the answer and
@@ -12852,6 +12892,50 @@ class RealtimeVoiceSession:
         try:
             await self._send_json({"type": "tts_cancel"})
         except Exception:  # noqa: BLE001, S110
+            pass
+
+    async def _drop_superseded_generation(self) -> None:
+        """Discard a reply the PROVIDER abandoned in favour of its own retry.
+
+        Neither a barge-in nor our own cancel. Nobody spoke, nothing was
+        cancelled locally — the far end decided the answer it had already
+        streamed is void and started producing a different one. Everything
+        received so far belongs to a generation that will never be finished,
+        so all of it goes: the buffered PCM, the partial transcript, and
+        whatever the surface has queued. The TURN stays open; the replacement
+        arrives under it.
+
+        Deliberately WITHOUT ``_drop_provider_output_until_new_response``.
+        That guard is released by the next locally grounded final transcript,
+        and a regeneration arrives with no new user input at all, so arming it
+        here would swallow precisely the answer this method clears the way for
+        — the 2026-08-10 shape, three complete replies discarded and 23.3 s to
+        the first audible frame. Straggling frames of the dead generation are
+        kept out by retiring its response id, which its successor does not
+        share.
+        """
+        self._superseded_generations += 1
+        self._gate.drain()
+        self._retire_active_provider_response()
+        # The abandoned half must reach neither the recorder nor the next
+        # turn's context. Nobody heard it, and a half sentence left standing
+        # is believed by everything downstream — the same reason
+        # _cancel_unsafe_output clears this (live forensic 2026-07-17 10:04).
+        self._output_transcript.clear()
+        self._output_samples_sent = 0
+        self._output_active = False
+        self._reset_echo_horizon()
+        # No edge is pending any more: this one was answered, not deferred.
+        self._clear_deferred_interruption()
+        self._mark_latency_named(
+            "REALTIME_SUPERSEDED_GENERATION",
+            detail="provider abandoned its own generation",
+        )
+        try:
+            # Terminal local playback boundary: every surface consumes
+            # tts_cancel to flush its audio and leave SPEAKING.
+            await self._send_json({"type": "tts_cancel"})
+        except Exception:  # noqa: BLE001, S110 — surface may already be gone
             pass
 
     def _harvest_adapter_diagnostics(self, session: Any) -> None:
