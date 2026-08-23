@@ -75,6 +75,25 @@ POLISH_PROMPT_VERSION: Final[int] = 7
 RAW_OPEN_DELIMITER: Final[str] = "<<<BEGIN TRANSCRIPT>>>"
 RAW_CLOSE_DELIMITER: Final[str] = "<<<END TRANSCRIPT>>>"
 
+#: Delimiters for the ALREADY-DELIVERED part of the same dictation, when the
+#: pass formats one stretch at a time (the incremental polish — see
+#: ``SpeechPipeline._dictation_session``). Same injection rule as the
+#: transcript block: the context is material, never instruction.
+CONTEXT_OPEN_DELIMITER: Final[str] = "<<<BEGIN CONTEXT>>>"
+CONTEXT_CLOSE_DELIMITER: Final[str] = "<<<END CONTEXT>>>"
+
+# Appended only when the call carries a context block. Kept apart from the
+# hard rules so a whole-text call (the Restore route, a short dictation)
+# keeps the exact prompt it was tuned with.
+_CONTINUATION_BLOCK: Final[str] = """\
+CONTINUATION. The user message may begin with a block between
+<<<BEGIN CONTEXT>>> and <<<END CONTEXT>>>: the part of the SAME dictation that
+is already final and delivered. It is there only so you can continue its
+style — capitalisation, punctuation, list formatting, the language it is in.
+Never repeat it, never change it, never comment on it. Return ONLY the
+formatted version of the transcript block; your first word continues
+directly after the context."""
+
 #: The register hints a caller may ask for. This is the cheap analogue of the
 #: reference tool's three-value application-type enum: one extra line in the
 #: prompt, no per-application model, no new failure mode.
@@ -293,6 +312,7 @@ def build_polish_prompt(
     style: str,
     protected_terms: Sequence[str],
     precision: bool = False,
+    continuation: bool = False,
 ) -> str:
     """Assemble the system prompt for one polish call.
 
@@ -318,6 +338,9 @@ def build_polish_prompt(
     if precision:
         parts.append(_PRECISION_BLOCK)
 
+    if continuation:
+        parts.append(_CONTINUATION_BLOCK)
+
     hint_language = str(language or "").strip()
     if hint_language and hint_language.lower() not in ("auto", "unknown"):
         parts.append(_LANGUAGE_HINT.format(language=hint_language))
@@ -331,7 +354,7 @@ def build_polish_prompt(
     return "\n\n".join(parts)
 
 
-def build_polish_user_message(raw: str) -> str:
+def build_polish_user_message(raw: str, *, preceding: str = "") -> str:
     """Wrap the untrusted transcript in the delimiters, injection-safely.
 
     Two properties matter here and nothing else does:
@@ -344,10 +367,28 @@ def build_polish_user_message(raw: str) -> str:
       dictation feature — losing text is the one unacceptable outcome) and only
       breaks the literal marker.
     """
+    delimiters = (
+        RAW_OPEN_DELIMITER,
+        RAW_CLOSE_DELIMITER,
+        CONTEXT_OPEN_DELIMITER,
+        CONTEXT_CLOSE_DELIMITER,
+    )
     body = str(raw or "")
-    for delimiter in (RAW_OPEN_DELIMITER, RAW_CLOSE_DELIMITER):
+    for delimiter in delimiters:
         body = body.replace(delimiter, _defuse(delimiter))
-    return f"{RAW_OPEN_DELIMITER}\n{body}\n{RAW_CLOSE_DELIMITER}"
+    message = f"{RAW_OPEN_DELIMITER}\n{body}\n{RAW_CLOSE_DELIMITER}"
+    context = str(preceding or "")
+    if context.strip():
+        for delimiter in delimiters:
+            context = context.replace(delimiter, _defuse(delimiter))
+        # ``preceding`` is the already-delivered text of the SAME dictation —
+        # material for style only, wrapped exactly like the transcript so it
+        # can never close the block early either.
+        message = (
+            f"{CONTEXT_OPEN_DELIMITER}\n{context}\n{CONTEXT_CLOSE_DELIMITER}\n\n"
+            + message
+        )
+    return message
 
 
 def _defuse(delimiter: str) -> str:

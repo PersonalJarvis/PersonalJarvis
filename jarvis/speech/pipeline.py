@@ -1318,6 +1318,13 @@ _DICTATION_CONCURRENT_READS = 3
 _DICTATION_TAIL_DROP_MIN_S = 1.5
 _DICTATION_TAIL_REREAD_BACK_S = 0.5
 
+# How long the release waits for the incremental polish worker to finish the
+# windows it already has — normally the last one, whose formatting started the
+# moment it was read. One configured polish budget plus a little: past that
+# the formatter is not answering and the whole-text pass (which has its own
+# ceiling and fails open to the raw text) takes over.
+_DICTATION_PREFIX_POLISH_WAIT_S = 3.0
+
 
 class _SessionInputBuffer:
     """Replayable bounded handoff for one continuously captured mic stream.
@@ -10907,6 +10914,23 @@ class SpeechPipeline:
             if code_switching or dictation_language == "auto"
             else dictation_language
         )
+        # INCREMENTAL POLISH. Once the final windows are read while the user is
+        # still speaking, the wording pass became the wait that grew with the
+        # dictation: 0.6-1.3 s for a long one, on text that had mostly been
+        # final for a minute. So each window is formatted as soon as it is read
+        # — one stretch at a time, each in the light of the already-formatted
+        # text before it — and on release only the last stretch is left to
+        # format. ``prefix_polish_raw`` is the merged RAW text of the windows
+        # formatted so far (a strict prefix of the final raw transcript, which
+        # is what lets ``_finish_dictation`` cut the remaining tail off);
+        # ``prefix_polish_text`` is their formatted text. The whole-text pass
+        # stays the fallback for every case the prefix does not hold.
+        prefix_polish_raw = ""
+        prefix_polish_text = ""
+        prefix_polish_windows = 0
+        prefix_polish_deltas = 0
+        prefix_polish_failed = False
+        prefix_polish_task: asyncio.Task[None] | None = None
 
         def _append_unique(values: list[str], value: object) -> None:
             text = str(value or "").strip()
@@ -11624,6 +11648,126 @@ class SpeechPipeline:
                 return merged
             return text
 
+        async def _polish_delta(delta_raw: str, preceding: str) -> tuple[str, str]:
+            """One more stretch of the dictation, cleaned and formatted in the
+            light of what is already delivered. ``(text, status)``; never
+            raises, never loses the words (the cleaned stretch is the floor).
+            The same cleanup and the same pass ``_finish_dictation`` runs on a
+            whole text, applied to a stretch — so a stretch formatted early and
+            a tail formatted at release come out of the same machinery.
+            """
+            text = delta_raw
+            try:
+                from jarvis.dictation.cleanup import clean_transcript, tidy_transcript
+                from jarvis.dictation.polish import polish_enabled, polish_transcript
+
+                lang = resolve_dictation_language(
+                    pinned=dictation_language, reported=language, text=delta_raw
+                )
+                outcome = clean_transcript(
+                    delta_raw,
+                    language=lang,
+                    remove_fillers=bool(getattr(cfg, "remove_fillers", True)),
+                    max_removed_fraction=float(
+                        getattr(cfg, "filler_max_removed_fraction", 0.25)
+                    ),
+                )
+                text = tidy_transcript(outcome.text)
+                if not text.strip():
+                    return "", "skipped_short"
+                if not polish_enabled(cfg):
+                    return text, "off"
+                protected = getattr(self, "_dictation_protected_terms", None)
+                result = await polish_transcript(
+                    text,
+                    language=lang,
+                    cfg=cfg,
+                    protected_terms=protected() if callable(protected) else (),
+                    style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                    preceding_text=preceding,
+                )
+                return result.text, result.status
+            except Exception:  # noqa: BLE001 — never lose the words to the polish
+                log.debug("incremental dictation polish failed; keeping the stretch", exc_info=True)
+                return text, "provider_error"
+
+        async def _advance_prefix_polish() -> None:
+            """Format every final window that is read and not yet formatted, in
+            order, stopping at the first one still in flight. Re-kicked by each
+            window as it lands, so the formatted prefix follows the recording
+            at one window's distance.
+            """
+            nonlocal prefix_polish_raw, prefix_polish_text, prefix_polish_windows
+            nonlocal prefix_polish_deltas, prefix_polish_failed
+            from jarvis.dictation.merge import merge_transcripts
+
+            while not prefix_polish_failed:
+                reading = final_reads.get(prefix_polish_windows)
+                if reading is None:
+                    return
+                window_text = (reading[0] or "").strip()
+                if prefix_polish_raw:
+                    merged = merge_transcripts([prefix_polish_raw, window_text])
+                else:
+                    merged = window_text
+                if not merged.startswith(prefix_polish_raw):
+                    # The seam was rewritten — the prefix is no longer a prefix
+                    # of the transcript, and the whole-text pass takes over.
+                    prefix_polish_failed = True
+                    log.debug("incremental dictation polish stopped: seam rewritten")
+                    return
+                delta = merged[len(prefix_polish_raw) :].strip()
+                if delta:
+                    piece, _status = await _polish_delta(delta, prefix_polish_text)
+                    if piece:
+                        prefix_polish_text = " ".join(
+                            part for part in (prefix_polish_text, piece) if part
+                        )
+                    prefix_polish_deltas += 1
+                prefix_polish_raw = merged
+                prefix_polish_windows += 1
+
+        def _kick_prefix_polish() -> None:
+            """Start the formatting worker unless it is running or given up."""
+            nonlocal prefix_polish_task
+            if prefix_polish_failed or not final_quality_pass:
+                return
+            if not bool(getattr(cfg, "polish", True)) or bool(getattr(cfg, "translate", False)):
+                return
+            if prefix_polish_task is not None and not prefix_polish_task.done():
+                return
+            prefix_polish_task = asyncio.create_task(
+                _advance_prefix_polish(), name="dictation-prefix-polish"
+            )
+
+        async def _settle_prefix_polish() -> None:
+            """Let the worker finish the windows it already has — normally the
+            last one, started the moment it was read — within one polish budget.
+            Past that the whole-text pass takes over rather than making the
+            user wait on a formatter that is not answering.
+            """
+            nonlocal prefix_polish_failed
+            _kick_prefix_polish()
+            task = prefix_polish_task
+            if task is None:
+                return
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task), timeout=_DICTATION_PREFIX_POLISH_WAIT_S
+                )
+            except TimeoutError:
+                prefix_polish_failed = True
+                log.info(
+                    "incremental dictation polish did not finish within %.1fs; "
+                    "formatting the whole text instead.",
+                    _DICTATION_PREFIX_POLISH_WAIT_S,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — a formatter failure never costs the text
+                prefix_polish_failed = True
+                log.debug("incremental dictation polish worker failed", exc_info=True)
+
         async def _read_final_window(idx: int, start: int, end: int) -> None:
             """Read ONE final window of the recording and file its result.
 
@@ -11708,6 +11852,10 @@ class SpeechPipeline:
                 )
                 lost_audio_bytes += max(0, (end - start) - final_overlap_bytes)
                 final_reads[idx] = ("", False)
+            finally:
+                # Whatever this window produced, the formatter may now have
+                # one more stretch to work on.
+                _kick_prefix_polish()
 
         def _launch_final_window(start: int, end: int, *, prefetched: bool) -> None:
             nonlocal final_next_index, final_prefetched
@@ -12046,6 +12194,10 @@ class SpeechPipeline:
                     release_wait_ms = round(
                         (time.monotonic() - release_started) * 1000.0
                     )
+                    # Give the formatter the windows it has not seen yet
+                    # (normally the one just read) before delivery decides how
+                    # much of the text still needs formatting.
+                    await _settle_prefix_polish()
                     if quality_text:
                         raw_text = quality_text
                         final_pass_status = "applied"  # noqa: S105 - status token
@@ -12115,6 +12267,11 @@ class SpeechPipeline:
                 lost_audio_s=lost_audio_s,
                 dropped_audio_s=quality_metrics.dropout_duration_ms / 1000.0,
                 audio=bytes(buffer),
+                polished_prefix=(
+                    (prefix_polish_raw, prefix_polish_text)
+                    if prefix_polish_raw and not prefix_polish_failed
+                    else None
+                ),
                 stt_providers=tuple(stt_providers),
                 stt_models=tuple(stt_models),
                 detected_languages=tuple(detected_languages),
@@ -12130,6 +12287,13 @@ class SpeechPipeline:
                     f"tail_repairs:{tail_repairs}",
                     f"pause_trim_ms:{round(pause_trim_bytes * 1000 / bytes_per_second)}",
                     f"capture_overflows:{capture_overflows}",
+                    "polish_mode:"
+                    + (
+                        "incremental"
+                        if prefix_polish_raw and not prefix_polish_failed
+                        else "whole"
+                    ),
+                    f"polish_deltas:{prefix_polish_deltas}",
                     f"code_switching:{'on' if code_switching else 'off'}",
                     f"capture_restarts:{capture_restart_count}",
                     *audio_preprocessing.audit(),
@@ -12367,8 +12531,16 @@ class SpeechPipeline:
         audio_clipping_ratio: float = 0.0,
         audio_dropouts: int = 0,
         audio_dropout_ms: int = 0,
+        polished_prefix: tuple[str, str] | None = None,
     ) -> str:
         """Clean, deliver and record one finished dictation. Returns the text.
+
+        ``polished_prefix`` is ``(raw, formatted)`` for the leading part of the
+        recording the session already cleaned and formatted while the user was
+        speaking (the incremental polish). When ``raw`` is a strict prefix of
+        ``raw_text``, only the remaining tail is formatted here — with the
+        formatted prefix as context — and the two are joined; otherwise the
+        whole text is formatted as before. The Restore route passes nothing.
 
         Split out of ``_dictation_session`` so the delivery half is testable
         without a microphone. Every step degrades on its own: a failed cleanup
@@ -12573,7 +12745,63 @@ class SpeechPipeline:
                 # wrong, is what made the delivered language alternate between
                 # two with nothing the user touched explaining it.
                 translate_to = resolve_translate_target(cfg)
-                if polish_enabled(cfg) or translate_to:
+                prefix_raw, prefix_text = polished_prefix or ("", "")
+                incremental = bool(
+                    prefix_raw
+                    and not translate_to
+                    and polish_enabled(cfg)
+                    and raw_text.startswith(prefix_raw)
+                )
+                if incremental:
+                    # Only the tail is left: clean it the same way the whole
+                    # text was cleaned above and format it in the light of the
+                    # already-formatted prefix.
+                    tail_raw = raw_text[len(prefix_raw) :].strip()
+                    tail_text = ""
+                    polish_status = "applied"
+                    if tail_raw:
+                        try:
+                            from jarvis.dictation.cleanup import (
+                                clean_transcript,
+                                tidy_transcript,
+                            )
+
+                            tail_outcome = clean_transcript(
+                                tail_raw,
+                                language=effective_language,
+                                remove_fillers=bool(getattr(cfg, "remove_fillers", True)),
+                                max_removed_fraction=float(
+                                    getattr(cfg, "filler_max_removed_fraction", 0.25)
+                                ),
+                            )
+                            tail_text = tidy_transcript(tail_outcome.text)
+                        except Exception:  # noqa: BLE001 — never lose the tail
+                            tail_text = tail_raw
+                        if tail_text.strip():
+                            result = await polish_transcript(
+                                tail_text,
+                                language=effective_language,
+                                cfg=cfg,
+                                protected_terms=self._dictation_protected_terms(),
+                                style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                                preceding_text=prefix_text,
+                            )
+                            tail_text = result.text
+                            polish_status = result.status
+                            polish_provider = result.provider
+                            polish_latency_ms = result.latency_ms
+                    cleaned = " ".join(
+                        part for part in (prefix_text, tail_text) if part.strip()
+                    ).strip()
+                    log.info(
+                        "dictation polish: incremental — %d chars formatted while "
+                        "speaking, tail %s (%s, %d ms).",
+                        len(prefix_text),
+                        polish_status,
+                        polish_provider or "no provider",
+                        polish_latency_ms,
+                    )
+                elif polish_enabled(cfg) or translate_to:
                     result = await polish_transcript(
                         cleaned,
                         language=effective_language,

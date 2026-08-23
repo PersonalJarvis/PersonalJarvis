@@ -427,8 +427,15 @@ async def polish_transcript(
     style: str = "neutral",
     timeout_s: float | None = None,
     translate_to: str = "",
+    preceding_text: str = "",
 ) -> PolishOutcome:
     """Format *raw* without changing what it says. Never raises, never loses text.
+
+    ``preceding_text`` is the already-delivered part of the SAME dictation when
+    the pass formats one stretch at a time (the incremental polish that keeps
+    the wait after key release flat). It reaches the model as a delimited
+    context block — style only, never repeated — and the guards still judge
+    *raw* against the answer alone. Ignored in translate mode.
 
     ``language`` is the ALREADY-RESOLVED transcript language (the pipeline
     resolves it before it gets here); it steers the guards and appears in the
@@ -530,17 +537,24 @@ async def polish_transcript(
                 precision=precision,
             )
         else:
+            prompt_kwargs: dict[str, Any] = {}
+            if preceding_text.strip():
+                prompt_kwargs["continuation"] = True
             system = build_polish_prompt(
                 language=language,
                 style=style,
                 protected_terms=protected_terms,
                 precision=precision,
+                **prompt_kwargs,
             )
         # The SAME fenced user message either way — the delimiter and the
         # ``meta_output`` guard that watches for it are one mechanism, and a
         # dictation shaped like an instruction has to stay material in both
         # passes.
-        user = build_polish_user_message(source)
+        if preceding_text.strip() and not translating:
+            user = build_polish_user_message(source, preceding=preceding_text)
+        else:
+            user = build_polish_user_message(source)
 
         try:
             polished = await asyncio.wait_for(
