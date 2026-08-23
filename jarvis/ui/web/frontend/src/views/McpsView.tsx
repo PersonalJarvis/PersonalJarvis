@@ -10,8 +10,8 @@ import {
   MoreHorizontal,
   Trash2,
   Activity,
-  Cable,
 } from "lucide-react";
+import { McpLogo } from "@/components/extensions/McpLogo";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -274,8 +274,8 @@ export function McpsView() {
   // ---- List page ---------------------------------------------------------
   const columns: Column[] = [
     { id: "name", label: t("mcps_view.col_server") },
-    { id: "transport", label: t("mcps_view.col_transport"), width: "96px" },
-    { id: "status", label: t("mcps_view.col_status"), width: "150px" },
+    { id: "transport", label: t("mcps_view.col_transport"), width: "110px" },
+    { id: "status", label: t("mcps_view.col_status"), width: "170px" },
     { id: "enabled", label: t("mcps_view.col_enabled"), width: "44px", srOnly: true, align: "right" },
   ];
 
@@ -383,22 +383,17 @@ export function McpsView() {
                       ariaLabel={s.name}
                     >
                       <Cell>
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-[13px] font-medium">{s.name}</span>
+                        <div className="flex items-center gap-2" title={s.description}>
+                          <span className="truncate text-[15px] font-medium">{s.name}</span>
                           {s.tools.length > 0 && (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                            <span className="shrink-0 text-xs text-muted-foreground">
                               {toolCountLabel(s.tools.length, t)}
                             </span>
                           )}
                         </div>
-                        {s.description && (
-                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={s.description}>
-                            {s.description}
-                          </p>
-                        )}
                       </Cell>
                       <Cell muted>
-                        <span className="font-mono text-[11px]">{s.transport ?? "—"}</span>
+                        <span className="font-mono text-xs">{s.transport ?? "—"}</span>
                       </Cell>
                       <Cell>
                         <span title={s.error ?? undefined}>
@@ -458,7 +453,7 @@ function McpDetail({
       <DetailHeader
         leading={
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border bg-sheen/[0.05]">
-            <Cable className="h-4 w-4 text-muted-foreground" />
+            <McpLogo className="h-5 w-5 text-muted-foreground" />
           </span>
         }
         title={server.name}

@@ -1124,8 +1124,8 @@ function PluginTable({
 } & ConnectHandlers) {
   const columns: Column[] = [
     { id: "plugin", label: translate("plugins_view.col_plugin") },
-    { id: "category", label: translate("plugins_view.col_category"), width: "130px" },
-    { id: "status", label: translate("plugins_view.col_status"), width: "170px" },
+    { id: "category", label: translate("plugins_view.col_category"), width: "150px" },
+    { id: "status", label: translate("plugins_view.col_status"), width: "180px" },
     { id: "action", label: translate("plugins_view.col_action"), width: "36px", srOnly: true, align: "right" },
   ];
 
@@ -1187,11 +1187,11 @@ function PluginTableRow({
       ariaLabel={plugin.name}
     >
       <Cell>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" title={plugin.description}>
           <BrandTile plugin={plugin} size="sm" />
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-[13px] font-medium">{plugin.name}</span>
+            <div className="flex items-center gap-2">
+              <span className="truncate text-[15px] font-medium">{plugin.name}</span>
               {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
               {plugin.selfUploaded && (
                 <span
@@ -1202,13 +1202,11 @@ function PluginTableRow({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={plugin.description}>
-              {plugin.status === "needs_reauth" ? (
+            {plugin.status === "needs_reauth" && (
+              <p className="mt-0.5 truncate text-xs">
                 <ReauthExplanation plugin={plugin} inline />
-              ) : (
-                plugin.description
-              )}
-            </p>
+              </p>
+            )}
           </div>
         </div>
       </Cell>

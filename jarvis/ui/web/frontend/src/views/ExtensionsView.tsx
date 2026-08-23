@@ -1,4 +1,6 @@
-import { Blocks, Cable, Sparkles, type LucideIcon } from "lucide-react";
+import { Blocks, ScrollText } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
+import { McpLogo } from "@/components/extensions/McpLogo";
 import { useEventStore, type SectionId } from "@/store/events";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { useT } from "@/i18n";
@@ -31,13 +33,14 @@ import { McpsView } from "@/views/McpsView";
 interface AreaSpec {
   id: SectionId;
   labelKey: string;
-  icon: LucideIcon;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
 }
 
 const AREAS = [
-  { id: "skills", labelKey: "nav.skills", icon: Sparkles },
+  { id: "skills", labelKey: "nav.skills", icon: ScrollText },
   { id: "plugins", labelKey: "nav.plugins", icon: Blocks },
-  { id: "mcps", labelKey: "nav.mcps", icon: Cable },
+  // The official Model Context Protocol mark, not a generic plug.
+  { id: "mcps", labelKey: "nav.mcps", icon: McpLogo },
 ] as const satisfies readonly AreaSpec[];
 
 type AreaId = (typeof AREAS)[number]["id"];
@@ -73,7 +76,7 @@ export function ExtensionsView() {
                   onClick={() => setActive(area.id)}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors",
+                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
                     isActive
                       ? "bg-sheen/[0.08] font-medium text-foreground"
                       : "text-foreground/75 hover:bg-sheen/[0.05] hover:text-foreground",

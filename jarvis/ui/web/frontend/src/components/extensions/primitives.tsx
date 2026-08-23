@@ -39,7 +39,7 @@ export function PanelHeader({
   return (
     <div className={cn("flex items-start justify-between gap-4", className)}>
       <div className="min-w-0">
-        <h2 className="font-display text-[15px] font-semibold tracking-tight text-foreground">
+        <h2 className="font-display text-base font-semibold tracking-tight text-foreground">
           {title}
         </h2>
         {subtitle ? (
@@ -288,7 +288,7 @@ export function TableHead({ columns }: { columns: Column[] }) {
   return (
     <div
       role="row"
-      className="grid items-center gap-x-4 border-b border-border px-3 py-2 text-xs text-muted-foreground"
+      className="grid items-center gap-x-5 border-b border-border px-3 py-2.5 text-[13px] text-muted-foreground"
       style={{ gridTemplateColumns: gridTemplate(columns) }}
     >
       {columns.map((c) => (
@@ -299,10 +299,12 @@ export function TableHead({ columns }: { columns: Column[] }) {
             "truncate",
             c.align === "right" && "text-right",
             c.align === "center" && "text-center",
-            c.srOnly && "sr-only",
           )}
         >
-          {c.label}
+          {/* The label stays for assistive tech, but the cell keeps its grid
+              track — an absolutely positioned header would shift every
+              header after it one column to the left. */}
+          {c.srOnly ? <span className="sr-only">{c.label}</span> : c.label}
         </div>
       ))}
     </div>
@@ -347,7 +349,7 @@ export function TableRow({
           : undefined
       }
       className={cn(
-        "group grid min-h-[44px] items-center gap-x-4 border-b border-border/70 px-3 py-2 transition-colors last:border-b-0",
+        "group grid min-h-[54px] items-center gap-x-5 border-b border-border/70 px-3 py-2.5 transition-colors last:border-b-0",
         clickable &&
           "cursor-pointer hover:bg-sheen/[0.05] focus:outline-none focus-visible:bg-sheen/[0.06]",
         selected && "bg-sheen/[0.06]",
@@ -383,7 +385,7 @@ export function Cell({
         "min-w-0",
         align === "right" && "flex justify-end text-right",
         align === "center" && "flex justify-center text-center",
-        muted && "text-xs text-muted-foreground",
+        muted && "text-sm text-muted-foreground",
         className,
       )}
     >
@@ -556,8 +558,8 @@ export function StatusDot({
     busy: "bg-primary",
   }[tone];
   return (
-    <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", color, pulse && "animate-pulse")} />
+    <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+      <span className={cn("h-2 w-2 shrink-0 rounded-full", color, pulse && "animate-pulse")} />
       <span className="truncate">{label}</span>
     </span>
   );

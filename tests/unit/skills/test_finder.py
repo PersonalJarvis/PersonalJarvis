@@ -212,6 +212,83 @@ async def test_search_mit_trust_filter(monkeypatch, sample_entries):
     assert all(c.trust == "official" for c in result)
 
 
+@pytest.mark.asyncio
+async def test_search_query_without_text_match_returns_empty(
+    monkeypatch, sample_entries
+):
+    """A query that matches no entry text must NOT fall back to a page of
+    filter-only hits ("Trust match (official) · Score 0.03")."""
+    from jarvis.skills import catalog
+
+    monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
+
+    finder = SkillFinder(brain=None)
+    result = await finder.search(
+        SearchFilters(query="PDf", trust="official", min_stars=500, limit=10)
+    )
+    assert result == []
+
+    # Same without any filter: still nothing matches "pdf" in the sample set
+    assert await finder.search(SearchFilters(query="PDf", limit=10)) == []
+
+
+@pytest.mark.asyncio
+async def test_search_drops_filter_only_entries_when_query_matches_some(
+    monkeypatch, sample_entries
+):
+    from jarvis.skills import catalog
+
+    monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
+
+    result = await SkillFinder(brain=None).search(
+        SearchFilters(query="docker", limit=10)
+    )
+    assert [c.name for c in result] == ["docker-helper"]
+    assert not any("Trust match" in c.reason for c in result)
+
+
+@pytest.mark.asyncio
+async def test_search_tag_match_is_case_insensitive_and_names_the_tag(
+    monkeypatch, sample_entries
+):
+    from jarvis.skills import catalog
+
+    monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
+
+    result = await SkillFinder(brain=None).search(
+        SearchFilters(query="GMail", limit=10)
+    )
+    assert result[0].name == "email-triage"
+    assert "tag: gmail" in result[0].reason
+    assert "Trust match" not in result[0].reason
+
+
+@pytest.mark.asyncio
+async def test_search_empty_query_browses_by_filters_only(
+    monkeypatch, sample_entries
+):
+    from jarvis.skills import catalog
+
+    monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
+
+    result = await SkillFinder(brain=None).search(
+        SearchFilters(query="", trust="official", limit=10)
+    )
+    assert [c.name for c in result] == ["skill-creator"]
+    assert result[0].reason == "Trust match (official)"
+
+
+@pytest.mark.asyncio
+async def test_search_punctuation_only_query_returns_empty(
+    monkeypatch, sample_entries
+):
+    from jarvis.skills import catalog
+
+    monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
+
+    assert await SkillFinder(brain=None).search(SearchFilters(query="???")) == []
+
+
 # ----------------------------------------------------------------------
 # Brain-Ranking-Integration
 # ----------------------------------------------------------------------
@@ -247,6 +324,30 @@ async def test_search_nutzt_brain_ranking(monkeypatch, sample_entries):
     # voice-journal must be the top hit because brain score 0.95 dominates
     assert result[0].name == "voice-journal"
     assert "Perfect match" in result[0].reason
+
+
+@pytest.mark.asyncio
+async def test_brain_cannot_resurrect_non_matching_entries(
+    monkeypatch, sample_entries
+):
+    """The brain re-ranks textual matches only — a high brain score for an
+    entry the query text rejected must not bring it back."""
+    from jarvis.skills import catalog
+
+    monkeypatch.setattr(catalog, "load_catalog", lambda: sample_entries)
+
+    fake = _FakeBrain(json.dumps([
+        {"name": "email-triage", "score": 0.99, "reason": "brain likes it"},
+        {"name": "docker-helper", "score": 0.5, "reason": "docker"},
+    ]))
+    result = await SkillFinder(brain=fake).search(
+        SearchFilters(query="docker", limit=10)
+    )
+    assert [c.name for c in result] == ["docker-helper"]
+    # With nothing matching, the brain is not even consulted
+    fake.call_count = 0
+    assert await SkillFinder(brain=fake).search(SearchFilters(query="PDf")) == []
+    assert fake.call_count == 0
 
 
 @pytest.mark.asyncio

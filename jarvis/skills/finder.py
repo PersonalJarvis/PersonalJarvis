@@ -25,7 +25,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.core.paths import user_skills_dir
-from jarvis.skills.catalog import load_catalog
+
+# ``search`` reads the seed through the module attribute so a test can swap
+# ``load_catalog`` on ``jarvis.skills.catalog``; the direct name stays a
+# re-export for callers that read the seed through the finder.
+from jarvis.skills import catalog as _catalog_module
+from jarvis.skills.catalog import load_catalog  # noqa: F401
 from jarvis.skills.loader import parse_skill
 
 log = logging.getLogger(__name__)
@@ -174,52 +179,128 @@ def _passes_filter(entry: dict[str, Any], f: SearchFilters) -> bool:
 
 
 _WORD_RE = re.compile(r"\b\w{3,}\b", re.UNICODE)
+_MATCH_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
+# A query token this long or longer may also PREFIX-match an entry token
+# ("extract" finds "extraction"); shorter tokens ("pdf", "ui") match exactly.
+_PREFIX_MIN_LEN = 4
 
 
 def _tokenize(text: str) -> set[str]:
     return {w.lower() for w in _WORD_RE.findall(text)}
 
 
-def _score_heuristic(query_tokens: set[str], entry: dict[str, Any]) -> float:
-    """Heuristic ranking without a brain.
+def _match_tokens(text: str) -> set[str]:
+    """Lower-cased word tokens of a catalog field, no minimum length — a tag
+    like "ui" or "git" must stay findable."""
+    return {w.lower() for w in _MATCH_WORD_RE.findall(text)}
 
-    Counts token overlaps between the query and (title + description + tags).
-    Weighs tags higher because they're curated.
+
+def _query_tokens(query: str) -> set[str]:
+    """Tokens of the user's query for text matching.
+
+    Every word of two or more characters counts, lower-cased ("PDf" → "pdf").
+    A query made of single letters only keeps those, so a non-empty query can
+    never silently turn into browse mode.
+    """
+    words = [w.lower() for w in _MATCH_WORD_RE.findall(query)]
+    return {w for w in words if len(w) >= 2} or set(words)
+
+
+def _token_hits(query_tokens: set[str], field_tokens: set[str]) -> set[str]:
+    """Query tokens that match a field: exact, or as a prefix when long enough."""
+    hits: set[str] = set()
+    for q in query_tokens:
+        if q in field_tokens:
+            hits.add(q)
+        elif len(q) >= _PREFIX_MIN_LEN and any(t.startswith(q) for t in field_tokens):
+            hits.add(q)
+    return hits
+
+
+@dataclass(frozen=True)
+class _TextMatch:
+    """Outcome of matching a query against one catalog entry."""
+    score: float
+    labels: tuple[str, ...]
+
+    @property
+    def matched(self) -> bool:
+        return self.score > 0.0
+
+    def reason(self, trust: str) -> str:
+        """Names WHAT matched ("name", "tag: pdf", ...). Without a text match
+        (browse mode) the only thing that matched is the filter set."""
+        if not self.matched:
+            return f"Trust match ({trust})"
+        return "Matches " + ", ".join(self.labels[:4])
+
+
+_NO_MATCH = _TextMatch(score=0.0, labels=())
+
+# Field weights: curated fields (name, title, tags) outrank prose.
+_FIELD_WEIGHTS: dict[str, float] = {
+    "name": 2.0,
+    "title": 2.0,
+    "tag": 2.0,
+    "category": 1.5,
+    "description": 1.0,
+}
+_MAX_FIELD_WEIGHT = max(_FIELD_WEIGHTS.values())
+
+
+def _match_text(query_tokens: set[str], entry: dict[str, Any]) -> _TextMatch:
+    """Token-wise, case-insensitive match of the query against an entry.
+
+    Looks at name, title, description, tags and categories. Each query token
+    scores the weight of the best field it hits, so one token found in three
+    fields does not outrank three tokens found once. The score is normalised
+    to [0, 1] by the number of query tokens — coverage matters.
+
+    Returns a zero score with no labels when nothing matches: the caller
+    drops such entries from a text search.
     """
     if not query_tokens:
-        return 0.0
-    blob_tokens = _tokenize(
-        " ".join([
-            str(entry.get("title", "")),
-            str(entry.get("description", "")),
-            " ".join(entry.get("categories", [])),
-        ])
-    )
-    tag_tokens = _tokenize(" ".join(entry.get("tags", [])))
+        return _NO_MATCH
 
-    blob_overlap = len(query_tokens & blob_tokens)
-    tag_overlap = len(query_tokens & tag_tokens)
+    best_per_token: dict[str, float] = {}
+    labels: list[str] = []
 
-    # Tags get a factor of 2, so "docker" in tags outranks "docker" somewhere in the body
-    raw = blob_overlap + tag_overlap * 2
-    # Normalize to [0, 1] with a soft decay
-    return min(1.0, raw / (len(query_tokens) + 1))
+    def _record(label: str, field: str, text: str) -> None:
+        hits = _token_hits(query_tokens, _match_tokens(text))
+        if not hits:
+            return
+        if label not in labels:
+            labels.append(label)
+        weight = _FIELD_WEIGHTS[field]
+        for tok in hits:
+            best_per_token[tok] = max(best_per_token.get(tok, 0.0), weight)
+
+    _record("name", "name", str(entry.get("name", "")))
+    _record("title", "title", str(entry.get("title", "")))
+    for tag in entry.get("tags", []) or []:
+        _record(f"tag: {tag}", "tag", str(tag))
+    for cat in entry.get("categories", []) or []:
+        _record(f"category: {cat}", "category", str(cat))
+    _record("description", "description", str(entry.get("description", "")))
+
+    if not best_per_token:
+        return _NO_MATCH
+    raw = sum(best_per_token.values())
+    score = min(1.0, raw / (_MAX_FIELD_WEIGHT * len(query_tokens)))
+    return _TextMatch(score=score, labels=tuple(labels))
+
+
+def _score_heuristic(query_tokens: set[str], entry: dict[str, Any]) -> float:
+    """Heuristic ranking without a brain — see ``_match_text``."""
+    return _match_text(query_tokens, entry).score
 
 
 def _heuristic_reason(query_tokens: set[str], entry: dict[str, Any]) -> str:
-    """Human-readable reason for a match — so the user understands why a
-    skill was ranked highly."""
-    matches = query_tokens & _tokenize(
-        " ".join([
-            str(entry.get("title", "")),
-            str(entry.get("description", "")),
-            " ".join(entry.get("tags", [])),
-        ])
+    """Human-readable reason for a hit — see ``_TextMatch.reason``."""
+    return _match_text(query_tokens, entry).reason(
+        str(entry.get("trust", "community"))
     )
-    if not matches:
-        trust = entry.get("trust", "community")
-        return f"Trust match ({trust})"
-    return "Match: " + ", ".join(sorted(matches)[:4])
 
 
 # ----------------------------------------------------------------------
@@ -350,8 +431,18 @@ class SkillFinder:
         self._brain = brain
 
     async def search(self, filters: SearchFilters) -> list[SkillCandidate]:
-        """Filter + rank — returns up to ``filters.limit`` candidates."""
-        catalog = list(load_catalog())
+        """Filter + rank — returns up to ``filters.limit`` candidates.
+
+        Two modes:
+        - **Text search** (non-empty query): an entry must pass the hard
+          filters AND match the query text (name/title/description/tags/
+          categories, case-insensitive, token-wise). Entries that only pass
+          the filters are dropped; when nothing matches the result is empty.
+          The brain only re-ranks the textual matches — it never resurrects
+          an entry the text match rejected.
+        - **Browse** (empty query): hard filters only, no brain call.
+        """
+        catalog = list(_catalog_module.load_catalog())
         # Community entries join the pool AFTER the seed so a name the curated
         # catalog already lists cannot be shadowed by a marketplace upload.
         seen_names = {str(e.get("name")) for e in catalog}
@@ -363,23 +454,40 @@ class SkillFinder:
         if not filtered:
             return []
 
-        # Brain ranking
-        brain_scores = await _brain_rank(self._brain, filters.query, filtered)
+        query = filters.query.strip()
+        query_tokens = _query_tokens(query)
+        if query and not query_tokens:
+            # Punctuation-only query: nothing can match, and it must not
+            # silently turn into browse mode.
+            return []
+        if query_tokens:
+            pool = [
+                (entry, match)
+                for entry in filtered
+                if (match := _match_text(query_tokens, entry)).matched
+            ]
+            if not pool:
+                return []
+            brain_scores = await _brain_rank(
+                self._brain, query, [entry for entry, _ in pool]
+            )
+        else:
+            pool = [(entry, _NO_MATCH) for entry in filtered]
+            brain_scores = None
 
-        query_tokens = _tokenize(filters.query)
         candidates: list[SkillCandidate] = []
-        for entry in filtered:
+        for entry, match in pool:
             cand = SkillCandidate.from_catalog_entry(entry)
+            heur_reason = match.reason(cand.trust)
             if brain_scores and cand.name in brain_scores:
                 score, reason = brain_scores[cand.name]
                 # Brain score weighted 0.7, heuristic score weighted 0.3 — so
-                # a heuristic zero-hit isn't left completely blind
-                heur = _score_heuristic(query_tokens, entry)
-                final_score = 0.7 * score + 0.3 * heur
-                final_reason = reason or _heuristic_reason(query_tokens, entry)
+                # a brain that under-rates an exact tag hit cannot bury it
+                final_score = 0.7 * score + 0.3 * match.score
+                final_reason = reason or heur_reason
             else:
-                final_score = _score_heuristic(query_tokens, entry)
-                final_reason = _heuristic_reason(query_tokens, entry)
+                final_score = match.score
+                final_reason = heur_reason
 
             # Trust bonus: on equal score, the more trustworthy one wins
             trust_bonus = (3 - TRUST_ORDER.get(cand.trust, 3)) * 0.01

@@ -65,6 +65,7 @@ import {
 import { cn } from "@/lib/utils";
 import { robustCopy } from "@/lib/clipboard";
 import { fill, translate, useT, useUiLanguage } from "@/i18n";
+import { PRODUCT_NAME } from "@/lib/branding";
 import {
   useSkillsList,
   useSkillDetail,
@@ -126,9 +127,11 @@ function isBrokenDraft(skill: {
   return skill.state === "draft" && Boolean(skill.error);
 }
 
-/** "You" / "Built-in" / the marketplace publisher — the Author column. */
+/** "You" / the product / the marketplace publisher — the Author column.
+ *  A shipped skill is authored by the product, the way a vendor's name sits in
+ *  that column elsewhere; "Built-in" said where it lives, not who wrote it. */
 function authorLabel(skill: Pick<SkillSummary, "is_builtin" | "origin">): string {
-  if (skill.is_builtin) return translate("skills_view.author_builtin");
+  if (skill.is_builtin) return PRODUCT_NAME;
   if (skill.origin?.source === "marketplace") {
     return skill.origin.publisher || translate("marketplace_origin.badge");
   }
@@ -365,15 +368,20 @@ export function SkillsView() {
       ? [{ id: "check", label: t("skills_view.select"), width: "20px", srOnly: true }]
       : []),
     { id: "name", label: t("skills_view.col_skill") },
-    { id: "updated", label: t("skills_view.col_updated"), width: "110px" },
-    { id: "author", label: t("skills_view.col_author"), width: "130px" },
+    { id: "updated", label: t("skills_view.col_updated"), width: "130px" },
+    { id: "author", label: t("skills_view.col_author"), width: "160px" },
     { id: "enabled", label: t("skills_view.col_enabled"), width: "44px", srOnly: true, align: "right" },
     { id: "actions", label: t("skills_view.col_actions"), width: "28px", srOnly: true, align: "right" },
   ];
 
+  // Selection exists to delete in bulk, and only the owner's skills can be
+  // deleted — so the selection view lists just those, instead of a page of
+  // dimmed built-ins with two tickable rows at the bottom.
   const rows: (SkillSummary | LocalSkillHit)[] = searchActive
     ? (search.data?.skills ?? [])
-    : items;
+    : selectionMode
+      ? items.filter((s) => !s.is_builtin)
+      : items;
 
   const countLabel = fill(t("skills_view.count"), { n: items.length });
 
@@ -393,7 +401,7 @@ export function SkillsView() {
                 >
                   <Search className="h-4 w-4" />
                 </IconButton>
-                {!searchActive && items.length > 0 && (
+                {!searchActive && deletableNames.length > 0 && (
                   <IconButton
                     label={selectionMode ? t("skills_view.delete_cancel") : t("skills_view.select")}
                     active={selectionMode}
@@ -604,7 +612,7 @@ function SkillRow({
     <TableRow
       columns={columns}
       onClick={selectionMode ? (selectable ? onCheckChange : undefined) : onOpen}
-      className={cn(selectionMode && skill.is_builtin && "opacity-50")}
+      className={cn(selectionMode && skill.is_builtin && "opacity-60")}
       selected={checked}
       ariaLabel={skill.name}
     >
@@ -622,23 +630,18 @@ function SkillRow({
         </Cell>
       )}
       <Cell>
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium">{skill.name}</span>
-          {skill.is_builtin && (
-            <Lock className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-label={t("skills_view.author_builtin")} />
-          )}
+        <div className="flex items-center gap-2" title={skill.description}>
+          <span className="truncate text-[15px] font-medium">{skill.name}</span>
           {skill.origin?.source === "marketplace" && (
             <MarketplaceBadge compact publisher={skill.origin.publisher} />
           )}
           {skill.triggers.map((tr, i) => {
             const Icon = TRIGGER_ICON[tr.type];
-            return <Icon key={i} className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label={tr.type} />;
+            return <Icon key={i} className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" aria-label={tr.type} />;
           })}
         </div>
-        {(skill.description || reason) && (
-          <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={skill.description}>
-            {reason ? <span className="italic">{reason}</span> : skill.description}
-          </p>
+        {reason && (
+          <p className="mt-0.5 truncate text-xs italic text-muted-foreground">{reason}</p>
         )}
       </Cell>
       <Cell muted>{formatShortDate(skill.updated_at, locale)}</Cell>
@@ -755,6 +758,9 @@ function SelectionToolbar({
       >
         {t("skills_view.select_all")}
       </button>
+      <span className="ml-3 hidden text-xs text-muted-foreground sm:inline">
+        {t("skills_view.select_hint")}
+      </span>
       <span className="ml-auto text-xs text-muted-foreground">
         {checkedCount} {t("skills_view.selected")}
       </span>
