@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { waitForNativeDrop } from "@/lib/nativeDrop";
+import { useDragSessionEnd } from "./dragSessionEnd";
 import { Button, Field, IconButton, SectionLabel } from "./controls";
 import {
   fetchFolders,
@@ -332,6 +333,15 @@ export function FolderPicker({
       })
       .catch((e) => setDropNote((e as Error).message));
   };
+
+  // The same backstop every other drop target in the app needs: a drag that
+  // ends outside the window sends no `dragleave`, `drop` or `dragend`, and the
+  // highlight would otherwise sit over the folder list for good (BUG-167).
+  const clearDragOver = useCallback(() => {
+    dragDepth.current = 0;
+    setDragOver(false);
+  }, []);
+  useDragSessionEnd(dragOver, clearDragOver);
 
   const searchingMachine = searchHits !== null;
 

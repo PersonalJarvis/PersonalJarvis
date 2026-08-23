@@ -85,6 +85,7 @@ import {
   isEmptyPayload,
   type PaneDropPayload,
 } from "./paneDrop";
+import { useDragSessionEnd } from "./dragSessionEnd";
 import { VoiceOrb } from "./VoiceOrb";
 import { VoiceBubbleNotice } from "./VoiceBubbleNotice";
 import { useVoiceCall } from "./useVoiceCall";
@@ -391,18 +392,12 @@ export function VoiceBubble({
     };
   }, [active, mounted]);
 
-  // A drag may leave the app without sending the orb a final dragleave.
-  // Clear only the hover state; reading/ready are real work and must remain.
-  useEffect(() => {
-    if (dropPhase !== "over") return;
-    const clear = () => setDropPhase("idle");
-    window.addEventListener("drop", clear);
-    window.addEventListener("dragend", clear);
-    return () => {
-      window.removeEventListener("drop", clear);
-      window.removeEventListener("dragend", clear);
-    };
-  }, [dropPhase]);
+  // A drag may leave the app without sending the orb a final dragleave — and
+  // without a `drop` or `dragend` either, when it ends outside the window
+  // (BUG-167). Clear only the hover state; reading/ready are real work and
+  // must remain.
+  const clearDropHover = useCallback(() => setDropPhase("idle"), []);
+  useDragSessionEnd(dropPhase === "over", clearDropHover);
 
   // ------------------------------------------------------------------ voice
   const closeBubble = useCallback(() => {

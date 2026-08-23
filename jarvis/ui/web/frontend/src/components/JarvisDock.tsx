@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useDragSessionEnd } from "@/components/agentic/dragSessionEnd";
 import { getWSClient } from "@/hooks/useWebSocket";
 import { useOverlayStyle } from "@/hooks/useOverlayStyle";
 import { useEventStore } from "@/store/events";
@@ -75,34 +76,13 @@ export function JarvisDock() {
   );
 
   // A native OS drag that leaves the window (or ends anywhere) must disarm the
-  // dock. The full-window catch layer has no dragleave of its own, so without
-  // this the bloom could stick after the cursor exits the window over the catch
-  // layer. Wired only while a file drag is armed.
-  useEffect(() => {
-    if (!fileArmed) return;
-    const disarm = () => setFileArmed(false);
-    const onWindowDragLeave = (e: DragEvent) => {
-      // relatedTarget === null + a viewport-edge cursor = the drag left the
-      // window entirely (not just moved between elements inside it).
-      if (
-        e.relatedTarget === null &&
-        (e.clientX <= 0 ||
-          e.clientY <= 0 ||
-          e.clientX >= window.innerWidth ||
-          e.clientY >= window.innerHeight)
-      ) {
-        setFileArmed(false);
-      }
-    };
-    window.addEventListener("drop", disarm);
-    window.addEventListener("dragend", disarm);
-    window.addEventListener("dragleave", onWindowDragLeave);
-    return () => {
-      window.removeEventListener("drop", disarm);
-      window.removeEventListener("dragend", disarm);
-      window.removeEventListener("dragleave", onWindowDragLeave);
-    };
-  }, [fileArmed]);
+  // dock. The full-window catch layer has no dragleave of its own, and a drag
+  // that ends outside the window sends no `drop` or `dragend` either, so the
+  // end of the drag is detected by the heartbeat going quiet rather than
+  // awaited (see components/agentic/dragSessionEnd, BUG-167). Wired only while
+  // a file drag is armed.
+  const disarmFile = useCallback(() => setFileArmed(false), []);
+  useDragSessionEnd(fileArmed, disarmFile);
 
   /** Parse + dispatch the dropped mission. Shared by the dock and the catch
    *  layer so a release anywhere near Jarvis behaves identically. */

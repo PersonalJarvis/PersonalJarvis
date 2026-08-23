@@ -25,12 +25,13 @@
  * another one — it addresses the workspace by name instead of making the user
  * switch first, drop second, and remember which pane had focus.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, FolderGit2, Pencil, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { WorkspaceCard } from "@/lib/agenticIdeApi";
 import { dragCarriesFiles, extractPaneDrop, type PaneDropPayload } from "./paneDrop";
+import { useDragSessionEnd } from "./dragSessionEnd";
 
 /** Names remain useful through six tabs; after that, numbered icons scan better. */
 const COMPACT_FROM_WORKSPACES = 7;
@@ -127,19 +128,13 @@ export function WorkspaceBar({
   const workspaceIdKey = workspaces.map((workspace) => workspace.id).join("\u0000");
   const full = maxWorkspaces !== null && workspaces.length >= maxWorkspaces;
 
-  // A drag that ends anywhere else owes this bar no `dragleave`, and a tab left
+  // A drag that ends anywhere else owes this bar no `dragleave` — and no
+  // `drop` or `dragend` either, once it ends outside the window. A tab left
   // highlighted over a workspace nobody dropped on is a lie about what will
-  // happen next. Watched globally, and only while something is actually armed.
-  useEffect(() => {
-    if (dropTarget === null) return;
-    const clear = () => setDropTarget(null);
-    window.addEventListener("drop", clear);
-    window.addEventListener("dragend", clear);
-    return () => {
-      window.removeEventListener("drop", clear);
-      window.removeEventListener("dragend", clear);
-    };
-  }, [dropTarget]);
+  // happen next, so the end of the drag is detected rather than awaited (see
+  // ./dragSessionEnd, BUG-167).
+  const clearDropTarget = useCallback(() => setDropTarget(null), []);
+  useDragSessionEnd(dropTarget !== null, clearDropTarget);
 
   /** Drag-drop handlers for one tab. Empty when the owner takes no drops. */
   const dropHandlersFor = (workspace: WorkspaceCard) => {

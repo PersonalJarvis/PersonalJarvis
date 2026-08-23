@@ -11,19 +11,21 @@
  * * **`dragleave` is not guaranteed to arrive.** Release the drag over another
  *   element, drop it outside the window, or cancel with Escape and the pane
  *   that armed never hears the end of it — the overlay then sits over a live
- *   agent until the next drag happens to balance the books.
+ *   agent, and the counter below is left non-zero, so no LATER drag can bring
+ *   it down either: that pane stays armed for the rest of the session and each
+ *   further drag strands one more (BUG-167).
  *
- * So the arming is gated on the payload, and the disarming has a window-level
- * backstop that does not depend on a matching leave ever being delivered.
+ * So the arming is gated on the payload, and the disarming does not depend on
+ * any particular event arriving — see ./dragSessionEnd.
  */
 import {
   useCallback,
-  useEffect,
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
 } from "react";
 import { dragCarriesFiles } from "./paneDrop";
+import { useDragSessionEnd } from "./dragSessionEnd";
 
 export interface PaneFileDragHandlers {
   onDragEnter: (e: ReactDragEvent) => void;
@@ -58,33 +60,11 @@ export function usePaneFileDrag(
     setDragging(false);
   }, []);
 
-  // The backstop. A drag that ends anywhere other than on this pane owes it no
-  // `dragleave`, so the end of the drag is watched globally instead — and only
-  // while armed, which is the only time there is anything to take down.
-  useEffect(() => {
-    if (!dragging) return;
-    const onWindowDragLeave = (e: DragEvent) => {
-      // `relatedTarget === null` plus a cursor at the viewport edge means the
-      // drag left the WINDOW, not merely moved between elements inside it.
-      if (
-        e.relatedTarget === null &&
-        (e.clientX <= 0 ||
-          e.clientY <= 0 ||
-          e.clientX >= window.innerWidth ||
-          e.clientY >= window.innerHeight)
-      ) {
-        disarm();
-      }
-    };
-    window.addEventListener("drop", disarm);
-    window.addEventListener("dragend", disarm);
-    window.addEventListener("dragleave", onWindowDragLeave);
-    return () => {
-      window.removeEventListener("drop", disarm);
-      window.removeEventListener("dragend", disarm);
-      window.removeEventListener("dragleave", onWindowDragLeave);
-    };
-  }, [dragging, disarm]);
+  // The backstop, and the only thing this pane can actually rely on: a drag
+  // that ends anywhere other than on this pane owes it no `dragleave`, and a
+  // drag out of Explorer owes the page no `dragend` either. Watched while
+  // armed, which is the only time there is anything to take down.
+  useDragSessionEnd(dragging, disarm);
 
   const handlers: PaneFileDragHandlers = {
     onDragEnter: (e) => {
@@ -93,6 +73,12 @@ export function usePaneFileDrag(
       // whole IDE — every agent in the grid with it.
       e.preventDefault();
       if (!dragCarriesFiles(e.dataTransfer)) return;
+      // No reset needed here, and deliberately not attempted: `dragging` has
+      // not flipped yet inside the batch that crossed into a child, so a reset
+      // read off it would zero the count mid-drag. What keeps the counter from
+      // outliving a drag is that `disarm` zeroes it and now always runs — a
+      // count that could only ever be wrong upwards is what made BUG-167
+      // permanent rather than momentary.
       depth.current += 1;
       setDragging(true);
     },
