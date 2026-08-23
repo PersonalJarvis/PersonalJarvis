@@ -12092,3 +12092,57 @@ barge-in risk, not a bug fix.
 edge whose cause is unknown. It is the wrong one for an edge whose cause is
 US, and the adapter knew the cause well enough to write it into the log. An
 attribution that is good enough to diagnose from is good enough to act on.
+
+## BUG-172: the Jarvis Bar is gone from the screen and a restart does not bring it back — the dev instance drew its own bar and switching that one off rewrote the shared config (HIGH, FIXED 2026-08-23)
+
+**Symptom (maintainer, 2026-08-23 evening).** "My bar is not shown any more."
+The slim on-screen Jarvis Bar had disappeared. Restarting the app did not bring
+it back: it came up without a bar every time.
+
+**Timeline (`data/jarvis_desktop.log` + `data-dev/jarvis_desktop.log`).**
+
+```
+15:29:14  data-dev  On-screen overlay active: style=jarvis_bar   <- dev app drew a SECOND bar
+15:42:20  data-dev  On-screen overlay active: style=none         <- the duplicate was switched off
+15:48:01  data      On-screen overlay active: style=none         <- the LIVE app lost its bar
+19:58:21  data      On-screen overlay active: style=none         <- and kept losing it
+```
+
+The two logs are two processes; the config file between them is one.
+
+**Root cause.** The dev instance (`--instance dev`, shipped 2026-08-23) separates
+the data dir, the ports and the OS identity, but deliberately shares
+`jarvis.toml` — same providers, same keys, "everything works". The on-screen
+overlay was not on the ambient-duty list, so the dev app built its own Jarvis Bar
+at the very same screen position as the live one. Switching that duplicate off in
+the dev window did what the settings route always does: it persisted
+`[ui] orb_style = "none"` — into the ONE file the live app reads at boot. The
+live app then had no bar to draw, and no amount of restarting could tell it
+otherwise, because the persisted value said "none" on purpose.
+
+Two properties made it invisible: the change is written by the app the
+maintainer was NOT looking at, and it only takes effect on the next boot of the
+app they WERE looking at, so the cause and the symptom never share a moment.
+
+**Fix.** The on-screen overlay became an ambient duty, like the wake word, the
+global hotkeys, the chat channels and autostart (`InstanceIdentity.owns_ambient_duties`):
+
+* `jarvis.ui.desktop_app.boot_overlay_style()` — a non-default instance always
+  boots the NullOverlay. At RUNTIME only: the configured value is never touched,
+  it belongs to the app that owns the screen.
+* `PUT /api/settings/overlay-style` answers 409 in a non-default instance and
+  names where the switch lives, so a pick there can neither persist nor swap.
+  `GET` still reads the shared value, so the dev window shows the truth.
+
+**Why not "let each instance have its own overlay style".** That would need a
+per-instance config layer for a single field, and two bars on one screen position
+is a defect on its own — the second one is indistinguishable from the first.
+
+**Tests.** `tests/unit/ui/test_overlay_boot_instance.py` (every style, both
+instances, explicit identity beats the environment),
+`tests/unit/ui/test_overlay_style_route.py` (dev PUT = 409 and persists nothing,
+dev GET unchanged).
+
+**Related.** BUG-031 (a second `tk.Tk()` root at runtime aborts the process) is
+why the recovery still needs one restart: an app that booted with `style=none`
+has no Tk root, so the bar cannot be swapped in live.
