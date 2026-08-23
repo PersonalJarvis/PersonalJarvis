@@ -65,6 +65,13 @@ interface AgentChatStore {
   catalog: AgentChatCatalog | null;
   connections: AgentConnectionRow[];
   catalogError: string | null;
+  /**
+   * The catalog answered without the fields this bundle reads (no permission
+   * ladders): the backend process predates the app on disk — an update that
+   * was reloaded but not yet restarted. The composer says so instead of
+   * silently showing fewer picks.
+   */
+  backendOutdated: boolean;
   /** Live model lists per provider id (the API-backed rows). */
   liveModels: Record<string, CuratedModel[]>;
   sessions: AgentChatSession[];
@@ -229,6 +236,7 @@ export const useAgentChatStore = create<AgentChatStore>((set, get) => {
     catalog: null,
     connections: [],
     catalogError: null,
+    backendOutdated: false,
     liveModels: {},
     sessions: [],
     activeSessionId: null,
@@ -247,10 +255,15 @@ export const useAgentChatStore = create<AgentChatStore>((set, get) => {
         ]);
         // A backend older than this bundle (the app not yet restarted after
         // an update) may lack the newer arrays; an empty ladder is honest,
-        // a crash is not.
+        // a crash is not — and the composer tells the person to restart.
+        // `permission_modes` is the tell: every row of the current route
+        // carries the array (possibly empty); only the older route omits it.
+        const providersRaw = raw.providers ?? [];
+        const backendOutdated =
+          providersRaw.length > 0 && providersRaw.some((p) => !Array.isArray(p.permission_modes));
         const catalog: AgentChatCatalog = {
           ...raw,
-          providers: (raw.providers ?? []).map((p) => ({
+          providers: providersRaw.map((p) => ({
             ...p,
             curated_models: Array.isArray(p.curated_models) ? p.curated_models : [],
             effort_levels: Array.isArray(p.effort_levels) ? p.effort_levels : [],
@@ -260,7 +273,7 @@ export const useAgentChatStore = create<AgentChatStore>((set, get) => {
             default_model: p.default_model ?? "",
           })),
         };
-        set({ catalog, connections, catalogError: null });
+        set({ catalog, connections, catalogError: null, backendOutdated });
         // Settle the draft: an empty or unknown provider becomes the active
         // sub-agent (else the first connected one); blank picks take the
         // provider's defaults.

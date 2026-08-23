@@ -93,6 +93,7 @@ describe("ChatStage (agent chat)", () => {
         { jarvis: "openai-codex", key_set: true, is_active_brain: false },
       ],
       catalogError: null,
+      backendOutdated: false,
       liveModels: {},
       sessions: [],
       activeSessionId: null,
@@ -134,6 +135,78 @@ describe("ChatStage (agent chat)", () => {
     useAgentChatStore.setState((s) => ({ draft: { ...s.draft, provider: "openai-codex", permissionMode: "auto" } }));
     render(<ChatStage />);
     expect(screen.queryByTestId("composer-plan")).toBeNull();
+  });
+
+  it("groups the provider list by what stands behind a row: coding CLIs, API keys, local servers", async () => {
+    const apiRow = {
+      ...CATALOG.providers[0],
+      id: "openai",
+      label: "OpenAI",
+      family: "openai",
+      runner: "api",
+      models_source: "live" as const,
+      curated_models: [],
+      cli_installed: null,
+    };
+    const localRow = { ...apiRow, id: "ollama", label: "Ollama", family: "ollama", keyless: true };
+    useAgentChatStore.setState({
+      catalog: { ...CATALOG, providers: [...CATALOG.providers, apiRow, localRow] },
+      connections: [
+        { jarvis: "claude-api", key_set: true, is_active_brain: false },
+        { jarvis: "openai-codex", key_set: false, is_active_brain: false },
+        { jarvis: "openai", key_set: true, is_active_brain: true },
+      ],
+    });
+    render(<ChatStage />);
+    fireEvent.click(screen.getByTestId("composer-provider"));
+    const panel = await screen.findByTestId("composer-provider-panel");
+    // The headings, in catalog order — never "connected / not connected".
+    const headings = Array.from(panel.querySelectorAll("div.uppercase")).map((el) => el.textContent);
+    expect(headings).toEqual(["Coding CLIs", "API keys", "On your own hardware"]);
+    expect(within(panel).queryByText("Connected")).toBeNull();
+    // Only what the Agents tab has set up is listed: Codex (no login) is not
+    // there at all, and the voice sub-agent's "active" word is not shown.
+    const options = within(panel).getAllByRole("option").map((el) => el.textContent ?? "");
+    expect(options.map((o) => o.replace(/\s+/g, " ").trim())).toEqual(["Anthropic Claude", "OpenAI", "Ollama"]);
+    expect(within(panel).queryByText("active")).toBeNull();
+  });
+
+  it("with nothing connected yet, lists every provider greyed with its connect hint", async () => {
+    useAgentChatStore.setState({
+      connections: [
+        { jarvis: "claude-api", key_set: false, is_active_brain: false },
+        { jarvis: "openai-codex", key_set: false, is_active_brain: false },
+      ],
+    });
+    render(<ChatStage />);
+    fireEvent.click(screen.getByTestId("composer-provider"));
+    const panel = await screen.findByTestId("composer-provider-panel");
+    const options = within(panel).getAllByRole("option");
+    expect(options).toHaveLength(2);
+    expect(options[0].textContent).toContain("connect");
+    // Codex is not installed on this box: the hint says so instead of "connect".
+    expect(options[1].textContent).toContain("not installed");
+  });
+
+  it("says when the backend is older than this window and offers the restart", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      useAgentChatStore.setState({ backendOutdated: true });
+      render(<ChatStage />);
+      const notice = screen.getByTestId("composer-backend-outdated");
+      expect(notice.textContent).toContain("older version");
+      fireEvent.click(within(notice).getByRole("button"));
+      await act(async () => {});
+      expect(fetchMock).toHaveBeenCalledWith("/api/settings/restart-app", { method: "POST" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows no restart notice when the catalog carries the permission ladders", () => {
+    render(<ChatStage />);
+    expect(screen.queryByTestId("composer-backend-outdated")).toBeNull();
   });
 
   it("greys out a provider that is not connected and says how to fix it", () => {

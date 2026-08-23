@@ -40,6 +40,14 @@ import { cn } from "@/lib/utils";
  * permission ladder's `plan` entry drawn as a switch, shown only when the
  * runner has one.
  *
+ * The provider list is grouped the way the Agents tab groups its cards — by
+ * what stands behind a row, never by whether it is connected: a coding CLI
+ * signed in with a subscription, a provider's own API behind a key, or a
+ * server on this machine with no account at all (maintainer, 2026-08-23: a
+ * person must SEE which rows are the CLIs and which are API keys), and it
+ * lists only the providers the Agents tab has connected — a fresh install
+ * with nothing connected sees every row greyed with a "connect" hint instead.
+ *
  * A pick applies to the open session at once (the backend patches it and
  * the next turn runs on it); with no session open it seeds the next one.
  */
@@ -53,9 +61,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const connected = useEventStore((s) => s.connected);
   const wsWarming = useEventStore((s) => s.wsWarming);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [restarting, setRestarting] = useState(false);
 
   const catalog = useAgentChatStore((s) => s.catalog);
   const catalogError = useAgentChatStore((s) => s.catalogError);
+  const backendOutdated = useAgentChatStore((s) => s.backendOutdated);
   const connections = useAgentChatStore((s) => s.connections);
   const liveModels = useAgentChatStore((s) => s.liveModels);
   const draft = useAgentChatStore((s) => s.draft);
@@ -111,28 +122,60 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     }
   }
 
+  // The same relauncher the top bar's Restart uses. A 409 means live
+  // missions would die — say so and leave the override to the top bar.
+  async function onRestart() {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      const res = await fetch("/api/settings/restart-app", { method: "POST" });
+      if (res.status === 409) {
+        pushToast("warning", t("topbar.restart_missions_running"));
+        setRestarting(false);
+        return;
+      }
+      if (!res.ok) throw new Error(`restart-failed:${res.status}`);
+      // Success schedules the shutdown; the button stays busy until the
+      // window goes away.
+    } catch {
+      pushToast("error", t("permissions.restart_failed"));
+      setRestarting(false);
+    }
+  }
+
   // ---- option lists -------------------------------------------------
 
+  // Only what the Agents tab has set up is offered (maintainer, 2026-08-23:
+  // the picker lists the providers configured there, nothing else). The one
+  // exception is an install with nothing connected yet: then every row shows
+  // greyed with its "connect" hint, so the list is a map and not a void. No
+  // "active" marker either — that word is the voice sub-agent's, and the
+  // pick here is its own thing: what you choose here is what the chat runs.
   const providerGroups = useMemo<ComboboxGroup[]>(() => {
+    const anyConnected = providers.some((p) => p.connected);
+    const shown = anyConnected ? providers.filter((p) => p.connected) : providers;
     const toOption = (p: ProviderOption): ComboboxOption => ({
       value: p.id,
       label: p.label,
-      hint: !p.connected
-        ? p.cli_installed === false
+      hint: p.connected
+        ? undefined
+        : p.cli_installed === false
           ? t("agent_chat.provider_not_installed")
-          : t("agent_chat.provider_connect")
-        : p.active
-          ? t("agent_chat.provider_active")
-          : undefined,
+          : t("agent_chat.provider_connect"),
       disabled: !p.connected,
       icon: <ProviderLogo providerId={p.id} label={p.label} size="sm" />,
       searchText: `${p.family} ${p.runner}`,
     });
-    const ready = providers.filter((p) => p.connected).map(toOption);
-    const rest = providers.filter((p) => !p.connected).map(toOption);
+    const labels: Record<ProviderKind, string> = {
+      cli: t("agent_chat.group_clis"),
+      api: t("agent_chat.group_api_keys"),
+      local: t("agent_chat.group_local"),
+    };
     const groups: ComboboxGroup[] = [];
-    if (ready.length) groups.push({ id: "ready", label: t("agent_chat.group_connected"), options: ready });
-    if (rest.length) groups.push({ id: "rest", label: t("agent_chat.group_not_connected"), options: rest });
+    for (const kind of PROVIDER_KINDS) {
+      const rows = shown.filter((p) => providerKind(p) === kind);
+      if (rows.length) groups.push({ id: kind, label: labels[kind], options: rows.map(toOption) });
+    }
     return groups;
   }, [providers, t]);
 
@@ -381,6 +424,23 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           </button>
         )}
       </div>
+      {backendOutdated && (
+        <div
+          className="flex items-center gap-2 px-1 text-xs text-muted-foreground"
+          data-testid="composer-backend-outdated"
+          role="status"
+        >
+          <span>{t("agent_chat.backend_outdated")}</span>
+          <button
+            type="button"
+            onClick={() => void onRestart()}
+            disabled={restarting}
+            className="font-medium text-primary hover:underline disabled:opacity-60"
+          >
+            {t("agent_chat.restart_now")}
+          </button>
+        </div>
+      )}
       {provider && !provider.connected && (
         <div
           className="flex items-center gap-2 px-1 text-xs text-muted-foreground"
@@ -410,6 +470,21 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       )}
     </div>
   );
+}
+
+/**
+ * What stands behind a provider row: a coding CLI (a subscription login, no
+ * key), a provider's own API behind a key, or a server on this machine with
+ * no account. Decided from the catalog's own facts (runner, keyless) — the
+ * same split the Agents tab draws, so the two never disagree. Claude's dual
+ * row lands where its resolved runner says: the CLI group when Claude Code
+ * answers, the API-key group when only an Anthropic key is saved.
+ */
+export type ProviderKind = "cli" | "api" | "local";
+export const PROVIDER_KINDS: readonly ProviderKind[] = ["cli", "api", "local"];
+export function providerKind(p: { runner: string; keyless: boolean }): ProviderKind {
+  if (p.keyless) return "local";
+  return p.runner === "api" ? "api" : "cli";
 }
 
 /** One compact pick on the composer's bottom row — a pill-sized Combobox. */
