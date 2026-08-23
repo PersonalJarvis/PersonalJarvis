@@ -330,6 +330,7 @@ class WebServer:
         from jarvis.runs.runs_ws import router as runs_ws_router
 
         from .agent_accounts_routes import router as agent_accounts_router
+        from .agent_chat_routes import router as agent_chat_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
@@ -525,6 +526,13 @@ class WebServer:
         # "Speak in this conversation". Reuses chat_store + session_store +
         # brain + speech_pipeline from app.state (graceful 503s when absent).
         app.include_router(chats_router)
+        # Agent chat — the typed front-page chat as an agent session on the
+        # agent-tier providers (jarvis/agent_chat). The service is built on
+        # first use by the routes (store = data/agent_chat.db) so nothing
+        # opens on the boot path (AP-26); stop() cancels running turns.
+        app.state.agent_chat = None
+        app.state.agent_chat_factory = self._build_agent_chat_service
+        app.include_router(agent_chat_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
         # sets this once it succeeds.
@@ -3446,9 +3454,33 @@ class WebServer:
                     "Friends-Stack live: Telegram-Channel disabled (config off)"
                 )
 
+    def _build_agent_chat_service(self) -> Any:
+        """Build the agent-chat service on first use (see agent_chat_routes)."""
+        from jarvis.agent_chat.service import AgentChatService
+        from jarvis.agent_chat.store import AgentChatStore
+        from jarvis.brain.assistant_name import resolve_assistant_name
+
+        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
+        store = AgentChatStore(data_dir / "agent_chat.db")
+
+        def _name() -> str:
+            try:
+                return resolve_assistant_name(self.cfg)
+            except Exception:  # noqa: BLE001 — the name is cosmetic
+                return "Jarvis"
+
+        return AgentChatService(store, assistant_name=_name)
+
     async def stop(self) -> None:
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
+
+        agent_chat = getattr(self.app.state, "agent_chat", None)
+        if agent_chat is not None:
+            try:
+                await agent_chat.cancel_all()
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).debug("agent chat cancel_all failed")
 
         # Stop token refresh before the plugin registry so an in-flight refresh
         # cannot enqueue a live-session rebuild while that registry is closing.

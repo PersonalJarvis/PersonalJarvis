@@ -1,14 +1,15 @@
-﻿"""Shared Anthropic logic for claude-api & claude-api.
+"""Shared Anthropic logic for claude-api & claude-api.
 
 The two providers differ almost only in their key sources. All
 streaming + tool-use logic is identical (Anthropic API format).
 """
+
 from __future__ import annotations
 
 import json
 import os
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Final
 
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 
@@ -49,12 +50,20 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
 
         if role == "tool":
             # Tool result becomes a user message with tool_result content
-            out.append({
-                "role": "user",
-                "content": content if isinstance(content, list) else [
-                    {"type": "tool_result", "tool_use_id": m.tool_call_id or "", "content": str(content)}
-                ],
-            })
+            out.append(
+                {
+                    "role": "user",
+                    "content": content
+                    if isinstance(content, list)
+                    else [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": m.tool_call_id or "",
+                            "content": str(content),
+                        }
+                    ],
+                }
+            )
             continue
 
         # role: user | assistant — multimodal only for user (Anthropic accepts
@@ -72,14 +81,16 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
                 # Already blocks (e.g. tool_result passthrough) — keep as-is.
                 content_blocks.extend(content)
             for img in images:
-                content_blocks.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": img.mime,
-                        "data": img.data_b64,
-                    },
-                })
+                content_blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img.mime,
+                            "data": img.data_b64,
+                        },
+                    }
+                )
             out.append({"role": role, "content": content_blocks})
             continue
 
@@ -112,18 +123,109 @@ def _tools_anthropic_format(
     for t in tools:
         schema = t.get("input_schema") or t.get("parameters") or t.get("schema") or {}
         original = t.get("name", "")
-        out.append({
-            "name": name_map.get(original, original),
-            "description": t.get("description", ""),
-            "input_schema": schema if schema else {"type": "object", "properties": {}},
-        })
+        out.append(
+            {
+                "name": name_map.get(original, original),
+                "description": t.get("description", ""),
+                "input_schema": schema if schema else {"type": "object", "properties": {}},
+            }
+        )
     return out
 
 
 def _is_reasoning_model(model: str) -> bool:
-    """Claude Opus-4.x and Sonnet-4.x no longer accept `temperature`."""
+    """Models that no longer take `temperature` (the 4.x and 5 families)."""
     m = (model or "").lower()
-    return "opus-4" in m or "sonnet-4" in m or "haiku-4" in m
+    return (
+        "opus-4" in m
+        or "sonnet-4" in m
+        or "haiku-4" in m
+        or "opus-5" in m
+        or "sonnet-5" in m
+        or "fable-5" in m
+        or "mythos" in m
+    )
+
+
+# Effort ladders per family (Anthropic Messages API ``output_config.effort``).
+# Opus 4.6 / Sonnet 4.6 stop at ``max`` with no ``xhigh``; Opus 4.5 knows
+# only low/medium/high; Haiku 4.5 and Sonnet 4.5 reject the parameter.
+_EFFORT_ALL: Final[tuple[str, ...]] = ("low", "medium", "high", "xhigh", "max")
+_EFFORT_46: Final[tuple[str, ...]] = ("low", "medium", "high", "max")
+_EFFORT_45: Final[tuple[str, ...]] = ("low", "medium", "high")
+
+
+def _effort_ladder(model: str) -> tuple[str, ...]:
+    m = (model or "").lower()
+    if "haiku" in m or "sonnet-4-5" in m or "sonnet-4-0" in m or "opus-4-0" in m or "opus-4-1" in m:
+        return ()
+    if "opus-4-5" in m:
+        return _EFFORT_45
+    if "opus-4-6" in m or "sonnet-4-6" in m:
+        return _EFFORT_46
+    if (
+        "fable-5" in m
+        or "mythos" in m
+        or "opus-5" in m
+        or "sonnet-5" in m
+        or "opus-4-7" in m
+        or "opus-4-8" in m
+    ):
+        return _EFFORT_ALL
+    return ()
+
+
+def _adaptive_thinking_model(model: str) -> bool:
+    """Models whose thinking is switched on with ``{"type": "adaptive"}``.
+
+    Opus 4.7 / 4.8 and Sonnet 5 run WITHOUT thinking unless told; Opus 5 and
+    Fable 5 think by default and accept the same value. Pre-4.6 models take
+    ``budget_tokens`` instead, which this adapter leaves alone.
+    """
+    m = (model or "").lower()
+    return any(
+        tag in m
+        for tag in (
+            "fable-5",
+            "mythos",
+            "opus-5",
+            "sonnet-5",
+            "opus-4-8",
+            "opus-4-7",
+            "opus-4-6",
+            "sonnet-4-6",
+        )
+    )
+
+
+def reasoning_kwargs(model: str, effort: str | None) -> dict[str, Any]:
+    """The ``output_config`` / ``thinking`` arguments for a requested effort.
+
+    ``effort`` is the caller's level (``BrainRequest.reasoning_effort``); a
+    level the model does not offer snaps to the nearest lower one it does
+    (``xhigh`` on Opus 4.6 -> ``high``; ``none``/``minimal`` -> ``low``).
+    No effort requested -> nothing is added, so the voice brain's requests
+    are byte-for-byte what they were.
+    """
+    picked = (effort or "").strip().lower()
+    if not picked:
+        return {}
+    ladder = _effort_ladder(model)
+    if not ladder:
+        return {}
+    if picked in ("none", "minimal"):
+        level = ladder[0]
+    elif picked in ladder:
+        level = picked
+    else:
+        order = ("low", "medium", "high", "xhigh", "max")
+        idx = order.index(picked) if picked in order else 0
+        lower = [lvl for lvl in ladder if order.index(lvl) <= idx]
+        level = lower[-1] if lower else ladder[0]
+    out: dict[str, Any] = {"output_config": {"effort": level}}
+    if _adaptive_thinking_model(model):
+        out["thinking"] = {"type": "adaptive"}
+    return out
 
 
 async def stream_complete(
@@ -175,6 +277,10 @@ async def stream_complete(
     # temperature=1 is hardcoded on the backend anyway.
     if not _is_reasoning_model(model):
         kwargs["temperature"] = req.temperature
+    # A requested reasoning effort (the agent chat's picker) becomes
+    # ``output_config.effort`` plus adaptive thinking on the models that
+    # take it; the voice brain never sets one and sends exactly what it did.
+    kwargs.update(reasoning_kwargs(model, getattr(req, "reasoning_effort", None)))
     if system_payload:
         kwargs["system"] = system_payload
     if tools_payload:
@@ -243,7 +349,6 @@ async def stream_complete(
                         # cache_read_input_tokens, which no consumer reads, so
                         # cache hits were invisible in cost and telemetry and
                         # cache regressions could not be measured.
-                        "cache_hit_tokens": int(
-                            getattr(usage, "cache_read_input_tokens", 0) or 0),
+                        "cache_hit_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
                     }
                 yield BrainDelta(finish_reason=finish, usage=usage_d or None)

@@ -190,6 +190,7 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     "claude-api": _curated(
         [
             ("claude-fable-5", "Claude Fable 5"),
+            ("claude-opus-5", "Claude Opus 5"),
             ("claude-opus-4-8", "Claude Opus 4.8"),
             ("claude-sonnet-5", "Claude Sonnet 5"),
             ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
@@ -211,6 +212,8 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     ),
     "gemini": _curated(
         [
+            ("gemini-3.7-flash", "Gemini 3.7 Flash"),
+            ("gemini-3.6-flash", "Gemini 3.6 Flash"),
             ("gemini-3.5-flash", "Gemini 3.5 Flash"),
             ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
             ("gemini-3-flash-preview", "Gemini 3 Flash"),

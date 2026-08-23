@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RecentChats } from "@/components/home/RecentChats";
+import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore, type ConversationSummary } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 
@@ -44,6 +45,27 @@ describe("RecentChats", () => {
       activeSection: "board",
     });
     useHomeStore.setState({ surface: "voice", transcript: [] });
+    useAgentChatStore.setState({
+      sessions: [
+        {
+          session_id: "s1",
+          title: "Agent chat",
+          provider: "claude-api",
+          model: "",
+          effort: "high",
+          cwd: "C:\work",
+          permission_mode: "acceptEdits",
+          vendor_session: null,
+          created_ms: 500,
+          updated_ms: 900,
+          message_count: 2,
+          preview: "Agent chat",
+        },
+      ],
+      activeSessionId: null,
+      loadSessions: async () => {},
+      openSession: vi.fn((id: string) => useAgentChatStore.setState({ activeSessionId: id })),
+    });
   });
   afterEach(() => {
     cleanup();
@@ -63,11 +85,16 @@ describe("RecentChats", () => {
     ]);
   });
 
-  it("opens a text thread on the chat surface even from the voice stage", async () => {
+  it("opens an agent chat on the chat surface even from the voice stage", async () => {
     render(<RecentChats />);
-    fireEvent.click(screen.getByTitle("Typed thread"));
+    // The classic brain's text threads are no longer listed — the chat
+    // surface is the agent chat now (components/home/ChatStage).
+    expect(screen.queryByTitle("Typed thread")).toBeNull();
+    fireEvent.click(screen.getByTitle("Agent chat"));
     await flush();
     expect(useHomeStore.getState().surface).toBe("chat");
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    expect(useAgentChatStore.getState().openSession).toHaveBeenCalledWith("s1");
     expect(useHomeStore.getState().transcript).toEqual([]);
   });
 

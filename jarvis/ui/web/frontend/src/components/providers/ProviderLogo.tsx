@@ -94,17 +94,27 @@ export function ProviderLogo({
   providerId,
   label,
   className,
+  size = "md",
 }: {
   providerId: string;
   /** The card's display name — its initial is the monogram fallback. */
   label: string;
   className?: string;
+  /**
+   * `md` is the provider-row tile; `sm` is the same mark drawn inline — no
+   * tile, no border — for a menu row or a composer pill where the mark is a
+   * hint beside a word rather than the subject of a card.
+   */
+  size?: "md" | "sm";
 }) {
   const family = providerFamily(providerId);
   const entry = family ? PROVIDER_FAMILY_LOGOS[family] : undefined;
   const url = entry ? assetUrl(entry.file) : undefined;
   const local = localGlyph(providerId);
   const monogram = label.trim().slice(0, 1).toUpperCase() || "?";
+  const small = size === "sm";
+  const markClass = small ? "h-3.5 w-3.5" : "h-5 w-5";
+  const glyphClass = small ? "h-3.5 w-3.5" : "h-4 w-4";
 
   return (
     <span
@@ -114,13 +124,15 @@ export function ProviderLogo({
       className={cn(
         // One neutral tile for every mark, so a row of providers reads as one
         // list rather than a row of differently shaped app icons.
-        "inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-surface border border-border/80 bg-background/70",
+        small
+          ? "inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-sm"
+          : "inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-surface border border-border/80 bg-background/70",
         className,
       )}
     >
       {url && entry?.render === "mono" ? (
         <span
-          className="block h-5 w-5 bg-foreground"
+          className={cn("block bg-foreground", markClass)}
           style={{
             WebkitMaskImage: `url("${url}")`,
             maskImage: `url("${url}")`,
@@ -136,13 +148,13 @@ export function ProviderLogo({
         // A lockup with its own ground fills the tile; its corners are ours.
         <img src={url} alt="" className="block h-full w-full object-cover" />
       ) : url ? (
-        <img src={url} alt="" className="block h-5 w-5 object-contain" />
+        <img src={url} alt="" className={cn("block object-contain", markClass)} />
       ) : local === "server" ? (
-        <Server className="h-4 w-4 text-muted-foreground" />
+        <Server className={cn("text-muted-foreground", glyphClass)} />
       ) : local === "device" ? (
-        <HardDrive className="h-4 w-4 text-muted-foreground" />
+        <HardDrive className={cn("text-muted-foreground", glyphClass)} />
       ) : (
-        <span className="font-display text-xs font-semibold text-muted-foreground">
+        <span className={cn("font-display font-semibold text-muted-foreground", small ? "text-[10px]" : "text-xs")}>
           {monogram}
         </span>
       )}

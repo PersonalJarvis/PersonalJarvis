@@ -1,0 +1,276 @@
+"""Agent chat — a whole turn through the service and the routes with a fake brain."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from jarvis.agent_chat import runner_api
+from jarvis.agent_chat.service import AgentChatService, SessionBusy
+from jarvis.agent_chat.store import AgentChatStore
+from jarvis.core.protocols import BrainDelta, BrainRequest
+from jarvis.ui.web.agent_chat_routes import router
+
+
+class ScriptedBrain:
+    """A brain that answers from a script: each entry is a list of deltas."""
+
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model
+        self.requests: list[BrainRequest] = []
+
+    script: list[list[BrainDelta]] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        ScriptedBrain.seen.append(req)
+        step = ScriptedBrain.script.pop(0) if ScriptedBrain.script else [BrainDelta(content="(done)")]
+        for d in step:
+            await asyncio.sleep(0)
+            yield d
+
+    seen: list[BrainRequest] = []
+
+
+@pytest.fixture
+def scripted(monkeypatch: pytest.MonkeyPatch):
+    ScriptedBrain.script = []
+    ScriptedBrain.seen = []
+    monkeypatch.setitem(runner_api.BRAIN_BY_PROVIDER, "fakeprov", ("tests.unit.agent_chat.test_agent_chat_service", "ScriptedBrain"))
+    # Catalog has no row for fakeprov; supports_api_runner() still says yes.
+    return ScriptedBrain
+
+
+async def _drain(q: asyncio.Queue, until_kind: str, timeout: float = 5.0) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise AssertionError(f"timed out waiting for {until_kind}; got {[e['kind'] for e in out]}")
+        ev = await asyncio.wait_for(q.get(), timeout=remaining)
+        out.append(ev)
+        if ev["kind"] == until_kind:
+            return out
+
+
+def test_turn_streams_text_runs_a_tool_and_asks_for_approval(tmp_path: Path, scripted):
+    ScriptedBrain.script = [
+        [
+            BrainDelta(content="Let me "),
+            BrainDelta(content="write it."),
+            BrainDelta(
+                tool_call={
+                    "id": "c1",
+                    "name": "Write",
+                    "input": {"file_path": "hello.txt", "content": "hi"},
+                }
+            ),
+            BrainDelta(finish_reason="tool_use", usage={"input_tokens": 3, "output_tokens": 4}),
+        ],
+        [BrainDelta(content="Written."), BrainDelta(finish_reason="stop")],
+    ]
+
+    async def scenario() -> None:
+        store = AgentChatStore(":memory:")
+        svc = AgentChatService(store, assistant_name=lambda: "Testo")
+        session = svc.create_session(provider="fakeprov", model="m", effort="high", cwd=str(tmp_path))
+        q = svc.subscribe(session.session_id)
+        turn_id = await svc.send(session.session_id, "please write hello.txt")
+        with pytest.raises(SessionBusy):
+            await svc.send(session.session_id, "again")
+
+        events = await _drain(q, "approval_required")
+        kinds = [e["kind"] for e in events]
+        assert kinds[:2] == ["user_message", "turn_started"]
+        assert "text_delta" in kinds and "tool_call" in kinds
+        approval = events[-1]["payload"]
+        assert approval["name"] == "Write" and approval["summary"] == "hello.txt"
+        assert svc.pending_approvals(session.session_id) == [approval["approval_id"]]
+
+        assert svc.resolve_approval(session.session_id, approval["approval_id"], "allow")
+        events += await _drain(q, "turn_finished")
+        kinds = [e["kind"] for e in events]
+        assert "approval_resolved" in kinds and "tool_result" in kinds
+        assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "hi"
+        finished = events[-1]["payload"]
+        assert finished["turn_id"] == turn_id and finished["status"] == "done"
+        assert finished["usage"] == {"input_tokens": 3, "output_tokens": 4}
+
+        # The persisted log has no transient deltas and the final texts.
+        stored = store.list_events(session.session_id)
+        stored_kinds = [e["kind"] for e in stored]
+        assert "text_delta" not in stored_kinds
+        texts = [e["payload"]["text"] for e in stored if e["kind"] == "assistant_text"]
+        assert texts == ["Let me write it.", "Written."]
+        # The second request carried the tool round back to the brain.
+        second = ScriptedBrain.seen[1]
+        assert second.reasoning_effort == "high"
+        assert second.messages[-1].role == "tool"
+        assert second.system and "Testo" in second.system
+        assert not svc.is_running(session.session_id)
+
+    asyncio.run(scenario())
+
+
+def test_deny_feeds_a_denied_result_and_allow_always_flips_the_mode(tmp_path: Path, scripted):
+    ScriptedBrain.script = [
+        [BrainDelta(tool_call={"id": "c1", "name": "RunCommand", "input": {"command": "echo x"}})],
+        [BrainDelta(tool_call={"id": "c2", "name": "RunCommand", "input": {"command": "echo y"}})],
+        [BrainDelta(tool_call={"id": "c3", "name": "RunCommand", "input": {"command": "echo z"}})],
+        [BrainDelta(content="ok")],
+    ]
+
+    async def scenario() -> None:
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        q = svc.subscribe(session.session_id)
+        await svc.send(session.session_id, "run things")
+        ev = (await _drain(q, "approval_required"))[-1]["payload"]
+        svc.resolve_approval(session.session_id, ev["approval_id"], "deny")
+        events = await _drain(q, "tool_result")
+        assert events[-1]["payload"]["is_error"] and "Denied" in events[-1]["payload"]["output"]
+        ev = (await _drain(q, "approval_required"))[-1]["payload"]
+        svc.resolve_approval(session.session_id, ev["approval_id"], "allow_always")
+        events = await _drain(q, "turn_finished")
+        kinds = [e["kind"] for e in events]
+        # c2 ran after allow_always, c3 ran with no approval card at all.
+        assert kinds.count("approval_required") == 0
+        assert kinds.count("tool_result") == 2
+        assert svc.store.get_session(session.session_id).permission_mode == "auto"  # type: ignore[union-attr]
+
+    asyncio.run(scenario())
+
+
+def test_cancel_ends_the_turn(tmp_path: Path, scripted):
+    ScriptedBrain.script = [
+        [BrainDelta(tool_call={"id": "c1", "name": "Write", "input": {"file_path": "a", "content": "b"}})],
+    ]
+
+    async def scenario() -> None:
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        q = svc.subscribe(session.session_id)
+        await svc.send(session.session_id, "go")
+        await _drain(q, "approval_required")
+        assert await svc.cancel(session.session_id)
+        events = await _drain(q, "turn_finished")
+        assert events[-1]["payload"]["status"] == "cancelled"
+        assert not (tmp_path / "a").exists()
+
+    asyncio.run(scenario())
+
+
+def test_provider_error_is_reported_not_raised(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    class Boom:
+        def __init__(self, model=None):
+            pass
+
+        async def complete(self, req):
+            raise RuntimeError("401 invalid api key")
+            yield  # pragma: no cover
+
+    monkeypatch.setitem(runner_api.BRAIN_BY_PROVIDER, "boomprov", (__name__, "Boom"))
+    import sys
+
+    setattr(sys.modules[__name__], "Boom", Boom)
+
+    async def scenario() -> None:
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.create_session(provider="boomprov", cwd=str(tmp_path))
+        q = svc.subscribe(session.session_id)
+        await svc.send(session.session_id, "hi")
+        events = await _drain(q, "turn_finished")
+        assert events[-1]["payload"]["status"] == "error"
+        assert "invalid api key" in events[-1]["payload"]["error"]
+
+    asyncio.run(scenario())
+
+
+# ------------------------------------------------------------------ routes
+
+
+def _app(tmp_path: Path) -> FastAPI:
+    app = FastAPI()
+    app.include_router(router)
+    app.state.agent_chat = None
+    app.state.agent_chat_factory = lambda: AgentChatService(
+        AgentChatStore(tmp_path / "db.sqlite"), default_cwd=lambda: str(tmp_path)
+    )
+    return app
+
+
+def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, scripted):
+    ScriptedBrain.script = [[BrainDelta(content="hello from fake")]]
+    # One portal for the whole test: a bare TestClient opens a fresh event
+    # loop per request, and the turn task spawned by POST /messages would be
+    # cancelled the moment that request returns.
+    with TestClient(_app(tmp_path)) as client:
+        _exercise_routes(client, tmp_path)
+
+
+def _exercise_routes(client: TestClient, tmp_path: Path) -> None:
+
+    cat = client.get("/api/agent-chat/catalog").json()
+    ids = [p["id"] for p in cat["providers"]]
+    assert "claude-api" in ids and "openai" in ids and "openai-codex" in ids
+    claude = next(p for p in cat["providers"] if p["id"] == "claude-api")
+    assert claude["effort_levels"][-1] == "max"
+    assert cat["default_cwd"] == str(tmp_path)
+
+    created = client.post(
+        "/api/agent-chat/sessions",
+        json={"provider": "fakeprov", "model": "m", "effort": "xhigh"},
+    )
+    assert created.status_code == 201, created.text
+    sid = created.json()["session_id"]
+    assert created.json()["cwd"] == str(tmp_path)
+
+    bad = client.post("/api/agent-chat/sessions", json={"provider": "fakeprov", "cwd": "/no/such/dir"})
+    assert bad.status_code == 400
+
+    patched = client.patch(f"/api/agent-chat/sessions/{sid}", json={"title": "My chat", "effort": "low"})
+    assert patched.json()["title"] == "My chat" and patched.json()["effort"] == "low"
+
+    with client.websocket_connect(f"/api/agent-chat/sessions/{sid}/ws") as ws:
+        snap = ws.receive_json()
+        assert snap["type"] == "snapshot" and snap["session"]["session_id"] == sid
+        # A session_updated event from the PATCH is already in the log.
+        assert [e["kind"] for e in snap["events"]] == ["session_updated"]
+
+        sent = client.post(f"/api/agent-chat/sessions/{sid}/messages", json={"text": "hi"})
+        assert sent.status_code == 202, sent.text
+        kinds: list[str] = []
+        while True:
+            frame = ws.receive_json()
+            if frame["type"] != "event":
+                continue
+            kinds.append(frame["event"]["kind"])
+            if frame["event"]["kind"] == "turn_finished":
+                break
+        assert kinds[0] == "user_message" and "assistant_text" in kinds
+
+    detail = client.get(f"/api/agent-chat/sessions/{sid}").json()
+    assert detail["session"]["title"] == "My chat"
+    assert any(e["kind"] == "assistant_text" for e in detail["events"])
+
+    listed = client.get("/api/agent-chat/sessions").json()["sessions"]
+    assert listed[0]["session_id"] == sid
+
+    assert client.post(f"/api/agent-chat/sessions/{sid}/cancel").json()["cancelled"] is False
+    assert client.delete(f"/api/agent-chat/sessions/{sid}").json()["ok"]
+    assert client.get(f"/api/agent-chat/sessions/{sid}").status_code == 404
+
+
+def test_routes_answer_503_without_a_service(tmp_path: Path):
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    assert client.get("/api/agent-chat/sessions").status_code == 503

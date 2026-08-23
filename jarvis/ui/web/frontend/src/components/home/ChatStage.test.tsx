@@ -1,13 +1,66 @@
-import { act, cleanup, render as rtlRender, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatStage } from "@/components/home/ChatStage";
-import type { ThinkingStep } from "@/lib/thinkingSteps";
-import { useEventStore, type ChatMessage } from "@/store/events";
+import { EMPTY_TIMELINE, reduceEvents } from "@/components/agentchat/reduce";
+import type { AgentChatCatalog, AgentChatEvent } from "@/lib/agentChatApi";
+import { useAgentChatStore } from "@/store/agentChat";
+import { useEventStore } from "@/store/events";
 
-// The composer inside the stage names the model that will answer (a query),
-// so the stage mounts under a query client like the app.
+const CATALOG: AgentChatCatalog = {
+  default_cwd: "C:\\work",
+  shell: "pwsh",
+  providers: [
+    {
+      id: "claude-api",
+      label: "Anthropic Claude",
+      family: "claude",
+      runner: "claude-cli",
+      models_source: "curated",
+      curated_models: [
+        { id: "claude-opus-5", label: "Claude Opus 5" },
+        { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+      ],
+      default_model: "",
+      keyless: false,
+      native_resume: true,
+      effort_levels: ["low", "medium", "high", "xhigh", "max"],
+      default_effort: "high",
+      permission_modes: [
+        { id: "default", label: "Ask before acting", description: "" },
+        { id: "acceptEdits", label: "Auto-accept edits", description: "" },
+        { id: "plan", label: "Plan", description: "" },
+        { id: "bypassPermissions", label: "Bypass permissions", description: "" },
+      ],
+      default_permission_mode: "acceptEdits",
+      cli_installed: true,
+    },
+    {
+      id: "openai-codex",
+      label: "OpenAI Codex",
+      family: "openai",
+      runner: "codex-cli",
+      models_source: "curated",
+      curated_models: [{ id: "gpt-5.4", label: "GPT-5.4" }],
+      default_model: "",
+      keyless: false,
+      native_resume: true,
+      effort_levels: ["minimal", "low", "medium", "high", "xhigh"],
+      default_effort: "medium",
+      permission_modes: [
+        { id: "read-only", label: "Read only", description: "" },
+        { id: "auto", label: "Auto", description: "" },
+        { id: "full-access", label: "Full access", description: "" },
+      ],
+      default_permission_mode: "auto",
+      cli_installed: false,
+    },
+  ],
+};
+
+// The greeting reads the profile name (a query), so the stage mounts under a
+// query client like the app.
 function render(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -15,143 +68,128 @@ function render(ui: React.ReactElement) {
   return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-function msg(id: string, role: ChatMessage["role"], content: string): ChatMessage {
-  return { id, role, content, ts: Number(id.replace(/\D/g, "")) || 0 };
+let seq = 0;
+function ev(kind: string, payload: Record<string, unknown>): AgentChatEvent {
+  seq += 1;
+  return { seq, ts_ms: 1_000 + seq, kind, payload };
 }
 
-function toolStep(id: string, tool: string, status: ThinkingStep["status"] = "done"): ThinkingStep {
-  return {
-    id,
-    kind: "tool",
-    labelKey: "thinking.step_tool",
-    detail: tool,
-    status,
-    startedTs: 0,
-    durationMs: status === "active" ? undefined : 500,
-  };
-}
-
-describe("ChatStage", () => {
+describe("ChatStage (agent chat)", () => {
   let scrollTo: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    // jsdom has no element scrolling; the stage must call the standard API.
     scrollTo = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
       writable: true,
       value: scrollTo,
     });
-    useEventStore.setState({
-      connected: true,
-      wsWarming: false,
-      messages: [],
-      chatThinking: false,
-      thinkingSteps: [],
-      thinkingStartedTs: null,
-      thinkingTraces: {},
-      activeThreadId: null,
-      assistantName: "Jarvis",
+    window.localStorage.clear();
+    useEventStore.setState({ connected: true, wsWarming: false, assistantName: "Jarvis" });
+    useAgentChatStore.setState({
+      catalog: CATALOG,
+      connections: [
+        { jarvis: "claude-api", key_set: true, is_active_brain: true },
+        { jarvis: "openai-codex", key_set: true, is_active_brain: false },
+      ],
+      catalogError: null,
+      liveModels: {},
+      sessions: [],
+      activeSessionId: null,
+      activeSession: null,
+      timeline: EMPTY_TIMELINE,
+      draft: {
+        provider: "claude-api",
+        model: "",
+        effort: "high",
+        permissionMode: "acceptEdits",
+        buildMode: "acceptEdits",
+        cwd: "C:\\work",
+      },
+      busy: false,
+      lastError: null,
+      // The stage's mount effects fetch; keep them inert here.
+      loadCatalog: async () => {},
+      loadSessions: async () => {},
+      loadModels: async () => {},
     });
   });
   afterEach(() => {
     cleanup();
-    vi.useRealTimers();
   });
 
-  it("shows the empty state with greeting and composer when there is nothing yet", () => {
+  it("shows the greeting and the composer with the four picks when there is nothing yet", () => {
     render(<ChatStage />);
     expect(screen.getByTestId("chat-stage").getAttribute("data-empty")).toBe("true");
-    expect(screen.getByTestId("chat-composer")).toBeTruthy();
+    const composer = screen.getByTestId("agent-composer");
+    expect(within(composer).getByTestId("composer-provider").getAttribute("data-value")).toBe("claude-api");
+    expect(within(composer).getByTestId("composer-model")).toBeTruthy();
+    expect(within(composer).getByTestId("composer-effort").getAttribute("data-value")).toBe("high");
+    expect(within(composer).getByTestId("composer-permission").getAttribute("data-value")).toBe("acceptEdits");
+    // Claude Code has a plan entry, so the Build | Plan switch is drawn.
+    expect(within(composer).getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
   });
 
-  it("renders the live turn with its steps while the assistant is thinking", () => {
-    useEventStore.setState({
-      messages: [msg("m1", "user", "find my invoices")],
-      chatThinking: true,
-      thinkingStartedTs: Date.now() - 4000,
-      thinkingSteps: [
-        { id: "s1", kind: "brain", labelKey: "thinking.step_brain", status: "done", startedTs: 0, durationMs: 700 },
-        toolStep("s2", "gmail_search", "active"),
-      ],
-    });
+  it("hides the Build | Plan switch for a provider whose ladder has no plan entry", () => {
+    useAgentChatStore.setState((s) => ({ draft: { ...s.draft, provider: "openai-codex", permissionMode: "auto" } }));
     render(<ChatStage />);
-    const live = screen.getByTestId("chat-turn-live");
-    expect(live.textContent).toContain("Jarvis");
-    const steps = within(live).getByTestId("turn-steps");
-    expect(steps.getAttribute("data-live")).toBe("true");
-    expect(steps.getAttribute("data-open")).toBe("true");
-    const rows = within(steps).getAllByTestId("turn-step");
-    expect(rows).toHaveLength(2);
-    expect(rows[1].textContent).toContain("Gmail · search");
-    expect(within(rows[1]).getByTestId("turn-step-spinner")).toBeTruthy();
+    expect(screen.queryByTestId("composer-plan")).toBeNull();
   });
 
-  it("renders a finished trace folded above the answer, tool rows still visible", () => {
-    useEventStore.setState({
-      messages: [msg("m1", "user", "any github issues?"), msg("m2", "assistant", "Three open issues.")],
-      thinkingTraces: {
-        m2: {
-          durationMs: 6_200,
-          steps: [
-            { id: "s1", kind: "brain", labelKey: "thinking.step_brain", status: "done", startedTs: 0, durationMs: 900 },
-            toolStep("s2", "github_issues"),
-          ],
-        },
-      },
+  it("greys out a provider that is not connected and says how to fix it", () => {
+    useAgentChatStore.setState({
+      connections: [{ jarvis: "claude-api", key_set: false, is_active_brain: true }],
     });
     render(<ChatStage />);
-    const answer = screen.getByTestId("chat-message-assistant");
-    const steps = within(answer).getByTestId("turn-steps");
-    expect(steps.getAttribute("data-open")).toBe("false");
-    expect(within(steps).getByTestId("turn-steps-toggle").textContent).toContain("6s");
-    const rows = within(steps).getAllByTestId("turn-step");
-    expect(rows).toHaveLength(1);
-    expect(rows[0].textContent).toContain("GitHub · issues");
-    expect(within(rows[0]).getByTestId("turn-step-brand").getAttribute("data-brand-tier")).toBe("logo");
-    // The steps sit above the answer text.
-    expect(answer.textContent!.indexOf("GitHub · issues")).toBeLessThan(
-      answer.textContent!.indexOf("Three open issues."),
-    );
+    const hint = screen.getByTestId("composer-connect-hint");
+    expect(hint.textContent).toContain("Anthropic Claude");
+    // Send stays off until the provider is usable.
+    expect((screen.getByTestId("composer-send") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("scrolls a new user message to the top and keeps a spacer under the turn", () => {
-    useEventStore.setState({
-      messages: [msg("m1", "user", "hello"), msg("m2", "assistant", "hi")],
-    });
+  it("renders the folded timeline: user bubble, byline with provider + model, tool row, answer", () => {
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "list the files" }),
+      ev("turn_started", { turn_id: "t1", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" }),
+      ev("tool_call", { turn_id: "t1", call_id: "c1", name: "Bash", input: { command: "ls" } }),
+      ev("tool_result", { turn_id: "t1", call_id: "c1", output: "a.py\nb.py", is_error: false, duration_ms: 40 }),
+      ev("assistant_text", { turn_id: "t1", message_id: "m1", text: "Two files: **a.py** and b.py." }),
+      ev("turn_finished", { turn_id: "t1", status: "done", duration_ms: 1200, usage: {} }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: "s1", timeline });
     render(<ChatStage />);
-    // Opening a conversation: follow the end, once.
-    expect(scrollTo).toHaveBeenCalledTimes(1);
-    scrollTo.mockClear();
+    expect(screen.getByTestId("chat-stage").getAttribute("data-empty")).toBe("false");
+    expect(screen.getByTestId("agent-message-user").textContent).toContain("list the files");
+    const turn = screen.getByTestId("agent-turn");
+    expect(turn.textContent).toContain("Anthropic Claude");
+    expect(turn.textContent).toContain("claude-opus-5");
+    const tool = within(turn).getByTestId("agent-tool");
+    expect(tool.getAttribute("data-tool")).toBe("Bash");
+    expect(tool.getAttribute("data-state")).toBe("done");
+    // The row opens to show input and output.
+    fireEvent.click(within(tool).getByRole("button"));
+    expect(tool.textContent).toContain("a.py");
+    expect(within(turn).getByTestId("agent-text").querySelector("strong")?.textContent).toBe("a.py");
+    // The person's message was pinned to the top of the scroll area.
+    expect(scrollTo).toHaveBeenCalled();
+  });
 
+  it("shows the approval card while the runner waits and routes the click to the store", () => {
+    const decide = vi.fn(async () => {});
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "delete it" }),
+      ev("turn_started", { turn_id: "t2", provider: "openai", model: "", effort: "", runner: "api" }),
+      ev("approval_required", { turn_id: "t2", approval_id: "a1", call_id: "c2", name: "RunCommand", input: { command: "rm x" }, summary: "rm x" }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: "s2", timeline, decide });
+    render(<ChatStage />);
+    const card = screen.getByTestId("agent-approval");
+    expect(card.textContent).toContain("rm x");
     act(() => {
-      useEventStore.getState().pushMessage(msg("m3", "user", "and now?"));
-      useEventStore.getState().setChatThinking(true);
+      fireEvent.click(within(card).getByTestId("approval-allow"));
     });
-    expect(screen.getByTestId("chat-bottom-spacer")).toBeTruthy();
-    // The user message is brought to the top (one scroll, smooth or instant).
-    expect(scrollTo).toHaveBeenCalledTimes(1);
-    const arg = scrollTo.mock.calls[0][0] as { top: number; behavior: string };
-    expect(arg.top).toBe(0); // jsdom lays everything out at 0 — the top edge
-    expect(["smooth", "auto"]).toContain(arg.behavior);
-    scrollTo.mockClear();
-
-    // The answer landing does NOT move the page.
-    act(() => {
-      useEventStore.getState().finishThinking("m4");
-      useEventStore.getState().pushMessage(msg("m4", "assistant", "here you go"));
-    });
-    expect(scrollTo).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("chat-turn-live")).toBeNull();
-    expect(screen.getAllByTestId("chat-message-assistant")).toHaveLength(2);
-  });
-
-  it("does not render the old thinking card anymore", () => {
-    useEventStore.setState({ messages: [msg("m1", "user", "x")], chatThinking: true, thinkingStartedTs: Date.now() });
-    render(<ChatStage />);
-    // The composer no longer carries a status pill; the live turn does the talking.
-    const composer = screen.getByTestId("chat-composer");
-    expect(within(composer).queryByRole("status")).toBeNull();
-    expect(screen.getByTestId("chat-turn-live")).toBeTruthy();
+    expect(decide).toHaveBeenCalledWith("a1", "allow");
+    // The composer offers Stop while the turn runs.
+    expect(screen.getByTestId("composer-stop")).toBeTruthy();
   });
 });

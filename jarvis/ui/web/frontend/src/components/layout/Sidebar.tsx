@@ -26,6 +26,7 @@ import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
+import { useAgentChatStore } from "@/store/agentChat";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { useAppInstance } from "@/hooks/useAppInstance";
 
@@ -114,14 +115,18 @@ export function Sidebar({
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
   // "+ New chat" lands on the chat surface of the front page with an empty
-  // thread — the sidebar owns the history now, so it owns this too.
+  // agent chat — the sidebar owns the history now, so it owns this too. The
+  // voice thread is cleared as well so a reopened voice session does not
+  // linger behind the fresh page.
   const { newChat } = useConversations();
+  const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
   // see `presentNavItem`.
   const surface = useHomeStore((s) => s.surface);
   const startNewChat = () => {
     newChat();
+    newAgentChat();
     setSurface("chat");
     setActive("chats");
   };
