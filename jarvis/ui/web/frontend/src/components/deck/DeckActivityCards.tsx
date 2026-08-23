@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  FolderOpen,
   Gauge,
   MessagesSquare,
+  Shapes,
   Terminal,
 } from "lucide-react";
 import { useEventStore } from "@/store/events";
@@ -116,12 +116,14 @@ export function OutputsCard({ className }: { className?: string }) {
 
   return (
     <DeckCard
-      icon={FolderOpen}
-      title={t("deck.card_outputs")}
+      icon={Shapes}
+      title={t("nav.visualization")}
       meta={running > 0 ? running : outputs.data ? outputs.data.length : undefined}
       live={running > 0}
       variant="chamfer"
-      onOpen={() => setActiveSection("outputs")}
+      // The Outputs section folded into Artifacts (2026-08-23): every run is
+      // listed there, with or without a page.
+      onOpen={() => setActiveSection("visualization")}
       openLabel={t("deck.open_section")}
       className={className}
       bodyClassName="overflow-y-auto"

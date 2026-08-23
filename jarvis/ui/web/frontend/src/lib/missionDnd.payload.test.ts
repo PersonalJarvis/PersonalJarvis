@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMissionDragPayload, MISSION_DND_MIME } from "./OutputsView";
+import { buildMissionDragPayload, MISSION_DND_MIME } from "./missionDnd";
 
 describe("buildMissionDragPayload", () => {
   it("serialises the fields the dock needs", () => {

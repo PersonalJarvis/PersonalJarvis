@@ -41,7 +41,6 @@ KNOWN: frozenset[str] = frozenset(
         "settings",
         "telephony",
         "telephony-setup",
-        "outputs",
         "socials",
         "taskbar",
         "contacts",
@@ -134,8 +133,13 @@ _ALIASES: dict[str, str] = {
     "telefonie setup": "telephony-setup",
     "telefon setup": "telephony-setup",
     "telefonie einrichten": "telephony-setup",
-    "ausgaben": "outputs",
-    "output": "outputs",
+    # The Outputs section folded into Artifacts (2026-08-23): every run is
+    # listed there now, with or without a page. The old words still land.
+    "outputs": "visualization",
+    "output": "visualization",
+    "ausgaben": "visualization",  # i18n-allow: input vocab
+    "ergebnisse": "visualization",  # i18n-allow: input vocab
+    "resultados": "visualization",  # i18n-allow: input vocab
     "wallpapers": "wallpaper",
     "background": "wallpaper",
     "hintergrund": "wallpaper",  # i18n-allow: input vocab

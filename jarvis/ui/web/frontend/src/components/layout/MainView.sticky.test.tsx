@@ -52,8 +52,8 @@ vi.mock("@/views/ChatsSurface", () => ({
   ViewHeader: () => null,
 }));
 
-vi.mock("@/views/OutputsView", () => ({
-  OutputsView: () => <div data-testid="outputs-stub">outputs</div>,
+vi.mock("@/views/VisualizationView", () => ({
+  VisualizationView: () => <div data-testid="artifacts-stub">artifacts</div>,
 }));
 
 function goTo(section: string) {
@@ -90,8 +90,8 @@ describe("MainView — the classic terminal grid is sticky", () => {
     await screen.findByTestId("ide-stub");
     expect(ide.mounts).toBe(1);
 
-    goTo("outputs");
-    await screen.findByTestId("outputs-stub");
+    goTo("visualization");
+    await screen.findByTestId("artifacts-stub");
 
     // Still there, and still the FIRST one: a second mount would mean a dozen
     // terminals were torn down and rebuilt for a section change.
@@ -100,7 +100,7 @@ describe("MainView — the classic terminal grid is sticky", () => {
 
     goTo("agentic-ide-classic");
     await waitFor(() =>
-      expect(screen.queryByTestId("outputs-stub")).toBeNull(),
+      expect(screen.queryByTestId("artifacts-stub")).toBeNull(),
     );
     expect(ide.mounts).toBe(1);
   });
@@ -114,8 +114,8 @@ describe("MainView — the classic terminal grid is sticky", () => {
     expect(sticky.className).not.toContain("hidden");
     expect(sticky.getAttribute("aria-hidden")).toBe("false");
 
-    goTo("outputs");
-    await screen.findByTestId("outputs-stub");
+    goTo("visualization");
+    await screen.findByTestId("artifacts-stub");
 
     expect(sticky.className).toContain("hidden");
     expect(sticky.getAttribute("aria-hidden")).toBe("true");
@@ -127,8 +127,8 @@ describe("MainView — the classic terminal grid is sticky", () => {
     await screen.findByTestId("ide-stub");
     expect(ide.lastOnScreen).toBe(true);
 
-    goTo("outputs");
-    await screen.findByTestId("outputs-stub");
+    goTo("visualization");
+    await screen.findByTestId("artifacts-stub");
 
     // The view cannot measure this itself once it is `display: none`, and its
     // pollers need the answer to stop asking the backend about panes nobody is
@@ -144,6 +144,6 @@ describe("MainView — the classic terminal grid is sticky", () => {
     // Two live copies of a workspace would fight over every pane's output
     // stream, so the ordinary switch must render nothing at all here.
     expect(screen.queryByTestId("chats-stub")).toBeNull();
-    expect(screen.queryByTestId("outputs-stub")).toBeNull();
+    expect(screen.queryByTestId("artifacts-stub")).toBeNull();
   });
 });

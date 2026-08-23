@@ -32,7 +32,7 @@ import type {
 } from "@/hooks/useOutputs";
 
 // ViewHeader lives in ChatsView, which subscribes to a WS client on mount —
-// null keeps that a deterministic no-op in jsdom (same pattern as OutputsView).
+// null keeps that a deterministic no-op in jsdom.
 vi.mock("@/hooks/useWebSocket", () => ({
   getWSClient: () => null,
 }));
@@ -341,7 +341,10 @@ describe("VisualizationView", () => {
     }
   });
 
-  it("says so when there are no artifacts at all", async () => {
+  it("lists a run without a page as a run row, never as an artifact", async () => {
+    // Since the Outputs section folded into Artifacts (2026-08-23) every run
+    // is here: one that produced only a text file is a run row (its file is
+    // behind the Files tab), not an artifact row and not an empty stage.
     installFetchMock(
       [{ slug: "run-text", utterance: "Write notes", status: "success" }],
       { "run-text": [file("tasks/t1/artifacts/files/notes.md", { is_text: true })] },
@@ -349,9 +352,21 @@ describe("VisualizationView", () => {
 
     renderView();
 
+    const rows = await screen.findAllByTestId("visualization-run-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("Write notes");
+    expect(screen.queryByTestId("visualization-frame")).toBeNull();
+    expect(screen.queryByTestId("visualization-empty")).toBeNull();
+    expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0);
+  });
+
+  it("says so when there are no runs at all", async () => {
+    installFetchMock([], {});
+
+    renderView();
+
     await screen.findByTestId("visualization-empty");
     expect(screen.queryByTestId("visualization-frame")).toBeNull();
-    expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0);
   });
 });
 

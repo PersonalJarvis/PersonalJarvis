@@ -33,8 +33,8 @@ describe("useSectionUrlMemory", () => {
     window.history.replaceState(null, "", "/?solo=1&view=chats");
     renderHook(() => useSectionUrlMemory());
 
-    act(() => useEventStore.getState().setActiveSection("outputs"));
+    act(() => useEventStore.getState().setActiveSection("visualization"));
 
-    expect(window.location.search).toBe("?solo=1&view=outputs");
+    expect(window.location.search).toBe("?solo=1&view=visualization");
   });
 });

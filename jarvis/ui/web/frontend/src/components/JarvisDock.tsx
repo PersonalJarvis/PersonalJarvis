@@ -9,9 +9,12 @@ import { playDropConfirm } from "@/lib/sound";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-/** MIME type carrying a mission reference from an Outputs card. Must match
- *  `MISSION_DND_MIME` in `views/OutputsView.tsx`. */
-export const MISSION_DND_MIME = "application/x-jarvis-mission";
+import { MISSION_DND_MIME } from "@/lib/missionDnd";
+
+/** The MIME type a dragged run arrives under — one definition, shared with the
+ *  rail rows that start the drag (`lib/missionDnd.ts`). Re-exported for the
+ *  dock's own tests. */
+export { MISSION_DND_MIME };
 
 function hasMission(dt: DataTransfer | null): boolean {
   if (!dt) return false;

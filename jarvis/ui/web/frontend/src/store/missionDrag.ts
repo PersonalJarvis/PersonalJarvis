@@ -3,7 +3,8 @@ import { create } from "zustand";
 /**
  * Shared "a mission card is being dragged" flag.
  *
- * The drag source (`SessionRow` in `OutputsView`) and the drop surface
+ * The drag source (a rail row in the Artifacts section, via `lib/missionDnd`)
+ * and the drop surface
  * (`JarvisDock`, far away in the tree) need to agree that a drag is in flight so
  * the dock can bloom into a big, forgiving target and mount its full-window
  * catch layer. A tiny zustand store is the lightest way to bridge them — same

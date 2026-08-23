@@ -64,6 +64,11 @@ async def test_canonical_id_publishes_navigate(tool: NavigateTool, bus: Recordin
         ("Kontakte", "contacts"),
         ("kontakt", "contacts"),
         ("contacts", "contacts"),
+        # The retired Outputs section: its old id and spoken names land on
+        # Artifacts, where every run is listed now (2026-08-23).
+        ("outputs", "visualization"),
+        ("Ausgaben", "visualization"),
+        ("ergebnisse", "visualization"),
     ],
 )
 async def test_alias_normalizes_to_id(

@@ -3,7 +3,7 @@
  *
  * No new REST surface: `/api/outputs` already lists the runs and
  * `/api/outputs/{slug}/artifacts` already lists their files, so this hook is a
- * read over what the Outputs view reads too. What it adds is the SELECTION —
+ * read over what the run graph reads too. What it adds is the SELECTION —
  * which of those files are things a person can look at — and a flat, newest-
  * first list across runs, because "show me what came out of this" is a question
  * about pages and pictures, not about directories.
@@ -31,7 +31,8 @@ export type VisualKind = "image" | "vector" | "page" | "document";
  * Extension → kind. Deliberately narrow: everything here must render inside the
  * desktop WebView without a plugin or a converter. A format that only *some*
  * hosts can draw would make the stage a coin flip, and a blank frame is a worse
- * answer than not listing the file at all (it still shows up in Outputs).
+ * answer than not listing the file at all (it still shows up under the
+ * run's Files tab).
  */
 const VISUAL_EXTENSIONS: ReadonlyArray<readonly [string, VisualKind]> = [
   [".png", "image"],
@@ -81,8 +82,14 @@ export interface VisualArtifact {
   url: string;
 }
 
-/** Newest runs scanned for visuals. See the module docstring for the why. */
-export const DEFAULT_RUN_SCAN_LIMIT = 10;
+/**
+ * Newest runs scanned for visuals. See the module docstring for the why. Twenty
+ * because that is how many runs the Outputs section listed before it folded
+ * into Artifacts (2026-08-23): the rail shows every run the list returns, but
+ * only these many are looked inside for pages and pictures up front — an older
+ * run still shows as a run row and is read when picked.
+ */
+export const DEFAULT_RUN_SCAN_LIMIT = 20;
 
 /**
  * Encode an artifact path segment by segment.
@@ -144,7 +151,8 @@ function decodeEntities(text: string): string {
     .replace(/&#39;|&apos;/g, "'");
 }
 
-function toVisuals(run: OutputSummary, files: ArtifactSummary[]): VisualArtifact[] {
+/** The visuals among a run's files, carrying the run they belong to. */
+export function toVisuals(run: OutputSummary, files: ArtifactSummary[]): VisualArtifact[] {
   const visuals: VisualArtifact[] = [];
   for (const file of files) {
     const kind = classifyVisual(file.path);
@@ -198,8 +206,9 @@ export function useVisualArtifacts(
 
   return useQueries({
     queries: scanned.map((run) => ({
-      // Same key as `useArtifactsForOutput`, so the Outputs view and this
-      // section share one cache entry rather than each fetching their own.
+      // Same key as `useArtifactsForOutput`, so the stage's Files tab and the
+      // run graph share one cache entry with this scan rather than each
+      // fetching their own.
       queryKey: ["output-artifacts", run.slug],
       queryFn: async (): Promise<ArtifactsResponse> => {
         const response = await fetch(

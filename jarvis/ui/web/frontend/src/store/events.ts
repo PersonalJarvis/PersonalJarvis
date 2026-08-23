@@ -61,7 +61,6 @@ export type SectionId =
   | "settings"
   | "telephony"
   | "telephony-setup"
-  | "outputs"
   | "socials"
   | "taskbar"
   | "contacts"
@@ -113,7 +112,6 @@ export const SECTION_IDS = [
   "settings",
   "telephony",
   "telephony-setup",
-  "outputs",
   "socials",
   "taskbar",
   "contacts",
@@ -139,12 +137,33 @@ export function isSectionId(value: unknown): value is SectionId {
   return typeof value === "string" && SECTION_IDS.includes(value as SectionId);
 }
 
+/**
+ * Section ids that no longer exist, mapped to where their content lives now.
+ * A deep link, a remembered `?view=`, a voice command or a backend event that
+ * still names the old id lands on the new section instead of nowhere.
+ *
+ * - "outputs": the Outputs section folded into Artifacts (2026-08-23) — every
+ *   run, with or without a page, is listed there now.
+ */
+export const LEGACY_SECTION_ALIASES: Readonly<Record<string, SectionId>> = {
+  outputs: "visualization",
+};
+
+/** The section an id names today — itself, its successor, or null. */
+export function resolveSectionId(value: unknown): SectionId | null {
+  if (isSectionId(value)) return value;
+  if (typeof value === "string" && value in LEGACY_SECTION_ALIASES) {
+    return LEGACY_SECTION_ALIASES[value];
+  }
+  return null;
+}
+
 export function initialSectionFromSearch(search: string): SectionId {
   const params = new URLSearchParams(search);
   // ?view= is the general deep-link (drives detached solo windows); an invalid
   // value falls through to the older ?doc shortcut, then the default.
-  const view = params.get("view");
-  if (isSectionId(view)) return view;
+  const view = resolveSectionId(params.get("view"));
+  if (view !== null) return view;
   return params.has("doc") ? "docs" : "chats";
 }
 
@@ -180,7 +199,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   settings: "Settings",
   telephony: "Telephony",
   "telephony-setup": "Telephony setup",
-  outputs: "Outputs",
   socials: "Socials",
   taskbar: "Taskbar",
   contacts: "Contacts",

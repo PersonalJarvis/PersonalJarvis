@@ -12,6 +12,7 @@ import {
   SECTION_LABELS,
   VOICE_STATES,
   isSectionId,
+  resolveSectionId,
   useEventStore,
   type ChatMessage,
   type VoiceState,
@@ -364,8 +365,11 @@ export function useWebSocket(): void {
         if (env.event_name === "NavigateSidebar") {
           const p = env.payload as { section?: string };
           const solo = useEventStore.getState().solo;
-          if (isSectionId(p.section)) {
-            if (p.section === "visualization") {
+          // A retired id ("outputs") still arrives from older deep links and
+          // spoken aliases; it lands on the section that holds its content now.
+          const section = resolveSectionId(p.section);
+          if (section !== null) {
+            if (section === "visualization") {
               // The one section whose event can mean "and here is a NEW
               // picture": the visualize tool publishes this right after
               // archiving one. Landing on the gallery with the newest tile
@@ -379,12 +383,12 @@ export function useWebSocket(): void {
               // A detached solo window is pinned to its one section; the spoken
               // "go to settings" targets the main window, and following it here
               // would blank the very view the user split off to keep.
-              setActiveSection(p.section);
+              setActiveSection(section);
             }
             if (!solo) {
               pushToast(
                 "info",
-                `${translate("use_web_socket.jarvis_opened")} ${SECTION_LABELS[p.section]}`,
+                `${translate("use_web_socket.jarvis_opened")} ${SECTION_LABELS[section]}`,
               );
             }
           }

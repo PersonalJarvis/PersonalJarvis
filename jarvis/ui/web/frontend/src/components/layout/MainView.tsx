@@ -100,9 +100,6 @@ const TasksView = lazyView(() =>
 const SessionsView = lazyView(() =>
   import("@/views/SessionsView").then((m) => ({ default: m.SessionsView })),
 );
-const OutputsView = lazyView(() =>
-  import("@/views/OutputsView").then((m) => ({ default: m.OutputsView })),
-);
 const ClisHubView = lazyView(() =>
   import("@/views/ClisHubView").then((m) => ({ default: m.ClisHubView })),
 );
@@ -476,8 +473,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "voice-language":
     case "voice-api-keys":
       return <VoiceHubView />;
-    case "outputs":
-      return <OutputsView />;
     case "socials":
       return <SocialsView />;
     case "contacts":

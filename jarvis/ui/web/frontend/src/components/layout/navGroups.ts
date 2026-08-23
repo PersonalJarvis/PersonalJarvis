@@ -13,7 +13,6 @@ import {
   BookOpen,
   Boxes,
   Contact,
-  FolderOpen,
   Gauge,
   KeyRound,
   ListTodo,
@@ -120,14 +119,17 @@ export const NAV_GROUPS: NavItem[][] = [
     { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
     { id: "sessions", labelKey: "nav.sessions", icon: Mic },
     { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
-    // The visual stage. Sits with the content group next to Outputs on
-    // purpose: it reads the same run archive, it just shows the pictures in it
-    // instead of listing the files.
+    // Artifacts — everything a run produced: the pages and pictures on a
+    // full-size stage, and every other run (its files, status and controls)
+    // in the same rail. The Outputs section that used to list the runs
+    // folded into this one (2026-08-23); the id stays "visualization" because
+    // it crosses the navigate parity test, the detachable-view registry and
+    // deep links.
     {
       id: "visualization",
       labelKey: "nav.visualization",
       icon: Shapes,
-      fallbackLabel: "Visualization",
+      fallbackLabel: "Artifacts",
     },
     { id: "board", labelKey: "nav.board", icon: Sparkles },
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },
@@ -180,7 +182,6 @@ export const NAV_GROUPS: NavItem[][] = [
       // missing from a locale, and it is NOT interpolated.
       fallbackLabel: "Voice",
     },
-    { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
     // Appearance. Sits with the configuration group rather than with the
     // content views: it changes how the app looks, not what it holds.
     {

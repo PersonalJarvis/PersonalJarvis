@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   startMissionDrag,
   MISSION_DND_MIME,
-  type OutputsDragMeta,
-} from "./OutputsView";
+  type MissionDragMeta,
+} from "./missionDnd";
 import { useMissionDrag } from "@/store/missionDrag";
 
 function fakeDragEvent() {
@@ -17,7 +17,7 @@ function fakeDragEvent() {
   return { dataTransfer, setData, setDragImage };
 }
 
-const meta: OutputsDragMeta = {
+const meta: MissionDragMeta = {
   slug: "mission_019ecc78",
   utterance: "Build the landing page",
   status: "success",
