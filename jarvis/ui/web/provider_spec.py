@@ -868,9 +868,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     # Deliberately last in the Voice Input picker and last among cloud runtime
-    # fallbacks. It remains available for users who only have a Groq key, but
-    # live German dictation has been substantially less reliable than the other
-    # hosted choices and must not be presented as a preferred takeover.
+    # fallbacks. It remains available for users who only have a Groq key; the
+    # ordering alone de-emphasizes it (the maintainer retired the explicit
+    # "Not recommended" badge on 2026-08-23).
     ProviderSpec(
         id="groq-api",
         label="Groq STT (Whisper)",
@@ -881,10 +881,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         credential_help=(
             "Groq API key (starts with gsk_). Fast hosted Whisper "
             "speech-to-text, billed per token."
-        ),
-        caution=(
-            "Not recommended for primary transcription: real-world dictation "
-            "quality has been less reliable than the other hosted choices."
         ),
     ),
     # ── Dictation polish ──────────────────────────────────────────────────

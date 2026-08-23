@@ -100,12 +100,13 @@ def test_codex_subscription_realtime_is_removed_from_provider_catalog() -> None:
     assert "codex-subscription-realtime" not in {spec.id for spec in PROVIDERS}
 
 
-def test_groq_stt_is_last_and_not_recommended() -> None:
-    """Groq remains selectable, but the Voice Input UI must de-emphasize it."""
+def test_groq_stt_is_last_without_a_caution_badge() -> None:
+    """Groq remains selectable and last; ordering de-emphasizes it, the
+    explicit "Not recommended" badge was retired (2026-08-23)."""
     stt_specs = [spec for spec in PROVIDERS if spec.tier == "stt"]
     assert stt_specs[-1].id == "groq-api"
     assert stt_specs[-1].recommended is False
-    assert stt_specs[-1].caution
+    assert stt_specs[-1].caution is None
 
 
 def test_all_secret_keys_collects_unique_set() -> None:
