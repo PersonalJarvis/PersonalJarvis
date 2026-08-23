@@ -8,7 +8,13 @@ import {
   useTransform,
 } from "framer-motion";
 import { useEventStore, type SectionId } from "@/store/events";
-import { NAV_GROUPS, resolveNavLabel, type NavItem } from "@/components/layout/navGroups";
+import {
+  NAV_GROUPS,
+  presentNavItem,
+  resolveNavLabel,
+  type NavItem,
+} from "@/components/layout/navGroups";
+import { useHomeStore } from "@/store/home";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { dockSlotAt, layoutDock } from "@/lib/dockMagnify";
@@ -67,7 +73,14 @@ export function DockRail({ className }: { className?: string }) {
   const pluginAttention = usePluginAttention();
   const reduced = useReducedMotion() ?? false;
 
-  const items = useMemo(() => NAV_GROUPS.flat(), []);
+  // The front page's icon follows the Voice | Chat switch like the sidebar
+  // row does (`presentNavItem`); the rail must not say "Chats" while the
+  // expanded sidebar says "Voice".
+  const surface = useHomeStore((s) => s.surface);
+  const items = useMemo(
+    () => NAV_GROUPS.flat().map((item) => presentNavItem(item, surface)),
+    [surface],
+  );
   const groupBreaks = useMemo(() => {
     // Index of the first item of every group after the first — a hairline is
     // drawn above these so the rail keeps the sidebar's grouping.

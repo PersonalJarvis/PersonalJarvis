@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import {
   NAV_GROUPS,
+  presentNavItem,
   resolveNavLabel,
   type NavItem,
 } from "@/components/layout/navGroups";
@@ -110,6 +111,9 @@ export function Sidebar({
   // thread — the sidebar owns the history now, so it owns this too.
   const { newChat } = useConversations();
   const setSurface = useHomeStore((s) => s.setSurface);
+  // The front page's nav row names the face the switch picked (Voice / Chat),
+  // see `presentNavItem`.
+  const surface = useHomeStore((s) => s.surface);
   const startNewChat = () => {
     newChat();
     setSurface("chat");
@@ -344,28 +348,31 @@ export function Sidebar({
                 groupIndex > 0 && "mt-2 border-t border-border/40 pt-2",
               )}
             >
-              {group.map((item) => (
-                <NavRow
-                  key={item.id}
-                  item={item}
-                  label={resolveNavLabel(t, item)}
-                  active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
-                  badge={item.id === "agents" ? agentsCount : undefined}
-                  betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
-                  alert={item.id === "apikeys" ? apikeysHasError : false}
-                  alertTitle={t("sidebar.apikeys_alert")}
-                  warn={item.id === "skills" ? pluginsNeedReconnect : false}
-                  warnTitle={pluginWarnTitle}
-                  // A plugin problem sends the "Skills & Tools" row straight into
-                  // the Plugins tab (where the banner + jump button are), so one
-                  // click lands on the fix instead of the default Skills tab.
-                  onClick={() =>
-                    setActive(
-                      item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
-                    )
-                  }
-                />
-              ))}
+              {group.map((raw) => {
+                const item = presentNavItem(raw, surface);
+                return (
+                  <NavRow
+                    key={item.id}
+                    item={item}
+                    label={resolveNavLabel(t, item)}
+                    active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
+                    badge={item.id === "agents" ? agentsCount : undefined}
+                    betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
+                    alert={item.id === "apikeys" ? apikeysHasError : false}
+                    alertTitle={t("sidebar.apikeys_alert")}
+                    warn={item.id === "skills" ? pluginsNeedReconnect : false}
+                    warnTitle={pluginWarnTitle}
+                    // A plugin problem sends the "Skills & Tools" row straight into
+                    // the Plugins tab (where the banner + jump button are), so one
+                    // click lands on the fix instead of the default Skills tab.
+                    onClick={() =>
+                      setActive(
+                        item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
+                      )
+                    }
+                  />
+                );
+              })}
             </ul>
           ))}
         </nav>
