@@ -296,6 +296,8 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
       screen.getByText("Connect"),
     );
     expect((connectBtn.closest("button") as HTMLButtonElement).disabled).toBe(true);
+    // The install hint sits in the row body; open the row first.
+    fireEvent.click(screen.getByText("Antigravity"));
     expect(
       screen.getByText("Install Antigravity or the Gemini CLI before connecting."),
     ).toBeTruthy();
@@ -320,8 +322,9 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     render(<ApiKeysView />);
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
-    await waitFor(() => expect(screen.getByText("open")).toBeTruthy());
-    expect(screen.queryByText("ready")).toBeNull();
+    // The honest word for a missing CLI: not "open" (vague) and never "ready".
+    await waitFor(() => expect(screen.getByText("not installed")).toBeTruthy());
+    expect(screen.queryByText("connected")).toBeNull();
     expect(screen.queryByText("active")).toBeNull();
     expect(screen.queryByRole("radio")).toBeNull();
     expect(

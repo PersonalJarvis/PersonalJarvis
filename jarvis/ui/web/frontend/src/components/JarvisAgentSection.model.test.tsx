@@ -133,6 +133,9 @@ describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
 
     render(<JarvisAgentSection />);
 
+    // The key field lives in the row body, which opens on click (the active
+    // worker opens by itself; this fixture's row is not the active one).
+    fireEvent.click(await screen.findByText("OpenAI"));
     expect(
       await screen.findByLabelText("Enter jarvis_agent_openai_api_key"),
     ).toBeTruthy();

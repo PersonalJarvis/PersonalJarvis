@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { ArrowUp, Bot, CreditCard, FlaskConical, Frame, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Bot, ChevronDown, FlaskConical, Frame, HardDrive, KeyRound, Lock, LogIn, LogOut, Terminal, type LucideIcon } from "lucide-react";
 import { agentBrandNow, useAgentBrand } from "@/lib/agentBrand";
 import { PromptWriterCard } from "@/components/PromptWriterCard";
 import { cn } from "@/lib/utils";
@@ -28,20 +28,24 @@ import {
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
+import { Button } from "@/components/ui/button";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import {
   LocalModeNotice,
   LocalModelDownloadPanel,
+  StateChip,
 } from "@/components/providers/ProviderTierSection";
 import { filterForLocalMode, useLocalMode } from "@/lib/localMode";
 
 /**
  * Subagent tier for the API-Keys view.
  *
- * Visually a sibling of the brain/tts/stt tiers in `ApiKeysView`: the same
- * tier header + `card-outline` cards + identical `StatusBadge` styling. Each
- * provider card carries its own scoped API-key field and the same "Set active"
- * radio as the other tiers. Legacy shared Brain credentials remain a visible
- * compatibility fallback, never the only configuration path.
+ * Visually a sibling of the provider tiers in `ApiKeysView`: the same row
+ * anatomy (brand mark · name · state · detail, the Use control on the right,
+ * one editor body open at a time), in three groups — own hardware, coding
+ * CLIs, API keys — so the three ways a worker is powered never mix. Each API
+ * row carries its own scoped key field. Legacy shared Brain credentials remain
+ * a visible compatibility fallback, never the only configuration path.
  *
  * Data source is `GET /api/jarvis-agent/status`; the switch posts to
  * `POST /api/jarvis-agent/switch` (3-layer persist). This is its own section
@@ -118,6 +122,16 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 /**
+ * The disclosure key of a row. Claude is the one slug that renders TWICE —
+ * a subscription row and an API-key row — so its key carries which of the two
+ * the live auth mode belongs to; every other slug is its own key.
+ */
+function rowId(slug: string, claudeMode?: string | null): string {
+  if (slug !== "claude-api") return slug;
+  return claudeMode === "api_key" ? "claude-api:api" : "claude-api:sub";
+}
+
+/**
  * Poll a CLI status endpoint after starting an external login flow, refreshing
  * the section on each tick, until it reports `connected` or a timeout.
  *
@@ -177,6 +191,12 @@ export function JarvisAgentSection({
   // tier used to ignore it, which made Local Mode look broken exactly where a
   // keyless install most needs it: this is the tab that picks the worker.
   const { localMode, setLocalMode } = useLocalMode();
+  // One row open at a time, the active worker by default. Anchored once, on
+  // the first status that arrives: re-opening on every refetch would yank the
+  // list under the pointer the moment a switch lands.
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const openRowAnchored = useRef(false);
+  const toggleRow = (id: string) => setOpenRow((cur) => (cur === id ? null : id));
 
   // Re-fetch on brain-switch / subagent-switch / secret-set so the active
   // provider highlight + the per-provider "Key gesetzt" badges track live.
@@ -192,25 +212,28 @@ export function JarvisAgentSection({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: SubagentStatus = await res.json();
       setBridge(data);
-      if (codexRes?.ok) {
-        setCodexStatus(await codexRes.json());
-      } else {
-        setCodexStatus(null);
-      }
+      const codexData: CodexStatus | null = codexRes?.ok ? await codexRes.json() : null;
+      setCodexStatus(codexData);
       if (antigravityRes?.ok) {
         setAntigravityStatus(await antigravityRes.json());
       } else {
         setAntigravityStatus(null);
       }
-      if (claudeRes?.ok) {
-        setClaudeStatus(await claudeRes.json());
-      } else {
-        setClaudeStatus(null);
-      }
+      const claudeData: ClaudeStatus | null = claudeRes?.ok ? await claudeRes.json() : null;
+      setClaudeStatus(claudeData);
       if (grokBuildRes?.ok) {
         setGrokBuildStatus(await grokBuildRes.json());
       } else {
         setGrokBuildStatus(null);
+      }
+      if (!openRowAnchored.current) {
+        openRowAnchored.current = true;
+        const active = data.mapping.find((r) => r.is_active_brain);
+        setOpenRow(
+          active
+            ? rowId(active.jarvis, active.jarvis === "claude-api" ? claudeData?.mode : undefined)
+            : null,
+        );
       }
       setError(null);
     } catch (e) {
@@ -300,6 +323,11 @@ export function JarvisAgentSection({
     subProviderRows.length > 0;
   const hasApiColumn = Boolean(claudeRow) || apiProviderRows.length > 0;
 
+  const disclosure = (id: string) => ({
+    expanded: openRow === id,
+    onToggle: () => toggleRow(id),
+  });
+
   return (
     <section className="space-y-4">
       {!hideHeader && <SectionHeader label={t("apikeys_view.tier_subagent")} />}
@@ -316,69 +344,52 @@ export function JarvisAgentSection({
 
       <BridgeStatusStrip status={bridge} />
 
-      {/* The model pin sits right under the status strip — it is the setting
-          users come back for, so it must not hide below the provider cards. */}
+      {/* The model pin sits right under the status line — it is the setting
+          users come back for, so it must not hide below the worker rows. */}
       <SubagentModelCard status={bridge} onSaved={reload} />
 
       {/* Who writes the Agentic-IDE briefs. Sits next to the model pin because
           it is the same kind of decision — which model does work on the user's
-          behalf — and because the two columns below are exactly the choice it
-          is about: a subscription login on the left, an API key on the right. */}
+          behalf — and because the groups below are exactly the choice it is
+          about: a coding CLI you are signed in to, or an API key. */}
       <PromptWriterCard />
 
-      {/* Scoped Agent keys are managed here. Older shared Brain keys remain a
-          compatibility fallback and are labelled honestly on the relevant card. */}
-      {/* Suppressed once Local Mode has filtered the API column away: a note
-          about dedicated keys, above a screen with no key fields on it, is the
-          kind of leftover that makes a filtered view feel broken. */}
-      {hasApiColumn && (
-        <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
-          <ArrowUp className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
-          <span>
-            API-backed Agents can use a dedicated key set on this tab. Existing
-            Brain keys remain available as a compatibility fallback; Realtime keys
-            stay isolated to Realtime Voice.
-          </span>
-        </p>
-      )}
-
-      {/* Two access-typed columns so the two ways to power an agent never mix:
-          subscription logins (violet) on the left, API-key providers (sky) on
-          the right. The colour matches each card's access badge + accent stripe. */}
-      {/* Own-hardware workers lead, full width. They are the group with no
-          account and no bill behind them, so they belong to neither column —
-          and putting them first is what makes the Subagents tab usable at all
-          on an install that entered no credentials. */}
+      {/* Three groups, three lists: the three ways a worker is powered never
+          mix, and each heading says what the rows under it need. Own-hardware
+          workers lead — they are the group with no account and no bill behind
+          them, and putting them first is what makes this tab usable at all on
+          an install that entered no credentials. */}
       {localProviderRows.length > 0 && (
-        <div className="space-y-3">
-          <ColumnHeader
-            icon={Laptop}
-            title="On your own hardware"
-            hint="no account, no key"
-            tone="emerald"
-          />
-          <div className="grid gap-3 md:grid-cols-2 md:items-start">
-            {localProviderRows.map((row) => (
-              <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
-            ))}
-          </div>
-        </div>
+        <AgentGroup
+          icon={HardDrive}
+          title="On your own hardware"
+          hint="no account, no key"
+          testId="agent-group-local"
+        >
+          {localProviderRows.map((row) => (
+            <SubagentProviderCard
+              key={row.jarvis}
+              row={row}
+              onSwitched={reload}
+              {...disclosure(row.jarvis)}
+            />
+          ))}
+        </AgentGroup>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 md:items-start">
-        {hasSubscriptionColumn && (
-        <div className="space-y-3">
-          <ColumnHeader
-            icon={Sparkles}
-            title="Subscription logins"
-            hint="sign in with an account"
-            tone="violet"
-          />
+      {hasSubscriptionColumn && (
+        <AgentGroup
+          icon={Terminal}
+          title="Coding CLIs"
+          hint="sign in with a subscription — no key"
+          testId="agent-group-clis"
+        >
           {codexRow && (
             <CodexConnectionCard
               status={codexStatus}
               row={codexRow}
               onChanged={reload}
+              {...disclosure("openai-codex")}
             />
           )}
           {antigravityRow && (
@@ -386,6 +397,7 @@ export function JarvisAgentSection({
               status={antigravityStatus}
               row={antigravityRow}
               onChanged={reload}
+              {...disclosure("antigravity")}
             />
           )}
           {claudeRow && (
@@ -393,6 +405,7 @@ export function JarvisAgentSection({
               status={claudeStatus}
               row={claudeRow}
               onChanged={reload}
+              {...disclosure("claude-api:sub")}
             />
           )}
           {grokBuildRow && (
@@ -400,41 +413,50 @@ export function JarvisAgentSection({
               status={grokBuildStatus}
               row={grokBuildRow}
               onChanged={reload}
+              {...disclosure("grok-build")}
             />
           )}
           {subProviderRows.map((row) => (
-            <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
+            <SubagentProviderCard
+              key={row.jarvis}
+              row={row}
+              onSwitched={reload}
+              {...disclosure(row.jarvis)}
+            />
           ))}
-        </div>
-        )}
+        </AgentGroup>
+      )}
 
-        {hasApiColumn && (
-        <div className="space-y-3">
-          <ColumnHeader
-            icon={CreditCard}
-            title="API keys"
-            hint="billed per token"
-            tone="sky"
-          />
+      {hasApiColumn && (
+        <AgentGroup
+          icon={KeyRound}
+          title="API keys"
+          hint="billed per token · a dedicated key per worker; shared Brain keys stay a fallback"
+          testId="agent-group-api"
+        >
           {claudeRow && (
             <ClaudeApiCard
               status={claudeStatus}
               row={claudeRow}
               onChanged={reload}
+              {...disclosure("claude-api:api")}
             />
           )}
           {apiProviderRows.map((row) => (
-            <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
+            <SubagentProviderCard
+              key={row.jarvis}
+              row={row}
+              onSwitched={reload}
+              {...disclosure(row.jarvis)}
+            />
           ))}
-        </div>
-        )}
-      </div>
+        </AgentGroup>
+      )}
 
-      {/* Below the two columns rather than inside one: this is a second axis.
-          The cards above answer "which provider powers the agent"; this answers
-          "which of YOUR seats on that provider", and a card holding two Claude
-          Max logins does not belong in a column of one-login-per-provider
-          cards. */}
+      {/* Below the groups rather than inside one: this is a second axis.
+          The rows above answer "which provider powers the agent"; this answers
+          "which of YOUR seats on that provider", and a panel holding two Claude
+          Max logins does not belong in a list of one-login-per-provider rows. */}
       <AgentAccountsPanel />
     </section>
   );
@@ -477,8 +499,8 @@ function SubagentModelCard({
     (p) => p.id === catalogProvider && p.supports_model_pull,
   );
   return (
-    <div className="card-outline space-y-3 p-4">
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+    <div className="space-y-3 rounded-surface border border-border bg-card/50 p-3.5">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         {t("subagent_model.description")}
       </p>
       {catalogProvider ? (
@@ -503,9 +525,9 @@ function SubagentModelCard({
           }}
         />
       ) : (
-        <p className="text-[11px] text-muted-foreground">{t("subagent_model.model_hint")}</p>
+        <p className="text-xs text-muted-foreground">{t("subagent_model.model_hint")}</p>
       )}
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {t("subagent_model.model_hint")}
         {status.model_resolved ? ` (${status.model_resolved})` : ""}
       </p>
@@ -522,38 +544,18 @@ function SubagentModelCard({
 
 function SectionHeader({ label }: { label: string }) {
   return (
-    <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+    <h3 className="mb-3 inline-flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
       <Bot className="h-3.5 w-3.5" /> {label}
     </h3>
   );
 }
 
-/** A small meta pill for the bridge status strip. */
-function BridgeMeta({
-  children,
-  mono = false,
-}: {
-  children: React.ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <span
-      className={cn(
-        "rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground",
-        mono && "font-mono",
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
 /**
- * The bridge status — a calm one-line strip instead of a debug key/value table.
- * A status dot + plain-language state on the left, the read-only worker / model
- * / limits as dim meta pills on the right. Engine internals (binary path etc.)
- * are reduced to "installed" / "not installed"; the concrete path is developer
- * noise and is not surfaced.
+ * The bridge status — one line, not a box. A status dot + plain-language
+ * state, then the read-only worker / model / limits as dim text separated by
+ * middots, and the one action (open the run visuals) on the right. Engine
+ * internals (binary path etc.) are reduced to "installed" / "not installed";
+ * the concrete path is developer noise and is not surfaced.
  */
 function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
   const t = useT();
@@ -574,314 +576,228 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
   const requestVisual = useEventStore((s) => s.requestVisual);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-border bg-card/60 px-4 py-3 backdrop-blur">
-      <span
-        className={cn(
-          "h-2 w-2 shrink-0 rounded-full",
-          live
-            ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.7)]"
-            : "bg-muted-foreground",
-        )}
-      />
-      <span className="text-sm font-medium">
-        {live ? "Agent provider configured" : "Agent provider needs setup"}
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 py-1 text-xs">
+      <span className="inline-flex shrink-0 items-center gap-2">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "h-[7px] w-[7px] shrink-0 rounded-full",
+            live
+              ? "bg-emerald-500 shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
+              : "bg-amber-500",
+          )}
+        />
+        <span className="font-medium text-foreground">
+          {live ? "Agent provider configured" : "Agent provider needs setup"}
+        </span>
       </span>
-      <span className="text-[11px] text-muted-foreground">
+      <span aria-hidden="true" className="text-border">·</span>
+      <span className="min-w-0 truncate text-muted-foreground">
         {live ? "Credential or subscription available" : "Add a key or connect a login"}
+        {" · worker "}
+        <span className="font-medium text-foreground">{worker}</span>
+        {model && (
+          <>
+            {" · "}
+            <span className="font-mono">{model}</span>
+          </>
+        )}
+        {status.time_cap_min !== null && (
+          <>{` · ${status.time_cap_min} min · max ${status.concurrency} parallel`}</>
+        )}
         {status.version_pin && (
           <>
             {" · pin "}
-            <span className="font-mono text-foreground">{status.version_pin}</span>
+            <span className="font-mono">{status.version_pin}</span>
           </>
         )}
       </span>
-      <div className="ml-auto flex flex-wrap items-center gap-2">
-        <BridgeMeta>
-          worker <strong className="font-semibold text-foreground">{worker}</strong>
-        </BridgeMeta>
-        {model && <BridgeMeta mono>{model}</BridgeMeta>}
-        {status.time_cap_min !== null && (
-          <BridgeMeta>
-            {status.time_cap_min} min · max {status.concurrency} parallel
-          </BridgeMeta>
-        )}
-        <button
-          type="button"
-          onClick={() => requestVisual()}
-          data-testid="agent-show-visuals"
-          title={t("visualization.open_from_agent_hint")}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-        >
-          <Frame className="h-3 w-3" aria-hidden />
-          {t("visualization.open_from_agent")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Subagent worker slug → local brand-logo file under public/provider-logos/
-// (monochrome white SVGs, so they work offline and never depend on a live CDN;
-// nominative-use brand marks, see TRADEMARK.md). A slug with no entry — or a
-// logo that fails to load — falls back to the neutral letter monogram, so a new
-// or logo-less provider never renders broken.
-const PROVIDER_ICON: Record<string, string> = {
-  openai: "openai",
-  "openai-codex": "openai",
-  "claude-api": "claude",
-  gemini: "gemini",
-  // Vertex AI serves the same Gemini models; the Gemini mark is the honest
-  // nominative-use glyph for it (TRADEMARK.md) and beats a letter monogram.
-  vertex: "gemini",
-  openrouter: "openrouter",
-  nvidia: "nvidia",
-  antigravity: "antigravity",
-  grok: "grok",
-  "grok-build": "grok",
-};
-
-/**
- * The tile on the left of every provider card. Shows the provider's real brand
- * logo when we have a glyph for its slug, and falls back to a neutral letter
- * monogram otherwise — including when the logo can't load (offline / unknown
- * slug), so the tile is never blank. Tints gold when its card is the active
- * worker. The logo is decorative (the card title carries the accessible label),
- * so it is aria-hidden.
- */
-function ProviderLogo({
-  slug,
-  label,
-  active,
-}: {
-  slug?: string;
-  label: string;
-  active?: boolean;
-}) {
-  const icon = slug ? PROVIDER_ICON[slug] : undefined;
-  const [failed, setFailed] = useState(false);
-  return (
-    <div
-      className={cn(
-        "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border text-sm font-semibold",
-        active
-          ? "border-primary/40 bg-primary/15 text-primary"
-          : "border-border bg-muted text-muted-foreground",
-      )}
-    >
-      {icon && !failed ? (
-        <img
-          src={`/provider-logos/${icon}.svg`}
-          alt=""
-          aria-hidden="true"
-          className="h-5 w-5"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        label.trim().slice(0, 1).toUpperCase() || "?"
-      )}
+      <button
+        type="button"
+        onClick={() => requestVisual()}
+        data-testid="agent-show-visuals"
+        title={t("visualization.open_from_agent_hint")}
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-control text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Frame className="h-3.5 w-3.5" aria-hidden />
+        {t("visualization.open_from_agent")}
+      </button>
     </div>
   );
 }
 
 /**
- * Access-type metadata for a subagent card — deliberately more prominent than a
- * plain billing badge so "subscription login vs API key" reads at a glance. That
- * is exactly what tells the two same-named Anthropic Claude cards apart, and the
- * left accent stripe colour-groups the whole section into subscription (violet)
- * vs API-key (sky). Driven by the backend `billing` field, never a provider name.
+ * One of the three worker groups — own hardware, coding CLIs, API keys — as a
+ * kicker line over its own bordered list. Three headings, three lists, no
+ * colour-coding: the grouping IS the distinction the old violet/sky/emerald
+ * stripes tried to draw, and it reads without a legend.
  */
-const ACCESS_META: Record<
-  Billing,
-  { label: string; icon: LucideIcon; badge: string; accent: string }
-> = {
-  subscription: {
-    label: "Subscription",
-    icon: Sparkles,
-    badge: "border-violet-500/40 bg-violet-500/15 text-violet-600 dark:text-violet-300",
-    accent: "bg-violet-500/70",
-  },
-  subscription_or_api: {
-    label: "Subscription or API key",
-    icon: Sparkles,
-    badge: "border-violet-500/40 bg-violet-500/15 text-violet-600 dark:text-violet-300",
-    accent: "bg-violet-500/70",
-  },
-  api: {
-    label: "API key",
-    icon: CreditCard,
-    badge: "border-sky-500/40 bg-sky-500/15 text-sky-600 dark:text-sky-300",
-    accent: "bg-sky-500/70",
-  },
-  local: {
-    label: "Local · no key",
-    icon: Laptop,
-    badge: "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-    accent: "bg-emerald-500/70",
-  },
-};
-
-/**
- * The prominent access-type badge (subscription vs API key) shown next to a
- * provider card title — larger and higher-contrast than the old billing badge,
- * so the subscription/API split is obvious even when two cards share a name.
- */
-function AccessBadge({ billing }: { billing?: Billing }) {
-  if (!billing) return null;
-  const m = ACCESS_META[billing];
-  if (!m) return null;
-  const Icon = m.icon;
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-        m.badge,
-      )}
-    >
-      <Icon className="h-3 w-3" />
-      {m.label}
-    </span>
-  );
-}
-
-/**
- * A colour-coded header for one of the two access columns — violet for the
- * subscription-login column, sky for the API-key column — matching the per-card
- * access badges and accent stripes so the split reads instantly.
- */
-function ColumnHeader({
+function AgentGroup({
   icon: Icon,
   title,
   hint,
-  tone,
+  testId,
+  children,
 }: {
   icon: LucideIcon;
   title: string;
   hint: string;
-  /** Matches the access accent each card in the group already carries:
-   *  violet = subscription login, sky = API key, emerald = own hardware. */
-  tone: "violet" | "sky" | "emerald";
+  testId?: string;
+  children: React.ReactNode;
 }) {
-  const toneCls =
-    tone === "violet"
-      ? "text-violet-400"
-      : tone === "emerald"
-        ? "text-emerald-400"
-        : "text-sky-400";
   return (
-    <div className="flex items-center gap-2 px-1 pb-0.5">
-      <Icon className={cn("h-4 w-4", toneCls)} />
-      <span className={cn("text-xs font-semibold uppercase tracking-wider", toneCls)}>
-        {title}
-      </span>
-      <span className="text-[11px] text-muted-foreground">· {hint}</span>
+    <div data-testid={testId} className="space-y-2">
+      <div className="flex min-w-0 items-center gap-2 px-0.5 text-xs">
+        <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <span className="font-display text-[13px] font-semibold tracking-tight">{title}</span>
+        <span aria-hidden="true" className="text-border">·</span>
+        <span className="truncate text-muted-foreground">{hint}</span>
+      </div>
+      <ul className="divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card/50">
+        {children}
+      </ul>
     </div>
   );
 }
 
 /**
- * The one shared shell every provider card is built from — so the whole section
- * reads as a single system instead of seven hand-rolled cards. Owns the layout
- * (logo · title + access badge · subtitle · optional warning · footer actions),
- * the active/interactive highlight, and the left access-accent stripe; each card
- * only supplies its content and its own action controls in `footer`.
+ * The one shared row every worker is built from — the same anatomy as the
+ * provider rows on the other tabs, so the whole screen reads as one list
+ * system: logo · name · state · one-line detail on the left, the action and
+ * the Use control on the right, a chevron when there is a body to open.
+ *
+ * The body (key field, install hint, CLI test) mounts only while open; the
+ * section opens one row at a time, the active worker by default.
  */
-function AgentCardShell({
+function AgentRow({
   label,
   slug,
   title,
-  billing,
-  badge,
+  state,
   subtitle,
-  warning,
-  footer,
+  actions,
+  body,
   active = false,
-  interactive = false,
+  expanded = false,
+  onToggle,
   tooltip,
-  className,
-  ...rest
+  testId,
 }: {
   label: string;
-  /** Worker slug driving the brand-logo tile (falls back to the label monogram). */
+  /** Worker slug driving the brand mark (the shared ProviderLogo family map). */
   slug?: string;
   title: React.ReactNode;
-  billing?: Billing;
-  badge?: React.ReactNode;
+  /** The row's state word. "active" draws no chip (the edge rule and the Use
+   *  control say it); anything else is a dot + word beside the name. */
+  state: "active" | AgentState;
   subtitle?: React.ReactNode;
-  warning?: React.ReactNode;
-  footer?: React.ReactNode;
+  /** Header-right controls: Connect / Disconnect and the Use radio. */
+  actions?: React.ReactNode;
+  /** Editor body under the row; absent means the row has nothing to open. */
+  body?: React.ReactNode;
   active?: boolean;
-  interactive?: boolean;
-  /** Native hover tooltip for the whole card (kept separate from `title`,
-   * which is the visible card heading). */
+  expanded?: boolean;
+  onToggle?: () => void;
+  /** Native hover tooltip for the row header. */
   tooltip?: string;
-  className?: string;
-} & Omit<React.HTMLAttributes<HTMLDivElement>, "title">) {
+  testId?: string;
+}) {
+  const collapsible = Boolean(body && onToggle);
+
+  function handleRowClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!collapsible) return;
+    const target = e.target as HTMLElement | null;
+    if (
+      target?.closest(
+        "input, label, button, a, select, textarea, [data-agent-card-control]",
+      )
+    ) {
+      return;
+    }
+    onToggle?.();
+  }
+
   return (
-    <div
-      title={tooltip}
+    <li
+      data-testid={testId}
+      data-expanded={expanded ? "true" : "false"}
       className={cn(
-        "relative flex flex-col gap-3 rounded-2xl border bg-card/60 p-4 backdrop-blur transition-colors",
-        active
-          ? "border-primary/55 bg-primary/[0.06] shadow-[0_0_0_1px_rgba(255,214,10,0.25),0_0_34px_rgba(255,214,10,0.06)]"
-          : interactive
-            ? "cursor-pointer border-border hover:border-primary/40 hover:bg-primary/[0.02]"
-            : "border-border",
-        className,
+        "relative",
+        // Said once, at the edge: a 3 px gold rule and a faint wash mark the
+        // worker that runs, instead of a gold frame plus glow plus chip.
+        active &&
+          "bg-primary/[0.035] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-primary",
       )}
-      {...rest}
     >
-      {/* Left access-accent stripe: violet = subscription, sky = API key — so the
-          section colour-splits into the two access types at a glance. The active
-          card's gold frame takes over, so the stripe is hidden there. */}
-      {billing && !active && (
-        <span
-          aria-hidden="true"
-          className={cn(
-            "absolute bottom-4 left-0 top-4 w-[3px] rounded-r-full",
-            ACCESS_META[billing]?.accent,
-          )}
-        />
-      )}
-      <div className="flex items-start gap-3">
-        <ProviderLogo label={label} slug={slug} active={active} />
+      <div
+        role={collapsible ? "button" : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        aria-expanded={collapsible ? expanded : undefined}
+        onClick={handleRowClick}
+        onKeyDown={(e) => {
+          if (!collapsible || e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle?.();
+          }
+        }}
+        title={tooltip}
+        className={cn(
+          "flex items-center gap-3 px-3.5 py-3 outline-none",
+          collapsible &&
+            "cursor-pointer hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        )}
+      >
+        <ProviderLogo providerId={slug ?? label} label={label} />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium">{title}</span>
-            {badge}
-            <AccessBadge billing={billing} />
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate font-display text-[13.5px] font-semibold tracking-tight">
+              {title}
+            </span>
+            {/* The active row says so on its left edge and in the Use control;
+                the other two states are a dot and a word beside the name. */}
+            {state !== "active" && (
+              <StateChip tone={state.tone} title={state.title}>
+                {state.label}
+              </StateChip>
+            )}
           </div>
           {subtitle && (
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              {subtitle}
-            </p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>
           )}
         </div>
+        {actions && (
+          <div
+            data-agent-card-control
+            className="flex shrink-0 items-center gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {actions}
+          </div>
+        )}
+        {collapsible && (
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+              expanded && "rotate-180",
+            )}
+          />
+        )}
       </div>
-      {warning}
-      {footer && (
-        <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">{footer}</div>
+      {body && expanded && (
+        <div
+          data-agent-card-control
+          className="space-y-3 border-t border-border/60 bg-background/30 px-3.5 pb-3.5 pl-[3.75rem] pt-3"
+        >
+          {body}
+        </div>
       )}
-    </div>
+    </li>
   );
 }
 
-/** The active / ready / open status pill shared by every provider card. */
-function StatusPill({ state }: { state: "active" | "ready" | "open" }) {
-  if (state === "active") return <span className="chip-yellow">active</span>;
-  if (state === "ready")
-    return (
-      <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-        ready
-      </span>
-    );
-  return (
-    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-      open
-    </span>
-  );
-}
-
-/** A small amber hint line (install / locked) shown inside a provider card. */
+/** A small amber hint line (install / locked) shown inside a row body. */
 function CardHint({
   icon: Icon,
   children,
@@ -890,14 +806,14 @@ function CardHint({
   children: React.ReactNode;
 }) {
   return (
-    <p className="flex items-start gap-1.5 text-[11px] text-amber-600">
+    <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
       <Icon className="mt-0.5 h-3 w-3 shrink-0" />
       <span>{children}</span>
     </p>
   );
 }
 
-/** Connect (gold) action shared by the OAuth-login cards. */
+/** Connect (primary) action shared by the CLI-login rows. */
 function ConnectButton({
   onClick,
   disabled,
@@ -906,26 +822,43 @@ function ConnectButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-    >
+    <Button size="sm" onClick={onClick} disabled={disabled} className="h-7 gap-1.5 rounded-control px-2.5 text-xs">
       <LogIn className="h-3.5 w-3.5" />
       Connect
-    </button>
+    </Button>
+  );
+}
+
+/** Disconnect (quiet) action shared by the CLI-login rows. */
+function DisconnectButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={onClick}
+      disabled={disabled}
+      className="h-7 gap-1.5 rounded-control px-2 text-xs text-muted-foreground hover:text-foreground"
+    >
+      <LogOut className="h-3.5 w-3.5" />
+      Disconnect
+    </Button>
   );
 }
 
 /**
- * "Test" button + inline result panel shared by the three agent-CLI cards.
+ * "Test" button + inline result shared by the CLI rows.
  *
- * POSTs the card's live-test endpoint (the backend re-augments PATH, clears
+ * POSTs the row's live-test endpoint (the backend re-augments PATH, clears
  * the version caches, and spawns the real binary), then reports found /
  * not-found with the binary path, version and login state. A miss lists the
  * PATH directories that were searched — making "installed in the shell but
- * invisible to the app" (the macOS GUI-PATH trap) diagnosable on the card.
+ * invisible to the app" (the macOS GUI-PATH trap) diagnosable on the row.
  */
 function CliTestControl({
   endpoint,
@@ -944,7 +877,7 @@ function CliTestControl({
     try {
       setResult(await testAgentCli(endpoint));
       // The test may have just discovered a freshly-installed CLI (PATH was
-      // re-augmented) — refresh the section so the card state follows.
+      // re-augmented) — refresh the section so the row state follows.
       await onChanged?.();
     } catch (e) {
       setResult(null);
@@ -955,95 +888,110 @@ function CliTestControl({
   }
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={run}
-        disabled={running}
-        data-agent-card-control
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-      >
-        <FlaskConical className={cn("h-3.5 w-3.5", running && "animate-pulse")} />
-        {running ? "Testing…" : "Test"}
-      </button>
-      {(result || error) && (
-        <div
-          data-agent-card-control
-          className="basis-full rounded-lg border border-border bg-muted/40 p-2 text-[11px] leading-relaxed"
+    <div className="space-y-2 border-t border-border/60 pt-2.5" data-agent-card-control>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={run}
+          disabled={running}
+          className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
         >
-          {error ? (
-            <p className="text-red-500">Test failed: {error}</p>
-          ) : result ? (
+          <FlaskConical className={cn("h-3.5 w-3.5", running && "animate-pulse")} />
+          {running ? "Testing…" : "Test"}
+        </Button>
+        {result && !error && (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 text-xs",
+              result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+            )}
+          >
+            <span
+              aria-hidden="true"
+              className={cn("h-[7px] w-[7px] rounded-full", result.ok ? "bg-emerald-500" : "bg-amber-500")}
+            />
+            {result.message}
+          </span>
+        )}
+        {error && <span className="text-xs text-destructive">Test failed: {error}</span>}
+      </div>
+      {result && !error && result.installed && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {result.binary_path && (
             <>
-              <p className={result.ok ? "text-emerald-600" : "text-amber-600"}>
-                {result.ok ? "✓ " : "✗ "}
-                {result.message}
-              </p>
-              {result.installed && (
-                <p className="mt-1 text-muted-foreground">
-                  {result.binary_path && (
-                    <>
-                      Binary: <code className="break-all">{result.binary_path}</code>
-                      <br />
-                    </>
-                  )}
-                  {result.version && <>Version: {result.version} · </>}
-                  Login: {result.connected ? `connected (${result.auth_mode})` : "not connected"}
-                  {result.account ? ` · ${result.account}` : ""}
-                </p>
-              )}
-              {!result.installed && result.searched_path.length > 0 && (
-                <details className="mt-1 text-muted-foreground">
-                  <summary className="cursor-pointer select-none">
-                    Searched {result.searched_path.length} PATH directories
-                  </summary>
-                  <ul className="mt-1 max-h-32 overflow-y-auto">
-                    {result.searched_path.map((p) => (
-                      <li key={p} className="break-all">
-                        {p}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
+              Binary: <code className="break-all">{result.binary_path}</code>
+              <br />
             </>
-          ) : null}
-        </div>
+          )}
+          {result.version && <>Version: {result.version} · </>}
+          Login: {result.connected ? `connected (${result.auth_mode})` : "not connected"}
+          {result.account ? ` · ${result.account}` : ""}
+        </p>
       )}
-    </>
+      {result && !error && !result.installed && result.searched_path.length > 0 && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none">
+            Searched {result.searched_path.length} PATH directories
+          </summary>
+          <ul className="mt-1 max-h-32 overflow-y-auto">
+            {result.searched_path.map((p) => (
+              <li key={p} className="break-all">
+                {p}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
   );
 }
 
-/** Disconnect (ghost) action shared by the OAuth-login cards. */
-function DisconnectButton({
-  onClick,
-  disabled,
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-    >
-      <LogOut className="h-3.5 w-3.5" />
-      Disconnect
-    </button>
-  );
+/**
+ * The honest state vocabulary of a worker row. Each word says exactly what
+ * the app KNOWS: a CLI that reports its login is "connected" (green); a key
+ * that is merely stored is "key saved" (grey, not green — nothing has proven
+ * it answers); "no key" / "not installed" name the missing piece. The old
+ * "ready" for a stored key claimed more than anyone had checked.
+ */
+interface AgentState {
+  label: string;
+  tone: "ready" | "neutral" | "missing";
+  title?: string;
+}
+const STATE_CONNECTED: AgentState = { label: "connected", tone: "ready" };
+const STATE_NOT_CONNECTED: AgentState = { label: "not connected", tone: "neutral" };
+const STATE_NOT_INSTALLED: AgentState = { label: "not installed", tone: "missing" };
+const STATE_KEY_SAVED: AgentState = {
+  label: "key saved",
+  tone: "neutral",
+  title: "A key is stored. Whether it works is proven only by a run.",
+};
+const STATE_SHARED_KEY: AgentState = {
+  label: "shared key",
+  tone: "neutral",
+  title: "No dedicated key — the shared Brain key is used as a fallback.",
+};
+const STATE_NO_KEY: AgentState = { label: "no key", tone: "neutral" };
+const STATE_LOCAL: AgentState = { label: "no key needed", tone: "neutral" };
+
+/** The expand/collapse plumbing every row card receives from the section. */
+interface RowDisclosure {
+  expanded: boolean;
+  onToggle: () => void;
 }
 
 function CodexConnectionCard({
   status,
   row,
   onChanged,
+  expanded,
+  onToggle,
 }: {
   status: CodexStatus | null;
   row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
-}) {
+} & RowDisclosure) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
   const { activating, activate } = useSubagentActivate(row, onChanged);
@@ -1068,7 +1016,7 @@ function CodexConnectionCard({
       pushToast("info", "Codex login started — finish it in the browser window");
       await onChanged();
       // The login finishes asynchronously in the spawned console/browser, so
-      // poll until the CLI reports connected; then the card flips to selectable
+      // poll until the CLI reports connected; then the row flips to selectable
       // on its own — no manual reload needed.
       void pollStatusUntilConnected("/api/codex/status", onChanged).then((ok) => {
         if (ok) pushToast("success", `Codex connected — now selectable as a ${agentBrandNow()}`);
@@ -1093,34 +1041,54 @@ function CodexConnectionCard({
     }
   }
 
+  const selectable = connected || (installed && Boolean(row?.api_key_set));
   return (
-    <AgentCardShell
+    <AgentRow
+      testId="agent-row-openai-codex"
       label="OpenAI Codex"
       slug={row?.jarvis}
       title="OpenAI Codex"
-      billing={row?.billing}
       active={isActive}
-      badge={
-        <StatusPill
-          state={
-            isActive
-              ? "active"
-              : connected || (installed && row?.api_key_set)
-                ? "ready"
-                : "open"
-          }
-        />
+      expanded={expanded}
+      onToggle={onToggle}
+      state={
+        isActive
+          ? "active"
+          : connected
+            ? STATE_CONNECTED
+            : !installed
+              ? STATE_NOT_INSTALLED
+              : row?.api_key_set
+                ? STATE_KEY_SAVED
+                : STATE_NOT_CONNECTED
       }
       subtitle={detail}
-      warning={
-        <div className="space-y-2" data-agent-card-control>
+      actions={
+        <>
+          {connected ? (
+            <DisconnectButton onClick={disconnect} disabled={pending} />
+          ) : (
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
+          )}
+          {/* When connected, the same Use control as every other row — so
+              this subscription login is selectable right here. */}
+          {selectable && row && (
+            <SubagentActiveControl
+              row={row}
+              activating={activating}
+              onActivate={activate}
+            />
+          )}
+        </>
+      }
+      body={
+        <>
           {/* The OpenAI key is the ALTERNATIVE way in (per-token billing), not
               a requirement of the ChatGPT login. Showing it unconditionally on
-              this subscription card read as "the subscription needs an OpenAI
+              this subscription row read as "the subscription needs an OpenAI
               API key" (user report 2026-07-17), so render it only while the
               login is absent — or when a key is actually stored, so it stays
-              replaceable/deletable. Mirrors the Claude/Antigravity siblings,
-              whose subscription cards carry no key field. */}
+              replaceable/deletable. */}
           {row?.secret_key && (!connected || row.dedicated_key_set) && (
             <ApiKeyForm
               secretKey={row.secret_key}
@@ -1133,25 +1101,6 @@ function CodexConnectionCard({
           {!installed && (
             <CardHint icon={Terminal}>Install Codex before activating it.</CardHint>
           )}
-        </div>
-      }
-      footer={
-        <>
-          {/* When connected, the same "Set active" control as the other
-              provider cards — so this subscription login is selectable right
-              here, not only via a duplicate card further down. */}
-          {(connected || (installed && row?.api_key_set)) && row && (
-            <SubagentActiveControl
-              row={row}
-              activating={activating}
-              onActivate={activate}
-            />
-          )}
-          {connected ? (
-            <DisconnectButton onClick={disconnect} disabled={pending} />
-          ) : (
-            <ConnectButton onClick={connect} disabled={pending || !installed} />
-          )}
           <CliTestControl endpoint="/api/codex/test" onChanged={onChanged} />
         </>
       }
@@ -1163,11 +1112,13 @@ function AntigravityConnectionCard({
   status,
   row,
   onChanged,
+  expanded,
+  onToggle,
 }: {
   status: AntigravityStatus | null;
   row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
-}) {
+} & RowDisclosure) {
   const pushToast = useEventStore((s) => s.pushToast);
   const brand = useAgentBrand();
   const [pending, setPending] = useState(false);
@@ -1178,7 +1129,7 @@ function AntigravityConnectionCard({
   // `/api/jarvis-agent/status.key_set` is the canonical readiness decision.
   // Keep the independent live status gate as defense against two parallel
   // responses straddling an install/uninstall. A Gemini key alone belongs to
-  // the separate Google Gemini card and must never make this CLI card ready.
+  // the separate Google Gemini row and must never make this CLI row ready.
   const usable = Boolean(installed && row?.key_set);
   const isActive = Boolean(usable && row?.is_active_brain);
   const detail = connected
@@ -1196,7 +1147,7 @@ function AntigravityConnectionCard({
       pushToast("info", "Google login started — finish it in the browser window");
       await onChanged();
       // Same as Codex: the Google sign-in completes asynchronously, so poll
-      // until agy reports connected and the card unlocks on its own.
+      // until agy reports connected and the row unlocks on its own.
       void pollStatusUntilConnected("/api/antigravity/status", onChanged).then((ok) => {
         if (ok) {
           pushToast("success", `Antigravity connected — now selectable as a ${agentBrandNow()}`);
@@ -1223,23 +1174,33 @@ function AntigravityConnectionCard({
   }
 
   return (
-    <AgentCardShell
+    <AgentRow
+      testId="agent-row-antigravity"
       label="Antigravity"
       slug={row?.jarvis}
       title="Antigravity"
-      billing={row?.billing}
       active={isActive}
-      badge={<StatusPill state={isActive ? "active" : usable ? "ready" : "open"} />}
-      subtitle={detail}
-      warning={
-        !installed && (
-          <CardHint icon={Terminal}>
-            Install Antigravity or the Gemini CLI before connecting.
-          </CardHint>
-        )
+      expanded={expanded}
+      onToggle={onToggle}
+      state={
+        isActive
+          ? "active"
+          : connected
+            ? STATE_CONNECTED
+            : !installed
+              ? STATE_NOT_INSTALLED
+              : apiKeyReady
+                ? STATE_KEY_SAVED
+                : STATE_NOT_CONNECTED
       }
-      footer={
+      subtitle={detail}
+      actions={
         <>
+          {connected ? (
+            <DisconnectButton onClick={disconnect} disabled={pending} />
+          ) : (
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
+          )}
           {usable && row && (
             <SubagentActiveControl
               row={row}
@@ -1247,10 +1208,14 @@ function AntigravityConnectionCard({
               onActivate={activate}
             />
           )}
-          {connected ? (
-            <DisconnectButton onClick={disconnect} disabled={pending} />
-          ) : (
-            <ConnectButton onClick={connect} disabled={pending || !installed} />
+        </>
+      }
+      body={
+        <>
+          {!installed && (
+            <CardHint icon={Terminal}>
+              Install Antigravity or the Gemini CLI before connecting.
+            </CardHint>
           )}
           <CliTestControl endpoint="/api/antigravity/test" onChanged={onChanged} />
         </>
@@ -1263,11 +1228,13 @@ function GrokBuildConnectionCard({
   status,
   row,
   onChanged,
+  expanded,
+  onToggle,
 }: {
   status: GrokBuildStatus | null;
   row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
-}) {
+} & RowDisclosure) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
   const { activating, activate } = useSubagentActivate(row, onChanged);
@@ -1316,23 +1283,31 @@ function GrokBuildConnectionCard({
   }
 
   return (
-    <AgentCardShell
+    <AgentRow
+      testId="agent-row-grok-build"
       label="Grok Build"
       slug={row?.jarvis}
       title="Grok Build"
-      billing={row?.billing}
       active={isActive}
-      badge={<StatusPill state={isActive ? "active" : usable ? "ready" : "open"} />}
-      subtitle={detail}
-      warning={
-        !installed && (
-          <CardHint icon={Terminal}>
-            {status?.message || "Install Grok Build before connecting."}
-          </CardHint>
-        )
+      expanded={expanded}
+      onToggle={onToggle}
+      state={
+        isActive
+          ? "active"
+          : connected
+            ? STATE_CONNECTED
+            : !installed
+              ? STATE_NOT_INSTALLED
+              : STATE_NOT_CONNECTED
       }
-      footer={
+      subtitle={detail}
+      actions={
         <>
+          {connected ? (
+            <DisconnectButton onClick={disconnect} disabled={pending} />
+          ) : (
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
+          )}
           {usable && row && (
             <SubagentActiveControl
               row={row}
@@ -1340,10 +1315,14 @@ function GrokBuildConnectionCard({
               onActivate={activate}
             />
           )}
-          {connected ? (
-            <DisconnectButton onClick={disconnect} disabled={pending} />
-          ) : (
-            <ConnectButton onClick={connect} disabled={pending || !installed} />
+        </>
+      }
+      body={
+        <>
+          {!installed && (
+            <CardHint icon={Terminal}>
+              {status?.message || "Install Grok Build before connecting."}
+            </CardHint>
           )}
           <CliTestControl endpoint="/api/grok-build/test" onChanged={onChanged} />
         </>
@@ -1356,26 +1335,28 @@ function ClaudeConnectionCard({
   status,
   row,
   onChanged,
+  expanded,
+  onToggle,
 }: {
   status: ClaudeStatus | null;
   row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
-}) {
+} & RowDisclosure) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
   const { activating, activate } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected && status.mode === "subscription");
   const installed = status?.installed ?? false;
   // Claude has ONE subagent slug (claude-api) reached by EITHER the Claude Max
-  // OAuth login OR an Anthropic API key — split into two sibling cards (mirror
-  // of Codex/OpenAI + Antigravity/Gemini). This subscription card lights up only
+  // OAuth login OR an Anthropic API key — split into two sibling rows (mirror
+  // of Codex/OpenAI + Antigravity/Gemini). This subscription row lights up only
   // when claude-api is the active worker AND it is running over the OAuth login
-  // (mode != "api_key"); the API key card owns the api_key mode. So exactly one
+  // (mode != "api_key"); the API key row owns the api_key mode. So exactly one
   // of the two ever shows "active".
   const isActive = Boolean(row?.is_active_brain) && status?.mode === "subscription";
   // A subscription login shows the signed-in account + tier ("Connected as
   // ruben@… · Claude Max"); not connected shows how to sign in. The API-key
-  // alternative now lives on its own card below, not here.
+  // alternative lives on its own row in the API-keys group.
   const detail = connected
     ? status?.user_email
       ? `Connected as ${status.user_email}${
@@ -1391,7 +1372,7 @@ function ClaudeConnectionCard({
       pushToast("info", "Claude login started — finish it in the terminal window");
       await onChanged();
       // The sign-in finishes asynchronously in the spawned console, so poll
-      // until the CLI reports connected; the card then unlocks on its own.
+      // until the CLI reports connected; the row then unlocks on its own.
       void pollStatusUntilConnected("/api/claude/status", onChanged).then((ok) => {
         if (ok) pushToast("success", `Claude connected — now selectable as a ${agentBrandNow()}`);
       });
@@ -1416,21 +1397,31 @@ function ClaudeConnectionCard({
   }
 
   return (
-    <AgentCardShell
+    <AgentRow
+      testId="agent-row-claude-subscription"
       label="Anthropic Claude"
       slug={row?.jarvis}
       title="Anthropic Claude"
-      billing="subscription"
       active={isActive}
-      badge={<StatusPill state={isActive ? "active" : connected ? "ready" : "open"} />}
-      subtitle={detail}
-      warning={
-        !installed && (
-          <CardHint icon={Terminal}>Install the Claude CLI before connecting.</CardHint>
-        )
+      expanded={expanded}
+      onToggle={onToggle}
+      state={
+        isActive
+          ? "active"
+          : connected
+            ? STATE_CONNECTED
+            : !installed
+              ? STATE_NOT_INSTALLED
+              : STATE_NOT_CONNECTED
       }
-      footer={
+      subtitle={detail}
+      actions={
         <>
+          {connected ? (
+            <DisconnectButton onClick={disconnect} disabled={pending} />
+          ) : (
+            <ConnectButton onClick={connect} disabled={pending || !installed} />
+          )}
           {connected && row && (
             <SubagentActiveControl
               row={row}
@@ -1439,10 +1430,12 @@ function ClaudeConnectionCard({
               onActivate={activate}
             />
           )}
-          {connected ? (
-            <DisconnectButton onClick={disconnect} disabled={pending} />
-          ) : (
-            <ConnectButton onClick={connect} disabled={pending || !installed} />
+        </>
+      }
+      body={
+        <>
+          {!installed && (
+            <CardHint icon={Terminal}>Install the Claude CLI before connecting.</CardHint>
           )}
           <CliTestControl endpoint="/api/claude/test" onChanged={onChanged} />
         </>
@@ -1452,59 +1445,46 @@ function ClaudeConnectionCard({
 }
 
 /**
- * The Anthropic Claude (API) card — the per-token sibling of the subscription
- * card above, built to behave EXACTLY like the OpenAI / Google Gemini subagent
- * cards (`SubagentProviderCard`): there is NO key field here. The Anthropic API
- * key is entered ONCE on the "Claude (API-Key)" brain provider above, and this
- * card just reflects whether that key is set (`row.key_set`) and lets the user
- * pick Claude-on-the-key as the heavy-task worker — locked with a pointer to the
- * Brain section until the key exists, exactly like OpenAI/Gemini.
+ * The Anthropic Claude (API) row — the per-token sibling of the subscription
+ * row above, built to behave EXACTLY like the OpenAI / Google Gemini subagent
+ * rows (`SubagentProviderCard`). The dedicated key is entered here; the row
+ * reflects whether it is set (`row.api_key_set`) and lets the user pick
+ * Claude-on-the-key as the heavy-task worker — locked with a pointer until the
+ * key exists, exactly like OpenAI/Gemini.
  *
- * Claude has ONE subagent slug (claude-api) reached by either auth, so this card
- * and the subscription card both drive `useSubagentActivate(row)`. To keep only
+ * Claude has ONE subagent slug (claude-api) reached by either auth, so this row
+ * and the subscription row both drive `useSubagentActivate(row)`. To keep only
  * one of the two lit, "active" here means claude-api is the active worker AND it
- * is running over the API key (status mode === "api_key"); the subscription card
+ * is running over the API key (status mode === "api_key"); the subscription row
  * owns every other mode.
  */
 function ClaudeApiCard({
   status,
   row,
   onChanged,
+  expanded,
+  onToggle,
 }: {
   status: ClaudeStatus | null;
   row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
-}) {
+} & RowDisclosure) {
   const { activating, activate } = useSubagentActivate(row, onChanged);
   const brand = useAgentBrand();
-  // OAuth unlocks the subscription sibling only. This API card reflects an
+  // OAuth unlocks the subscription sibling only. This API row reflects an
   // actual API key, so a Claude Max login cannot paint it falsely ready.
   const keySet = Boolean(row?.api_key_set);
   const isActive = Boolean(row?.is_active_brain) && status?.mode === "api_key";
 
-  // Click anywhere on the card activates — except the radio/label (own handler)
-  // so a single user click never fires activate() twice (mirror of the others).
-  function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
-    const target = e.target as HTMLElement | null;
-    if (
-      target?.closest(
-        "input, label, button, a, select, textarea, [data-agent-card-control]",
-      )
-    ) {
-      return;
-    }
-    void activate();
-  }
-
   return (
-    <AgentCardShell
+    <AgentRow
+      testId="agent-row-claude-api"
       label="Anthropic Claude"
       slug={row?.jarvis}
       title="Anthropic Claude"
-      billing="api"
       active={isActive}
-      interactive={keySet && !isActive}
-      onClick={handleCardActivate}
+      expanded={expanded}
+      onToggle={onToggle}
       tooltip={
         isActive
           ? `This ${brand} provider is active`
@@ -1512,10 +1492,20 @@ function ClaudeApiCard({
             ? `Activate this ${brand} provider`
             : `Save a dedicated Claude ${brand} key first`
       }
-      badge={<StatusPill state={isActive ? "active" : keySet ? "ready" : "open"} />}
+      state={isActive ? "active" : keySet ? STATE_KEY_SAVED : STATE_NO_KEY}
       subtitle="API key · billed per token"
-      warning={
-        <div className="space-y-2" data-agent-card-control>
+      actions={
+        row && (
+          <SubagentActiveControl
+            row={row}
+            active={isActive}
+            activating={activating}
+            onActivate={activate}
+          />
+        )
+      }
+      body={
+        <>
           {row?.secret_key && (
             <ApiKeyForm
               secretKey={row.secret_key}
@@ -1530,17 +1520,7 @@ function ClaudeApiCard({
               Locked &mdash; save a dedicated <strong>Claude API key</strong> above.
             </CardHint>
           )}
-        </div>
-      }
-      footer={
-        row && (
-          <SubagentActiveControl
-            row={row}
-            active={isActive}
-            activating={activating}
-            onActivate={activate}
-          />
-        )
+        </>
       }
     />
   );
@@ -1548,9 +1528,8 @@ function ClaudeApiCard({
 
 /**
  * Shared "activate this subagent provider" action (POST /api/subagent/switch,
- * 3-layer persist). Used by the generic provider cards AND the Codex /
- * Antigravity subscription cards, so every selectable card behaves identically
- * — including the subscription logins, which previously had no "Set active".
+ * 3-layer persist). Used by the generic provider rows AND the CLI-login rows,
+ * so every selectable row behaves identically.
  */
 function useSubagentActivate(
   row: SubagentMappingRow | undefined,
@@ -1601,47 +1580,33 @@ function useSubagentActivate(
 }
 
 /**
- * One sub-agent-capable provider, styled to match the `ProviderCard` in
- * `ApiKeysView` (header + badge + id·auth sub-line + active highlight + the
- * "Set active" radio). Clicking the card or the radio switches the Heavy-Task
- * subagent provider via `POST /api/subagent/switch` (3-layer persist). The key
- * itself is managed by the brain-provider card above; a provider with no key
+ * One sub-agent-capable provider as a row. The Use control switches the
+ * heavy-task subagent provider via `POST /api/subagent/switch` (3-layer
+ * persist); the key itself lives in the row body. A provider with no key
  * cannot be activated (warning toast instead of a silent no-op).
  */
 function SubagentProviderCard({
   row,
   onSwitched,
+  expanded,
+  onToggle,
 }: {
   row: SubagentMappingRow;
   onSwitched: () => void | Promise<void>;
-}) {
+} & RowDisclosure) {
   const label = row.label ?? PROVIDER_LABELS[row.jarvis] ?? row.jarvis;
   const brand = useAgentBrand();
   const { activating, activate } = useSubagentActivate(row, onSwitched);
 
-  // Click anywhere on the card activates — except on the radio/label (which
-  // has its own handler) so a single user click never fires activate() twice.
-  function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
-    const target = e.target as HTMLElement | null;
-    if (
-      target?.closest(
-        "[data-agent-card-control], button, a, input, label, textarea, select",
-      )
-    ) {
-      return;
-    }
-    void activate();
-  }
-
   return (
-    <AgentCardShell
+    <AgentRow
+      testId={`agent-row-${row.jarvis}`}
       label={label}
       slug={row.jarvis}
       title={label}
-      billing={row.billing}
       active={row.is_active_brain}
-      interactive={row.key_set && !row.is_active_brain}
-      onClick={handleCardActivate}
+      expanded={expanded}
+      onToggle={onToggle}
       tooltip={
         row.is_active_brain
           ? `This ${brand} provider is active`
@@ -1649,12 +1614,18 @@ function SubagentProviderCard({
             ? `Activate this ${brand} provider`
             : "Set an API key first"
       }
-      // A keyless card has no key to wait for: it is ready as soon as it is
+      // A keyless row has no key to wait for: it is ready as soon as it is
       // listed, and every credential line below has to say so.
-      badge={
-        <StatusPill
-          state={row.is_active_brain ? "active" : row.key_set ? "ready" : "open"}
-        />
+      state={
+        row.is_active_brain
+          ? "active"
+          : row.keyless
+            ? STATE_LOCAL
+            : row.dedicated_key_set
+              ? STATE_KEY_SAVED
+              : row.shared_key_set
+                ? STATE_SHARED_KEY
+                : STATE_NO_KEY
       }
       subtitle={
         row.keyless
@@ -1665,46 +1636,49 @@ function SubagentProviderCard({
               ? "Using the shared Brain key as a compatibility fallback"
               : `Set a dedicated key for this ${brand}`
       }
-      warning={
-        <div className="space-y-2" data-agent-card-control>
-          {row.secret_key && (
-            <ApiKeyForm
-              secretKey={row.secret_key}
-              dashboardUrl={row.dashboard_url}
-              configured={row.dedicated_key_set}
-              credentialHelp={row.credential_help}
-              onChanged={onSwitched}
-            />
-          )}
-          {row.keyless && row.credential_help && (
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              {row.credential_help}
-            </p>
-          )}
-          {!row.key_set && (
-            <CardHint icon={Lock}>
-              Locked &mdash; save a dedicated <strong>{label}</strong> key on this card.
-            </CardHint>
-          )}
-        </div>
-      }
-      footer={
+      actions={
         <SubagentActiveControl
           row={row}
           activating={activating}
           onActivate={activate}
         />
       }
+      body={
+        row.secret_key || row.credential_help || !row.key_set ? (
+          <>
+            {row.secret_key && (
+              <ApiKeyForm
+                secretKey={row.secret_key}
+                dashboardUrl={row.dashboard_url}
+                configured={row.dedicated_key_set}
+                credentialHelp={row.credential_help}
+                onChanged={onSwitched}
+              />
+            )}
+            {row.keyless && row.credential_help && (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {row.credential_help}
+              </p>
+            )}
+            {!row.key_set && (
+              <CardHint icon={Lock}>
+                Locked &mdash; save a dedicated <strong>{label}</strong> key on this row.
+              </CardHint>
+            )}
+          </>
+        ) : undefined
+      }
     />
   );
 }
 
 /**
- * Radio-based active toggle, mirroring `ActiveControl` in `ApiKeysView`.
- * Source of truth stays `row.is_active_brain` from `/api/jarvis-agent/status`;
- * the radio reflects the server state and is not held locally.
- * `name="active-subagent"` gives native single-select across the cards.
- * The radio is NOT disabled when the key is missing — instead `activate()`
+ * The Use control, mirroring `ActiveControl` on the provider rows: visually a
+ * state word ("Active") or a quiet action ("Set active"), semantically still a
+ * radio in the `active-subagent` group so browsers, screen readers and the
+ * tests keep native single-select. Source of truth stays `row.is_active_brain`
+ * from `/api/jarvis-agent/status`; the radio reflects the server state and is
+ * not held locally. It is NOT disabled when the key is missing — `activate()`
  * routes a warning toast so every click gets a reaction.
  */
 function SubagentActiveControl({
@@ -1718,10 +1692,10 @@ function SubagentActiveControl({
   onActivate: () => void;
   /**
    * Explicit active state, overriding `row.is_active_brain`. The two Claude
-   * cards share ONE slug (claude-api), so the raw row flag would light BOTH
-   * radios at once. Each Claude card passes its mode-split flag here so only the
-   * card matching the live auth (subscription vs API key) shows "Active". Other
-   * cards omit it and fall back to the row flag.
+   * rows share ONE slug (claude-api), so the raw row flag would light BOTH
+   * radios at once. Each Claude row passes its mode-split flag here so only the
+   * row matching the live auth (subscription vs API key) shows "Active". Other
+   * rows omit it and fall back to the row flag.
    */
   active?: boolean;
 }) {
@@ -1738,12 +1712,12 @@ function SubagentActiveControl({
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       className={cn(
-        "inline-flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-xs",
+        "inline-flex h-7 shrink-0 cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-control px-2.5 text-xs transition-colors focus-within:ring-2 focus-within:ring-ring",
         isActive
-          ? "font-medium text-primary"
+          ? "font-medium text-foreground"
           : row.key_set
-            ? "text-muted-foreground hover:text-foreground"
-            : "text-muted-foreground/70",
+            ? "border border-border bg-background/60 text-muted-foreground hover:border-primary/50 hover:text-foreground"
+            : "border border-dashed border-border/80 text-muted-foreground/80 hover:text-foreground",
       )}
       title={labelTitle}
     >
@@ -1753,8 +1727,17 @@ function SubagentActiveControl({
         checked={isActive}
         onChange={() => onActivate()}
         disabled={activating}
-        className="accent-primary"
+        className="sr-only"
       />
+      {isActive && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "h-[7px] w-[7px] rounded-full bg-primary",
+            activating && "animate-pulse motion-reduce:animate-none",
+          )}
+        />
+      )}
       {activating ? "Activating…" : isActive ? "Active" : "Set active"}
     </label>
   );

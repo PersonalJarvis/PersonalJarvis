@@ -65,6 +65,7 @@ import {
   useSectionHealth,
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
+import { useProviderTestStore, verificationOf, type Verification } from "@/store/providerTests";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { robustCopy } from "@/lib/clipboard";
 import { filterForLocalMode } from "@/lib/localMode";
@@ -1023,6 +1024,7 @@ export function ProviderCard({
   const [consentPending, setConsentPending] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
+  const recordVerdict = useProviderTestStore((s) => s.record);
   // The card only escalates to red for a real "set up but failing" error — the
   // amber "needs setup" case stays on the tab + the open/ready badge so a fresh,
   // half-configured screen doesn't paint cards red.
@@ -1062,6 +1064,7 @@ export function ProviderCard({
       console.debug("polish provider verification failed to run", e);
       return;
     }
+    recordVerdict(descriptor.id, result);
     if (result.status === "ok") return;
     // The backend's sentence already names the cause AND the fix ("no credits",
     // "model not pulled", "slower than the 1200 ms limit — raise it or pick a
@@ -1653,12 +1656,15 @@ export function ProviderTestControl({
     );
   }
 
+  const recordVerdict = useProviderTestStore((s) => s.record);
+
   async function run() {
     setRunning(true);
     setResult(null);
     try {
       const next = await testProvider(providerId);
       setResult(next);
+      recordVerdict(providerId, next);
       publish(next);
     } catch (e) {
       const next: ProviderTestResult = {
@@ -1669,6 +1675,7 @@ export function ProviderTestControl({
         integration_ok: false,
       };
       setResult(next);
+      recordVerdict(providerId, next);
       publish(next);
     } finally {
       setRunning(false);
@@ -4143,14 +4150,17 @@ const STATE_CHIP_TONE = {
 
 export function StateChip({
   tone,
+  title,
   children,
 }: {
   tone: keyof typeof STATE_CHIP_TONE;
+  title?: string;
   children: React.ReactNode;
 }) {
   const meta = STATE_CHIP_TONE[tone];
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs leading-5",
         meta.wrap,
@@ -4205,7 +4215,15 @@ export function Tag({
  */
 export const PROVIDER_STATE_CHIPS = {
   active: { tone: "active", key: "apikeys_view.state_active" },
+  // "ready" is a VERDICT, not a presence check: the provider answered a real
+  // call (this session's Test, the on-disk runtime probe, or a CLI that
+  // reports its login). A stored key alone is "key_saved" — grey, not green.
   ready: { tone: "ready", key: "apikeys_view.state_ready" },
+  key_saved: { tone: "neutral", key: "apikeys_view.state_key_saved" },
+  no_key: { tone: "neutral", key: "apikeys_view.state_no_key" },
+  not_working: { tone: "missing", key: "apikeys_view.state_not_working" },
+  not_installed: { tone: "missing", key: "apikeys_view.state_not_installed" },
+  local: { tone: "neutral", key: "apikeys_view.state_local" },
   checking: { tone: "neutral", key: "apikeys_view.state_checking" },
   unavailable: { tone: "neutral", key: "apikeys_view.state_unavailable" },
   blocked: { tone: "missing", key: "apikeys_view.state_blocked" },
@@ -4219,9 +4237,17 @@ export const PROVIDER_STATE_CHIPS = {
 
 export type ProviderStateChip = keyof typeof PROVIDER_STATE_CHIPS;
 
-/** Which chip a descriptor deserves. Pure, so the mapping stays testable. */
+/**
+ * Which chip a descriptor deserves. Pure, so the mapping stays testable.
+ *
+ * `verification` is what this session's live Test found (see
+ * store/providerTests.ts); without one, a hosted provider with a key is
+ * "key_saved" — the chip says exactly as much as the app knows. Local engines
+ * and login CLIs carry their own probe, so they can honestly say ready.
+ */
 export function providerStateChip(
   descriptor: ProviderDescriptor,
+  verification: Verification = null,
 ): ProviderStateChip {
   if (descriptor.active) return "active";
   if (descriptor.auth_mode === "codex") {
@@ -4242,11 +4268,32 @@ export function providerStateChip(
     if (!status?.installed) return "missing";
     return status.connected ? "ready" : "not_connected";
   }
-  return descriptor.configured ? "ready" : "open";
+  // A live verdict outranks everything below: the provider was asked and
+  // answered (or did not).
+  if (verification === "failed") return "not_working";
+  if (verification === "ok") return "ready";
+  // On-device engine: the server's on-disk probe is the verdict.
+  if (descriptor.local_runtime) {
+    return descriptor.local_runtime.ready ? "ready" : "not_installed";
+  }
+  // Managed self-hosted server: installed and smoke-booted, or not there.
+  if (descriptor.managed_server) {
+    return descriptor.managed_server.ready ? "ready" : "not_installed";
+  }
+  // A keyless provider (Ollama, a local OpenAI-compatible server you point
+  // at) has nothing to store and, without a probe in its payload, nothing
+  // proven either: it needs no key, and a Test decides the rest.
+  if (descriptor.auth_mode === "none") return "local";
+  return descriptor.configured ? "key_saved" : "no_key";
 }
 
 export function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
   const t = useT();
-  const chip = PROVIDER_STATE_CHIPS[providerStateChip(descriptor)];
-  return <StateChip tone={chip.tone}>{t(chip.key)}</StateChip>;
+  const tested = useProviderTestStore((s) => s.results[descriptor.id]);
+  const chip = PROVIDER_STATE_CHIPS[providerStateChip(descriptor, verificationOf(tested))];
+  return (
+    <StateChip tone={chip.tone} title={tested?.detail || undefined}>
+      {t(chip.key)}
+    </StateChip>
+  );
 }
