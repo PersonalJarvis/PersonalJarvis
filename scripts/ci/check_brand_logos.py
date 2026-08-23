@@ -23,8 +23,13 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
-_BRANDS = _ROOT / "jarvis" / "ui" / "web" / "frontend" / "src" / "assets" / "brands"
-_LEDGER = _BRANDS / "LOGOS.md"
+_FRONTEND_ASSETS = _ROOT / "jarvis" / "ui" / "web" / "frontend" / "src" / "assets"
+# Two folders, one rulebook: the plugin-store marks and the provider-card
+# marks. Each keeps its own LOGOS.md ledger next to the files it records.
+_FOLDERS = (
+    _FRONTEND_ASSETS / "brands",
+    _FRONTEND_ASSETS / "providers",
+)
 
 # Generous: a real icon is square, but a few legitimate marks are slightly
 # rectangular. Anything past this is a logotype.
@@ -51,16 +56,13 @@ def _aspect(svg: str) -> float | None:
     return parts[2] / parts[3]
 
 
-def main() -> int:
-    if not _BRANDS.is_dir():
-        print("check_brand_logos: no brands folder - nothing to check.")
-        return 0
-
-    ledger = _LEDGER.read_text(encoding="utf-8") if _LEDGER.exists() else ""
-    problems: list[str] = []
-
-    for path in sorted(_BRANDS.glob("*.svg")):
-        plugin_id = path.stem
+def _check_folder(folder: Path, problems: list[str]) -> int:
+    """Append findings for one folder; return how many marks it holds."""
+    ledger_path = folder / "LOGOS.md"
+    ledger = ledger_path.read_text(encoding="utf-8") if ledger_path.exists() else ""
+    marks = sorted(folder.glob("*.svg"))
+    for path in marks:
+        mark_id = path.stem
         svg = path.read_text(encoding="utf-8", errors="replace")
         where = path.relative_to(_ROOT).as_posix()
 
@@ -84,23 +86,40 @@ def main() -> int:
                 "use the vendor's icon variant"
             )
 
-        if f"| {plugin_id} |" not in ledger:
+        if f"| {mark_id} |" not in ledger:
             problems.append(
                 f"{where}: no row in LOGOS.md - every bundled mark needs its "
                 "source and legal basis recorded"
             )
+    # A raster mark is allowed only as a standalone file (a vendor that ships
+    # no vector icon), and it still needs its row.
+    for path in sorted(folder.glob("*.png")):
+        if f"| {path.stem} |" not in ledger:
+            where = path.relative_to(_ROOT).as_posix()
+            problems.append(f"{where}: no row in LOGOS.md - record source and legal basis")
+    return len(marks) + len(list(folder.glob("*.png")))
+
+
+def main() -> int:
+    problems: list[str] = []
+    count = 0
+    checked = 0
+    for folder in _FOLDERS:
+        if not folder.is_dir():
+            continue
+        checked += 1
+        count += _check_folder(folder, problems)
+    if checked == 0:
+        print("check_brand_logos: no brand folders - nothing to check.")
+        return 0
 
     if problems:
         print("BRAND-LOGO GATE FAILED\n")
         for problem in problems:
             print(f"  [x] {problem}")
-        print(
-            f"\n{len(problems)} finding(s). See "
-            "jarvis/ui/web/frontend/src/assets/brands/LOGOS.md for the rules."
-        )
+        print(f"\n{len(problems)} finding(s). See the LOGOS.md next to the files for the rules.")
         return 1
 
-    count = len(list(_BRANDS.glob("*.svg")))
     print(f"check_brand_logos: OK - {count} bundled marks, all safe and recorded.")
     return 0
 

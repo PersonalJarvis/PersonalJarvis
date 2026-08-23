@@ -191,7 +191,7 @@ describe("ProviderCard — dictation polish activation", () => {
     const calls = installFetchMock();
 
     renderCard(dictationCard());
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => {
       // "openai", never "openai-polish": the chain ignores a family id it does
@@ -205,7 +205,7 @@ describe("ProviderCard — dictation polish activation", () => {
     const calls = installFetchMock();
 
     renderCard(dictationCard());
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => {
       expect(polishPin(calls).persist).toBe(true);
@@ -216,7 +216,7 @@ describe("ProviderCard — dictation polish activation", () => {
     const calls = installFetchMock();
 
     renderCard(dictationCard({ polish_family: null }));
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => {
       // Not the ideal value, but a live one: the route translates the card
@@ -229,7 +229,7 @@ describe("ProviderCard — dictation polish activation", () => {
     const calls = installFetchMock();
 
     renderCard(dictationCard());
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => expect(calls.length).toBeGreaterThan(0));
     // The realtime/STT/TTS switch routes rebuild the live voice pipeline. A
@@ -254,7 +254,7 @@ describe("ProviderCard — a switched-to polish provider proves it works", () =>
     const calls = installFetchMock();
 
     renderCard(dictationCard());
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     // A stored key is not a working provider, and this pass is INVISIBLE when
     // it fails — it just delivers the raw transcript. Without this probe an
@@ -278,7 +278,7 @@ describe("ProviderCard — a switched-to polish provider proves it works", () =>
     });
 
     renderCard(dictationCard());
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => {
       const warnings = toastsOf("warning");
@@ -293,7 +293,7 @@ describe("ProviderCard — a switched-to polish provider proves it works", () =>
     installFetchMock();
 
     renderCard(dictationCard());
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => expect(toastsOf("success").length).toBe(1));
     expect(toastsOf("warning")).toEqual([]);
@@ -324,7 +324,7 @@ describe("ProviderCard — a switched-to polish provider proves it works", () =>
       failingProbe as unknown as typeof fetch;
 
     renderCard(dictationCard());
-    fireEvent.click(screen.getByText("OpenAI: dictation polish"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => {
       expect(
@@ -516,7 +516,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
     // Clicking the card during busy must not demand a redo of a working
     // login — it answers with the same neutral "checking" note.
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
     expect(toastsOf("warning")).toEqual([]);
     expect(toastsOf("info")).toEqual([
       "Checking the ChatGPT voice status — one moment.",
@@ -677,7 +677,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     // The backend's live account gate is the ONLY judge that can clear the
     // sticky block — the click must reach it instead of dead-ending in a
     // local toast.
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() =>
       expect(
@@ -733,7 +733,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
       }),
     );
 
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
 
     expect(toastsOf("warning")).toEqual([
       "This voice provider needs a ChatGPT subscription login. Connect with ChatGPT below.",
@@ -773,7 +773,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     window.localStorage.setItem(EXPERIMENTAL_CONSENT_KEY, "1");
     renderCard(codexRealtimeCard());
 
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() => {
       const call = calls.find(
@@ -794,7 +794,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     const optimistic = vi.fn();
     renderCard(codexRealtimeCard(), () => {}, optimistic);
 
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
 
     // An in-app dialog, not window.confirm: the desktop shell renders that as
     // a raw "127.0.0.1 says" box and it blocks the whole window.
@@ -817,7 +817,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     const optimistic = vi.fn();
     renderCard(codexRealtimeCard(), () => {}, optimistic);
 
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
 
     const accept = await screen.findByText("Yes");
     expect(optimistic).not.toHaveBeenCalled();
@@ -837,7 +837,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     const optimistic = vi.fn();
     renderCard(codexRealtimeCard(), () => {}, optimistic);
 
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
 
     // Straight through: re-asking every time taught the user to click the
     // notice away unread, which defeats the point of showing it at all.
@@ -899,12 +899,14 @@ describe("ProviderCard — an unavailable card does not build a warning wall", (
     installFetchMock();
     renderCard(unconnectedSubscriptionCard());
 
-    const title = screen.getByText("ChatGPT subscription (Codex)");
-    // Exactly what a user does: a real double click delivers two click events
-    // plus one dblclick. Only the clicks may reach the handler now.
-    fireEvent.click(title);
-    fireEvent.click(title);
-    fireEvent.doubleClick(title);
+    // The row's "Use" control is the one thing that activates — the row
+    // itself only opens and closes the editor, so a click on the title is no
+    // longer a switch at all. Exactly what a user does on the control: a real
+    // double click delivers two click events plus one dblclick.
+    const useControl = screen.getByRole("radio");
+    fireEvent.click(useControl);
+    fireEvent.click(useControl);
+    fireEvent.doubleClick(useControl);
 
     await waitFor(() =>
       expect(useEventStore.getState().toasts.length).toBeGreaterThan(0),
@@ -919,7 +921,7 @@ describe("ProviderCard — an unavailable card does not build a warning wall", (
     const calls = installFetchMock();
     renderCard(unconnectedSubscriptionCard());
 
-    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    fireEvent.click(screen.getByRole("radio"));
 
     await waitFor(() =>
       expect(useEventStore.getState().toasts.length).toBe(1),

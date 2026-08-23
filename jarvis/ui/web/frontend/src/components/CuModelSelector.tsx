@@ -102,11 +102,11 @@ export function CuModelSelector({
           return res;
         }}
       />
-      <p className="text-[10px] text-muted-foreground/80">
+      <p className="text-[11px] text-muted-foreground/80">
         {t("apikeys_cu_model.vision_note")}
       </p>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-[11px] text-muted-foreground">
           {usesMain
             ? t("apikeys_cu_model.using_main")
             : `${t("apikeys_cu_model.effective")}: ${effective || cuModel}`}

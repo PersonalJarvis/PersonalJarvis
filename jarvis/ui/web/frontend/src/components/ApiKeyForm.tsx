@@ -148,7 +148,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       href={dashboardUrl}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
+      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
     >
       <ExternalLink className="h-3 w-3" />{" "}
       {dashboardHost
@@ -158,8 +158,8 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
   ) : null;
 
   const sharedDeleteConfirm = confirmingDelete ? (
-    <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-2">
-      <p className="flex items-start gap-1 text-[11px] text-destructive">
+    <div className="space-y-2 rounded-control border border-destructive/40 bg-destructive/[0.06] px-3 py-2">
+      <p className="flex items-start gap-1.5 text-xs text-destructive">
         <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
         <span>
           {t("apikeys_view.shared_delete_prefix")} {(sharedWith ?? []).join(", ")}.{" "}
@@ -186,23 +186,26 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     // The saved state says so in words, not only in dots: a masked row alone
     // reads as "there is SOMETHING here", while "Key saved" + a green check
     // answers the actual question ("am I done with this field?") at a glance.
+    // One field-shaped row that carries its own state and actions: the check
+    // and "Key saved" on the left, the masked value, then "Replace" as a text
+    // link and a quiet trash icon on the right. Two free-standing buttons
+    // beside a box read as three controls for one fact.
     return (
       <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5">
-            <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-            <span className="shrink-0 text-xs font-medium text-foreground">
-              {t("apikeys_view.key_saved_label")}
-            </span>
-            <code className="truncate font-mono text-xs text-muted-foreground">
-              {"\u2022".repeat(12)}
-            </code>
-          </div>
+        <div className="flex h-9 min-w-0 items-center gap-2.5 rounded-control border border-border bg-background/60 pl-3 pr-1.5">
+          <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <span className="shrink-0 text-xs font-medium text-foreground">
+            {t("apikeys_view.key_saved_label")}
+          </span>
+          <code className="min-w-0 flex-1 truncate font-mono text-xs tracking-[0.2em] text-muted-foreground">
+            {"\u2022".repeat(12)}
+          </code>
           <Button
             size="sm"
             variant="ghost"
             onClick={() => setEditing(true)}
             title={t("apikeys_view.replace_tooltip")}
+            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
           >
             {t("apikeys_view.replace")}
           </Button>
@@ -213,7 +216,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             disabled={pending}
             aria-label={`Delete ${secretKey}`}
             title={t("apikeys_view.delete_key_tooltip")}
-            className="text-destructive hover:text-destructive"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -231,7 +234,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     // with the dedicated key as an explicit optional upgrade.
     return (
       <div className="space-y-2">
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           {coveredNote || t("apikeys_view.shared_key_covered")}
         </p>
         <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
@@ -245,7 +248,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
   return (
     <div className="space-y-2">
       {credentialHelp && (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">{credentialHelp}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{credentialHelp}</p>
       )}
       <div className="flex gap-2">
         <div className="relative flex-1">
@@ -259,7 +262,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             // assistive tech (and tests) still identify the exact field.
             placeholder={t("apikeys_view.paste_key_placeholder")}
             className={cn(
-              "w-full rounded-md border border-input bg-background px-3 py-1.5 pr-9 font-mono text-xs",
+              "h-9 w-full rounded-control border border-input bg-background px-3 pr-9 font-mono text-xs",
               "focus:outline-none focus:ring-1 focus:ring-primary",
             )}
             onKeyDown={(e) => {
@@ -276,18 +279,28 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             {reveal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
           </button>
         </div>
-        <Button size="sm" onClick={handleSave} disabled={pending || !value.trim()}>
+        <Button
+          size="sm"
+          onClick={handleSave}
+          disabled={pending || !value.trim()}
+          className="h-9 rounded-control"
+        >
           {pending ? "…" : t("common.save")}
         </Button>
         {(configured || coveredByShared) && (
-          <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setEditing(false)}
+            className="h-9 rounded-control"
+          >
             {t("common.cancel")}
           </Button>
         )}
       </div>
       {fmt && !fmt.match && fmt.detected && (
         <div className="space-y-1">
-          <p className="flex items-start gap-1 text-[11px] text-amber-500">
+          <p className="flex items-start gap-1 text-xs text-amber-500">
             <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
             <span>
               {t("apikeys_view.format_mismatch").replace("{0}", fmt.detected.label)}
@@ -297,7 +310,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
               Vertex service-account file, not an AI Studio key") — most useful
               exactly here, in the mismatch case, not only on a match. */}
           {fmt.detected.note && (
-            <p className="text-[11px] text-muted-foreground">{fmt.detected.note}</p>
+            <p className="text-xs text-muted-foreground">{fmt.detected.note}</p>
           )}
         </div>
       )}
@@ -306,13 +319,13 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
           random string has no way to tell "right kind of key" from "garbage" —
           this answers it before they hit Save. Format only, never validity. */}
       {fmt && keyFormatConfirmed(fmt) && (
-        <p className="flex items-start gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+        <p className="flex items-start gap-1 text-xs text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{t("apikeys_view.format_match_hint")}</span>
         </p>
       )}
       {fmt && fmt.match && fmt.detected?.note && (
-        <p className="text-[11px] text-muted-foreground">{fmt.detected.note}</p>
+        <p className="text-xs text-muted-foreground">{fmt.detected.note}</p>
       )}
       {dashboardLink}
     </div>

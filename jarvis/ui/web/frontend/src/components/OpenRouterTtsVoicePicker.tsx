@@ -103,7 +103,7 @@ function LanguageChip({ code }: { code: string }) {
   const t = useT();
   const { flag, label } = languageChip(t, code);
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
       {flag && <span aria-hidden>{flag}</span>}
       {label}
     </span>
@@ -281,7 +281,7 @@ function VoicePicker({
       onDoubleClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
           {t("apikeys_voice.heading")}
         </span>
         {/* Preview-language toggle (the sample sentence's language). */}
@@ -290,7 +290,7 @@ function VoicePicker({
           role="group"
           aria-label={t("apikeys_voice.preview_language")}
         >
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground">
             {t("apikeys_voice.preview_in")}
           </span>
           {(["de", "en", "es"] as const).map((lng) => (
@@ -300,7 +300,7 @@ function VoicePicker({
               onClick={() => setPreviewLang(lng)}
               aria-pressed={previewLang === lng}
               className={cn(
-                "rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide transition-colors",
+                "rounded-full border px-1.5 py-0.5 text-[11px] uppercase tracking-wide transition-colors",
                 previewLang === lng
                   ? "border-primary/40 bg-primary/20 text-primary"
                   : "border-border bg-muted text-muted-foreground hover:text-foreground",
@@ -403,7 +403,7 @@ function VoicePicker({
             )}
           </ul>
           {voices.length > 0 && (
-            <div className="border-t border-border px-2.5 py-1 text-[10px] text-muted-foreground">
+            <div className="border-t border-border px-2.5 py-1 text-[11px] text-muted-foreground">
               {t("apikeys_voice.count_hint").replace("{0}", String(voices.length))}
             </div>
           )}

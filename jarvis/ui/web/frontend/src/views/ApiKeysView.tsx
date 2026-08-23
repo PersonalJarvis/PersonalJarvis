@@ -139,7 +139,7 @@ export function ApiKeysView() {
         title={t("apikeys_view.title")}
         subtitle={t("apikeys_view.subtitle")}
         right={
-          <div className="flex items-start gap-2">
+          <div className="flex items-center gap-3">
             <LocalModeSwitch enabled={localMode} onToggle={setLocalMode} />
             <EngineModeSwitch
               mode={engineMode}
@@ -156,7 +156,7 @@ export function ApiKeysView() {
 
       <div
         data-testid="api-keys-provider-scroll"
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-4 py-4"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-6 py-3"
       >
         <VoiceEngineContext
           mode={engineMode}
@@ -272,24 +272,25 @@ function CategoryTabs({
   return (
     <div
       data-testid="api-keys-category-tabs"
-      className="shrink-0 overflow-x-auto border-b border-border px-4 py-2 scrollbar-jarvis"
+      className="shrink-0 overflow-x-auto border-b border-border px-6 scrollbar-jarvis"
     >
-      <div role="tablist" className="flex min-w-max flex-nowrap items-center gap-1.5">
-        <div className="flex flex-nowrap items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
-          {coreTabs.map((key) => (
-            <TabButton
-              key={key}
-              icon={tabMeta[key].icon}
-              label={tabMeta[key].label}
-              selected={active === key}
-              onClick={() => onSelect(key)}
-              health={health[key]}
-            />
-          ))}
-        </div>
+      {/* Underline tabs on the header's own rule — no pill group inside a
+          frame inside a bar. The core tabs and the two secondary ones share
+          one baseline; a hairline separates them. */}
+      <div role="tablist" className="flex min-w-max flex-nowrap items-center gap-1">
+        {coreTabs.map((key) => (
+          <TabButton
+            key={key}
+            icon={tabMeta[key].icon}
+            label={tabMeta[key].label}
+            selected={active === key}
+            onClick={() => onSelect(key)}
+            health={health[key]}
+          />
+        ))}
         {(showJarvisKey || showAdvanced) && (
           <span
-            className="mx-1 hidden h-6 w-px bg-border/70 sm:block"
+            className="mx-2 hidden h-4 w-px bg-border sm:block"
             aria-hidden="true"
           />
         )}
@@ -365,33 +366,31 @@ function TabButton({
       onClick={onClick}
       title={title}
       className={cn(
-        "relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-        muted
-          ? selected
-            ? "bg-secondary text-foreground ring-1 ring-border"
-            : "text-muted-foreground/70 hover:bg-secondary/50 hover:text-foreground"
-          : selected
-            ? "bg-primary/10 text-primary ring-1 ring-primary/30"
-            : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-        // A faint red outline echoes the "rot umrandet" cue for a broken section,
-        // independent of the selection ring so the two never fight.
-        indicator === "error" && "outline outline-1 outline-destructive/70",
+        "relative -mb-px inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 text-[13px] font-medium transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        selected
+          ? "border-primary text-foreground"
+          : muted
+            ? "border-transparent text-muted-foreground/70 hover:text-foreground"
+            : "border-transparent text-muted-foreground hover:text-foreground",
       )}
     >
-      <Icon className="h-4 w-4" />
-      {label}
-      {indicator && (
-        <>
-          <span
-            aria-hidden="true"
-            className={cn(
-              "absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background",
-              indicator === "error" ? "bg-destructive" : "bg-amber-500",
-            )}
-          />
-          <span className="sr-only">{` (${statusLabel})`}</span>
-        </>
+      {/* The attention dot sits where the icon would: it is the only colour in
+          the bar besides the gold underline, so a dot always means "look here"
+          — red for "set up but broken", amber for "still to set up". */}
+      {indicator ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "h-[7px] w-[7px] shrink-0 rounded-full",
+            indicator === "error" ? "bg-destructive" : "bg-amber-500",
+          )}
+        />
+      ) : (
+        <Icon className="h-4 w-4 opacity-80" />
       )}
+      {label}
+      {indicator && <span className="sr-only">{` (${statusLabel})`}</span>}
     </button>
   );
 }

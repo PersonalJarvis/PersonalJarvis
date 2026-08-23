@@ -394,7 +394,7 @@ export function BrainModelSelector({
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
           {headingLabel ??
             (selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading"))}
         </span>
@@ -413,7 +413,7 @@ export function BrainModelSelector({
       onDoubleClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
           {headingLabel ??
             (selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading"))}
         </span>
@@ -506,7 +506,7 @@ export function BrainModelSelector({
                       aria-label={t(`apikeys_model.filter_${f}`)}
                       title={t(`apikeys_model.filter_hint_${f}`)}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors",
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
                         isActive
                           ? "border-primary/40 bg-primary/20 text-primary"
                           : "border-border bg-muted text-muted-foreground hover:text-foreground",
@@ -521,7 +521,7 @@ export function BrainModelSelector({
                 })}
               </div>
               {filter !== "all" && (
-                <p className="px-2.5 pb-1.5 text-[10px] leading-snug text-muted-foreground">
+                <p className="px-2.5 pb-1.5 text-[11px] leading-snug text-muted-foreground">
                   {t(`apikeys_model.filter_hint_${filter}`)}
                 </p>
               )}
@@ -564,12 +564,12 @@ export function BrainModelSelector({
                         )}
                         {m.label}
                         {recommendedModel && m.id === recommendedModel && (
-                          <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary-foreground">
+                          <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-primary-foreground">
                             {t("apikeys_model.recommended_tag")}
                           </span>
                         )}
                       </span>
-                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
                         {m.id}
                       </span>
                     </button>
@@ -615,7 +615,7 @@ export function BrainModelSelector({
           </ul>
 
           {matched.length > 0 && (
-            <div className="border-t border-border px-2.5 py-1 text-[10px] text-muted-foreground">
+            <div className="border-t border-border px-2.5 py-1 text-[11px] text-muted-foreground">
               {t("apikeys_model.count_hint").replace("{0}", String(matched.length))}
             </div>
           )}

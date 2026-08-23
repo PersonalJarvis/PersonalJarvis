@@ -6,7 +6,7 @@ import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { CuModelSelector } from "@/components/CuModelSelector";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
-import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
 import {
@@ -287,18 +287,28 @@ export function EngineModeSwitch({
     }
   }
 
+  // The guidance ("Recommended" / "Not recommended" / "you only set up one
+  // engine") stays — as the tooltip and for assistive tech. What went was the
+  // 8 px badge inside each segment and the caption under the control: a
+  // header control carries its state, not its manual.
+  const pickOneHint = t("apikeys_view.mode_pick_one_hint");
+
   return (
     <div
       data-testid="voice-engine-header-control"
       role="group"
       aria-label={t("apikeys_view.voice_engine_label")}
+      title={pickOneHint}
       className="shrink-0"
     >
-      <div className="relative grid min-w-56 grid-cols-2 rounded-lg border border-border bg-card/40 p-0.5">
+      <span data-testid="voice-engine-pick-one-hint" className="sr-only">
+        {pickOneHint}
+      </span>
+      <div className="relative grid min-w-48 grid-cols-2 rounded-surface border border-border bg-card/40 p-0.5">
         <span
           data-testid="voice-engine-selection-thumb"
           aria-hidden="true"
-          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-md bg-primary shadow-[0_0_14px_rgba(255,214,10,0.22)] transition-transform duration-200 ease-out"
+          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-control bg-primary transition-transform duration-200 ease-out motion-reduce:transition-none"
           style={{ transform: `translateX(${selectedIndex * 100}%)` }}
         />
         {segments.map((seg) => {
@@ -308,6 +318,11 @@ export function EngineModeSwitch({
           const needsKey = seg.key === "realtime" && !realtimeAvailable;
           const isRecommended = seg.key === "realtime";
           const Icon = seg.icon;
+          const guidance = t(
+            isRecommended
+              ? "apikeys_view.mode_recommended"
+              : "apikeys_view.not_recommended",
+          );
           return (
             <button
               key={seg.key}
@@ -315,8 +330,9 @@ export function EngineModeSwitch({
               onClick={() => handleSelect(seg.key)}
               aria-pressed={isSelected}
               data-live={isLive ? "true" : "false"}
+              title={guidance}
               className={cn(
-                "relative z-10 inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                "relative z-10 inline-flex h-7 items-center justify-center gap-1.5 rounded-control px-3 text-xs font-medium transition-colors",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 isSelected
                   ? "text-primary-foreground"
@@ -325,26 +341,20 @@ export function EngineModeSwitch({
                     : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <Icon aria-hidden="true" className="h-3 w-3" />
+              <Icon aria-hidden="true" className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap">{seg.label}</span>
-              <span
-                className={cn(
-                  "whitespace-nowrap rounded-full px-1 py-px text-[8px] font-semibold uppercase tracking-wide",
-                  isRecommended
-                    ? isSelected
-                      ? "bg-primary-foreground/20 text-primary-foreground"
-                      : "bg-primary/15 text-primary"
-                    : isSelected
-                      ? "border border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
-                      : "border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-                )}
-              >
-                {t(
-                  isRecommended
-                    ? "apikeys_view.mode_recommended"
-                    : "apikeys_view.not_recommended",
-                )}
-              </span>
+              {/* The recommendation as a 5 px dot, not a capsule: enough to
+                  say "this one", quiet enough to live inside a button. */}
+              {isRecommended && (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    isSelected ? "bg-primary-foreground/80" : "bg-primary",
+                  )}
+                />
+              )}
+              <span className="sr-only">{` (${guidance})`}</span>
               {isLive && (
                 <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>
               )}
@@ -352,15 +362,6 @@ export function EngineModeSwitch({
           );
         })}
       </div>
-      {/* One discreet reminder right where the choice is made: you configure
-          exactly one engine, never both. The per-mode key details live in the
-          VoiceEngineContext copy below, so this stays a single short line. */}
-      <p
-        data-testid="voice-engine-pick-one-hint"
-        className="mt-1 text-right text-[10px] leading-tight text-muted-foreground/70"
-      >
-        {t("apikeys_view.mode_pick_one_hint")}
-      </p>
     </div>
   );
 }
@@ -385,45 +386,46 @@ export function LocalModeSwitch({
   onToggle: (next: boolean) => void;
 }) {
   const t = useT();
+  // A real switch: the knob's position IS the state, so no "ON"/"OFF" capsule
+  // has to spell it out. The one-line explanation lives in the tooltip and
+  // for assistive tech — not as a caption under the header.
+  const hint = t("apikeys_view.local_mode_hint");
   return (
-    <div className="shrink-0">
+    <div className="flex shrink-0 items-center">
       <button
         type="button"
         data-testid="local-mode-switch"
         aria-pressed={enabled}
         onClick={() => onToggle(!enabled)}
-        title={t(
+        title={`${t(
           enabled ? "apikeys_view.local_mode_title_on" : "apikeys_view.local_mode_title_off",
-        )}
+        )} — ${hint}`}
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-[0.4375rem] text-xs font-medium transition-colors",
+          "group inline-flex h-8 items-center gap-2 rounded-control px-1.5 text-xs font-medium transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          enabled
-            ? "border-primary/40 bg-primary/15 text-primary"
-            : "border-border bg-card/40 text-muted-foreground hover:text-foreground",
+          enabled ? "text-foreground" : "text-muted-foreground hover:text-foreground",
         )}
       >
-        <HardDrive aria-hidden="true" className="h-3.5 w-3.5" />
-        <span className="whitespace-nowrap">{t("apikeys_view.local_mode_label")}</span>
         <span
+          aria-hidden="true"
           className={cn(
-            "whitespace-nowrap rounded-full px-1 py-px text-[8px] font-semibold uppercase tracking-wide",
-            enabled
-              ? "bg-primary/25 text-primary"
-              : "border border-border bg-background/60 text-muted-foreground/80",
+            "relative inline-block h-[18px] w-[30px] shrink-0 rounded-full transition-colors",
+            enabled ? "bg-primary" : "bg-border group-hover:bg-muted-foreground/40",
           )}
         >
-          {t(enabled ? "apikeys_view.local_mode_on" : "apikeys_view.local_mode_off")}
+          <span
+            className={cn(
+              "absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform motion-reduce:transition-none",
+              enabled && "translate-x-3",
+            )}
+          />
+        </span>
+        <HardDrive aria-hidden="true" className="h-3.5 w-3.5 opacity-80" />
+        <span className="whitespace-nowrap">{t("apikeys_view.local_mode_label")}</span>
+        <span className="sr-only">
+          {` — ${t(enabled ? "apikeys_view.local_mode_on" : "apikeys_view.local_mode_off")}. ${hint}`}
         </span>
       </button>
-      {/* Mirrors the engine switch's one-line hint so the two controls sit on
-          the same baseline and the header stays a single tidy row. */}
-      <p
-        data-testid="local-mode-hint"
-        className="mt-1 text-right text-[10px] leading-tight text-muted-foreground/70"
-      >
-        {t("apikeys_view.local_mode_hint")}
-      </p>
     </div>
   );
 }
@@ -450,7 +452,7 @@ export function LocalModeNotice({
       // is a translated template, so this is the one place a test (or a support
       // screenshot) can read the number without depending on wording.
       data-hidden-count={hiddenCount}
-      className="mb-3 flex items-start gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.05] px-3 py-2"
+      className="mb-3 flex items-start gap-2.5 rounded-surface border border-border bg-card/40 px-3 py-2"
     >
       <HardDrive aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
       <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
@@ -562,63 +564,90 @@ export function VoiceEngineContext({
         ? t("apikeys_view.mode_desc_realtime")
         : t("apikeys_view.mode_desc_pipeline");
 
+  const attention = transitioning || connecting || !runtimeMatchesSelection;
+
+  // One line, not a box: what is running right now (dot + words), what the
+  // selected engine means, and an "i" that opens the longer explanation on
+  // demand. The previous band restated the section three times before the
+  // first card; everything it said is still here, one click deeper.
   return (
     <section
       data-testid="voice-engine-context"
-      className="mx-auto mb-4 w-full max-w-4xl rounded-xl border border-border bg-card/25 px-3 py-2"
+      className="mx-auto mb-2 w-full max-w-4xl"
       aria-label={t("apikeys_view.voice_engine_label")}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
+      <div className="flex min-w-0 items-center gap-2.5 py-1.5 text-xs">
         <div
-          className="flex min-w-64 flex-1 items-center gap-2 overflow-hidden text-xs"
-          title={`${t("apikeys_view.voice_engine_desc")} ${modeDescription}`}
-        >
-          <Volume2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <span className="shrink-0 font-medium text-foreground">
-            {t("apikeys_view.voice_engine_label")}
-          </span>
-          <span aria-hidden="true" className="text-border">·</span>
-          <span className="min-w-0 truncate text-muted-foreground">
-            {modeDescription}
-            {mode === "realtime" && (
-              <span className="text-amber-500/90">
-                {` · ${t("apikeys_view.mode_realtime_preview")}`}
-              </span>
-            )}
-          </span>
-        </div>
-        <div
-          className="flex shrink-0 items-center gap-1.5 text-[11px] leading-snug"
+          className="flex min-w-0 shrink-0 items-center gap-2"
           aria-live="polite"
           data-testid="voice-engine-runtime-status"
         >
           <span
             aria-hidden="true"
             className={cn(
-              "h-1.5 w-1.5 shrink-0 rounded-full",
+              "h-[7px] w-[7px] shrink-0 rounded-full",
               transitioning || connecting
-                ? "animate-pulse bg-amber-400 motion-reduce:animate-none"
+                ? "animate-pulse bg-amber-500 motion-reduce:animate-none"
                 : runtimeMatchesSelection
-                  ? "bg-emerald-400"
-                  : "bg-amber-400",
+                  ? "bg-emerald-500 shadow-[0_0_0_3px_rgb(16_185_129/0.18)]"
+                  : "bg-amber-500",
             )}
           />
           <span
             className={cn(
-              runtimeMatchesSelection && !transitioning && !connecting
-                ? "text-muted-foreground"
-                : "text-amber-300",
+              "font-medium",
+              attention ? "text-amber-600 dark:text-amber-400" : "text-foreground",
             )}
           >
             {runtimeText}
           </span>
         </div>
+        <span aria-hidden="true" className="text-border">·</span>
+        <span
+          className="min-w-0 flex-1 truncate text-muted-foreground"
+          title={`${t("apikeys_view.voice_engine_desc")} ${modeDescription}`}
+        >
+          {modeDescription}
+        </span>
+        {/* The research-preview caveat as a tag; the full sentence is its
+            tooltip and is read out in full — a one-line status has no room
+            for a second sentence, and truncating a warning is worse than
+            shortening it. */}
+        {mode === "realtime" && (
+          <Tag tone="warn" title={t("apikeys_view.mode_realtime_preview")}>
+            {t("apikeys_view.mode_realtime_preview_short")}
+            <span className="sr-only">{` — ${t("apikeys_view.mode_realtime_preview")}`}</span>
+          </Tag>
+        )}
+        <details className="group relative shrink-0">
+          <summary
+            className="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden"
+            title={t("apikeys_view.voice_engine_desc")}
+          >
+            <span
+              aria-hidden="true"
+              className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-xs font-semibold leading-none"
+            >
+              i
+            </span>
+            <span className="hidden sm:inline">{t("apikeys_view.voice_engine_label")}</span>
+          </summary>
+          <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-surface border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground shadow-lg">
+            <p className="font-medium text-foreground">
+              {t("apikeys_view.voice_engine_desc")}
+            </p>
+            <p data-testid="voice-engine-keys-hint" className="mt-1.5">
+              {t("apikeys_view.mode_keys_hint")}
+            </p>
+            <p className="mt-1.5">{t("apikeys_view.mode_pick_one_hint")}</p>
+          </div>
+        </details>
       </div>
 
       {offerDetail && (
         <p
           data-testid="voice-engine-transport-offer-detail"
-          className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+          className="pb-1 text-xs leading-snug text-amber-600 dark:text-amber-400"
           aria-live="polite"
         >
           {offerDetail}
@@ -628,7 +657,7 @@ export function VoiceEngineContext({
       {liveMode === "realtime" && lastStartError && (
         <p
           data-testid="voice-engine-last-start-error"
-          className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+          className="pb-1 text-xs leading-snug text-amber-600 dark:text-amber-400"
           aria-live="polite"
         >
           {t("voice_state.connect_failed")
@@ -636,13 +665,6 @@ export function VoiceEngineContext({
             .replace("{1}", lastStartError.message)}
         </p>
       )}
-
-      <p
-        data-testid="voice-engine-keys-hint"
-        className="mt-1 text-[11px] leading-snug text-muted-foreground/80"
-      >
-        {t("apikeys_view.mode_keys_hint")}
-      </p>
 
       {mode === "realtime" && (
         <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
@@ -703,13 +725,15 @@ function RecommendedSetupPanel({
   return (
     <div
       data-testid="recommended-setup-panel"
-      className="mt-2 flex min-w-0 items-center gap-2 border-t border-primary/20 pt-2"
+      className="flex min-w-0 items-center gap-3 border-t border-border/60 py-1.5 text-xs"
     >
-      <p className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-foreground">
+      <p className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
         <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
         {t("apikeys_view.reco_title")}
       </p>
-      <ul className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-jarvis">
+      {/* Text links, not capsules: three picks in a row already read as a
+          set; a frame around each of them adds nothing but frames. */}
+      <ul className="flex min-w-0 flex-1 items-center gap-x-4 overflow-x-auto scrollbar-jarvis">
         {rows.map((row) => {
           const Icon = row.icon;
           return (
@@ -720,14 +744,13 @@ function RecommendedSetupPanel({
                 data-testid={`reco-row-${row.tab}`}
                 aria-label={`${t("apikeys_view.reco_title")}: ${row.label} — ${row.pick}. ${row.why}`}
                 title={row.why}
-                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-primary/15 bg-primary/[0.04] px-2 py-1 text-[11px] leading-none transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="group inline-flex items-center gap-1.5 whitespace-nowrap rounded-control leading-none transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Icon
-                  aria-hidden="true"
-                  className="h-3 w-3 shrink-0 text-primary/80"
-                />
-                <span className="text-muted-foreground">{row.label}:</span>
-                <span className="font-medium text-foreground">{row.pick}</span>
+                <Icon aria-hidden="true" className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <span className="text-muted-foreground">{row.label}</span>
+                <span className="font-medium text-foreground underline-offset-4 group-hover:underline">
+                  {row.pick}
+                </span>
               </button>
             </li>
           );
@@ -751,36 +774,45 @@ export function CategoryHero({
   title: string;
   description: string;
 }) {
+  // The tab already names the category, so the heading here is a kicker, not
+  // a hero: icon, title and the one-line description on a single baseline.
   return (
-    <div className="mb-4 flex items-start gap-2.5">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary/40 text-primary">
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="min-w-0">
-        <h3 className="font-display text-base font-semibold tracking-tight">
-          {title}
-        </h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-      </div>
+    <div className="mb-3 flex min-w-0 items-center gap-2 pt-1">
+      <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
+      <h3 className="shrink-0 font-display text-sm font-semibold tracking-tight">
+        {title}
+      </h3>
+      <span aria-hidden="true" className="text-border">·</span>
+      <p className="min-w-0 truncate text-xs text-muted-foreground" title={description}>
+        {description}
+      </p>
     </div>
   );
 }
 
 /**
- * A soft, gold-tinted "which one should I pick?" band — the one place a
- * category speaks up with an opinion. Used by the Realtime and Computer-Use
- * tabs, where the model choice genuinely confuses people; the calmer tiers
- * carry their guidance on the cards themselves (Recommended badges).
+ * The "which one should I pick?" guidance — the one place a category speaks
+ * up with an opinion. Used by the Realtime and Computer-Use tabs, where the
+ * model choice genuinely confuses people; the calmer tiers carry their
+ * guidance on the cards themselves (Recommended tags).
+ *
+ * A disclosure, closed by default: the question is the visible part, the
+ * answer opens on demand. It used to be a permanently open tinted band above
+ * every card list — advice nobody asked for, on every visit.
  */
 export function GuidancePanel({ title, body }: { title: string; body: string }) {
   return (
-    <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.05] px-3 py-2">
-      <Sparkles aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-      <p className="min-w-0 text-xs leading-relaxed">
-        <span className="font-medium text-foreground">{title}</span>
-        <span className="text-muted-foreground"> · {body}</span>
-      </p>
-    </div>
+    <details className="group mb-3 text-xs">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 font-medium text-foreground/90 transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+        {title}
+        <ChevronDown
+          aria-hidden="true"
+          className="h-3 w-3 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none"
+        />
+      </summary>
+      <p className="mt-1.5 max-w-prose pl-5 leading-relaxed text-muted-foreground">{body}</p>
+    </details>
   );
 }
 
@@ -925,8 +957,19 @@ export function TierSection({
   const rank = (p: ProviderDescriptor) =>
     p.id === leadId ? 2 : Number(p.configured || p.active);
   const sorted = [...providers].sort((a, b) => rank(b) - rank(a));
+  // One row open at a time. The list opens on the provider this tier RUNS on
+  // (or, in an empty tier, on the first card, so there is a key field on
+  // screen to paste into); every other provider is a scannable one-line row
+  // until it is clicked. This is what turns 2 000 px of stacked forms into a
+  // list the eye can read top to bottom.
+  const [expandedId, setExpandedId] = useState<string | null>(
+    () => leadId ?? sorted[0]?.id ?? null,
+  );
   return (
-    <ul className="space-y-3">
+    <ul
+      data-testid="provider-list"
+      className="divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card/50"
+    >
       {sorted.map((p) => (
         <li key={p.id}>
           <ProviderCard
@@ -935,6 +978,10 @@ export function TierSection({
             onActivateOptimistic={onActivateOptimistic}
             autoActivateOnSave={!tierHasActive}
             health={p.active ? sectionHealthForSubject(health, p.id) : undefined}
+            expanded={expandedId === p.id}
+            onToggleExpanded={() =>
+              setExpandedId((current) => (current === p.id ? null : p.id))
+            }
           />
         </li>
       ))}
@@ -948,6 +995,8 @@ export function ProviderCard({
   onActivateOptimistic,
   autoActivateOnSave,
   health,
+  expanded = true,
+  onToggleExpanded,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
@@ -957,6 +1006,12 @@ export function ProviderCard({
    *  status of "error" turns the card red and surfaces the cause inline — the
    *  tab dot says "something here is broken", this says exactly WHAT/WHERE. */
   health?: SectionHealth;
+  /** Whether the editor body (key, model, test) is open under the row. A
+   *  caller that renders a single card leaves it open; the tier list opens
+   *  one row at a time. */
+  expanded?: boolean;
+  /** Toggles `expanded`; absent means the row is not collapsible. */
+  onToggleExpanded?: () => void;
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
@@ -1185,22 +1240,14 @@ export function ProviderCard({
     }
   }
 
-  // A click anywhere on the card activates the provider. There is deliberately
-  // NO separate onDoubleClick: a double click already delivers two `click`
-  // events, and binding both handlers made it fire activate() THREE times —
-  // on a card that only answers with "connect this provider first", that meant
-  // three identical warnings per double click (six after two), stacked into a
-  // wall over the connect button itself.
-  //
-  // We explicitly filter clicks on interactive sub-elements (inputs, buttons,
-  // links) so that a click into the password field or on the
-  // "Replace"/trash icon does NOT accidentally trigger a switch. The radio
-  // also has its own stopPropagation for historical reasons
-  // (belt and suspenders).
-  function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
-    // Codex is connection-only — a card click must never trigger a brain switch.
-    if (isCodexBrain) return;
-    if (!isBrainSwitchable) return;
+  // A click on the row opens or closes the editor body. Activation is the job
+  // of the "Use" control on the row — not of the row itself, which used to
+  // switch providers on any click, including a double click that fired
+  // activate() three times and stacked three identical warnings. Clicks on
+  // the row's own controls (the Use radio, a tag's tooltip target) are left to
+  // those controls.
+  function handleRowClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!onToggleExpanded) return;
     const target = e.target as HTMLElement | null;
     if (
       target &&
@@ -1211,7 +1258,7 @@ export function ProviderCard({
     ) {
       return;
     }
-    void activate();
+    onToggleExpanded();
   }
 
   // Called by ApiKeyForm as soon as a key has been saved for a previously
@@ -1272,52 +1319,76 @@ export function ProviderCard({
     </div>
   ) : null;
 
+  // The one-line summary under the name: how the card is paid for, in human
+  // words. It used to be "gemini-live · API key auth" — the catalog id and
+  // developer vocabulary; the id still travels on the row's testid and for
+  // assistive tech, and the billing line already says how you sign in.
+  const summary = t(`provider_billing.${descriptor.billing}`);
+  const collapsible = Boolean(onToggleExpanded);
+  const rowTitle = descriptor.active
+    ? t("apikeys_view.active_tooltip")
+    : !isBrainSwitchable
+      ? t("apikeys_view.agents_only_short").replace("{0}", agentsBrand(assistantName))
+      : descriptor.configured
+        ? t("apikeys_view.click_to_activate")
+        : descriptor.auth_mode === "codex"
+          ? t("apikeys_view.needs_codex")
+          : descriptor.auth_mode === "antigravity"
+            ? t("apikeys_view.needs_login")
+            : t("apikeys_view.needs_key");
+
   return (
     <>
     {consentDialog}
     <div
-      onClick={handleCardActivate}
-      title={
-        descriptor.active
-          ? t("apikeys_view.active_tooltip")
-          : !isBrainSwitchable
-            ? t("apikeys_view.agents_only_short").replace(
-                "{0}",
-                agentsBrand(assistantName),
-              )
-          : descriptor.configured
-            ? t("apikeys_view.click_to_activate")
-            : descriptor.auth_mode === "codex"
-              ? t("apikeys_view.needs_codex")
-              : descriptor.auth_mode === "antigravity"
-                ? t("apikeys_view.needs_login")
-                : t("apikeys_view.needs_key")
-      }
+      data-testid={`provider-card-${descriptor.id}`}
+      data-expanded={expanded ? "true" : "false"}
       className={cn(
-        "card-outline space-y-3 p-4 transition-colors",
-        // A broken active provider wins the card's frame — red outline + faint
-        // red wash — so the eye lands on the exact card behind the tab's red dot.
+        "relative transition-colors",
+        // The active provider gets a 3 px gold rule on the left edge and a
+        // faint wash — said once, at the edge, instead of three times
+        // (chip + frame + tint). A broken active provider turns that rule red.
         cardError
-          ? "border-destructive/70 bg-destructive/[0.05] ring-1 ring-destructive/30"
+          ? "bg-destructive/[0.04] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-destructive"
           : descriptor.active
-            ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
-            : descriptor.configured
-              ? isBrainSwitchable
-                ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
-                : ""
-              : "opacity-95",
+            ? "bg-primary/[0.035] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-primary"
+            : "",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
+      {/* ROW — logo, name, summary, state, the "Use" control, chevron. */}
+      <div
+        role={collapsible ? "button" : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        aria-expanded={collapsible ? expanded : undefined}
+        aria-controls={collapsible ? `provider-body-${descriptor.id}` : undefined}
+        data-testid={`provider-row-${descriptor.id}`}
+        onClick={handleRowClick}
+        onKeyDown={(e) => {
+          if (!collapsible) return;
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleExpanded?.();
+          }
+        }}
+        title={rowTitle}
+        className={cn(
+          "flex items-center gap-3 px-3.5 py-3 outline-none",
+          collapsible && "cursor-pointer hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          !isBrainSwitchable && "opacity-80",
+        )}
+      >
+        <ProviderLogo providerId={descriptor.id} label={descriptor.label} />
+
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-display text-sm font-semibold tracking-tight">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate font-display text-[13.5px] font-semibold tracking-tight">
               {descriptor.label}
             </span>
-            <StatusBadge descriptor={descriptor} />
+            {!descriptor.active && <StatusBadge descriptor={descriptor} />}
             {descriptor.recommended && (
-              <span
-                className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+              <Tag
+                tone="accent"
                 title={
                   descriptor.recommended_model
                     ? t("apikeys_view.recommended_tooltip").replace(
@@ -1327,45 +1398,37 @@ export function ProviderCard({
                     : undefined
                 }
               >
-                <Sparkles aria-hidden="true" className="h-2.5 w-2.5" />
                 {t("apikeys_view.recommended")}
-              </span>
+              </Tag>
             )}
             {descriptor.experimental && (
-              <span
+              <Tag
+                tone="neutral"
                 data-testid={`provider-experimental-${descriptor.id}`}
-                className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300"
+                title={t("apikeys_view.experimental_note")}
               >
                 {t("apikeys_view.experimental")}
-              </span>
+              </Tag>
             )}
             {descriptor.caution && (
-              <span
-                className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                title={descriptor.caution}
-              >
+              <Tag tone="warn" title={descriptor.caution}>
                 {t("apikeys_view.not_recommended")}
-              </span>
+              </Tag>
             )}
-            {/* Neutral, never amber: an unset optional key is not a warning.
-                The chip is what makes the whole section read as "recommended",
-                so a user scanning for what still needs doing can skip it. */}
+            {/* Neutral, never amber: an unset optional key is not a warning. */}
             {descriptor.optional && (
-              <span
+              <Tag
+                tone="neutral"
                 data-testid={`provider-optional-${descriptor.id}`}
-                className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
                 title={t("apikeys_view.optional_tooltip")}
               >
                 {t("apikeys_view.optional")}
-              </span>
+              </Tag>
             )}
           </div>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            <code className="font-mono">{descriptor.id}</code>
-            {" · "}
-            <span>
-              {t(`apikeys_view.auth_mode_${descriptor.auth_mode}`)}
-            </span>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {summary}
+            <span className="sr-only">{` · ${descriptor.id}`}</span>
           </p>
         </div>
 
@@ -1391,144 +1454,165 @@ export function ProviderCard({
                 : undefined
           }
         />
+
+        {collapsible && (
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+              expanded && "rotate-180",
+            )}
+          />
+        )}
       </div>
 
-      {/* The precise "this card is the problem" banner: only on the active card,
-          only when the live check actually failed. Names the cause in plain
-          words instead of leaving the user to guess behind the tab's red dot. */}
-      {cardError && (
+      {/* BODY — everything that edits the provider. Mounted only while open,
+          so a collapsed list neither polls nor paints forty key forms. */}
+      {expanded && (
         <div
-          data-testid={`provider-health-error-${descriptor.id}`}
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/[0.07] px-3 py-2 text-[11px] leading-relaxed text-destructive"
+          id={`provider-body-${descriptor.id}`}
+          data-testid={`provider-body-${descriptor.id}`}
+          className="space-y-3 border-t border-border/60 bg-background/30 px-3.5 pb-3.5 pl-[3.75rem] pt-3"
         >
-          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 break-words">
-            <span className="font-medium">{t("apikeys_view.health_error")}</span>
-            {cardErrorDetail ? ` — ${cardErrorDetail}` : ""}
-          </span>
+          {/* The precise "this card is the problem" banner: only on the active card,
+              only when the live check actually failed. Names the cause in plain
+              words instead of leaving the user to guess behind the tab's red dot. */}
+          {cardError && (
+            <div
+              data-testid={`provider-health-error-${descriptor.id}`}
+              role="status"
+              className="flex items-start gap-2 rounded-control border border-destructive/40 bg-destructive/[0.07] px-3 py-2 text-xs leading-relaxed text-destructive"
+            >
+              <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 break-words">
+                <span className="font-medium">{t("apikeys_view.health_error")}</span>
+                {cardErrorDetail ? ` — ${cardErrorDetail}` : ""}
+              </span>
+            </div>
+          )}
+
+          <AuthWidget
+            descriptor={descriptor}
+            onChanged={onChanged}
+            onSavedActivate={handleSavedActivate}
+          />
+
+          {!isBrainSwitchable && (
+            <p className="rounded-control border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+              {t("apikeys_view.agents_only_note").replace(
+                "{0}",
+                agentBrand(assistantName),
+              )}
+            </p>
+          )}
+
+          {/* Model / voice picker. Every switchable brain provider shows its model
+              picker — even before a key is set — because the catalog falls back to
+              the provider's curated family without a key (no network, no error), so
+              a model can be pre-picked. TTS/STT share a single global [tts]/[stt]
+              block, so the picker only WRITES from the ACTIVE provider and sets the
+              voice (Grok/Gemini/OpenAI/Google) or model (Cartesia/STT). */}
+          {((descriptor.tier === "brain" && isBrainSwitchable) ||
+            ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
+              descriptor.active &&
+              descriptor.configured)) &&
+            // OpenRouter TTS is the one provider where the user also picks a VOICE
+            // (per model, language-tagged, with an audio preview) — render the
+            // combined model + voice controls; every other tier keeps the plain
+            // model/voice picker.
+            (descriptor.id === "openrouter-tts" ? (
+              <OpenRouterTtsControls
+                providerId={descriptor.id}
+                recommendedModel={descriptor.recommended_model}
+                healthActive={descriptor.active}
+              />
+            ) : (
+              <BrainModelSelector
+                providerId={descriptor.id}
+                recommendedModel={descriptor.recommended_model}
+                healthSection={descriptor.tier}
+                healthActive={descriptor.active}
+                // An on-device provider's list is what is installed here, so there
+                // is nothing to type — and with a single entry, nothing to pick.
+                fixedCatalog={Boolean(descriptor.local_runtime)}
+              />
+            ))}
+
+          {/* TTS/STT model/voice is a single global value, so a configured-but-
+              inactive provider can't own it — make the capability discoverable with
+              a hint instead of silently hiding the picker. */}
+          {(descriptor.tier === "tts" || descriptor.tier === "stt") &&
+            descriptor.configured &&
+            !descriptor.active && (
+              <p className="text-xs text-muted-foreground">
+                {t("apikeys_view.model_picker_activate_hint")}
+              </p>
+            )}
+
+          {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
+              (defaults to the provider's main model — no automatic escalation).
+              Also shown under the Computer-Use tab (synthetic "computer-use"
+              tier, same underlying brain id) — but never the plain
+              BrainModelSelector above, which stays Brain-tab-only. */}
+          {(descriptor.tier === "brain" || descriptor.tier === "computer-use") &&
+            descriptor.configured &&
+            isBrainSwitchable && (
+              <CuModelSelector
+                providerId={descriptor.id}
+                recommendedModel={descriptor.recommended_model}
+                healthActive={
+                  descriptor.tier === "computer-use"
+                    ? descriptor.active
+                    : Boolean(descriptor.computer_use_active)
+                }
+              />
+            )}
+
+          {/* Realtime needs BOTH a model AND a voice pinned per provider — a
+              dedicated compact control (two dropdowns), gated on the card
+              already having a stored credential like the other tiers' pickers
+              above. */}
+          {descriptor.tier === "realtime" &&
+            (descriptor.configured ||
+              // Keep the model/voice pickers mounted through a transient busy
+              // probe so the card does not visibly flicker while saying
+              // "one moment".
+              descriptor.codex_status?.reason_code === "busy") && (
+              <RealtimeOptionsControl
+                providerId={descriptor.id}
+                healthActive={descriptor.active}
+              />
+            )}
+
+          {/* Footer: the live connectivity test, visually separated from the
+              configuration body so "set up" and "verify" read as two steps. */}
+          <div className="border-t border-border/60 pt-2.5">
+            <ProviderTestControl
+              providerId={descriptor.id}
+              providerLabel={descriptor.label}
+              section={descriptor.tier}
+              active={descriptor.active}
+            />
+          </div>
         </div>
       )}
-
-      <AuthWidget
-        descriptor={descriptor}
-        onChanged={onChanged}
-        onSavedActivate={handleSavedActivate}
-      />
-
-      {!isBrainSwitchable && (
-        <p className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
-          {t("apikeys_view.agents_only_note").replace(
-            "{0}",
-            agentBrand(assistantName),
-          )}
-        </p>
-      )}
-
-      {/* Model / voice picker. Every switchable brain provider shows its model
-          picker — even before a key is set — because the catalog falls back to
-          the provider's curated family without a key (no network, no error), so
-          a model can be pre-picked. TTS/STT share a single global [tts]/[stt]
-          block, so the picker only WRITES from the ACTIVE provider and sets the
-          voice (Grok/Gemini/OpenAI/Google) or model (Cartesia/STT). */}
-      {((descriptor.tier === "brain" && isBrainSwitchable) ||
-        ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
-          descriptor.active &&
-          descriptor.configured)) &&
-        // OpenRouter TTS is the one provider where the user also picks a VOICE
-        // (per model, language-tagged, with an audio preview) — render the
-        // combined model + voice controls; every other tier keeps the plain
-        // model/voice picker.
-        (descriptor.id === "openrouter-tts" ? (
-          <OpenRouterTtsControls
-            providerId={descriptor.id}
-            recommendedModel={descriptor.recommended_model}
-            healthActive={descriptor.active}
-          />
-        ) : (
-          <BrainModelSelector
-            providerId={descriptor.id}
-            recommendedModel={descriptor.recommended_model}
-            healthSection={descriptor.tier}
-            healthActive={descriptor.active}
-            // An on-device provider's list is what is installed here, so there
-            // is nothing to type — and with a single entry, nothing to pick.
-            fixedCatalog={Boolean(descriptor.local_runtime)}
-          />
-        ))}
-
-      {/* TTS/STT model/voice is a single global value, so a configured-but-
-          inactive provider can't own it — make the capability discoverable with
-          a hint instead of silently hiding the picker. */}
-      {(descriptor.tier === "tts" || descriptor.tier === "stt") &&
-        descriptor.configured &&
-        !descriptor.active && (
-          <p className="text-[11px] text-muted-foreground">
-            {t("apikeys_view.model_picker_activate_hint")}
-          </p>
-        )}
-
-      {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
-          (defaults to the provider's main model — no automatic escalation).
-          Also shown under the Computer-Use tab (synthetic "computer-use"
-          tier, same underlying brain id) — but never the plain
-          BrainModelSelector above, which stays Brain-tab-only. */}
-      {(descriptor.tier === "brain" || descriptor.tier === "computer-use") &&
-        descriptor.configured &&
-        isBrainSwitchable && (
-          <CuModelSelector
-            providerId={descriptor.id}
-            recommendedModel={descriptor.recommended_model}
-            healthActive={
-              descriptor.tier === "computer-use"
-                ? descriptor.active
-                : Boolean(descriptor.computer_use_active)
-            }
-          />
-        )}
-
-      {/* Realtime needs BOTH a model AND a voice pinned per provider — a
-          dedicated compact control (two dropdowns), gated on the card
-          already having a stored credential like the other tiers' pickers
-          above. */}
-      {descriptor.tier === "realtime" &&
-        (descriptor.configured ||
-          // Keep the model/voice pickers mounted through a transient busy
-          // probe so the card does not visibly flicker while saying
-          // "one moment".
-          descriptor.codex_status?.reason_code === "busy") && (
-          <RealtimeOptionsControl
-            providerId={descriptor.id}
-            healthActive={descriptor.active}
-          />
-        )}
-
-      {/* Footer: the live connectivity test, visually separated from the
-          configuration body so "set up" and "verify" read as two steps. */}
-      <div className="border-t border-border/60 pt-2.5">
-        <ProviderTestControl
-          providerId={descriptor.id}
-          providerLabel={descriptor.label}
-          section={descriptor.tier}
-          active={descriptor.active}
-        />
-      </div>
     </div>
     </>
   );
 }
 
 // Tone per status: green = works; amber = reached but key/account/model blocks
-// (integration is fine); red = couldn't reach / integration bug.
-const TEST_STATUS_TONE: Record<ProviderTestStatus, string> = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
-  not_configured: "border-border bg-muted text-muted-foreground",
-  bad_key: "border-amber-500/30 bg-amber-500/10 text-amber-600",
-  no_credits: "border-amber-500/30 bg-amber-500/10 text-amber-600",
-  rate_limited: "border-amber-500/30 bg-amber-500/10 text-amber-600",
-  model_unavailable: "border-amber-500/30 bg-amber-500/10 text-amber-600",
-  unreachable: "border-destructive/30 bg-destructive/10 text-destructive",
-  error: "border-destructive/30 bg-destructive/10 text-destructive",
+// (integration is fine); red = couldn't reach / integration bug. A dot and a
+// word — the same vocabulary as the row's state, never a filled capsule.
+const TEST_STATUS_TONE: Record<ProviderTestStatus, { dot: string; text: string }> = {
+  ok: { dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400" },
+  not_configured: { dot: "bg-muted-foreground/50", text: "text-muted-foreground" },
+  bad_key: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
+  no_credits: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
+  rate_limited: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
+  model_unavailable: { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
+  unreachable: { dot: "bg-destructive", text: "text-destructive" },
+  error: { dot: "bg-destructive", text: "text-destructive" },
 };
 
 /**
@@ -1591,24 +1675,26 @@ export function ProviderTestControl({
     }
   }
 
-  const tone = result ? TEST_STATUS_TONE[result.status] : "";
+  const tone = result ? TEST_STATUS_TONE[result.status] : null;
   const note = result
     ? (result.integration_ok
         ? t("apikeys_test.integration_ok_note")
         : t("apikeys_test.integration_bad_note"))
     : "";
 
+  // Footer layout: the action on the left, its last answer on the right —
+  // "set up" above the line, "verify" below it.
   return (
-    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+    <div className="flex flex-wrap items-center justify-between gap-2">
       <Button
         size="sm"
-        variant="outline"
+        variant="ghost"
         onClick={(e) => {
           e.stopPropagation();
           void run();
         }}
         disabled={running}
-        className="h-7 gap-1.5 text-xs"
+        className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
       >
         {running ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1618,24 +1704,15 @@ export function ProviderTestControl({
         {running ? t("apikeys_test.running") : t("apikeys_test.button")}
       </Button>
 
-      {result && (
+      {result && tone && (
         <span
           data-testid={`provider-test-result-${providerId}`}
-          className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
-            tone,
-          )}
+          className={cn("inline-flex items-center gap-1.5 text-xs", tone.text)}
           title={[note, result.detail, result.latency_ms ? `${Math.round(result.latency_ms)} ms` : ""]
             .filter(Boolean)
             .join("\n")}
         >
-          {result.status === "ok" ? (
-            <Check className="h-3 w-3" />
-          ) : result.integration_ok ? (
-            <AlertCircle className="h-3 w-3" />
-          ) : (
-            <XCircle className="h-3 w-3" />
-          )}
+          <span aria-hidden="true" className={cn("h-[7px] w-[7px] rounded-full", tone.dot)} />
           {t(`apikeys_test.status_${result.status}`)}
           {result.status === "ok" && result.latency_ms
             ? ` · ${Math.round(result.latency_ms)} ms`
@@ -1693,21 +1770,23 @@ export function ActiveControl({
             )
           : t("apikeys_view.needs_credentials");
 
+  // Visually a state word ("In use") or a quiet action ("Use"); semantically
+  // still a radio in a per-tier group, so browsers, screen readers and the
+  // tests keep the native exclusivity. The native control itself is hidden —
+  // the old radio-inside-a-pill read as a 2012 form element.
   return (
     <label
       // The radio owns its own activation; letting the click bubble would run
-      // the card handler for the same gesture and send a second API call.
-      // (The card no longer binds onDoubleClick, so there is nothing else to
-      // stop here.)
+      // the row handler for the same gesture and toggle the body.
       onClick={(e) => e.stopPropagation()}
       className={cn(
-        "inline-flex shrink-0 select-none items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-background",
+        "inline-flex h-7 shrink-0 select-none items-center gap-2 whitespace-nowrap rounded-control px-2.5 text-xs transition-colors focus-within:ring-2 focus-within:ring-ring",
         disabled ? "cursor-not-allowed" : "cursor-pointer",
         descriptor.active
-          ? "border-primary/40 bg-primary/10 font-semibold text-primary"
+          ? "font-medium text-foreground"
           : descriptor.configured
-            ? "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
-            : "border-border/60 text-muted-foreground/70",
+            ? "border border-border bg-background/60 text-muted-foreground hover:border-primary/50 hover:text-foreground"
+            : "border border-dashed border-border/80 text-muted-foreground/80 hover:text-foreground",
       )}
       title={labelTitle}
     >
@@ -1717,8 +1796,17 @@ export function ActiveControl({
         checked={descriptor.active}
         onChange={() => onActivate()}
         disabled={activating || disabled}
-        className="accent-primary"
+        className="sr-only"
       />
+      {descriptor.active && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "h-[7px] w-[7px] rounded-full bg-primary",
+            activating && "animate-pulse motion-reduce:animate-none",
+          )}
+        />
+      )}
       {activating
         ? t("apikeys_view.provider_activating")
         : descriptor.active
@@ -1768,7 +1856,7 @@ export function BaseUrlField({
 
   return (
     <div className="space-y-1">
-      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <label className="text-xs uppercase tracking-wider text-muted-foreground">
         {t("apikeys_base_url.label")}
       </label>
       <div className="flex gap-2">
@@ -1790,7 +1878,7 @@ export function BaseUrlField({
           {saving ? t("apikeys_base_url.saving") : t("apikeys_base_url.save")}
         </Button>
       </div>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         {descriptor.default_base_url
           ? t("apikeys_base_url.hint_default")
           : t("apikeys_base_url.hint_required")}
@@ -1910,7 +1998,7 @@ function LocalRuntimePanel({
   const showAccelerator =
     accelerator !== null && accelerator.reason !== "not_requested" && accelerator.reason !== "";
   return (
-    <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
+    <div className="space-y-2 border-t border-border/60 pt-3">
       <div className="flex items-start gap-2 text-xs">
         {status.ready ? (
           <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
@@ -1961,11 +2049,11 @@ function LocalRuntimePanel({
         </Button>
       )}
       {gpuRunning && (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {t("apikeys_view.gpu_libraries_install_hint")}
         </p>
       )}
-      {gpuError && <p className="text-[11px] text-destructive">{gpuError}</p>}
+      {gpuError && <p className="text-xs text-destructive">{gpuError}</p>}
       {!status.ready && (
         <Button
           size="sm"
@@ -1987,12 +2075,12 @@ function LocalRuntimePanel({
         </Button>
       )}
       {running && (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {t("apikeys_view.local_install_hint")}
         </p>
       )}
       {error && (
-        <p className="text-[11px] text-destructive">{error}</p>
+        <p className="text-xs text-destructive">{error}</p>
       )}
     </div>
   );
@@ -2367,7 +2455,7 @@ function ManagedServerPanel({
       .includes(normalizedVoiceQuery);
   });
   return (
-    <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
+    <div className="space-y-2 border-t border-border/60 pt-3">
       <div className="flex items-start gap-2 text-xs">
         {status.ready ? (
           <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
@@ -2381,7 +2469,7 @@ function ManagedServerPanel({
 
       {!running && installed && runtimeBadge && (
         <div
-          className="flex items-center gap-2 text-[11px]"
+          className="flex items-center gap-2 text-xs"
           data-testid="managed-server-runtime"
           aria-live="polite"
         >
@@ -2429,7 +2517,7 @@ function ManagedServerPanel({
               variant="secondary"
               onClick={startServer}
               disabled={lifecycleBusy}
-              className="h-6 gap-1.5 px-2 text-[11px]"
+              className="h-6 gap-1.5 px-2 text-xs"
             >
               {lifecycleBusy ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -2445,7 +2533,7 @@ function ManagedServerPanel({
               variant="ghost"
               onClick={stopServer}
               disabled={lifecycleBusy}
-              className="h-6 gap-1.5 px-2 text-[11px]"
+              className="h-6 gap-1.5 px-2 text-xs"
             >
               {lifecycleBusy ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -2459,7 +2547,7 @@ function ManagedServerPanel({
       )}
 
       {setupNote && (
-        <p className="text-[11px] text-muted-foreground" aria-live="polite">
+        <p className="text-xs text-muted-foreground" aria-live="polite">
           {setupNote}
         </p>
       )}
@@ -2467,19 +2555,19 @@ function ManagedServerPanel({
       {!running && catalog && (
         <div className="space-y-3" data-testid="managed-model-picker">
           <div className="grid gap-2 sm:grid-cols-3">
-            <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
-              <span className="flex items-center gap-1.5 text-[11px] font-medium">
+            <label className="space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium">
                 <Mic className="h-3.5 w-3.5 text-muted-foreground" />
                 {t("apikeys_view.managed_hearing_title")}
               </span>
               <span className="block text-xs">{catalog.hearing.label}</span>
-              <span className="block text-[10px] leading-snug text-muted-foreground">
+              <span className="block text-xs leading-snug text-muted-foreground">
                 {t("apikeys_view.managed_hearing_note")}
               </span>
             </label>
 
-            <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
-              <span className="flex items-center gap-1.5 text-[11px] font-medium">
+            <label className="space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium">
                 <Brain className="h-3.5 w-3.5 text-muted-foreground" />
                 {t("apikeys_view.managed_thinking_title")}
               </span>
@@ -2505,8 +2593,8 @@ function ManagedServerPanel({
               />
             </label>
 
-            <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
-              <span className="flex items-center gap-1.5 text-[11px] font-medium">
+            <label className="space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium">
                 <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
                 {t("apikeys_view.managed_speaking_title")}
               </span>
@@ -2551,8 +2639,12 @@ function ManagedServerPanel({
             </Button>
           )}
 
-          <details className="rounded-md border border-border/50 bg-background/30 p-2">
-              <summary className="cursor-pointer text-[11px] font-medium">
+          <details className="group text-xs">
+              <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronDown
+                  aria-hidden="true"
+                  className="h-3 w-3 -rotate-90 transition-transform group-open:rotate-0 motion-reduce:transition-none"
+                />
                 {t("apikeys_view.managed_full_catalog")}
               </summary>
               <LibraryBrowser
@@ -2566,11 +2658,12 @@ function ManagedServerPanel({
               />
           </details>
 
-          <details
-            data-testid="managed-voice-catalog"
-            className="rounded-md border border-border/50 bg-background/30 p-2"
-          >
-            <summary className="cursor-pointer text-[11px] font-medium">
+          <details data-testid="managed-voice-catalog" className="group text-xs">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronDown
+                aria-hidden="true"
+                className="h-3 w-3 -rotate-90 transition-transform group-open:rotate-0 motion-reduce:transition-none"
+              />
               {t("apikeys_view.managed_voice_catalog_title")}
             </summary>
             <div className="mt-2 space-y-2">
@@ -2590,7 +2683,7 @@ function ManagedServerPanel({
               </label>
 
               {voiceResults.length === 0 ? (
-                <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                <p className="px-1 py-2 text-xs text-muted-foreground">
                   {t("apikeys_view.managed_voice_catalog_empty")}
                 </p>
               ) : (
@@ -2610,18 +2703,18 @@ function ManagedServerPanel({
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-xs font-medium">{choice.label}</span>
                           {choice.frontier && (
-                            <span className="rounded-full bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
+                            <span className="rounded-full bg-primary/15 px-1.5 py-px text-xs font-semibold uppercase tracking-wide text-primary">
                               {t("apikeys_view.managed_voice_frontier")}
                             </span>
                           )}
                           {choice.streaming && (
-                            <span className="rounded-full border border-border px-1.5 py-px text-[9px] text-muted-foreground">
+                            <span className="rounded-full border border-border px-1.5 py-px text-xs text-muted-foreground">
                               {t("apikeys_view.managed_voice_streaming")}
                             </span>
                           )}
                           <span
                             className={cn(
-                              "rounded-full border px-1.5 py-px text-[9px]",
+                              "rounded-full border px-1.5 py-px text-xs",
                               choice.selectable
                                 ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
                                 : "border-amber-500/30 bg-amber-500/10 text-amber-500",
@@ -2634,13 +2727,13 @@ function ManagedServerPanel({
                             )}
                           </span>
                         </div>
-                        <p className="break-all font-mono text-[10px] text-muted-foreground">
+                        <p className="break-all font-mono text-xs text-muted-foreground">
                           {choice.model}
                         </p>
-                        <p className="text-[10px] leading-snug text-muted-foreground">
+                        <p className="text-xs leading-snug text-muted-foreground">
                           {choice.note}
                         </p>
-                        <div className="flex flex-wrap items-center gap-1 text-[9px] text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                           {(choice.languages ?? []).slice(0, 12).map((language) => (
                             <span key={language} className="rounded bg-muted px-1 py-px uppercase">
                               {language}
@@ -2670,7 +2763,7 @@ function ManagedServerPanel({
                           variant={choice.id === selectedVoice ? "secondary" : "outline"}
                           disabled={setupBusy || !selectedBrain}
                           onClick={() => void applyVoiceChoice(choice)}
-                          className="h-7 shrink-0 gap-1 px-2 text-[10px]"
+                          className="h-7 shrink-0 gap-1 px-2 text-xs"
                         >
                           {setupBusy && choice.id === selectedVoice ? (
                             <Loader2 className="h-3 w-3 animate-spin" />
@@ -2701,7 +2794,7 @@ function ManagedServerPanel({
               style={{ width: `${Math.max(2, progress?.percent ?? 0)}%` }}
             />
           </div>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {t("apikeys_view.managed_hint")}
           </p>
         </div>
@@ -2773,7 +2866,10 @@ function ManagedServerPanel({
           size="sm"
           variant="ghost"
           onClick={remove}
-          className="gap-2 text-destructive hover:text-destructive"
+          className={cn(
+            "gap-2 text-muted-foreground hover:text-destructive",
+            confirmRemove && "text-destructive",
+          )}
         >
           <XCircle className="h-3.5 w-3.5" />
           {confirmRemove
@@ -2782,7 +2878,7 @@ function ManagedServerPanel({
         </Button>
       )}
 
-      {error && <p className="text-[11px] text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }
@@ -2888,7 +2984,7 @@ function OllamaRuntimePanel({
 
   return (
     <div
-      className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3"
+      className="space-y-2 border-t border-border/60 pt-3"
       data-testid="ollama-runtime-panel"
     >
       <div className="flex items-start gap-2 text-xs">
@@ -2915,7 +3011,7 @@ function OllamaRuntimePanel({
               ? t("apikeys_view.ollama_install_confirm")
               : t("apikeys_view.ollama_install_cta")}
           </Button>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {t("apikeys_view.ollama_install_hint")}
           </p>
         </div>
@@ -2938,7 +3034,7 @@ function OllamaRuntimePanel({
         </Button>
       )}
 
-      {error && <p className="text-[11px] text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }
@@ -3078,17 +3174,17 @@ function LibraryBrowser({
       {browsing && (
         <div className="space-y-1.5">
           {searching && !results && (
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {t("apikeys_model_pull.library_searching")}
             </p>
           )}
           {/* An unreachable catalog is a note, never a blocker — the field
               above still downloads by exact name. */}
           {libraryError && (
-            <p className="text-[11px] text-amber-500">{libraryError}</p>
+            <p className="text-xs text-amber-500">{libraryError}</p>
           )}
           {results && results.length === 0 && !libraryError && (
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {t("apikeys_model_pull.library_no_results")}
             </p>
           )}
@@ -3108,13 +3204,13 @@ function LibraryBrowser({
                   <p className="truncate text-xs font-medium">
                     {model.name}
                     {model.installed && (
-                      <span className="ml-1.5 text-[10px] font-normal text-emerald-500">
+                      <span className="ml-1.5 text-xs font-normal text-emerald-500">
                         {t("apikeys_model_pull.installed")}
                       </span>
                     )}
                   </p>
                   {model.description && (
-                    <p className="text-[11px] leading-snug text-muted-foreground">
+                    <p className="text-xs leading-snug text-muted-foreground">
                       {model.description}
                     </p>
                   )}
@@ -3122,7 +3218,7 @@ function LibraryBrowser({
                     {model.capabilities.map((cap) => (
                       <span
                         key={cap}
-                        className="rounded bg-primary/10 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-primary"
+                        className="rounded bg-primary/10 px-1 py-px text-xs font-medium uppercase tracking-wide text-primary"
                       >
                         {cap}
                       </span>
@@ -3130,7 +3226,7 @@ function LibraryBrowser({
                     {model.sizes.slice(0, 6).map((size) => (
                       <span
                         key={size}
-                        className="rounded bg-muted px-1 py-px text-[9px] font-medium text-muted-foreground"
+                        className="rounded bg-muted px-1 py-px text-xs font-medium text-muted-foreground"
                       >
                         {size}
                       </span>
@@ -3151,12 +3247,12 @@ function LibraryBrowser({
                 // whole settings page down by several screens.
                 <div className="max-h-56 space-y-1 overflow-y-auto border-t border-border/40 px-2 py-1.5">
                   {loadingTags && !tags[model.name] && (
-                    <p className="text-[11px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       {t("apikeys_model_pull.library_loading_versions")}
                     </p>
                   )}
                   {tagsError && (
-                    <p className="text-[11px] text-amber-500">{tagsError}</p>
+                    <p className="text-xs text-amber-500">{tagsError}</p>
                   )}
                   {(tags[model.name] ?? []).map((tag) => (
                     <div
@@ -3165,7 +3261,7 @@ function LibraryBrowser({
                       className="flex items-center justify-between gap-2"
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-[11px]">
+                        <p className="truncate text-xs">
                           <span className="font-mono">{tag.id}</span>{" "}
                           <span className="text-muted-foreground">
                             {tag.size_gb
@@ -3180,7 +3276,7 @@ function LibraryBrowser({
                           </span>
                         </p>
                         {tag.fit === "tight" && tag.fit_note && (
-                          <p className="text-[10px] leading-snug text-amber-500">
+                          <p className="text-xs leading-snug text-amber-500">
                             {tag.fit_note}
                           </p>
                         )}
@@ -3188,14 +3284,14 @@ function LibraryBrowser({
                       {/* A hosted tag has no weights to fetch. Offering
                           "Download" for it would fail at the server. */}
                       {tag.cloud ? (
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                        <span className="shrink-0 text-xs text-muted-foreground">
                           {t("apikeys_model_pull.library_hosted")}
                         </span>
                       ) : tag.installed && onInstalledSelect ? (
                         <Button
                           size="sm"
                           variant="secondary"
-                          className="h-6 shrink-0 gap-1 px-2 text-[10px]"
+                          className="h-6 shrink-0 gap-1 px-2 text-xs"
                           disabled={disabled || pullingModel !== null}
                           onClick={() => onInstalledSelect(tag.id)}
                         >
@@ -3207,7 +3303,7 @@ function LibraryBrowser({
                           {installedActionLabel ?? t("apikeys_model_pull.installed")}
                         </Button>
                       ) : tag.installed ? (
-                        <span className="flex shrink-0 items-center gap-1 text-[10px] text-emerald-500">
+                        <span className="flex shrink-0 items-center gap-1 text-xs text-emerald-500">
                           <Check className="h-3 w-3" />
                           {t("apikeys_model_pull.installed")}
                         </span>
@@ -3215,7 +3311,7 @@ function LibraryBrowser({
                         <Button
                           size="sm"
                           variant="secondary"
-                          className="h-6 shrink-0 gap-1 px-2 text-[10px]"
+                          className="h-6 shrink-0 gap-1 px-2 text-xs"
                           disabled={disabled || pullingModel !== null}
                           onClick={() => onPull(tag.id)}
                         >
@@ -3370,14 +3466,14 @@ export function LocalModelDownloadPanel({
   return (
     <div
       data-testid={`provider-model-pull-${descriptor.id}`}
-      className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3"
+      className="space-y-2 border-t border-border/60 pt-3"
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium">{t("apikeys_model_pull.title")}</p>
         {hardwareNote ? (
           <span
             data-testid="model-pull-hardware"
-            className="text-[11px] text-muted-foreground"
+            className="text-xs text-muted-foreground"
           >
             {hardwareNote}
           </span>
@@ -3385,13 +3481,13 @@ export function LocalModelDownloadPanel({
       </div>
 
       {catalog && !catalog.server_reachable && (
-        <p className="text-[11px] text-amber-500">{catalog.message}</p>
+        <p className="text-xs text-amber-500">{catalog.message}</p>
       )}
 
       {groups.map((group) => (
         <div key={group.role ?? "all"} className="space-y-1.5">
           {group.role && (
-            <p className="pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+            <p className="pt-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">
               {t(`apikeys_model_pull.role_${group.role}`)}
             </p>
           )}
@@ -3417,12 +3513,12 @@ export function LocalModelDownloadPanel({
                   )}
                 </span>
                 {row.recommended && (
-                  <span className="ml-1.5 whitespace-nowrap rounded-full bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
+                  <span className="ml-1.5 whitespace-nowrap rounded-full bg-primary/15 px-1.5 py-px text-xs font-semibold uppercase tracking-wide text-primary">
                     {t("apikeys_model_pull.best_for_machine")}
                   </span>
                 )}
               </p>
-              <p className="text-[11px] leading-snug text-muted-foreground">
+              <p className="text-xs leading-snug text-muted-foreground">
                 {row.purpose}
               </p>
               {/* The honest half of a recommendation: the comfortable note
@@ -3431,7 +3527,7 @@ export function LocalModelDownloadPanel({
               {(row.fit === "tight" || row.recommended) && (
                 <p
                   className={cn(
-                    "text-[11px] leading-snug",
+                    "text-xs leading-snug",
                     row.fit === "tight" ? "text-amber-500" : "text-muted-foreground/80",
                   )}
                 >
@@ -3440,7 +3536,7 @@ export function LocalModelDownloadPanel({
               )}
             </div>
             {row.installed ? (
-              <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-500">
+              <span className="flex shrink-0 items-center gap-1 text-xs text-emerald-500">
                 <Check className="h-3.5 w-3.5" />
                 {t("apikeys_model_pull.installed")}
               </span>
@@ -3477,7 +3573,7 @@ export function LocalModelDownloadPanel({
 
       {progress && progress.state !== "idle" && (
         <div className="space-y-1">
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {progress.model}: {progress.message}
           </p>
           {running && (
@@ -3490,7 +3586,7 @@ export function LocalModelDownloadPanel({
           )}
         </div>
       )}
-      {error && <p className="text-[11px] text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }
@@ -3511,11 +3607,14 @@ export function AuthWidget({
     descriptor.billing === "subscription" && descriptor.secret_keys.length === 0;
   return (
     <div className="space-y-2">
-      <ProviderBillingBadge billing={descriptor.billing} />
+      {/* Billing now reads on the row summary line; the body starts with what
+          the user can DO. An experimental route keeps its one-paragraph note,
+          as plain text — the violet box said "warning" about a sentence that
+          never changes. */}
       {descriptor.experimental && (
         <div
           data-testid={`provider-experimental-note-${descriptor.id}`}
-          className="rounded-md border border-violet-500/30 bg-violet-500/[0.06] px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground"
+          className="text-xs leading-relaxed text-muted-foreground"
         >
           <p>
             {/* The subscription wording ("uses the ChatGPT plan…") belongs to
@@ -3537,8 +3636,12 @@ export function AuthWidget({
       <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
       <ManagedServerPanel descriptor={descriptor} onChanged={onChanged} />
       {descriptor.supports_base_url && descriptor.managed_server && (
-        <details className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-          <summary className="cursor-pointer text-xs text-muted-foreground">
+        <details className="group text-xs">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronDown
+              aria-hidden="true"
+              className="h-3 w-3 -rotate-90 transition-transform group-open:rotate-0 motion-reduce:transition-none"
+            />
             {t("apikeys_view.managed_advanced_connection")}
           </summary>
           <div className="pt-2">
@@ -3805,7 +3908,7 @@ function CodexAuthWidget({
           status.message && (
             <div
               data-testid="codex-setup-detail"
-              className="mt-2 break-words border-t border-border/60 pt-2 font-mono text-[11px]"
+              className="mt-2 break-words border-t border-border/60 pt-2 font-mono text-xs"
             >
               <span className="mr-1 font-sans">
                 {t("apikeys_codex.setup_detail_label")}
@@ -4018,11 +4121,24 @@ function AntigravityAuthWidget({
 // One calm chip vocabulary for every card state. Sentence-case, small, and
 // tonally consistent (gold = on, green = ready, neutral = untouched, red =
 // broken) — replaces the earlier mix of shouting uppercase badges.
+/**
+ * Status as a dot and a word, not a tinted capsule.
+ *
+ * `active` is the one chip that still frames itself (gold text, hairline),
+ * because it is the one a user scans a list for. Everything else is a 7 px
+ * dot in the semantic colour beside muted text — green means works, red means
+ * blocked, grey means nothing to report — so six colours of pills collapse
+ * into one quiet vocabulary. Semantic colour stays separate from the gold
+ * accent: gold is "selected", never "healthy".
+ */
 const STATE_CHIP_TONE = {
-  active: "border-primary/40 bg-primary/15 text-primary font-semibold",
-  ready: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
-  missing: "border-destructive/30 bg-destructive/10 text-destructive",
-  neutral: "border-border bg-muted text-muted-foreground",
+  active: {
+    wrap: "rounded-[4px] border border-primary/40 px-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-primary",
+    dot: null,
+  },
+  ready: { wrap: "text-muted-foreground", dot: "bg-emerald-500" },
+  missing: { wrap: "text-destructive", dot: "bg-destructive" },
+  neutral: { wrap: "text-muted-foreground", dot: "bg-muted-foreground/50" },
 } as const;
 
 export function StateChip({
@@ -4032,11 +4148,47 @@ export function StateChip({
   tone: keyof typeof STATE_CHIP_TONE;
   children: React.ReactNode;
 }) {
+  const meta = STATE_CHIP_TONE[tone];
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
-        STATE_CHIP_TONE[tone],
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs leading-5",
+        meta.wrap,
+      )}
+    >
+      {meta.dot && (
+        <span aria-hidden="true" className={cn("h-[7px] w-[7px] rounded-full", meta.dot)} />
+      )}
+      {children}
+    </span>
+  );
+}
+
+/**
+ * A small uppercase label for a property of the row — Recommended, Beta,
+ * Optional, Not recommended. Hairline and text, no fill: at most one of these
+ * per row carries meaning, and a row of filled capsules carried none.
+ */
+export function Tag({
+  tone,
+  title,
+  children,
+  ...rest
+}: {
+  tone: "accent" | "neutral" | "warn";
+  title?: string;
+  children: React.ReactNode;
+  "data-testid"?: string;
+}) {
+  return (
+    <span
+      {...rest}
+      title={title}
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-[4px] border px-1.5 text-[10.5px] font-semibold uppercase leading-[18px] tracking-[0.06em]",
+        tone === "accent" && "border-primary/40 text-primary",
+        tone === "neutral" && "border-border text-muted-foreground",
+        tone === "warn" && "border-amber-500/40 text-amber-600 dark:text-amber-400",
       )}
     >
       {children}

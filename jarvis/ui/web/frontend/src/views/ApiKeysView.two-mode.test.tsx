@@ -145,7 +145,9 @@ describe("ApiKeysView two-mode", () => {
   it("shows a research-preview disclaimer when Realtime is selected", () => {
     render(<ApiKeysView />);
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
-    expect(screen.getByText(/research preview/i)).toBeTruthy();
+    // The caveat is a tag with the full sentence for assistive tech, so the
+    // phrase appears more than once — what matters is that it is on screen.
+    expect(screen.getAllByText(/research preview/i).length).toBeGreaterThan(0);
   });
 
   it("shows when the selected Realtime mode is still served by Pipeline", () => {
