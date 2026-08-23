@@ -45,6 +45,17 @@
         var root = document.documentElement;
         root.classList.toggle("dark", mode === "dark");
         root.style.colorScheme = mode;
+        // The ground: a flat theme colour unless the user switched a
+        // wallpaper on. Same key and fallback as src/lib/backgroundMode.ts —
+        // the class gates the wallpaper readability floor in index.css, so it
+        // must be right before the first frame, not a moment after.
+        var wallpaper = false;
+        try {
+          wallpaper = localStorage.getItem("jarvis.background.v1") === "wallpaper";
+        } catch (e) {
+          /* storage blocked — the flat colour is the default anyway */
+        }
+        root.classList.toggle("jarvis-wallpaper", wallpaper);
       })();
     </script>
     <style>
@@ -94,8 +105,8 @@
       }
       @keyframes jbs-spin { to { transform: rotate(360deg); } }
     </style>
-    <script type="module" crossorigin src="/assets/index-BlMHBJM1.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-D0lxmyWx.css">
+    <script type="module" crossorigin src="/assets/index-D4CIYMeA.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CFHOOVWr.css">
   </head>
   <body>
     <div id="root">
