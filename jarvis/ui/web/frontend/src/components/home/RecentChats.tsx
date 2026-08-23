@@ -5,6 +5,7 @@ import { useConversations } from "@/hooks/useConversations";
 import { useEventStore, type ConversationSummary } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useT } from "@/i18n";
+import { transcriptFromMessages } from "@/lib/homeTranscript";
 import { cn } from "@/lib/utils";
 import { SidebarGroup } from "@/components/home/SidebarGroup";
 
@@ -16,9 +17,14 @@ export const RECENT_CHATS_UNFOLDED = 15;
  * from the sidebar. This block is the one long-lived poller of the history
  * (`useConversations({ poll: true })`); the chat stage reads the same store.
  *
- * Opening a row resumes it on the CHAT surface: that is where a stored
- * thread can be read and continued by typing. The voice surface shows the
- * live turn, not an archive.
+ * Opening a row resumes it — the backend seeds the shared brain, so the next
+ * turn continues it whether typed or spoken — and lands on the surface that
+ * fits (maintainer, 2026-08-23): a VOICE session opened while the voice
+ * stage is up stays there, its words loaded into the transcript lane, so
+ * you just keep talking. Everything else (a text thread, or any row opened
+ * from the chat surface) goes to the chat surface, where a thread is read
+ * and continued by typing. Reading the surface at click time, not via a
+ * subscription, keeps the list from re-rendering on every switch.
  */
 export function RecentChats() {
   const t = useT();
@@ -27,6 +33,19 @@ export function RecentChats() {
   const [open, setOpen] = useState(false);
   const setActive = useEventStore((s) => s.setActiveSection);
   const setSurface = useHomeStore((s) => s.setSurface);
+  const seedTranscript = useHomeStore((s) => s.seedTranscript);
+
+  const openRow = (c: ConversationSummary) => {
+    const stayOnVoice = c.kind === "voice" && useHomeStore.getState().surface === "voice";
+    const opened = openConversation(c.kind, c.id);
+    if (stayOnVoice) {
+      void opened.then((messages) => seedTranscript(transcriptFromMessages(messages)));
+    } else {
+      void opened;
+      setSurface("chat");
+    }
+    setActive("chats");
+  };
 
   const shown = conversations.slice(0, open ? RECENT_CHATS_UNFOLDED : RECENT_CHATS_FOLDED);
   const canExpand = conversations.length > RECENT_CHATS_FOLDED;
@@ -54,11 +73,7 @@ export function RecentChats() {
               key={`${c.kind}-${c.id}`}
               conversation={c}
               active={c.id === activeThreadId}
-              onOpen={() => {
-                void openConversation(c.kind, c.id);
-                setSurface("chat");
-                setActive("chats");
-              }}
+              onOpen={() => openRow(c)}
               onDelete={() => void removeConversation(c.id)}
             />
           ))}

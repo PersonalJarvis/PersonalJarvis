@@ -4,6 +4,7 @@ import {
   LATE_ATTACH_MS,
   STALE_TURN_MS,
   reduceTranscript,
+  transcriptFromMessages,
   type TranscriptLine,
   type TranscriptStepsLine,
 } from "@/lib/homeTranscript";
@@ -216,5 +217,42 @@ describe("homeTranscript reducer — steps per turn", () => {
     }
     const lines = run(events);
     expect(stepsLine(lines).steps.length).toBe(MAX_THINKING_STEPS);
+  });
+});
+
+describe("transcriptFromMessages", () => {
+  it("keeps the words of a stored conversation and drops UI-only roles", () => {
+    const lines = transcriptFromMessages([
+      { role: "user", content: "  what's  the weather ", ts: 1_000 },
+      { role: "preamble", content: "One moment", ts: 1_500 },
+      { role: "assistant", content: "Sunny, 24 degrees.", ts: 2_000 },
+      { role: "assistant", content: "   ", ts: 2_500 },
+    ]);
+    expect(shape(lines)).toEqual([
+      ["user", "what's the weather"],
+      ["assistant", "Sunny, 24 degrees."],
+    ]);
+    expect(lines.map((l) => l.ts)).toEqual([1_000, 2_000]);
+  });
+
+  it("lets live events append after the archive without joining old lines", () => {
+    const seeded = transcriptFromMessages([
+      { role: "user", content: "hello", ts: 1_000 },
+      { role: "assistant", content: "Hi there.", ts: 2_000 },
+    ]);
+    const now = 5_000_000;
+    const lines = run(
+      [
+        ["TranscriptFinal", { transcript: { text: "and now?" } }, now],
+        ["SpeechSpoken", { text: "Still here.", spoken_kind: "reply" }, now + 800],
+      ],
+      seeded,
+    );
+    expect(shape(lines)).toEqual([
+      ["user", "hello"],
+      ["assistant", "Hi there."],
+      ["user", "and now?"],
+      ["assistant", "Still here."],
+    ]);
   });
 });

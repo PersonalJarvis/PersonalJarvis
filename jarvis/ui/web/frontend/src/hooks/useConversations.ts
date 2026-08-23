@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 
-import { useEventStore, type ConversationKind } from "@/store/events";
+import { useEventStore, type ChatMessage, type ConversationKind } from "@/store/events";
 import {
   deleteTextConversation,
   detailToMessages,
@@ -45,15 +45,23 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     return () => window.clearInterval(id);
   }, [poll, refresh]);
 
+  /**
+   * Make a conversation the active one and resume it on the backend (the
+   * brain is seeded with it, so the next typed OR spoken turn continues it).
+   * Resolves to the stored messages — empty when the backend had none or
+   * could not be reached — so a caller can show them elsewhere too.
+   */
   const openConversation = useCallback(
-    async (kind: ConversationKind, id: string) => {
+    async (kind: ConversationKind, id: string): Promise<ChatMessage[]> => {
       setActiveConversation(kind, id);
+      let messages: ChatMessage[] = [];
       try {
-        const detail = await resumeConversation(kind, id);
-        setMessages(detailToMessages(detail));
+        messages = detailToMessages(await resumeConversation(kind, id));
       } catch {
-        setMessages([]);
+        /* unreachable / gone — an empty thread is the honest view */
       }
+      setMessages(messages);
+      return messages;
     },
     [setActiveConversation, setMessages],
   );

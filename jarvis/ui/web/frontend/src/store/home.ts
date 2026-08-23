@@ -20,6 +20,11 @@ interface HomeStore {
   /** What was said and answered, oldest first (lib/homeTranscript.ts). */
   transcript: TranscriptLine[];
   ingest: (name: string, payload: unknown, tsMs: number) => void;
+  /**
+   * Replace the lane with a stored conversation (a reopened voice session);
+   * live events append after it.
+   */
+  seedTranscript: (lines: TranscriptLine[]) => void;
   /** Tests and a fresh session. */
   resetTranscript: () => void;
 }
@@ -36,5 +41,6 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     const after = reduceTranscript(before, name, payload, tsMs);
     if (after !== before) set({ transcript: after });
   },
+  seedTranscript: (lines) => set({ transcript: lines }),
   resetTranscript: () => set({ transcript: [] }),
 }));

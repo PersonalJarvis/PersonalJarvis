@@ -326,6 +326,29 @@ function reduceSteps(
   return cap([...lines, line]);
 }
 
+/**
+ * A stored conversation as transcript lines — what the voice stage shows
+ * when a past voice session is reopened WITHOUT leaving the voice surface
+ * (sidebar recent chats, 2026-08-23): you pick up where you left off and
+ * keep talking. Only the words survive (user / assistant); a stored thread
+ * carries no step trace, and UI-only roles (a preamble bubble, a system
+ * note) are not part of the conversation. The reducer appends live events
+ * after these lines as usual — their timestamps are old, so no live piece
+ * ever joins or dedups against an archived line.
+ */
+export function transcriptFromMessages(
+  messages: ReadonlyArray<{ role: string; content: string; ts: number }>,
+): TranscriptLine[] {
+  const lines: TranscriptLine[] = [];
+  for (const m of messages) {
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    const text = clean(m.content);
+    if (!text) continue;
+    lines.push({ id: nextId(m.ts), ts: m.ts, who: m.role, text });
+  }
+  return cap(lines);
+}
+
 export function reduceTranscript(
   lines: TranscriptLine[],
   name: string,
