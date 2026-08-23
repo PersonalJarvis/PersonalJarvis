@@ -2979,3 +2979,65 @@
     }
   }
 }
+
+/* ----------------------------------------------------------------------
+   prefers-reduced-motion — the app-wide floor
+
+   The individual reduced-motion rules above (and the matchMedia checks in the
+   orb, the 3-D stage and the waveform) each handle one animation. This block
+   is the floor underneath all of them: whatever a component animates, and
+   whatever gets added later, stops moving here without anyone having to
+   remember the variant.
+
+   Deliberately OUTSIDE @layer, so it lands after every Tailwind utility and
+   after the component rules above. The !important is what makes it a floor
+   rather than another opinion.
+
+   Reduced motion is not "no feedback" — that trade is the reason this cannot
+   be a single blanket `animation: none`:
+
+     * A SPINNER that stops reads as a hang. It keeps turning, just slower and
+       at a constant rate, which is rotation without the jitter that triggers
+       vestibular symptoms.
+     * A PULSING skeleton is a loading state, so it becomes a still, dimmed
+       surface rather than a blank one — the state is still legible, it just
+       stops breathing.
+     * A PING ring exists only to draw the eye by expanding. Frozen mid-expand
+       it is a stray halo, so it is dimmed to a quiet static ring.
+
+   Everything else collapses to its end state in ~1ms, which is what turns a
+   slide or a zoom into an instant state change while React still sees the
+   animation start and finish.
+   ---------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Still says "working", without the fast spin. */
+  .animate-spin {
+    animation-duration: 1.4s !important;
+    animation-iteration-count: infinite !important;
+    animation-timing-function: linear !important;
+  }
+
+  /* Loading surfaces: visible and quiet, never blank. */
+  .animate-pulse {
+    animation: none !important;
+    opacity: 0.55;
+  }
+
+  /* Attention rings: a static halo instead of a repeating expansion. */
+  .animate-ping {
+    animation: none !important;
+    opacity: 0.35;
+    transform: none !important;
+  }
+}
