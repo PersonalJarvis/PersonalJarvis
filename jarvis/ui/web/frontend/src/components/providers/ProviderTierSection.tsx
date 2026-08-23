@@ -7,6 +7,7 @@ import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { CuModelSelector } from "@/components/CuModelSelector";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
+import { useRowGestures } from "@/components/providers/rowGestures";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
 import {
@@ -1243,26 +1244,17 @@ export function ProviderCard({
     }
   }
 
-  // A click on the row opens or closes the editor body. Activation is the job
-  // of the "Use" control on the row — not of the row itself, which used to
-  // switch providers on any click, including a double click that fired
-  // activate() three times and stacked three identical warnings. Clicks on
-  // the row's own controls (the Use radio, a tag's tooltip target) are left to
-  // those controls.
-  function handleRowClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!onToggleExpanded) return;
-    const target = e.target as HTMLElement | null;
-    if (
-      target &&
-      (target.closest("input") ||
-        target.closest("button") ||
-        target.closest("a") ||
-        target.closest("label"))
-    ) {
-      return;
-    }
-    onToggleExpanded();
-  }
+  // One click on the row opens or closes the editor body; a double click
+  // activates the provider — the same path as the Use control, with the same
+  // guards and the same warning when a key is missing. A card that cannot be
+  // switched (an agents-only brain, a Codex login that is not a brain) has no
+  // double-click action. See rowGestures.ts for why a single click waits out
+  // the double-click window.
+  const canSwitch = isBrainSwitchable && !isCodexBrain;
+  const rowGestures = useRowGestures({
+    onToggle: onToggleExpanded,
+    onActivate: canSwitch ? () => void activate() : undefined,
+  });
 
   // Called by ApiKeyForm as soon as a key has been saved for a previously
   // unconfigured provider. If no one else is active in this tier, the
@@ -1333,7 +1325,7 @@ export function ProviderCard({
     : !isBrainSwitchable
       ? t("apikeys_view.agents_only_short").replace("{0}", agentsBrand(assistantName))
       : descriptor.configured
-        ? t("apikeys_view.click_to_activate")
+        ? t("apikeys_view.double_click_to_activate")
         : descriptor.auth_mode === "codex"
           ? t("apikeys_view.needs_codex")
           : descriptor.auth_mode === "antigravity"
@@ -1365,7 +1357,8 @@ export function ProviderCard({
         aria-expanded={collapsible ? expanded : undefined}
         aria-controls={collapsible ? `provider-body-${descriptor.id}` : undefined}
         data-testid={`provider-row-${descriptor.id}`}
-        onClick={handleRowClick}
+        onClick={rowGestures.onClick}
+        onDoubleClick={rowGestures.onDoubleClick}
         onKeyDown={(e) => {
           if (!collapsible) return;
           if (e.target !== e.currentTarget) return;

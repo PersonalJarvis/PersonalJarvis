@@ -30,6 +30,7 @@ import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
+import { useRowGestures } from "@/components/providers/rowGestures";
 import {
   LocalModeNotice,
   LocalModelDownloadPanel,
@@ -680,6 +681,7 @@ function AgentRow({
   active = false,
   expanded = false,
   onToggle,
+  onActivate,
   tooltip,
   testId,
 }: {
@@ -698,24 +700,19 @@ function AgentRow({
   active?: boolean;
   expanded?: boolean;
   onToggle?: () => void;
+  /** Double-click action: make this the worker (the Use control's path). */
+  onActivate?: () => void;
   /** Native hover tooltip for the row header. */
   tooltip?: string;
   testId?: string;
 }) {
   const collapsible = Boolean(body && onToggle);
-
-  function handleRowClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!collapsible) return;
-    const target = e.target as HTMLElement | null;
-    if (
-      target?.closest(
-        "input, label, button, a, select, textarea, [data-agent-card-control]",
-      )
-    ) {
-      return;
-    }
-    onToggle?.();
-  }
+  // One click opens the body, a double click makes this the worker — the
+  // same path as the Use control (see rowGestures.ts).
+  const rowGestures = useRowGestures({
+    onToggle: collapsible ? onToggle : undefined,
+    onActivate,
+  });
 
   return (
     <li
@@ -733,7 +730,8 @@ function AgentRow({
         role={collapsible ? "button" : undefined}
         tabIndex={collapsible ? 0 : undefined}
         aria-expanded={collapsible ? expanded : undefined}
-        onClick={handleRowClick}
+        onClick={rowGestures.onClick}
+        onDoubleClick={rowGestures.onDoubleClick}
         onKeyDown={(e) => {
           if (!collapsible || e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
@@ -1045,6 +1043,7 @@ function CodexConnectionCard({
   return (
     <AgentRow
       testId="agent-row-openai-codex"
+      onActivate={() => void activate()}
       label="OpenAI Codex"
       slug={row?.jarvis}
       title="OpenAI Codex"
@@ -1176,6 +1175,7 @@ function AntigravityConnectionCard({
   return (
     <AgentRow
       testId="agent-row-antigravity"
+      onActivate={() => void activate()}
       label="Antigravity"
       slug={row?.jarvis}
       title="Antigravity"
@@ -1285,6 +1285,7 @@ function GrokBuildConnectionCard({
   return (
     <AgentRow
       testId="agent-row-grok-build"
+      onActivate={() => void activate()}
       label="Grok Build"
       slug={row?.jarvis}
       title="Grok Build"
@@ -1399,6 +1400,7 @@ function ClaudeConnectionCard({
   return (
     <AgentRow
       testId="agent-row-claude-subscription"
+      onActivate={() => void activate()}
       label="Anthropic Claude"
       slug={row?.jarvis}
       title="Anthropic Claude"
@@ -1479,6 +1481,7 @@ function ClaudeApiCard({
   return (
     <AgentRow
       testId="agent-row-claude-api"
+      onActivate={() => void activate()}
       label="Anthropic Claude"
       slug={row?.jarvis}
       title="Anthropic Claude"
@@ -1489,7 +1492,7 @@ function ClaudeApiCard({
         isActive
           ? `This ${brand} provider is active`
           : keySet
-            ? `Activate this ${brand} provider`
+            ? `Double-click to make this the ${brand} provider`
             : `Save a dedicated Claude ${brand} key first`
       }
       state={isActive ? "active" : keySet ? STATE_KEY_SAVED : STATE_NO_KEY}
@@ -1601,6 +1604,7 @@ function SubagentProviderCard({
   return (
     <AgentRow
       testId={`agent-row-${row.jarvis}`}
+      onActivate={() => void activate()}
       label={label}
       slug={row.jarvis}
       title={label}
@@ -1611,7 +1615,7 @@ function SubagentProviderCard({
         row.is_active_brain
           ? `This ${brand} provider is active`
           : row.key_set
-            ? `Activate this ${brand} provider`
+            ? `Double-click to make this the ${brand} provider`
             : "Set an API key first"
       }
       // A keyless row has no key to wait for: it is ready as soon as it is
@@ -1704,7 +1708,7 @@ function SubagentActiveControl({
   const labelTitle = isActive
     ? `This ${brand} provider is active`
     : row.key_set
-      ? `Activate this ${brand} provider`
+      ? `Double-click to make this the ${brand} provider`
       : "Set an API key first";
 
   return (

@@ -119,6 +119,36 @@ describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
     });
   });
 
+  it("makes a worker the active one on a double click of its row", async () => {
+    const status = {
+      ...STATUS,
+      mapping: [{ ...OPENAI_AGENT_ROW, key_set: true, dedicated_key_set: true }],
+    };
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/jarvis-agent/status")) return { ok: true, json: async () => status };
+      if (u.includes("/api/jarvis-agent/switch")) {
+        return { ok: true, json: async () => ({ ok: true, provider: "openai", restart_required: false }) };
+      }
+      void init;
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<JarvisAgentSection />);
+    const title = await screen.findByText("OpenAI");
+    // A real double click is click, click, dblclick — exactly one switch.
+    fireEvent.click(title);
+    fireEvent.click(title, { detail: 2 });
+    fireEvent.doubleClick(title);
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/jarvis-agent/switch")),
+      ).toHaveLength(1),
+    );
+  });
+
   it("renders a dedicated API-key input on the Jarvis-Agents card", async () => {
     const status = { ...STATUS, mapping: [OPENAI_AGENT_ROW] };
     vi.stubGlobal(

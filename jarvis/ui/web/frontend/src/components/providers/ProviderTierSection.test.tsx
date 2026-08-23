@@ -187,6 +187,22 @@ describe("ProviderCard — dictation polish activation", () => {
     cleanup();
   });
 
+  it("activates on a double click of the row, never on a single click", async () => {
+    const calls = installFetchMock();
+
+    renderCard(dictationCard());
+    const title = screen.getByText("OpenAI: dictation polish");
+    // A real double click: click, click, dblclick — one activation.
+    fireEvent.click(title);
+    fireEvent.click(title, { detail: 2 });
+    fireEvent.doubleClick(title);
+
+    await waitFor(() => expect(polishPin(calls).polish_provider).toBe("openai"));
+    expect(
+      calls.filter((c) => c.method === "PUT" && c.url.startsWith("/api/dictation/settings")),
+    ).toHaveLength(1);
+  });
+
   it("pins the polish FAMILY, not the card id", async () => {
     const calls = installFetchMock();
 
