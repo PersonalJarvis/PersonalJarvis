@@ -864,6 +864,31 @@
       "error": "fehler"
     }
   },
+  "shortcut_overlay": {
+    "title": "Tastenkürzel",
+    "description": "Drücke überall ?, um diese Liste zu öffnen. Die Sprachtasten lassen sich in den Einstellungen ändern.",
+    "close": "Schließen",
+    "or": "oder",
+    "unassigned": "nicht belegt",
+    "footer": "Sprachtasten änderst du unter Einstellungen → Tastatur.",
+    "area": {
+      "voice": "Sprache",
+      "workspace": "Arbeitsbereich"
+    },
+    "voice": {
+      "dictate": "Zum Sprechen halten (Push-to-Talk)",
+      "dictate_toggle": "Freihändiges Diktat an/aus",
+      "call": "Gespräch mit Jarvis starten",
+      "hangup": "Gespräch beenden",
+      "paste_last": "Letzte Transkription einfügen"
+    },
+    "workspace": {
+      "zoom_in": "Terminaltext größer",
+      "zoom_out": "Terminaltext kleiner",
+      "zoom_reset": "Terminaltextgröße zurücksetzen",
+      "open_overlay": "Diese Liste öffnen"
+    }
+  },
   "board_view": {
     "title": "Board",
     "subtitle": "Alles, was du und {name} zusammen gemacht habt — komplett lokal.",

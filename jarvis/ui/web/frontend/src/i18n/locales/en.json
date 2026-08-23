@@ -864,6 +864,31 @@
       "error": "error"
     }
   },
+  "shortcut_overlay": {
+    "title": "Keyboard shortcuts",
+    "description": "Press ? anywhere to open this list. Voice keys are configurable in Settings.",
+    "close": "Close",
+    "or": "or",
+    "unassigned": "not assigned",
+    "footer": "Rebind the voice keys under Settings → Keyboard.",
+    "area": {
+      "voice": "Voice",
+      "workspace": "Workspace"
+    },
+    "voice": {
+      "dictate": "Hold to talk (push-to-talk)",
+      "dictate_toggle": "Hands-free dictation on/off",
+      "call": "Start a call with Jarvis",
+      "hangup": "End the call",
+      "paste_last": "Paste the last transcription"
+    },
+    "workspace": {
+      "zoom_in": "Larger terminal text",
+      "zoom_out": "Smaller terminal text",
+      "zoom_reset": "Reset terminal text size",
+      "open_overlay": "Open this list"
+    }
+  },
   "board_view": {
     "title": "Board",
     "subtitle": "Everything you and {name} have done together — fully local.",

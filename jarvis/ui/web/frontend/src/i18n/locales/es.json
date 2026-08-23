@@ -864,6 +864,31 @@
       "error": "error"
     }
   },
+  "shortcut_overlay": {
+    "title": "Atajos de teclado",
+    "description": "Pulsa ? en cualquier lugar para abrir esta lista. Las teclas de voz se configuran en Ajustes.",
+    "close": "Cerrar",
+    "or": "o",
+    "unassigned": "sin asignar",
+    "footer": "Cambia las teclas de voz en Ajustes → Teclado.",
+    "area": {
+      "voice": "Voz",
+      "workspace": "Espacio de trabajo"
+    },
+    "voice": {
+      "dictate": "Mantén pulsado para hablar (push-to-talk)",
+      "dictate_toggle": "Dictado manos libres on/off",
+      "call": "Iniciar una llamada con Jarvis",
+      "hangup": "Colgar",
+      "paste_last": "Pegar la última transcripción"
+    },
+    "workspace": {
+      "zoom_in": "Texto del terminal más grande",
+      "zoom_out": "Texto del terminal más pequeño",
+      "zoom_reset": "Restablecer el tamaño del texto",
+      "open_overlay": "Abrir esta lista"
+    }
+  },
   "board_view": {
     "title": "Tablero",
     "subtitle": "Todo lo que tú y {name} habéis hecho juntos — totalmente local.",

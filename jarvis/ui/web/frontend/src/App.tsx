@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { isSectionId, useEventStore } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
@@ -23,6 +23,17 @@ import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
 import { CommandActivityLayer } from "@/components/CommandActivityLayer";
 import { EditContextMenu } from "@/components/EditContextMenu";
+/*
+  Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
+  layout table and the keybind hook — none of which anything needs before
+  someone presses `?`. Imported statically it put the startup chunk over the
+  bundle budget, and every byte there is parsed before the UI paints. Only the
+  key guard below stays eager, and it is a pure function over the event.
+*/
+const ShortcutOverlay = lazy(() =>
+  import("@/components/ShortcutOverlay").then((m) => ({ default: m.ShortcutOverlay })),
+);
+import { shouldOpenShortcutOverlay } from "@/lib/shortcutOverlayTrigger";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
@@ -116,6 +127,23 @@ export function SectionStage({
 }
 
 export default function App() {
+  /*
+    `?` opens the shortcut overlay. Registered here rather than per view so it
+    works everywhere, and guarded by shouldOpenShortcutOverlay so it never eats
+    a question mark typed into a message, a search box or a terminal pane.
+    Escape and focus restoration are the dialog's own.
+  */
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldOpenShortcutOverlay(event)) return;
+      event.preventDefault();
+      setShortcutsOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   useWebSocket();
   useBrainStatus();
   useVoiceStatus();
@@ -307,6 +335,11 @@ export default function App() {
         <ToastLayer />
         <CommandActivityLayer />
         <EditContextMenu />
+        {shortcutsOpen && (
+          <Suspense fallback={null}>
+            <ShortcutOverlay open onOpenChange={setShortcutsOpen} />
+          </Suspense>
+        )}
       </div>
     );
   }
@@ -381,6 +414,12 @@ export default function App() {
       <CliConnectPoller />
       {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
       <OnboardingGate />
+      {/* `?` anywhere in the app opens this; the chunk loads on first use. */}
+      {shortcutsOpen && (
+        <Suspense fallback={null}>
+          <ShortcutOverlay open onOpenChange={setShortcutsOpen} />
+        </Suspense>
+      )}
     </div>
   );
 }
