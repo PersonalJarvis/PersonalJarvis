@@ -33,14 +33,14 @@ def test_tasks_dir_without_artifacts_returns_empty(tmp_path: Path) -> None:
 
 
 def test_single_file_is_named(tmp_path: Path) -> None:
-    """One archived file → 'Fertig. Datei X ist gespeichert.'"""  # i18n-allow: quotes the German TTS readback
+    """One archived file → the German 'filed as an artifact' readback."""
     files = tmp_path / "tasks" / "019e63c5-5855" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     s = build_deliverable_summary(tmp_path)
     assert "landing.html" in s, f"filename must appear in summary, got {s!r}"
-    assert "Datei" in s  # i18n-allow: asserts the German TTS readback text
-    assert "gespeichert" in s  # i18n-allow: asserts the German TTS readback text
+    assert "Artefakt" in s  # i18n-allow: asserts the German TTS readback text
+    assert "Artefakt" in s  # i18n-allow: asserts the German TTS readback text
 
 
 def test_two_files_are_named(tmp_path: Path) -> None:
@@ -125,8 +125,8 @@ def test_single_file_summary_in_english(tmp_path: Path) -> None:
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     s = build_deliverable_summary(tmp_path, language="en")
     assert "landing.html" in s, f"filename must appear, got {s!r}"
-    assert "saved" in s
-    assert "Datei" not in s and "gespeichert" not in s, (  # i18n-allow: asserts absence of the German TTS words
+    assert "artifact" in s
+    assert "Datei" not in s and "Artefakt" not in s, (  # i18n-allow: asserts absence
         f"English summary must not contain German words: {s!r}"
     )
 
@@ -148,31 +148,35 @@ def test_deliverable_summary_defaults_to_german(tmp_path: Path) -> None:
     files = tmp_path / "tasks" / "019e63c5-5855" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
-    assert "Datei" in build_deliverable_summary(tmp_path)
+    assert "Artefakt" in build_deliverable_summary(tmp_path)  # i18n-allow: DE readback
 
 
 def test_delivered_summary_in_english(tmp_path: Path) -> None:
-    """build_delivered_summary names the folder in English when asked."""
+    """build_delivered_summary says "as an artifact" in English when asked —
+    and never names the mirror folder (maintainer 2026-08-23)."""
     folder = tmp_path / "Jarvis-Outputs"
     folder.mkdir()
     f = folder / "report.md"
     f.write_text("x", encoding="utf-8")
     s = build_delivered_summary([f], language="en")
     assert "report.md" in s
-    assert "folder" in s and "Jarvis-Outputs" in s
+    assert "artifact" in s
+    assert "Jarvis-Outputs" not in s and "folder" not in s
     assert "Datei" not in s and "Ordner" not in s, (
         f"English delivered summary must not contain German words: {s!r}"
     )
 
 
 def test_delivered_summary_defaults_to_german(tmp_path: Path) -> None:
-    """No language arg keeps the historical German output (back-compat)."""
+    """No language arg keeps the German output (back-compat) — as an artifact,
+    never as a folder."""
     folder = tmp_path / "Jarvis-Outputs"
     folder.mkdir()
     f = folder / "report.md"
     f.write_text("x", encoding="utf-8")
     s = build_delivered_summary([f])
-    assert "Ordner" in s and "Datei" in s
+    assert "Artefakt" in s  # i18n-allow: asserts the German TTS readback text
+    assert "Ordner" not in s and "Jarvis-Outputs" not in s  # i18n-allow: asserts absence
 
 
 # --- End-of-chain seam ------------------------------------------------------

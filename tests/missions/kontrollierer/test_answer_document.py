@@ -87,7 +87,7 @@ def test_report_is_found_by_build_deliverable_summary(tmp_path: Path) -> None:
     assert out is not None
     summary = build_deliverable_summary(tmp_path)
     assert out.name in summary
-    assert "Datei" in summary
+    assert "Artefakt" in summary  # i18n-allow: DE readback
 
 
 def test_existing_file_deliverable_suppresses_report(tmp_path: Path) -> None:

@@ -92,7 +92,9 @@ def test_build_delivered_summary_single(tmp_path: Path) -> None:
     f.write_text("x", encoding="utf-8")
     out = build_delivered_summary([f])
     assert "report.html" in out
-    assert "Jarvis-Outputs" in out
+    # The folder is never spoken (maintainer 2026-08-23): the file is "an artifact".
+    assert "Jarvis-Outputs" not in out
+    assert "Artefakt" in out  # i18n-allow: asserts the German TTS readback text
     assert out.startswith("Fertig.")  # i18n-allow: asserts the German TTS readback text
 
 

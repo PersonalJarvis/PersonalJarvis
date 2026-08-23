@@ -90,31 +90,27 @@ _DELIVERABLES_FOLDER_NAME: Final[str] = "Jarvis-Outputs"
 #: and ``en`` only — Spanish dispatch falls back to ``de`` at the spawn layer
 #: (the ``Literal["de","en"]`` dispatch contract). "Datei" / "File" stay outside
 #: the scrub blacklist so they survive ``scrub_for_voice``.
+# What the completion readback SAYS about where a deliverable went. Since
+# 2026-08-23 the answer is always "as an artifact": the Outputs section folded
+# into Artifacts, and the maintainer's rule is that Jarvis never names the
+# Jarvis-Outputs folder aloud again — a person looks in the Artifacts section,
+# not in a directory. Both tables say the same thing; the "delivered" variant
+# exists for the caller that also mirrored the files to disk, and it no longer
+# speaks the folder name either.
 _DELIVERABLE_TEMPLATES: Final[dict[str, dict[str, str]]] = {
     "de": {
-        "one": "Fertig. Datei {name} ist gespeichert.",
-        "few": "Fertig. {count} Dateien gespeichert: {joined}.",
-        "many": "Fertig. {count} Dateien gespeichert.",
+        "one": "Fertig. {name} habe ich als Artefakt hinterlegt.",  # i18n-allow
+        "few": "Fertig. {count} Dateien als Artefakte hinterlegt: {joined}.",  # i18n-allow
+        "many": "Fertig. {count} Dateien als Artefakte hinterlegt.",  # i18n-allow
     },
     "en": {
-        "one": "Done. File {name} is saved.",
-        "few": "Done. {count} files saved: {joined}.",
-        "many": "Done. {count} files saved.",
+        "one": "Done. I've filed {name} as an artifact.",
+        "few": "Done. {count} files filed as artifacts: {joined}.",
+        "many": "Done. {count} files filed as artifacts.",
     },
 }
 
-_DELIVERED_TEMPLATES: Final[dict[str, dict[str, str]]] = {
-    "de": {
-        "one": "Fertig. Datei {name} liegt im Ordner {folder}.",
-        "few": "Fertig. {count} Dateien im Ordner {folder}: {joined}.",
-        "many": "Fertig. {count} Dateien im Ordner {folder} gespeichert.",
-    },
-    "en": {
-        "one": "Done. File {name} is in the folder {folder}.",
-        "few": "Done. {count} files in the folder {folder}: {joined}.",
-        "many": "Done. {count} files in the folder {folder}.",
-    },
-}
+_DELIVERED_TEMPLATES: Final[dict[str, dict[str, str]]] = _DELIVERABLE_TEMPLATES
 
 
 def _templates(table: dict[str, dict[str, str]], language: str) -> dict[str, str]:
@@ -465,11 +461,12 @@ def deliver_to_user_folder(
 
 
 def build_delivered_summary(delivered: list[Path], *, language: str = "de") -> str:
-    """TTS-safe sentence naming delivered files AND their folder.
+    """TTS-safe sentence naming delivered files as artifacts.
 
-    Unlike :func:`build_deliverable_summary` (which only names the archive
-    basenames), this also tells the user WHERE the file landed so they can open
-    it. Empty string when nothing was delivered (caller falls back).
+    Until 2026-08-23 this also spoke the mirror folder's name ("liegt im Ordner
+    Jarvis-Outputs"). It no longer does: the place a person looks is the
+    Artifacts section, and the maintainer asked that the folder never be named
+    aloud again. Empty string when nothing was delivered (caller falls back).
 
     Args:
         delivered: the on-disk paths the deliverables were mirrored to.
@@ -478,16 +475,15 @@ def build_delivered_summary(delivered: list[Path], *, language: str = "de") -> s
     """
     if not delivered:
         return ""
-    folder = delivered[0].parent
     names = [p.name for p in delivered]
     tpl = _templates(_DELIVERED_TEMPLATES, language)
     count = len(names)
     if count == 1:
-        return tpl["one"].format(name=names[0], folder=folder.name)
+        return tpl["one"].format(name=names[0])
     if count <= _MAX_NAMED_FILES:
         joined = ", ".join(names)
-        return tpl["few"].format(count=count, folder=folder.name, joined=joined)
-    return tpl["many"].format(count=count, folder=folder.name)
+        return tpl["few"].format(count=count, joined=joined)
+    return tpl["many"].format(count=count)
 
 
 __all__ = [
