@@ -7,12 +7,49 @@ import {
   useProviders,
   type ProviderDescriptor,
 } from "@/hooks/useProviders";
+import {
+  applyStarterPlan,
+  getStarterPlans,
+  selectStarterPlan,
+  type ApplyPlanOutcome,
+  type StarterPlan,
+} from "@/hooks/useStarterPlans";
+import { ReadyCelebration } from "@/components/ReadyCelebration";
 import { setLocalMode } from "@/lib/localMode";
 import { putVoiceMode } from "@/lib/voiceEngineMode";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { StepProps } from "../OnboardingFlow";
-import { StatusLine, StepFooter, StepSection } from "../primitives";
+import { ChoiceRow, StatusLine, StepFooter, StepSection } from "../primitives";
+
+/** The "I'll pick everything myself" choice; mirrors the backend's custom id. */
+const CUSTOM_PLAN = "custom";
+
+/**
+ * The providers a plan asks a key for: the brain card whose primary slot is
+ * the plan's family slot. One key per family (2026-08-24), so one card per
+ * family is all the plan ever needs to show. Exported for tests.
+ */
+export function providersForPlan(
+  plan: StarterPlan | null,
+  startable: ProviderDescriptor[],
+): ProviderDescriptor[] {
+  if (!plan) return startable;
+  const slots = new Set(plan.key_slots.map((s) => s.slot));
+  return startable.filter((p) => {
+    const slot = primarySlot(p);
+    return slot !== null && slots.has(slot);
+  });
+}
+
+/** Every key the plan needs is saved (dedicated or covered by the family). */
+export function planKeysComplete(plan: StarterPlan, startable: ProviderDescriptor[]): boolean {
+  const cards = providersForPlan(plan, startable);
+  return (
+    plan.key_slots.length > 0 &&
+    plan.key_slots.every((s) => cards.some((p) => primarySlot(p) === s.slot && slotEffective(p)))
+  );
+}
 
 /** How many providers are open before the "show more" fold. */
 const FOLD_AFTER = 4;
@@ -188,15 +225,76 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
   const [expanded, setExpanded] = useState(false);
   const [localActive, setLocalActive] = useState(false);
 
-  const startable = useMemo(() => startableProviders(providers), [providers]);
-  const visible = expanded ? startable : startable.slice(0, FOLD_AFTER);
+  // Starter plans: "one key and you are done". The recommended plan is
+  // preselected; "custom" shows the whole catalog exactly as before.
+  const [plans, setPlans] = useState<StarterPlan[]>([]);
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState<{ id: string; outcome: ApplyPlanOutcome } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getStarterPlans();
+        if (cancelled) return;
+        setPlans(res.plans);
+        setPlanId(
+          (current) =>
+            current ?? res.selected ?? res.plans.find((p) => p.recommended)?.id ?? CUSTOM_PLAN,
+        );
+      } catch {
+        // No plan catalog (older backend) — the full list still works.
+        if (!cancelled) setPlanId((current) => current ?? CUSTOM_PLAN);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const plan = useMemo(
+    () => (planId && planId !== CUSTOM_PLAN ? (plans.find((p) => p.id === planId) ?? null) : null),
+    [plans, planId],
+  );
+
+  const allStartable = useMemo(() => startableProviders(providers), [providers]);
+  const startable = useMemo(() => providersForPlan(plan, allStartable), [plan, allStartable]);
+  const visible = expanded || plan ? startable : startable.slice(0, FOLD_AFTER);
   const hidden = startable.length - visible.length;
 
   const configured = startable.filter(slotEffective);
   const hasKey = configured.length > 0;
+  const planComplete = plan ? planKeysComplete(plan, allStartable) : false;
+  const planApplied = Boolean(plan && applied?.id === plan.id);
+
+  // Once every key the plan needs is saved, point every surface at it —
+  // brain, tool model, agents, voice out, voice in, live voice, mode. Runs
+  // once per plan; a re-render never re-applies.
+  useEffect(() => {
+    if (!plan || !planComplete || applying || applied?.id === plan.id) return;
+    let cancelled = false;
+    setApplying(true);
+    (async () => {
+      try {
+        await selectStarterPlan(plan.id).catch(() => undefined);
+        const outcome = await applyStarterPlan(plan);
+        if (!cancelled) setApplied({ id: plan.id, outcome });
+      } finally {
+        if (!cancelled) setApplying(false);
+        void refetch();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.id, planComplete]);
 
   useEffect(() => {
-    if (hasKey) {
+    if (plan && planApplied) {
+      setSummary(`${planLabel(plan)} · ${configured.map((p) => p.label).join(" · ")}`);
+    } else if (hasKey) {
       setSummary(configured.map((p) => p.label).join(" · "));
     } else if (localActive) {
       setSummary(t("onboarding.api_keys.summary_local"));
@@ -205,7 +303,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
     }
     // configured is derived from startable; its labels are what we render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasKey, localActive, configured.map((p) => p.id).join(","), setSummary, t]);
+  }, [hasKey, localActive, planApplied, configured.map((p) => p.id).join(","), setSummary, t]);
 
   // Open the first row by default so a fresh install shows an input, not a
   // list of closed doors. Once anything is configured, everything stays shut.
@@ -213,6 +311,23 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
     if (open === null && startable.length > 0 && !hasKey) setOpen(startable[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startable.length, hasKey]);
+
+  function planLabel(p: StarterPlan): string {
+    const key = `onboarding.plans.${p.id.replace(/-/g, "_")}_label`;
+    const translated = t(key);
+    return translated === key ? p.label : translated;
+  }
+  function planSummary(p: StarterPlan): string {
+    const key = `onboarding.plans.${p.id.replace(/-/g, "_")}_summary`;
+    const translated = t(key);
+    return translated === key ? p.summary : translated;
+  }
+
+  async function choosePlan(id: string) {
+    setPlanId(id);
+    setOpen(null);
+    await selectStarterPlan(id).catch(() => undefined);
+  }
 
   const activateIfNone = (p: ProviderDescriptor) => {
     const anyActive = startable.some((q) => q.active);
@@ -229,6 +344,30 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
 
   return (
     <div className="space-y-8">
+      {plans.length > 0 && (
+        <StepSection label={t("onboarding.api_keys.plan_label")}>
+          <div className="space-y-2" role="radiogroup" data-testid="onboarding-plan-picker">
+            {plans.map((p) => (
+              <ChoiceRow
+                key={p.id}
+                selected={planId === p.id}
+                title={p.recommended ? `${planLabel(p)} — ${t("onboarding.api_keys.recommended")}` : planLabel(p)}
+                body={planSummary(p)}
+                onSelect={() => void choosePlan(p.id)}
+                testId={`onboarding-plan-${p.id}`}
+              />
+            ))}
+            <ChoiceRow
+              selected={planId === CUSTOM_PLAN}
+              title={t("onboarding.api_keys.plan_custom_title")}
+              body={t("onboarding.api_keys.plan_custom_body")}
+              onSelect={() => void choosePlan(CUSTOM_PLAN)}
+              testId="onboarding-plan-custom"
+            />
+          </div>
+        </StepSection>
+      )}
+
       <StepSection label={t("onboarding.api_keys.providers_label")}>
         {loading && startable.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">{t("onboarding.api_keys.loading")}</p>
@@ -296,8 +435,17 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
                         credentialHelp={p.credential_help}
                         coveredNote={p.credential_note ?? null}
                         sharedWith={p.secret_shared_with?.[slot] ?? []}
+                        testAfterSave={{
+                          id: p.id,
+                          label: p.label,
+                          section: p.tier,
+                          active: p.active,
+                        }}
                         onChanged={() => void refetch()}
-                        onSavedActivate={() => activateIfNone(p)}
+                        onSavedActivate={() => {
+                          // A plan takes over activation for every surface.
+                          if (!plan) activateIfNone(p);
+                        }}
                       />
                     </div>
                   )}
@@ -324,9 +472,28 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
             {t("onboarding.api_keys.show_less")}
           </button>
         )}
+        {plan && applying && (
+          <StatusLine tone="muted" testId="onboarding-plan-applying">
+            {t("onboarding.api_keys.plan_applying").replace("{0}", planLabel(plan))}
+          </StatusLine>
+        )}
+        {plan && planApplied && applied && applied.outcome.failed.length === 0 && (
+          <StatusLine tone="ok" testId="onboarding-plan-applied">
+            {t("onboarding.api_keys.plan_applied").replace("{0}", planLabel(plan))}
+          </StatusLine>
+        )}
+        {plan && planApplied && applied && applied.outcome.failed.length > 0 && (
+          <StatusLine tone="warning" testId="onboarding-plan-partial">
+            {t("onboarding.api_keys.plan_partial").replace(
+              "{0}",
+              applied.outcome.failed.map((f) => `${f.surface}: ${f.error}`).join(" · "),
+            )}
+          </StatusLine>
+        )}
+        {plan && planApplied && <ReadyCelebration inline />}
       </StepSection>
 
-      <LocalPath onActivated={() => setLocalActive(true)} />
+      {!plan && <LocalPath onActivated={() => setLocalActive(true)} />}
 
       <p className="text-[13px] leading-relaxed text-muted-foreground">
         {t("onboarding.api_keys.security_note")}

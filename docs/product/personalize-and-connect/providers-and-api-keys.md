@@ -166,6 +166,37 @@ Only a genuinely different second key raises a question:
 Nothing is written until you answer. Areas that keep their own key show it as
 **Key saved**; areas served by the shared key show the covered note.
 
+### Starter plans (first run)
+
+The first-run guide opens with **How do you want to start?** A starter plan
+is one voice mode plus a provider for every part that mode needs, all on one
+provider family:
+
+| Plan | Mode | Keys | What it sets |
+|---|---|---|---|
+| **Pipeline with Gemini** (recommended) | Pipeline | Gemini | Brain, tool model, agents, voice out, voice in |
+| Realtime with Gemini | Realtime | Gemini | Gemini Live, plus the Pipeline parts as fallback |
+| Gemini + OpenAI | Realtime | Gemini, OpenAI | OpenAI Realtime speaks; Gemini thinks, plans and runs the agents |
+| Pick everything myself | — | any | The full provider list, as before |
+
+Choosing a plan narrows the key list to the families it needs. The moment
+every key is saved, the guide points each part at that key and pins the voice
+mode — nothing else to click. Parts that could not be applied are listed and
+can be fixed later here.
+
+### Every saved key is checked
+
+Saving a key runs the card's live test right away (the same probe as the
+**Test** button) and reports the answer as a short note — a wrong or empty key
+is caught when it is pasted, not on the first spoken turn.
+
+### The "all lights green" note
+
+Once every part the active mode needs answers — Pipeline: brain, tool model,
+voice out, voice in; Realtime: live voice, tool model, agents — a one-time
+note appears (inside the guide, or above the top bar later). It shows exactly
+once per install; **Let's go** dismisses it for good.
+
 Brain and Computer Use changes apply to the next request. Voice input applies
 to the next transcription. Voice output switches the running Pipeline when it
 can, otherwise the saved choice is used when speech starts again. Activating a

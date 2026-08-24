@@ -362,6 +362,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .local_models_routes import router as local_models_router
         from .marketplace_publish_routes import router as marketplace_publish_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
@@ -389,6 +390,7 @@ class WebServer:
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
+        from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
         from .telephony_routes import router as telephony_router
@@ -415,10 +417,19 @@ class WebServer:
         app.include_router(mcp_router)
         app.include_router(tools_router)
         app.include_router(tool_model_router)
+        # Jarvis' OWN tools, offered outwards over MCP so an agent-chat session
+        # drives Jarvis instead of a bare workspace. Key-gated like the rest of
+        # the Control API; mounted raw because the transport streams.
+        from jarvis.ui.web.mcp_server_routes import build_mcp_asgi_app
+
+        app.mount("/api/control/mcp", build_mcp_asgi_app())
         # Event-loop diagnostics (read-only) — names the owner of an AP-20
         # cancellation busy-loop from inside the loop; see diagnostics_routes.
         app.include_router(diagnostics_router)
         app.include_router(provider_router)
+        # Local models section: inventory / unload / delete behind the
+        # pull-capable card (same capability gate as the pull routes).
+        app.include_router(local_models_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
         app.include_router(grok_build_router)
@@ -437,6 +448,8 @@ class WebServer:
         # Share-safe cross-device setup report (read-only) — names why THIS
         # install behaves differently from another device (CLAUDE.md §3 triage).
         app.include_router(setup_report_router)
+        # Starter plans + the one-time "all set" readiness note.
+        app.include_router(starter_plan_router)
         # Frontier auto-switch modal API (GET pending / POST ack) + Self-Mod
         # read/restore API. Both were the last route modules left unmounted; the
         # 404 on /api/frontier/pending silently broke the desktop auto-switch
@@ -2368,6 +2381,12 @@ class WebServer:
             assert_bind_safe(host, _control_key.get_control_key())
 
             resolved_port = port if port is not None else self.cfg.ui.admin_api_port
+            # The one place the effective port is known: a dev instance offsets
+            # it at runtime while sharing jarvis.toml, so reading the config
+            # would point an in-process caller at the LIVE app's port.
+            from jarvis.core import runtime_refs as _runtime_refs
+
+            _runtime_refs.set_api_base_url(f"http://127.0.0.1:{resolved_port}")
             config = uvicorn.Config(
                 app=self.app,
                 host=host,

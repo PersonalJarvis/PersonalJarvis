@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import {
   deleteSecret,
   postSecret,
+  testProvider,
+  type ProviderTestResult,
   type SecretSaveResult,
   type SecretSaveScope,
 } from "@/hooks/useProviders";
@@ -44,6 +46,13 @@ interface ApiKeyFormProps {
    * silently disables those surfaces too.
    */
   sharedWith?: string[];
+  /**
+   * When set, every successful save is followed by the provider's live test
+   * (the same probe as the card's Test button) and its verdict lands as a
+   * toast + a `jarvis:provider-tested` event — so a wrong key is caught the
+   * moment it is pasted, not on the first spoken turn.
+   */
+  testAfterSave?: { id: string; label: string; section: string; active: boolean };
   onChanged?: () => void;
   /**
    * Called after a key has been saved successfully.
@@ -77,7 +86,7 @@ function announceSecretChange(secretKey: string, action: "set" | "delete") {
  * existing value. Writes directly to POST /api/secrets/{key}; the value
  * never leaves the frontend again after submit (read-only flag in the backend).
  */
-export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, effectiveConfigured, coveredNote, sharedWith, onChanged, onSavedActivate }: ApiKeyFormProps) {
+export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, effectiveConfigured, coveredNote, sharedWith, testAfterSave, onChanged, onSavedActivate }: ApiKeyFormProps) {
   const t = useT();
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
@@ -116,10 +125,47 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       for (const slot of new Set([secretKey, ...(result?.written ?? [])])) {
         announceSecretChange(slot, "set");
       }
+      if (testAfterSave) void verifySavedKey(testAfterSave);
     } catch (e) {
       pushToast("error", `${t("common.save_failed")}: ${(e as Error).message}`);
     } finally {
       setPending(false);
+    }
+  }
+
+  async function verifySavedKey(target: NonNullable<ApiKeyFormProps["testAfterSave"]>) {
+    let verdict: ProviderTestResult;
+    try {
+      verdict = await testProvider(target.id);
+    } catch (e) {
+      verdict = {
+        provider: target.id,
+        status: "error",
+        detail: (e as Error).message,
+        latency_ms: 0,
+        integration_ok: false,
+      };
+    }
+    window.dispatchEvent(
+      new CustomEvent("jarvis:provider-tested", {
+        detail: {
+          section: target.section,
+          provider: target.id,
+          provider_label: target.label,
+          active: target.active,
+          result: verdict,
+        },
+      }),
+    );
+    if (verdict.status === "ok") {
+      pushToast("success", t("apikeys_view.key_verified_toast").replace("{0}", target.label));
+    } else {
+      pushToast(
+        "warning",
+        t("apikeys_view.key_check_failed_toast")
+          .replace("{0}", target.label)
+          .replace("{1}", verdict.detail || verdict.status),
+      );
     }
   }
 

@@ -215,6 +215,10 @@ _ONBOARDING_KEYS = (
     "terms_accepted_at",
     "terms_version",
     "wake_word_acknowledged_at",
+    # Starter plan chosen in onboarding + the one-time "all set" moment. Both
+    # belong to the first run, so an onboarding reset clears them too.
+    "starter_plan",
+    "ready_celebrated_at",
 )
 
 
@@ -294,6 +298,25 @@ def acknowledge_wake_word(path: Path | None = None) -> None:
 
 def mark_onboarding_complete(path: Path | None = None) -> None:
     _merge_state({"onboarding_completed_at": _now_iso()}, path)
+
+
+def set_starter_plan(plan_id: str, path: Path | None = None) -> None:
+    _merge_state({"starter_plan": plan_id}, path)
+
+
+def get_starter_plan(path: Path | None = None) -> str | None:
+    value = load_setup_state(path).get("starter_plan")
+    return value if isinstance(value, str) and value else None
+
+
+def mark_ready_celebrated(path: Path | None = None) -> None:
+    """Record that the one-time "everything answered" moment was shown."""
+    _merge_state({"ready_celebrated_at": _now_iso()}, path)
+
+
+def is_ready_celebrated(path: Path | None = None) -> bool:
+    value = load_setup_state(path).get("ready_celebrated_at")
+    return isinstance(value, str) and bool(value)
 
 
 def reset_onboarding(path: Path | None = None) -> list[str]:

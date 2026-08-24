@@ -1838,7 +1838,9 @@
     "switch_done_realtime": "Realtime → {0}",
     "experimental_note": "Beta: Dieser Anbieter ist noch nicht fertig und nutzt ein instabiles Protokoll, das sich ohne Vorankündigung ändern kann. Wenn es nicht startet, endet das Gespräch.",
     "experimental_consent": "Bevor du das aktivierst: Dieser Anbieter ist noch im Beta-Stadium und nutzt eine experimentelle, instabile Route, die sich ohne Vorankündigung ändern kann. Wenn sie ausfällt, endet das Gespräch, statt von selbst auf einen anderen Anbieter zu wechseln. Fortfahren?",
-    "trademark_notice": "Anbieter- und Dienstnamen sowie Logos sind Marken ihrer jeweiligen Inhaber und werden nur gezeigt, um die verbindbaren Integrationen zu benennen. Eine Verbindung oder Empfehlung ist damit nicht gemeint."
+    "trademark_notice": "Anbieter- und Dienstnamen sowie Logos sind Marken ihrer jeweiligen Inhaber und werden nur gezeigt, um die verbindbaren Integrationen zu benennen. Eine Verbindung oder Empfehlung ist damit nicht gemeint.",
+    "key_verified_toast": "{0} hat geantwortet — der Schlüssel funktioniert.",
+    "key_check_failed_toast": "{0} hat nicht geantwortet: {1}"
   },
   "apikeys_test": {
     "button": "Testen",
@@ -2723,7 +2725,13 @@
       "later": "Später — Schlüssel in den Einstellungen hinzufügen",
       "later_hint": "Chat und Sprache bleiben aus, bis ein Schlüssel gespeichert ist.",
       "summary_none": "Noch kein Schlüssel",
-      "summary_local": "Lokal · Ollama"
+      "summary_local": "Lokal · Ollama",
+      "plan_label": "Wie willst du starten?",
+      "plan_custom_title": "Alles selbst auswählen",
+      "plan_custom_body": "Die komplette Provider-Liste — jeden Teil einzeln wählen.",
+      "plan_applying": "Richte alles für {0} ein…",
+      "plan_applied": "{0} ist eingerichtet: Denken, Tool-Modell, Agenten und Stimme zeigen alle auf deinen Schlüssel.",
+      "plan_partial": "Das meiste ist eingerichtet; das hier hat nicht geklappt: {0}. Du kannst es später unter API-Keys nachholen."
     },
     "permissions": {
       "privacy_note": "Diese Abfragen kommen von macOS. Der Installer kann sie nicht still genehmigen, und {name} umgeht die Systemeinstellungen nie. Die Schlüsselbund-Abfrage beim App-Start bedeutet nur, dass deine API-Schlüssel verschlüsselt im macOS-Schlüsselbund gespeichert werden — sie verlassen deinen Mac nie.",
@@ -2779,6 +2787,14 @@
       "start_cta": "{name} starten",
       "starting": "Startet…",
       "start_failed": "Die Einrichtung konnte nicht abgeschlossen werden. Prüfe, ob die App läuft, und versuche es erneut."
+    },
+    "plans": {
+      "gemini_pipeline_label": "Pipeline mit Gemini",
+      "gemini_pipeline_summary": "Ein Google-Gemini-Schlüssel für alles: Denken, Tool-Modell, Agenten, Stimme rein und raus.",
+      "gemini_realtime_label": "Realtime mit Gemini",
+      "gemini_realtime_summary": "Ein Google-Gemini-Schlüssel, live gesprochen: Gemini Live antwortet in Echtzeit; Tool-Modell und Agenten laufen über denselben Schlüssel.",
+      "gemini_openai_realtime_label": "Gemini + OpenAI",
+      "gemini_openai_realtime_summary": "Zwei Schlüssel, beide Engines abgedeckt: OpenAI Realtime spricht live, Gemini denkt, plant und steuert die Agenten — und die Pipeline bleibt als Reserve bereit."
     }
   },
   "language_select": {
@@ -5253,5 +5269,12 @@
     "empty": "In dieser Sitzung wurde nichts aufgezeichnet.",
     "read_only": "Eine gesprochene Unterhaltung. Sprich weiter, um sie fortzusetzen.",
     "continue": "Per Sprache fortsetzen"
+  },
+  "ready_note": {
+    "title": "Alle Lichter grün.",
+    "body": "Denken, Werkzeuge, Agenten und {0} haben beim ersten Versuch geantwortet. Sag dein Wake-Word — oder tipp einfach los.",
+    "go": "Los geht's",
+    "mode_realtime": "Live-Stimme",
+    "mode_pipeline": "Stimme rein und raus"
   }
 }

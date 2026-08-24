@@ -1836,7 +1836,9 @@
     "switch_done_realtime": "Realtime → {0}",
     "experimental_note": "Beta: este proveedor todavía no está terminado y usa un protocolo inestable que puede cambiar sin aviso. Si no puede iniciarse, la llamada se detiene.",
     "experimental_consent": "Antes de activarlo: este proveedor todavía está en beta y usa una ruta experimental e inestable que puede cambiar sin aviso. Si falla, la llamada se detiene en lugar de cambiar por su cuenta a otro proveedor. ¿Continuar?",
-    "trademark_notice": "Los nombres y logotipos de proveedores y servicios son marcas de sus respectivos titulares y se muestran únicamente para identificar las integraciones que puedes conectar. No implican afiliación ni respaldo."
+    "trademark_notice": "Los nombres y logotipos de proveedores y servicios son marcas de sus respectivos titulares y se muestran únicamente para identificar las integraciones que puedes conectar. No implican afiliación ni respaldo.",
+    "key_verified_toast": "{0} ha respondido — la clave funciona.",
+    "key_check_failed_toast": "{0} no ha respondido: {1}"
   },
   "apikeys_test": {
     "button": "Probar",
@@ -2721,7 +2723,13 @@
       "later": "Más tarde — añadir una clave en Ajustes",
       "later_hint": "El chat y la voz permanecen desactivados hasta que se guarde una clave.",
       "summary_none": "Aún sin clave",
-      "summary_local": "Local · Ollama"
+      "summary_local": "Local · Ollama",
+      "plan_label": "¿Cómo quieres empezar?",
+      "plan_custom_title": "Elegir todo yo mismo",
+      "plan_custom_body": "La lista completa de proveedores — elige cada parte por separado.",
+      "plan_applying": "Configurando todo para {0}…",
+      "plan_applied": "{0} está configurado: pensar, modelo de herramientas, agentes y voz apuntan a tu clave.",
+      "plan_partial": "Casi todo está listo; esto no se aplicó: {0}. Puedes arreglarlo después en Claves API."
     },
     "permissions": {
       "privacy_note": "Estas solicitudes vienen de macOS. El instalador no puede aprobarlas en silencio y {name} nunca se salta los Ajustes del Sistema. La solicitud del Llavero al iniciar solo significa que tus claves API se guardan cifradas en el Llavero de macOS — nunca salen de tu Mac.",
@@ -2777,6 +2785,14 @@
       "start_cta": "Iniciar {name}",
       "starting": "Iniciando…",
       "start_failed": "No se pudo terminar la configuración. Comprueba que la aplicación esté en marcha e inténtalo de nuevo."
+    },
+    "plans": {
+      "gemini_pipeline_label": "Pipeline con Gemini",
+      "gemini_pipeline_summary": "Una clave de Google Gemini lo hace todo: pensar, el modelo de herramientas, los agentes, voz de entrada y salida.",
+      "gemini_realtime_label": "Realtime con Gemini",
+      "gemini_realtime_summary": "Una clave de Google Gemini, hablada en vivo: Gemini Live responde en tiempo real; el modelo de herramientas y los agentes usan la misma clave.",
+      "gemini_openai_realtime_label": "Gemini + OpenAI",
+      "gemini_openai_realtime_summary": "Dos claves, ambos motores cubiertos: OpenAI Realtime habla en vivo, Gemini piensa, planifica y dirige los agentes — y el Pipeline queda listo como reserva."
     }
   },
   "language_select": {
@@ -5251,5 +5267,12 @@
     "empty": "No se grabó nada en esta sesión.",
     "read_only": "Una conversación hablada. Continúala hablando.",
     "continue": "Continuar por voz"
+  },
+  "ready_note": {
+    "title": "Todo en verde.",
+    "body": "Pensar, herramientas, agentes y {0} han respondido a la primera. Di tu palabra de activación — o simplemente empieza a escribir.",
+    "go": "Vamos",
+    "mode_realtime": "voz en vivo",
+    "mode_pipeline": "voz de entrada y salida"
   }
 }

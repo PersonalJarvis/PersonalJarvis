@@ -37,8 +37,39 @@ vi.mock("@/components/ApiKeyForm", () => ({
     </div>
   ),
 }));
+// Starter plans: the catalog a test hands in, plus spies on select/apply.
+const plansState = vi.hoisted(() => ({
+  plans: [] as unknown[],
+  selected: null as string | null,
+  fail: false,
+  selectStarterPlan: vi.fn(async () => undefined),
+  applyStarterPlan: vi.fn(async () => ({ applied: ["brain"], failed: [], modeSet: true })),
+}));
+vi.mock("@/hooks/useStarterPlans", () => ({
+  getStarterPlans: async () => {
+    if (plansState.fail) throw new Error("HTTP 404");
+    return { plans: plansState.plans, selected: plansState.selected, custom_id: "custom" };
+  },
+  selectStarterPlan: plansState.selectStarterPlan,
+  applyStarterPlan: plansState.applyStarterPlan,
+}));
+vi.mock("@/components/ReadyCelebration", () => ({
+  ReadyCelebration: () => <div data-testid="ready-celebration-stub" />,
+}));
 
-import { ApiKeysStep, startableProviders } from "./ApiKeysStep";
+import { ApiKeysStep, planKeysComplete, providersForPlan, startableProviders } from "./ApiKeysStep";
+
+const GEMINI_PLAN = {
+  id: "gemini-pipeline",
+  label: "Pipeline with Gemini",
+  summary: "One key.",
+  mode: "pipeline" as const,
+  recommended: true,
+  assignments: { brain: "gemini", tts: "gemini-flash-tts" },
+  key_slots: [{ family: "gemini", slot: "gemini_api_key", label: "Google Gemini", present: false }],
+  keys_complete: false,
+  ready_sections: ["brain", "computer-use", "tts", "stt"],
+};
 
 afterEach(() => {
   cleanup();
@@ -48,7 +79,15 @@ afterEach(() => {
   providersState.error = null;
   providersState.refetch.mockClear();
   providersState.switchBrainProvider.mockClear();
+  plansState.plans = [];
+  plansState.selected = null;
+  plansState.fail = true;
+  plansState.selectStarterPlan.mockClear();
+  plansState.applyStarterPlan.mockClear();
 });
+
+// The legacy tests below describe the "custom" path: no plan catalog.
+plansState.fail = true;
 
 function provider(overrides: Partial<ProviderDescriptor>): ProviderDescriptor {
   return {
@@ -192,6 +231,65 @@ it("probes through the backend, activates local, pins pipeline, and unlocks Cont
 
   expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false);
   expect(props.setSummary).toHaveBeenLastCalledWith("onboarding.api_keys.summary_local");
+});
+
+it("providersForPlan keeps only the cards whose primary slot the plan needs", () => {
+  const gemini = provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: false } });
+  const other = provider({ id: "b", label: "B" });
+  expect(providersForPlan(GEMINI_PLAN, [gemini, other]).map((p) => p.id)).toEqual(["gemini"]);
+  expect(providersForPlan(null, [gemini, other]).map((p) => p.id)).toEqual(["gemini", "b"]);
+  expect(planKeysComplete(GEMINI_PLAN, [gemini, other])).toBe(false);
+  const saved = { ...gemini, secrets_set: { gemini_api_key: true } };
+  expect(planKeysComplete(GEMINI_PLAN, [saved, other])).toBe(true);
+});
+
+it("preselects the recommended plan, filters the list to its key, and applies the plan once the key is in", async () => {
+  plansState.fail = false;
+  plansState.plans = [GEMINI_PLAN];
+  providersState.providers = [
+    provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: false } }),
+    provider({ id: "b", label: "B" }),
+  ];
+  stubFetch(null);
+  renderStep();
+
+  const row = await screen.findByTestId("onboarding-plan-gemini-pipeline");
+  expect(row.getAttribute("aria-checked")).toBe("true");
+  await waitFor(() => expect(screen.getByTestId("form-gemini_api_key")).toBeDefined());
+  expect(screen.queryByTestId("form-X_API_KEY")).toBeNull();
+  expect(plansState.applyStarterPlan).not.toHaveBeenCalled();
+
+  // The catalog refresh reports the key — the plan is applied without any
+  // further click, and the brain auto-switch stays out of the plan's way.
+  providersState.providers = [
+    provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: true }, configured: true }),
+  ];
+  cleanup();
+  const props = renderStep();
+  await screen.findByTestId("onboarding-plan-applied");
+  expect(plansState.applyStarterPlan).toHaveBeenCalledTimes(1);
+  expect(plansState.selectStarterPlan).toHaveBeenCalledWith("gemini-pipeline");
+  expect(screen.getByTestId("ready-celebration-stub")).toBeDefined();
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false);
+  // The i18n mock echoes keys, so the plan label falls back to the catalog text.
+  expect(props.setSummary).toHaveBeenLastCalledWith("Pipeline with Gemini · Google Gemini");
+});
+
+it("'pick everything myself' restores the full list and the local path", async () => {
+  plansState.fail = false;
+  plansState.plans = [GEMINI_PLAN];
+  providersState.providers = [
+    provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: false } }),
+    provider({ id: "b", label: "B" }),
+  ];
+  stubFetch(null);
+  renderStep();
+  await screen.findByTestId("onboarding-plan-custom");
+  expect(screen.queryByText("onboarding.api_keys.local_title")).toBeNull();
+  fireEvent.click(screen.getByTestId("onboarding-plan-custom"));
+  await waitFor(() => expect(screen.getByTestId("onboarding-provider-b")).toBeDefined());
+  expect(screen.getByText("onboarding.api_keys.local_title")).toBeDefined();
+  expect(plansState.selectStarterPlan).toHaveBeenCalledWith("custom");
 });
 
 it("with Ollama running but empty, explains the missing model and shows no activate button", async () => {

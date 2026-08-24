@@ -1838,7 +1838,9 @@
     "switch_done_dictation": "Dictation wording → {0}",
     "switch_done_realtime": "Realtime → {0}",
     "experimental_note": "Beta: this provider is not finished yet and uses an unstable protocol that can change without notice. If it cannot start, the call stops.",
-    "experimental_consent": "Before you turn this on: this provider is still in beta and uses an experimental, unstable route that can change without notice. If it breaks, the call stops instead of switching to another provider on its own. Continue?"
+    "experimental_consent": "Before you turn this on: this provider is still in beta and uses an experimental, unstable route that can change without notice. If it breaks, the call stops instead of switching to another provider on its own. Continue?",
+    "key_verified_toast": "{0} answered — the key works.",
+    "key_check_failed_toast": "{0} did not answer: {1}"
   },
   "apikeys_test": {
     "button": "Test",
@@ -2723,7 +2725,13 @@
       "later": "Later — add a key in Settings",
       "later_hint": "Chat and voice stay off until a key is saved.",
       "summary_none": "No key yet",
-      "summary_local": "Local · Ollama"
+      "summary_local": "Local · Ollama",
+      "plan_label": "How do you want to start?",
+      "plan_custom_title": "Pick everything myself",
+      "plan_custom_body": "The full provider list — choose each part on its own.",
+      "plan_applying": "Setting everything up for {0}…",
+      "plan_applied": "{0} is set up: thinking, tool model, agents and voice all point at your key.",
+      "plan_partial": "Most of it is set; this did not apply: {0}. You can fix it later under API Keys."
     },
     "permissions": {
       "privacy_note": "These prompts come from macOS. The installer cannot silently approve them, and {name} never bypasses System Settings. The Keychain prompt at app start only means your API keys are being saved encrypted in the macOS Keychain — they never leave your Mac.",
@@ -2779,6 +2787,14 @@
       "start_cta": "Start {name}",
       "starting": "Starting…",
       "start_failed": "Could not finish setup. Check that the app is running, then try again."
+    },
+    "plans": {
+      "gemini_pipeline_label": "Pipeline with Gemini",
+      "gemini_pipeline_summary": "One Google Gemini key runs everything: thinking, the tool model, the agents, voice in and voice out.",
+      "gemini_realtime_label": "Realtime with Gemini",
+      "gemini_realtime_summary": "One Google Gemini key, spoken live: Gemini Live answers in real time; tool model and agents run on the same key.",
+      "gemini_openai_realtime_label": "Gemini + OpenAI",
+      "gemini_openai_realtime_summary": "Two keys, both engines covered: OpenAI Realtime speaks live, Gemini thinks, plans and runs the agents — and the Pipeline engine stays ready as a fallback."
     }
   },
   "language_select": {
@@ -5253,5 +5269,12 @@
     "empty": "Nothing was recorded in this session.",
     "read_only": "A spoken conversation. Continue it by talking.",
     "continue": "Continue by voice"
+  },
+  "ready_note": {
+    "title": "All lights green.",
+    "body": "Thinking, tools, agents and {0} all answered on the first try. Say your wake word — or just start typing.",
+    "go": "Let's go",
+    "mode_realtime": "live voice",
+    "mode_pipeline": "voice in and out"
   }
 }
