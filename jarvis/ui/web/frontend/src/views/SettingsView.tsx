@@ -33,6 +33,7 @@ import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
+import { isAutopilotToastsEnabled, setAutopilotToastsEnabled } from "@/lib/autopilotToasts";
 
 // The wake-word language pin — its OWN setting ([trigger.wake_word] language),
 // deliberately independent of both the app display language and the general
@@ -71,13 +72,25 @@ interface SettingRow {
 
 export function SettingsView() {
   const t = useT();
+  // The "{name} opened X" note after a spoken navigation. This switch used to
+  // be `<Switch defaultChecked />` with no handler — it toggled nothing.
+  const [autopilotToasts, setAutopilotToasts] = useState(isAutopilotToastsEnabled);
 
   const rows: SettingRow[] = [
     {
       icon: Settings,
       title: t("settings_view.rows.toasts_title"),
       description: t("settings_view.rows.toasts_description"),
-      control: <Switch defaultChecked />,
+      control: (
+        <Switch
+          checked={autopilotToasts}
+          aria-label={t("settings_view.rows.toasts_title")}
+          onCheckedChange={(next) => {
+            setAutopilotToasts(next);
+            setAutopilotToastsEnabled(next);
+          }}
+        />
+      ),
     },
   ];
 
@@ -421,6 +434,7 @@ function WakeWordPanel() {
             <Switch
               checked={enabled}
               disabled={loading || togglingActivation}
+              aria-label={t("settings_view.wake_word.activation_title")}
               onCheckedChange={onToggleActivation}
             />
           </div>

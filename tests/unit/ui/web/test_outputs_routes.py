@@ -1350,6 +1350,21 @@ def test_artifact_page_allows_inline_scripts_but_no_network(app):
     assert "document.title" in r.text
 
 
+def test_artifact_page_answers_head_probe(app):
+    """The frontend probes ``/page`` with HEAD before framing it. A 405 here
+    made the probe fail on every backend, so the sandboxed page never got its
+    scripts. HEAD must answer like GET — same status and headers, no body."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "probe.html", "<b>probe</b>")
+    client = TestClient(app)
+    r = client.head(f"/api/outputs/{slug}/files/{rel}/page")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "script-src 'unsafe-inline'" in r.headers.get("content-security-policy", "")
+    assert r.content == b""
+
+
 def test_artifact_page_refuses_non_html(app):
     root = Path(app.state.outputs_root)
     slug = "mission_019ed2dfd0fab"

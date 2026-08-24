@@ -609,7 +609,10 @@ function HtmlPage({ slug, path }: { slug: string; path: string }) {
     queryFn: async () => {
       try {
         const r = await fetch(pageUrl, { method: "HEAD" });
-        return r.ok;
+        // 405 is a backend that HAS the route but predates HEAD support on it
+        // (FastAPI registers GET alone): the page is served, so frame it. Only
+        // a 404 — no route at all — earns the no-script inline fallback.
+        return r.ok || r.status === 405;
       } catch {
         return false;
       }

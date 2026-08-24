@@ -1070,7 +1070,12 @@ async def download_output_artifact(
     )
 
 
-@router.get("/{slug}/files/{path:path}/page")
+# GET and HEAD: the Artifacts section probes this route with a HEAD request
+# before framing the page (an older backend without the route falls back to the
+# no-script inline download). FastAPI registers only GET for ``@router.get``, so
+# the probe used to answer 405 on every backend and the fallback ALWAYS won —
+# the page's own scripts never ran. FileResponse sends headers only for HEAD.
+@router.api_route("/{slug}/files/{path:path}/page", methods=["GET", "HEAD"])
 async def serve_artifact_page(slug: str, path: str, request: Request) -> FileResponse:
     """Serve an HTML deliverable as an ARTIFACT PAGE — scripts allowed, network shut.
 

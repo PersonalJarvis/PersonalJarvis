@@ -81,7 +81,12 @@ function ToggleRow({
         <div className="font-medium">{title}</div>
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
       </div>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onToggle} />
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        aria-label={title}
+        onCheckedChange={onToggle}
+      />
     </div>
   );
 }

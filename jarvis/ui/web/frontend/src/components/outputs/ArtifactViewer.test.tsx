@@ -134,6 +134,44 @@ describe("ArtifactViewer", () => {
   });
 });
 
+const HTML_PATH = "tasks/t1/artifacts/files/dash.html";
+const HTML_FILE: ArtifactSummary = {
+  path: HTML_PATH,
+  size: 64,
+  mtime: 3,
+  is_text: true,
+  preview: "<script>run()</script>",
+};
+
+function installHeadProbeMock(headStatus: number) {
+  const base = installFetchMock({});
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "HEAD") {
+      return { ok: headStatus >= 200 && headStatus < 300, status: headStatus };
+    }
+    return base(input);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("ArtifactViewer HTML page probe", () => {
+  it("frames the sandboxed /page when the backend answers HEAD with 405 (route present)", async () => {
+    installHeadProbeMock(405);
+    renderViewer([HTML_FILE]);
+    const frame = await waitFor(() => screen.getByTitle("dash.html") as HTMLIFrameElement);
+    expect(frame.getAttribute("src")).toContain("/page");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+
+  it("falls back to the no-script inline download when the route is missing (404)", async () => {
+    installHeadProbeMock(404);
+    renderViewer([HTML_FILE]);
+    const frame = await waitFor(() => screen.getByTitle("dash.html") as HTMLIFrameElement);
+    expect(frame.getAttribute("src")).toContain("/download?disposition=inline");
+  });
+});
+
 describe("resolveSiblingPath", () => {
   it("resolves relative links inside the archive and rejects escapes", () => {
     expect(resolveSiblingPath("tasks/t/artifacts/files/report.md", "chart.png")).toBe(

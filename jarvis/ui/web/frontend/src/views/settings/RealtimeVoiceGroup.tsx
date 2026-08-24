@@ -73,6 +73,7 @@ export function RealtimeVoiceGroup() {
             <Switch
               checked={on}
               disabled={isLoading || isSaving || (!on && !realtimeAvailable)}
+              aria-label={t("settings_view.realtime_voice.title")}
               onCheckedChange={(next) => setMode(next ? "realtime" : "pipeline")}
             />
           </div>

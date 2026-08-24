@@ -212,6 +212,7 @@ export function JarvisApiGroup() {
           <Switch
             checked={browserLock.enabled ?? false}
             disabled={browserLock.loading || lockBusy}
+            aria-label={t("settings_view.jarvis_api.browser_lock_title")}
             onCheckedChange={onToggleBrowserLock}
           />
         </div>

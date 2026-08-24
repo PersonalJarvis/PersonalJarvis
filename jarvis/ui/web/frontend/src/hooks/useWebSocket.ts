@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { WSClient } from "@/lib/ws";
+import { isAutopilotToastsEnabled } from "@/lib/autopilotToasts";
 import {
   deliverDictationText,
   documentOwnsDictation,
@@ -406,7 +407,8 @@ export function useWebSocket(): void {
               // would blank the very view the user split off to keep.
               setActiveSection(section);
             }
-            if (!solo) {
+            // The Settings "Autopilot Toasts" switch owns this note.
+            if (!solo && isAutopilotToastsEnabled()) {
               pushToast(
                 "info",
                 `${translate("use_web_socket.jarvis_opened")} ${SECTION_LABELS[section]}`,

@@ -118,6 +118,7 @@ export function ScreenContextGroup() {
               <Switch
                 checked={settings.enabled}
                 disabled={saving}
+                aria-label={t("settings_view.screen_context.title")}
                 onCheckedChange={(enabled) => void toggle(enabled)}
               />
             )}

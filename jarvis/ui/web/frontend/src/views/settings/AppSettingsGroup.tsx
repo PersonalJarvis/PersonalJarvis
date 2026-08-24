@@ -182,6 +182,7 @@ function AutostartRow() {
             <Switch
               checked={enabled}
               disabled={loading || saving || !supported}
+              aria-label={t("settings_view.autostart.title")}
               onCheckedChange={onToggle}
             />
           </div>
