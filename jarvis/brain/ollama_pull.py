@@ -486,6 +486,37 @@ async def recommendations() -> dict[str, Any]:
     }
 
 
+#: Name prefixes Ollama resolves against Hugging Face instead of its own
+#: library (``ollama pull hf.co/<user>/<repo>[:<quant>]``).
+HF_NAME_PREFIXES = ("hf.co/", "huggingface.co/")
+
+
+def not_found_message(model: str) -> str:
+    """The English sentence for a ``/api/pull`` 404, by where the name lives.
+
+    A Hugging Face name is never in the Ollama library, so pointing at
+    ollama.com/library would send the user to the wrong catalogue; the
+    sentence names the repository (or the quantization suffix) instead.
+    """
+    lowered = model.lower()
+    if lowered.startswith(HF_NAME_PREFIXES):
+        repo, _, quant = model.partition(":")
+        if quant:
+            return (
+                f"Hugging Face has no GGUF file matching '{quant}' in {repo}, or "
+                "the repository does not exist. Pick one of the listed "
+                "quantizations and try again."
+            )
+        return (
+            f"Ollama could not find the repository '{repo}' on Hugging Face, or "
+            "it holds no GGUF file. Check the name at huggingface.co and try again."
+        )
+    return (
+        f"Ollama does not know a model called '{model}'. Check the "
+        "name at ollama.com/library and try again."
+    )
+
+
 async def _run_pull(model: str) -> None:
     """Stream ``/api/pull`` into the run state. Never raises."""
     run = _run_for(model)
@@ -499,10 +530,7 @@ async def _run_pull(model: str) -> None:
         ):
             if resp.status_code == 404:
                 run.state = "error"
-                run.message = (
-                    f"Ollama does not know a model called '{model}'. Check the "
-                    "name at ollama.com/library and try again."
-                )
+                run.message = not_found_message(model)
                 return
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -616,6 +644,7 @@ async def pull_status(model: str) -> dict[str, Any]:
 
 
 __all__ = [
+    "HF_NAME_PREFIXES",
     "PULL_CAPABLE_PROVIDERS",
     "RECOMMENDED_MODELS",
     "ROLE_ORDER",
@@ -624,6 +653,7 @@ __all__ = [
     "accelerator_gb",
     "fit_verdict",
     "installed_models",
+    "not_found_message",
     "pull_status",
     "recommendations",
     "registry_size_gb",

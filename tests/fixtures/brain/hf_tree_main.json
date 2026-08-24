@@ -1,0 +1,69 @@
+[
+  {
+    "type": "file",
+    "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "size": 1519,
+    "path": ".gitattributes"
+  },
+  {
+    "type": "file",
+    "oid": "1a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "size": 4021,
+    "path": "README.md"
+  },
+  {
+    "type": "file",
+    "oid": "2a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "size": 135,
+    "lfs": {
+      "oid": "9f3c2b1a0e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1",
+      "size": 16700000000,
+      "pointerSize": 135
+    },
+    "path": "Qwen3.8-27B-Q4_K_M.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "3a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "size": 135,
+    "lfs": {
+      "oid": "8f3c2b1a0e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1",
+      "size": 29100000000,
+      "pointerSize": 135
+    },
+    "path": "Qwen3.8-27B-Q8_0.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "4a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "size": 135,
+    "lfs": {
+      "oid": "7f3c2b1a0e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1",
+      "size": 9400000000,
+      "pointerSize": 135
+    },
+    "path": "Qwen3.8-27B-IQ2_XS.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "5a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "size": 135,
+    "lfs": {
+      "oid": "6f3c2b1a0e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1",
+      "size": 54400000000,
+      "pointerSize": 135
+    },
+    "path": "Qwen3.8-27B-BF16.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "6a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "size": 135,
+    "path": "weird-no-size.gguf"
+  },
+  {
+    "type": "directory",
+    "oid": "7a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3",
+    "path": "imatrix"
+  }
+]

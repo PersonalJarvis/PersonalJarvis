@@ -1,0 +1,54 @@
+[
+  {
+    "_id": "68f1a2b3c4d5e6f7a8b9c0d1",
+    "id": "unsloth/Qwen3.8-27B-GGUF",
+    "author": "unsloth",
+    "private": false,
+    "downloads": 184213,
+    "likes": 412,
+    "tags": ["gguf", "qwen3", "text-generation", "license:apache-2.0"],
+    "lastModified": "2026-08-19T10:14:02.000Z",
+    "createdAt": "2026-08-17T08:00:00.000Z",
+    "modelId": "unsloth/Qwen3.8-27B-GGUF",
+    "gguf": {
+      "total": 27200000000,
+      "architecture": "qwen3",
+      "context_length": 262144,
+      "chat_template": "{% for message in messages %}…{% endfor %}",
+      "bos_token": "<|endoftext|>",
+      "eos_token": "<|im_end|>"
+    }
+  },
+  {
+    "_id": "68f1a2b3c4d5e6f7a8b9c0d2",
+    "id": "bartowski/gemma-4-12b-it-GGUF",
+    "author": "bartowski",
+    "private": false,
+    "downloads": 99120,
+    "likes": 233,
+    "tags": ["gguf", "gemma4", "text-generation"],
+    "lastModified": "2026-08-02T21:40:11.000Z",
+    "createdAt": "2026-07-30T00:00:00.000Z",
+    "modelId": "bartowski/gemma-4-12b-it-GGUF",
+    "gguf": {
+      "total": 12300000000,
+      "architecture": "gemma4",
+      "context_length": 131072
+    }
+  },
+  {
+    "_id": "68f1a2b3c4d5e6f7a8b9c0d3",
+    "id": "someone/mystery-GGUF",
+    "private": false,
+    "downloads": 12,
+    "likes": 0,
+    "tags": ["gguf"],
+    "lastModified": "2026-06-01T00:00:00.000Z",
+    "modelId": "someone/mystery-GGUF"
+  },
+  {
+    "_id": "68f1a2b3c4d5e6f7a8b9c0d4",
+    "id": "not-a-repo-id",
+    "downloads": 1
+  }
+]
