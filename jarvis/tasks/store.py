@@ -291,11 +291,14 @@ class TaskStore:
             sets.append("started_at_ns = ?")
             params.append(now_ns)
         # A run has finished when the state is terminal — or when a recurring
-        # task hands back a ``result`` on its way to ``scheduled``. Either way
+        # task hands back a ``result`` (or a failure ``error``) on its way to
+        # ``scheduled``. Either way
         # ``finished_at_ns`` marks the end of the LAST run, and a successful
         # result clears the error of a previous failed run so the list view's
         # ``last_run_state`` reflects the latest run only.
-        finished = state in TERMINAL_STATES or result is not None
+        finished = (
+            state in TERMINAL_STATES or result is not None or error is not None
+        )
         if finished:
             sets.append("finished_at_ns = ?")
             params.append(now_ns)

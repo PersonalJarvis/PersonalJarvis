@@ -174,14 +174,22 @@ class TaskRunner:
         except Exception as exc:  # noqa: BLE001
             duration_ms = int((time.perf_counter() - start) * 1000)
             error_msg = readable_error(exc)
-            await self._store.update_state(task_id, "failed", error=error_msg)
+            # A recurring automation survives a failed run: it goes back to
+            # `scheduled` with the reason in `last_error`, and fires again at
+            # its next occurrence. Only one-shot tasks end in `failed`
+            # (live 2026-08-24: the first automation ever added died for
+            # good on one provider error and "Run now" refused it as final).
+            is_recurring = getattr(spec.trigger, "type", None) == "every"
+            await self._store.update_state(
+                task_id, "scheduled" if is_recurring else "failed", error=error_msg,
+            )
             await self._store.append_step(task_id, "log",
                                           {"event": "error", "message": error_msg})
             await self._bus.publish(
                 TaskFailed(
                     task_id=task_id,
                     error=error_msg,
-                    will_retry=False,
+                    will_retry=is_recurring,
                     source_layer="tasks.runner",
                 )
             )

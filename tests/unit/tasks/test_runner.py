@@ -418,3 +418,26 @@ async def test_cancel_mid_stream_stops_the_harness(
     assert task is not None
     assert task["state"] == "cancelled"
     assert hm.harness.cancelled  # the stop reached the harness itself
+
+
+async def test_recurring_task_survives_a_failed_run(store: TaskStore, bus: EventBus) -> None:
+    """A failed run must not end a recurring automation: the task returns to
+    ``scheduled`` with the reason in ``last_error`` (live 2026-08-24 — the
+    first automation ever added died for good on one provider error)."""
+    from jarvis.tasks.schema import TriggerEvery
+
+    runner = TaskRunner(store=store, bus=bus)
+    spec = TaskSpec(
+        title="recurring-tool-missing",
+        trigger=TriggerEvery(interval_seconds=3600.0),
+        action=ToolCallAction(tool_name="whoami", args={}),
+    )
+    tid = await store.insert(spec)
+
+    await runner.run(tid)
+
+    task = await store.get(tid)
+    assert task is not None
+    assert task["state"] == "scheduled"
+    assert task["last_error"]
+    assert task["finished_at_ns"] is not None
