@@ -467,11 +467,37 @@ class CohereEmbedding(_HttpEmbedding):
         return vectors
 
 
+def _shared_ollama_root() -> str:
+    """The one Ollama address every role shares (override -> OLLAMA_HOST -> localhost)."""
+    from jarvis.brain.ollama_pull import server_root  # lazy (AP-26)
+
+    return server_root()
+
+
 def _make_ollama(cfg: Any) -> OllamaEmbedding:
-    endpoint = _DEFAULT_OLLAMA_ENDPOINT
+    """Build the Ollama embedder on the address the wiki config names.
+
+    ``[ultrawiki].ollama_endpoint`` still wins when the user set it to
+    something of their own. Empty, or left at the shipped localhost default,
+    means "the same server as everything else": the configured
+    ``[brain.providers.ollama].base_url`` override (or ``OLLAMA_HOST``), so a
+    remote Ollama setup no longer leaves the wiki silently talking to a
+    localhost that has nothing on it.
+    """
+    endpoint = ""
     ultrawiki = getattr(cfg, "ultrawiki", None)
     if ultrawiki is not None:
-        endpoint = getattr(ultrawiki, "ollama_endpoint", endpoint) or endpoint
+        endpoint = str(getattr(ultrawiki, "ollama_endpoint", "") or "").strip()
+    if not endpoint or endpoint.rstrip("/") == _DEFAULT_OLLAMA_ENDPOINT:
+        try:
+            endpoint = _shared_ollama_root()
+        except Exception:  # noqa: BLE001 — the wiki must build even when config cannot be read
+            log.warning(
+                "ultrawiki: shared Ollama address unavailable, using %s",
+                _DEFAULT_OLLAMA_ENDPOINT,
+                exc_info=True,
+            )
+            endpoint = _DEFAULT_OLLAMA_ENDPOINT
     return OllamaEmbedding(endpoint=endpoint)
 
 

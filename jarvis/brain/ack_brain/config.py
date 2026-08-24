@@ -14,6 +14,7 @@ Maps the [ack_brain] section of jarvis.toml. Two switches, opposite defaults:
 it on", which described the pre-2026-06-21 shape and contradicted the field
 defaults below.)
 """
+
 from __future__ import annotations
 
 from typing import Literal
@@ -30,7 +31,11 @@ from pydantic import BaseModel, ConfigDict, Field
 # "gemini" with a warning. Letting users pin a separate flash provider
 # stays possible by setting one of the four concrete names.
 SUPPORTED_PROVIDERS: tuple[str, ...] = (
-    "follow_brain", "gemini", "grok", "openai", "ollama",
+    "follow_brain",
+    "gemini",
+    "grok",
+    "openai",
+    "ollama",
 )
 
 
@@ -63,9 +68,25 @@ class OpenAIAckProviderConfig(_ProviderBase):
 
 
 class OllamaAckProviderConfig(_ProviderBase):
-    """Local Ollama provider config - no API key, just an HTTP endpoint."""
+    """Local Ollama provider config - no API key, just an HTTP endpoint.
 
-    endpoint: str = Field(default="http://localhost:11434", min_length=1)
+    ``endpoint`` empty (the default) means the ONE Ollama address every role
+    shares — ``[brain.providers.ollama].base_url`` when set, else
+    ``OLLAMA_HOST``, else localhost — resolved by :meth:`resolved_endpoint`
+    at request time, never at config-load time (the config is still being
+    built then). A non-empty value pins this role to its own server.
+    """
+
+    endpoint: str = Field(default="")
+
+    def resolved_endpoint(self) -> str:
+        """The server root this role talks to (own value, else the shared one)."""
+        own = (self.endpoint or "").strip().rstrip("/")
+        if own:
+            return own
+        from jarvis.brain.ollama_pull import server_root  # lazy: config must not import it
+
+        return server_root().rstrip("/")
 
 
 class _ProvidersBundle(BaseModel):
@@ -88,9 +109,7 @@ class _ProvidersBundle(BaseModel):
         default_factory=lambda: GeminiAckProviderConfig(model="gemini-flash-latest")
     )
     grok: GrokAckProviderConfig = Field(
-        default_factory=lambda: GrokAckProviderConfig(
-            model="grok-4.20-0309-non-reasoning"
-        )
+        default_factory=lambda: GrokAckProviderConfig(model="grok-4.20-0309-non-reasoning")
     )
     openai: OpenAIAckProviderConfig = Field(
         default_factory=lambda: OpenAIAckProviderConfig(model="gpt-5-mini")

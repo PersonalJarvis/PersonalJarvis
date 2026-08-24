@@ -481,3 +481,40 @@ def test_a_body_without_a_code_still_yields_an_honest_error(fake_secrets):
         import asyncio
 
         asyncio.run(backend.embed(["hello"], model="m"))
+
+
+# ---------------------------------------------------------------------------
+# One Ollama address for every role (jarvis.ultrawiki.embeddings._make_ollama)
+# ---------------------------------------------------------------------------
+
+
+def test_make_ollama_falls_back_to_the_shared_root_when_the_wiki_key_is_empty(
+    monkeypatch,
+):
+    monkeypatch.setattr(emb, "_shared_ollama_root", lambda: "http://lan-box:11434")
+    cfg = SimpleNamespace(ultrawiki=SimpleNamespace(ollama_endpoint=""))
+    assert emb._make_ollama(cfg)._endpoint == "http://lan-box:11434"
+
+
+def test_make_ollama_treats_the_shipped_localhost_default_as_unset(monkeypatch):
+    """The config ships ``http://localhost:11434`` as its default; a user who
+    moved the brain to a remote box did not choose that value, so the wiki
+    follows the brain instead of talking to an empty localhost."""
+    monkeypatch.setattr(emb, "_shared_ollama_root", lambda: "http://lan-box:11434")
+    cfg = SimpleNamespace(ultrawiki=SimpleNamespace(ollama_endpoint=emb._DEFAULT_OLLAMA_ENDPOINT))
+    assert emb._make_ollama(cfg)._endpoint == "http://lan-box:11434"
+
+
+def test_make_ollama_keeps_an_explicit_wiki_endpoint(monkeypatch):
+    monkeypatch.setattr(emb, "_shared_ollama_root", lambda: pytest.fail("own value must win"))
+    cfg = SimpleNamespace(ultrawiki=SimpleNamespace(ollama_endpoint="http://box:9999"))
+    assert emb._make_ollama(cfg)._endpoint == "http://box:9999"
+
+
+def test_make_ollama_survives_an_unreadable_config(monkeypatch):
+    def boom() -> str:
+        raise RuntimeError("config unreadable")
+
+    monkeypatch.setattr(emb, "_shared_ollama_root", boom)
+    cfg = SimpleNamespace(ultrawiki=SimpleNamespace(ollama_endpoint=""))
+    assert emb._make_ollama(cfg)._endpoint == emb._DEFAULT_OLLAMA_ENDPOINT

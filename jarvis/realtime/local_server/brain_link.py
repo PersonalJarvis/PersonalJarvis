@@ -80,12 +80,30 @@ class BrainResolution:
 
 
 def _ollama_base() -> str:
+    """The Ollama root the voice brain talks to.
+
+    ``OLLAMA_HOST`` wins when set (the vendor's own convention); otherwise
+    the ONE server address every other role resolves — the configured
+    ``[brain.providers.ollama].base_url`` override or the vendor default —
+    so a remote setup no longer splits the voice brain from chat, wiki and
+    ack. The lazy import keeps this module free of config on import.
+    """
     host = (os.environ.get("OLLAMA_HOST") or "").strip()
-    if not host:
+    if host:
+        if not host.startswith(("http://", "https://")):
+            host = f"http://{host}"
+        return host.rstrip("/")
+    try:
+        from jarvis.brain.ollama_pull import server_root  # lazy (AP-26)
+
+        return server_root().rstrip("/") or _OLLAMA_DEFAULT
+    except Exception:  # noqa: BLE001 — an unreadable config must not take the voice brain down
+        log.warning(
+            "brain-link: shared Ollama address unavailable, using %s",
+            _OLLAMA_DEFAULT,
+            exc_info=True,
+        )
         return _OLLAMA_DEFAULT
-    if not host.startswith(("http://", "https://")):
-        host = f"http://{host}"
-    return host.rstrip("/")
 
 
 #: Memory the brain model must leave free on the accelerator, in GiB: the
@@ -269,9 +287,7 @@ def resolve_brain(
     base = _ollama_base()
     models = _ollama_models(base, timeout)
     if models is not None:
-        model, note = _pick_model(
-            models, preferred_model=preferred_model, usable_gb=usable_gb
-        )
+        model, note = _pick_model(models, preferred_model=preferred_model, usable_gb=usable_gb)
         if model:
             sentence = f"Fully local: reasoning runs on your Ollama ({model})."
             if note:

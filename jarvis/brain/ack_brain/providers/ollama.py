@@ -8,6 +8,7 @@ The HTTP client uses a short connect timeout (2s) so an unreachable
 endpoint falls through to ``None`` quickly instead of stalling the
 voice pipeline.
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,7 +41,7 @@ class OllamaFlashAck:
             timeout = httpx.Timeout(connect=2.0, read=5.0, write=2.0, pool=2.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
-                    f"{self._config.endpoint.rstrip('/')}/api/chat",
+                    f"{self._config.resolved_endpoint()}/api/chat",
                     json={
                         "model": self._config.model,
                         "messages": [

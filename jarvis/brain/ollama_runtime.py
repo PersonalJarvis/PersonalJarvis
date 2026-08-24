@@ -9,7 +9,13 @@ button instead of a command line:
   "installed but not running" / "running"), which pure HTTP probes cannot
   distinguish.
 - :func:`start_server` — spawn ``ollama serve`` detached and wait for its
-  port.
+  port; the child's pid is recorded beside the log so :func:`stop_server`
+  can later stop THAT process and nothing else.
+- :func:`stop_server` / :func:`tail_log` / :func:`probe_host` /
+  :func:`env_guide` — the Server panel's read-and-control surface: stop
+  only what Jarvis spawned, show the log tail, test any host address, and
+  hand out per-OS environment recipes as copyable text (the app never edits
+  the OS environment itself).
 - :func:`start_install` / :func:`install_snapshot` — a poll-shaped installer
   (same skeleton as the managed realtime server install): winget or the
   official per-user installer on Windows, Homebrew on macOS, the official
@@ -127,12 +133,98 @@ def _server_version(timeout: float = _VERSION_TIMEOUT_S) -> str | None:
     return version or "unknown"
 
 
-def runtime_status() -> dict[str, object]:
-    """The honest runtime picture: ``{installed, binary, running, version, detail}``.
+#: ``0.0.0.0`` is a bind address; a client that typed it means this machine.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})  # noqa: S104
 
-    A pure HTTP probe cannot tell "not installed" from "installed but
-    stopped" — and those two states need OPPOSITE buttons (install vs
-    start), so the distinction is the whole point of this function.
+
+def host_kind(base_url: str) -> str:
+    """``"local"`` when ``base_url`` points at this machine, else ``"remote"``.
+
+    Loopback names, any ``127.x`` address, and this machine's own hostname
+    count as local; everything else is a server somewhere on the network
+    whose install/start/stop/log belong to that machine.
+    """
+    host = (urlsplit(base_url).hostname or "").strip().lower().strip("[]")
+    if host in _LOOPBACK_HOSTS or host.startswith("127."):
+        return "local"
+    try:
+        own = socket.gethostname().strip().lower()
+    except OSError:
+        # Without a resolvable own hostname the only honest answer is that
+        # the address is not one of the loopback spellings.
+        log.debug("ollama-runtime: gethostname failed", exc_info=True)
+        return "remote"
+    if own and (host == own or host == f"{own}.local" or host.split(".")[0] == own):
+        return "local"
+    return "remote"
+
+
+def _current_os() -> str:
+    """``"windows"`` / ``"macos"`` / ``"linux"`` for this process."""
+    if os.name == "nt":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+_OS_ALIASES = {
+    "nt": "windows",
+    "win32": "windows",
+    "windows": "windows",
+    "darwin": "macos",
+    "mac": "macos",
+    "macos": "macos",
+    "linux": "linux",
+    "posix": "linux",
+}
+
+
+def _normalize_os(os_name: str | None) -> str:
+    """Map any common OS spelling to ``windows`` / ``macos`` / ``linux``.
+
+    Empty means "this process"; an unknown name is treated as Linux, the
+    family every headless server belongs to.
+    """
+    key = (os_name or "").strip().lower()
+    if not key:
+        return _current_os()
+    return _OS_ALIASES.get(key, "linux")
+
+
+def models_dir(os_name: str | None = None) -> Path:
+    """Where Ollama keeps its weights: ``OLLAMA_MODELS`` or the OS default.
+
+    Defaults follow the vendor: the user's ``.ollama/models`` on Windows
+    (under ``%USERPROFILE%``) and macOS (under ``~``); on Linux the service
+    user's ``/usr/share/ollama/.ollama/models`` when that directory exists,
+    else the current user's ``~/.ollama/models``. Pure pathlib — nothing is
+    created.
+    """
+    env_dir = (os.environ.get("OLLAMA_MODELS") or "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser()
+    which = _normalize_os(os_name)
+    if which == "linux":
+        service_dir = Path("/usr/share/ollama/.ollama/models")
+        try:
+            if service_dir.is_dir():
+                return service_dir
+        except OSError:
+            # An unreadable mount means "not this one"; fall through.
+            log.debug("ollama-runtime: service models dir unreadable", exc_info=True)
+    return Path.home() / ".ollama" / "models"
+
+
+def runtime_status() -> dict[str, object]:
+    """The honest runtime picture.
+
+    ``{installed, binary, running, version, detail, base_url, host_kind,
+    models_dir}``. A pure HTTP probe cannot tell "not installed" from
+    "installed but stopped" — and those two states need OPPOSITE buttons
+    (install vs start), so the distinction is the whole point of this
+    function. ``host_kind`` tells the panel whether install/start/stop/log
+    even apply here: a remote server is managed on its own machine.
     """
     binary = find_binary()
     version = _server_version()
@@ -144,12 +236,16 @@ def runtime_status() -> dict[str, object]:
         detail = "Ollama is installed but not running."
     else:
         detail = "Ollama is not installed on this machine."
+    base_url = _server_root()
     return {
         "installed": installed,
         "binary": binary,
         "running": running,
         "version": version or "",
         "detail": detail,
+        "base_url": base_url,
+        "host_kind": host_kind(base_url),
+        "models_dir": str(models_dir()),
     }
 
 
@@ -188,6 +284,53 @@ def _install_marker() -> Path:
     return _data_dir() / "ollama_installed_by_jarvis.json"
 
 
+def _log_path() -> Path:
+    return _data_dir() / "ollama_server.log"
+
+
+def _pid_file() -> Path:
+    return _data_dir() / "ollama_server.pid"
+
+
+def _record_pid(pid: int, binary: str) -> None:
+    """Remember which process Jarvis spawned so ``stop_server`` stops only that."""
+    try:
+        _pid_file().parent.mkdir(parents=True, exist_ok=True)
+        _pid_file().write_text(
+            json.dumps({"pid": int(pid), "binary": binary, "at": time.time()}),
+            encoding="utf-8",
+        )
+    except OSError:
+        # Bookkeeping only: the server still runs, stop just loses its handle.
+        log.warning("ollama-runtime: could not record the server pid", exc_info=True)
+
+
+def _recorded_pid() -> int | None:
+    """The pid Jarvis spawned, or ``None`` when no record exists."""
+    try:
+        raw = _pid_file().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        log.debug("ollama-runtime: pid file unreadable", exc_info=True)
+        return None
+    try:
+        pid = int(json.loads(raw).get("pid", 0))
+    except (ValueError, AttributeError, TypeError):
+        log.debug("ollama-runtime: pid file malformed", exc_info=True)
+        return None
+    return pid or None
+
+
+def _forget_pid() -> None:
+    try:
+        _pid_file().unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        log.debug("ollama-runtime: pid file not removed", exc_info=True)
+
+
 def start_server() -> tuple[bool, str]:
     """Spawn ``ollama serve`` detached and wait for its port. ``(ok, detail)``.
 
@@ -202,7 +345,7 @@ def start_server() -> tuple[bool, str]:
         return False, "Ollama is not installed — install it first."
     sink = None
     try:
-        log_path = _data_dir() / "ollama_server.log"
+        log_path = _log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
         sink = open(log_path, "ab")  # noqa: SIM115 — handed to the child
     except OSError:
@@ -211,13 +354,13 @@ def start_server() -> tuple[bool, str]:
     if os.name != "nt":
         popen_kwargs["start_new_session"] = True
     try:
-        subprocess.Popen(  # noqa: S603 — fixed argv, resolved binary
+        child = subprocess.Popen(  # noqa: S603 — fixed argv, resolved binary
             [binary, "serve"],
             stdin=subprocess.DEVNULL,
             stdout=sink or subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
             creationflags=NO_WINDOW_CREATIONFLAGS,
-            **popen_kwargs,  # type: ignore[arg-type]
+            **popen_kwargs,  # type: ignore[arg-type, call-overload]
         )
     except OSError as exc:
         # Not swallowed: the reason travels back as this function's own
@@ -226,6 +369,7 @@ def start_server() -> tuple[bool, str]:
     finally:
         if sink is not None:
             sink.close()
+    _record_pid(child.pid, binary)
     port = _server_port()
     deadline = time.monotonic() + _START_WAIT_S
     while time.monotonic() < deadline:
@@ -236,6 +380,228 @@ def start_server() -> tuple[bool, str]:
         f"Ollama did not come up within {_START_WAIT_S:.0f} seconds — "
         "see ollama_server.log in the Jarvis data folder."
     )
+
+
+# ── Stop / log / probe / environment guide ───────────────────────────────
+
+_STOP_WAIT_S = 8.0
+_PROBE_TIMEOUT_S = 3.0
+
+_NOT_OURS = (
+    "This Ollama was not started by Jarvis, so Jarvis will not stop it — "
+    "stop it where you started it (the Ollama tray app, your terminal, or "
+    "the system service)."
+)
+
+
+def _process_is_ollama(proc: object) -> bool:
+    """True when ``proc`` still is an Ollama binary (guards pid reuse)."""
+    try:
+        name = str(proc.name() or "").lower()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — psutil raises its own family on a gone/denied process
+        log.debug("ollama-runtime: process name unavailable", exc_info=True)
+        return False
+    return "ollama" in name
+
+
+def stop_server() -> tuple[bool, str]:
+    """Stop the ``ollama serve`` Jarvis itself spawned. ``(ok, detail)``.
+
+    Only the recorded pid is ever touched: a server the user started from
+    the tray app, a terminal, or systemd gets one honest sentence instead of
+    a silent no-op or a foreign kill. A recorded pid that already died is
+    forgotten so the next answer is honest again.
+    """
+    pid = _recorded_pid()
+    if pid is None:
+        return False, _NOT_OURS
+    import psutil  # lazy (AP-26)
+
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        _forget_pid()
+        return False, (
+            f"The Ollama that Jarvis started (pid {pid}) is no longer running. "
+            "If a server is still answering, it was started elsewhere."
+        )
+    except psutil.Error as exc:
+        return False, f"Could not inspect the Ollama process Jarvis started ({exc})."
+    if not _process_is_ollama(proc):
+        # The pid was recycled by the OS for an unrelated program.
+        _forget_pid()
+        return False, (
+            f"Pid {pid} no longer belongs to Ollama; the server Jarvis started "
+            "is gone. If a server is still answering, it was started elsewhere."
+        )
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=_STOP_WAIT_S)
+        except psutil.TimeoutExpired:
+            log.warning("ollama-runtime: pid %s ignored terminate; killing", pid)
+            proc.kill()
+            proc.wait(timeout=_STOP_WAIT_S)
+    except psutil.NoSuchProcess:
+        # It exited between the check and the signal — that IS the goal.
+        log.debug("ollama-runtime: pid %s exited before the signal", pid)
+    except psutil.Error as exc:
+        return False, f"Could not stop Ollama (pid {pid}): {exc}."
+    _forget_pid()
+    return True, "Ollama stopped."
+
+
+def tail_log(lines: int = 40) -> list[str]:
+    """The last ``lines`` of the server log Jarvis writes; ``[]`` when none."""
+    if lines <= 0:
+        return []
+    try:
+        with open(_log_path(), "rb") as handle:
+            tail = deque(handle, maxlen=lines)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        log.debug("ollama-runtime: server log unreadable", exc_info=True)
+        return []
+    return [raw.decode("utf-8", errors="replace").rstrip("\r\n") for raw in tail]
+
+
+async def probe_host(base_url: str, *, transport: object | None = None) -> dict[str, object]:
+    """Ask ``base_url`` for its version: ``{ok, version, latency_ms, detail}``.
+
+    Used before a new server address is saved, so a typo is caught by one
+    sentence instead of by every role failing later. Never raises.
+    ``transport`` is the test seam (an ``httpx`` transport); production
+    passes nothing.
+    """
+    from jarvis.plugins.brain.ollama import normalize_server_root  # lazy (AP-26)
+
+    root = normalize_server_root(base_url)
+    url = f"{root}/api/version"
+    if not url.startswith(("http://", "https://")):
+        return {
+            "ok": False,
+            "version": "",
+            "latency_ms": 0,
+            "detail": f"{base_url!r} is not an http(s) address.",
+        }
+    import httpx  # lazy (AP-26)
+
+    started = time.monotonic()
+    try:
+        async with httpx.AsyncClient(
+            timeout=_PROBE_TIMEOUT_S,
+            transport=transport,  # type: ignore[arg-type]
+        ) as client:
+            response = await client.get(url)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        response.raise_for_status()
+        version = str(response.json().get("version", "") or "") or "unknown"
+    except httpx.HTTPStatusError as exc:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "ok": False,
+            "version": "",
+            "latency_ms": latency_ms,
+            "detail": (
+                f"{root} answered HTTP {exc.response.status_code} on /api/version "
+                "— that is not an Ollama server."
+            ),
+        }
+    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        reason = str(exc) or exc.__class__.__name__
+        return {
+            "ok": False,
+            "version": "",
+            "latency_ms": latency_ms,
+            "detail": f"No Ollama answered at {root} ({reason}).",
+        }
+    return {
+        "ok": True,
+        "version": version,
+        "latency_ms": latency_ms,
+        "detail": f"Ollama {version} answered in {latency_ms} ms.",
+    }
+
+
+#: (key, purpose, example value) — one plain sentence each. The value is an
+#: example the user edits, not a setting the app applies.
+_ENV_KEYS: tuple[tuple[str, str, str], ...] = (
+    (
+        "OLLAMA_HOST",
+        "The address the server listens on; 0.0.0.0 lets other machines reach it.",
+        "0.0.0.0",  # noqa: S104 — the documented value the USER pastes, not a bind here
+    ),
+    (
+        "OLLAMA_MODELS",
+        "The folder where downloaded model weights are stored.",
+        "/path/to/models",
+    ),
+    (
+        "OLLAMA_KEEP_ALIVE",
+        "How long a model stays loaded in memory after its last request.",
+        "30m",
+    ),
+    (
+        "OLLAMA_NUM_PARALLEL",
+        "How many requests one loaded model serves at the same time.",
+        "1",
+    ),
+    (
+        "OLLAMA_MAX_LOADED_MODELS",
+        "How many models may sit in memory at once.",
+        "2",
+    ),
+    (
+        "OLLAMA_FLASH_ATTENTION",
+        "Turns the faster attention kernel on (1) or off (0) on supported GPUs.",
+        "1",
+    ),
+    (
+        "OLLAMA_KV_CACHE_TYPE",
+        "The precision of the context cache; q8_0 halves its memory with little loss.",
+        "q8_0",
+    ),
+)
+
+_RESTART_HINTS = {
+    "windows": "Quit Ollama from the tray icon and start it again.",
+    "macos": "Quit the Ollama menu-bar app and start it again.",
+    "linux": "Run: sudo systemctl restart ollama",
+}
+
+
+def _env_command(which: str, key: str, value: str) -> str:
+    if which == "windows":
+        return f"setx {key} {value}"
+    if which == "macos":
+        return f"launchctl setenv {key} {value}"
+    return (
+        f'sudo systemctl edit ollama.service   # add under [Service]: Environment="{key}={value}"'
+    )
+
+
+def env_guide(os_name: str | None = None) -> list[dict[str, str]]:
+    """Copyable per-OS recipes for Ollama's server environment variables.
+
+    Each row is ``{key, purpose, command, restart}``. The app never edits the
+    OS environment: the user pastes the line, then restarts the server. The
+    Linux recipe targets the systemd unit the official installer creates;
+    Windows ``setx`` reaches processes started afterwards; macOS
+    ``launchctl setenv`` reaches apps launched after it.
+    """
+    which = _normalize_os(os_name)
+    restart = _RESTART_HINTS[which]
+    return [
+        {
+            "key": key,
+            "purpose": purpose,
+            "command": _env_command(which, key, value),
+            "restart": restart,
+        }
+        for key, purpose, value in _ENV_KEYS
+    ]
 
 
 # ── Poll-shaped installer ────────────────────────────────────────────────
@@ -305,9 +671,7 @@ def start_install() -> tuple[bool, str]:
         _STATE.percent = 0
         _STATE.error = ""
         _STATE.detail = ""
-        thread = threading.Thread(
-            target=_run_install, name="ollama-runtime-install", daemon=True
-        )
+        thread = threading.Thread(target=_run_install, name="ollama-runtime-install", daemon=True)
         _STATE.thread = thread
     thread.start()
     return True, "install started"
@@ -341,9 +705,7 @@ def _run_command(cmd: list[str], *, timeout: int) -> None:
         with _LOCK:
             _STATE.log_tail.append(line[:200])
     if result.returncode != 0:
-        raise RuntimeError(
-            f"step failed (exit {result.returncode}): {' '.join(cmd[:2])}…"
-        )
+        raise RuntimeError(f"step failed (exit {result.returncode}): {' '.join(cmd[:2])}…")
 
 
 def _download(url: str, target: Path) -> None:
@@ -354,9 +716,7 @@ def _download(url: str, target: Path) -> None:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = target.with_suffix(target.suffix + ".part")
-    with httpx.stream(
-        "GET", url, follow_redirects=True, timeout=_DOWNLOAD_TIMEOUT_S
-    ) as response:
+    with httpx.stream("GET", url, follow_redirects=True, timeout=_DOWNLOAD_TIMEOUT_S) as response:
         response.raise_for_status()
         total = int(response.headers.get("Content-Length", 0) or 0)
         done = 0
@@ -477,9 +837,7 @@ def ensure_runtime_blocking() -> tuple[bool, str]:
                 method = _install_linux()
             _record_marker(method)
             if not find_binary():
-                return False, (
-                    "the Ollama installer finished but no binary was found"
-                )
+                return False, ("the Ollama installer finished but no binary was found")
         return start_server()
     except Exception as exc:  # noqa: BLE001 — honest sentence, never a raise
         return False, str(exc)
@@ -501,8 +859,7 @@ def _run_install() -> None:
             _record_marker(method)
             if not find_binary():
                 raise RuntimeError(
-                    "the installer finished but no Ollama binary was found — "
-                    "see the log tail above"
+                    "the installer finished but no Ollama binary was found — see the log tail above"
                 )
         _set("starting", 85, "starting Ollama")
         ok, detail = start_server()
