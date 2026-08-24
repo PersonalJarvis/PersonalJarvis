@@ -1,19 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Archive, MessageSquare, Mic, Trash2 } from "lucide-react";
 
+import { useAgentChatStore } from "@/store/agentChat";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { SidebarGroup } from "@/components/home/SidebarGroup";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
 import { formatChatWhen, useChatRows, type ChatRow } from "@/components/home/chatRows";
+import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
 
 export const RECENT_CHATS_FOLDED = 3;
 export const RECENT_CHATS_UNFOLDED = 15;
 
 /**
- * The last conversations — the ones you typed and the ones you spoke, in one
- * list — from the sidebar. This block is the app's one long-lived poller of
- * that history (`useChatRows({ poll: true })`).
+ * The last conversations — agent chats and voice sessions in one list —
+ * from the sidebar. This block is the one long-lived poller of both
+ * histories (`useConversations({ poll: true })` for the voice sessions,
+ * the agent-chat store's session list for the typed ones).
  *
  * It is a shortcut, not the archive: it shows the handful you touched last
  * and hands everything else to "All chats" (components/home/AllChatsDialog),
@@ -24,17 +27,25 @@ export const RECENT_CHATS_UNFOLDED = 15;
  * 2026-08-23): a VOICE session opened while the voice stage is up stays
  * there, its words loaded into the transcript lane, so you just keep
  * talking. Opened from the chat surface it is read there as an archive.
- * A typed thread goes to the chat surface and is continued by typing.
+ * An agent chat goes to the chat surface, where the session is read and
+ * continued by typing — on the provider and model it was using.
  *
- * Both are Jarvis, which is why they share one list. The Agentic IDE's agent
- * chats are not here — they belong to a workspace folder and are listed where
- * that folder is (components/agentic/WorkspaceChats).
+ * The classic brain's text threads are no longer listed: since the chat
+ * surface became the agent chat there is nowhere to open them; the data
+ * stays on disk.
  */
 export function RecentChats() {
   const t = useT();
   const { rows, isActive, open: openRow, remove } = useChatRows({ poll: true });
+  const loadSessions = useAgentChatStore((s) => s.loadSessions);
   const [open, setOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+
+  useEffect(() => {
+    void loadSessions();
+    const id = window.setInterval(() => void loadSessions(), CONVERSATIONS_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [loadSessions]);
 
   const shown = rows.slice(0, open ? RECENT_CHATS_UNFOLDED : RECENT_CHATS_FOLDED);
   const canExpand = rows.length > RECENT_CHATS_FOLDED;
@@ -66,7 +77,7 @@ export function RecentChats() {
                 row={row}
                 active={isActive(row)}
                 onOpen={() => openRow(row)}
-                onDelete={row.kind === "text" ? () => remove(row) : undefined}
+                onDelete={row.kind === "agent" ? () => remove(row) : undefined}
               />
             ))}
           </ul>

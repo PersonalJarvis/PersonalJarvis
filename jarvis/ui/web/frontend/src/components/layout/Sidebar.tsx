@@ -18,6 +18,7 @@ import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
+import { useAgentChatStore } from "@/store/agentChat";
 import { prettyProviderName } from "@/lib/prettyProviderName";
 import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
@@ -131,9 +132,9 @@ export function Sidebar({
   // "+ New" starts a new conversation of the KIND you are looking at: on the
   // chat surface an empty chat with Jarvis, on the voice stage a fresh voice
   // run. Sending someone standing in Voice to the chat page is what the one
-  // button used to do, and it read as the button being broken. The Agentic
-  // IDE's chats have their own button in their own column (WorkspaceChats).
+  // button used to do, and it read as the button being broken.
   const { newChat, newVoiceRun } = useConversations();
+  const newChatSession = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
   // see `presentNavItem`.
@@ -167,11 +168,12 @@ export function Sidebar({
     void newVoiceRun();
     setActive("chats");
   };
-  // On the chat surface: an empty page for a new chat with Jarvis. `newChat`
-  // drops the open thread whichever kind it was, so a reopened voice session
-  // does not linger behind the fresh page either.
+  // On the chat surface: an empty page for a new chat with Jarvis. Both stores
+  // are cleared — the chat session that owns the stage, and the voice thread —
+  // so a reopened conversation does not linger behind the fresh page.
   const startNewChat = () => {
     newChat();
+    newChatSession();
     setSurface("chat");
     setActive("chats");
   };

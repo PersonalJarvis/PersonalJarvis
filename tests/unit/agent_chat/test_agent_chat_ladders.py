@@ -9,6 +9,7 @@ import pytest
 
 from jarvis.agent_chat import permissions, runner_cli
 from jarvis.agent_chat.catalog import CODEX_FALLBACK_MODELS, provider_row
+from jarvis.agent_chat.effort import effort_levels
 from jarvis.agent_chat.runner_cli import (
     _AgyState,
     agy_model_args,
@@ -392,19 +393,17 @@ def test_read_codex_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
     assert CODEX_FALLBACK_MODELS[0].id == "gpt-5.6-sol"
 
 
-def test_catalog_rows_carry_per_model_efforts_for_cli_runners():
-    agy = provider_row("antigravity")
-    assert agy is not None
-    models = agy.to_dict()["curated_models"]
-    assert models[0]["id"] == "gemini-3.7-flash" and models[0]["efforts"] == [
-        "low",
-        "medium",
-        "high",
-    ]
-    assert any(m["id"] == "claude-sonnet-4-6" and m["efforts"] == [] for m in models)
-    codex = provider_row("openai-codex")
-    assert codex is not None
-    assert codex.to_dict()["curated_models"][0]["efforts"][-1] == "ultra"
+def test_the_coding_clis_are_not_offered_as_brains():
+    """Codex / Antigravity / Grok Build left the picker with the runner swap.
+
+    They are sub-agents: an agent loop on a subscription seat, with no chat API
+    to think with. Their per-model effort ladders still live in effort.py for
+    the sub-agent paths that DO drive them.
+    """
+    for cli in ("antigravity", "openai-codex", "grok-build"):
+        assert provider_row(cli) is None, f"{cli} is offered as a brain"
+    # The ladders themselves are untouched — the IDE and the missions read them.
+    assert "low" in effort_levels("antigravity")
 
 
 # ------------------------------------------------------------ Anthropic API effort

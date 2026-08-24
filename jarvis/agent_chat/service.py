@@ -8,18 +8,18 @@ approval card. Cancel sets the turn's event and awaits the task; a runner
 that is mid-tool or mid-stream ends at the next boundary (the API loop
 between deltas, the CLI by killing the child).
 
-The runner is picked per turn from the provider row: a CLI-backed provider
-uses :mod:`runner_cli`; ``claude-api`` uses the CLI when the ``claude``
-binary is on PATH and the API otherwise; everything else uses
-:mod:`runner_api`. The choice is recorded in ``turn_started`` so the
-timeline can say what answered.
+Every turn runs on :mod:`runner_brain` — Jarvis' own brain, with the picked
+provider and model applied to it. That is what this surface IS: the assistant,
+typed at instead of spoken to. The CLI and API runners stay in the package for
+the sub-agent paths that drive a vendor CLI; nothing on the chat surface
+reaches them any more (maintainer, 2026-08-24). The runner is recorded in
+``turn_started`` so the timeline can say what answered.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -29,8 +29,9 @@ from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
-from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
-from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
+from jarvis.agent_chat.runner_api import TurnHandle
+from jarvis.agent_chat.runner_brain import RUNNER as BRAIN_RUNNER
+from jarvis.agent_chat.runner_brain import run_brain_turn
 from jarvis.agent_chat.store import AgentChatSession, AgentChatStore
 
 log = logging.getLogger(__name__)
@@ -48,21 +49,14 @@ class NoSuchSession(KeyError):
 
 
 def resolve_runner(provider: str) -> str:
-    """Which runner answers for ``provider`` on this machine, right now.
+    """Which runner answers for ``provider`` — on this surface, always the brain.
 
-    ``claude-api`` is dual: Claude Code (the CLI) when it is installed — that
-    is the subscription path and the one with the CLI's own tools — else the
-    Anthropic API in the in-process loop. Every other provider row names its
-    runner outright.
+    The pick names the MODEL Jarvis thinks with, not a different assistant, so
+    there is one runner: :mod:`runner_brain`. A provider that cannot be a brain
+    (a subscription coding CLI) is not offered by the catalog at all, and the
+    runner reports it as the turn's error if one ever arrives.
     """
-    row = provider_row(provider)
-    if row is None:
-        return "api" if supports_api_runner(provider) else "unknown"
-    if row.id == "claude-api":
-        if shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"):
-            return "claude-cli"
-        return "api"
-    return row.runner
+    return BRAIN_RUNNER
 
 
 class _Running:
@@ -106,8 +100,8 @@ class AgentChatService:
         title: str = "",
     ) -> AgentChatSession:
         row = provider_row(provider)
-        if row is None and not supports_api_runner(provider):
-            raise ValueError(f"Unknown agent-chat provider: {provider!r}")
+        if row is None:
+            raise ValueError(f"Unknown chat provider: {provider!r}")
         permission_mode = normalize_permission(resolve_runner(provider), permission_mode)
         eff = normalize_effort(provider, effort) if effort is not None else ""
         if effort is None:
@@ -205,29 +199,7 @@ class AgentChatService:
 
         async def _body() -> None:
             try:
-                if supports_cli_runner(runner):
-                    vendor = await run_cli_turn(handle, text, runner)
-                    if vendor and vendor != session.vendor_session:
-                        self.store.update_session(session_id, vendor_session=vendor)
-                elif runner == "api" and supports_api_runner(session.provider):
-                    await run_api_turn(handle, text)
-                else:
-                    await self._emit(
-                        session_id,
-                        make_event(
-                            "turn_finished",
-                            {
-                                "turn_id": turn_id,
-                                "status": "error",
-                                "duration_ms": 0,
-                                "usage": {},
-                                "error": (
-                                    f"No runner for provider {session.provider!r} on this "
-                                    "machine. Connect it under API Keys → Agents."
-                                ),
-                            },
-                        ),
-                    )
+                await run_brain_turn(handle, text)
             except asyncio.CancelledError:
                 await self._emit(
                     session_id,

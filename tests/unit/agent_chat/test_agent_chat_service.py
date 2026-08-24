@@ -1,9 +1,16 @@
-"""Agent chat — a whole turn through the service and the routes with a fake brain."""
+"""The chat surface end to end: a typed turn, run on Jarvis' brain.
+
+The surface used to run a coding agent — a vendor CLI or an in-process tool
+loop, with approval cards of its own. Since 2026-08-24 it runs the assistant:
+``BrainManager.generate``, with the picked provider and model applied to the
+live brain. So these tests fake the BRAIN, not a provider adapter, and there
+are no approval cards here — a consequential action is confirmed inside the
+answer (``allow_voice_confirm``), the same two-turn flow voice has.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -11,185 +18,184 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis.agent_chat import runner_api
 from jarvis.agent_chat.service import AgentChatService, SessionBusy
 from jarvis.agent_chat.store import AgentChatStore
-from jarvis.core.protocols import BrainDelta, BrainRequest
+from jarvis.core import runtime_refs
 from jarvis.ui.web.agent_chat_routes import router
 
 
-class ScriptedBrain:
-    """A brain that answers from a script: each entry is a list of deltas."""
+class FakeBrain:
+    """A BrainManager stand-in: streams a scripted answer, records the pick."""
 
-    def __init__(self, model: str | None = None) -> None:
-        self.model = model
-        self.requests: list[BrainRequest] = []
+    def __init__(self, answer: str = "Two meetings today.", *, fail: str = "") -> None:
+        self.answer = answer
+        self.fail = fail
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.switched: list[str] = []
+        self.models: list[tuple[str, str]] = []
+        self.started = asyncio.Event()
+        self.release: asyncio.Event | None = None
 
-    script: list[list[BrainDelta]] = []
+    # -- the pick ---------------------------------------------------------
+    async def switch(self, provider: str, *, persist: bool = False) -> None:
+        self.switched.append(provider)
 
-    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        self.requests.append(req)
-        ScriptedBrain.seen.append(req)
-        step = ScriptedBrain.script.pop(0) if ScriptedBrain.script else [BrainDelta(content="(done)")]
-        for d in step:
-            await asyncio.sleep(0)
-            yield d
+    def apply_provider_model(self, provider: str, model: str) -> bool:
+        self.models.append((provider, model))
+        return True
 
-    seen: list[BrainRequest] = []
+    # -- the turn ---------------------------------------------------------
+    async def generate(self, text: str, **kwargs: Any) -> str:
+        self.calls.append((text, kwargs))
+        self.started.set()
+        if self.release is not None:
+            await self.release.wait()
+        if self.fail:
+            raise RuntimeError(self.fail)
+        consumer = kwargs.get("text_consumer")
+        if callable(consumer):
+            for piece in self.answer.split(" "):
+                consumer(piece + " ")
+                await asyncio.sleep(0)
+        return self.answer
 
 
 @pytest.fixture
-def scripted(monkeypatch: pytest.MonkeyPatch):
-    ScriptedBrain.script = []
-    ScriptedBrain.seen = []
-    monkeypatch.setitem(runner_api.BRAIN_BY_PROVIDER, "fakeprov", ("tests.unit.agent_chat.test_agent_chat_service", "ScriptedBrain"))
-    # Catalog has no row for fakeprov; supports_api_runner() still says yes.
-    return ScriptedBrain
+def brain(monkeypatch: pytest.MonkeyPatch) -> FakeBrain:
+    fake = FakeBrain()
+    monkeypatch.setattr(runtime_refs, "get_brain_manager", lambda: fake)
+    return fake
 
 
-async def _drain(q: asyncio.Queue, until_kind: str, timeout: float = 5.0) -> list[dict[str, Any]]:
+async def _drain(
+    q: asyncio.Queue, until_kind: str, budget_s: float = 5.0
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
+    deadline = loop.time() + budget_s
     while True:
         remaining = deadline - loop.time()
         if remaining <= 0:
-            raise AssertionError(f"timed out waiting for {until_kind}; got {[e['kind'] for e in out]}")
+            seen = [e['kind'] for e in out]
+            raise AssertionError(f"timed out waiting for {until_kind}; got {seen}")
         ev = await asyncio.wait_for(q.get(), timeout=remaining)
         out.append(ev)
         if ev["kind"] == until_kind:
             return out
 
 
-def test_turn_streams_text_runs_a_tool_and_asks_for_approval(tmp_path: Path, scripted):
-    ScriptedBrain.script = [
-        [
-            BrainDelta(content="Let me "),
-            BrainDelta(content="write it."),
-            BrainDelta(
-                tool_call={
-                    "id": "c1",
-                    "name": "Write",
-                    "input": {"file_path": "hello.txt", "content": "hi"},
-                }
-            ),
-            BrainDelta(finish_reason="tool_use", usage={"input_tokens": 3, "output_tokens": 4}),
-        ],
-        [BrainDelta(content="Written."), BrainDelta(finish_reason="stop")],
-    ]
-
+def test_a_typed_turn_runs_on_the_brain_with_the_picked_model(tmp_path: Path, brain: FakeBrain):
     async def scenario() -> None:
         store = AgentChatStore(":memory:")
         svc = AgentChatService(store, assistant_name=lambda: "Testo")
-        session = svc.create_session(provider="fakeprov", model="m", effort="high", cwd=str(tmp_path))
+        session = svc.create_session(provider="grok", model="grok-4.3", cwd=str(tmp_path))
         q = svc.subscribe(session.session_id)
-        turn_id = await svc.send(session.session_id, "please write hello.txt")
+        turn_id = await svc.send(session.session_id, "was steht heute an")
         with pytest.raises(SessionBusy):
             await svc.send(session.session_id, "again")
 
-        events = await _drain(q, "approval_required")
+        events = await _drain(q, "turn_finished")
         kinds = [e["kind"] for e in events]
         assert kinds[:2] == ["user_message", "turn_started"]
-        assert "text_delta" in kinds and "tool_call" in kinds
-        approval = events[-1]["payload"]
-        assert approval["name"] == "Write" and approval["summary"] == "hello.txt"
-        assert svc.pending_approvals(session.session_id) == [approval["approval_id"]]
+        assert "text_delta" in kinds, "the answer must stream as it is written"
+        assert "assistant_text" in kinds
 
-        assert svc.resolve_approval(session.session_id, approval["approval_id"], "allow")
-        events += await _drain(q, "turn_finished")
-        kinds = [e["kind"] for e in events]
-        assert "approval_resolved" in kinds and "tool_result" in kinds
-        assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "hi"
+        started = events[1]["payload"]
+        assert started["runner"] == "brain", "the assistant answers, not a coding CLI"
+        assert started["provider"] == "grok" and started["model"] == "grok-4.3"
+
         finished = events[-1]["payload"]
-        assert finished["turn_id"] == turn_id and finished["status"] == "done"
-        assert finished["usage"] == {"input_tokens": 3, "output_tokens": 4}
+        assert finished["turn_id"] == turn_id
+        assert finished["status"] == "done" and finished["error"] is None
 
-        # The persisted log has no transient deltas and the final texts.
-        stored = store.list_events(session.session_id)
-        stored_kinds = [e["kind"] for e in stored]
-        assert "text_delta" not in stored_kinds
-        texts = [e["payload"]["text"] for e in stored if e["kind"] == "assistant_text"]
-        assert texts == ["Let me write it.", "Written."]
-        # The second request carried the tool round back to the brain.
-        second = ScriptedBrain.seen[1]
-        assert second.reasoning_effort == "high"
-        assert second.messages[-1].role == "tool"
-        assert second.system and "Testo" in second.system
+        # The pick reached the live brain, both halves of it.
+        assert brain.switched == ["grok"]
+        assert brain.models == [("grok", "grok-4.3")]
+
+        # It really is the brain's own turn: present-user confirmation on, and
+        # the conversation keyed to this session so follow-ups keep context.
+        _, kwargs = brain.calls[0]
+        assert kwargs["allow_voice_confirm"] is True
+        assert kwargs["conversation_id"] == session.session_id
+        assert callable(kwargs["text_consumer"])
+
+        # The persisted log keeps the answer, never the token dust.
+        stored = [e["kind"] for e in store.list_events(session.session_id)]
+        assert "text_delta" not in stored and "assistant_text" in stored
         assert not svc.is_running(session.session_id)
 
     asyncio.run(scenario())
 
 
-def test_deny_feeds_a_denied_result_and_allow_always_flips_the_mode(tmp_path: Path, scripted):
-    ScriptedBrain.script = [
-        [BrainDelta(tool_call={"id": "c1", "name": "RunCommand", "input": {"command": "echo x"}})],
-        [BrainDelta(tool_call={"id": "c2", "name": "RunCommand", "input": {"command": "echo y"}})],
-        [BrainDelta(tool_call={"id": "c3", "name": "RunCommand", "input": {"command": "echo z"}})],
-        [BrainDelta(content="ok")],
-    ]
+def test_a_coding_subagent_cannot_answer_here_and_says_so(tmp_path: Path, brain: FakeBrain):
+    """A sub-agent pick is refused with a sentence, not a silent wrong answer."""
 
     async def scenario() -> None:
         svc = AgentChatService(AgentChatStore(":memory:"))
-        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        # The catalog no longer offers one, so build the session past it: what
+        # is pinned here is the runner's own guard, the last line of defence.
+        session = svc.create_session(provider="grok", cwd=str(tmp_path))
+        svc.store.update_session(session.session_id, provider="antigravity")
         q = svc.subscribe(session.session_id)
-        await svc.send(session.session_id, "run things")
-        ev = (await _drain(q, "approval_required"))[-1]["payload"]
-        svc.resolve_approval(session.session_id, ev["approval_id"], "deny")
-        events = await _drain(q, "tool_result")
-        assert events[-1]["payload"]["is_error"] and "Denied" in events[-1]["payload"]["output"]
-        ev = (await _drain(q, "approval_required"))[-1]["payload"]
-        svc.resolve_approval(session.session_id, ev["approval_id"], "allow_always")
+        await svc.send(session.session_id, "hi")
         events = await _drain(q, "turn_finished")
-        kinds = [e["kind"] for e in events]
-        # c2 ran after allow_always, c3 ran with no approval card at all.
-        assert kinds.count("approval_required") == 0
-        assert kinds.count("tool_result") == 2
-        assert svc.store.get_session(session.session_id).permission_mode == "auto"  # type: ignore[union-attr]
+        finished = events[-1]["payload"]
+        assert finished["status"] == "done"
+        assert "coding sub-agent" in (finished["error"] or "")
+        assert brain.switched == [], "a sub-agent must never become the brain"
 
     asyncio.run(scenario())
 
 
-def test_cancel_ends_the_turn(tmp_path: Path, scripted):
-    ScriptedBrain.script = [
-        [BrainDelta(tool_call={"id": "c1", "name": "Write", "input": {"file_path": "a", "content": "b"}})],
-    ]
+def test_a_brain_that_is_not_up_yet_is_reported_instead_of_spinning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(runtime_refs, "get_brain_manager", lambda: None)
 
     async def scenario() -> None:
         svc = AgentChatService(AgentChatStore(":memory:"))
-        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        session = svc.create_session(provider="openai", cwd=str(tmp_path))
         q = svc.subscribe(session.session_id)
-        await svc.send(session.session_id, "go")
-        await _drain(q, "approval_required")
-        assert await svc.cancel(session.session_id)
+        await svc.send(session.session_id, "hi")
         events = await _drain(q, "turn_finished")
-        assert events[-1]["payload"]["status"] == "cancelled"
-        assert not (tmp_path / "a").exists()
+        assert events[-1]["payload"]["status"] == "error"
+        assert "starting up" in events[-1]["payload"]["error"]
 
     asyncio.run(scenario())
 
 
-def test_provider_error_is_reported_not_raised(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    class Boom:
-        def __init__(self, model=None):
-            pass
-
-        async def complete(self, req):
-            raise RuntimeError("401 invalid api key")
-            yield  # pragma: no cover
-
-    monkeypatch.setitem(runner_api.BRAIN_BY_PROVIDER, "boomprov", (__name__, "Boom"))
-    import sys
-
-    setattr(sys.modules[__name__], "Boom", Boom)
+def test_a_failing_turn_is_reported_not_raised(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake = FakeBrain(fail="401 invalid api key")
+    monkeypatch.setattr(runtime_refs, "get_brain_manager", lambda: fake)
 
     async def scenario() -> None:
         svc = AgentChatService(AgentChatStore(":memory:"))
-        session = svc.create_session(provider="boomprov", cwd=str(tmp_path))
+        session = svc.create_session(provider="openai", cwd=str(tmp_path))
         q = svc.subscribe(session.session_id)
         await svc.send(session.session_id, "hi")
         events = await _drain(q, "turn_finished")
         assert events[-1]["payload"]["status"] == "error"
         assert "invalid api key" in events[-1]["payload"]["error"]
+
+    asyncio.run(scenario())
+
+
+def test_cancel_ends_the_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake = FakeBrain()
+
+    async def scenario() -> None:
+        fake.release = asyncio.Event()
+        monkeypatch.setattr(runtime_refs, "get_brain_manager", lambda: fake)
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.create_session(provider="openai", cwd=str(tmp_path))
+        q = svc.subscribe(session.session_id)
+        await svc.send(session.session_id, "go")
+        await asyncio.wait_for(fake.started.wait(), timeout=5)
+        cancelled = asyncio.create_task(svc.cancel(session.session_id))
+        fake.release.set()
+        assert await asyncio.wait_for(cancelled, timeout=5)
+        events = await _drain(q, "turn_finished")
+        assert events[-1]["payload"]["status"] in {"cancelled", "done"}
 
     asyncio.run(scenario())
 
@@ -207,8 +213,7 @@ def _app(tmp_path: Path) -> FastAPI:
     return app
 
 
-def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, scripted):
-    ScriptedBrain.script = [[BrainDelta(content="hello from fake")]]
+def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, brain: FakeBrain):
     # One portal for the whole test: a bare TestClient opens a fresh event
     # loop per request, and the turn task spawned by POST /messages would be
     # cancelled the moment that request returns.
@@ -217,26 +222,31 @@ def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, scripted
 
 
 def _exercise_routes(client: TestClient, tmp_path: Path) -> None:
-
     cat = client.get("/api/agent-chat/catalog").json()
     ids = [p["id"] for p in cat["providers"]]
-    assert "claude-api" in ids and "openai" in ids and "openai-codex" in ids
+    assert "claude-api" in ids and "openai" in ids
+    # The subscription coding CLIs are not brains and are not offered.
+    assert "openai-codex" not in ids and "antigravity" not in ids
     claude = next(p for p in cat["providers"] if p["id"] == "claude-api")
     assert claude["effort_levels"][-1] == "max"
     assert cat["default_cwd"] == str(tmp_path)
 
     created = client.post(
         "/api/agent-chat/sessions",
-        json={"provider": "fakeprov", "model": "m", "effort": "xhigh"},
+        json={"provider": "openai", "model": "gpt-5.5", "effort": "xhigh"},
     )
     assert created.status_code == 201, created.text
     sid = created.json()["session_id"]
     assert created.json()["cwd"] == str(tmp_path)
 
-    bad = client.post("/api/agent-chat/sessions", json={"provider": "fakeprov", "cwd": "/no/such/dir"})
+    bad = client.post(
+        "/api/agent-chat/sessions", json={"provider": "openai", "cwd": "/no/such/dir"}
+    )
     assert bad.status_code == 400
 
-    patched = client.patch(f"/api/agent-chat/sessions/{sid}", json={"title": "My chat", "effort": "low"})
+    patched = client.patch(
+        f"/api/agent-chat/sessions/{sid}", json={"title": "My chat", "effort": "low"}
+    )
     assert patched.json()["title"] == "My chat" and patched.json()["effort"] == "low"
 
     with client.websocket_connect(f"/api/agent-chat/sessions/{sid}/ws") as ws:

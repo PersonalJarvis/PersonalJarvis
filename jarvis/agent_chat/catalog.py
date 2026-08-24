@@ -1,32 +1,24 @@
-"""The provider rows the agent-chat composer can pick from.
+"""The provider rows the chat composer can pick from.
 
-The picker lists every provider of the AGENT tier — the same families the
-API-Keys "Agents" section shows (``MAPPINGS`` in
-``jarvis.missions.worker_runtime.provider_map`` plus the three direct CLI
-workers) — whether or not a credential is saved: a provider without one is
-shown disabled with a "connect" hint that leads to the API-Keys page, so the
-person sees what they *could* use (maintainer, 2026-08-23: all agents, not
-only the active one).
+The picker lists the providers Jarvis can THINK with — the brain-tier keys
+from the API-Keys page. Picking one makes it the live brain for the turn
+(:mod:`jarvis.agent_chat.runner_brain`), so what the row names is the model
+behind the assistant, not a different assistant.
 
-Two kinds of runner sit behind the rows:
+A subscription coding CLI (Codex, Antigravity, Grok Build) is deliberately
+NOT here. Those are agent loops with their own tools and no chat API; the
+brain cannot be switched to them at all (``SUBAGENT_ONLY_BRAIN_PROVIDERS``),
+and a coding session belongs in the Agentic IDE. ``claude-api`` stays because
+an Anthropic key IS a brain — the row is the API, not Claude Code.
 
-``api``
-    The provider's own chat API, driven in-process in a tool loop
-    (:mod:`jarvis.agent_chat.runner_api`). Model lists come live from the
-    provider catalog (``GET /api/providers/{id}/models``).
+Rows are shown whether or not a credential is saved: one without a key is
+disabled with a "connect" hint that leads to the API-Keys page, so the person
+sees what they *could* use (maintainer, 2026-08-23: all agents, not only the
+active one).
 
-``claude-cli`` / ``codex-cli`` / ``agy-cli`` / ``grok-cli``
-    A vendor CLI driven non-interactively (:mod:`jarvis.agent_chat.runner_cli`).
-    The CLI brings its own tools and permissions; the model list is the
-    CLI's own — read live where the CLI publishes one (``agy models``,
-    Codex's ``models_cache.json``), else the curated fallback here — and
-    ``""`` means "the CLI's default".
-
-``claude-api`` is the one dual row: with a Claude subscription login the
-``claude`` CLI runs the session (Claude Code proper — tools, skills, the
-Max plan's included usage); with only an Anthropic API key the API runner
-does. The route decides per request by probing; this module only carries the
-static shape.
+Model lists come live from the provider catalog
+(``GET /api/providers/{id}/models``) where the provider publishes one, else
+from the curated list below; ``""`` means "the provider's default".
 
 Presentation data only — nothing here decides behaviour (AP-21); the rows
 exist so the picker can show a provider before a key is typed.
@@ -40,7 +32,9 @@ from typing import Any, Final, Literal
 from jarvis.agent_chat.effort import default_effort, effort_levels
 from jarvis.brain.model_catalog import CURATED_MODELS
 
-Runner = Literal["api", "claude-cli", "codex-cli", "agy-cli", "grok-cli"]
+#: One runner answers on this surface: Jarvis' brain. The string is what
+#: ``turn_started`` reports and what the permission/effort ladders key on.
+Runner = Literal["brain"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,67 +148,32 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         id="claude-api",
         label="Anthropic Claude",
         family="claude",
-        runner="claude-cli",
+        runner="brain",
         models_source="curated",
         curated_models=_curated("claude-api"),
         default_model="",
         native_resume=True,
     ),
+    ProviderRow(id="openai", label="OpenAI", family="openai", runner="brain", models_source="live"),
     ProviderRow(
-        id="openai-codex",
-        label="OpenAI Codex",
-        family="openai",
-        runner="codex-cli",
-        models_source="curated",
-        # Codex's OWN catalog, not the OpenAI API's: the route replaces this
-        # with the account's live list from ``models_cache.json``.
-        curated_models=CODEX_FALLBACK_MODELS,
-        default_model="",
-        native_resume=True,
+        id="gemini", label="Google Gemini", family="gemini", runner="brain", models_source="live"
     ),
-    ProviderRow(
-        id="antigravity",
-        label="Antigravity",
-        family="antigravity",
-        runner="agy-cli",
-        models_source="curated",
-        # agy's OWN ids (not the Gemini API's): the route replaces this with
-        # the live ``agy models`` list when the binary answers.
-        curated_models=tuple(
-            CuratedModel(mid, label, efforts) for mid, label, efforts in _agy_fallback_models()
-        ),
-        default_model="",
-        native_resume=True,
-    ),
-    ProviderRow(
-        id="grok-build",
-        label="Grok Build",
-        family="xai",
-        runner="grok-cli",
-        models_source="curated",
-        curated_models=_curated("grok"),
-        default_model="",
-    ),
-    ProviderRow(id="openai", label="OpenAI", family="openai", runner="api", models_source="live"),
-    ProviderRow(
-        id="gemini", label="Google Gemini", family="gemini", runner="api", models_source="live"
-    ),
-    ProviderRow(id="grok", label="xAI Grok", family="xai", runner="api", models_source="live"),
+    ProviderRow(id="grok", label="xAI Grok", family="xai", runner="brain", models_source="live"),
     ProviderRow(
         id="openrouter",
         label="OpenRouter",
         family="openrouter",
-        runner="api",
+        runner="brain",
         models_source="live",
     ),
     ProviderRow(
-        id="nvidia", label="NVIDIA NIM", family="nvidia", runner="api", models_source="live"
+        id="nvidia", label="NVIDIA NIM", family="nvidia", runner="brain", models_source="live"
     ),
     ProviderRow(
         id="vertex",
         label="Google Vertex AI",
         family="google-cloud",
-        runner="api",
+        runner="brain",
         models_source="curated",
         curated_models=_curated("gemini"),
     ),
@@ -222,7 +181,7 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         id="ollama",
         label="Ollama",
         family="ollama",
-        runner="api",
+        runner="brain",
         models_source="live",
         keyless=True,
     ),
@@ -230,7 +189,7 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         id="local-openai",
         label="Local OpenAI-compatible",
         family="local",
-        runner="api",
+        runner="brain",
         models_source="live",
         keyless=True,
     ),

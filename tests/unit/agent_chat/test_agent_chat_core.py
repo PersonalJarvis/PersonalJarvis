@@ -55,13 +55,36 @@ def test_normalize_effort_folds_onto_the_nearest_offered_level(provider, picked,
     assert effort.normalize_effort(provider, picked) == expected
 
 
-def test_catalog_rows_carry_ladders_and_curated_models_for_cli_runners():
+def test_every_row_is_a_brain_jarvis_can_actually_think_with():
+    """The picker names the MODEL behind the assistant, so every row must be one.
+
+    A subscription coding CLI cannot be a brain (it is an agent loop with no
+    chat API, and ``BrainManager.switch`` refuses it), so offering one here
+    would be a pick that silently does nothing — the class of bug this whole
+    surface was rebuilt to end.
+    """
+    from jarvis.brain.manager import SUBAGENT_ONLY_BRAIN_PROVIDERS
+
+    ids = [row.id for row in PROVIDER_ROWS]
+    assert ids, "the picker needs rows"
+    offered = sorted(set(ids) & SUBAGENT_ONLY_BRAIN_PROVIDERS)
+    assert not offered, f"a subagent-only provider is offered as a brain: {offered}"
+    assert all(row.runner == "brain" for row in PROVIDER_ROWS)
+
     claude = provider_row("claude-api")
-    assert claude is not None and claude.runner == "claude-cli"
+    assert claude is not None, "an Anthropic key is a brain and stays offered"
     d = claude.to_dict()
     assert d["effort_levels"] == ["low", "medium", "high", "xhigh", "max"]
-    assert d["curated_models"], "CLI-backed rows need a curated list"
+    assert d["curated_models"], "a curated row needs its list"
     assert provider_row("openai").models_source == "live"  # type: ignore[union-attr]
+
+
+def test_the_brain_offers_no_vendor_permission_ladder():
+    """Jarvis' own risk tiers gate its tools; a vendor ladder here is dead UI."""
+    from jarvis.agent_chat.permissions import normalize_permission, permission_modes
+
+    assert permission_modes("brain") == ()
+    assert normalize_permission("brain", "acceptEdits") == ""
 
 
 # ----------------------------------------------------------------- store
