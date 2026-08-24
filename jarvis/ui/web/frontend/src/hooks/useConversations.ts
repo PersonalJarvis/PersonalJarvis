@@ -7,6 +7,7 @@ import {
   detailToTraces,
   fetchConversations,
   resumeConversation,
+  startNewVoiceRun,
 } from "@/lib/chatsApi";
 
 /** How often the history list is re-read while a poller is mounted. */
@@ -80,6 +81,27 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     setMessages([]);
   }, [seedThinkingTraces, setActiveConversation, setMessages]);
 
+  /**
+   * Start a fresh voice run: drop the open voice thread here and tell the
+   * backend to forget the one it was seeded with (and to end a session that
+   * is still live). The lane on the voice stage is cleared by the caller —
+   * it belongs to the home store, not to the history.
+   *
+   * Separate from `newChat` on purpose: that one lands on the chat surface,
+   * which is exactly what someone standing on the voice stage did not ask for.
+   */
+  const newVoiceRun = useCallback(async () => {
+    setActiveConversation("voice", null);
+    seedThinkingTraces({});
+    setMessages([]);
+    try {
+      await startNewVoiceRun();
+    } catch {
+      /* headless / offline: the local reset above already happened, and the
+         backend has no seeded thread to forget when it is not running */
+    }
+  }, [seedThinkingTraces, setActiveConversation, setMessages]);
+
   const removeConversation = useCallback(
     async (id: string) => {
       try {
@@ -100,6 +122,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     refresh,
     openConversation,
     newChat,
+    newVoiceRun,
     removeConversation,
   };
 }

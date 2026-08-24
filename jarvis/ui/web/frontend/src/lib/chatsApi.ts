@@ -59,6 +59,20 @@ export async function speakInConversation(
   return (await res.json()) as { armed: boolean; seeded_turns: number };
 }
 
+/**
+ * Begin a fresh voice run: the brain forgets the thread it was seeded with,
+ * and a session that is still live is ended so the next wake word opens a new
+ * one. The microphone is not re-armed — starting to talk stays the user's move.
+ */
+export async function startNewVoiceRun(): Promise<{
+  cleared: boolean;
+  ended: boolean;
+}> {
+  const res = await fetch("/api/chats/voice/new", { method: "POST" });
+  if (!res.ok) throw new ChatsApiError("new-voice-run-failed", res.status);
+  return (await res.json()) as { cleared: boolean; ended: boolean };
+}
+
 export async function deleteTextConversation(id: string): Promise<void> {
   const res = await fetch(`/api/chats/text/${encodeURIComponent(id)}`, {
     method: "DELETE",

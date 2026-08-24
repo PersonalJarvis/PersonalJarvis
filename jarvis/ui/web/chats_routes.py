@@ -112,6 +112,16 @@ class SpeakResponse(BaseModel):
     seeded_turns: int = 0
 
 
+class NewVoiceRunResponse(BaseModel):
+    """What "+ New voice chat" actually changed on the backend."""
+
+    #: The brain's conversation buffer was emptied, so the next spoken turn
+    #: starts a thread of its own.
+    cleared: bool = False
+    #: A voice session was still live and has been ended.
+    ended: bool = False
+
+
 # ----------------------------------------------------------------------
 # DI helpers
 # ----------------------------------------------------------------------
@@ -313,6 +323,41 @@ async def create_chat(request: Request, body: NewChatRequest | None = None) -> N
     title = (body.title if body else "New Chat") or "New Chat"
     created = await chat_store.create_thread(title=title)
     return NewChatResponse(id=str(created["thread_id"]), title=created["title"])
+
+
+@router.post("/voice/new", response_model=NewVoiceRunResponse)
+async def new_voice_run(request: Request) -> NewVoiceRunResponse:
+    """Begin a fresh voice run.
+
+    A voice thread lives in two places: the brain's in-memory conversation
+    buffer (which a re-opened chat seeds via ``.../resume``) and the session
+    the pipeline is currently recording under. "+ New voice chat" must reset
+    both, or the "new" run answers out of the old thread and its turns are
+    appended to the session already on disk.
+
+    Declared above ``GET /{kind}/{cid}`` only for readability — the literal
+    path and the parameterized one differ in method, so they never compete.
+
+    Purely in-memory: no LLM call, no I/O, nothing on the voice critical path
+    (AP-9/AP-11). The microphone is deliberately NOT re-armed; the next wake
+    word or orb click opens the new session.
+    """
+    cleared = False
+    brain = _optional_brain(request)
+    if brain is not None and hasattr(brain, "seed_history"):
+        # An empty seed is the documented equivalent of clear_history() and
+        # works on every brain that can be seeded at all.
+        brain.seed_history([])
+        cleared = True
+
+    ended = False
+    pipeline = _optional_pipeline(request)
+    if pipeline is not None and hasattr(pipeline, "request_voice_hangup"):
+        # Same contract as the hangup key / POST /api/voice/hangup: False
+        # simply means nothing was running, which is the common case.
+        ended = bool(pipeline.request_voice_hangup())
+
+    return NewVoiceRunResponse(cleared=cleared, ended=ended)
 
 
 @router.get("/{kind}/{cid}", response_model=ConversationDetail)

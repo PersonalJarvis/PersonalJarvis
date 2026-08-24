@@ -114,22 +114,34 @@ export function Sidebar({
   // confused; the default app shows nothing here.
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
-  // "+ New chat" lands on the chat surface of the front page with an empty
-  // agent chat — the sidebar owns the history now, so it owns this too. The
-  // voice thread is cleared as well so a reopened voice session does not
-  // linger behind the fresh page.
-  const { newChat } = useConversations();
+  // "+ New" starts a conversation of the KIND you are looking at: on the chat
+  // surface an empty agent chat, on the voice stage a fresh voice run. Sending
+  // someone standing in Voice to the chat page is what the one button used to
+  // do, and it read as the button being broken.
+  const { newChat, newVoiceRun } = useConversations();
   const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
   // see `presentNavItem`.
   const surface = useHomeStore((s) => s.surface);
+  const resetTranscript = useHomeStore((s) => s.resetTranscript);
+  // On the voice stage: clear the lane, drop the open voice thread and let the
+  // backend forget the one it was seeded with. We stay on Voice and the mic
+  // stays shut — the next wake word (or orb click) opens the new session.
+  const startNewVoice = () => {
+    resetTranscript();
+    void newVoiceRun();
+    setActive("chats");
+  };
+  // On the chat surface: an empty agent chat. The voice thread is cleared as
+  // well so a reopened voice session does not linger behind the fresh page.
   const startNewChat = () => {
     newChat();
     newAgentChat();
     setSurface("chat");
     setActive("chats");
   };
+  const onVoiceSurface = surface === "voice";
   // Shared readiness derivation (same source the banner + chat empty-state use).
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
 
@@ -342,14 +354,14 @@ export function Sidebar({
             <SurfaceSwitch className="mt-3" />
             <button
               type="button"
-              onClick={startNewChat}
+              onClick={onVoiceSurface ? startNewVoice : startNewChat}
               data-testid="sidebar-new-chat"
               className="mt-2 flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <span className="flex h-4 w-4 items-center justify-center rounded bg-primary text-primary-foreground">
                 <Plus aria-hidden className="h-3 w-3" />
               </span>
-              {t("sidebar.new_chat")}
+              {onVoiceSurface ? t("sidebar.new_voice_chat") : t("sidebar.new_chat")}
             </button>
             <BrowserRealtimeControl />
           </>

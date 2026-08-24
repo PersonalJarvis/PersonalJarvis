@@ -24,13 +24,21 @@ class _FakeBrain:
 
 
 class _FakePipeline:
-    def __init__(self, armed: bool = True) -> None:
+    def __init__(self, armed: bool = True, live: bool = False) -> None:
         self.armed = armed
         self.seed_messages = None
+        # Whether a voice session is running — what the hangup contract reports.
+        self.live = live
+        self.hangups = 0
 
     def request_voice_session(self, *, seed_messages) -> bool:
         self.seed_messages = list(seed_messages)
         return self.armed
+
+    def request_voice_hangup(self) -> bool:
+        self.hangups += 1
+        was_live, self.live = self.live, False
+        return was_live
 
 
 def _fake_session_store():
@@ -60,14 +68,18 @@ def _fake_session_store():
     )
 
 
-async def _make_app(*, with_session=False, with_brain=False, with_pipeline=False):
+async def _make_app(
+    *, with_session=False, with_brain=False, with_pipeline=False, voice_live=False
+):
     app = FastAPI()
     app.include_router(chats_router)
     store = ChatStore(bus=EventBus())  # in-memory
     app.state.chat_store = store
     app.state.session_store = _fake_session_store() if with_session else None
     app.state.brain = _FakeBrain() if with_brain else None
-    app.state.speech_pipeline = _FakePipeline() if with_pipeline else None
+    app.state.speech_pipeline = (
+        _FakePipeline(live=voice_live) if with_pipeline else None
+    )
     return app, store
 
 
@@ -207,3 +219,33 @@ async def test_days_filter_excludes_old() -> None:
         r = await c.get("/api/chats", params={"days": 10})
     ids = [row["id"] for row in r.json()]
     assert ids == ["fresh"]
+
+
+async def test_new_voice_run_ends_a_live_session() -> None:
+    """ "+ New voice chat": the brain drops the thread it was seeded with and a
+    session still running is ended, so the next wake word opens a new one."""
+    app, _ = await _make_app(with_brain=True, with_pipeline=True, voice_live=True)
+    async with _client(app) as c:
+        r = await c.post("/api/chats/voice/new")
+    assert r.status_code == 200
+    assert r.json() == {"cleared": True, "ended": True}
+    assert app.state.brain.seeded == []
+    assert app.state.speech_pipeline.hangups == 1
+
+
+async def test_new_voice_run_reports_no_session_to_end() -> None:
+    """Nothing running is the common case — an honest False, not an error."""
+    app, _ = await _make_app(with_brain=True, with_pipeline=True, voice_live=False)
+    async with _client(app) as c:
+        r = await c.post("/api/chats/voice/new")
+    assert r.status_code == 200
+    assert r.json() == {"cleared": True, "ended": False}
+
+
+async def test_new_voice_run_without_brain_or_pipeline() -> None:
+    """Headless / voice-less installs answer instead of failing."""
+    app, _ = await _make_app()
+    async with _client(app) as c:
+        r = await c.post("/api/chats/voice/new")
+    assert r.status_code == 200
+    assert r.json() == {"cleared": False, "ended": False}

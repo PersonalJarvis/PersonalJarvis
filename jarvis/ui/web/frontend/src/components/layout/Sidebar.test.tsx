@@ -9,6 +9,7 @@ import {
   SIDEBAR_RAIL_WIDTH,
 } from "@/components/layout/Sidebar";
 import { useEventStore } from "@/store/events";
+import { useHomeStore } from "@/store/home";
 
 // The sidebar header avatar must mirror the chosen on-screen display style:
 // the ghost mascot ONLY when the user explicitly picked "mascot"; the slim bar
@@ -134,6 +135,83 @@ describe("Sidebar voice header", () => {
     renderSidebar();
     expect(screen.getByTestId("home-surface-switch")).toBeTruthy();
     expect(screen.getByTestId("sidebar-new-chat")).toBeTruthy();
+  });
+});
+
+/*
+ * "+ New" starts a conversation of the KIND on screen. Standing on the voice
+ * stage and being thrown onto the chat page was the reported bug: the button
+ * looked like it did nothing you asked for.
+ */
+describe("Sidebar new-conversation button", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      // GET /api/chats answers with a list, the agent-chat sessions probe with
+      // an empty roster; every other call the mounted sidebar fires gets a
+      // harmless object. An undefined list here crashes the recent-chats block.
+      vi.fn(async (url: string) =>
+        String(url).startsWith("/api/chats")
+          ? new Response(JSON.stringify([]), { status: 200 })
+          : new Response(JSON.stringify({ sessions: [] }), { status: 200 }),
+      ),
+    );
+    useEventStore.setState({
+      connected: true,
+      activeSection: "board",
+      conversations: [],
+      messages: [],
+      activeThreadId: "old-voice-thread",
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    // The event store is module-global: leaving a fetched-in list behind
+    // would break whichever test file runs next.
+    useEventStore.setState({ conversations: [], messages: [], activeThreadId: null });
+  });
+
+  test("on the voice stage it starts a voice run and stays on Voice", async () => {
+    useHomeStore.setState({
+      surface: "voice",
+      transcript: [{ id: "l1", who: "user", text: "hello", ts: 1 }],
+    });
+
+    renderSidebar();
+    const button = screen.getByTestId("sidebar-new-chat");
+    expect(button.textContent).toContain("New voice chat");
+
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useHomeStore.getState().transcript).toEqual([]);
+    // The open voice thread is dropped so the next spoken turn is its own.
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(true);
+  });
+
+  test("on the chat surface it still opens an empty chat", async () => {
+    useHomeStore.setState({ surface: "chat", transcript: [] });
+
+    renderSidebar();
+    const button = screen.getByTestId("sidebar-new-chat");
+    expect(button.textContent).toContain("New chat");
+    expect(button.textContent).not.toContain("voice");
+
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+
+    expect(useHomeStore.getState().surface).toBe("chat");
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(false);
   });
 });
 

@@ -457,6 +457,7 @@
     "surface_chat": "Chat",
     "surface_hint": "Switch the front page between voice and typed chat",
     "new_chat": "New chat",
+    "new_voice_chat": "New voice chat",
     "recent_chats": "Recent chats",
     "show_all": "Show all",
     "show_less": "Show less",
