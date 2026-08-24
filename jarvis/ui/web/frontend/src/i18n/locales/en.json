@@ -889,9 +889,9 @@
     "show_installed": "Show your automation",
     "needs": "Needs {tools}",
     "needs_warning": "This automation needs {tools}, which is not connected. You can add it anyway — it will run once the plugin is connected.",
-    "add_dialog_title": "Add: {name}",
+    "add_dialog_title": "Add: {title}",
     "add_error": "Could not add the automation.",
-    "added_notice": "\"{name}\" added.",
+    "added_notice": "\"{title}\" added.",
     "required": "Required",
     "kind": {
       "hourly": "Hourly",

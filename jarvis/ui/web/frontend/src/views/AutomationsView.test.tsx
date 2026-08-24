@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // (the humanized tool list, the added-notice name) is exercised.
 const TEMPLATED: Record<string, string> = {
   "automations_view.needs": "Needs {tools}",
-  "automations_view.added_notice": '"{name}" added.',
+  "automations_view.added_notice": '"{title}" added.',
 };
 
 vi.mock("@/i18n", () => ({

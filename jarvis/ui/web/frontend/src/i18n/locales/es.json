@@ -887,9 +887,9 @@
     "show_installed": "Mostrar tu automatización",
     "needs": "Necesita {tools}",
     "needs_warning": "Esta automatización necesita {tools}, que no está conectado. Puedes añadirla igualmente; se ejecutará cuando el plugin esté conectado.",
-    "add_dialog_title": "Añadir: {name}",
+    "add_dialog_title": "Añadir: {title}",
     "add_error": "No se pudo añadir la automatización.",
-    "added_notice": "«{name}» añadida.",
+    "added_notice": "«{title}» añadida.",
     "required": "Obligatorio",
     "kind": {
       "hourly": "Cada hora",

@@ -87,7 +87,7 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
     >
       <div
         role="dialog"
-        aria-label={fill(t("automations_view.add_dialog_title"), { name: template.name })}
+        aria-label={fill(t("automations_view.add_dialog_title"), { title: template.name })}
         className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -98,7 +98,7 @@ export function TemplateAddDialog({ template, onClose, onAdded }: TemplateAddDia
             </div>
             <div className="min-w-0">
               <h2 className="truncate text-sm font-semibold">
-                {fill(t("automations_view.add_dialog_title"), { name: template.name })}
+                {fill(t("automations_view.add_dialog_title"), { title: template.name })}
               </h2>
               <p className="truncate text-[11px] text-muted-foreground">{template.description}</p>
             </div>

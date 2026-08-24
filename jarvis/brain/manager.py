@@ -3438,6 +3438,7 @@ class BrainManager:
         deadline_s: float | None = None,
         reasoning_effort: Literal["none"] | None = None,
         delegated_voice: bool = False,
+        tool_context: dict[str, Any] | None = None,
     ) -> BrainDispatcher:
         """Builds the dispatcher with an optional tool override.
 
@@ -3454,6 +3455,11 @@ class BrainManager:
         of the turn. Delegated realtime voice turns pass ``"none"`` so a
         thinking-by-default model never burns seconds of internal reasoning
         per tool-loop round — see ``_DELEGATE_REASONING_EFFORT``.
+
+        ``tool_context`` (2026-08-24): extra keys merged into every tool's
+        ``ExecutionContext.config`` for this dispatcher's turns — scheduled
+        task turns pass ``{"delivery": "written"}`` so search results stop
+        asking for a spoken two-liner. ``None`` = no extra keys.
 
         ``delegated_voice`` (2026-07-17): appends the static speed contract
         (``_DELEGATE_VOICE_DIRECTIVE``) — batch lookups, no repeats, answer
@@ -3481,6 +3487,7 @@ class BrainManager:
             max_tokens=self._config.brain.max_tokens,
             deadline_s=deadline_s,
             reasoning_effort=reasoning_effort,
+            tool_context=tool_context,
             **kwargs,
         )
 

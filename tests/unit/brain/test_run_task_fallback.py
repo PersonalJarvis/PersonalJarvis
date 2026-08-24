@@ -184,3 +184,18 @@ def test_unknown_task_only_grant_is_skipped(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_spawn_tools_never_task_only() -> None:
     assert not any("spawn" in name for name in manager_mod._TASK_ONLY_TOOLS)
+
+
+def test_build_dispatcher_accepts_tool_context() -> None:
+    """Regression guard (live 2026-08-24): ``run_task`` passes
+    ``tool_context`` to the REAL ``_build_dispatcher``; the fallback tests
+    above monkeypatch that method, so only a signature check catches a
+    missing keyword — the first automation ever run died on exactly that
+    TypeError."""
+    import inspect
+
+    from jarvis.brain.manager import BrainManager
+
+    params = inspect.signature(BrainManager._build_dispatcher).parameters
+    assert "tool_context" in params
+    assert params["tool_context"].kind is inspect.Parameter.KEYWORD_ONLY

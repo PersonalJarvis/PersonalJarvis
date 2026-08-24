@@ -144,7 +144,7 @@ export function AutomationsView() {
   const handleAdded = useCallback(
     (taskId: string, template: AutomationTemplate) => {
       setAdding(null);
-      showNotice(fill(t("automations_view.added_notice"), { name: template.name }));
+      showNotice(fill(t("automations_view.added_notice"), { title: template.name }));
       // The list refetches on invalidation; scroll once it has rendered.
       setTimeout(() => scrollToTask(taskId), 400);
     },
