@@ -4415,7 +4415,22 @@
       "show_cli": "Show what the CLI displays"
     }
   },
+  "ide_chats": {
+    "back_to_sections": "Sections",
+    "this_workspace": "This workspace",
+    "other_folders": "Other folders",
+    "new_chat_here": "New chat in this folder",
+    "no_chats_here": "No chats in this folder yet",
+    "show_more": "Show more"
+  },
   "agentic_grid": {
+    "view_switch": {
+      "hint": "Show this workspace as a chat or as the terminal grid",
+      "chat": "Chat",
+      "grid": "Grid",
+      "chat_hint": "Chat — talk to an agent in this workspace's folder.",
+      "grid_hint": "Terminal grid — every pane on screen at once."
+    },
     "toolbar": {
       "more_controls": "More workspace controls",
       "close_controls": "Close workspace controls"

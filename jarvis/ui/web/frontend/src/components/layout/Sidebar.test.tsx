@@ -10,6 +10,7 @@ import {
 } from "@/components/layout/Sidebar";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
+import { useIdeChatStore } from "@/store/ideChat";
 
 // The sidebar header avatar must mirror the chosen on-screen display style:
 // the ghost mascot ONLY when the user explicitly picked "mascot"; the slim bar
@@ -751,5 +752,56 @@ describe("Sidebar collapse toggle", () => {
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.queryByTestId("sidebar-collapse-toggle")).toBeNull();
+  });
+});
+
+describe("the Agentic IDE's chat face", () => {
+  /*
+   * Chat mode in the IDE borrows this column for the workspace's chats. What
+   * these pin is that the takeover is BOUNDED: it only happens on that
+   * section, and there is always a way back to the sections.
+   */
+  beforeEach(() => {
+    useIdeChatStore.setState({
+      view: "chat",
+      sidebarFace: "chats",
+      workspace: { id: "w1", name: "Personal Jarvis", path: "/work/jarvis" },
+    });
+  });
+
+  afterEach(() => {
+    useIdeChatStore.setState({ view: "grid", sidebarFace: "chats", workspace: null });
+  });
+
+  test("shows the workspace's chats instead of the sections", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
+    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
+  });
+
+  test("hands the sections back when the back button is pressed", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    act(() => {
+      screen.getByTestId("workspace-chats-back").click();
+    });
+
+    expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
+  });
+
+  test("leaves every other section its navigation", () => {
+    // The IDE is in chat mode, but the user is reading another section:
+    // taking the navigation away there would be a takeover nobody asked for.
+    useEventStore.setState({ activeSection: "settings" });
+
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
   });
 });

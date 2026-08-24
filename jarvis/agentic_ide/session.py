@@ -1362,9 +1362,14 @@ class Session:
     def contextual_terminal(self) -> Terminal | None:
         """The one pane the visible surface puts in front of the user.
 
-        Chat view stages exactly one pane and can answer. The grid never
-        does — a dozen panes are visible there, and picking one of them would
-        be a guess dressed as a fact.
+        Nothing does, today: the grid shows a dozen panes at once, and chat
+        shows none — it is the agent chat, not a way of reading the terminals.
+        Picking one anyway would be a guess dressed as a fact, so this answers
+        None and the caller asks for a call-sign.
+
+        The seam is kept rather than deleted because a surface that DOES stage
+        one pane is a plausible third value of the enum, and it would report
+        itself through exactly this field.
         """
         if self.surface_view != VIEW_CHAT:
             return None
@@ -1373,7 +1378,15 @@ class Session:
         return self.find(self.surface_terminal)
 
     def stages_one_pane(self) -> bool:
-        """Does the visible view show a single pane, rather than the wall?"""
+        """May the visible surface name ONE pane as the one being read?
+
+        The grid never may. ``chat`` may, and today never does: the current
+        bundle's chat surface is the agent chat and reports no terminal at all.
+        The permission is kept rather than hard-coded away because the browser
+        is the only layer that knows what is on screen, and a desktop window
+        holding a bundle from before the switch is still entitled to be
+        believed until it reloads itself.
+        """
         return self.surface_view == VIEW_CHAT
 
     def prompt_target_terminal(self) -> Terminal | None:

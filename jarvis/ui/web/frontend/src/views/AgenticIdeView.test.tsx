@@ -42,13 +42,27 @@ const launcherEnglish = vi.hoisted<Record<string, string>>(() => ({
 }));
 vi.mock("@/i18n", () => ({
   useT: () => (key: string) => launcherEnglish[key] ?? key,
+  // The chat surface's greeting fills a placeholder in its own string.
+  fill: (text: string, values: Record<string, string>) =>
+    Object.entries(values).reduce(
+      (out, [name, value]) => out.replaceAll(`{${name}}`, value),
+      text,
+    ),
 }));
 
 // The workspace grid follows the app theme for its terminal colours; this test
 // renders the view outside the provider, so the hook is stubbed.
+// The chat surface greets by name, and the name comes from a react-query
+// read of the profile. This view is rendered bare here, with no provider —
+// no name is a state the greeting already handles.
+vi.mock("@/hooks/useUserName", () => ({ useUserName: () => null }));
+
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({ theme: "dark", setTheme: vi.fn(), toggle: vi.fn() }),
   useThemeValue: () => "dark",
+  // The top bar's light/dark flip reads the provider through this one, and it
+  // renders inside the bar this view carries.
+  useOptionalTheme: () => ({ theme: "dark", setTheme: vi.fn(), toggle: vi.fn() }),
 }));
 
 const pushToast = vi.fn();
@@ -136,6 +150,7 @@ import { AgenticIdeView } from "./AgenticIdeView";
 import { workspaceLaunchShortcut } from "@/components/agentic/WorkspaceLauncher";
 import * as api from "@/lib/agenticIdeApi";
 import { GRID_HORIZONTAL_PADDING_PX } from "@/components/agentic/layout";
+import { useIdeChatStore } from "@/store/ideChat";
 
 const AGENTS: api.AgentsResponse = {
   terminal_available: true,
@@ -299,9 +314,11 @@ beforeEach(() => {
   // and the remembered height is how a user who wants it open gets it.
   window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
   // The wizard's view step preselects the remembered reading mode, and the
-  // grid reads the same key on mount — a value left behind by one test must
-  // not decide how the next one's workspace opens.
+  // open workspace reads the same answer — a value left behind by one test
+  // must not decide how the next one's workspace opens. The store is a module
+  // singleton, so the key alone is not enough: reset the live state too.
   window.localStorage.removeItem("jarvis.agenticIde.workspaceView");
+  useIdeChatStore.setState({ view: "grid", workspace: null, sidebarFace: "chats" });
   vi.mocked(api.fetchIdeAgents).mockResolvedValue(AGENTS);
   vi.mocked(api.fetchIdeState).mockResolvedValue(EMPTY_STATE);
   vi.mocked(api.fetchFolders).mockResolvedValue({
@@ -509,15 +526,14 @@ describe("Agentic IDE launcher", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
 
-    // The grid reads the stored preference on mount, so the workspace comes up
-    // with the chat rail showing instead of the wall of terminals.
-    expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
+    // The workspace comes up on the CHAT surface — the agent chat in this
+    // folder — while every terminal stays mounted behind it.
+    expect(await screen.findByTestId("ide-chat-surface")).toBeTruthy();
     expect(
       window.localStorage.getItem("jarvis.agenticIde.workspaceView"),
     ).toBe("chat");
-    const rail = screen.getByTestId("agentic-chat-rail");
-    expect(rail.className).toContain("flex");
-    expect(rail.className).not.toContain("hidden");
+    expect(screen.getByTestId("pane-Mika")).toBeTruthy();
+    expect(screen.getByTestId("agentic-grid-layer").className).toContain("opacity-0");
   });
 
   it("keeps every reading-mode miniature visible on the dark workspace", async () => {
@@ -815,6 +831,54 @@ describe("Agentic IDE running workspace", () => {
     render(<AgenticIdeView />);
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
     expect(screen.queryByTestId("workspace-launcher")).toBeNull();
+  });
+
+  it("switches between the chat and the grid from one control in the bar", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
+    render(<AgenticIdeView />);
+    await screen.findByTestId("pane-Mika");
+    expect(screen.queryByTestId("ide-chat-surface")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
+    expect(await screen.findByTestId("ide-chat-surface")).toBeTruthy();
+    // The switch has to be reachable from the surface it switched TO, or
+    // pressing "Chat" would take the way back off screen with it.
+    fireEvent.click(screen.getByTestId("agentic-view-mode-grid"));
+    expect(screen.queryByTestId("ide-chat-surface")).toBeNull();
+  });
+
+  it("covers the panes for the chat instead of unmounting them", async () => {
+    // The one rule this pair of surfaces must not break: every pane is a live
+    // coding agent, and unmounting one kills it.
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova"])),
+    );
+    render(<AgenticIdeView />);
+    const mika = await screen.findByTestId("pane-Mika");
+
+    fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
+    await screen.findByTestId("ide-chat-surface");
+    expect(screen.getByTestId("pane-Mika")).toBe(mika);
+    expect(screen.getByTestId("agentic-grid-layer").className).toContain("opacity-0");
+
+    fireEvent.click(screen.getByTestId("agentic-view-mode-grid"));
+    expect(screen.getByTestId("pane-Mika")).toBe(mika);
+    expect(screen.getByTestId("agentic-grid-layer").className).not.toContain("opacity-0");
+  });
+
+  it("runs the chat in the folder of the workspace that is open", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
+    render(<AgenticIdeView />);
+    await screen.findByTestId("pane-Mika");
+
+    fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
+
+    const surface = await screen.findByTestId("ide-chat-surface");
+    expect(surface.dataset.folder).toBe("/work/project");
   });
 
   it("toggles focus mode through the API, not just locally", async () => {

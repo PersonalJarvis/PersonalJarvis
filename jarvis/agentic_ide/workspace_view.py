@@ -1,10 +1,11 @@
-"""Which way the user is reading the open workspace right now.
+"""Which surface the Agentic IDE is showing right now.
 
-The Agentic IDE renders one set of panes two different ways, and the backend
-has to know which one is on screen — not for looks, but because deictic
-reference depends on it: "this terminal" is only answerable when exactly one
-pane fills the screen. Chat view puts one there; the grid puts a dozen, and
-guessing among them is less honest than asking for a call-sign.
+The backend has to know, and not for looks: deictic reference depends on it.
+"This terminal" is only answerable when exactly one pane fills the screen, and
+neither surface does that any more — the grid puts a dozen panes up, and since
+2026-08-24 ``chat`` is not a way of reading them at all but the agent chat in
+the workspace's folder, with no terminal on screen. So the report is what tells
+the voice path to ask for a call-sign instead of guessing.
 
 This module is layer 0 of the five-layer enum pattern
 (``docs/anti-drift-three-layer.md``). The value crosses from this package into
@@ -23,17 +24,19 @@ from __future__ import annotations
 
 #: The wall of terminals — every pane visible at once, sized by dragged seams.
 VIEW_GRID = "grid"
-#: One pane on a calm stage, the rest on a rail, read like a conversation.
+#: The agent chat, running in this workspace's folder. No pane is on screen;
+#: the terminals stay alive behind it (the browser covers them, never unmounts
+#: them) and come back untouched when the grid does.
 VIEW_CHAT = "chat"
 
-#: Every value the contract allows, in the order the toolbar offers them.
+#: Every value the contract allows, in the order the switch offers them.
 WORKSPACE_VIEWS: tuple[str, ...] = (VIEW_GRID, VIEW_CHAT)
 
 #: What an unreadable or absent value falls back to.
 #:
-#: The grid, deliberately: it is the view that promises the least. A surface
-#: report that arrives garbled must not be able to switch a workspace into a
-#: mode that answers "this terminal" with a pane the user is not looking at.
+#: The grid, deliberately: it is the surface that promises the least. A report
+#: that arrives garbled must not be able to put a workspace into a state that
+#: answers "this terminal" with a pane the user is not looking at.
 VIEW_DEFAULT = VIEW_GRID
 
 

@@ -27,6 +27,8 @@ import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
+import { useIdeChatStore } from "@/store/ideChat";
+import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { useAppInstance } from "@/hooks/useAppInstance";
 
@@ -35,6 +37,18 @@ import { useAppInstance } from "@/hooks/useAppInstance";
 // retries on its own. Bounded cache-busted retries let it heal itself.
 const LOGO_RETRY_MAX = 5;
 const LOGO_RETRY_BASE_MS = 1500;
+
+/**
+ * The section ids the Agentic IDE answers to.
+ *
+ * Mirrors the nav row's own `matchIds` (see ./navGroups): the section has been
+ * renamed twice and the older ids are still what some entry points set.
+ */
+const IDE_SECTIONS: readonly string[] = [
+  "agentic-ide",
+  "chat-workspace",
+  "agentic-ide-classic",
+];
 
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   idle: { dot: "bg-muted-foreground/50", pulse: false },
@@ -114,16 +128,36 @@ export function Sidebar({
   // confused; the default app shows nothing here.
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
-  // "+ New" starts a conversation of the KIND you are looking at: on the chat
-  // surface an empty agent chat, on the voice stage a fresh voice run. Sending
-  // someone standing in Voice to the chat page is what the one button used to
-  // do, and it read as the button being broken.
+  // "+ New" starts a new conversation of the KIND you are looking at: on the
+  // chat surface an empty agent chat, on the voice stage a fresh voice run.
+  // Sending someone standing in Voice to the chat page is what the one button
+  // used to do, and it read as the button being broken.
   const { newChat, newVoiceRun } = useConversations();
   const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
   // see `presentNavItem`.
   const surface = useHomeStore((s) => s.surface);
+  /*
+   * The Agentic IDE in chat mode borrows this column for ITS chats.
+   *
+   * Chat mode is a surface, not a layout — the conversations you are having in
+   * the workspace you opened, grouped by folder — and a chat surface with its
+   * history two clicks away is a chat surface nobody uses. So while it is on,
+   * the sections step aside and `WorkspaceChats` takes the column, with its own
+   * button back (`sidebarFace`). Only while the IDE is the section on screen:
+   * leaving it must give the navigation straight back.
+   */
+  const ideView = useIdeChatStore((s) => s.view);
+  const ideSidebarFace = useIdeChatStore((s) => s.sidebarFace);
+  const setIdeSidebarFace = useIdeChatStore((s) => s.setSidebarFace);
+  // No open workspace means the IDE is showing its wizard, not a chat — and a
+  // column of chats headed "This workspace" would be naming one that is not
+  // there.
+  const ideWorkspaceOpen = useIdeChatStore((s) => s.workspace !== null);
+  const onIdeSection = IDE_SECTIONS.includes(active);
+  const chatFace =
+    onIdeSection && ideWorkspaceOpen && ideView === "chat" && ideSidebarFace === "chats";
   const resetTranscript = useHomeStore((s) => s.resetTranscript);
   // On the voice stage: clear the lane, drop the open voice thread and let the
   // backend forget the one it was seeded with. We stay on Voice and the mic
@@ -346,11 +380,13 @@ export function Sidebar({
             </button>
           )}
         </div>
-        {!railed && (
+        {!railed && !chatFace && (
           <>
             {/* The front page's one switch (maintainer sketch, 2026-08-23):
                 Voice or Chat. The live transcript that used to sit here moved
-                onto the voice stage itself, where it has the room to be read. */}
+                onto the voice stage itself, where it has the room to be read.
+                Hidden while the IDE's chats own the column: two switches with
+                "Chat" on both halves are two questions nobody asked. */}
             <SurfaceSwitch className="mt-3" />
             <button
               type="button"
@@ -373,6 +409,8 @@ export function Sidebar({
         // API-Keys error pip, the plugin reconnect pip, the Skills → Plugins
         // shortcut) from its own sources, so nothing here has to be threaded in.
         <DockRail className="min-h-0 flex-1" />
+      ) : chatFace ? (
+        <WorkspaceChats />
       ) : (
         <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
           {/* One list, not two: a voice session IS a run, and showing it as
@@ -406,11 +444,17 @@ export function Sidebar({
                     // A plugin problem sends the "Skills & Tools" row straight into
                     // the Plugins tab (where the banner + jump button are), so one
                     // click lands on the fix instead of the default Skills tab.
-                    onClick={() =>
+                    onClick={() => {
+                      // Pressing the IDE row while its chat surface is already
+                      // open is the way BACK to the chats — otherwise the
+                      // "Sections" button would be a one-way door.
+                      if (IDE_SECTIONS.includes(item.id) && ideView === "chat") {
+                        setIdeSidebarFace("chats");
+                      }
                       setActive(
                         item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
-                      )
-                    }
+                      );
+                    }}
                   />
                 );
               })}

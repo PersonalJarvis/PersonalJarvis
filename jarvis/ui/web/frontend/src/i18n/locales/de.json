@@ -4415,7 +4415,22 @@
       "show_cli": "Anzeigen, was das CLI ausgibt"
     }
   },
+  "ide_chats": {
+    "back_to_sections": "Bereiche",
+    "this_workspace": "Dieser Workspace",
+    "other_folders": "Andere Ordner",
+    "new_chat_here": "Neuer Chat in diesem Ordner",
+    "no_chats_here": "Noch keine Chats in diesem Ordner",
+    "show_more": "Mehr anzeigen"
+  },
   "agentic_grid": {
+    "view_switch": {
+      "hint": "Diesen Workspace als Chat oder als Terminal-Raster anzeigen",
+      "chat": "Chat",
+      "grid": "Raster",
+      "chat_hint": "Chat — sprich mit einem Agenten im Ordner dieses Workspaces.",
+      "grid_hint": "Terminal-Raster — alle Bereiche gleichzeitig auf dem Bildschirm."
+    },
     "toolbar": {
       "more_controls": "Weitere Arbeitsbereich-Steuerelemente",
       "close_controls": "Arbeitsbereich-Steuerelemente schließen"

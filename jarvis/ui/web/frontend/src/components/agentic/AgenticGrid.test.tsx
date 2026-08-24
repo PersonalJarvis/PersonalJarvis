@@ -2753,13 +2753,16 @@ describe("renaming a pane", () => {
   });
 });
 
-describe("chat view", () => {
+describe("the surface the backend is told about", () => {
   /*
-   * The workspace read like a conversation: a rail of agents on the left, one
-   * pane on a centred stage, the prompt bar as the composer. What these tests
-   * pin is not the styling but the two contracts underneath it — switching
-   * modes must not remount a pane (a remount kills the coding agent), and
-   * every action the grid offers keeps working from the other mode.
+   * The grid used to have a second reading mode of its own — one pane on a
+   * stage, the rest in a rail. That is gone: the IDE's chat is the AGENT chat
+   * now, a separate surface owned by `views/AgenticIdeView`, and this
+   * component is the wall of terminals and nothing else.
+   *
+   * What survives is the report: the browser is the only layer that knows
+   * which surface is in front of the user, and voice resolves "this terminal"
+   * from it.
    */
   const FOUR = sessionWith([
     ["Mika", 0],
@@ -2768,328 +2771,6 @@ describe("chat view", () => {
     ["Kai", 3],
   ]);
 
-  const cellClass = (name: string) =>
-    screen.getByTestId(`pane-cell-${name}`).className;
-
-  /*
-   * The reading modes are three separate buttons, not one cycling control:
-   * past two states "click again" stops telling you where you land, and the
-   * third mode changes the assistant's behaviour rather than only the layout.
-   */
-  const toChat = () => fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
-  const toGrid = () => fireEvent.click(screen.getByTestId("agentic-view-mode-grid"));
-
-  const railOrder = () =>
-    screen
-      .getAllByTestId(/^chat-rail-item-/)
-      .map((item) => item.dataset.terminal);
-
-  function placeRailItem(name: string, top: number) {
-    const item = screen.getByTestId(`chat-rail-item-${name}`);
-    item.getBoundingClientRect = () =>
-      ({
-        left: 0,
-        top,
-        width: 200,
-        height: 36,
-        right: 200,
-        bottom: top + 36,
-        x: 0,
-        y: top,
-        toJSON: () => ({}),
-      }) as DOMRect;
-  }
-
-  it("starts in the grid, with the rail hidden", () => {
-    renderGrid(FOUR);
-    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
-    for (const name of ["Mika", "Nova", "Aria", "Kai"]) {
-      expect(cellClass(name)).not.toContain("hidden");
-    }
-  });
-
-  it("shows one pane on the stage and the rest in the rail", () => {
-    renderGrid(FOUR);
-    toChat();
-    expect(screen.getByTestId("agentic-chat-rail").className).not.toContain("hidden");
-    // Mika is the prompt target, so it takes the stage; the others hide.
-    expect(cellClass("Mika")).not.toContain("hidden");
-    for (const name of ["Nova", "Aria", "Kai"]) {
-      expect(cellClass(name)).toContain("hidden");
-      // Hidden, never unmounted — the agent behind the pane lives on.
-      expect(screen.getByTestId(`pane-${name}`)).toBeTruthy();
-      expect(screen.getByTestId(`chat-rail-${name}`)).toBeTruthy();
-    }
-  });
-
-  it("uses the live task recap as the rail title, behind the agent's mark", async () => {
-    const mixed = sessionWith([
-      ["Mika", 0],
-      ["Nova", 1],
-    ]);
-    mixed.terminals[1] = {
-      ...mixed.terminals[1],
-      agent: "codex",
-      display_name: "Codex",
-    };
-    vi.mocked(api.fetchTerminalRecaps).mockResolvedValue({
-      workspace_id: "ide_test",
-      terminals: [
-        {
-          key: "nova",
-          name: "Nova",
-          status: "live",
-          recap: "Fix provider selection priority",
-          recap_detail: "Correct the fallback order used by the provider picker.",
-        },
-      ],
-    });
-
-    renderGrid(mixed);
-    toChat();
-
-    const title = await screen.findByTestId("chat-rail-title-Nova");
-    expect(title.textContent).toBe("Fix provider selection priority");
-    // The mark LEADS the row and the title follows it, the way a list of
-    // conversations reads: the title is the subject, the mark says which CLI
-    // is having it. The title sits inside its tooltip anchor, so the mark is
-    // the ANCHOR's previous sibling.
-    const mark = title.parentElement?.previousElementSibling;
-    expect(mark?.getAttribute("data-testid")).toBe("agent-mark-codex");
-    // `data-logo` rather than the <img>: a single-colour mark is drawn as a
-    // CSS mask so it follows the theme's ink, and jsdom does not model masks.
-    expect(mark?.getAttribute("data-logo")).toBe("/provider-logos/openai.svg");
-  });
-
-  it("uses the last prompt as the title while a recap is not available", () => {
-    const session = sessionWith([["Mika", 0]]);
-    session.terminals[0].last_prompt = "Analyze transcription omissions";
-
-    renderGrid(session);
-    toChat();
-
-    expect(screen.getByTestId("chat-rail-title-Mika").textContent).toBe(
-      "Analyze transcription omissions",
-    );
-  });
-
-  it("keeps the very same pane elements across every mode and back", () => {
-    // The iron rule of this component, and the one a new reading mode is most
-    // likely to break: element identity is the mounting guarantee. A remounted
-    // pane is a NEW element, and a new element means the WebSocket died with
-    // the old one — which kills the coding agent behind it.
-    renderGrid(FOUR);
-    const before = screen.getByTestId("pane-Nova");
-
-    toChat();
-    expect(screen.getByTestId("pane-Nova")).toBe(before);
-    toGrid();
-
-    expect(screen.getByTestId("pane-Nova")).toBe(before);
-    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
-    expect(cellClass("Kai")).not.toContain("hidden");
-  });
-
-  it("a rail click puts that pane on the stage", () => {
-    renderGrid(FOUR);
-    toChat();
-    fireEvent.click(screen.getByTestId("chat-rail-Aria"));
-    expect(cellClass("Aria")).not.toContain("hidden");
-    expect(cellClass("Mika")).toContain("hidden");
-  });
-
-  it("activates an externally added pane on its first chat-stage render", () => {
-    const { rerender } = renderGrid(FOUR);
-    toChat();
-    paneActiveHistory.clear();
-
-    rerender({
-      session: sessionWith([
-        ["Mika", 0],
-        ["Nova", 1],
-        ["Aria", 2],
-        ["Kai", 3],
-        ["Fresh", 4],
-      ]),
-    });
-
-    // Connecting once while inactive gives the PTY the narrow hidden-grid
-    // geometry. The pane must own the full stage before its first effect runs.
-    expect(paneActiveHistory.get("Fresh")?.[0]).toBe(true);
-    expect(screen.getByTestId("pane-Fresh").getAttribute("data-active")).toBe(
-      "yes",
-    );
-  });
-
-  it("swaps two rail positions by dragging without moving or remounting the panes", async () => {
-    renderGrid(FOUR);
-    const paneBefore = screen.getByTestId("pane-Mika");
-    toChat();
-    placeRailItem("Mika", 0);
-    placeRailItem("Nova", 36);
-    placeRailItem("Aria", 72);
-    placeRailItem("Kai", 108);
-
-    fireEvent(
-      screen.getByTestId("chat-rail-Mika"),
-      new MouseEvent("pointerdown", {
-        bubbles: true,
-        clientX: 40,
-        clientY: 18,
-        button: 0,
-      }),
-    );
-    act(() => {
-      window.dispatchEvent(
-        new MouseEvent("pointermove", { clientX: 40, clientY: 90 }),
-      );
-    });
-
-    expect(screen.getByTestId("chat-rail-arrange-ghost").textContent).toContain(
-      "Mika",
-    );
-    expect(screen.getByTestId("chat-rail-item-Aria").className).toContain(
-      "ring-primary/70",
-    );
-
-    await act(async () => {
-      window.dispatchEvent(new MouseEvent("pointerup"));
-    });
-
-    expect(railOrder()).toEqual(["Aria", "Nova", "Mika", "Kai"]);
-    expect(api.moveTerminal).not.toHaveBeenCalled();
-    expect(screen.getByTestId("pane-Mika")).toBe(paneBefore);
-    // Chromium follows a drag release with a compatibility click on the row
-    // below it. That click belongs to the drag and must not switch the stage.
-    fireEvent.click(screen.getByTestId("chat-rail-Aria"));
-    expect(cellClass("Mika")).not.toContain("hidden");
-    expect(cellClass("Aria")).toContain("hidden");
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          window.localStorage.getItem("jarvis.agenticIde.chatOrder.v1.ide_test") ??
-            "[]",
-        ),
-      ).toEqual(["aria@0", "nova@0", "mika@0", "kai@0"]),
-    );
-
-    cleanup();
-    renderGrid(FOUR);
-    expect(railOrder()).toEqual(["Aria", "Nova", "Mika", "Kai"]);
-  });
-
-  it("grounds deictic voice references in the pane visibly on stage", async () => {
-    renderGrid(FOUR);
-    await waitFor(() =>
-      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
-        workspaceId: "ide_test",
-        view: "grid",
-        onScreen: true,
-        terminal: null,
-        promptTarget: "Mika",
-      }),
-    );
-
-    toChat();
-    fireEvent.click(screen.getByTestId("chat-rail-Aria"));
-
-    await waitFor(() =>
-      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
-        workspaceId: "ide_test",
-        view: "chat",
-        onScreen: true,
-        terminal: "Aria",
-        promptTarget: "Aria",
-      }),
-    );
-
-    toGrid();
-    await waitFor(() =>
-      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
-        workspaceId: "ide_test",
-        view: "grid",
-        onScreen: true,
-        terminal: null,
-        promptTarget: "Aria",
-      }),
-    );
-  });
-
-  /*
-   * The view travels to the backend by NAME rather than as a boolean, so that
-   * a third mode added later reads correctly everywhere without re-deriving
-   * what "not chat" was supposed to mean. Pinned separately from the pane
-   * above because it is a separate claim.
-   */
-  it("tells the backend which mode is on screen", async () => {
-    renderGrid(FOUR);
-
-    toChat();
-
-    await waitFor(() =>
-      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
-        expect.objectContaining({ view: "chat", onScreen: true }),
-      ),
-    );
-  });
-
-  it("reports the grid while the section is off screen, whatever it shows", async () => {
-    // A workspace nobody is looking at must not answer "this terminal". This
-    // grid stays mounted behind another section, so "on screen" is the only
-    // thing that can stop it — see the matching backend test.
-    const { rerender } = renderGrid(FOUR);
-    toChat();
-    await waitFor(() =>
-      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
-        expect.objectContaining({ view: "chat" }),
-      ),
-    );
-
-    rerender({ onScreen: false });
-
-    await waitFor(() =>
-      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
-        expect.objectContaining({ onScreen: false, terminal: null }),
-      ),
-    );
-  });
-
-  it("remembers the chosen view for the next workspace", () => {
-    renderGrid(FOUR);
-    toChat();
-    cleanup();
-    renderGrid(FOUR);
-    expect(screen.getByTestId("agentic-chat-rail").className).not.toContain("hidden");
-  });
-
-  it("maximize on the stage hands over to the grid, maximized", () => {
-    renderGrid(FOUR);
-    toChat();
-    fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
-    expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
-    expect(screen.getByTestId("pane-Mika").getAttribute("data-maximized")).toBe("yes");
-  });
-
-  it("the rail's plus opens a terminal at the end of the row", async () => {
-    renderGrid(FOUR);
-    toChat();
-    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
-    await waitFor(() =>
-      expect(api.addTerminal).toHaveBeenCalledWith({
-        anchor: undefined,
-        direction: "right",
-        agent: undefined,
-      }),
-    );
-  });
-
-  /*
-   * The rail's plus offers the same choice the grid's split buttons do.
-   *
-   * It used to open whatever CLI the backend listed first, so a workspace read
-   * in chat view could only ever grow more panes of that one agent — the one
-   * thing the grid had been asking about since the split menus landed.
-   */
   const CLI_CHOICES = [
     { name: "claude", displayName: "Claude Code", installed: true },
     { name: "codex", displayName: "Codex", installed: true },
@@ -3101,101 +2782,43 @@ describe("chat view", () => {
     },
   ];
 
-  it("the rail's plus asks which CLI when more than one is installed", async () => {
-    renderGrid(FOUR, { agents: CLI_CHOICES });
-    toChat();
-    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
-
-    // Uninstalled entries stay listed but disabled, so the absence is visible.
-    expect(
-      (screen.getByTestId("chat-rail-new-shell") as HTMLButtonElement).disabled,
-    ).toBe(true);
-
-    fireEvent.click(screen.getByTestId("chat-rail-new-codex"));
-    await waitFor(() =>
-      expect(api.addTerminal).toHaveBeenCalledWith({
-        anchor: undefined,
-        direction: "right",
-        agent: "codex",
-      }),
-    );
-    // The menu closes with the pick — it was a question, and it was answered.
-    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
-  });
-
-  it("the rail's plus just opens one when a single CLI is installed", async () => {
-    // A menu with one entry is a click tax, not a choice.
-    renderGrid(FOUR, {
-      agents: [CLI_CHOICES[0], { ...CLI_CHOICES[1], installed: false }],
-    });
-    toChat();
-    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
-    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
-    await waitFor(() =>
-      expect(api.addTerminal).toHaveBeenCalledWith({
-        anchor: undefined,
-        direction: "right",
-        agent: undefined,
-      }),
-    );
-  });
-
-  it("leaving chat view closes an open picker", () => {
-    renderGrid(FOUR, { agents: CLI_CHOICES });
-    toChat();
-    fireEvent.click(screen.getByTestId("chat-rail-new-terminal"));
-    expect(screen.getByTestId("chat-rail-agent-menu")).toBeTruthy();
-    toChat();
-    // The button that opened it just left the screen; it must not be waiting
-    // there on the way back.
-    expect(screen.queryByTestId("chat-rail-agent-menu")).toBeNull();
-  });
-
-  /*
-   * Closing ONE terminal from the rail.
-   *
-   * Chat view shows a single pane and hides the other eleven — and with them
-   * the pane header that used to be the only per-terminal close. So the rail
-   * carries its own, and it goes through the same confirmation as the header:
-   * closing a pane kills whatever its agent was doing, and there is no undo.
-   */
-  it("closes one terminal from its row in the rail", async () => {
-    const survivors = sessionWith([
-      ["Mika", 0],
-      ["Nova", 1],
-      ["Kai", 3],
-    ]);
-    vi.mocked(api.closeTerminal).mockResolvedValue(survivors);
-    const { onSessionChanged } = renderGrid(FOUR);
-    toChat();
-
-    fireEvent.click(screen.getByTestId("chat-rail-close-Aria"));
-    // Asked, never done on the spot — closing a pane kills a working agent.
-    expect(api.closeTerminal).not.toHaveBeenCalled();
-    expect(screen.getByText(/Close Aria\?/)).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId("confirm-close-terminal-confirm"));
-    await waitFor(() => expect(api.closeTerminal).toHaveBeenCalledWith("Aria"));
-    // The grid does not own the workspace; it reports the new one upwards.
-    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(survivors));
-    await waitFor(() =>
-      expect(screen.queryByTestId("confirm-close-terminal")).toBeNull(),
-    );
-  });
-
-  it("keeps the rail's close out of selection mode", () => {
-    // That mode is here to close SEVERAL panes; a per-row close beside a
-    // checkbox is two answers to one question.
+  it("names no staged terminal — the grid shows all of them", async () => {
     renderGrid(FOUR);
-    toChat();
-    expect(screen.getByTestId("chat-rail-close-Nova")).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId("terminal-selection-toggle"));
-
-    expect(screen.queryByTestId("chat-rail-close-Nova")).toBeNull();
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
+        expect.objectContaining({ view: "grid", onScreen: true, terminal: null }),
+      ),
+    );
   });
 
-  it("an emptied workspace asks the same question", async () => {
+  it("passes on the surface its owner says is showing", async () => {
+    renderGrid(FOUR, { view: "chat" });
+
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
+        expect.objectContaining({ view: "chat" }),
+      ),
+    );
+  });
+
+  it("reports nothing on screen once the section is left", async () => {
+    // A workspace nobody is looking at must not answer "this terminal". This
+    // grid stays mounted behind another section, so "on screen" is the only
+    // thing that can stop it — see the matching backend test.
+    const { rerender } = renderGrid(FOUR);
+    await waitFor(() => expect(api.syncAgenticIdeSurface).toHaveBeenCalled());
+
+    rerender({ onScreen: false });
+
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
+        expect.objectContaining({ onScreen: false, terminal: null }),
+      ),
+    );
+  });
+
+  it("an emptied workspace asks which CLI to open", async () => {
     // The message shown when every pane is closed opens a terminal too, and it
     // is the only way back — so it offers the same list rather than guessing.
     renderGrid(sessionWith([]), { agents: CLI_CHOICES });
@@ -3208,6 +2831,17 @@ describe("chat view", () => {
         agent: "codex",
       }),
     );
+  });
+
+  it("keeps a way to another workspace where the rail's rows used to be", () => {
+    const onNewSession = vi.fn();
+    const onAddProject = vi.fn();
+    renderGrid(sessionWith([]), { onNewSession, onAddProject });
+
+    fireEvent.click(screen.getByTestId("empty-workspace-new-session"));
+    expect(onNewSession).toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("empty-workspace-add-project"));
+    expect(onAddProject).toHaveBeenCalled();
   });
 });
 

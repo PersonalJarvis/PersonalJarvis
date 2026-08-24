@@ -20,27 +20,21 @@ import {
   FileText,
   Files,
   FolderGit2,
-  FolderPlus,
   GripVertical,
   Image as ImageIcon,
-  LayoutGrid,
   ListChecks,
   Loader2,
-  MessagesSquare,
   Minus,
   MoveHorizontal,
   Moon,
   MoreHorizontal,
   Plus,
   Power,
-  Search,
   SlidersHorizontal,
-  SquarePen,
   Sun,
   Trash2,
   Type,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -48,10 +42,8 @@ import { useThemeValue } from "@/hooks/useTheme";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { AgenticTerminal, type PaneStatus, type SplitDirection } from "./AgenticTerminal";
-import { AgentMark } from "./AgentMark";
 import { PaneActivityPill } from "./PaneActivityPill";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
@@ -85,14 +77,8 @@ import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkspaceExplorer } from "./WorkspaceExplorer";
 import { WorkspaceFileViewer } from "./WorkspaceFileViewer";
 import { usePaneFileDrag } from "./paneFileDrag";
-import {
-  chatTerminalIdentity,
-  initialChatOrder,
-  orderChatTerminals,
-  reconcileChatOrder,
-  sameRows,
-  swapChatOrder,
-} from "./chatState";
+import { sameRows } from "./paneRows";
+import type { WorkspaceView } from "./workspaceView";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -129,6 +115,16 @@ import {
 
 interface AgenticGridProps {
   session: SessionState;
+  /**
+   * Which surface the Agentic IDE is showing — owned by `AgenticIdeView`.
+   *
+   * The grid does not switch it and is not hidden by itself: in `chat` the
+   * view above keeps this component MOUNTED and merely takes it off screen,
+   * because unmounting a pane kills the coding agent behind it. The value is
+   * here so the backend hears which surface the user is actually reading (see
+   * `syncAgenticIdeSurface`).
+   */
+  view?: WorkspaceView;
   focusMode: boolean;
   onToggleFocus: (enabled: boolean) => void;
   onClose: () => void;
@@ -282,34 +278,6 @@ const TOOLBAR_BTN =
 
 /** The same button, switched ON — the only yellow the toolbar spends. */
 const TOOLBAR_BTN_ON = "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary";
-
-/**
- * The reading-mode switch, one entry per view.
- *
- * A table rather than two hand-written buttons because the set is a contract
- * (see `WorkspaceView`): a third mode should be one row here, and a mode with
- * no row is a mode the user cannot reach — which is the failure this shape
- * makes obvious instead of silent.
- */
-const VIEW_BUTTONS: ReadonlyArray<{
-  view: WorkspaceView;
-  testId: string;
-  icon: LucideIcon;
-  title: string;
-}> = [
-  {
-    view: "grid",
-    testId: "agentic-view-mode-grid",
-    icon: LayoutGrid,
-    title: "Terminal grid — every pane on screen at once.",
-  },
-  {
-    view: "chat",
-    testId: "agentic-view-mode-toggle",
-    icon: MessagesSquare,
-    title: "Chat view — read one agent at a time, like a conversation.",
-  },
-];
 
 /**
  * The part of the hovered pane a drop would take, drawn as it will look.
@@ -542,70 +510,12 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  */
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 
-/**
- * The two ways of looking at one workspace.
- *
- * `grid` is the wall of terminals — every pane visible at once, sized by the
- * dragged seams. `chat` is the same workspace read like a conversation: a rail
- * of agents on the left, ONE terminal on a calm centred stage, and the prompt
- * bar underneath as the composer.
- *
- * Talking to the assistant is not a mode: the floating voice orb is summoned
- * from the toolbar and drawn over whichever of these two is on screen, so
- * reaching for the microphone never costs the user the layout they chose.
- *
- * No mode owns the panes — switching is a pure restyle of the same mounted
- * elements, because unmounting a pane kills the coding agent behind it (see
- * the grid container's comment below). That rule is what makes a further mode
- * cheap to add and is the one thing it must not break.
- *
- * Layer 4 of the enum contract; `jarvis/agentic_ide/workspace_view.py` is the
- * source of truth and the backend asserts the two agree at import.
- */
-export type WorkspaceView = "grid" | "chat";
-
-/** Every value, in the order the toolbar and the wizard offer them. */
-export const WORKSPACE_VIEWS: readonly WorkspaceView[] = ["grid", "chat"];
-
-function isWorkspaceView(raw: string): raw is WorkspaceView {
-  return (WORKSPACE_VIEWS as readonly string[]).includes(raw);
-}
-
-const VIEW_KEY = "jarvis.agenticIde.workspaceView";
-const CHAT_ORDER_KEY_PREFIX = "jarvis.agenticIde.chatOrder.v1";
-
-export function storedViewMode(): WorkspaceView | null {
-  return readStored(VIEW_KEY, (raw) => (isWorkspaceView(raw) ? raw : null));
-}
-
-/**
- * Record which way the workspace should be read, ahead of the grid mounting.
- *
- * Exported for the workspace wizard: its last step asks grid-or-chat before
- * anything opens, and the grid then simply reads the answer on mount — the
- * same stored preference the toolbar toggle below keeps, so the wizard's
- * choice and a later toggle can never disagree about where the answer lives.
- */
-export function rememberViewMode(next: WorkspaceView): void {
-  writeStored(VIEW_KEY, next);
-}
-
-function storedChatOrder(workspaceId: string): readonly string[] | null {
-  return readStored(`${CHAT_ORDER_KEY_PREFIX}.${workspaceId}`, (raw) => {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed) && parsed.every((item) => typeof item === "string")
-        ? parsed
-        : null;
-    } catch {
-      return null;
-    }
-  });
-}
-
-function rememberChatOrder(workspaceId: string, identities: readonly string[]): void {
-  writeStored(`${CHAT_ORDER_KEY_PREFIX}.${workspaceId}`, JSON.stringify(identities));
-}
+export {
+  WORKSPACE_VIEWS,
+  rememberViewMode,
+  storedViewMode,
+  type WorkspaceView,
+} from "./workspaceView";
 
 function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
   try {
@@ -665,6 +575,7 @@ function storedAppearance(): TerminalAppearance | null {
 
 export function AgenticGrid({
   session,
+  view = "grid",
   focusMode,
   onToggleFocus,
   onClose,
@@ -872,29 +783,11 @@ export function AgenticGrid({
    * panes of that one agent while the grid's split buttons were asking properly
    * (maintainer report 2026-07-31).
    */
-  const [picking, setPicking] = useState<"rail" | "empty" | null>(null);
+  const [picking, setPicking] = useState<"empty" | null>(null);
 
-  /*
-   * Grid or chat — remembered per browser profile, like the appearance above:
-   * which way someone reads their agents is a display preference of this
-   * screen, not workspace state worth a round-trip.
-   */
-  const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [openedWorkspaceFile, setOpenedWorkspaceFile] = useState<string | null>(null);
   const openedWorkspaceFileTrigger = useRef<HTMLElement | null>(null);
-  const setViewMode = useCallback((next: WorkspaceView) => {
-    setViewModeState(next);
-    rememberViewMode(next);
-    // Chat shows one pane at most; a leftover maximize from the grid would
-    // silently pin the stage to a pane the chat rail does not highlight.
-    if (next !== "grid") setMaximized(null);
-    // An open CLI picker belongs to the button that opened it, and that button
-    // just left the screen — it must not be waiting there on the way back.
-    setPicking(null);
-  }, []);
-  const chatView = viewMode === "chat";
-
   useEffect(() => {
     setOpenedWorkspaceFile(null);
     openedWorkspaceFileTrigger.current = null;
@@ -910,29 +803,9 @@ export function AgenticGrid({
     setOpenedWorkspaceFile(path);
   }, []);
 
-  /*
-   * Which pane the chat stage shows. Kept apart from `target` (the pane the
-   * prompt bar types into) because the two answer different questions: a plain
-   * shell pane can be WATCHED on the stage but never prompted, and looking at
-   * it must not silently redirect the next instruction into a pane that
-   * refuses it. The effective selection is derived rather than repaired in
-   * effects, so a pane closed by another client simply falls back.
-   */
-  const [chatPane, setChatPane] = useState<string | null>(null);
   // Null until the first render has been seen: on mount every pane is "new",
   // and announcing a restored workspace's eight panes would be a light show.
-  // Kept beside the stage selection because a newly arrived pane must be
-  // selected during render, before its terminal's connection effect measures
-  // the otherwise-hidden grid cell.
   const knownPanes = useRef<Set<string> | null>(null);
-  const [chatOrder, setChatOrder] = useState<{
-    workspaceId: string;
-    keys: readonly string[];
-  }>(() => ({
-    workspaceId: session.id,
-    keys: storedChatOrder(session.id) ?? initialChatOrder(session.terminals),
-  }));
-  const chatRailRef = useRef<HTMLDivElement | null>(null);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(() => new Set());
@@ -1519,139 +1392,25 @@ export function AgenticGrid({
   const atLimit = session.terminals.length >= maxTerminals;
 
   /*
-   * Chat is a conversation history, so its rail follows ARRIVAL order. The
-   * backend's terminal array follows grid coordinates and is deliberately
-   * re-sorted after every split or drag; rendering that array directly made a
-   * newly spawned Codex session appear in the middle of an existing chat.
-   */
-  const stableChatKeys = useMemo(
-    () =>
-      reconcileChatOrder(
-        chatOrder.workspaceId === session.id
-          ? chatOrder.keys
-          : (storedChatOrder(session.id) ?? initialChatOrder(session.terminals)),
-        session.terminals,
-      ),
-    [chatOrder, session.id, session.terminals],
-  );
-  const chatTerminals = useMemo(
-    () => orderChatTerminals(session.terminals, stableChatKeys),
-    [session.terminals, stableChatKeys],
-  );
-  /*
-   * The rail's own filter over those panes.
-   *
-   * Matched against what the row SHOWS — its headline, the prompt behind it,
-   * the CLI's name — rather than against the internal call-sign, because
-   * "T7" is not what anybody is looking for when they type into a search box.
-   * Purely local: no request fires, so it stays instant with a dozen panes.
-   */
-  const [railFilter, setRailFilter] = useState("");
-  const railTerminals = useMemo(() => {
-    const needle = railFilter.trim().toLowerCase();
-    if (!needle) return chatTerminals;
-    return chatTerminals.filter((term) =>
-      [term.recap, term.last_prompt, term.display_name, term.agent, term.name]
-        .filter(Boolean)
-        .some((field) => String(field).toLowerCase().includes(needle)),
-    );
-  }, [chatTerminals, railFilter]);
-
-  /*
-   * The chat rail is a user's reading order, independent of the pane grid.
-   * Dropping one row on another exchanges only their stable lifetime keys: no
-   * terminal moves, remounts or reconnects, and the existing storage effect
-   * below makes the chosen order survive the next visit.
-   */
-  const suppressRailClickUntil = useRef(0);
-  const swapRailTerminals = useCallback(
-    (moved: string, targetName: string) => {
-      const movedTerminal = session.terminals.find((terminal) => terminal.name === moved);
-      const targetTerminal = session.terminals.find(
-        (terminal) => terminal.name === targetName,
-      );
-      if (!movedTerminal || !targetTerminal) return;
-      const next = swapChatOrder(
-        stableChatKeys,
-        chatTerminalIdentity(movedTerminal),
-        chatTerminalIdentity(targetTerminal),
-      );
-      if (next === stableChatKeys) return;
-      // Releasing over a row also produces a click in Chromium. Suppress that
-      // compatibility click so a reorder does not unexpectedly change stages.
-      suppressRailClickUntil.current = Date.now() + 250;
-      setChatOrder({ workspaceId: session.id, keys: next });
-    },
-    [session.id, session.terminals, stableChatKeys],
-  );
-  const railArrange = usePaneArrange(
-    useCallback(
-      (moved: string, targetName: string) => swapRailTerminals(moved, targetName),
-      [swapRailTerminals],
-    ),
-  );
-  const canReorderRail =
-    chatView && !selectionMode && !busy && !working && railTerminals.length > 1;
-
-  useEffect(() => {
-    rememberChatOrder(session.id, stableChatKeys);
-    if (chatOrder.workspaceId === session.id && chatOrder.keys === stableChatKeys) {
-      return;
-    }
-    setChatOrder({ workspaceId: session.id, keys: stableChatKeys });
-  }, [chatOrder, session.id, stableChatKeys]);
-
-  /*
-   * A pane can arrive through voice, the CLI, or another client. Effects run
-   * after child effects, which is too late to put that pane on the chat stage:
-   * its terminal would already have connected from a hidden, grid-sized cell
-   * and handed the PTY a tiny column count. Derive the arrival synchronously so
-   * the new terminal's first measurement is the full stage.
-   */
-  const knownBeforeRender = knownPanes.current;
-  const arrivingChatPane =
-    chatView && knownBeforeRender !== null
-      ? (session.terminals
-          .filter((term) => !knownBeforeRender.has(term.name))
-          .at(-1)?.name ?? null)
-      : null;
-
-  /** The pane on the chat stage: the newest arrival, chosen pane, then fallback. */
-  const chatSelected = useMemo(() => {
-    const names = session.terminals.map((term) => term.name);
-    if (arrivingChatPane && names.includes(arrivingChatPane)) return arrivingChatPane;
-    if (chatPane && names.includes(chatPane)) return chatPane;
-    if (target && names.includes(target)) return target;
-    return names[0] ?? null;
-  }, [arrivingChatPane, chatPane, target, session.terminals]);
-
-  /*
    * The browser is the only layer that knows what is actually on screen. Hand
    * that fact to the backend so voice and chat can resolve "this terminal"
    * from what the user sees.
    *
-   * `stagedPane` is the ONE pane the view puts in front of the user: chat's
-   * stage. Grid has no such pane and reports none — guessing among a dozen
-   * visible terminals would be less honest than making the user name one.
+   * No pane is ever THE one on screen here: the grid shows all of them, and
+   * guessing among a dozen visible terminals would be less honest than making
+   * the user name one. The prompt target is the aim that does exist.
    */
-  const stagedPane = chatView ? chatSelected : null;
   useEffect(() => {
     void syncAgenticIdeSurface({
       workspaceId: session.id,
-      view: viewMode,
+      view,
       onScreen,
-      terminal: onScreen ? stagedPane : null,
+      terminal: null,
       promptTarget: onScreen ? target || null : null,
     }).catch((error) => {
       console.warn("Agentic IDE: could not sync the visible terminal:", error);
     });
-  }, [onScreen, session.id, stagedPane, target, viewMode]);
-
-  /** Rail click: show the pane, and aim the composer at it when it can listen. */
-  const selectChatPane = useCallback((name: string, promptable: boolean) => {
-    setChatPane(name);
-    if (promptable) setTarget(name);
-  }, []);
+  }, [onScreen, session.id, target, view]);
 
   const split = async (anchor: string | null, direction: SplitDirection, agent?: string) => {
     setWorking(true);
@@ -1672,10 +1431,6 @@ export function AgenticGrid({
       // stealing the target would silently redirect the next prompt into a pane
       // that refuses it.
       if (added && takesPrompts(added)) setTarget(added.name);
-      // The chat stage shows what was just opened — in the grid the new pane
-      // simply appears, but on a one-pane stage an unshown terminal would read
-      // as a split that did nothing.
-      if (added) setChatPane(added.name);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -1690,7 +1445,7 @@ export function AgenticGrid({
    * has more than one CLI installed. With a single one there is nothing to pick,
    * so the click opens it straight away rather than showing a one-entry menu.
    */
-  const openTerminal = (surface: "rail" | "empty") => {
+  const openTerminal = (surface: "empty") => {
     if (offersChoice) setPicking((current) => (current === surface ? null : surface));
     else void split(null, "right");
   };
@@ -1828,7 +1583,6 @@ export function AgenticGrid({
   const guardActive =
     onScreen &&
     documentVisible &&
-    !chatView &&
     maximized === null &&
     arrange.held === null &&
     !layoutBusy;
@@ -1986,31 +1740,13 @@ export function AgenticGrid({
     const fresh = names.filter((name) => !known.has(name));
     if (fresh.length === 0) return;
     setJustOpened(new Set(fresh));
-    // On the chat stage, "seen appearing" means TAKING the stage: a pane
-    // opened by voice would otherwise exist only as a rail entry behind the
-    // one being read, which is the 2026-07-28 "terminals just don't load"
-    // report in new clothes.
-    let frame: number | undefined;
-    if (chatView) {
-      setChatPane(fresh[fresh.length - 1]);
-      // Chat rows are arrival-ordered, so the new session belongs at the rail's
-      // tail. Scrolling the hidden grid cell used to move the whole workspace
-      // and then snap the terminal again after its delayed fit.
-      frame = requestAnimationFrame(() => {
-        const rail = chatRailRef.current;
-        if (rail) rail.scrollTop = rail.scrollHeight;
-      });
-    }
     // In the grid there is nothing to scroll to: the workspace is one screenful
     // by rule, so a pane that just opened is already in view and the ring below
     // is the whole announcement. This used to call `scrollIntoView` on the
     // newest pane, which was the honest answer while a workspace could be wider
     // or taller than its window.
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
-    return () => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
+    return () => window.clearTimeout(timer);
   }, [session.terminals]);
 
   /*
@@ -2044,10 +1780,8 @@ export function AgenticGrid({
       pushToast("warning", t("agentic_grid.notifications.gone").replace("{0}", wanted));
       return;
     }
-    // The jump means "let me READ that pane". In the grid that is a maximize;
-    // on the chat stage it is the stage showing that pane.
-    if (chatView) setChatPane(wanted);
-    else setMaximized(wanted);
+    // The jump means "let me READ that pane", which in the grid is a maximize.
+    setMaximized(wanted);
     setJustOpened(new Set([wanted]));
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
     return () => window.clearTimeout(timer);
@@ -2151,7 +1885,6 @@ export function AgenticGrid({
    */
   const canArrange =
     !selectionMode &&
-    !chatView &&
     maximized === null &&
     !busy &&
     !working &&
@@ -2385,38 +2118,6 @@ export function AgenticGrid({
           <Brain className="h-4 w-4 shrink-0" />
         </button>
 
-        {/* Grid or chat — how the same agents are read.
-
-            Two buttons rather than one cycling through both states, because
-            the switch stays readable when a third mode is added: "click
-            again" stops telling you where you will land. They are ordinary
-            toolbar glyphs, not a segmented group in a box — the row's rule is
-            one button shape throughout, with colour reserved for what is ON.
-
-            `agentic-view-mode-toggle` stays on the chat button: it is the one
-            this control used to be, and the tests that press it are about
-            chat view rather than about the switch. */}
-        {VIEW_BUTTONS.map(({ view, testId, icon: Icon, title }) => (
-          <button
-            key={view}
-            type="button"
-            data-testid={testId}
-            aria-pressed={viewMode === view}
-            onClick={() => {
-              setViewMode(view);
-              // A conversation surface with no input box is a screenshot, so
-              // chat view brings the composer with it.
-              if (view !== "grid" && composerCollapsed) {
-                resizeComposer(COMPOSER_DEFAULT_PX);
-              }
-            }}
-            title={title}
-            className={cn(TOOLBAR_BTN, viewMode === view && TOOLBAR_BTN_ON)}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-          </button>
-        ))}
-
         {/* The current workspace's files, in the familiar editor-explorer
             position. It is an independent panel rather than a fourth reading
             mode: opening it must not hide or remount a live terminal. */}
@@ -2434,22 +2135,20 @@ export function AgenticGrid({
           <Files className="h-4 w-4 shrink-0" aria-hidden />
         </button>
 
-        {/* Even out the sizes. Beside the grid/chat toggle because both are
-            about the SHAPE of the workspace rather than what is in it, and
-            before the appearance controls because it changes the panes
-            themselves, not how their text is drawn.
+        {/* Even out the sizes. Before the appearance controls because it
+            changes the panes themselves, not how their text is drawn.
 
-            Off in chat view and while a pane is maximized: both hide the
-            boundaries this evens out, so the click would be a change nobody
-            can see — and a control whose effect is invisible reads as a dead
-            one. The tooltip says which of the reasons applies. */}
+            Off while a pane is maximized: that hides the boundaries this evens
+            out, so the click would be a change nobody can see — and a control
+            whose effect is invisible reads as a dead one. The tooltip says
+            which of the reasons applies. */}
         <button
           type="button"
           data-testid="agentic-even-panes"
           onClick={evenPanes}
-          disabled={chatView || maximized !== null || alreadyEven}
+          disabled={maximized !== null || alreadyEven}
           title={
-            chatView || maximized !== null
+            maximized !== null
               ? t("agentic_grid.even.grid_only")
               : alreadyEven
                 ? t("agentic_grid.even.already")
@@ -2626,288 +2325,8 @@ export function AgenticGrid({
         CSS, never removed, and the maximized one is told to fill the container
         instead of keeping its own rectangle.
 
-        Chat view is the same trick one step further: the rail on the left is
-        ALWAYS in the tree (hidden in grid mode), and switching modes only
-        flips class names — the scroller and every cell keep their place in
-        the element tree, so React re-parents nothing and no agent dies for a
-        change of clothes.
       */}
       <div className="flex min-h-0 flex-1">
-        {/* ------------------------------------------------------ chat rail */}
-        <aside
-          data-testid="agentic-chat-rail"
-          className={cn(
-            /*
-             * 224 px, and the header is the same 44 px rule-under-a-label as
-             * the voice column opposite it. Chat view puts THREE vertical
-             * bands in front of the one pane being read — the app's own
-             * navigation, this list, and the voice column — so the two this
-             * view owns at least agree with each other about how a column
-             * begins.
-             */
-            "w-56 shrink-0 flex-col border-r border-border",
-            chatView ? "flex" : "hidden",
-          )}
-        >
-          {/*
-            The column's own head and name.
-
-            Not "AGENTS" in small caps any more. This column lists the
-            conversations you are having, grouped by the folder they are in —
-            "Chat" is what that is.
-          */}
-          <div className="flex h-11 shrink-0 items-center gap-1 px-2">
-            <span className="flex-1 truncate px-1 text-sm font-semibold tracking-tight">
-              Chat
-            </span>
-          </div>
-
-          <div className="px-2 pb-2">
-            <div className="relative flex items-center">
-              <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground/70" />
-              <input
-                value={railFilter}
-                onChange={(event) => setRailFilter(event.target.value)}
-                placeholder="Search"
-                aria-label="Search chats"
-                className="h-8 w-full rounded-md border border-transparent bg-foreground/[0.045] pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-border focus-visible:bg-transparent"
-              />
-            </div>
-          </div>
-
-          {/*
-            The three things a person arrives wanting to do, as rows with words
-            on them. They used to be one bare "+" in the header, which cannot
-            say which of the three it is.
-          */}
-          <div className="relative px-1.5 pb-1">
-            <RailAction
-              icon={SquarePen}
-              label="New chat"
-              testId="chat-rail-new-terminal"
-              disabled={atLimit || busy || working}
-              onClick={() => openTerminal("rail")}
-            />
-            {onNewSession && (
-              <RailAction
-                icon={Plus}
-                label="New session"
-                hint="A workspace with no project folder"
-                testId="chat-rail-new-session"
-                disabled={busy || working}
-                onClick={onNewSession}
-              />
-            )}
-            {onAddProject && (
-              <RailAction
-                icon={FolderPlus}
-                label="Add project"
-                testId="chat-rail-add-project"
-                disabled={busy || working}
-                onClick={onAddProject}
-              />
-            )}
-            {picking === "rail" && (
-              <AgentPickerMenu
-                title="Open a terminal — what?"
-                ariaLabel="What should run in the new terminal?"
-                agents={agents ?? []}
-                testId="chat-rail-agent-menu"
-                itemTestId={(agent) => `chat-rail-new-${agent}`}
-                className="left-2 top-full"
-                onDismiss={() => setPicking(null)}
-                onInstalled={() => onAgentsChanged?.()}
-                onPick={(agent) => {
-                  setPicking(null);
-                  void split(null, "right", agent);
-                }}
-              />
-            )}
-          </div>
-
-          <div
-            ref={chatRailRef}
-            className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-1.5 pb-2"
-          >
-            <RailBand>Projects</RailBand>
-            {/*
-              The folder these panes are in, named and coloured like the
-              project it is. Every row under it belongs to it — which is the
-              whole reason this band exists: with two workspaces open, a flat
-              list of eleven conversations says nothing about which repository
-              any of them is touching.
-            */}
-            <div className="flex items-center gap-1.5 rounded-md px-2 py-1.5">
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ background: folderColor(project.path || project.name) }}
-                aria-hidden
-              />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                {project.name}
-              </span>
-            </div>
-
-            {railTerminals.map((term) => {
-              const state = statusOf(term);
-              const headline = recaps[term.name]?.recap ?? term.recap;
-              const title =
-                headline?.trim() ||
-                term.last_prompt?.trim() ||
-                `${term.display_name || term.name} session`;
-              const marked = selectedTerminals.has(term.name);
-              const active = chatSelected === term.name;
-              return (
-                /*
-                 * The row and its close button are SIBLINGS, never nested: a
-                 * button inside a button is invalid HTML, and browsers resolve
-                 * it by dropping one of them — usually the one you wanted.
-                 */
-                <div
-                  key={term.key}
-                  ref={railArrange.registerCell(term.name)}
-                  data-testid={`chat-rail-item-${term.name}`}
-                  data-terminal={term.name}
-                  className={cn(
-                    "group relative ml-3 mb-0.5 rounded-md transition-[opacity,box-shadow,background-color]",
-                    railArrange.held === term.name && "opacity-50",
-                    railArrange.hover?.target === term.name &&
-                      "bg-primary/10 ring-2 ring-inset ring-primary/70",
-                  )}
-                >
-                  <button
-                    type="button"
-                    data-testid={`chat-rail-${term.name}`}
-                    aria-label={`${title}, ${term.display_name || term.agent}`}
-                    aria-pressed={selectionMode ? marked : active}
-                    onPointerDown={
-                      canReorderRail
-                        ? (event) => railArrange.start(term.name, event)
-                        : undefined
-                    }
-                    onClick={(event) => {
-                      if (Date.now() < suppressRailClickUntil.current) {
-                        event.preventDefault();
-                        return;
-                      }
-                      // Selection mode borrows the rail: in chat view the grid's
-                      // per-pane overlays are hidden with their panes, so the
-                      // rail is where a multi-close is composed.
-                      selectionMode
-                        ? toggleTerminalSelection(term.name)
-                        : selectChatPane(term.name, takesPrompts(term));
-                    }}
-                    /*
-                     * Selection is a barely-there lift of the surface — no hue,
-                     * no border, no fill. Eleven rows of tinted boxes turn a
-                     * list into a heat map and leave the accent with nothing
-                     * distinct to say when a row actually wants attention. The
-                     * one exception is a MARKED row in selection mode, which is
-                     * a deliberate armed state and should look like one.
-                     */
-                    className={cn(
-                      "w-full rounded-md px-2 py-[5px] text-left transition-colors",
-                      selectionMode && marked
-                        ? "bg-primary/15"
-                        : active && !selectionMode
-                          ? "bg-foreground/[0.09]"
-                          : "hover:bg-foreground/[0.055]",
-                      canReorderRail &&
-                        (railArrange.held === term.name
-                          ? "cursor-grabbing"
-                          : "cursor-grab"),
-                    )}
-                    style={{ touchAction: canReorderRail ? "none" : undefined }}
-                  >
-                    {/* The right padding is permanent, not applied on hover:
-                        the close button appears where the badge would otherwise
-                        be, and a status pill that jumps sideways under the
-                        cursor is a row nobody can aim at. */}
-                    <span className="flex items-center gap-1.5 pr-5">
-                      {selectionMode && (
-                        <Check
-                          className={cn(
-                            "h-3.5 w-3.5 shrink-0",
-                            marked ? "text-primary" : "text-transparent",
-                          )}
-                        />
-                      )}
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        {/* The mark leads, at the weight of the text beside it
-                            — it says which CLI this is, it is not the subject
-                            of the row. The title is. */}
-                        <AgentMark
-                          agent={term.agent}
-                          label={term.display_name || term.agent}
-                          size="sm"
-                          variant="plain"
-                        />
-                        {/* The app's own bubble, not `title=`: the native
-                            tooltip takes over a second to appear and is drawn
-                            in the OS's grey box — a foreign artifact over a
-                            rail whose whole point is the title. */}
-                        <QuickTooltip
-                          content={title}
-                          side="right"
-                          className="min-w-0 flex-1"
-                        >
-                          <span
-                            data-testid={`chat-rail-title-${term.name}`}
-                            className={cn(
-                              "block truncate text-[12px]",
-                              active ? "text-foreground" : "text-foreground/75",
-                            )}
-                          >
-                            {title}
-                          </span>
-                        </QuickTooltip>
-                      </span>
-                      {/* Not "live". Every pane in this list is live, all day —
-                          what the user is scanning for is which of them still
-                          owes them something. See ./PaneActivityPill. */}
-                      <PaneActivityPill
-                        status={state.status}
-                        detail={state.detail}
-                        {...activityOf(term)}
-                      />
-                    </span>
-                  </button>
-                  {/*
-                    Closing one terminal from the list itself.
-                    Chat view hides every pane but the one on the stage, and with
-                    it the header that used to be the only place a single
-                    terminal could be closed — so the eleven panes you are NOT
-                    looking at could only be closed by switching to the grid or
-                    by composing a multi-select. This is the row's own button.
-
-                    Left out of selection mode on purpose: that mode is here to
-                    close SEVERAL, and a per-row close beside a checkbox is two
-                    answers to one question.
-                  */}
-                  {!selectionMode && (
-                    <button
-                      type="button"
-                      data-testid={`chat-rail-close-${term.name}`}
-                      disabled={busy || working}
-                      onClick={() => setPendingClose(term.name)}
-                      title={`Close ${term.name} and stop what is running in it`}
-                      aria-label={`Close ${term.name}`}
-                      className={cn(
-                        "absolute right-1 top-1.5 flex h-5 w-5 items-center justify-center rounded",
-                        "text-muted-foreground opacity-0 transition-opacity",
-                        "hover:bg-destructive/20 hover:text-destructive",
-                        "group-hover:opacity-100 group-focus-within:opacity-100",
-                        "focus-visible:opacity-100 disabled:cursor-not-allowed",
-                      )}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </aside>
       <div
         ref={gridRef}
         data-testid="agentic-grid"
@@ -2927,7 +2346,7 @@ export function AgenticGrid({
         )}
         // Inline rather than a utility class so ONE number drives both the
         // rendered outer margin and the width the column count is computed from.
-        style={{ padding: chatView ? 12 : GRID_GAP_PX }}
+        style={{ padding: GRID_GAP_PX }}
       >
       {/*
         The surface the fractions resolve against — always exactly the window.
@@ -2947,9 +2366,6 @@ export function AgenticGrid({
         {session.terminals.map((term, index) => {
           const box = layout.boxes[index];
           const isMaximized = maximized === term.name;
-          // The one pane the single-pane view is showing. It stages one and
-          // hides the rest — the others are hidden and NEVER unmounted.
-          const onStage = chatView && chatSelected === term.name;
           return (
             <div
               key={term.key}
@@ -2963,8 +2379,7 @@ export function AgenticGrid({
                 // imperatively (`paintDraggedLayout`) and must track the
                 // pointer, not ease after it — and off for the stage/maximize
                 // style, which swaps to `inset` and cannot tween from here.
-                !chatView &&
-                  !isMaximized &&
+                !isMaximized &&
                   !layoutBusy &&
                   "transition-[left,top,width,height] duration-300 ease-out motion-reduce:transition-none",
                 /*
@@ -2997,29 +2412,9 @@ export function AgenticGrid({
                 justMoved?.name === term.name &&
                   !selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary/70",
-                chatView
-                  ? onStage
-                    ? /*
-                       * ONE edge per pane, in every view.
-                       *
-                       * This cell used to add `rounded-xl border border-border`
-                       * of its own around a pane that already draws a rounded
-                       * border in the TERMINAL's colours — two hairlines, at
-                       * two different radii (12 px outside an 8 px corner), so
-                       * every corner of the staged pane showed a sliver of app
-                       * chrome curving around the pane's own. In grid view the
-                       * same pane has a single edge, which is what made the
-                       * switch to chat look like a different component rather
-                       * than the same one enlarged.
-                       *
-                       * The lift stays: a staged pane genuinely IS raised above
-                       * the rail beside it.
-                       */
-                      "shadow-lg"
-                        : "hidden"
-                      : maximized !== null && !isMaximized && "hidden",
+                maximized !== null && !isMaximized && "hidden",
                   )}
-                  style={isMaximized || chatView ? MAXIMIZED_BOX : paneBoxStyle(box)}
+                  style={isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}
                 >
                   <AgenticTerminal
                     name={term.name}
@@ -3053,7 +2448,7 @@ export function AgenticGrid({
                     fontSize={fontSize}
                     geometryReady={gridMeasured}
                     focused={target === term.name}
-                    active={!chatView || onStage}
+                    active
                     maximized={isMaximized}
                     layoutBusy={layoutBusy}
                     splitDisabled={atLimit || busy || working}
@@ -3063,17 +2458,9 @@ export function AgenticGrid({
                   if (takesPrompts(term)) setTarget(term.name);
                 }}
                 onStatus={(status, detail) => setStatus(term.name, status, detail)}
-                onToggleMaximize={() => {
-                  // On the chat stage the pane already fills the surface, so
-                  // "maximize" honestly means "give me the full-width grid
-                  // version of this pane".
-                  if (chatView) {
-                        setViewMode("grid");
-                        setMaximized(term.name);
-                      } else {
-                        setMaximized((current) => (current === term.name ? null : term.name));
-                      }
-                    }}
+                onToggleMaximize={() =>
+                  setMaximized((current) => (current === term.name ? null : term.name))
+                }
                     onSplit={(direction, agent) => void split(term.name, direction, agent)}
                 onRename={(next) => renamePane(term, next)}
                 onClose={() => setPendingClose(term.name)}
@@ -3174,8 +2561,7 @@ export function AgenticGrid({
           panes are being selected or dragged (those gestures own the pointer),
           and, naturally, when there is only one pane.
         */}
-        {!chatView &&
-          maximized === null &&
+        {maximized === null &&
           !selectionMode &&
           arrange.held === null &&
           layout.seams.map((seam) => (
@@ -3232,6 +2618,38 @@ export function AgenticGrid({
                 />
               )}
             </div>
+            {/*
+              The rail used to carry these two beside "New chat"; with the rail
+              gone this is where they live. An emptied workspace is exactly the
+              moment somebody wants a DIFFERENT one — quiet links rather than
+              buttons, because opening a terminal here is still the answer.
+            */}
+            {(onNewSession || onAddProject) && (
+              <div className="flex items-center gap-4 text-xs">
+                {onNewSession && (
+                  <button
+                    type="button"
+                    data-testid="empty-workspace-new-session"
+                    disabled={busy || working}
+                    onClick={onNewSession}
+                    className="text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    New session
+                  </button>
+                )}
+                {onAddProject && (
+                  <button
+                    type="button"
+                    data-testid="empty-workspace-add-project"
+                    disabled={busy || working}
+                    onClick={onAddProject}
+                    className="text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Add project
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -3450,7 +2868,7 @@ export function AgenticGrid({
                   key={term.key}
                   type="button"
                   data-testid={`prompt-target-${term.name}`}
-                  onClick={() => (chatView ? selectChatPane(term.name, true) : setTarget(term.name))}
+                  onClick={() => setTarget(term.name)}
                   aria-pressed={picked}
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-1.5 text-xs transition-colors",
@@ -3541,24 +2959,6 @@ export function AgenticGrid({
               {t("agentic_grid.arrange.swap_hint")}
             </span>
           )}
-        </div>
-      )}
-      {railArrange.held !== null && railArrange.point !== null && (
-        <div
-          data-testid="chat-rail-arrange-ghost"
-          className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-lg border border-primary/60 bg-card px-2.5 py-1.5 text-xs font-semibold shadow-xl"
-          style={{ left: railArrange.point.x + 14, top: railArrange.point.y + 14 }}
-        >
-          <GripVertical className="h-3.5 w-3.5 text-primary" />
-          {railArrange.held}
-          <span className="font-normal text-muted-foreground">
-            {railArrange.hover === null
-              ? t("agentic_grid.arrange.carrying")
-              : t("agentic_grid.arrange.swap").replace(
-                  "{0}",
-                  railArrange.hover.target,
-                )}
-          </span>
         </div>
       )}
     </div>
@@ -4073,78 +3473,4 @@ function ConfirmClose({
       </div>
     </div>
   );
-}
-
-/**
- * One of the rail's standing actions — a word, an icon, a whole row to hit.
- *
- * Rows rather than a toolbar of glyphs: these are the three things a person
- * arrives wanting to do, and each has to be able to say which one it is
- * without being hovered first.
- */
-function RailAction({
-  icon: Icon,
-  label,
-  hint,
-  onClick,
-  disabled,
-  testId,
-}: {
-  icon: LucideIcon;
-  label: string;
-  hint?: string;
-  onClick: () => void;
-  disabled?: boolean;
-  testId?: string;
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={onClick}
-      disabled={disabled}
-      title={hint ?? label}
-      className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium",
-        "text-foreground/85 transition-colors hover:bg-foreground/[0.055]",
-        "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
-      )}
-    >
-      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-      {label}
-    </button>
-  );
-}
-
-/** A section heading in the rail. Quiet enough to be scanned past. */
-function RailBand({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-      {children}
-    </div>
-  );
-}
-
-/**
- * A stable colour for a folder, so the same project reads the same everywhere.
- *
- * Derived from the path rather than stored, which means it needs no setting and
- * survives a lost store. The palette is fixed rather than a free hue rotation:
- * arbitrary HSL produces colours that vanish against one of the two themes.
- */
-const FOLDER_COLORS = [
-  "#e7c46e",
-  "#7dd3fc",
-  "#a5b4fc",
-  "#86efac",
-  "#fca5a5",
-  "#f0abfc",
-  "#fdba74",
-  "#5eead4",
-] as const;
-
-function folderColor(key: string): string {
-  let sum = 0;
-  for (const char of key) sum = (sum + char.charCodeAt(0)) % 4096;
-  return FOLDER_COLORS[sum % FOLDER_COLORS.length];
 }

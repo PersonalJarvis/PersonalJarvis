@@ -4415,7 +4415,22 @@
       "show_cli": "Mostrar lo que muestra la CLI"
     }
   },
+  "ide_chats": {
+    "back_to_sections": "Secciones",
+    "this_workspace": "Este espacio de trabajo",
+    "other_folders": "Otras carpetas",
+    "new_chat_here": "Nuevo chat en esta carpeta",
+    "no_chats_here": "Aún no hay chats en esta carpeta",
+    "show_more": "Mostrar más"
+  },
   "agentic_grid": {
+    "view_switch": {
+      "hint": "Mostrar este espacio de trabajo como chat o como cuadrícula de terminales",
+      "chat": "Chat",
+      "grid": "Cuadrícula",
+      "chat_hint": "Chat: habla con un agente en la carpeta de este espacio de trabajo.",
+      "grid_hint": "Cuadrícula de terminales: todos los paneles a la vez en pantalla."
+    },
     "toolbar": {
       "more_controls": "Más controles del espacio de trabajo",
       "close_controls": "Cerrar controles del espacio de trabajo"

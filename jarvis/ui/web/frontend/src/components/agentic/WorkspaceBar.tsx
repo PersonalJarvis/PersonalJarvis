@@ -91,6 +91,15 @@ interface WorkspaceBarProps {
    */
   actions?: React.ReactNode;
   /**
+   * The `Chat | Grid` switch, pinned between the tabs and the controls.
+   *
+   * It lives in THIS row and nowhere else because it is the one control that
+   * has to be reachable from both surfaces it switches between — put it in the
+   * grid's own toolbar and pressing "Chat" would take the way back off screen
+   * with it.
+   */
+  viewSwitch?: React.ReactNode;
+  /**
    * Rendered INSIDE another bar rather than as its own — drops the frame (its
    * border and outer padding) so the host row draws exactly one line.
    */
@@ -109,6 +118,7 @@ export function WorkspaceBar({
   onDropFiles,
   busy = false,
   actions,
+  viewSwitch,
   embedded = false,
 }: WorkspaceBarProps) {
   const t = useT();
@@ -268,7 +278,7 @@ export function WorkspaceBar({
 
   // Nothing open, nothing to add to and no controls to carry: the wizard IS the
   // screen, and an empty bar above it would be furniture.
-  if (!hasTabs && !actions) return null;
+  if (!hasTabs && !actions && !viewSwitch) return null;
 
   return (
     <div
@@ -576,6 +586,15 @@ export function WorkspaceBar({
         </span>
       </button>
       </div>
+      )}
+
+      {viewSwitch && (
+        <div
+          data-testid="workspace-bar-view-switch"
+          className="flex shrink-0 items-center"
+        >
+          {viewSwitch}
+        </div>
       )}
 
       {actions && (
