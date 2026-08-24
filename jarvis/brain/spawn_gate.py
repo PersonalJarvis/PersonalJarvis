@@ -116,6 +116,25 @@ def _marker_spans(text: str) -> list[tuple[int, int]]:
 # realtime answer pull-back (``_DELEGATE_ANSWER_MAX_TOKENS``).
 _CONFIRM_MAX_WORDS = 6
 
+# …unless the confirmation NAMES the vehicle, which is evidence the six-word
+# cap is only guessing at. The counter-example above is dangerous precisely
+# because it confirms and then changes the subject; "just do the sub and then
+# do it" confirms and points back at the very thing that was offered. Live
+# 2026-08-24 10:24 Turn 5: the user's third request in a row, read as a
+# confirm by every classifier, refused on length alone (eight words). Spoken
+# turns carry filler ("just", "and then") that written ones do not, so the
+# cap has to be generous once the vehicle is on the record.
+_CONFIRM_MAX_WORDS_NAMING_VEHICLE = 14
+
+# The clipped form of the vehicle, which the marker pattern deliberately does
+# NOT carry: ``_DELEGATION_MARKER_RE`` is shared with the Agentic-IDE turn
+# detector (``names_spawn_vehicle``), where a bare "sub" would start stealing
+# turns from a workspace pane. Inside an ARMED offer window there is no such
+# ambiguity — the subject under discussion is the offered agent — so the
+# short form is honoured only here. Word-bounded so "subscribe", "submit",
+# "subject" and "substitute" stay untouched.
+_SHORT_VEHICLE_RE: re.Pattern[str] = re.compile(r"\bsubs?\b", re.IGNORECASE)
+
 # An offer is only fresh for the immediate follow-up exchange. Voice turns
 # arrive within seconds; two minutes comfortably covers a slow "hmm... yes"
 # without letting a stale offer unlock a spawn much later in the session.
@@ -188,7 +207,9 @@ class DelegationOfferWindow:
 
         The turn that armed the window can never confirm itself, a long
         sentence never confirms, and any veto wording closes the window for
-        good (declined offers must not linger as an unlockable spawn).
+        good (declined offers must not linger as an unlockable spawn). A
+        confirmation that names the vehicle gets the longer cap — see
+        ``_CONFIRM_MAX_WORDS_NAMING_VEHICLE``.
         """
         if not self._armed_text:
             return False
@@ -202,7 +223,9 @@ class DelegationOfferWindow:
         if "veto" in verdicts:
             self.disarm()
             return False
-        if len(norm.split()) > _CONFIRM_MAX_WORDS:
+        names_vehicle = bool(_marker_spans(norm)) or bool(_SHORT_VEHICLE_RE.search(norm))
+        cap = _CONFIRM_MAX_WORDS_NAMING_VEHICLE if names_vehicle else _CONFIRM_MAX_WORDS
+        if len(norm.split()) > cap:
             return False
         if "confirm" in verdicts:
             self.disarm()

@@ -167,6 +167,37 @@ def test_long_sentence_containing_yes_does_not_unlock() -> None:
     )
 
 
+def test_spoken_confirm_naming_the_vehicle_unlocks_past_the_word_cap() -> None:
+    """Live 2026-08-24 10:24 Turn 5 — the user's third ask in a row.
+
+    Every classifier read "just follow the sub and then do it" as a confirm;
+    it was refused on length alone (eight words against a six-word cap).
+    Naming the vehicle — here the clipped "sub" — is the evidence the cap is
+    otherwise only guessing at, so the confirmation stands.
+    """
+    assert llm_spawn_allowed("Give me an overview of my calendar and mails.") is False
+    assert llm_spawn_allowed("Just follow the sub and then do it.") is True
+
+
+def test_longer_cap_needs_the_vehicle_not_merely_length() -> None:
+    """The counter-example the cap exists for must stay blocked.
+
+    It confirms and then changes the subject; the Turn-5 shape confirms and
+    points back at what was offered. Only the second one gets the long cap.
+    """
+    assert llm_spawn_allowed("Where should I move next?") is False
+    assert llm_spawn_allowed("yes and tell me more about Monaco") is False
+
+
+def test_sub_prefixed_words_are_not_the_vehicle() -> None:
+    """"subscribe" / "submit" / "subject" must not buy the longer cap."""
+    assert llm_spawn_allowed("Where should I move next?") is False
+    assert (
+        llm_spawn_allowed("yes and subscribe me to the newsletter today please")
+        is False
+    )
+
+
 def test_veto_closes_the_offer_window_for_good() -> None:
     assert llm_spawn_allowed("Find out where I should move next.") is False
     assert llm_spawn_allowed("No, don't.") is False
