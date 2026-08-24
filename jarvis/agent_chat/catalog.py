@@ -5,11 +5,21 @@ from the API-Keys page. Picking one makes it the live brain for the turn
 (:mod:`jarvis.agent_chat.runner_brain`), so what the row names is the model
 behind the assistant, not a different assistant.
 
-A subscription coding CLI (Codex, Antigravity, Grok Build) is deliberately
-NOT here. Those are agent loops with their own tools and no chat API; the
-brain cannot be switched to them at all (``SUBAGENT_ONLY_BRAIN_PROVIDERS``),
-and a coding session belongs in the Agentic IDE. ``claude-api`` stays because
-an Anthropic key IS a brain — the row is the API, not Claude Code.
+Two kinds of row, and the difference is who pays and who runs the loop:
+
+``brain``
+    An API key. Jarvis thinks with that provider's model — the router, the
+    tools, the memory, all of it (:mod:`runner_brain`). Billed per token.
+
+``claude-cli`` / ``codex-cli`` / ``agy-cli`` / ``grok-cli``
+    A SUBSCRIPTION seat (Claude Max, ChatGPT, Antigravity, Grok). The vendor
+    CLI runs the loop — that is what a subscription pays for — but inside the
+    Jarvis harness (:mod:`jarvis_harness`): it gets Jarvis' own tools over MCP
+    and a preamble telling it whose hands those are, so it acts as Jarvis and
+    not as a coding assistant that happens to sit in this folder.
+
+Both are offered because both are worth having: the subscription costs
+nothing per turn, the API keys reach models no CLI exposes.
 
 Rows are shown whether or not a credential is saved: one without a key is
 disabled with a "connect" hint that leads to the API-Keys page, so the person
@@ -32,9 +42,11 @@ from typing import Any, Final, Literal
 from jarvis.agent_chat.effort import default_effort, effort_levels
 from jarvis.brain.model_catalog import CURATED_MODELS
 
-#: One runner answers on this surface: Jarvis' brain. The string is what
-#: ``turn_started`` reports and what the permission/effort ladders key on.
-Runner = Literal["brain"]
+#: ``brain`` = Jarvis thinks with this provider's model (runner_brain).
+#: The ``*-cli`` runners are the subscription seats: a vendor CLI driven
+#: non-interactively INSIDE the Jarvis harness (runner_cli + jarvis_harness),
+#: so the model works with Jarvis' own tools and answers as Jarvis.
+Runner = Literal["brain", "claude-cli", "codex-cli", "agy-cli", "grok-cli"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,11 +160,46 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         id="claude-api",
         label="Anthropic Claude",
         family="claude",
-        runner="brain",
+        runner="claude-cli",
         models_source="curated",
         curated_models=_curated("claude-api"),
         default_model="",
         native_resume=True,
+    ),
+    ProviderRow(
+        id="openai-codex",
+        label="OpenAI Codex",
+        family="openai",
+        runner="codex-cli",
+        models_source="curated",
+        # Codex's OWN catalog, not the OpenAI API's: the route replaces this
+        # with the account's live list from ``models_cache.json``.
+        curated_models=CODEX_FALLBACK_MODELS,
+        default_model="",
+        native_resume=True,
+    ),
+    ProviderRow(
+        id="antigravity",
+        label="Antigravity",
+        family="antigravity",
+        runner="agy-cli",
+        models_source="curated",
+        # agy's OWN ids (not the Gemini API's): the route replaces this with
+        # the live ``agy models`` list when the binary answers.
+        curated_models=tuple(
+            CuratedModel(mid, label, efforts) for mid, label, efforts in _agy_fallback_models()
+        ),
+        default_model="",
+        native_resume=True,
+    ),
+    ProviderRow(
+        id="grok-build",
+        label="Grok Build",
+        family="xai",
+        runner="grok-cli",
+        models_source="curated",
+        curated_models=_curated("grok"),
+        default_model="",
     ),
     ProviderRow(id="openai", label="OpenAI", family="openai", runner="brain", models_source="live"),
     ProviderRow(

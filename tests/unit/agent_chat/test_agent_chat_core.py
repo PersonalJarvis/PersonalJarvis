@@ -55,24 +55,30 @@ def test_normalize_effort_folds_onto_the_nearest_offered_level(provider, picked,
     assert effort.normalize_effort(provider, picked) == expected
 
 
-def test_every_row_is_a_brain_jarvis_can_actually_think_with():
-    """The picker names the MODEL behind the assistant, so every row must be one.
+def test_every_row_names_a_runner_that_can_actually_answer():
+    """Two kinds of row, and neither may promise something it cannot do.
 
-    A subscription coding CLI cannot be a brain (it is an agent loop with no
-    chat API, and ``BrainManager.switch`` refuses it), so offering one here
-    would be a pick that silently does nothing — the class of bug this whole
-    surface was rebuilt to end.
+    An API-key row runs Jarvis' brain with that provider's model. A
+    subscription row runs the vendor CLI inside the Jarvis harness. What must
+    never happen is a row that would try to make a coding CLI the BRAIN —
+    ``BrainManager.switch`` refuses those, so the pick could only ever fail.
     """
     from jarvis.brain.manager import SUBAGENT_ONLY_BRAIN_PROVIDERS
 
-    ids = [row.id for row in PROVIDER_ROWS]
-    assert ids, "the picker needs rows"
-    offered = sorted(set(ids) & SUBAGENT_ONLY_BRAIN_PROVIDERS)
-    assert not offered, f"a subagent-only provider is offered as a brain: {offered}"
-    assert all(row.runner == "brain" for row in PROVIDER_ROWS)
+    assert PROVIDER_ROWS, "the picker needs rows"
+    for row in PROVIDER_ROWS:
+        assert row.runner in {"brain", "claude-cli", "codex-cli", "agy-cli", "grok-cli"}
+        if row.id in SUBAGENT_ONLY_BRAIN_PROVIDERS:
+            assert row.runner != "brain", f"{row.id} cannot be a brain"
+
+    # The subscription seats are offered — they cost nothing per turn.
+    ids = {row.id for row in PROVIDER_ROWS}
+    assert {"openai-codex", "antigravity", "grok-build"} <= ids
+    # …and so are the API keys, which reach models no CLI exposes.
+    assert {"openai", "gemini", "grok", "openrouter"} <= ids
 
     claude = provider_row("claude-api")
-    assert claude is not None, "an Anthropic key is a brain and stays offered"
+    assert claude is not None
     d = claude.to_dict()
     assert d["effort_levels"] == ["low", "medium", "high", "xhigh", "max"]
     assert d["curated_models"], "a curated row needs its list"

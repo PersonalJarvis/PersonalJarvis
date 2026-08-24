@@ -393,16 +393,16 @@ def test_read_codex_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
     assert CODEX_FALLBACK_MODELS[0].id == "gpt-5.6-sol"
 
 
-def test_the_coding_clis_are_not_offered_as_brains():
-    """Codex / Antigravity / Grok Build left the picker with the runner swap.
-
-    They are sub-agents: an agent loop on a subscription seat, with no chat API
-    to think with. Their per-model effort ladders still live in effort.py for
-    the sub-agent paths that DO drive them.
-    """
-    for cli in ("antigravity", "openai-codex", "grok-build"):
-        assert provider_row(cli) is None, f"{cli} is offered as a brain"
-    # The ladders themselves are untouched — the IDE and the missions read them.
+def test_the_coding_clis_keep_their_own_runner_and_ladders():
+    """A subscription row runs its CLI — never the brain — with its own dials."""
+    for cli, runner in (
+        ("antigravity", "agy-cli"),
+        ("openai-codex", "codex-cli"),
+        ("grok-build", "grok-cli"),
+    ):
+        row = provider_row(cli)
+        assert row is not None, f"{cli} is missing from the picker"
+        assert row.runner == runner
     assert "low" in effort_levels("antigravity")
 
 

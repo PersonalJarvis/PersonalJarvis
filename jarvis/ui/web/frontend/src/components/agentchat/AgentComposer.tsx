@@ -61,6 +61,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const connected = useEventStore((s) => s.connected);
   const wsWarming = useEventStore((s) => s.wsWarming);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const setApiKeysTab = useEventStore((s) => s.setApiKeysTab);
   const pushToast = useEventStore((s) => s.pushToast);
   const [restarting, setRestarting] = useState(false);
 
@@ -141,6 +142,14 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       pushToast("error", t("permissions.restart_failed"));
       setRestarting(false);
     }
+  }
+
+  // A subscription row is connected by LOGGING IN under Sub-agents; an
+  // API-key row by pasting a key under Brain. Sending everyone to the same
+  // page and letting them hunt is what made this link feel broken.
+  function openConnectPage(p: ProviderOption) {
+    setApiKeysTab(providerKind(p) === "cli" ? "subagents" : "brain");
+    setActiveSection("apikeys");
   }
 
   // ---- option lists -------------------------------------------------
@@ -456,7 +465,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           </span>
           <button
             type="button"
-            onClick={() => setActiveSection("apikeys")}
+            onClick={() => openConnectPage(provider)}
             className="font-medium text-primary hover:underline"
           >
             {t("agent_chat.open_api_keys")}
@@ -484,7 +493,11 @@ export type ProviderKind = "cli" | "api" | "local";
 export const PROVIDER_KINDS: readonly ProviderKind[] = ["cli", "api", "local"];
 export function providerKind(p: { runner: string; keyless: boolean }): ProviderKind {
   if (p.keyless) return "local";
-  return p.runner === "api" ? "api" : "cli";
+  // "brain" = Jarvis thinks with this provider's model on an API key; anything
+  // else is a vendor CLI on a subscription seat. The runner used to be called
+  // "api" for the first kind, and grouping on that name put every brain under
+  // "Coding CLIs" the day it was renamed (live 2026-08-24).
+  return p.runner === "brain" ? "api" : "cli";
 }
 
 /** One compact pick on the composer's bottom row — a pill-sized Combobox. */

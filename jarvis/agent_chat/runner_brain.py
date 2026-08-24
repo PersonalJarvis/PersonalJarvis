@@ -93,6 +93,150 @@ async def apply_pick(brain: Any, provider: str, model: str) -> str:
     return ""
 
 
+class _StepMirror:
+    """Turns the brain's bus events into the timeline's own step rows.
+
+    The brain does not report its work to the chat; it publishes it on the app
+    bus, which is where the voice lane and the classic chat column read it from
+    too (``jarvis/state/turn_trace.py`` keeps the same set for the archive).
+    This subscribes for the length of one turn and translates:
+
+    * ``ActionProposed`` -> a tool row, plus its ``rationale`` as the reasoning
+      text. That sentence is the model's OWN words for why it is about to
+      reach for the tool, and it is the honest source for a trace (maintainer,
+      2026-08-23 — never a second, slower "explain yourself" call).
+    * ``ActionExecuted`` -> that row's result and how long it took. This is
+      Jarvis' real tool path (``jarvis/safety/tool_executor.py``);
+      ``ToolCallStarted`` / ``ToolCallCompleted`` are handled too because other
+      paths publish those instead.
+    * ``BrainTurnCompleted`` -> the receipt (tokens and cost) on the footer.
+
+    Rows are paired in order: a turn runs one tool at a time, so the oldest
+    open call is the one that just closed.
+
+    Read-only and defensive: a malformed event, or an emit that fails, must
+    never reach the brain (AP-18) — a missing row is a cosmetic loss, a raised
+    exception would cost the answer.
+    """
+
+    __slots__ = ("_emit", "_turn_id", "_bus", "_open", "usage", "_seen_text")
+
+    def __init__(self, emit: Any, turn_id: str, bus: Any | None) -> None:
+        self._emit = emit
+        self._turn_id = turn_id
+        self._bus = bus
+        self._open: list[str] = []
+        self.usage: dict[str, Any] = {}
+        self._seen_text: set[str] = set()
+
+    def start(self) -> None:
+        if self._bus is not None and hasattr(self._bus, "subscribe_all"):
+            self._bus.subscribe_all(self._on_event)
+
+    def stop(self) -> None:
+        if self._bus is not None and hasattr(self._bus, "unsubscribe_all"):
+            try:
+                self._bus.unsubscribe_all(self._on_event)
+            except Exception:  # noqa: BLE001 — detaching must never raise
+                log.debug("brain runner: could not detach the step mirror", exc_info=True)
+
+    async def _on_event(self, event: Any) -> None:
+        try:
+            await self._translate(event)
+        except Exception:  # noqa: BLE001 — AP-18: never leave a subscriber
+            log.debug("brain runner: step mirror skipped an event", exc_info=True)
+
+    async def _open_call(self, tool_name: str, args: Any) -> None:
+        call_id = uuid.uuid4().hex
+        self._open.append(call_id)
+        if isinstance(args, dict):
+            payload_in: Any = args
+        elif args:
+            payload_in = {"arguments": str(args)}
+        else:
+            payload_in = {}
+        await self._emit(
+            "tool_call",
+            {
+                "turn_id": self._turn_id,
+                "call_id": call_id,
+                "name": tool_name,
+                "input": payload_in,
+            },
+        )
+
+    async def _close_call(self, *, ok: bool, output: str, duration_ms: Any) -> None:
+        if not self._open:
+            # A result with no row of its own (another turn's, or a path that
+            # only reports the end) would draw a headless row; drop it.
+            return
+        call_id = self._open.pop(0)
+        await self._emit(
+            "tool_result",
+            {
+                "turn_id": self._turn_id,
+                "call_id": call_id,
+                "output": str(output)[:2000],
+                "is_error": not ok,
+                "duration_ms": int(duration_ms or 0),
+            },
+        )
+
+    async def _translate(self, event: Any) -> None:
+        name = type(event).__name__
+        if name == "ActionProposed":
+            text = (getattr(event, "rationale", "") or "").strip()
+            # The same rationale is published per proposal; show each once.
+            if text and text not in self._seen_text:
+                self._seen_text.add(text)
+                await self._emit("reasoning_delta", {"turn_id": self._turn_id, "text": text})
+            await self._open_call(
+                getattr(event, "tool_name", "") or "tool",
+                getattr(event, "args", None),
+            )
+            return
+        if name == "ActionExecuted":
+            await self._close_call(
+                ok=bool(getattr(event, "success", False)),
+                output=(
+                    getattr(event, "error", None) or getattr(event, "output_preview", "") or ""
+                ),
+                duration_ms=getattr(event, "duration_ms", 0),
+            )
+            return
+        if name == "ActionDenied":
+            await self._close_call(
+                ok=False,
+                output=str(getattr(event, "reason", "") or "denied"),
+                duration_ms=0,
+            )
+            return
+        if name == "ToolCallStarted":
+            await self._open_call(
+                getattr(event, "tool_name", "") or "tool",
+                getattr(event, "args_preview", "") or "",
+            )
+            return
+        if name == "ToolCallCompleted":
+            await self._close_call(
+                ok=bool(getattr(event, "success", False)),
+                output=(
+                    getattr(event, "error", None) or getattr(event, "output_preview", "") or ""
+                ),
+                duration_ms=getattr(event, "duration_ms", 0),
+            )
+            return
+        if name == "BrainTurnCompleted":
+            for key, attr in (
+                ("input_tokens", "tokens_in"),
+                ("output_tokens", "tokens_out"),
+                ("cost_usd", "cost_usd"),
+            ):
+                value = getattr(event, attr, None)
+                if isinstance(value, int | float) and value:
+                    self.usage[key] = value
+
+
 async def run_brain_turn(handle: TurnHandle, text: str) -> None:
     """Run one typed turn on Jarvis' brain, streaming it into the timeline."""
     started = time.monotonic()
@@ -102,14 +246,17 @@ async def run_brain_turn(handle: TurnHandle, text: str) -> None:
     async def emit(kind: str, payload: dict[str, Any]) -> None:
         await handle.emit(make_event(kind, payload))
 
+    mirror = _StepMirror(emit, turn_id, getattr(handle, "bus", None))
+
     async def finish(status: str, error: str | None = None) -> None:
+        mirror.stop()
         await emit(
             "turn_finished",
             {
                 "turn_id": turn_id,
                 "status": status,
                 "duration_ms": int((time.monotonic() - started) * 1000),
-                "usage": {},
+                "usage": dict(mirror.usage),
                 "error": error,
             },
         )
@@ -124,10 +271,11 @@ async def run_brain_turn(handle: TurnHandle, text: str) -> None:
 
     pick_error = await apply_pick(brain, handle.session.provider, handle.session.model)
 
-    # The "thinking" line the timeline shows until the first words arrive. The
-    # brain streams its answer but not its reasoning, so the time IS the fact —
-    # the same shape a vendor that redacts its thinking gets.
+    # The "thinking" line the timeline shows until the first words arrive, and
+    # the watcher that fills it: from here on, every tool Jarvis reaches for and
+    # every sentence it writes next to one lands in the timeline as it happens.
     await emit("reasoning_started", {"turn_id": turn_id, "message_id": message_id})
+    mirror.start()
 
     loop = asyncio.get_running_loop()
     seen = ""

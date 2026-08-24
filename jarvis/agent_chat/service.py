@@ -8,11 +8,17 @@ approval card. Cancel sets the turn's event and awaits the task; a runner
 that is mid-tool or mid-stream ends at the next boundary (the API loop
 between deltas, the CLI by killing the child).
 
-Every turn runs on :mod:`runner_brain` — Jarvis' own brain, with the picked
-provider and model applied to it. That is what this surface IS: the assistant,
-typed at instead of spoken to. The CLI and API runners stay in the package for
-the sub-agent paths that drive a vendor CLI; nothing on the chat surface
-reaches them any more (maintainer, 2026-08-24). The runner is recorded in
+The runner is picked per turn from the provider row, and either way the
+answer is JARVIS — the difference is only who runs the loop and who pays:
+
+* an API-key row runs :mod:`runner_brain`: Jarvis' own brain thinks with that
+  provider's model, billed per token;
+* a subscription row runs :mod:`runner_cli`: the vendor CLI drives the loop
+  (that is what a Claude Max / ChatGPT / Antigravity seat pays for) inside the
+  Jarvis harness, so it works with Jarvis' tools and answers as Jarvis.
+
+``claude-api`` is the dual row: Claude Code when the binary is on PATH, the
+brain on the Anthropic key otherwise. The choice is recorded in
 ``turn_started`` so the timeline can say what answered.
 """
 
@@ -20,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +39,7 @@ from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle
 from jarvis.agent_chat.runner_brain import RUNNER as BRAIN_RUNNER
 from jarvis.agent_chat.runner_brain import run_brain_turn
+from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
 from jarvis.agent_chat.store import AgentChatSession, AgentChatStore
 
 log = logging.getLogger(__name__)
@@ -49,14 +57,21 @@ class NoSuchSession(KeyError):
 
 
 def resolve_runner(provider: str) -> str:
-    """Which runner answers for ``provider`` — on this surface, always the brain.
+    """Which runner answers for ``provider`` on this machine, right now.
 
-    The pick names the MODEL Jarvis thinks with, not a different assistant, so
-    there is one runner: :mod:`runner_brain`. A provider that cannot be a brain
-    (a subscription coding CLI) is not offered by the catalog at all, and the
-    runner reports it as the turn's error if one ever arrives.
+    ``claude-api`` is dual: Claude Code (the CLI) when it is installed — the
+    subscription path, no per-token cost — else Jarvis' brain on the Anthropic
+    key. Every other row names its runner outright, and an unknown provider
+    falls back to the brain, which reports honestly if it cannot answer.
     """
-    return BRAIN_RUNNER
+    row = provider_row(provider)
+    if row is None:
+        return BRAIN_RUNNER
+    if row.id == "claude-api":
+        if shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"):
+            return "claude-cli"
+        return BRAIN_RUNNER
+    return row.runner
 
 
 class _Running:
@@ -75,8 +90,10 @@ class AgentChatService:
         *,
         assistant_name: Callable[[], str] | None = None,
         default_cwd: Callable[[], str] | None = None,
+        bus: Any | None = None,
     ) -> None:
         self.store = store
+        self._bus = bus
         self._assistant_name = assistant_name or (lambda: "Jarvis")
         self._default_cwd = default_cwd or (lambda: str(Path.home()))
         self._running: dict[str, _Running] = {}
@@ -195,11 +212,17 @@ class AgentChatService:
             cancel=cancel,
             history=history,
             assistant_name=self._assistant_name(),
+            bus=self._bus,
         )
 
         async def _body() -> None:
             try:
-                await run_brain_turn(handle, text)
+                if supports_cli_runner(runner):
+                    vendor = await run_cli_turn(handle, text, runner)
+                    if vendor and vendor != session.vendor_session:
+                        self.store.update_session(session_id, vendor_session=vendor)
+                else:
+                    await run_brain_turn(handle, text)
             except asyncio.CancelledError:
                 await self._emit(
                     session_id,

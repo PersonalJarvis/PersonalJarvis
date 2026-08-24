@@ -127,21 +127,19 @@ def test_a_typed_turn_runs_on_the_brain_with_the_picked_model(tmp_path: Path, br
     asyncio.run(scenario())
 
 
-def test_a_coding_subagent_cannot_answer_here_and_says_so(tmp_path: Path, brain: FakeBrain):
-    """A sub-agent pick is refused with a sentence, not a silent wrong answer."""
+def test_the_brain_runner_refuses_a_coding_subagent_in_words(brain: FakeBrain):
+    """The last line of defence, if a sub-agent ever reaches the brain runner.
+
+    Those rows run their own CLI, so they never get here in practice — but a
+    stale session or a hand-made request must be told, not answered as
+    somebody else.
+    """
 
     async def scenario() -> None:
-        svc = AgentChatService(AgentChatStore(":memory:"))
-        # The catalog no longer offers one, so build the session past it: what
-        # is pinned here is the runner's own guard, the last line of defence.
-        session = svc.create_session(provider="grok", cwd=str(tmp_path))
-        svc.store.update_session(session.session_id, provider="antigravity")
-        q = svc.subscribe(session.session_id)
-        await svc.send(session.session_id, "hi")
-        events = await _drain(q, "turn_finished")
-        finished = events[-1]["payload"]
-        assert finished["status"] == "done"
-        assert "coding sub-agent" in (finished["error"] or "")
+        from jarvis.agent_chat.runner_brain import apply_pick
+
+        why = await apply_pick(brain, "antigravity", "")
+        assert "coding sub-agent" in why
         assert brain.switched == [], "a sub-agent must never become the brain"
 
     asyncio.run(scenario())
@@ -224,9 +222,15 @@ def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, brain: F
 def _exercise_routes(client: TestClient, tmp_path: Path) -> None:
     cat = client.get("/api/agent-chat/catalog").json()
     ids = [p["id"] for p in cat["providers"]]
-    assert "claude-api" in ids and "openai" in ids
-    # The subscription coding CLIs are not brains and are not offered.
-    assert "openai-codex" not in ids and "antigravity" not in ids
+    # Both kinds are offered: the API keys and the subscription seats.
+    assert {"claude-api", "openai", "openai-codex", "antigravity"} <= set(ids)
+    codex = next(p for p in cat["providers"] if p["id"] == "openai-codex")
+    assert codex["runner"] == "codex-cli"
+    openai = next(p for p in cat["providers"] if p["id"] == "openai")
+    assert openai["runner"] == "brain"
+    # An API-key row is not a CLI question — reporting False there greyed every
+    # brain out as "not installed" (live 2026-08-24).
+    assert openai["cli_installed"] is None
     claude = next(p for p in cat["providers"] if p["id"] == "claude-api")
     assert claude["effort_levels"][-1] == "max"
     assert cat["default_cwd"] == str(tmp_path)
