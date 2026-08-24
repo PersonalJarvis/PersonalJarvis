@@ -1612,6 +1612,105 @@ def test_sanitizer_drops_ref_and_combinators_keeping_siblings() -> None:
     assert result["properties"]["value"] == {"description": "kept sibling"}
 
 
+def test_sanitizer_collapses_union_type_to_a_single_gemini_type() -> None:
+    """A JSON-Schema union type is not a Gemini type — and killed the socket.
+
+    Live 2026-08-24: one tool declared ``["string", "number", "boolean"]`` and
+    the whole LiveConnectConfig failed validation, dropping every call to the
+    fallback provider.
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "value": {"type": ["string", "number", "boolean"]},
+            "maybe": {"type": ["string", "null"]},
+        },
+    }
+
+    result = _sanitize(schema)
+
+    assert result["properties"]["value"] == {"type": "string"}
+    assert result["properties"]["maybe"] == {"type": "string", "nullable": True}
+
+
+def test_sanitizer_keeps_a_null_only_type_permissive() -> None:
+    result = _sanitize({"type": ["null"], "description": "kept"})
+
+    assert result == {"description": "kept", "nullable": True}
+
+
+def test_sanitizer_collapses_tuple_form_items() -> None:
+    schema = {
+        "type": "array",
+        "items": [{"type": "string", "format": "uri"}, {"type": "integer"}],
+    }
+
+    result = _sanitize(schema)
+
+    assert result["items"] == {"type": "string"}
+
+
+def test_sanitizer_renders_enum_members_as_strings() -> None:
+    schema = {"type": "integer", "enum": [1, 2, 3]}
+
+    assert _sanitize(schema) == {"type": "integer", "enum": ["1", "2", "3"]}
+
+
+def test_declaration_the_sdk_rejects_is_dropped_not_raised() -> None:
+    """One malformed tool must never cost the user their voice provider."""
+    from jarvis.plugins.realtime.gemini_live import _sanitize_declarations
+
+    class _Types:
+        class FunctionDeclaration:
+            def __init__(self, **kwargs: object) -> None:
+                parameters = kwargs.get("parameters")
+                if isinstance(parameters, dict) and parameters.get("type") == "bogus":
+                    raise ValueError("1 validation error\nbad type")
+
+    good = {"name": "ok", "description": "d", "parameters": {"type": "object"}}
+    bad = {"name": "broken", "description": "d", "parameters": {"type": "bogus"}}
+
+    result = _sanitize_declarations((good, bad), types=_Types)
+
+    assert [entry["name"] for entry in result] == ["ok"]
+
+
+def test_declarations_pass_the_real_sdk_after_sanitizing() -> None:
+    """The exact live failure, validated against the installed google-genai."""
+    types = pytest.importorskip("google.genai.types")
+    from jarvis.plugins.realtime.gemini_live import _sanitize_declarations
+
+    declarations = _sanitize_declarations(
+        (
+            {
+                "name": "issue_write",
+                "description": "Write an issue.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "value": {"type": ["string", "number", "boolean"]}
+                                },
+                            },
+                        }
+                    },
+                },
+            },
+        ),
+        types=types,
+    )
+
+    assert [entry["name"] for entry in declarations] == ["issue_write"]
+    types.LiveConnectConfig(
+        response_modalities=[types.Modality.AUDIO],
+        tools=[{"function_declarations": declarations}],
+    )
+
+
 def test_sanitizer_is_idempotent() -> None:
     schema = {
         "type": "object",

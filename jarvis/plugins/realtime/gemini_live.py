@@ -1033,6 +1033,7 @@ def _sanitize_schema_for_gemini(schema: Any, *, tool_name: str = "") -> Any:
     if not isinstance(schema, dict):
         return schema
     sanitized: dict[str, Any] = {}
+    nullable_from_type = False
     for key, value in schema.items():
         if key not in _GEMINI_SCHEMA_KEYS:
             # Drop unsupported keys but keep their siblings: the tool stays
@@ -1049,13 +1050,65 @@ def _sanitize_schema_for_gemini(schema: Any, *, tool_name: str = "") -> Any:
                 for name, sub in value.items()
             }
         elif key == "items":
+            # JSON Schema's tuple form lists one schema per position; Gemini
+            # takes exactly ONE item schema. The first entry describes the
+            # element type well enough for a permissive declaration.
+            if isinstance(value, (list, tuple)):
+                first = next(
+                    (entry for entry in value if isinstance(entry, dict)), None
+                )
+                if first is None:
+                    log.debug(
+                        "gemini-live: dropping empty tuple-form 'items' "
+                        "(tool=%s)",
+                        tool_name or "unknown",
+                    )
+                    continue
+                value = first
             sanitized[key] = _sanitize_schema_for_gemini(value, tool_name=tool_name)
+        elif key == "type" and isinstance(value, (list, tuple)):
+            # A union type ("string" | "number" | null) is legal JSON Schema
+            # and NOT a Gemini type — the SDK validates it as an enum member
+            # and the whole LiveConnectConfig fails, which drops the entire
+            # provider to the fallback family for one tool's schema
+            # (live 2026-08-24: a GitHub issue-field tool did exactly that).
+            # Collapse to the first concrete member; a "null" member becomes
+            # the nullable flag Gemini does understand.
+            named = [str(entry).strip() for entry in value if str(entry).strip()]
+            concrete = [entry for entry in named if entry.lower() != "null"]
+            nullable_from_type = len(concrete) < len(named)
+            if concrete:
+                sanitized[key] = concrete[0]
+            if len(concrete) > 1:
+                log.debug(
+                    "gemini-live: collapsing union type %s to %r (tool=%s)",
+                    named,
+                    concrete[0],
+                    tool_name or "unknown",
+                )
+        elif key == "enum" and isinstance(value, (list, tuple)):
+            # Gemini declares enum members as strings; an integer member is
+            # the same class of validation failure as a union type.
+            sanitized[key] = [str(entry) for entry in value]
         else:
             sanitized[key] = value
+    if nullable_from_type:
+        sanitized["nullable"] = True
     return sanitized
 
 
-def _sanitize_declarations(tools: tuple[Any, ...]) -> list[dict[str, Any]]:
+def _sanitize_declarations(
+    tools: tuple[Any, ...], *, types: Any = None
+) -> list[dict[str, Any]]:
+    """Translate bridge declarations into the Gemini wire subset.
+
+    ``types`` (the lazily imported ``google.genai.types``) enables the final
+    guard: every declaration is validated on its own, and one the installed
+    SDK still rejects is dropped instead of failing the whole
+    ``LiveConnectConfig``. One malformed tool schema must never cost the user
+    their chosen voice provider — the dropped tool stays reachable through
+    ``jarvis_action``.
+    """
     sanitized: list[dict[str, Any]] = []
     for declaration in tools:
         if not isinstance(declaration, dict):
@@ -1066,8 +1119,34 @@ def _sanitize_declarations(tools: tuple[Any, ...]) -> list[dict[str, Any]]:
             entry["parameters"] = _sanitize_schema_for_gemini(
                 entry["parameters"], tool_name=name
             )
+        if types is not None:
+            rejection = _declaration_rejection(types, entry)
+            if rejection:
+                # Logged in full (AP-30): a silently dropped tool looks
+                # exactly like one the model chose not to call.
+                log.warning(
+                    "gemini-live: dropping tool declaration %r the installed "
+                    "google-genai SDK rejects (%s); it stays reachable "
+                    "through jarvis_action",
+                    name or "unnamed",
+                    rejection,
+                )
+                continue
         sanitized.append(entry)
     return sanitized
+
+
+def _declaration_rejection(types: Any, declaration: dict[str, Any]) -> str:
+    """Return why the SDK rejects this declaration, or "" when it accepts it."""
+    function_declaration_cls = getattr(types, "FunctionDeclaration", None)
+    if function_declaration_cls is None:
+        return ""
+    try:
+        function_declaration_cls(**declaration)
+    except Exception as exc:  # noqa: BLE001 — any rejection means "drop it"
+        first_line = str(exc).strip().splitlines()
+        return first_line[0] if first_line else type(exc).__name__
+    return ""
 
 
 class GeminiLiveProvider:
@@ -1272,7 +1351,8 @@ class GeminiLiveProvider:
                     "tools": [
                         {
                             "function_declarations": _sanitize_declarations(
-                                tuple(getattr(cfg, "tools", ()) or ())
+                                tuple(getattr(cfg, "tools", ()) or ()),
+                                types=types,
                             )
                         }
                     ]
