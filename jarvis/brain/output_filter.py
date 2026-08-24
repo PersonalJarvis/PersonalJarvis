@@ -457,6 +457,35 @@ JARGON_COMPOUND_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 2026-08-24: the compound is REPLACED by the user-facing brand, not deleted.
+# Live voice session 10:24: "…a complete overview using a Sub-Agent for your
+# morning briefing…" was spoken as "…using a for your morning briefing…", and
+# "Ich starte dafür einen Subagenten." became "Ich starte dafür einen." —
+# Jarvis could not even announce the thing he was starting. This is exactly
+# the failure the OF-04 audit recorded four lines above for "Provider" and
+# "MCP": a noun cannot be deleted out of the middle of a sentence by regex,
+# and a bare remnant falls through to the residue guard and is spoken as an
+# error. The mandate itself is untouched — the user must not hear the
+# internal compound — but "Agent" IS the user-facing name (the product surface
+# is "<wake-name> Agent" and the app has an Agents board), so substituting it
+# satisfies the mandate and leaves a sentence behind. Declension is preserved
+# so the German accusative stays right ("einen Subagenten" -> "einen Agenten").
+_JARGON_COMPOUND_BRAND = "Agent"
+
+
+def _compound_to_brand(match: re.Match[str]) -> str:
+    """Swap an internal agent compound for the user-facing brand word."""
+    return (
+        f"{_JARGON_COMPOUND_BRAND}en"
+        if match.group(0).lower().endswith("en")
+        else _JARGON_COMPOUND_BRAND
+    )
+
+
+# English needs "an" before the vowel the substitution introduces ("a Sub-Agent"
+# -> "a Agent"). German articles are unaffected because they do not elide.
+_A_BEFORE_AGENT_RE = re.compile(rf"\ba(?=\s+{_JARGON_COMPOUND_BRAND}\b)")
+
 # 2026-05-24: strip the retired "OpenClaw" brand from voice output. Removes the
 # "OpenClaw-" compound prefix ("OpenClaw-Mission" -> "Mission"; "OpenClaw-
 # Subagent" -> "Subagent", which JARGON_COMPOUND_RE then drops) and any
@@ -735,7 +764,8 @@ def scrub_for_voice(
     #    Erweiterung 2026-04-28).
     new = LEGACY_BRAND_RE.sub("", out)
     new = JARGON_RE.sub("", new)
-    new = JARGON_COMPOUND_RE.sub("", new)
+    new = JARGON_COMPOUND_RE.sub(_compound_to_brand, new)
+    new = _A_BEFORE_AGENT_RE.sub("an", new)
     if new != out:
         actions.append("removed_engineering_jargon")
         out = new

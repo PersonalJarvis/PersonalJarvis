@@ -446,6 +446,43 @@ def test_sub_agent_jargon_is_removed() -> None:
     assert "removed_engineering_jargon" in result.actions
 
 
+def test_agent_compound_leaves_a_sentence_not_a_hole() -> None:
+    """Live 2026-08-24 10:24: the scrub gutted the sentence around the word.
+
+    Spoken to the user: "…a complete overview using a for your morning
+    briefing…". Deleting a noun mid-sentence is the failure OF-04 already
+    recorded for "Provider"/"MCP"; the compound is now swapped for the
+    user-facing brand instead, so the mandate holds AND a sentence survives.
+    """
+    text = (
+        "I understand you would like a complete overview using a Sub-Agent "
+        "for your morning briefing."
+    )
+    cleaned = scrub_for_voice(text, language="en").cleaned
+    assert "Sub-Agent" not in cleaned
+    assert "using an Agent for your morning briefing" in cleaned
+
+
+def test_agent_compound_keeps_the_german_declension() -> None:
+    """"einen Subagenten" must not become "einen Agent" — nor "einen"."""
+    result = scrub_for_voice("Ich starte dafür einen Subagenten.")  # i18n-allow
+    assert result.cleaned == "Ich starte dafür einen Agenten."  # i18n-allow
+
+
+def test_agent_compound_announcement_survives() -> None:
+    """Jarvis must be able to say that he is starting one.
+
+    Before the fix this became "Ich starte dafür einen." — the announcement
+    of a spawn with the spawned thing deleted out of it.
+    """
+    cleaned = scrub_for_voice(
+        "Ich aktiviere einen Subagent für die Aufgabe."  # i18n-allow
+    ).cleaned
+    assert "Subagent" not in cleaned
+    assert "Agent" in cleaned
+    assert cleaned.endswith("für die Aufgabe.")  # i18n-allow
+
+
 def test_official_jarvis_agent_label_is_preserved() -> None:
     """The public product label is not the retired generic engineering term."""
     text = "Ein Jarvis-Agent prüft das gründlich und meldet sich."
