@@ -75,6 +75,26 @@ def test_claude_planner_passes_the_cli_mode_through(monkeypatch, tmp_path: Path)
     }
 
 
+def test_claude_planner_opens_the_control_protocol(monkeypatch, tmp_path: Path):
+    """The handshake, without which no permission mode can ever ask.
+
+    ``--permission-prompt-tool stdio`` is a flag Claude Code accepts and then
+    ignores until a client announces itself over the control protocol. Without
+    this frame every tool call ran straight through, so "Ask before acting"
+    behaved exactly like "Auto-accept edits" (maintainer report 2026-08-24).
+    """
+    monkeypatch.setattr(runner_cli, "claude_argv_prefix", lambda: ["claude"])
+    plan = plan_claude(
+        prompt="hi", cwd=tmp_path, model="", effort="", permission_mode="default", resume=None
+    )
+    assert plan.control_init is not None
+    frame = json.loads(plan.control_init)
+    assert frame["type"] == "control_request"
+    assert frame["request"]["subtype"] == "initialize"
+    # One frame per line: the CLI reads its stdin as NDJSON.
+    assert plan.control_init.endswith("\n")
+
+
 def test_codex_planner_maps_the_presets(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(runner_cli, "codex_argv_prefix", lambda: ["codex"])
     monkeypatch.setattr(runner_cli, "read_codex_models", lambda: None)

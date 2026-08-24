@@ -18,9 +18,12 @@ Every CLI resumes its own conversation natively (``claude --resume``,
 row keeps the vendor's id in ``vendor_session`` and a later turn continues
 the same conversation — the tools, skills, MCP servers and permissions are
 the CLI's own, exactly as in a terminal. The person's permission mode maps
-onto the closest stance each CLI offers; a print-mode CLI cannot ask back,
-so ``ask`` means "edits yes, anything riskier is declined by the CLI and
-reported to the model", and ``auto`` bypasses.
+onto the closest stance each CLI offers. Claude Code really does ask: the
+control-protocol handshake below opens a channel on stdin, and its prompts
+arrive as ``can_use_tool`` for the chat's approval card to answer. The
+others cannot ask in print mode, so there ``ask`` means "edits yes, anything
+riskier is declined by the CLI and reported to the model", and ``auto``
+bypasses.
 
 Spawning follows the mission workers: shell-free argv, the prompt on stdin
 where the binary accepts it, ``NO_WINDOW_CREATIONFLAGS``, UTF-8 decoding,
@@ -152,6 +155,36 @@ class CliPlan:
     #: Code's control protocol — permission prompts answered from the chat).
     #: The pump closes stdin once the turn's ``result`` line arrived.
     keep_stdin: bool = False
+    #: The control-protocol handshake, written before the prompt. Claude Code
+    #: only asks about tool calls once a client has announced itself this way.
+    control_init: str | None = None
+
+
+def claude_control_init() -> str:
+    """The handshake that turns Claude Code's control protocol on.
+
+    Without it, ``--permission-prompt-tool stdio`` is a flag the CLI accepts
+    and never uses: it has no client on the other end that it knows can answer,
+    so every tool call runs straight through and "Ask before acting" behaves
+    exactly like "Auto-accept edits" (maintainer report 2026-08-24). The CLI
+    answers this with a ``control_response`` listing its commands; from then on
+    a permission prompt arrives as ``control_request {subtype: can_use_tool}``
+    and the chat's approval card answers it on stdin.
+
+    ``hooks: null`` says this client registers none of its own — the CLI's
+    configured hooks still run.
+    """
+    return (
+        json.dumps(
+            {
+                "type": "control_request",
+                "request_id": "jarvis-init",
+                "request": {"subtype": "initialize", "hooks": None},
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
 
 
 def claude_stream_input(prompt: str) -> str:
@@ -203,6 +236,7 @@ def plan_claude(
         "claude",
         sid,
         keep_stdin=True,
+        control_init=claude_control_init(),
     )
 
 
@@ -1342,6 +1376,10 @@ async def _run_cli_once(
                 if obj.get("type") == "control_request":
                     await _answer_control_request(obj)
                     continue
+                if obj.get("type") == "control_response":
+                    # The CLI's answer to our handshake (its command list).
+                    # Nothing the timeline shows, and not a line to translate.
+                    continue
                 events = translate_claude_line(obj, claude_state)
             for ev in events:
                 await handle.emit(ev)
@@ -1419,6 +1457,14 @@ async def _run_cli_once(
         if proc.stdin is None:
             return
         try:
+            # The control-protocol handshake goes FIRST, on the same stdin, so
+            # the CLI knows a client is listening before it needs to ask about
+            # the first tool call. Back to back with the prompt on purpose: the
+            # CLI reads its input in order, and waiting for the response would
+            # add a round-trip to every turn for no gain.
+            if plan.control_init is not None:
+                proc.stdin.write(plan.control_init.encode("utf-8"))
+                await proc.stdin.drain()
             if plan.stdin_text is not None:
                 proc.stdin.write(plan.stdin_text.encode("utf-8"))
                 await proc.stdin.drain()
