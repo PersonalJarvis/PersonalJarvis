@@ -30,7 +30,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from jarvis.costs import CostEntry, CostSources, build_report, collect_entries, default_sources
-from jarvis.costs.aggregate import filter_entries
+from jarvis.costs.aggregate import bucket_ms_for, filter_entries
 from jarvis.costs.model import ROLES, SURFACES
 
 log = logging.getLogger(__name__)
@@ -207,7 +207,14 @@ class _EntryCache:
         with self._lock:
             if self._key == key and (now - self._at) < self._TTL_S:
                 return self._entries
-        entries = collect_entries(sources, since_ms=since_ms, until_ms=until_ms)
+        # The coding-CLI source pre-aggregates, so it has to know the grain
+        # the report will draw at before it reads a row.
+        entries = collect_entries(
+            sources,
+            since_ms=since_ms,
+            until_ms=until_ms,
+            bucket_ms=bucket_ms_for(since_ms, until_ms),
+        )
         with self._lock:
             self._key = key
             self._entries = entries

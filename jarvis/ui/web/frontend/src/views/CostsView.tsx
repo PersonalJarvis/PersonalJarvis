@@ -55,6 +55,7 @@ import {
   formatShare,
   formatTimestamp,
   formatTokens,
+  formatTokensOrNone,
   keyColor,
   priceSourceLabelKey,
   priceSourceTone,
@@ -154,7 +155,12 @@ export function CostsView() {
 
   const topSpender = data?.by_provider[0];
   const rangeMs = Math.max(1, (data?.until_ms ?? 0) - (data?.since_ms ?? 0));
-  const perDay = totals ? totals.cost_usd / Math.max(1, rangeMs / 86_400_000) : 0;
+  // `cost_usd` is what the work was WORTH; the seat-covered part of it never
+  // reached an invoice. Splitting them here keeps every downstream number
+  // honest about which question it answers.
+  const seat = totals?.subscription_usd ?? 0;
+  const billed = Math.max(0, (totals?.cost_usd ?? 0) - seat);
+  const perDay = billed / Math.max(1, rangeMs / 86_400_000);
 
   return (
     <ScrollArea className="h-full">
@@ -267,19 +273,22 @@ export function CostsView() {
         --------------------------------------------------------------- */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {/*
-            The headline is everything the work was worth. A subscription seat
-            did some of it, and that part is named rather than netted out —
-            hiding it would make the total disagree with every breakdown below.
+            Money that actually left the account. A monthly seat can be worth
+            orders of magnitude more than the metered spend beside it — the
+            coding CLIs alone run to four figures a month at API rates — so
+            adding the two into one headline would read as a bill nobody got.
+            The seat's worth is named on the line below instead, which is the
+            answer to a different question and deserves its own words.
           */}
           <StatTile
             icon={<Coins className="h-4 w-4" />}
             label={t("costs_view.stat_total")}
-            value={money(totals?.cost_usd ?? 0)}
+            value={money(billed)}
             hint={
-              (totals?.subscription_usd ?? 0) > 0
+              seat > 0
                 ? fill(t("costs_view.stat_total_hint_seat"), {
                     perDay: money(perDay),
-                    seat: money(totals?.subscription_usd ?? 0),
+                    seat: money(seat),
                   })
                 : fill(t("costs_view.stat_total_hint"), { perDay: money(perDay) })
             }
@@ -825,12 +834,12 @@ function BreakdownTable({
             </Cell>
             <Cell align="right" muted>
               <span className="tabular-nums" title={formatExact(row.tokens_in)}>
-                {formatTokens(row.tokens_in)}
+                {formatTokensOrNone(row.tokens_in)}
               </span>
             </Cell>
             <Cell align="right" muted>
               <span className="tabular-nums" title={formatExact(row.tokens_out)}>
-                {formatTokens(row.tokens_out)}
+                {formatTokensOrNone(row.tokens_out)}
               </span>
             </Cell>
             <Cell align="right" muted>
@@ -943,7 +952,7 @@ function TopRefsTable({
             </Cell>
             <Cell align="right" muted>
               <span className="tabular-nums" title={formatExact(row.tokens_total)}>
-                {formatTokens(row.tokens_total)}
+                {formatTokensOrNone(row.tokens_total)}
               </span>
             </Cell>
             <Cell align="right" muted>
@@ -1046,7 +1055,7 @@ function EntriesTable({
               className="tabular-nums"
               title={`${formatExact(row.tokens_in)} in / ${formatExact(row.tokens_out)} out`}
             >
-              {formatTokens(row.tokens_in)} / {formatTokens(row.tokens_out)}
+              {formatTokensOrNone(row.tokens_in)} / {formatTokensOrNone(row.tokens_out)}
             </span>
           </Cell>
           <Cell align="right">

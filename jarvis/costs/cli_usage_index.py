@@ -1,0 +1,1204 @@
+"""Incremental index of token usage in the vendor coding-CLI session logs.
+
+The cost read model (:mod:`jarvis.costs.sources`) answers a request in
+milliseconds because every store it reads is a small SQLite file. The coding
+CLIs are the opposite: they append JSONL transcripts that on a working machine
+reach several gigabytes (measured here: 659 MB of Claude Code across 948 files,
+9.5 GB of Codex across 2466 files, one single rollout of 484 MB). Parsing that
+per request is impossible, so this module reads each file ONCE, remembers the
+byte offset it got to, and writes one small row per model call into its own
+database. Callers then query rows, never logs.
+
+Nothing here prices anything — that stays with the read model. This module only
+answers *how many tokens, when, by which agent and model*.
+
+What each source looks like — MEASURED on a live install, not taken from
+documentation:
+
+**Claude Code** — ``<config>/projects/<slug>/<session>.jsonl``. The records
+that carry usage have ``type == "assistant"`` and hold it at
+``message.usage``, with the thinking count nested one level deeper in
+``usage.output_tokens_details``.
+
+*The identity of such a record is NOT its ``uuid``.* One API response is
+written as one line PER content block, each line getting its own ``uuid`` while
+repeating the SAME ``message.usage``. On a sampled transcript that was 64
+assistant lines for 31 responses — deduplicating by ``uuid`` would have
+reported roughly twice the tokens that were actually billed. The identity used
+here is ``message.id`` (the ``msg_...`` the API assigns), falling back to
+``requestId`` and only then to ``uuid``. Because that id is unique everywhere,
+the same response copied into a resumed or forked transcript is also counted
+once, which is the correct answer.
+
+**Codex** — ``<home>/sessions/<YYYY>/<MM>/<DD>/rollout-<iso>-<uuid>.jsonl``.
+Usage arrives as ``event_msg`` records with ``payload.type == "token_count"``.
+Only ``payload.info.last_token_usage`` is read: its sibling
+``total_token_usage`` is CUMULATIVE, so summing it would multiply the real
+number by the turn count. ``info`` is ``null`` on the records a session emits
+before its first model call — those contribute nothing. The model is not on the
+usage record; it is on ``turn_context`` records and is carried forward within
+the file (and across a resumed scan, which is why the resume row stores it).
+The session id comes from the ``session_meta`` record, or from the filename.
+
+**agy** — ``<root>/sessions/**/wire.jsonl``. Two generations ship under one
+binary and keep separate roots (``~/.kimi``, ``~/.kimi-code``); both are read,
+since a machine can carry both histories. The usage record shape is taken from
+real transcripts of the LEGACY layout, the only one on this machine that holds
+finished turns::
+
+    {"timestamp": 1770293705.85, "message": {"type": "StatusUpdate", "payload":
+      {"token_usage": {"input_other": 1384, "output": 184,
+                       "input_cache_read": 4864, "input_cache_creation": 0}}}}
+
+Those counters are per model call, not cumulative (verified: they rise and fall
+across a session). The eleven current-layout transcripts available here contain
+only the setup prefix a session writes when it opens, so that generation's
+finished-turn shape is UNVERIFIED: its files are scanned with the same reader
+and contribute nothing unless they carry the same records. Nothing is guessed.
+agy records no model id anywhere in the transcript, so :attr:`CliTurn.model`
+stays empty for it.
+
+Design rules this module holds itself to:
+
+* **Never raises.** A missing root, an unreadable file, a corrupt line, a
+  locked database — each degrades to "contributed nothing" and is logged.
+  A fresh machine with none of these directories returns empty results.
+* **Incremental.** A file is re-opened at its stored offset when it grew, and
+  re-read from zero only when it SHRANK (rotated or rewritten), whose rows are
+  dropped first. An offset is only ever stored at a line boundary.
+* **Bounded.** :func:`refresh` stops when its deadline is spent, commits what
+  it has and says ``complete=False``. Files are taken newest-modified first and
+  no single file may take more than :data:`_FILE_BYTE_BUDGET` per run, so one
+  half-gigabyte rollout cannot starve the rest.
+* **Cheap first.** Every line is tested for a substring on the raw bytes before
+  ``json.loads`` is considered.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import sqlite3
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import IO, Any
+from urllib.parse import quote
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Vocabulary
+# ---------------------------------------------------------------------------
+
+AGENT_CLAUDE = "claude-cli"
+"""Claude Code. Same spelling as ``jarvis.costs.model.SUBSCRIPTION_RUNNERS``."""
+
+AGENT_CODEX = "codex-cli"
+"""The Codex CLI."""
+
+AGENT_AGY = "agy-cli"
+"""The agy CLI (both generations of its data root)."""
+
+AGENTS: tuple[str, ...] = (AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY)
+
+#: Filename of the index, relative to the data dir.
+DB_NAME = "cli_usage_index.db"
+
+# Token accounting, mirrored from ``jarvis/costs/sources.py`` so both halves of
+# the section count the same way. Cache CREATION is input (billed at a premium),
+# cache READS are their own cheap bucket.
+_IN_KEYS = (
+    "input_tokens",
+    "prompt_tokens",
+    "cache_creation_input_tokens",
+    "cache_write_input_tokens",
+)
+_OUT_KEYS = ("output_tokens", "completion_tokens")
+
+# Reasoning is a BREAKDOWN of the output count, never a sibling of it. It only
+# stands in when a source reports no primary output count at all.
+_OUT_DETAIL_KEYS = ("reasoning_output_tokens", "thinking_tokens")
+
+_CACHED_KEYS = (
+    "cache_read_input_tokens",
+    "cached_input_tokens",
+    "cache_read_tokens",
+    "cache_hit_tokens",
+)
+
+# agy names its counters after the position they occupy in a request rather
+# than after the API field they came from. Renaming them into the canonical
+# vocabulary above is a translation, not a second accounting rule.
+_AGY_KEY_MAP = {
+    "input_other": "input_tokens",
+    "input_cache_creation": "cache_creation_input_tokens",
+    "input_cache_read": "cache_read_input_tokens",
+    "output": "output_tokens",
+}
+
+# Cheap pre-filters, tested on the raw bytes of a line before any parsing.
+_CLAUDE_MARK = b'"usage"'
+_CODEX_MARKS = (b'"token_count"', b'"turn_context"', b'"session_meta"')
+_AGY_MARK = b'"token_usage"'
+
+_LABEL_MAX = 90
+_DB_TIMEOUT_S = 5.0
+
+#: How many lines pass between two clock reads. Reading the clock per line of a
+#: 484 MB file costs more than the parsing it guards.
+_DEADLINE_CHECK_LINES = 2000
+
+#: Most bytes one file may contribute to a single :func:`refresh`. Without it a
+#: single huge rollout would consume every run's whole budget forever and the
+#: files behind it would never be reached.
+_FILE_BYTE_BUDGET = 48 * 1024 * 1024
+
+#: The trailing UUID of ``rollout-<iso>-<uuid>.jsonl``.
+_ROLLOUT_ID = re.compile(r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$")
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS indexed_files (
+    path        TEXT PRIMARY KEY,
+    agent       TEXT NOT NULL,
+    session_id  TEXT NOT NULL DEFAULT '',
+    size        INTEGER NOT NULL DEFAULT 0,
+    mtime_ns    INTEGER NOT NULL DEFAULT 0,
+    byte_offset INTEGER NOT NULL DEFAULT 0,
+    model       TEXT NOT NULL DEFAULT '',
+    cwd         TEXT NOT NULL DEFAULT '',
+    label       TEXT NOT NULL DEFAULT '',
+    scanned_ms  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS cli_turns (
+    agent         TEXT NOT NULL,
+    dedup_key     TEXT NOT NULL,
+    path          TEXT NOT NULL DEFAULT '',
+    session_id    TEXT NOT NULL DEFAULT '',
+    ts_ms         INTEGER NOT NULL DEFAULT 0,
+    model         TEXT NOT NULL DEFAULT '',
+    tokens_in     INTEGER NOT NULL DEFAULT 0,
+    tokens_out    INTEGER NOT NULL DEFAULT 0,
+    tokens_cached INTEGER NOT NULL DEFAULT 0,
+    cwd           TEXT NOT NULL DEFAULT '',
+    label         TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (agent, dedup_key)
+);
+CREATE INDEX IF NOT EXISTS idx_cli_turns_ts ON cli_turns (ts_ms);
+"""
+
+_INSERT_TURN = (
+    "INSERT OR IGNORE INTO cli_turns "
+    "(agent, dedup_key, path, session_id, ts_ms, model, "
+    " tokens_in, tokens_out, tokens_cached, cwd, label) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+_UPSERT_FILE = (
+    "INSERT INTO indexed_files "
+    "(path, agent, session_id, size, mtime_ns, byte_offset, model, cwd, label, scanned_ms) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    "ON CONFLICT(path) DO UPDATE SET "
+    "agent=excluded.agent, session_id=excluded.session_id, size=excluded.size, "
+    "mtime_ns=excluded.mtime_ns, byte_offset=excluded.byte_offset, model=excluded.model, "
+    "cwd=excluded.cwd, label=excluded.label, scanned_ms=excluded.scanned_ms"
+)
+
+
+# ---------------------------------------------------------------------------
+# Public shapes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CliTurn:
+    """One model call a coding CLI made, as its own transcript recorded it.
+
+    ``model`` is empty where the CLI does not write one down (agy), and
+    ``cwd`` is empty where its layout does not preserve it (agy's legacy
+    per-folder buckets are an MD5 of the directory, not the directory).
+    """
+
+    agent: str
+    session_id: str
+    ts_ms: int
+    model: str
+    tokens_in: int
+    tokens_out: int
+    tokens_cached: int
+    cwd: str
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
+class CliRollup:
+    """Indexed turns summed inside one time bucket.
+
+    The cost report groups by model, session and time bucket and never shows
+    an individual call, so summing them in SQLite costs it nothing and saves
+    it building six figures' worth of objects per request.
+    """
+
+    agent: str
+    session_id: str
+    ts_ms: int
+    """Start of the bucket the rows fell into."""
+
+    model: str
+    tokens_in: int
+    tokens_out: int
+    tokens_cached: int
+    turns: int
+    cwd: str
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshResult:
+    """What one :func:`refresh` managed to do inside its budget."""
+
+    files_seen: int
+    """Transcripts discovered on disk, whether or not they needed reading."""
+
+    files_scanned: int
+    """Transcripts actually opened and read from this run."""
+
+    bytes_read: int
+    turns_added: int
+
+    complete: bool
+    """False when the deadline or a per-file cap cut the run short. Whatever
+    was read is committed either way; the next call resumes where it stopped."""
+
+    elapsed_s: float
+    errors: int
+    """Files that could not be read or parsed at all. Logged, never raised."""
+
+
+@dataclass(frozen=True, slots=True)
+class IndexState:
+    """How far the index has got — enough for a UI to say "still indexing"."""
+
+    files_known: int
+    files_indexed: int
+    files_pending: int
+    bytes_pending: int
+    turns: int
+    db_path: Path
+
+    @property
+    def complete(self) -> bool:
+        return self.files_pending == 0
+
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+
+def _int(value: object) -> int:
+    try:
+        return int(value or 0)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        # Silence is right: one malformed counter in a historic transcript means
+        # that counter is 0, not that the whole file stops being indexable. The
+        # turn still carries its timestamp, session and model.
+        return 0
+
+
+def _clip(text: object, limit: int = _LABEL_MAX) -> str:
+    s = " ".join(str(text or "").split())
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _iso_ms(value: object) -> int:
+    """ISO-8601 (``...Z`` included) to epoch milliseconds, 0 when unusable."""
+    if not isinstance(value, str) or not value:
+        return 0
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError as exc:
+        log.debug("cli usage index: unparsable timestamp %r (%s)", value, exc)
+        return 0
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return int(stamp.timestamp() * 1000)
+
+
+def _epoch_ms(value: object) -> int:
+    """Epoch seconds (agy) or milliseconds to epoch milliseconds."""
+    try:
+        seconds = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        log.debug("cli usage index: unusable epoch stamp %r", value)
+        return 0
+    if seconds <= 0:
+        return 0
+    # A value already in milliseconds is far past any plausible second-count.
+    if seconds > 1e11:
+        return int(seconds)
+    return int(seconds * 1000)
+
+
+def _usage_totals(usage: Mapping[str, Any]) -> tuple[int, int, int]:
+    """``(in, out, cached)`` under the convention shared with the read model."""
+    tokens_in = sum(_int(usage.get(k)) for k in _IN_KEYS)
+    tokens_out = sum(_int(usage.get(k)) for k in _OUT_KEYS)
+    if tokens_out <= 0:
+        tokens_out = sum(_int(usage.get(k)) for k in _OUT_DETAIL_KEYS)
+    tokens_cached = sum(_int(usage.get(k)) for k in _CACHED_KEYS)
+    return tokens_in, tokens_out, tokens_cached
+
+
+def _flatten_details(usage: Mapping[str, Any]) -> dict[str, Any]:
+    """Lift ``output_tokens_details`` to the top so one rule covers everything.
+
+    A top-level key wins: the nested block is a breakdown of it, never a
+    correction to it.
+    """
+    flat: dict[str, Any] = dict(usage)
+    details = usage.get("output_tokens_details")
+    if isinstance(details, Mapping):
+        for key, value in details.items():
+            flat.setdefault(key, value)
+    return flat
+
+
+def _payload(record: Mapping[str, Any], key: str) -> dict[str, Any]:
+    value = record.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _key_of(path: Path) -> str:
+    """Stable database key for a file — case-folded where the OS folds it."""
+    return os.path.normcase(str(path))
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _Candidate:
+    path: Path
+    key: str
+    agent: str
+    size: int
+    mtime_ns: int
+
+
+def _claude_roots(home: Path | None) -> list[Path]:
+    """Claude Code config dirs: the CLI's own override first, then the default."""
+    if home is not None:
+        return [home / ".claude"]
+    roots: list[Path] = []
+    override = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if override:
+        roots.append(Path(override).expanduser())
+    default = Path.home() / ".claude"
+    if default not in roots:
+        roots.append(default)
+    return roots
+
+
+def _codex_roots(home: Path | None) -> list[Path]:
+    """``CODEX_HOME`` when the CLI is pointed elsewhere, else the default."""
+    if home is not None:
+        return [home / ".codex"]
+    override = os.environ.get("CODEX_HOME", "").strip()
+    if override:
+        return [Path(override).expanduser()]
+    return [Path.home() / ".codex"]
+
+
+def _agy_roots(home: Path | None) -> list[Path]:
+    """Both generations. A machine can carry both histories at once."""
+    base = home if home is not None else Path.home()
+    return [base / ".kimi", base / ".kimi-code"]
+
+
+#: ``agent -> (root resolver, glob patterns relative to the root)``. Patterns
+#: are explicit rather than ``rglob`` so discovery walks only the directories
+#: that can hold transcripts.
+_LAYOUTS: tuple[tuple[str, str], ...] = (
+    (AGENT_CLAUDE, "projects/*/*.jsonl"),
+    (AGENT_CODEX, "sessions/*/*/*/rollout-*.jsonl"),
+    # Older Codex builds filed rollouts flat.
+    (AGENT_CODEX, "sessions/rollout-*.jsonl"),
+    # agy, legacy layout (``sessions/<md5>/<session>/wire.jsonl``).
+    (AGENT_AGY, "sessions/*/*/wire.jsonl"),
+    # agy, current layout (``sessions/<wd_...>/<session>/agents/<name>/wire.jsonl``).
+    (AGENT_AGY, "sessions/*/*/agents/*/wire.jsonl"),
+)
+
+
+def _roots_for(agent: str, home: Path | None) -> list[Path]:
+    if agent == AGENT_CLAUDE:
+        return _claude_roots(home)
+    if agent == AGENT_CODEX:
+        return _codex_roots(home)
+    return _agy_roots(home)
+
+
+def _discover(home: Path | None) -> list[_Candidate]:
+    """Every transcript on this machine, with its size and mtime.
+
+    A root that does not exist is simply not there — that is the state of a
+    fresh machine, and of every machine that never installed a given CLI.
+    """
+    found: dict[str, _Candidate] = {}
+    for agent, pattern in _LAYOUTS:
+        for root in _roots_for(agent, home):
+            try:
+                if not root.is_dir():
+                    continue
+                paths = list(root.glob(pattern))
+            except OSError as exc:
+                log.debug("cli usage index: %s not searchable (%s)", root, exc)
+                continue
+            for path in paths:
+                key = _key_of(path)
+                if key in found:
+                    continue
+                try:
+                    stat = path.stat()
+                except OSError as exc:
+                    log.debug("cli usage index: %s not stat-able (%s)", path, exc)
+                    continue
+                found[key] = _Candidate(
+                    path=path,
+                    key=key,
+                    agent=agent,
+                    size=stat.st_size,
+                    mtime_ns=stat.st_mtime_ns,
+                )
+    return list(found.values())
+
+
+# ---------------------------------------------------------------------------
+# Reading
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _Cursor:
+    """What a file has told us so far, carried forward and then persisted.
+
+    Codex puts the model on a record of its own, far from the usage records it
+    applies to. Resuming a half-read file therefore has to start from the model
+    the last run left off with, which is why this is stored rather than derived.
+    """
+
+    session_id: str = ""
+    model: str = ""
+    cwd: str = ""
+    label: str = ""
+
+
+class _LineReader:
+    """Line iteration that keeps an exact byte offset.
+
+    Binary mode, deliberately: text mode rewrites ``\\r\\n`` on Windows, and an
+    offset counted from the rewritten text would point into the middle of a
+    line on the next run. A trailing line without its newline is a file being
+    appended to right now — it is left for the next run, never half-parsed.
+    """
+
+    __slots__ = ("_fh", "offset", "bytes_read", "reason")
+
+    def __init__(self, fh: IO[bytes] | None, start: int) -> None:
+        self._fh = fh
+        self.offset = start
+        self.bytes_read = 0
+        self.reason = "eof"
+
+    def attach(self, fh: IO[bytes]) -> None:
+        """Bind the open handle. Constructed unbound so a failed open still
+        leaves the caller a reader to report the untouched offset from."""
+        self._fh = fh
+
+    def lines(self, *, byte_cap: int, deadline: float) -> Iterator[tuple[int, bytes]]:
+        if self._fh is None:
+            return
+        since_check = 0
+        for raw in self._fh:
+            if not raw.endswith(b"\n"):
+                self.reason = "partial"
+                return
+            start = self.offset
+            self.offset += len(raw)
+            self.bytes_read += len(raw)
+            yield start, raw
+            if self.bytes_read >= byte_cap:
+                self.reason = "cap"
+                return
+            since_check += 1
+            if since_check >= _DEADLINE_CHECK_LINES:
+                since_check = 0
+                if time.monotonic() >= deadline:
+                    self.reason = "deadline"
+                    return
+
+
+def _decode(raw: bytes) -> dict[str, Any] | None:
+    """One JSONL line to a record, or ``None`` when it is not usable.
+
+    UTF-8 with replacement: a byte sequence a CLI wrote in another encoding
+    costs that one string, never the file.
+    """
+    try:
+        record = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError as exc:
+        log.debug("cli usage index: unparsable line skipped (%s)", exc)
+        return None
+    return record if isinstance(record, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# Per-agent readers
+# ---------------------------------------------------------------------------
+
+# One row as the turn table takes it.
+_Row = tuple[str, str, str, str, int, str, int, int, int, str, str]
+
+
+def _claude_row(
+    record: Mapping[str, Any], cand: _Candidate, cursor: _Cursor
+) -> _Row | None:
+    if record.get("type") != "assistant":
+        return None
+    message = _payload(record, "message")
+    usage = message.get("usage")
+    if not isinstance(usage, Mapping):
+        return None
+    tokens_in, tokens_out, tokens_cached = _usage_totals(_flatten_details(usage))
+    if tokens_in + tokens_out + tokens_cached <= 0:
+        return None
+    # See the module docstring: ``uuid`` is per content block, ``message.id``
+    # is per API response, and the API response is what was billed.
+    dedup = str(message.get("id") or record.get("requestId") or record.get("uuid") or "")
+    if not dedup:
+        return None
+    session_id = str(record.get("sessionId") or record.get("session_id") or cursor.session_id)
+    if session_id:
+        cursor.session_id = session_id
+    cwd = str(record.get("cwd") or cursor.cwd)
+    if cwd:
+        cursor.cwd = cwd
+        cursor.label = _clip(Path(cwd).name)
+    return (
+        cand.agent,
+        dedup,
+        cand.key,
+        session_id or cand.path.stem,
+        _iso_ms(record.get("timestamp")),
+        str(message.get("model") or ""),
+        tokens_in,
+        tokens_out,
+        tokens_cached,
+        cwd,
+        cursor.label,
+    )
+
+
+def _codex_row(
+    record: Mapping[str, Any], offset: int, cand: _Candidate, cursor: _Cursor
+) -> _Row | None:
+    kind = record.get("type")
+    if kind == "session_meta":
+        meta = _payload(record, "payload")
+        cursor.session_id = str(meta.get("session_id") or meta.get("id") or cursor.session_id)
+        cwd = str(meta.get("cwd") or "")
+        if cwd:
+            cursor.cwd = cwd
+            cursor.label = _clip(Path(cwd).name)
+        return None
+    if kind == "turn_context":
+        context = _payload(record, "payload")
+        cursor.model = str(context.get("model") or cursor.model)
+        cwd = str(context.get("cwd") or "")
+        if cwd and not cursor.cwd:
+            cursor.cwd = cwd
+            cursor.label = _clip(Path(cwd).name)
+        return None
+    if kind != "event_msg":
+        return None
+    payload = _payload(record, "payload")
+    if payload.get("type") != "token_count":
+        return None
+    info = payload.get("info")
+    if not isinstance(info, Mapping):
+        # A session emits ``info: null`` before its first model call. Nothing
+        # was spent, so there is nothing to record and nothing to report.
+        return None
+    # ``last_token_usage`` only: ``total_token_usage`` is cumulative and
+    # summing it would multiply the real number by the turn count.
+    usage = info.get("last_token_usage")
+    if not isinstance(usage, Mapping):
+        return None
+    tokens_in, tokens_out, tokens_cached = _usage_totals(usage)
+    if tokens_in + tokens_out + tokens_cached <= 0:
+        return None
+    return (
+        cand.agent,
+        # Codex records carry no id of their own, so the line's place in the
+        # file is its identity. A rewritten file has its rows dropped first,
+        # so an offset can never mean two different turns.
+        f"{cand.key}:{offset}",
+        cand.key,
+        cursor.session_id or _codex_session_id(cand.path),
+        _iso_ms(record.get("timestamp")),
+        cursor.model,
+        tokens_in,
+        tokens_out,
+        tokens_cached,
+        cursor.cwd,
+        cursor.label,
+    )
+
+
+def _codex_session_id(path: Path) -> str:
+    match = _ROLLOUT_ID.search(path.stem)
+    return match.group(1) if match else path.stem
+
+
+def _agy_row(
+    record: Mapping[str, Any], offset: int, cand: _Candidate, cursor: _Cursor
+) -> _Row | None:
+    message = _payload(record, "message")
+    if message.get("type") != "StatusUpdate":
+        return None
+    payload = _payload(message, "payload")
+    usage = payload.get("token_usage")
+    if not isinstance(usage, Mapping):
+        return None
+    renamed: dict[str, Any] = {
+        _AGY_KEY_MAP.get(str(key), str(key)): value for key, value in usage.items()
+    }
+    tokens_in, tokens_out, tokens_cached = _usage_totals(renamed)
+    if tokens_in + tokens_out + tokens_cached <= 0:
+        return None
+    return (
+        cand.agent,
+        f"{cand.key}:{offset}",
+        cand.key,
+        cursor.session_id,
+        _epoch_ms(record.get("timestamp")),
+        # agy writes no model id into its transcript, at any point.
+        "",
+        tokens_in,
+        tokens_out,
+        tokens_cached,
+        cursor.cwd,
+        cursor.label,
+    )
+
+
+def _agy_session_dir(path: Path) -> Path:
+    """The session folder of a ``wire.jsonl``, in either layout."""
+    if path.parent.parent.name == "agents":
+        return path.parent.parent.parent
+    return path.parent
+
+
+def _agy_context(path: Path) -> tuple[str, str, str]:
+    """``(session_id, cwd, label)`` for a wire log.
+
+    The current layout records the working directory in the session's
+    ``state.json``. The legacy layout records it nowhere — its bucket name is
+    an MD5 of the directory — so an empty ``cwd`` there is the honest answer
+    rather than a reconstruction.
+    """
+    folder = _agy_session_dir(path)
+    session_id = folder.name
+    state = folder / "state.json"
+    cwd = ""
+    title = ""
+    try:
+        if state.is_file():
+            parsed = json.loads(state.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(parsed, dict):
+                cwd = str(parsed.get("workDir") or "")
+                title = str(parsed.get("title") or "")
+    except (OSError, ValueError) as exc:
+        log.debug("cli usage index: %s unreadable (%s)", state, exc)
+    label = _clip(Path(cwd).name if cwd else title or session_id)
+    return session_id, cwd, label
+
+
+# ---------------------------------------------------------------------------
+# Scanning one file
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _FileScan:
+    rows: list[_Row]
+    offset: int
+    cursor: _Cursor
+    bytes_read: int
+    reason: str
+    failed: bool = False
+
+
+def _scan(cand: _Candidate, start: int, cursor: _Cursor, deadline: float) -> _FileScan:
+    """Read one transcript from ``start`` and return the turns it added."""
+    rows: list[_Row] = []
+    reader = _LineReader(None, start)
+    if cand.agent == AGENT_AGY and not cursor.session_id:
+        cursor.session_id, cursor.cwd, cursor.label = _agy_context(cand.path)
+    failed = False
+    try:
+        with cand.path.open("rb") as fh:
+            if start:
+                fh.seek(start)
+            reader.attach(fh)
+            for offset, raw in reader.lines(byte_cap=_FILE_BYTE_BUDGET, deadline=deadline):
+                if not _wanted(cand.agent, raw):
+                    continue
+                record = _decode(raw)
+                if record is None:
+                    continue
+                row = _row_for(cand.agent, record, offset, cand, cursor)
+                if row is not None:
+                    rows.append(row)
+    except OSError as exc:
+        # Partial progress still counts: the lines already parsed are real and
+        # the offset stops exactly where reading stopped, so the next run picks
+        # up from there rather than from the start.
+        log.warning("cli usage index: %s not readable (%s)", cand.path, exc)
+        reader.reason = "error"
+        failed = True
+    return _FileScan(
+        rows=rows,
+        offset=reader.offset,
+        cursor=cursor,
+        bytes_read=reader.bytes_read,
+        reason=reader.reason,
+        failed=failed,
+    )
+
+
+def _wanted(agent: str, raw: bytes) -> bool:
+    """The pre-filter that keeps gigabytes of JSON out of ``json.loads``."""
+    if agent == AGENT_CLAUDE:
+        return _CLAUDE_MARK in raw
+    if agent == AGENT_CODEX:
+        return any(mark in raw for mark in _CODEX_MARKS)
+    return _AGY_MARK in raw
+
+
+def _row_for(
+    agent: str, record: Mapping[str, Any], offset: int, cand: _Candidate, cursor: _Cursor
+) -> _Row | None:
+    if agent == AGENT_CLAUDE:
+        return _claude_row(record, cand, cursor)
+    if agent == AGENT_CODEX:
+        return _codex_row(record, offset, cand, cursor)
+    return _agy_row(record, offset, cand, cursor)
+
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+
+def index_db_path(data_dir: Path | None = None) -> Path:
+    """Where the index lives.
+
+    The data dir — not the process CWD — decides, exactly as
+    ``jarvis.costs.sources.default_sources`` does, so a second instance
+    (``JARVIS_INSTANCE=dev``) indexes into its own file.
+    """
+    root = data_dir
+    if root is None:
+        from jarvis.core import config as cfg
+
+        root = Path(cfg.DATA_DIR)
+    return Path(root) / DB_NAME
+
+
+def _open_rw(path: Path) -> sqlite3.Connection | None:
+    """Open (creating if needed) the index for writing, or ``None``."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path, timeout=_DB_TIMEOUT_S)
+        conn.row_factory = sqlite3.Row
+        # WAL so a report reading the index is never blocked by a refresh, and
+        # NORMAL so a run that touches thousands of files is not thousands of
+        # fsyncs. A lost tail after a crash costs a re-read, never a wrong sum.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.executescript(_SCHEMA)
+        conn.commit()
+        return conn
+    except (OSError, sqlite3.Error) as exc:
+        log.warning("cli usage index: %s not writable (%s)", path, exc)
+        return None
+
+
+def _open_ro(path: Path) -> sqlite3.Connection | None:
+    """Open the index read-only, or ``None`` when there is nothing to read."""
+    if not path.exists():
+        return None
+    try:
+        # Percent-encoded: an unencoded space or ``#`` in the path makes SQLite
+        # open a DIFFERENT, empty database instead of failing.
+        uri = f"file:{quote(path.as_posix(), safe='/:')}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=_DB_TIMEOUT_S)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: %s not readable (%s)", path, exc)
+        return None
+
+
+def _resume_rows(conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
+    try:
+        return {
+            str(row["path"]): row
+            for row in conn.execute(
+                "SELECT path, agent, session_id, size, mtime_ns, byte_offset, "
+                "       model, cwd, label FROM indexed_files"
+            )
+        }
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: resume state unreadable, rebuilding (%s)", exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def refresh(
+    *,
+    data_dir: Path | None = None,
+    deadline_s: float = 5.0,
+    since_ms: int = 0,
+    home: Path | None = None,
+) -> RefreshResult:
+    """Read whatever is new in the coding-CLI transcripts, within a budget.
+
+    ``since_ms`` skips files last modified before that instant: they cannot
+    have gained a turn the caller is asking about, and skipping them leaves
+    their resume state untouched, so a later call with a wider window still
+    picks them up in full.
+
+    ``home`` replaces the user's home directory when resolving the CLI roots.
+    It exists so tests never touch the real ``~/.claude`` or ``~/.codex``; in
+    production it stays ``None`` and the CLIs' own environment overrides apply.
+
+    Never raises. When the index cannot be opened at all the result reports
+    nothing done and ``complete=False``.
+    """
+    started = time.monotonic()
+    deadline = started + max(0.0, deadline_s)
+    db_path = _resolve_db_path(data_dir)
+    if db_path is None:
+        return RefreshResult(0, 0, 0, 0, False, 0.0, 1)
+
+    candidates = _discover(home)
+    conn = _open_rw(db_path)
+    if conn is None:
+        return RefreshResult(len(candidates), 0, 0, 0, False, time.monotonic() - started, 1)
+
+    scanned = 0
+    bytes_read = 0
+    turns_added = 0
+    errors = 0
+    complete = True
+    try:
+        known = _resume_rows(conn)
+        pending = _pending(candidates, known, since_ms)
+        # Newest first: the file a user just closed is the one whose numbers
+        # they are looking at, and it is the one most likely to be small.
+        pending.sort(key=lambda cand: cand.mtime_ns, reverse=True)
+        for cand in pending:
+            if time.monotonic() >= deadline:
+                complete = False
+                break
+            row = known.get(cand.key)
+            start, cursor = _resume_point(cand, row)
+            if row is not None and start == 0:
+                # The file shrank — rotated or rewritten. Its old rows describe
+                # bytes that no longer exist, so they go before it is re-read.
+                _drop_rows(conn, cand.key)
+            scan = _scan(cand, start, cursor, deadline)
+            scanned += 1
+            bytes_read += scan.bytes_read
+            if scan.failed:
+                errors += 1
+            if scan.reason in ("cap", "deadline"):
+                complete = False
+            turns_added += _commit_file(conn, cand, scan)
+            if scan.reason == "deadline":
+                break
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: refresh aborted (%s)", exc)
+        errors += 1
+        complete = False
+    finally:
+        try:
+            conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("cli usage index: final commit failed (%s)", exc)
+        conn.close()
+    return RefreshResult(
+        files_seen=len(candidates),
+        files_scanned=scanned,
+        bytes_read=bytes_read,
+        turns_added=turns_added,
+        complete=complete,
+        elapsed_s=time.monotonic() - started,
+        errors=errors,
+    )
+
+
+def entries(
+    *, data_dir: Path | None = None, since_ms: int, until_ms: int
+) -> Iterator[CliTurn]:
+    """Indexed turns in ``[since_ms, until_ms]``, oldest first.
+
+    Reads only the index, never a transcript, so this is a millisecond
+    operation whatever the logs weigh. An index that does not exist yet yields
+    nothing — call :func:`refresh` to build it.
+    """
+    db_path = _resolve_db_path(data_dir)
+    if db_path is None:
+        return
+    conn = _open_ro(db_path)
+    if conn is None:
+        return
+    try:
+        for row in conn.execute(
+            "SELECT agent, session_id, ts_ms, model, tokens_in, tokens_out, "
+            "       tokens_cached, cwd, label FROM cli_turns "
+            "WHERE ts_ms BETWEEN ? AND ? ORDER BY ts_ms",
+            (since_ms, until_ms),
+        ):
+            yield CliTurn(
+                agent=str(row["agent"] or ""),
+                session_id=str(row["session_id"] or ""),
+                ts_ms=_int(row["ts_ms"]),
+                model=str(row["model"] or ""),
+                tokens_in=_int(row["tokens_in"]),
+                tokens_out=_int(row["tokens_out"]),
+                tokens_cached=_int(row["tokens_cached"]),
+                cwd=str(row["cwd"] or ""),
+                label=str(row["label"] or ""),
+            )
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: read failed (%s)", exc)
+    finally:
+        conn.close()
+
+
+def rollups(
+    *, data_dir: Path | None = None, since_ms: int, until_ms: int, bucket_ms: int
+) -> Iterator[CliRollup]:
+    """Indexed turns summed per (agent, model, session, time bucket).
+
+    ``bucket_ms`` should match the bucket the report itself uses — an hour for
+    a short window, a day otherwise — so rolling up here never coarsens the
+    chart above what it was going to draw anyway.
+
+    ``cwd`` and ``label`` come from any row in the group: they describe the
+    session, which is part of the group key, so every row in it agrees.
+    """
+    db_path = _resolve_db_path(data_dir)
+    if db_path is None:
+        return
+    bucket = max(1, int(bucket_ms))
+    conn = _open_ro(db_path)
+    if conn is None:
+        return
+    try:
+        for row in conn.execute(
+            "SELECT agent, session_id, model, "
+            "       MIN(ts_ms) AS ts_ms, "
+            "       SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out, "
+            "       SUM(tokens_cached) AS tokens_cached, COUNT(*) AS turns, "
+            "       MIN(cwd) AS cwd, MIN(label) AS label "
+            "FROM cli_turns WHERE ts_ms BETWEEN ? AND ? "
+            "GROUP BY agent, session_id, model, ts_ms / ? "
+            "ORDER BY ts_ms",
+            (since_ms, until_ms, bucket),
+        ):
+            yield CliRollup(
+                agent=str(row["agent"] or ""),
+                session_id=str(row["session_id"] or ""),
+                ts_ms=_int(row["ts_ms"]),
+                model=str(row["model"] or ""),
+                tokens_in=_int(row["tokens_in"]),
+                tokens_out=_int(row["tokens_out"]),
+                tokens_cached=_int(row["tokens_cached"]),
+                turns=_int(row["turns"]),
+                cwd=str(row["cwd"] or ""),
+                label=str(row["label"] or ""),
+            )
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: rollup failed (%s)", exc)
+    finally:
+        conn.close()
+
+
+def index_state(*, data_dir: Path | None = None, home: Path | None = None) -> IndexState:
+    """How much of the transcripts on disk the index has already absorbed.
+
+    Walks the transcript directories (a few thousand ``stat`` calls) but opens
+    no transcript, so it is cheap enough for a status badge and honest about
+    files that appeared since the last :func:`refresh`.
+    """
+    db_path = _resolve_db_path(data_dir)
+    if db_path is None:
+        return IndexState(0, 0, 0, 0, 0, Path(DB_NAME))
+    candidates = _discover(home)
+    conn = _open_ro(db_path)
+    known: dict[str, sqlite3.Row] = {}
+    turns = 0
+    if conn is not None:
+        try:
+            known = _resume_rows(conn)
+            row = conn.execute("SELECT COUNT(*) AS n FROM cli_turns").fetchone()
+            turns = _int(row["n"]) if row is not None else 0
+        except sqlite3.Error as exc:
+            log.warning("cli usage index: state unreadable (%s)", exc)
+        finally:
+            conn.close()
+
+    indexed = 0
+    bytes_pending = 0
+    for cand in candidates:
+        stored = known.get(cand.key)
+        offset = _int(stored["byte_offset"]) if stored is not None else 0
+        if stored is not None and _int(stored["size"]) > cand.size:
+            # Shrank since the last run: everything will be read again.
+            offset = 0
+        if offset >= cand.size:
+            indexed += 1
+        else:
+            bytes_pending += cand.size - offset
+    return IndexState(
+        files_known=len(candidates),
+        files_indexed=indexed,
+        files_pending=len(candidates) - indexed,
+        bytes_pending=bytes_pending,
+        turns=turns,
+        db_path=db_path,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Refresh internals
+# ---------------------------------------------------------------------------
+
+
+def _resolve_db_path(data_dir: Path | None) -> Path | None:
+    try:
+        return index_db_path(data_dir)
+    except Exception as exc:  # noqa: BLE001 - config import is the only risk here
+        log.warning("cli usage index: data dir unresolvable (%s)", exc)
+        return None
+
+
+def _pending(
+    candidates: Sequence[_Candidate], known: Mapping[str, sqlite3.Row], since_ms: int
+) -> list[_Candidate]:
+    """The files worth opening this run."""
+    out: list[_Candidate] = []
+    for cand in candidates:
+        if since_ms > 0 and cand.mtime_ns // 1_000_000 < since_ms:
+            continue
+        row = known.get(cand.key)
+        # A file only earns a skip when nothing about it moved AND the last run
+        # reached its end. Same bytes but an offset short of them means the last
+        # run stopped early — on its deadline, on the per-file cap, or on a
+        # half-written trailing line — and there is still tail to read.
+        if row is not None and _int(row["byte_offset"]) >= cand.size:
+            if _int(row["size"]) == cand.size and _int(row["mtime_ns"]) == cand.mtime_ns:
+                continue
+        out.append(cand)
+    return out
+
+
+def _resume_point(cand: _Candidate, row: sqlite3.Row | None) -> tuple[int, _Cursor]:
+    """Where to start reading, and what the file already told us."""
+    if row is None:
+        return 0, _Cursor()
+    if _int(row["size"]) > cand.size:
+        # Shrank: rotated or rewritten. Everything known about it is stale.
+        return 0, _Cursor()
+    offset = min(_int(row["byte_offset"]), cand.size)
+    return offset, _Cursor(
+        session_id=str(row["session_id"] or ""),
+        model=str(row["model"] or ""),
+        cwd=str(row["cwd"] or ""),
+        label=str(row["label"] or ""),
+    )
+
+
+def _drop_rows(conn: sqlite3.Connection, key: str) -> None:
+    try:
+        conn.execute("DELETE FROM cli_turns WHERE path = ?", (key,))
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: could not drop rows of %s (%s)", key, exc)
+
+
+def _commit_file(conn: sqlite3.Connection, cand: _Candidate, scan: _FileScan) -> int:
+    """Write a file's turns and its resume point as one transaction."""
+    before = conn.total_changes
+    try:
+        if scan.rows:
+            conn.executemany(_INSERT_TURN, scan.rows)
+        added = conn.total_changes - before
+        conn.execute(
+            _UPSERT_FILE,
+            (
+                cand.key,
+                cand.agent,
+                scan.cursor.session_id,
+                cand.size,
+                cand.mtime_ns,
+                scan.offset,
+                scan.cursor.model,
+                scan.cursor.cwd,
+                scan.cursor.label,
+                int(time.time() * 1000),
+            ),
+        )
+        conn.commit()
+        return added
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: %s could not be committed (%s)", cand.path, exc)
+        try:
+            conn.rollback()
+        except sqlite3.Error as rollback_exc:
+            log.warning("cli usage index: rollback failed (%s)", rollback_exc)
+        return 0
+
+
+__all__ = [
+    "AGENTS",
+    "AGENT_AGY",
+    "AGENT_CLAUDE",
+    "AGENT_CODEX",
+    "DB_NAME",
+    "CliRollup",
+    "CliTurn",
+    "IndexState",
+    "RefreshResult",
+    "entries",
+    "rollups",
+    "index_db_path",
+    "index_state",
+    "refresh",
+]

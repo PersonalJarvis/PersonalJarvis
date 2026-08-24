@@ -26,6 +26,18 @@ from .model import CostEntry
 # Range shorter than this many days → hourly buckets, so "today" is a curve
 # rather than a single bar.
 _HOURLY_RANGE_MS = 3 * 24 * 60 * 60 * 1000
+_HOUR_MS = 60 * 60 * 1000
+_DAY_MS = 24 * _HOUR_MS
+
+
+def bucket_ms_for(since_ms: int, until_ms: int) -> int:
+    """The bucket this report will use, for a caller that must agree.
+
+    A source that pre-aggregates (the coding-CLI index) has to know the
+    grain before it reads, and deriving it twice is how the chart and the
+    table start disagreeing about the same day.
+    """
+    return _HOUR_MS if (until_ms - since_ms) <= _HOURLY_RANGE_MS else _DAY_MS
 
 
 @dataclass(slots=True)

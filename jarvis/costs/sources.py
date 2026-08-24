@@ -27,6 +27,7 @@ from .model import (
     ROLE_WORKER,
     SUBSCRIPTION_RUNNERS,
     SURFACE_AGENT_CHAT,
+    SURFACE_AGENTIC_IDE,
     SURFACE_JARVIS_VOICE,
     SURFACE_MISSION,
     SURFACE_VOICE,
@@ -54,6 +55,11 @@ class CostSources:
     sessions_db: Path | None = None
     missions_db: Path | None = None
     agent_chat_db: Path | None = None
+    #: Where :mod:`jarvis.costs.cli_usage_index` keeps its index. A source
+    #: like any other, so a caller that did not ask for coding-CLI spend —
+    #: a test with its own fixtures, above all — does not silently get this
+    #: machine's.
+    cli_index_dir: Path | None = None
 
     def existing(self) -> list[Path]:
         candidates = (self.sessions_db, self.missions_db, self.agent_chat_db)
@@ -87,6 +93,7 @@ def default_sources(data_dir: Path | None = None) -> CostSources:
         sessions_db=root / "sessions.db",
         missions_db=root / "missions.db",
         agent_chat_db=root / "agent_chat.db",
+        cli_index_dir=root,
     )
 
 
@@ -547,11 +554,78 @@ def _speech_label(stage: str, chars: int, audio_ms: float) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# Coding CLIs — the index, not the transcripts
+# ---------------------------------------------------------------------------
+
+def _cli_entries(
+    data_dir: Path | None, since_ms: int, until_ms: int, bucket_ms: int
+) -> Iterator[CostEntry]:
+    """Coding agents run through a vendor CLI.
+
+    Their transcripts are gigabytes and live outside this app, so nothing is
+    parsed here: :mod:`jarvis.costs.cli_usage_index` reads each file once in
+    the background and this walks the small table it leaves behind.
+
+    Every one of these ran on a monthly seat, so the amount is what the same
+    work would have cost through the API and is labelled ``subscription``
+    rather than counted as money that moved.
+    """
+    if data_dir is None:
+        return
+    try:
+        from .cli_usage_index import rollups as indexed_rollups
+    except ImportError as exc:  # pragma: no cover — the module ships with us
+        log.warning("cost read model: cli index unavailable (%s)", exc)
+        return
+    try:
+        turns = list(
+            indexed_rollups(
+                data_dir=data_dir,
+                since_ms=since_ms,
+                until_ms=until_ms,
+                bucket_ms=bucket_ms,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — a broken index must not 500 the page
+        log.warning("cost read model: cli index read failed (%s)", exc)
+        return
+    for turn in turns:
+        if turn.tokens_in + turn.tokens_out + turn.tokens_cached <= 0:
+            continue
+        # ``claude-cli`` / ``codex-cli`` already carry their vendor in the
+        # name, which is all the logo lookup needs — no translation table.
+        provider = turn.agent
+        cost, source = price_entry(
+            provider=provider,
+            model=turn.model,
+            tokens_in=turn.tokens_in,
+            tokens_out=turn.tokens_out,
+            recorded_usd=0.0,
+            subscription=True,
+        )
+        yield CostEntry(
+            ts_ms=turn.ts_ms,
+            surface=SURFACE_AGENTIC_IDE,
+            role=ROLE_AGENT,
+            provider=provider,
+            model=turn.model,
+            tokens_in=turn.tokens_in,
+            tokens_out=turn.tokens_out,
+            tokens_cached=turn.tokens_cached,
+            cost_usd=cost,
+            price_source=source,
+            ref_id=turn.session_id,
+            label=_clip(turn.label or turn.cwd),
+        )
+
+
 def collect_entries(
     sources: CostSources,
     *,
     since_ms: int = 0,
     until_ms: int = 2**62,
+    bucket_ms: int = 86_400_000,
 ) -> list[CostEntry]:
     """Every priced line item across all sources, newest last."""
     entries: list[CostEntry] = []
@@ -559,5 +633,8 @@ def collect_entries(
     entries.extend(_agent_chat_entries(sources.agent_chat_db, since_ms, until_ms))
     entries.extend(_mission_entries(sources.missions_db, since_ms, until_ms))
     entries.extend(_speech_entries(sources.sessions_db, since_ms, until_ms))
+    entries.extend(
+        _cli_entries(sources.cli_index_dir, since_ms, until_ms, bucket_ms)
+    )
     entries.sort(key=lambda e: e.ts_ms)
     return entries
