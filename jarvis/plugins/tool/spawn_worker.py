@@ -42,7 +42,11 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import JarvisAgentAnnouncement, JarvisAgentBackgroundCompleted
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.missions.manager import MissionManager
-from jarvis.missions.stream_evidence import strip_spawn_meta
+from jarvis.missions.stream_evidence import (
+    FORCE_SPAWN_DIRECTIVE,
+    UNDERLYING_REQUEST_LEAD,
+    strip_spawn_meta,
+)
 from jarvis.voice.action_phrases import action_phrase, resolve_ambient_language
 
 log = logging.getLogger(__name__)
@@ -273,12 +277,10 @@ def _build_mission_prompt(
                 if topic_match
                 else stripped
             )
-            body = (
-                "Carry out the underlying user request directly. Use a sensible, "
-                "complete default deliverable instead of asking which format the "
-                "user wants, unless a genuinely indispensable fact is missing.\n\n"
-                f"Underlying request: {task}"
-            )
+            # Both halves come from stream_evidence, which is also what strips
+            # them back off for report titles, filenames and the agent board's
+            # task column. Inlining the wording here is what let the two drift.
+            body = f"{FORCE_SPAWN_DIRECTIVE}\n\n{UNDERLYING_REQUEST_LEAD}{task}"
         else:
             body = utterance
     else:

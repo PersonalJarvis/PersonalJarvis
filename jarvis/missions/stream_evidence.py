@@ -1122,14 +1122,33 @@ def _normalize_informational_idioms(text: str) -> str:
     return _MAKE_RESEARCH_IDIOM_RE.sub("research", text)
 
 
-def _request_body(prompt: str) -> str:
-    """Strip the standing quality directive that spawn_worker prepends so the
-    classifier sees only the real request.
+# The SECOND directive layer, added by ``spawn_worker._build_mission_prompt``
+# under the quality directive on the force-spawn path. It lives here, next to
+# the code that strips it, and the builder imports it: the two drifted apart
+# once already (only the first layer was ever removed), and a shared constant
+# is what stops that recurring.
+FORCE_SPAWN_DIRECTIVE: Final[str] = (
+    "Carry out the underlying user request directly. Use a sensible, "
+    "complete default deliverable instead of asking which format the "
+    "user wants, unless a genuinely indispensable fact is missing."
+)
+UNDERLYING_REQUEST_LEAD: Final[str] = "Underlying request: "
 
-    ``spawn_worker._build_mission_prompt`` joins
-    ``f"{_QUALITY_DIRECTIVE}\\n\\n{body}"``; the directive is recognised by its
-    stable phrasing. When no directive is present (tests / other callers) the
-    whole prompt is classified.
+
+def _request_body(prompt: str) -> str:
+    """Strip the standing directives that spawn_worker prepends so the caller
+    sees only the real request.
+
+    ``spawn_worker._build_mission_prompt`` can stack THREE layers:
+    the quality directive, then ``FORCE_SPAWN_DIRECTIVE``, then
+    ``UNDERLYING_REQUEST_LEAD`` + the task. This used to remove only the
+    first, so every consumer of "the real request" — report titles, generated
+    filenames, the agent board's task column — surfaced "Carry out the
+    underlying user request directly. Use a sensible…" instead of the ask.
+    On the agent board that made 45 of 50 rows read identically.
+
+    Every layer is optional: a prompt carrying neither directive (tests, other
+    callers) is returned whole.
     """
     head, sep, tail = prompt.partition("\n\n")
     low = head.lower()
@@ -1138,7 +1157,15 @@ def _request_body(prompt: str) -> str:
         or "never ship one" in low
         or "inhalt folgt" in low
     ):
-        return tail
+        prompt = tail
+
+    # Cut at the lead only when the text before it really is the directive, so
+    # a user who happens to write "Underlying request:" keeps their wording.
+    lead_at = prompt.find(UNDERLYING_REQUEST_LEAD)
+    if lead_at != -1 and "carry out the underlying user request" in prompt[:lead_at].lower():
+        rest = prompt[lead_at + len(UNDERLYING_REQUEST_LEAD) :]
+        if rest.strip():
+            return rest
     return prompt
 
 
@@ -1444,7 +1471,9 @@ def summarize_answers(answers: list[str], *, cap: int = 600) -> str:
 
 
 __all__ = [
+    "FORCE_SPAWN_DIRECTIVE",
     "StreamEvidence",
+    "UNDERLYING_REQUEST_LEAD",
     "clean_request_body",
     "diff_has_action_evidence",
     "extract_stream_evidence",
