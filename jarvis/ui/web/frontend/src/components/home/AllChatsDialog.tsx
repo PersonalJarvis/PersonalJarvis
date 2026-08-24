@@ -16,14 +16,15 @@ import {
  * "All chats" — the whole history, not the handful the sidebar has room for.
  *
  * The sidebar block is a shortcut to what you touched last; this is the
- * archive: every voice session and every agent chat, searchable, grouped by
- * day like a mail client, opening on the same click path as the sidebar
+ * archive: every conversation with Jarvis, typed or spoken, searchable,
+ * grouped by day like a mail client, opening on the same click path as the
+ * sidebar
  * (components/home/chatRows). Modelled on the recents dialog desktop chat
  * apps use — one field, one list, Escape closes — because a second full
  * SECTION for the same data would be one more place to keep in sync.
  *
- * The list is whatever the two pollers already hold, so opening the dialog
- * costs no request; the sidebar refreshes both lists every few seconds.
+ * The list is whatever the sidebar's poller already holds, so opening the
+ * dialog costs no request.
  */
 export function AllChatsDialog({
   open,
@@ -35,7 +36,7 @@ export function AllChatsDialog({
   const t = useT();
   const { rows, isActive, open: openRow, remove } = useChatRows();
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<"all" | "agent" | "voice">("all");
+  const [kind, setKind] = useState<"all" | "text" | "voice">("all");
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   // A reopened dialog starts clean — a stale filter hiding the chat someone
@@ -56,7 +57,7 @@ export function AllChatsDialog({
   const counts = useMemo(
     () => ({
       all: rows.length,
-      agent: rows.filter((r) => r.kind === "agent").length,
+      text: rows.filter((r) => r.kind === "text").length,
       voice: rows.filter((r) => r.kind === "voice").length,
     }),
     [rows],
@@ -128,9 +129,9 @@ export function AllChatsDialog({
               />
               <FilterChip
                 label={t("all_chats.filter_chats")}
-                count={counts.agent}
-                selected={kind === "agent"}
-                onClick={() => setKind("agent")}
+                count={counts.text}
+                selected={kind === "text"}
+                onClick={() => setKind("text")}
               />
               <FilterChip
                 label={t("all_chats.filter_voice")}
@@ -162,7 +163,7 @@ export function AllChatsDialog({
                           openRow(row);
                           onOpenChange(false);
                         }}
-                        onDelete={row.kind === "agent" ? () => remove(row) : undefined}
+                        onDelete={row.kind === "text" ? () => remove(row) : undefined}
                       />
                     ))}
                   </ul>

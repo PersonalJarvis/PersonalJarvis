@@ -2,38 +2,42 @@ import { useCallback, useMemo } from "react";
 
 import { useConversations } from "@/hooks/useConversations";
 import { useEventStore, type ConversationSummary } from "@/store/events";
-import { useAgentChatStore } from "@/store/agentChat";
 import { useHomeStore } from "@/store/home";
 import { transcriptFromMessages } from "@/lib/homeTranscript";
 
 /**
- * The one chat history the app has, and the one way to open a row of it.
+ * The one chat history the front page has, and the one way to open a row.
  *
- * Two backends feed it — the voice sessions (`/api/chats`) and the agent
- * chats (`/api/agent-chat/sessions`) — merged into one list sorted by when
- * each was last touched. The sidebar block and the "All chats" dialog both
- * read THIS, so the two can never disagree about what exists or about what
- * a click does.
+ * Both kinds in it are the SAME assistant: the voice sessions you spoke and
+ * the chats you typed, from `/api/chats`, merged into one list sorted by when
+ * each was last touched. That is the point of the front page — one Jarvis,
+ * two ways to reach it — and it is why a typed thread can pick up where a
+ * spoken one stopped. The sidebar block and the "All chats" dialog both read
+ * THIS, so the two can never disagree about what exists or about what a click
+ * does.
  *
- * The rule a click follows (the bug this file was extracted to fix): the
- * front page shows exactly ONE conversation, so opening a row must also
- * close the other kind. Opening an agent chat drops the voice thread from
- * the stage; opening a voice session ends the agent session's socket. Before
- * that, clicking a voice row while the chat surface was up loaded its words
- * into a store the chat stage does not read — the screen simply kept showing
- * the previous conversation.
+ * The Agentic IDE's agent chats are deliberately NOT here (maintainer,
+ * 2026-08-24). They belong to a workspace folder and are opened where that
+ * folder is — components/agentic/WorkspaceChats. Listing them next to Jarvis'
+ * own conversations was the visible half of the mix-up this file's history
+ * records: for a day, opening the front page's chat opened a coding agent.
+ *
+ * The rule a click follows: the front page shows exactly ONE conversation, so
+ * opening a row replaces whatever was on stage. A spoken session opened while
+ * the voice stage is up stays there with its words in the lane; opened from
+ * the chat surface it is read there as an archive
+ * (components/home/VoiceThreadStage).
  */
 
 export interface ChatRow {
-  kind: "voice" | "agent";
+  /** "voice" was spoken, "text" was typed — both are Jarvis. */
+  kind: "voice" | "text";
   id: string;
   title: string;
   preview: string;
   updatedMs: number;
   messageCount: number;
-  /** The sub-agent an agent chat runs on; empty for a voice session. */
-  provider: string;
-  raw: ConversationSummary | null;
+  raw: ConversationSummary;
 }
 
 export interface ChatRowsApi {
@@ -41,59 +45,45 @@ export interface ChatRowsApi {
   /** True for the row currently on the front page's stage. */
   isActive: (row: ChatRow) => boolean;
   open: (row: ChatRow) => void;
-  /** Agent chats can be deleted; a voice session is a recording, not a draft. */
+  /** A typed thread can be deleted; a voice session is a recording, not a draft. */
   remove: (row: ChatRow) => void;
 }
 
 export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRowsApi {
-  const { conversations, openConversation } = useConversations({ poll });
-  const sessions = useAgentChatStore((s) => s.sessions);
-  const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
-  const activeVoiceId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
+  const { conversations, openConversation, removeConversation } = useConversations({ poll });
+  const activeThreadId = useEventStore((s) => s.activeThreadId);
+  const activeKind = useEventStore((s) => s.activeKind);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const setActiveConversation = useEventStore((s) => s.setActiveConversation);
-  const setMessages = useEventStore((s) => s.setMessages);
   const seedTranscript = useHomeStore((s) => s.seedTranscript);
   const setSurface = useHomeStore((s) => s.setSurface);
 
-  const rows = useMemo<ChatRow[]>(() => {
-    const voice: ChatRow[] = conversations
-      .filter((c) => c.kind === "voice")
-      .map((c) => ({
-        kind: "voice",
-        id: c.id,
-        title: c.title || c.preview,
-        preview: c.preview,
-        updatedMs: c.updated_ms,
-        messageCount: c.message_count,
-        provider: "",
-        raw: c,
-      }));
-    const agent: ChatRow[] = sessions.map((s) => ({
-      kind: "agent",
-      id: s.session_id,
-      title: s.title || s.preview,
-      preview: s.preview,
-      updatedMs: s.updated_ms,
-      messageCount: s.message_count,
-      provider: s.provider,
-      raw: null,
-    }));
-    return [...voice, ...agent].sort((a, b) => b.updatedMs - a.updatedMs);
-  }, [conversations, sessions]);
+  const rows = useMemo<ChatRow[]>(
+    () =>
+      conversations
+        .map((c) => ({
+          kind: c.kind === "voice" ? ("voice" as const) : ("text" as const),
+          id: c.id,
+          title: c.title || c.preview,
+          preview: c.preview,
+          updatedMs: c.updated_ms,
+          messageCount: c.message_count,
+          raw: c,
+        }))
+        .sort((a, b) => b.updatedMs - a.updatedMs),
+    [conversations],
+  );
 
   const isActive = useCallback(
-    (row: ChatRow) => (row.kind === "agent" ? row.id === activeSessionId : row.id === activeVoiceId),
-    [activeSessionId, activeVoiceId],
+    (row: ChatRow) => row.id === activeThreadId && row.kind === activeKind,
+    [activeKind, activeThreadId],
   );
 
   const open = useCallback(
     (row: ChatRow) => {
       if (row.kind === "voice") {
-        // End the agent session on stage first: the chat stage renders the
-        // voice archive only while no agent chat is open, and its socket has
-        // no business staying connected to a conversation nobody is looking at.
-        useAgentChatStore.getState().newChat();
+        // Standing on the voice stage, a spoken session is resumed there with
+        // its words in the lane — you just keep talking. From the chat
+        // surface it is read as an archive instead.
         const stayOnVoice = useHomeStore.getState().surface === "voice";
         const opened = openConversation("voice", row.id);
         if (stayOnVoice) {
@@ -103,22 +93,21 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
           setSurface("chat");
         }
       } else {
-        // Drop the voice thread so the stage shows the agent timeline, not a
-        // stale archive underneath it.
-        setActiveConversation("text", null);
-        setMessages([]);
-        useAgentChatStore.getState().openSession(row.id);
+        void openConversation("text", row.id);
         setSurface("chat");
       }
       setActiveSection("chats");
     },
-    [openConversation, seedTranscript, setActiveConversation, setActiveSection, setMessages, setSurface],
+    [openConversation, seedTranscript, setActiveSection, setSurface],
   );
 
-  const remove = useCallback((row: ChatRow) => {
-    if (row.kind !== "agent") return;
-    void useAgentChatStore.getState().removeSession(row.id);
-  }, []);
+  const remove = useCallback(
+    (row: ChatRow) => {
+      if (row.kind !== "text") return;
+      void removeConversation(row.id);
+    },
+    [removeConversation],
+  );
 
   return { rows, isActive, open, remove };
 }

@@ -1,69 +1,60 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-import { useEventStore } from "@/store/events";
-import { useAgentChatStore } from "@/store/agentChat";
+import { useEventStore, type ChatMessage } from "@/store/events";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AgentComposer } from "@/components/agentchat/AgentComposer";
-import { AgentTimeline } from "@/components/agentchat/AgentTimeline";
+import { ChatInput } from "@/components/ChatInput";
+import { TurnSteps } from "@/components/home/TurnSteps";
 import { Greeting } from "@/components/home/Greeting";
 import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
-import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 /**
- * The chat stage — the typed half of the front page.
+ * The chat stage — Jarvis with a keyboard.
  *
- * Since 2026-08-23 this is the AGENT chat (jarvis/agent_chat): a coding-agent
- * session on whichever sub-agent — Claude Code, Codex, Antigravity, Grok
- * Build, or an API-key provider — the composer picks, with the model, the
- * reasoning effort and the permission mode dialled in the composer itself.
- * The voice stage next door still talks to the voice brain; this stage does
- * not (AP-9: nothing here touches the voice path).
+ * This is the SAME assistant the microphone talks to, on the same brain, with
+ * the same tools, the same memory and the same conversation history. The only
+ * difference from the voice stage next door is the input: here the person
+ * types and reads instead of speaking and listening. Everything a spoken turn
+ * can do — open an app, read the calendar, run a skill, ask back before a
+ * consequential action — a typed turn does too, because it is literally the
+ * same turn (jarvis/ui/desktop_app.py::_on_user_message → BrainManager).
  *
- * One centred column, like a document: the greeting and the composer sit
- * in the middle of an empty page; once there are messages the column
- * scrolls and the composer docks to the bottom. The history is the
- * sidebar's (components/home/RecentChats), visible from every section.
+ * What it is NOT, and was between 2026-08-23 and 2026-08-24: a coding-agent
+ * session that happened to run in the Jarvis folder, picked by provider,
+ * model, reasoning effort and permission mode. Coding agents are a real thing
+ * this app has — they are the Agentic IDE's sessions, where a workspace
+ * folder is the whole point. On the front page that was the wrong assistant
+ * wearing the right name (maintainer, 2026-08-24).
  *
- * One conversation is on stage at a time. The sidebar's history mixes agent
- * chats with VOICE sessions, and a voice session opened from here is read in
- * components/home/VoiceThreadStage — the same column, no composer. Which of
- * the two shows is decided by the event store's active thread: opening either
- * kind clears the other (components/home/chatRows), so the two can never both
- * claim the stage and leave a click looking like it did nothing.
+ * The wiring, end to end:
+ *   composer (components/ChatInput) sends a `message` frame on the app socket
+ *   → MessageSent on the event bus
+ *   → the brain answers, streaming its text as AssistantTextDelta("chat")
+ *     and its progress as the reasoning steps this column shows live
+ *   → the finished reply arrives as the assistant message and is stored in
+ *     the thread, so the sidebar's history holds it like any other.
  *
- * Scrolling follows the Claude app: when the person sends, their message
- * is brought to the TOP of the scroll area and the answer grows below it —
- * the eye stays where the new turn begins instead of chasing the bottom.
- * A spacer under the last turn makes that possible even when the turn is
- * short; it shrinks as the answer fills the viewport. Nothing jumps on
- * assistant output.
+ * A spoken session opened from that history is READ here, in
+ * components/home/VoiceThreadStage: the same column, no composer, because a
+ * spoken thread is continued by speaking.
+ *
+ * Scrolling follows the Claude app: when the person sends, their message is
+ * brought to the TOP of the scroll area and the answer grows below it — the
+ * eye stays where the new turn begins instead of chasing the bottom. A spacer
+ * under the last turn makes that possible even when the turn is short; it
+ * shrinks as the answer fills the viewport, so a finished answer never trails
+ * a screen of blank paper. Nothing jumps on assistant output.
  */
 export function ChatStage() {
   const t = useT();
-  const assistantName = useEventStore((s) => s.assistantName);
-  const items = useAgentChatStore((s) => s.timeline.items);
-  const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
-  const catalog = useAgentChatStore((s) => s.catalog);
-  const decide = useAgentChatStore((s) => s.decide);
-  const loadCatalog = useAgentChatStore((s) => s.loadCatalog);
-  const loadSessions = useAgentChatStore((s) => s.loadSessions);
-  const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
-  const hasContent = items.length > 0;
-
-  useEffect(() => {
-    if (!catalog) void loadCatalog();
-    void loadSessions();
-  }, [catalog, loadCatalog, loadSessions]);
-
-  const providerLabel = useCallback(
-    (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id,
-    [catalog],
-  );
-  const onDecide = useCallback(
-    (approvalId: string, decision: ApprovalDecision) => void decide(approvalId, decision),
-    [decide],
-  );
+  const messages = useEventStore((s) => s.messages);
+  const chatThinking = useEventStore((s) => s.chatThinking);
+  const activeThreadId = useEventStore((s) => s.activeThreadId);
+  const isVoiceThread = useEventStore((s) => s.activeKind === "voice" && s.activeThreadId !== null);
+  const hasContent = messages.length > 0 || chatThinking;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const columnRef = useRef<HTMLDivElement | null>(null);
@@ -72,8 +63,8 @@ export function ChatStage() {
   // turn. Null until the person sends in this mounted column — opening an
   // old conversation lands at its end like before, with no spacer.
   const anchorIdRef = useRef<string | null>(null);
-  const lastItemIdRef = useRef<string | null>(null);
-  const sessionRef = useRef<string | null>(activeSessionId);
+  const lastMessageIdRef = useRef<string | null>(null);
+  const threadRef = useRef<string | null>(activeThreadId);
 
   // Refs, not state, on purpose: the spacer must be sized BEFORE the scroll
   // that relies on it, in the same layout pass — a state round-trip would
@@ -87,39 +78,44 @@ export function ChatStage() {
       spacer.style.minHeight = "0px";
       return;
     }
+    // Everything from the anchored message down to the spacer is the turn.
     const turnHeight = spacer.getBoundingClientRect().top - anchor.getBoundingClientRect().top;
     const room = viewport.clientHeight - turnHeight - TURN_BOTTOM_PAD_PX;
     spacer.style.minHeight = `${Math.max(0, Math.round(room))}px`;
   };
 
-  const lastItem = items[items.length - 1];
-  const lastItemId = lastItem?.id ?? null;
-  const lastItemIsUser = lastItem?.type === "user";
-
+  // React to the newest message: a user line is the start of a turn and gets
+  // pinned to the top; anything else, with no turn in flight, keeps the old
+  // "follow the end" behaviour (first render of a conversation). Switching
+  // conversations resets the anchor: the new thread is read from its end, not
+  // from wherever the previous turn left the scroll position.
   useLayoutEffect(() => {
-    if (sessionRef.current !== activeSessionId) {
-      sessionRef.current = activeSessionId;
+    if (threadRef.current !== activeThreadId) {
+      threadRef.current = activeThreadId;
       anchorIdRef.current = null;
-      lastItemIdRef.current = null;
+      lastMessageIdRef.current = null;
     }
     const viewport = viewportOf(rootRef.current);
-    const isNew = lastItemId !== lastItemIdRef.current;
-    lastItemIdRef.current = lastItemId;
-    if (!viewport || !lastItemId) return;
-    if (isNew && lastItemIsUser) {
-      anchorIdRef.current = lastItemId;
+    const last = messages[messages.length - 1];
+    const lastId = last?.id ?? null;
+    const isNew = lastId !== lastMessageIdRef.current;
+    lastMessageIdRef.current = lastId;
+    if (!viewport || !last) return;
+    if (isNew && last.role === "user") {
+      anchorIdRef.current = last.id;
       applySpacer();
-      scrollMessageToTop(viewport, lastItemId);
+      scrollMessageToTop(viewport, last.id);
       return;
     }
     applySpacer();
     if (isNew && anchorIdRef.current === null) scrollToEnd(viewport);
     // `applySpacer` reads refs only and is recreated per render by design.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastItemId, lastItemIsUser, activeSessionId, items.length]);
+  }, [messages, activeThreadId, chatThinking]);
 
-  // The live blocks grow without a new item; the spacer follows the
-  // column's size where the platform has ResizeObserver.
+  // The live turn grows without a new message (steps arrive, the answer
+  // streams in), so the spacer also follows the column's own size where the
+  // platform has ResizeObserver.
   useEffect(() => {
     const column = columnRef.current;
     const viewport = viewportOf(rootRef.current);
@@ -131,41 +127,45 @@ export function ChatStage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasContent]);
 
-  const subtitle = useMemo(() => t("agent_chat.empty_subtitle"), [t]);
-
   // A spoken thread was opened from the history: read it here, in the column
-  // the composer would otherwise own. An agent chat opening clears this.
-  if (voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
+  // the composer would otherwise own.
+  if (isVoiceThread) return <VoiceThreadStage />;
 
   if (!hasContent) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
+      <div
+        className="flex min-h-0 flex-1 flex-col items-center"
+        data-testid="chat-stage"
+        data-empty="true"
+      >
         <div className="flex w-full max-w-[760px] flex-1 flex-col justify-center gap-8 px-6 pb-20">
-          <Greeting subtitle={subtitle} />
-          <AgentComposer autoFocus />
+          <Greeting subtitle={t("home.chat_empty_title")} />
+          <ChatInput />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="false">
+    <div
+      className="flex min-h-0 flex-1 flex-col items-center"
+      data-testid="chat-stage"
+      data-empty="false"
+    >
       <ScrollArea ref={rootRef} className="min-h-0 w-full flex-1">
         <div
           ref={columnRef}
           className="relative mx-auto flex w-full max-w-[760px] flex-col gap-5 px-6 pb-6 pt-8"
         >
-          <AgentTimeline
-            items={items}
-            assistantName={assistantName}
-            providerLabel={providerLabel}
-            onDecide={onDecide}
-          />
+          {messages.map((m) => (
+            <MessageRow key={m.id} message={m} />
+          ))}
+          {chatThinking && <LiveTurn />}
           <div ref={spacerRef} aria-hidden data-testid="chat-bottom-spacer" className="shrink-0" />
         </div>
       </ScrollArea>
       <div className="w-full max-w-[760px] px-6 pb-5 pt-2">
-        <AgentComposer />
+        <ChatInput />
       </div>
     </div>
   );
@@ -181,8 +181,8 @@ function viewportOf(root: HTMLElement | null): HTMLElement | null {
 }
 
 function messageElement(viewport: HTMLElement, id: string): HTMLElement | null {
-  // Attribute compare instead of a selector: ids carry characters a CSS
-  // selector would need escaping for.
+  // Attribute compare instead of a selector: message ids carry characters
+  // (":" , ".") a CSS selector would need escaping for.
   for (const el of Array.from(viewport.querySelectorAll<HTMLElement>("[data-message-id]"))) {
     if (el.dataset.messageId === id) return el;
   }
@@ -212,4 +212,144 @@ function scrollMessageToTop(viewport: HTMLElement, id: string) {
 
 function scrollToEnd(viewport: HTMLElement) {
   scrollViewport(viewport, viewport.scrollHeight);
+}
+
+/** Elapsed wall-clock since `startedTs`, ticking once a second while set. */
+function useElapsedMs(startedTs: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedTs === null) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [startedTs]);
+  return startedTs === null ? 0 : Math.max(0, now - startedTs);
+}
+
+/**
+ * The assistant turn still in progress: byline, the live steps, and the
+ * answer as it is being written.
+ *
+ * The streaming text is the half that was missing while this column showed
+ * only the steps: the brain publishes the answer as cumulative
+ * AssistantTextDelta snapshots on the "chat" channel several times a second
+ * (jarvis/core/text_stream.py), so a long reply reads as it arrives instead
+ * of appearing at once when the turn ends. The store clears it the moment the
+ * finished message lands, so the two never show the same words twice.
+ *
+ * Reads the store itself so the column does not re-render on every delta —
+ * only this block does.
+ */
+function LiveTurn() {
+  const assistantName = useEventStore((s) => s.assistantName);
+  const steps = useEventStore((s) => s.thinkingSteps);
+  const startedTs = useEventStore((s) => s.thinkingStartedTs);
+  const liveText = useEventStore((s) => s.liveReply?.text ?? "");
+  const elapsed = useElapsedMs(startedTs);
+  return (
+    <div className="flex flex-col gap-1.5 px-1" data-testid="chat-turn-live">
+      <Byline name={assistantName} />
+      <TurnSteps steps={steps} live durationMs={elapsed} />
+      {liveText.trim() !== "" && <Prose text={liveText} testId="chat-live-text" />}
+    </div>
+  );
+}
+
+function Byline({ name }: { name: string }) {
+  return (
+    <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
+      <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
+      {name}
+    </div>
+  );
+}
+
+/**
+ * An assistant answer, rendered as Markdown.
+ *
+ * Jarvis writes lists, short headings and the odd bit of code, and typed
+ * answers are read rather than heard — so an answer is rendered, not printed
+ * as source. Colours come from theme tokens (`prose-neutral` +
+ * `dark:prose-invert`), so it reads correctly in light and dark. The person's
+ * own lines stay plain text: they typed characters, not markup.
+ */
+function Prose({ text, testId }: { text: string; testId?: string }) {
+  return (
+    <div
+      data-testid={testId}
+      className={cn(
+        "prose prose-neutral max-w-none text-[15px] leading-relaxed dark:prose-invert [overflow-wrap:anywhere]",
+        "prose-p:my-2 prose-headings:font-display prose-headings:tracking-tight prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
+        "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+        "prose-code:rounded prose-code:bg-muted/60 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
+        "prose-pre:my-2 prose-pre:border prose-pre:border-border prose-pre:bg-card/80 prose-pre:text-[13px]",
+        "prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2",
+      )}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
+/**
+ * One message in the column. The person's lines sit right in a quiet bubble;
+ * the assistant's run flush-left with a byline and, when there is one, the
+ * turn's steps ("Thought for Ns" + tool calls) above the answer — prose on
+ * the page, not a bubble.
+ */
+function MessageRow({ message }: { message: ChatMessage }) {
+  const assistantName = useEventStore((s) => s.assistantName);
+  const liveTrace = useEventStore((s) => s.thinkingTraces[message.id]);
+  // A replayed conversation carries its steps on the message itself; a reply
+  // that happened in this session has them in the store's live map.
+  const trace = liveTrace ?? message.trace;
+  const isUser = message.role === "user";
+
+  if (message.role === "system") {
+    return (
+      <div
+        data-message-id={message.id}
+        data-testid="chat-message-system"
+        className="mx-auto max-w-[85%] rounded-lg border border-border bg-secondary/50 px-3 py-2 text-center text-xs italic text-muted-foreground"
+      >
+        {message.content}
+      </div>
+    );
+  }
+
+  if (message.role === "preamble") {
+    return (
+      <div
+        data-message-id={message.id}
+        className="flex flex-col gap-1 text-xs italic leading-relaxed text-muted-foreground"
+      >
+        <span className="font-mono text-[10px] not-italic uppercase tracking-[0.14em] text-muted-foreground">
+          {assistantName} · pre-ack
+        </span>
+        <div className="whitespace-pre-wrap">{message.content}</div>
+      </div>
+    );
+  }
+
+  if (isUser) {
+    return (
+      <div className="flex justify-end" data-testid="chat-message-user" data-message-id={message.id}>
+        <div className="max-w-[78%] rounded-2xl rounded-br-md border border-border bg-secondary px-4 py-2.5 text-[15px] leading-relaxed text-foreground">
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-1.5 px-1"
+      data-testid="chat-message-assistant"
+      data-message-id={message.id}
+    >
+      <Byline name={assistantName} />
+      {trace && <TurnSteps steps={trace.steps} durationMs={trace.durationMs} className="mb-1" />}
+      <Prose text={message.content} />
+    </div>
+  );
 }

@@ -26,7 +26,6 @@ import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
-import { useAgentChatStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
 import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { PRODUCT_NAME } from "@/lib/branding";
@@ -129,11 +128,11 @@ export function Sidebar({
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
   // "+ New" starts a new conversation of the KIND you are looking at: on the
-  // chat surface an empty agent chat, on the voice stage a fresh voice run.
-  // Sending someone standing in Voice to the chat page is what the one button
-  // used to do, and it read as the button being broken.
+  // chat surface an empty chat with Jarvis, on the voice stage a fresh voice
+  // run. Sending someone standing in Voice to the chat page is what the one
+  // button used to do, and it read as the button being broken. The Agentic
+  // IDE's chats have their own button in their own column (WorkspaceChats).
   const { newChat, newVoiceRun } = useConversations();
-  const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
   // see `presentNavItem`.
@@ -167,11 +166,11 @@ export function Sidebar({
     void newVoiceRun();
     setActive("chats");
   };
-  // On the chat surface: an empty agent chat. The voice thread is cleared as
-  // well so a reopened voice session does not linger behind the fresh page.
+  // On the chat surface: an empty page for a new chat with Jarvis. `newChat`
+  // drops the open thread whichever kind it was, so a reopened voice session
+  // does not linger behind the fresh page either.
   const startNewChat = () => {
     newChat();
-    newAgentChat();
     setSurface("chat");
     setActive("chats");
   };

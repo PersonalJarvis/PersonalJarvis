@@ -6,10 +6,12 @@ import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-// Safety net: if the brain doesn't respond within 60s (no reply, no error event),
-// we revert the indicator. A backend hang must not leave the UI stuck in the
-// wait state permanently.
-const THINKING_TIMEOUT_MS = 60_000;
+// Safety net: a backend hang must not leave the UI waiting forever. This is a
+// SILENCE window, not a turn budget — every sign of life (a reasoning step, a
+// streamed piece of the answer) re-arms it. A turn that reads the calendar,
+// runs a skill and then writes three paragraphs takes well over a minute and
+// is perfectly healthy; only a turn that goes quiet is one nobody is having.
+const THINKING_SILENCE_MS = 60_000;
 
 /**
  * The composer — a card with the text box and, on its bottom row, dictation,
@@ -32,6 +34,9 @@ export function ChatInput() {
   // column renders the live steps (components/home/TurnSteps) as the
   // in-progress assistant turn. The composer only arms the wait state.
   const setChatThinking = useEventStore((s) => s.setChatThinking);
+  const chatThinking = useEventStore((s) => s.chatThinking);
+  const stepCount = useEventStore((s) => s.thinkingSteps.length);
+  const liveLength = useEventStore((s) => s.liveReply?.text.length ?? 0);
   // Mic-dictation: live transcript streams into the box as the user speaks.
   const dictating = useEventStore((s) => s.dictating);
   const dictationText = useEventStore((s) => s.dictationText);
@@ -50,11 +55,24 @@ export function ChatInput() {
   const mirroringRef = useRef(false);
   const lastCommitSeqRef = useRef(dictationCommitSeq);
 
+  // Arm the silence window while a turn is in flight, and re-arm it whenever
+  // the turn shows a sign of life. `stepCount`/`liveLength` are the two live
+  // signals the brain produces; either one moving means the turn is alive.
   useEffect(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    if (!chatThinking) {
+      timeoutRef.current = null;
+      return;
+    }
+    timeoutRef.current = setTimeout(() => {
+      setChatThinking(false);
+      timeoutRef.current = null;
+    }, THINKING_SILENCE_MS);
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     };
-  }, []);
+  }, [chatThinking, stepCount, liveLength, setChatThinking]);
 
   // While dictating, mirror the live interim tail into the textarea in real time.
   useEffect(() => {
@@ -118,11 +136,6 @@ export function ChatInput() {
       payload: { content },
     });
     setChatThinking(true);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => {
-      setChatThinking(false);
-      timeoutRef.current = null;
-    }, THINKING_TIMEOUT_MS);
     setValue("");
   }
 
