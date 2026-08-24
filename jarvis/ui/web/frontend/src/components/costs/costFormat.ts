@@ -66,13 +66,30 @@ export function formatMoney(usd: number, eurPerUsd: number, currency: "usd" | "e
   const value = currency === "eur" ? usd * eurPerUsd : usd;
   const symbol = currency === "eur" ? "€" : "$";
   const abs = Math.abs(value);
+  // One convention for the whole amount. The decimals below have always been
+  // written with a dot, while grouping followed the reader's locale — which
+  // on a German machine put "$0.60/day · $17.433" on one line, the same
+  // character meaning a decimal point in one number and a thousands
+  // separator in the next. The symbol is already written in the leading
+  // position these separators belong to, so the grouping follows suit.
   if (abs === 0) return `${symbol}0.00`;
   if (abs < 0.01) return `${symbol}${value.toFixed(4)}`;
   if (abs < 100) return `${symbol}${value.toFixed(2)}`;
-  return `${symbol}${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `${symbol}${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
 /** Compact token counts: 1 240 → 1.2k, 12 823 750 → 12.8M. */
+/**
+ * Tokens, or an em dash when there are none.
+ *
+ * Speech spend is billed per audio second and per character and carries no
+ * tokens at all. A literal "0" in that column reads as a measurement that
+ * failed; the dash reads as "not this unit", which is what is true.
+ */
+export function formatTokensOrNone(n: number): string {
+  return n > 0 ? formatTokens(n) : "—";
+}
+
 export function formatTokens(n: number): string {
   const abs = Math.abs(n);
   if (abs >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
@@ -184,13 +201,20 @@ export interface SurfaceGroup {
 
 export const SURFACE_GROUPS: SurfaceGroup[] = [
   { id: "all", surfaces: [], roles: ROLE_ORDER },
+  // Talking. Everything a spoken turn costs, whichever path served it: the
+  // realtime model, the tool model it delegated to, the classic pipeline
+  // brain, and the ears and mouth around them. Naming this area after the
+  // speech layer alone would leave it nearly empty while the feature it is
+  // named after is the biggest spender in the app.
   {
-    id: "jarvis",
-    surfaces: ["voice", "agent-chat", "mission"],
-    roles: ["realtime", "tool", "pipeline", "agent", "worker"],
+    id: "jarvis-voice",
+    surfaces: ["voice", "jarvis-voice"],
+    roles: ["realtime", "tool", "pipeline", "stt", "tts"],
   },
+  // Typing — the agent chat and the missions it hands off to.
+  { id: "jarvis", surfaces: ["agent-chat", "mission"], roles: ["agent", "worker"] },
+  // Coding — the workspaces, billed through vendor CLI seats.
   { id: "agentic-ide", surfaces: ["agentic-ide"], roles: ["agent", "worker"] },
-  { id: "jarvis-voice", surfaces: ["jarvis-voice"], roles: ["stt", "tts"] },
 ];
 
 /** The group whose surfaces are exactly the ones selected, if any. */

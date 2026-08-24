@@ -59,8 +59,26 @@ ROLE_STT = "stt"
 ROLE_TTS = "tts"
 """An autonomous mission worker."""
 
-ROLES: tuple[str, ...] = (ROLE_REALTIME, ROLE_TOOL, ROLE_PIPELINE, ROLE_AGENT, ROLE_WORKER)
-SURFACES: tuple[str, ...] = (SURFACE_VOICE, SURFACE_AGENT_CHAT, SURFACE_MISSION)
+# Every role and surface the read model can emit, in the order a report
+# should offer them. A value missing here is invisible in the facets, which
+# is how the section decides what to offer as a filter — so a new reader that
+# forgets to register lands rows nobody can select.
+ROLES: tuple[str, ...] = (
+    ROLE_REALTIME,
+    ROLE_TOOL,
+    ROLE_PIPELINE,
+    ROLE_AGENT,
+    ROLE_WORKER,
+    ROLE_STT,
+    ROLE_TTS,
+)
+SURFACES: tuple[str, ...] = (
+    SURFACE_VOICE,
+    SURFACE_AGENT_CHAT,
+    SURFACE_MISSION,
+    SURFACE_AGENTIC_IDE,
+    SURFACE_JARVIS_VOICE,
+)
 
 PriceSource = Literal["recorded", "derived", "free", "unknown", "subscription"]
 
