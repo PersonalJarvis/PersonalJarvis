@@ -12146,3 +12146,80 @@ dev GET unchanged).
 **Related.** BUG-031 (a second `tk.Tk()` root at runtime aborts the process) is
 why the recovery still needs one restart: an app that booted with `style=none`
 has no Tk root, so the bar cannot be swapped in live.
+
+## BUG-174: right after a restart, voice on local models is unusably slow or returns nothing — the Whisper engine was built ON the event loop, and a slow build was answered by starting it again from zero (HIGH, FIXED 2026-08-24)
+
+**Symptom (maintainer, 2026-08-24 morning).** "I used it after a restart with
+local models and it is so slow or does not work at all." Dictation returned zero
+characters; the whole app felt frozen for a minute at a time.
+
+**Timeline (`data/jarvis_desktop.log`).**
+
+```
+09:05:58  Dictation STT warm-up did not finish within 20s; replacing the provider instance
+09:06:10  Event loop STALLED for 15.0s   <- stack: transcribe_pcm -> _ensure_model -> WhisperModel(
+09:07:11  Event loop STALLED for 75.3s   <- same stack, still building
+09:08:31  (maintainer restarts the app)
+09:09:15  dictation ended (0 chars, stt error: unavailable — provider did not answer within 8s)
+09:12:36  dictation ended (0 chars, stt error: engine_busy (TranscribeBusy))
+09:13:26  dictation ended (37 chars)     <- fine from here on, the engine is warm
+```
+
+The failure window is the first minutes after a restart and nothing else — which
+is exactly when a person tries the thing they just restarted.
+
+**Root cause, part one: the build ran on the event loop.** `transcribe_pcm` is a
+coroutine, and it awaited `_ensure_model()` inline. Constructing a ctranslate2
+`WhisperModel` is a long BLOCKING call — weights off disk, DLL resolution, a VRAM
+allocation — so a cold `large-v3` on CUDA held the loop thread for 90+ s. That is
+every WebSocket frame, HTTP route and brain turn frozen behind one model load,
+which is the "so slow" half of the report.
+
+It also disabled the caller's own protection. `_read_piece` wraps the call in
+`asyncio.wait_for(..., timeout=ceiling)`, but a timeout needs a RUNNING loop to
+fire on; while the loop is the thing that is blocked, the ceiling cannot expire.
+When it finally did, the abandoned build kept the engine's lock, so the next
+attempt came back `TranscribeBusy` and the dictation ended empty (AP-24) — the
+"does not work at all" half.
+
+**Root cause, part two: giving up made it worse.** The dictation warm-up
+supervisor could only read a wall clock. Twenty seconds elapsed meant "this
+warmer is unhealthy", so it abandoned the whole provider instance and built a
+replacement — which starts the identical cold load AT ZERO. Replacing an
+instance never shortens a load, it repeats it. The maintainer waited through both
+and still got nothing. This is the same load cascade that once turned a 4 s load
+into 114.7 s on the boot path (TTU forensic 2026-07-02), rediscovered on the
+dictation lane.
+
+Nothing was guarding `_ensure_model` either, so two callers arriving during that
+window each started their own build — twice the wait and twice the VRAM.
+
+**Fix.**
+
+* `transcribe_pcm` / `transcribe` build through `_ensure_model_async`, which
+  ships the construction to a thread. The already-built path costs one attribute
+  read and no thread hop, so steady state is unchanged.
+* `_ensure_model` takes a DEDICATED load lock, so a second caller waits for the
+  first engine instead of building a rival one. It can never deadlock: only
+  `_ensure_model` takes it, so the order is always infer -> load. `recover()`
+  swaps it for a fresh one for the same reason it swaps the inference lock.
+* Providers expose `is_loading`. The warm-up supervisor waits while the engine
+  is demonstrably building (hard ceiling 180 s) and reserves instance
+  replacement for a real wedge. A provider without the flag — every cloud one —
+  keeps the short 20 s join unchanged.
+
+**Tests.** `tests/unit/plugins/stt/test_fwhisper_model_load_offloop.py` runs a
+heartbeat coroutine during a build and asserts the loop still ticks; recreating
+the old inline build makes it tick ZERO times. It also pins one build per
+provider under concurrency, `is_loading` honesty, and the fresh load lock after
+`recover()`. `tests/unit/dictation/test_warmup_cold_load_patience.py` pins the
+four supervisor cases: still-loading is waited for, a cloud provider keeps the
+short join, a hang AFTER the build is still a wedge, and an endless build
+eventually gives up.
+
+**Lesson.** Two of them. A blocking call inside a coroutine does not just make
+one thing slow, it removes the timeout that was supposed to contain it — the
+supervisor and the supervised were on the same thread. And "it is taking too
+long" is not a diagnosis: replacing a worker only helps when the worker is
+stuck, never when it is merely loading. Patience needs evidence, so the engine
+had to say which one it was.
