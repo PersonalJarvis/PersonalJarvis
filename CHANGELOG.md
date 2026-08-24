@@ -30,6 +30,14 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **A dictated prompt reaches a Tauri/Electron coding-agent terminal.** On
+  Windows the transcript is now offered with delayed clipboard rendering, so
+  Jarvis sees who reads it: a proven paste restores the old clipboard at once,
+  an unanswered Ctrl+V falls through to Ctrl+Shift+V, Shift+Insert and finally
+  typing (line breaks as Shift+Enter), and on a host with a clipboard watcher
+  (Remote Desktop, clipboard history) one chord goes out and the old clipboard
+  is restored after a 2 s grace instead of 120 ms — the timer that used to hand
+  a slow, async-reading WebView the previous clipboard (BUG-178).
 - **A web-searched answer in a live call is spoken to the end.** Gemini Live
   closes every tool call with an "interrupted" edge before its turn boundary;
   that edge wiped the evidence the boundary guard needed, so every search

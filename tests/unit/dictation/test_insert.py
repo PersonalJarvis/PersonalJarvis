@@ -72,6 +72,9 @@ def wired(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr("jarvis.cu.actuate.get_actuator", lambda: actuator)
     monkeypatch.setattr(insert_mod.time, "sleep", lambda _s: None)
+    # These tests pin the PLAIN chord path (every OS). The Windows path that
+    # watches who reads the clipboard has its own file: test_insert_verified.py.
+    monkeypatch.setattr(insert_mod, "_clipboard_offer_factory", lambda: None)
     return clipboard, actuator
 
 

@@ -12492,3 +12492,53 @@ of cache hits at one vendor and disjoint from them at the other, and a reader
 that normalises both into one column has to know which it is holding. And a
 dedup key that is a position in a file is only an identity for that file —
 anything a tool can copy needs a key made from the content.
+
+## BUG-178: a dictated prompt never appears in a Tauri/Electron coding-agent app — Jarvis reported `inserted` after a Ctrl+V nobody answered, and restored the old clipboard 120 ms later (HIGH, FIXED 2026-08-24)
+
+**Symptom (maintainer, 2026-08-24).** Dictating into a terminal pane of a
+Tauri-based coding-agent app (xterm.js inside WebView2): the history shows
+`inserted · clipboard+ctrl_v` for every dictation of the day, the pane shows
+nothing. Ordinary text fields on the same machine were fine.
+
+**Evidence.**
+
+* `jarvis/dictation/insert.py` wrote the text, sent Ctrl+V, slept 120 ms and
+  wrote the PREVIOUS clipboard back. `inserted` was inferred from "the chord
+  went out without error" — there was no observation of the target at all.
+* The app's own log records paste round-trips of 0.7–21 s on this machine
+  (eight agent panes running). Its paste goes through an async IPC bridge
+  (`tauri-plugin-clipboard-manager read_text`), so a read after the 120 ms
+  restore hands it the previous clipboard, not the dictation.
+* Jarvis's own Agentic IDE needed a bridge for the same reason
+  (`AgenticTerminal.tsx`: xterm.js reads Ctrl+V as `^V` and cancels the
+  browser's paste; nothing arrives). An app without such a bridge ignores the
+  chord entirely — and again nothing reports it.
+* Measured with a delayed-rendering clipboard offer: the system asks the owner
+  to render ONCE. On this box `msrdc.exe` (Remote Desktop clipboard sync)
+  reads within 5 ms of every write, so the text is cached before the chord is
+  sent and a later paste leaves no trace. A refused render removes the format
+  (later readers get nothing), so watchers cannot be starved either.
+
+**Root cause.** Insertion claimed success from the absence of an error, and
+restored the clipboard on a timer that assumed a synchronous reader.
+
+**Fix (`jarvis/platform/clipboard_offer.py`, `jarvis/dictation/insert.py`).**
+On Windows the text is offered with delayed rendering and every reader is
+recorded with its process name. *Sighted* host (nobody read during the settle
+window — the default install: no RDP client, clipboard history off): a paste is
+proven by the target's read and the clipboard is restored right then; silence
+proves the chord was not a paste there, so Ctrl+V → Ctrl+Shift+V →
+Shift+Insert are tried and, when none is answered, the text is typed with
+line breaks as Shift+Enter (Enter would submit a prompt). The route that
+landed is remembered per executable. *Blind* host (a watcher consumed the
+render): exactly one chord, nothing inferred from silence — a guessed second
+chord would paste the prompt twice — and the previous clipboard comes back
+after a 2 s grace, only if the dictated text is still on it. macOS/Linux keep
+the plain path (`docs/os-parity.md` P-25).
+
+**Lesson.** "Sent without error" is not "arrived". When the only proof lives
+in another process, either measure it (here: who read the clipboard) or say
+so — and never let a fallback fire on the absence of evidence when the
+fallback's failure mode is doing the thing twice.
+
+---

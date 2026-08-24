@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Literal
@@ -221,9 +222,7 @@ def normalize_paste_chord(value: str) -> tuple[str, str]:
         )
 
     if not keys:
-        return "auto", (
-            "A paste shortcut needs a real key, not only Ctrl / Alt / Shift."
-        )
+        return "auto", ("A paste shortcut needs a real key, not only Ctrl / Alt / Shift.")
 
     ordered = [m for m in _MODIFIER_ORDER if m in modifiers] + keys
     for name, chord in PASTE_CHORDS.items():
@@ -405,8 +404,7 @@ def _word_count(text: str) -> int:
 
         return count_words(text)
     except Exception:  # noqa: BLE001 — a missing counter is not a reason to refuse
-        log.debug("word count unavailable; treating the text as insertable",
-                  exc_info=True)
+        log.debug("word count unavailable; treating the text as insertable", exc_info=True)
         return 1
 
 
@@ -505,9 +503,7 @@ def insert_text(
     except Exception as exc:  # noqa: BLE001 — ActuationUnavailable + anything else
         return InsertResult(
             status="clipboard_only" if parked else "unavailable",
-            detail=(
-                f"{exc} The text is on your clipboard — paste it where you want it."
-            ),
+            detail=(f"{exc} The text is on your clipboard — paste it where you want it."),
             clipboard_holds_text=parked,
         )
 
@@ -532,6 +528,18 @@ def insert_text(
             method="type",
             clipboard_restored=restored,
         )
+
+    verified = _insert_windows_verified(
+        text,
+        actuator,
+        clipboard,
+        paste_chord=paste_chord,
+        delay_ms=delay_ms,
+        delay_after_ms=delay_after_ms,
+        previous=previous if restore_clipboard else None,
+    )
+    if verified is not None:
+        return verified
 
     chord_name, chord = resolve_paste_chord(paste_chord)
     if delay_ms > 0:
@@ -581,6 +589,298 @@ def insert_text(
         clipboard_holds_text=not restored,
         method=f"clipboard+{chord_name}",
         clipboard_restored=restored,
+    )
+
+
+#: Chords tried, in order, when the configured one is not answered by a
+#: clipboard read. Windows only — each of them means "paste" somewhere real:
+#: Ctrl+V nearly everywhere, Ctrl+Shift+V in terminals and "paste as plain
+#: text" fields, Shift+Insert in the classic controls and most terminals.
+WINDOWS_CHORD_CASCADE: tuple[str, ...] = ("ctrl_v", "ctrl_shift_v", "shift_insert")
+
+#: How long the target application gets to read the clipboard after a chord
+#: before that chord is declared "not a paste here". An xterm.js paste through
+#: a Tauri/Electron IPC bridge answers in well under 100 ms; the margin covers
+#: a busy machine.
+PASTE_READ_WAIT_S: float = 0.6
+
+#: On a blind host (see ``_insert_windows_verified``) the previous clipboard
+#: content comes back after this long, in the background, and only if the
+#: clipboard still holds the dictated text. Long enough for a WebView that
+#: pastes through an async IPC bridge on a busy machine; a copy the user
+#: makes in the meantime is never overwritten.
+RESTORE_GRACE_S: float = 2.0
+
+#: Processes that read EVERY clipboard change and therefore prove nothing —
+#: remote-desktop clipboard sync and the Windows clipboard-history service.
+#: Measured: ``msrdc.exe`` reads within 5 ms of every write (2026-08-24).
+_CLIPBOARD_WATCHER_EXES: frozenset[str] = frozenset(
+    {"msrdc.exe", "mstsc.exe", "rdpclip.exe", "svchost.exe", "vmware-tray.exe", "vmtoolsd.exe"}
+)
+
+#: What worked last time for a given foreground executable, so the second
+#: dictation into the same app skips straight to the route that landed. A
+#: value is a curated chord name or ``"type"``. Process-local on purpose: an
+#: app update can change its bindings, and a stale file would outlive it.
+_LEARNED_ROUTES: dict[str, str] = {}
+
+
+def _clipboard_offer_factory():
+    """The delayed-rendering clipboard offer, or ``None`` off Windows.
+
+    A function rather than an import so tests can swap the factory and so a
+    host without the mechanism costs one attribute check, not an import.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        from jarvis.platform.clipboard_offer import ClipboardOffer, available
+    except Exception:  # noqa: BLE001 — a missing helper is the plain path, not an error
+        log.debug("clipboard offer unavailable", exc_info=True)
+        return None
+    return ClipboardOffer if available() else None
+
+
+def _foreground_exe() -> str:
+    """Executable name of the foreground window's owner, ``""`` when unknown."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes  # noqa: PLC0415 — lazy (HN-7)
+        from ctypes import wintypes  # noqa: PLC0415
+
+        from jarvis.platform.clipboard_offer import _exe_name
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return _exe_name(int(pid.value))
+    except Exception:  # noqa: BLE001 — unknown app, no learning, still a paste
+        log.debug("could not read the foreground executable", exc_info=True)
+        return ""
+
+
+def _type_with_soft_newlines(actuator: object, text: str) -> None:
+    """Type *text*, sending each line break as Shift+Enter.
+
+    A plain Enter SUBMITS in the places that refuse to paste — a coding agent's
+    terminal prompt, a chat composer — so a dictated paragraph with a line
+    break would go out half-written. Shift+Enter is the line break in those
+    places and a harmless line break in an ordinary editor.
+    """
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for index, line in enumerate(lines):
+        if index:
+            actuator.key_combo(["shift", "enter"])  # type: ignore[attr-defined]
+        if line:
+            actuator.type_text(line, delay_s=0.002)  # type: ignore[attr-defined]
+
+
+def _clipboard_still_holds(clipboard_module: object, text: str) -> bool:
+    """Is our text still what the clipboard shows? Unreadable counts as yes."""
+    try:
+        current = clipboard_module.read_text()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — cannot check, do not clobber
+        return True
+    if current is None:
+        return True
+    return current.replace("\r\n", "\n") == text.replace("\r\n", "\n")
+
+
+def _restore_later(
+    clipboard_module: object, previous: str | None, text: str, grace_s: float
+) -> None:
+    """Put the previous clipboard back after *grace_s*, off the delivery path.
+
+    Only if the clipboard still holds OUR text: if the user copied something
+    else in the meantime, that copy is theirs and stays. This is the blind-host
+    answer to a target that reads the clipboard late (an async WebView bridge
+    on a busy machine): the old timer fired at 120 ms and handed such an app
+    the previous content — the maintainer's 2026-08-24 report.
+    """
+    if previous is None:
+        return
+
+    def _run() -> None:
+        time.sleep(grace_s)
+        if _clipboard_still_holds(clipboard_module, text):
+            _restore(clipboard_module, previous)
+
+    threading.Thread(target=_run, name="jarvis-clipboard-restore", daemon=True).start()
+
+
+def _insert_windows_verified(
+    text: str,
+    actuator: object,
+    clipboard_module: object,
+    *,
+    paste_chord: str,
+    delay_ms: int,
+    delay_after_ms: int,
+    previous: str | None,
+) -> InsertResult | None:
+    """Paste with evidence, and fall back to typing only when it is SAFE.
+
+    Windows only; ``None`` on any other host or when the delayed-rendering
+    offer cannot be made, and the caller uses the plain chord path.
+
+    The text is offered with delayed rendering
+    (:mod:`jarvis.platform.clipboard_offer`), which makes the first clipboard
+    read visible with the reader's process name. Two hosts follow:
+
+    * **Sighted** — nobody read during the settle window. A paste now shows up
+      as a read by the foreground app; silence for :data:`PASTE_READ_WAIT_S`
+      proves the chord was not a paste there, so the next chord of
+      :data:`WINDOWS_CHORD_CASCADE` is tried and, when none is answered, the
+      text is typed in — every focused field accepts keystrokes. The route
+      that landed is remembered per executable for this process.
+    * **Blind** — a watcher (Remote Desktop clipboard sync, clipboard history)
+      read during the settle window, so the system has cached the text and a
+      later paste leaves no render event. Then ONE chord goes out and nothing
+      is inferred from silence: a second chord or typing on a guess would
+      paste the prompt twice. What the blind host still gets is the restore
+      fix — the previous clipboard comes back only after a read was seen or
+      after a long grace, never on the old 120 ms timer.
+    """
+    offer_cls = _clipboard_offer_factory()
+    if offer_cls is None:
+        return None
+
+    import os  # noqa: PLC0415
+
+    exe = _foreground_exe()
+    configured, _keys = resolve_paste_chord(paste_chord)
+    order: list[str] = []
+    learned = _LEARNED_ROUTES.get(exe) if exe else None
+    for name in ((learned,) if learned else ()) + (configured,) + WINDOWS_CHORD_CASCADE:
+        if name and name != "type" and name not in order:
+            order.append(name)
+    if learned == "type":
+        order = []
+
+    own_pid = os.getpid()
+    for chord_name in order:
+        offer = offer_cls(text)
+        blind = False
+        try:
+            if not offer.start():
+                log.debug("clipboard offer could not take the clipboard; plain paste path")
+                return None
+            time.sleep(max(delay_ms, 20) / 1000.0)
+            # Whoever read during the settle window is a watcher, not the
+            # paste — and it has just consumed the one render there is.
+            exclude = {own_pid}
+            for early in offer.reads():
+                exclude.add(early.pid)
+                if early.observed == "render":
+                    blind = True
+            sent_at = offer.elapsed()
+            _name, keys = resolve_paste_chord(chord_name)
+            try:
+                actuator.key_combo(keys)  # type: ignore[attr-defined]
+            except Exception as exc:  # noqa: BLE001
+                log.warning("paste chord %s failed: %s", chord_name, exc)
+                return InsertResult(
+                    status="clipboard_only",
+                    detail=(
+                        "The paste shortcut could not be sent. The text is on your "
+                        "clipboard — press Ctrl+V."
+                    ),
+                    clipboard_holds_text=True,
+                )
+            read = offer.wait_for_read(
+                exclude_pids=exclude, after_s=sent_at, timeout_s=PASTE_READ_WAIT_S
+            )
+            while read is not None and read.exe in _CLIPBOARD_WATCHER_EXES:
+                # A slow watcher answering after the chord: from here on the
+                # host is blind for the same reason as above.
+                exclude.add(read.pid)
+                if read.observed == "render":
+                    blind = True
+                read = offer.wait_for_read(
+                    exclude_pids=exclude, after_s=sent_at, timeout_s=PASTE_READ_WAIT_S
+                )
+        finally:
+            # Renders the text for real: the clipboard keeps it either way.
+            offer.stop()
+
+        if read is not None:
+            log.info(
+                "dictation paste: %s read the clipboard %.0f ms after %s (%s)",
+                read.exe or f"pid {read.pid}",
+                (read.at - sent_at) * 1000.0,
+                chord_name,
+                read.observed,
+            )
+            if exe:
+                _LEARNED_ROUTES[exe] = chord_name
+            if delay_after_ms > 0:
+                time.sleep(delay_after_ms / 1000.0)
+            restored = _restore(clipboard_module, previous)
+            return InsertResult(
+                status="inserted",
+                detail="",
+                clipboard_holds_text=not restored,
+                method=f"clipboard+{chord_name}",
+                clipboard_restored=restored,
+            )
+
+        if blind:
+            log.info(
+                "dictation paste: %s sent to %s; a clipboard watcher makes this host "
+                "blind, so the paste is assumed and the clipboard is restored after "
+                "%.1f s at the earliest",
+                chord_name,
+                exe or "the foreground app",
+                RESTORE_GRACE_S,
+            )
+            _restore_later(clipboard_module, previous, text, RESTORE_GRACE_S)
+            return InsertResult(
+                status="inserted" if paste_chord_is_curated(chord_name) else "paste_sent",
+                detail="",
+                clipboard_holds_text=True,
+                method=f"clipboard+{chord_name}",
+                clipboard_restored=False,
+            )
+
+        log.info(
+            "dictation paste: %s was not answered by a clipboard read in %s; trying the next route",
+            chord_name,
+            exe or "the foreground app",
+        )
+
+    # Sighted host, and no chord was a paste in this application: type it in.
+    # The clipboard still holds the text (the offers rendered it) and stays
+    # that way — if the keystrokes land nowhere, that copy is the way back.
+    try:
+        _type_with_soft_newlines(actuator, text)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("synthetic typing failed: %s", exc)
+        return InsertResult(
+            status="clipboard_only",
+            detail=(
+                "This app does not paste on any known shortcut and typing into it "
+                "did not work. The text is on your clipboard."
+            ),
+            clipboard_holds_text=True,
+        )
+    if exe:
+        _LEARNED_ROUTES[exe] = "type"
+    log.info(
+        "dictation paste: no paste shortcut is answered in %s; typed %d chars",
+        exe or "the foreground app",
+        len(text),
+    )
+    return InsertResult(
+        status="inserted",
+        detail="",
+        clipboard_holds_text=True,
+        method="type",
+        clipboard_restored=False,
     )
 
 
