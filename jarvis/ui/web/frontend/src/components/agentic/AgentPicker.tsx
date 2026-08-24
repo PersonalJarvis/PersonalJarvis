@@ -87,31 +87,52 @@ const MENU_WIDTH_PX = 272;
 const MENU_GAP_PX = 4;
 /** Never hang closer than this to a window edge. */
 const VIEWPORT_MARGIN_PX = 8;
+/**
+ * The least room below the anchor still worth dropping into.
+ *
+ * Under the button is where a menu belongs and where the eye already is, so
+ * flipping it above is a last resort rather than the winner of a contest
+ * between two numbers. The old `below >= above` rule flipped a pane sitting
+ * anywhere past the middle of a tall window — with 640px of clear space under
+ * the header, more than the whole list needs, the menu still went up.
+ */
+const MENU_ROOM_PX = 220;
 
-type FixedPlacement = { left: number; top: number; maxHeight: number };
+/** One of `top` and `bottom` is set: the menu hangs below the anchor, or above it. */
+type FixedPlacement = { left: number; maxHeight: number; top?: number; bottom?: number };
 
 /**
  * Where a detached menu hangs, measured from the element it belongs to.
  *
  * Right-aligned with the anchor, because that is where the buttons that open
- * it sit, and flipped above it when the space below is the shorter of the two.
- * Both numbers are clamped into the window: a pane in the last column would
- * otherwise put half the menu past the right edge, where it is unreachable.
+ * it sit, and flipped above it only when the room below cannot hold a usable
+ * list. Both numbers are clamped into the window: a pane in the last column
+ * would otherwise put half the menu past the right edge, where it is
+ * unreachable.
+ *
+ * The upward flip anchors the menu's BOTTOM edge, never its top. A top
+ * computed as "anchor minus the available room" places a short menu at the
+ * start of that room — which is the window's top edge, half a screen away
+ * from the button that opened it (maintainer report 2026-08-24). The space
+ * available and the space used are different numbers; only `bottom` keeps the
+ * menu against the anchor whatever its height turns out to be.
  */
 function placeMenu(rect: DOMRect, viewport: { width: number; height: number }): FixedPlacement {
   const below = viewport.height - rect.bottom - MENU_GAP_PX - VIEWPORT_MARGIN_PX;
   const above = rect.top - MENU_GAP_PX - VIEWPORT_MARGIN_PX;
-  const dropsDown = below >= above;
+  const dropsDown = below >= MENU_ROOM_PX || below >= above;
   const maxHeight = Math.max(96, Math.min(dropsDown ? below : above, viewport.height * 0.7));
   const left = Math.max(
     VIEWPORT_MARGIN_PX,
     Math.min(rect.right - MENU_WIDTH_PX, viewport.width - MENU_WIDTH_PX - VIEWPORT_MARGIN_PX),
   );
-  return {
-    left,
-    top: dropsDown ? rect.bottom + MENU_GAP_PX : Math.max(VIEWPORT_MARGIN_PX, rect.top - MENU_GAP_PX - maxHeight),
-    maxHeight,
-  };
+  return dropsDown
+    ? { left, top: rect.bottom + MENU_GAP_PX, maxHeight }
+    : {
+        left,
+        bottom: Math.max(VIEWPORT_MARGIN_PX, viewport.height - rect.top + MENU_GAP_PX),
+        maxHeight,
+      };
 }
 
 export function AgentPickerMenu({
@@ -207,7 +228,11 @@ export function AgentPickerMenu({
       ? {
           position: "fixed",
           left: placement.left,
+          // Exactly one of the two carries a number; the other stays `auto`, so
+          // a menu flipped above the anchor grows upwards from its own bottom
+          // edge instead of hanging from a top the list may never reach.
           top: placement.top,
+          bottom: placement.bottom,
           width: MENU_WIDTH_PX,
           maxHeight: placement.maxHeight,
         }

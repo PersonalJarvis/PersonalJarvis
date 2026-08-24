@@ -158,8 +158,30 @@ describe("AgentPickerMenu anchored outside its caller", () => {
     render(<AnchoredHarness rect={{ top: 700, bottom: 730, right: 700 }} />);
 
     const menu = screen.getByTestId("picker");
-    expect(parseFloat(menu.style.top)).toBeLessThan(700);
+    // Anchored by its BOTTOM edge, and by nothing else: a `top` computed from
+    // the room above would drop a short list at the start of that room, which
+    // is the window's top edge rather than the button it belongs to.
+    expect(menu.style.top).toBe("");
+    expect(parseFloat(menu.style.bottom)).toBe(VIEWPORT.height - 700 + 4);
     expect(parseFloat(menu.style.maxHeight)).toBeGreaterThan(0);
+  });
+
+  /*
+   * The pane sat in the lower half of a tall window with 640px of clear space
+   * under its header — room enough for the whole list — and the menu still
+   * went up, because the old rule only compared the two gaps and "above" won
+   * by 50px. Combined with the top-anchored flip, the menu landed against the
+   * window's top edge, half a screen from the split button that opened it
+   * (maintainer report 2026-08-24).
+   */
+  it("stays under the anchor when the room below holds the list, however low the pane sits", () => {
+    window.innerWidth = 2560;
+    window.innerHeight = 1370;
+    render(<AnchoredHarness rect={{ top: 703, bottom: 717, right: 838 }} />);
+
+    const menu = screen.getByTestId("picker");
+    expect(menu.style.bottom).toBe("");
+    expect(parseFloat(menu.style.top)).toBe(717 + 4);
   });
 
   it("keeps a menu opened near the right edge inside the window", () => {
