@@ -402,3 +402,54 @@ async def test_confirmed_delegation_offer_unlocks_realtime_spawn():
 
     assert result["success"] is True
     assert len(executor.execute_calls) == 1
+
+
+# ── the 2026-08-24 10:24 session: three asks, zero agents on the board ─────
+
+
+@pytest.mark.asyncio
+async def test_correcting_the_assistant_still_starts_the_worker():
+    """Turn 4 of the live session, verbatim.
+
+    The model had just offered to do the job itself. "No, no, which a worker
+    should do it." is the user OVERRULING that offer and naming the vehicle,
+    and it must reach the executor. It used to score as a spawn DECLINE — the
+    English "no" read as the German "kein" — so the board stayed empty at
+    "0 running · 0 in total" while the user asked three times.
+    """
+    bridge, executor = _spawn_bridge()
+    await bridge.handle_user_transcript("No, no, which a worker should do it.")
+
+    _name, result = await bridge.execute(wire_name="spawn_worker", arguments={})
+
+    assert result["success"] is True
+    assert len(executor.execute_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_spoken_confirmation_naming_the_vehicle_starts_the_worker():
+    """Turn 5 of the live session: a confirmation refused for being 8 words."""
+    bridge, executor = _spawn_bridge()
+    await bridge.handle_user_transcript("Give me an overview of my calendar.")
+    _name, blocked = await bridge.execute(wire_name="spawn_worker", arguments={})
+    assert blocked["success"] is False
+
+    await bridge.handle_user_transcript("Just follow the sub and then do it.")
+    _name, result = await bridge.execute(wire_name="spawn_worker", arguments={})
+
+    assert result["success"] is True
+    assert len(executor.execute_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_real_decline_still_starts_nothing():
+    """The guard this all protects must survive: an explicit no spawns nothing."""
+    bridge, executor = _spawn_bridge()
+    await bridge.handle_user_transcript(
+        "No, do not spawn a subagent, talk to me directly."
+    )
+
+    _name, result = await bridge.execute(wire_name="spawn_worker", arguments={})
+
+    assert result["success"] is False
+    assert executor.execute_calls == []
