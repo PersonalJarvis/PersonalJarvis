@@ -9,8 +9,15 @@ Ollama publishes no JSON search API, and the registry does NOT expose the
 Docker ``tags/list`` endpoint (404, verified 2026-08-09). Both surfaces here
 therefore parse the public web pages:
 
-- search:   ``https://ollama.com/search?q=…``           (name, blurb, badges)
+- search:   ``https://ollama.com/search?q=…&o=…&c=…``  (name, blurb, badges)
 - tag list: ``https://ollama.com/library/{name}/tags``  (tag, size, context)
+            ``https://ollama.com/{user}/{model}/tags``  (community namespace)
+
+The search page honours two query parameters, verified live 2026-08-24:
+``o=newest`` orders by publication instead of popularity, and
+``c=tools|vision|embedding|thinking`` keeps only models carrying that badge.
+Both are forwarded verbatim by :func:`search_library`; an unknown value is
+dropped rather than sent, so a typo degrades to the default listing.
 
 Scraping is a liability, so the contract is honest degradation: any fetch or
 parse failure answers ``{"models"/"tags": [], "error": "<English sentence>"}``
@@ -58,14 +65,34 @@ _FETCH_TIMEOUT = httpx.Timeout(connect=3.0, read=10.0, write=10.0, pool=10.0)
 #: without ever showing a week-old catalog.
 _CACHE_TTL_SECONDS = 600.0
 
-#: Search answers at most this many models. The page itself shows about this
-#: many above the fold, and a narrower query beats scrolling page two.
-_SEARCH_LIMIT = 25
+#: Search answers at most this many models. The page itself renders about
+#: twenty per query, so this is a ceiling for a wider listing, not a cut that
+#: hides rows; a narrower query still beats scrolling.
+_SEARCH_LIMIT = 50
 
-#: Library model names as they appear in ``/library/{name}`` URLs. No slash on
-#: purpose: community-namespaced models (``/{user}/{model}``) are out of scope
-#: here, and the pattern doubles as the URL-injection guard for the tags fetch.
-_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+#: Sort orders the search page understands. "popular" is the page default and
+#: sends nothing; only "newest" is forwarded as ``?o=newest``.
+SEARCH_SORTS: tuple[str, ...] = ("popular", "newest")
+
+#: Capability filters the search page understands (``?c=…``). Same words as
+#: the badges the page renders, so a filtered listing and a badge agree.
+SEARCH_CAPABILITIES: tuple[str, ...] = ("tools", "vision", "embedding", "thinking")
+
+#: Library model names as they appear in ``/library/{name}`` URLs, plus at most
+#: ONE community namespace segment (``{user}/{model}``, served from
+#: ``/{user}/{model}``). The pattern doubles as the URL-injection guard for the
+#: tags fetch: every segment starts with a letter or digit (so ``..`` is out),
+#: no second slash, no query characters.
+_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?")
+
+#: Quantization as far as the TAG NAME says it — the tags page prints no
+#: separate quantization column (verified 2026-08-24), so ``27b-q8_0`` is the
+#: only place the fact lives. A tag without such a suffix (``latest``, ``27b``)
+#: is the library's default quant and reads as an empty string, never a guess.
+_QUANT_RE = re.compile(
+    r"(?:^|-)((?:i?q\d(?:_[a-z0-9]+)*)|(?:bf16|fp16|f16|fp32|f32|mxfp8|nvfp4|fp8|fp4))$",
+    re.IGNORECASE,
+)
 
 #: Capability badges the search page renders, in display order. "cloud" is
 #: handled separately: it is a hosting fact, not a model capability.
@@ -113,6 +140,22 @@ def _cache_get(
     if hit and (time.monotonic() - hit[0]) < _CACHE_TTL_SECONDS:
         return [dict(entry) for entry in hit[1]]
     return None
+
+
+def _tags_path(name: str) -> str:
+    """The page path for ``name``'s tag list.
+
+    Library models live under ``/library/{name}``; a community model with a
+    namespace lives under ``/{user}/{model}`` (``/library/{user}/{model}``
+    answers 404, verified 2026-08-24).
+    """
+    return f"/{name}/tags" if "/" in name else f"/library/{name}/tags"
+
+
+def _quantization(tag: str) -> str:
+    """The quantization a tag name declares (``q4_K_M``, ``bf16``…), or ``""``."""
+    match = _QUANT_RE.search(tag)
+    return match.group(1) if match else ""
 
 
 def _text(fragment: str) -> str:
@@ -207,18 +250,46 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
     return entries
 
 
-async def search_library(query: str) -> dict[str, Any]:
+async def search_library(
+    query: str,
+    *,
+    sort: str = "popular",
+    capability: str | None = None,
+    limit: int = _SEARCH_LIMIT,
+) -> dict[str, Any]:
     """Search the public library; an empty query lists the popular models.
+
+    ``sort`` is ``"popular"`` (the page default) or ``"newest"``;
+    ``capability`` is one of :data:`SEARCH_CAPABILITIES` or ``None``. Values the
+    page does not know are dropped, not sent — a stray filter must degrade to
+    the plain listing, never to an error. ``limit`` caps the answer at 1..50.
 
     ``installed`` is judged against the LOCAL server's inventory, so a model
     already pulled (any tag of it) reads as such directly in the results.
     """
     q = (query or "").strip()
-    models = _cache_get(_search_cache, q)
+    sort = sort if sort in SEARCH_SORTS else "popular"
+    capability = capability if capability in SEARCH_CAPABILITIES else None
+    limit = max(1, min(int(limit), _SEARCH_LIMIT))
+    params: dict[str, str] = {}
+    if q:
+        params["q"] = q
+    if sort == "newest":
+        params["o"] = "newest"
+    if capability:
+        params["c"] = capability
+    cache_key = f"{q}|{sort}|{capability or ''}"
+    models = _cache_get(_search_cache, cache_key)
     if models is None:
-        page, error = await _fetch_page("/search", params={"q": q} if q else None)
+        page, error = await _fetch_page("/search", params=params or None)
         if page is None:
-            return {"query": q, "models": [], "error": error}
+            return {
+                "query": q,
+                "sort": sort,
+                "capability": capability,
+                "models": [],
+                "error": error,
+            }
 
         models = parse_search_html(page)
         if not models:
@@ -226,16 +297,17 @@ async def search_library(query: str) -> dict[str, Any]:
             # that no longer parses would silently kill the feature. Only the
             # latter is an error, and only the live guard can tell them apart —
             # here both honestly say "nothing found".
-            log.info("ollama-library: search %r parsed 0 entries", q)
-        _search_cache[q] = (time.monotonic(), [dict(entry) for entry in models])
+            log.info("ollama-library: search %r (%s) parsed 0 entries", q, cache_key)
+        _search_cache[cache_key] = (time.monotonic(), [dict(entry) for entry in models])
 
+    models = models[:limit]
     installed, _inventory_error = await installed_models()
     families = {i.partition(":")[0] for i in installed}
     for model in models:
         name = model["name"]
         model["installed"] = name in families or _is_installed(name, installed)
 
-    return {"query": q, "models": models, "error": None}
+    return {"query": q, "sort": sort, "capability": capability, "models": models, "error": None}
 
 
 # ── tags ────────────────────────────────────────────────────────────────────
@@ -246,11 +318,13 @@ def parse_tags_html(page: str, name: str) -> list[dict[str, Any]]:
 
     The page renders each tag twice (a mobile and a desktop block). Instead of
     depending on either block's classes, this walks the FIRST occurrence of
-    each distinct ``/library/{name}:{tag}`` href and reads the plain-text facts
-    ("6.6GB", "256K context window", "Text, Image input", "5 months ago") from
-    the window up to the next distinct tag.
+    each distinct ``/library/{name}:{tag}`` (or ``/{user}/{model}:{tag}``) href
+    and reads the plain-text facts ("6.6GB", "256K context window", "Text,
+    Image input", "5 months ago") from the window up to the next distinct tag.
+    ``quantization`` comes from the tag name alone — the page prints no other
+    source for it — and ``context`` is the "256K" before "context window".
     """
-    href_re = re.compile(rf'href="/library/{re.escape(name)}:([^"?#]+)"')
+    href_re = re.compile(rf'href="/(?:library/)?{re.escape(name)}:([^"?#]+)"')
     matches = list(href_re.finditer(page))
     first_seen: list[tuple[str, int]] = []
     seen: set[str] = set()
@@ -276,6 +350,7 @@ def parse_tags_html(page: str, name: str) -> list[dict[str, Any]]:
                 "id": f"{name}:{tag}",
                 "size_gb": _size_to_gb(size_match) if size_match else None,
                 "context": context_match.group(1) if context_match else "",
+                "quantization": _quantization(tag),
                 "inputs": _text(inputs_match.group(1)) if inputs_match else "",
                 "updated": updated_match.group(1) if updated_match else "",
                 # A hosting fact from the tag NAME, never inferred from a
@@ -299,7 +374,7 @@ async def library_tags(model: str) -> dict[str, Any]:
         return {"model": name, "tags": [], "error": "Not a valid library model name."}
     tags = _cache_get(_tags_cache, name)
     if tags is None:
-        page, error = await _fetch_page(f"/library/{name}/tags")
+        page, error = await _fetch_page(_tags_path(name))
         if page is None:
             return {"model": name, "tags": [], "error": error}
 

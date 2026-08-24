@@ -179,11 +179,14 @@ async def test_recommendations_mark_what_is_already_there(fake_tags) -> None:
     result = await pull.recommendations()
     by_id = {m["id"]: m for m in result["models"]}
     assert by_id["qwen3.5"]["installed"] is True
-    assert by_id["qwen3-vl"]["installed"] is False
-    # The vision entry must be findable AS the vision entry — it is the one
-    # that makes Screen Context work on a local-only install.
-    assert by_id["qwen3-vl"]["vision"] is True
+    assert by_id["qwen3-vl:2b"]["installed"] is False
+    # The vision fallback must be findable AS the vision entry — it is the one
+    # that makes Screen Context work on a machine too small for a multimodal
+    # chat pick, and the chat picks that see the screen say so themselves.
+    assert by_id["qwen3-vl:2b"]["vision"] is True
+    assert by_id["qwen3.5"]["vision"] is True
     assert result["server_reachable"] is True
+    assert result["curated_reviewed_on"] == pull.CURATED_REVIEWED_ON.isoformat()
 
 
 async def test_recommendations_stay_usable_when_the_server_is_down(fake_tags) -> None:
@@ -370,7 +373,9 @@ async def test_a_big_machine_is_recommended_a_big_model(fake_tags, monkeypatch) 
     _machine(monkeypatch, ram=128.0, accel=80.0)
     result = await pull.recommendations()
     chat = [m for m in result["models"] if m["role"] == "chat"]
-    picked = [m for m in chat if m["recommended"]]
+    # A second chat row may be flagged as the VISION pick; the chat role
+    # itself still has exactly one answer.
+    picked = [m for m in chat if "chat" in m["recommended_for"]]
     assert len(picked) == 1, "exactly one pick per role"
     # The largest chat model that still fits comfortably — on 80 GB that is the
     # top of the list, which is the entire point of probing the hardware.
@@ -403,8 +408,39 @@ async def test_every_role_gets_its_own_pick(fake_tags, monkeypatch) -> None:
     decision and gets a separate answer."""
     _machine(monkeypatch, ram=64.0, accel=24.0)
     result = await pull.recommendations()
-    picked_roles = {m["role"] for m in result["models"] if m["recommended"]}
+    picked_roles = {role for m in result["models"] for role in m["recommended_for"]}
     assert picked_roles == set(result["roles"])
+    assert all(m["recommended"] == bool(m["recommended_for"]) for m in result["models"])
+
+
+async def test_the_vision_pick_is_the_multimodal_chat_model_where_it_fits(
+    fake_tags, monkeypatch
+) -> None:
+    """Every current chat family sees images, so a machine that runs one is not
+    told to download a second model just for the screen. The separate vision
+    line is only the fallback below the smallest multimodal chat pick."""
+    _machine(monkeypatch, ram=64.0, accel=24.0)
+    result = await pull.recommendations()
+    vision_pick = next(m for m in result["models"] if "vision" in m["recommended_for"])
+    assert vision_pick["role"] == "chat"
+    assert vision_pick["vision"] is True
+
+    _machine(monkeypatch, ram=4.0, accel=0.0)
+    result = await pull.recommendations()
+    vision_pick = next(m for m in result["models"] if "vision" in m["recommended_for"])
+    assert vision_pick["id"] == "qwen3-vl:2b"
+
+
+def test_the_shortlist_review_date_is_not_a_year_old() -> None:
+    """The date the panel prints as "Shortlist reviewed …" must be true AND
+    recent: a list nobody has checked for a year ships year-old defaults."""
+    import datetime
+
+    age = datetime.date.today() - pull.CURATED_REVIEWED_ON
+    assert age.days <= pull.CURATED_MAX_AGE_DAYS, (
+        f"The curated Ollama shortlist was last reviewed on {pull.CURATED_REVIEWED_ON}; "
+        "check every tag against ollama.com and bump CURATED_REVIEWED_ON."
+    )
 
 
 async def test_an_installed_role_stops_being_recommended(fake_tags, monkeypatch) -> None:
@@ -415,8 +451,12 @@ async def test_an_installed_role_stops_being_recommended(fake_tags, monkeypatch)
     result = await pull.recommendations()
     chat = [m for m in result["models"] if m["role"] == "chat"]
     assert not any(m["recommended"] for m in chat)
+    # The installed chat model sees the screen, so the vision role is served
+    # too — recommending a separate vision download now would be nagging.
+    assert not any("vision" in m["recommended_for"] for m in result["models"])
     # Other roles are untouched — one installed model does not silence the rest.
-    assert any(m["recommended"] for m in result["models"] if m["role"] == "vision")
+    assert any(m["recommended"] for m in result["models"] if m["role"] == "coder")
+    assert any(m["recommended"] for m in result["models"] if m["role"] == "embedding")
 
 
 async def test_real_registry_sizes_replace_the_estimates(fake_tags, monkeypatch) -> None:

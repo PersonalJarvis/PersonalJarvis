@@ -19,12 +19,19 @@ must not go red over it. Run it explicitly with ``pytest -m integration``.
 
 from __future__ import annotations
 
+import datetime
+
 import httpx
 import pytest
 
 from jarvis.brain.ack_brain.config import AckBrainConfig
 from jarvis.brain.ollama_library import parse_tags_html
-from jarvis.brain.ollama_pull import RECOMMENDED_MODELS, ROLE_ORDER
+from jarvis.brain.ollama_pull import (
+    CURATED_MAX_AGE_DAYS,
+    CURATED_REVIEWED_ON,
+    RECOMMENDED_MODELS,
+    ROLE_ORDER,
+)
 from jarvis.core.config import MemoryConfig
 from jarvis.dictation.polish_client import POLISH_FAMILIES
 from jarvis.realtime.local_server import brain_link, tiers
@@ -36,9 +43,31 @@ pytestmark = pytest.mark.integration
 _REGISTRY = "https://registry.ollama.ai/v2/library"
 _ACCEPT = {"Accept": "application/vnd.docker.distribution.manifest.v2+json"}
 
+#: Every tag the 2026-08-24 shortlist refresh names, listed here so a retired
+#: one fails by NAME even if someone trims it from RECOMMENDED_MODELS without
+#: reading this file. Verified against the registry manifests on that date.
+_SHORTLIST_2026_08_24 = (
+    "granite4.1:3b",
+    "qwen3.5:4b",
+    "lfm2.5",
+    "qwen3.5",
+    "gemma4:12b-it-qat",
+    "gemma4:26b-a4b-it-qat",
+    "qwen3.8:27b",
+    "nemotron-3.5-lightning",
+    "qwen3-vl:2b",
+    "ornith:9b",
+    "qwen3.6:27b",
+    "muse-glimmer:30b",
+    "ornith:35b",
+    "embeddinggemma",
+    "qwen3-embedding:4b",
+)
+
 _RUNTIME_OLLAMA_MODELS = tuple(
     sorted(
         {
+            *_SHORTLIST_2026_08_24,
             AckBrainConfig().providers.ollama.model,
             MemoryConfig().embedding_model,
             DEFAULT_MODELS["ollama"],
@@ -125,6 +154,24 @@ def _assert_model_is_current(model_id: str, registry: httpx.Client) -> None:
     )
 
 
+def test_the_shortlist_was_reviewed_within_twelve_months() -> None:
+    """CLAUDE.md §4: nothing a year old ships as a local default. The review
+    date is printed in the panel, so it must be both true and recent — the
+    per-tag checks above catch a retired tag, this catches a list nobody has
+    looked at."""
+    age = datetime.date.today() - CURATED_REVIEWED_ON
+    assert 0 <= age.days <= CURATED_MAX_AGE_DAYS, (
+        f"The curated shortlist was reviewed on {CURATED_REVIEWED_ON}, "
+        f"{age.days} days ago. Re-check every tag on ollama.com and bump "
+        "CURATED_REVIEWED_ON in the same commit."
+    )
+
+
+def test_the_shortlist_names_every_registered_tag() -> None:
+    """The registry list above and RECOMMENDED_MODELS must move together."""
+    assert {entry.id for entry in RECOMMENDED_MODELS} == set(_SHORTLIST_2026_08_24)
+
+
 def test_every_role_still_offers_something() -> None:
     """A role whose last entry is removed would silently stop being recommended
     — the panel would just have one fewer group, which reads as "not needed"."""
@@ -137,5 +184,11 @@ def test_every_role_spans_more_than_one_size() -> None:
     with a single entry gives it nothing to pick from, and a small machine and a
     workstation get the same answer again."""
     for role in ROLE_ORDER:
-        sizes = {e.size_gb for e in RECOMMENDED_MODELS if e.role == role}
+        # The vision role is served by every multimodal pick, whichever role
+        # it is filed under (see ``_pick_recommended``).
+        sizes = {
+            e.size_gb
+            for e in RECOMMENDED_MODELS
+            if e.role == role or (role == "vision" and e.role == "chat" and e.vision)
+        }
         assert len(sizes) >= 2, f"role '{role}' offers only one size"

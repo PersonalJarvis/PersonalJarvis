@@ -82,7 +82,7 @@ def test_search_parser_answers_empty_on_garbage() -> None:
 
 def test_tags_parser_dedupes_the_mobile_and_desktop_blocks(tags_page: str) -> None:
     tags = library.parse_tags_html(tags_page, "qwen3.5")
-    assert [t["tag"] for t in tags] == ["latest", "cloud", "0.8b", "0.3b"]
+    assert [t["tag"] for t in tags] == ["latest", "cloud", "0.8b", "0.3b", "0.8b-q8_0"]
 
 
 def test_tags_parser_reads_sub_gigabyte_sizes(tags_page: str) -> None:
@@ -118,6 +118,53 @@ def test_tags_parser_reads_size_context_and_inputs(tags_page: str) -> None:
     assert latest["cloud"] is False
 
 
+def test_tags_parser_reads_quantization_from_the_tag_name(tags_page: str) -> None:
+    """The page prints no quantization column, so the tag name is the only
+    honest source: ``0.8b-q8_0`` says q8_0, a bare ``latest`` says nothing."""
+    by_tag = {t["tag"]: t for t in library.parse_tags_html(tags_page, "qwen3.5")}
+    assert by_tag["0.8b-q8_0"]["quantization"] == "q8_0"
+    assert by_tag["0.8b-q8_0"]["context"] == "128K"
+    assert by_tag["latest"]["quantization"] == ""
+    assert by_tag["0.8b"]["quantization"] == ""
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("27b-q4_K_M", "q4_K_M"),
+        ("27b-mtp-q8_0", "q8_0"),
+        ("35b-a3b-coding-mxfp8", "mxfp8"),
+        ("2b-nvfp4", "nvfp4"),
+        ("0.8b-mlx-bf16", "bf16"),
+        ("7b-instruct-fp16", "fp16"),
+        ("4b-iq2_xs", "iq2_xs"),
+        ("27b", ""),
+        ("latest", ""),
+        ("cloud", ""),
+    ],
+)
+def test_quantization_is_read_the_way_the_library_names_tags(tag: str, expected: str) -> None:
+    markup = f'<a href="/library/x:{tag}">x</a> 1GB'
+    assert library.parse_tags_html(markup, "x")[0]["quantization"] == expected
+
+
+def test_tags_parser_reads_a_namespaced_model_page() -> None:
+    """Community models live at ``/{user}/{model}:{tag}`` — no ``/library/``
+    prefix — and must parse with the same anchors."""
+    page = (
+        '<a href="/huihui_ai/qwen3-abliterated:latest">x</a> 5.2GB • 40K context window'
+        " • Text input • 1 year ago"
+        '<a href="/huihui_ai/qwen3-abliterated:0.6b-q8_0">x</a> 639MB'
+    )
+    tags = library.parse_tags_html(page, "huihui_ai/qwen3-abliterated")
+    assert [t["id"] for t in tags] == [
+        "huihui_ai/qwen3-abliterated:latest",
+        "huihui_ai/qwen3-abliterated:0.6b-q8_0",
+    ]
+    assert tags[0]["context"] == "40K"
+    assert tags[1]["quantization"] == "q8_0"
+
+
 def test_tags_parser_flags_cloud_from_the_name_only(tags_page: str) -> None:
     """Cloud is a NAME fact. A local tag whose size fails to parse must stay
     size-unknown, never become cloud-only."""
@@ -126,9 +173,7 @@ def test_tags_parser_flags_cloud_from_the_name_only(tags_page: str) -> None:
     assert cloud["cloud"] is True
     assert cloud["size_gb"] is None
 
-    broken = library.parse_tags_html(
-        '<a href="/library/x:4b">x:4b</a> no size markers here', "x"
-    )
+    broken = library.parse_tags_html('<a href="/library/x:4b">x:4b</a> no size markers here', "x")
     assert broken[0]["cloud"] is False
     assert broken[0]["size_gb"] is None
 
@@ -136,11 +181,18 @@ def test_tags_parser_flags_cloud_from_the_name_only(tags_page: str) -> None:
 # ── async surfaces: degradation, enrichment, caching ─────────────────────
 
 
-def _fake_fetch(page: str | None, error: str | None, calls: list[str]):
+def _fake_fetch(
+    page: str | None,
+    error: str | None,
+    calls: list[str],
+    params_seen: list[dict[str, str] | None] | None = None,
+):
     async def fetch(
         path: str, params: dict[str, str] | None = None
     ) -> tuple[str | None, str | None]:
         calls.append(path)
+        if params_seen is not None:
+            params_seen.append(params)
         return page, error
 
     return fetch
@@ -166,6 +218,65 @@ async def test_search_marks_installed_models(monkeypatch, search_page: str, _mac
     by_name = {m["name"]: m for m in result["models"]}
     assert by_name["qwen3.5"]["installed"] is True
     assert by_name["deepscaler"]["installed"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs", "expected_params"),
+    [
+        ({}, {"q": "qwen"}),
+        ({"sort": "popular"}, {"q": "qwen"}),
+        ({"sort": "newest"}, {"q": "qwen", "o": "newest"}),
+        ({"capability": "tools"}, {"q": "qwen", "c": "tools"}),
+        ({"sort": "newest", "capability": "vision"}, {"q": "qwen", "o": "newest", "c": "vision"}),
+        # Values the page does not know are dropped, never forwarded.
+        ({"sort": "loudest", "capability": "magic"}, {"q": "qwen"}),
+    ],
+)
+async def test_search_forwards_sort_and_capability_as_the_page_expects(
+    monkeypatch, search_page: str, _machine, kwargs, expected_params
+) -> None:
+    seen: list[dict[str, str] | None] = []
+    monkeypatch.setattr(library, "_fetch_page", _fake_fetch(search_page, None, [], seen))
+    result = await library.search_library("qwen", **kwargs)
+    assert seen == [expected_params]
+    assert result["sort"] == expected_params.get("o", "popular")
+    assert result["capability"] == expected_params.get("c")
+
+
+@pytest.mark.asyncio
+async def test_an_empty_newest_browse_sends_only_the_sort(
+    monkeypatch, search_page: str, _machine
+) -> None:
+    seen: list[dict[str, str] | None] = []
+    monkeypatch.setattr(library, "_fetch_page", _fake_fetch(search_page, None, [], seen))
+    await library.search_library("", sort="newest")
+    assert seen == [{"o": "newest"}]
+
+
+@pytest.mark.asyncio
+async def test_search_limit_trims_the_answer_not_the_cache(
+    monkeypatch, search_page: str, _machine
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(library, "_fetch_page", _fake_fetch(search_page, None, calls))
+    short = await library.search_library("qwen", limit=1)
+    assert len(short["models"]) == 1
+    full = await library.search_library("qwen", limit=500)
+    assert len(full["models"]) == 3
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_caches_per_sort_and_filter(monkeypatch, search_page: str, _machine) -> None:
+    """Newest and popular are different pages; one must not answer for the other."""
+    calls: list[str] = []
+    monkeypatch.setattr(library, "_fetch_page", _fake_fetch(search_page, None, calls))
+    await library.search_library("qwen")
+    await library.search_library("qwen", sort="newest")
+    await library.search_library("qwen", capability="tools")
+    await library.search_library("qwen", sort="newest")
+    assert len(calls) == 3
 
 
 @pytest.mark.asyncio
@@ -234,9 +345,7 @@ async def test_a_freshly_pulled_tag_stops_offering_download_immediately(
 
 
 @pytest.mark.asyncio
-async def test_search_installed_state_is_never_cached(
-    monkeypatch, search_page: str
-) -> None:
+async def test_search_installed_state_is_never_cached(monkeypatch, search_page: str) -> None:
     inventory: set[str] = set()
 
     async def _installed() -> tuple[set[str], str | None]:
@@ -263,6 +372,30 @@ async def test_tags_reject_a_name_that_is_not_a_library_name(_machine) -> None:
     result = await library.library_tags("../evil")
     assert result["tags"] == []
     assert result["error"] == "Not a valid library model name."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["../evil", "a/../b", "a/b/c", ".hidden", "a?x", "a/.x"])
+async def test_tags_reject_path_shaped_namespaces(_machine, name: str) -> None:
+    result = await library.library_tags(name)
+    assert result["tags"] == []
+    assert result["error"] == "Not a valid library model name."
+
+
+@pytest.mark.asyncio
+async def test_tags_fetch_a_namespaced_model_from_its_own_path(monkeypatch, _machine) -> None:
+    """``/library/{user}/{model}/tags`` answers 404 on ollama.com; a community
+    model lives at ``/{user}/{model}/tags``."""
+    calls: list[str] = []
+    page = '<a href="/huihui_ai/qwen3-abliterated:latest">x</a> 5.2GB'
+    monkeypatch.setattr(library, "_fetch_page", _fake_fetch(page, None, calls))
+    result = await library.library_tags("huihui_ai/qwen3-abliterated")
+    assert calls == ["/huihui_ai/qwen3-abliterated/tags"]
+    assert result["error"] is None
+    assert result["tags"][0]["id"] == "huihui_ai/qwen3-abliterated:latest"
+
+    await library.library_tags("qwen3.5")
+    assert calls[-1] == "/library/qwen3.5/tags"
 
 
 @pytest.mark.asyncio

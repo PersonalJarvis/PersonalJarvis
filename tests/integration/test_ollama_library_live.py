@@ -15,7 +15,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from jarvis.brain.ollama_library import parse_search_html, parse_tags_html
+from jarvis.brain.ollama_library import _tags_path, parse_search_html, parse_tags_html
 
 pytestmark = pytest.mark.integration
 
@@ -54,3 +54,39 @@ def test_the_live_tags_page_still_parses() -> None:
     with_size = [t for t in tags if t["size_gb"]]
     assert with_size, "No parsed tag carries a download size any more."
     assert any(t["tag"] == "latest" for t in tags)
+
+
+def test_the_live_newest_sort_is_honoured() -> None:
+    """``?o=newest`` must change the ORDER: the first rows are days or weeks
+    old, never the years-old names that top the popular listing."""
+    models = parse_search_html(_fetch("https://ollama.com/search?o=newest"))
+    assert len(models) >= 5, "The live newest listing parsed almost empty."
+    head = [m["updated"] for m in models[:5]]
+    assert all(u and "year" not in u for u in head), head
+    assert any(("day" in u or "week" in u or u == "yesterday") for u in head), head
+
+
+def test_the_live_capability_filter_is_honoured() -> None:
+    """``?c=embedding`` must change the SET: every row carries that badge."""
+    models = parse_search_html(_fetch("https://ollama.com/search?c=embedding"))
+    assert len(models) >= 3, "The live embedding filter parsed almost empty."
+    assert all("embedding" in m["capabilities"] for m in models), [
+        m["name"] for m in models if "embedding" not in m["capabilities"]
+    ]
+
+
+def test_the_live_tags_page_carries_quantized_tags() -> None:
+    """A family that publishes quant variants must yield a non-empty
+    ``quantization`` for them and an empty one for the default tag."""
+    tags = parse_tags_html(_fetch("https://ollama.com/library/qwen3.6/tags"), "qwen3.6")
+    quantized = [t for t in tags if t["quantization"]]
+    assert quantized, "No tag on the live qwen3.6 page reads a quantization any more."
+    assert next(t for t in tags if t["tag"] == "latest")["quantization"] == ""
+    assert all(t["context"] for t in tags[:3]), "Context window no longer parses."
+
+
+def test_a_live_namespaced_model_parses_from_its_own_path() -> None:
+    name = "huihui_ai/qwen3-abliterated"
+    tags = parse_tags_html(_fetch(f"https://ollama.com{_tags_path(name)}"), name)
+    assert len(tags) >= 2, "The live community tags page parsed almost empty."
+    assert tags[0]["id"].startswith(f"{name}:")

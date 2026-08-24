@@ -26,6 +26,7 @@ Two deliberate choices:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 from dataclasses import dataclass
@@ -101,84 +102,112 @@ class RecommendedModel:
 #: registry). That test is also the guard against the list going stale: a tag
 #: that is retired fails it rather than reaching a user as "Ollama does not know
 #: a model called …". Sizes are the registry's own, refreshed at request time.
+#: When a maintainer last checked the shortlist against the live library.
+#: Surfaced in the download panel ("Shortlist reviewed …") and enforced by
+#: ``tests/integration/test_ollama_catalog_is_current.py``: a review older
+#: than twelve months fails the suite, because CLAUDE.md §4 forbids shipping a
+#: year-old local default. Bump it in the same commit that refreshes the list.
+CURATED_REVIEWED_ON = datetime.date(2026, 8, 24)
+
+#: How old the review above may get before the guard fails.
+CURATED_MAX_AGE_DAYS = 365
+
 RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
     # ── chat / voice / tools ────────────────────────────────────────────────
+    # Every chat pick that declares ``vision=True`` also serves Screen Context
+    # and Computer-Use: the current families (Qwen 3.5/3.8, Gemma 4, Muse) are
+    # natively multimodal, so a separate vision download is only a fallback
+    # for machines below the smallest multimodal chat model.
     RecommendedModel(
-        id="qwen3.5:2b",
-        label="Qwen 3.5 2B",
-        size_gb=2.7,
-        purpose="Chat and voice on a small laptop. Calls tools.",
+        id="granite4.1:3b",
+        label="Granite 4.1 3B",
+        size_gb=2.1,
+        purpose="Tiny chat with tool calling for a machine with little memory.",
     ),
     RecommendedModel(
         id="qwen3.5:4b",
         label="Qwen 3.5 4B",
         size_gb=3.4,
-        purpose="Chat and voice with more headroom, still light on memory.",
+        purpose="Chat, voice and screen reading on a small laptop. Calls tools.",
+        vision=True,
+    ),
+    RecommendedModel(
+        id="lfm2.5",
+        label="LFM 2.5 8B A1B",
+        size_gb=5.2,
+        purpose="Fastest tool caller of the small class; 1B parameters work per token.",
     ),
     RecommendedModel(
         id="qwen3.5",
         label="Qwen 3.5 9B",
         size_gb=6.6,
-        purpose="The balanced default: chat, voice, and reliable tool calling.",
+        purpose="The balanced default: chat, voice, screen reading and reliable tool calling.",
+        vision=True,
     ),
     RecommendedModel(
         id="gemma4:12b-it-qat",
         label="Gemma 4 12B QAT",
         size_gb=7.2,
-        purpose="Current quantized 12B chat, tools, and vision for one GPU.",
+        purpose="Current quantized 12B chat with tools, vision and audio for one GPU.",
+        vision=True,
     ),
     RecommendedModel(
         id="gemma4:26b-a4b-it-qat",
         label="Gemma 4 26B A4B QAT",
-        size_gb=16.0,
+        size_gb=15.6,
         purpose="Current sparse Gemma with stronger reasoning where memory allows.",
+        vision=True,
     ),
-    # ── vision (Screen Context / Computer-Use) ──────────────────────────────
+    RecommendedModel(
+        id="qwen3.8:27b",
+        label="Qwen 3.8 27B",
+        size_gb=17.7,
+        purpose="The current flagship for a large card: chat, tools, vision and thinking.",
+        vision=True,
+    ),
+    RecommendedModel(
+        id="nemotron-3.5-lightning",
+        label="Nemotron 3.5 Lightning 30B A3B",
+        size_gb=25.4,
+        purpose="Sparse chat with a one-million-token context; 3B parameters work per token.",
+    ),
+    # ── vision fallback (Screen Context / Computer-Use below 3 GB) ──────────
     RecommendedModel(
         id="qwen3-vl:2b",
         label="Qwen 3 VL 2B",
         size_gb=1.9,
-        purpose="Sees your screen on a small machine.",
-        role="vision",
-        vision=True,
-    ),
-    RecommendedModel(
-        id="qwen3-vl:4b",
-        label="Qwen 3 VL 4B",
-        size_gb=3.3,
-        purpose="Sees your screen, with more detail than the 2B.",
-        role="vision",
-        vision=True,
-    ),
-    RecommendedModel(
-        id="qwen3-vl",
-        label="Qwen 3 VL 8B",
-        size_gb=6.1,
-        purpose="The balanced choice for Screen Context and Computer-Use.",
-        role="vision",
-        vision=True,
-    ),
-    RecommendedModel(
-        id="qwen3-vl:32b",
-        label="Qwen 3 VL 32B",
-        size_gb=20.9,
-        purpose="Reads dense screens and small text most reliably.",
+        purpose="Sees your screen on a machine too small for a multimodal chat model.",
         role="vision",
         vision=True,
     ),
     # ── coding worker (the Agents tab's heavy-task model) ───────────────────
     RecommendedModel(
+        id="ornith:9b",
+        label="Ornith 9B",
+        size_gb=5.6,
+        purpose="Small agentic coding worker with tool calling.",
+        role="coder",
+    ),
+    RecommendedModel(
         id="qwen3.6:27b",
         label="Qwen 3.6 27B",
-        size_gb=17.0,
+        size_gb=17.4,
         purpose="Current dense Qwen for agentic coding and repository work.",
         role="coder",
     ),
     RecommendedModel(
-        id="qwen3.6:35b-a3b",
-        label="Qwen 3.6 35B A3B",
-        size_gb=24.0,
-        purpose="Current sparse Qwen coding worker; 3B parameters activate per token.",
+        id="muse-glimmer:30b",
+        label="Muse Glimmer 30B",
+        size_gb=18.2,
+        purpose="Agentic coding worker with vision and thinking.",
+        role="coder",
+        vision=True,
+    ),
+    RecommendedModel(
+        id="ornith:35b",
+        label="Ornith 35B",
+        size_gb=21.2,
+        purpose="Large agentic coding worker for a big card.",
         role="coder",
     ),
     # ── embeddings (UltraWiki search) ───────────────────────────────────────
@@ -405,6 +434,11 @@ async def _real_sizes() -> dict[str, float]:
     return sizes
 
 
+def _serves_vision(role: str, row: dict[str, Any]) -> bool:
+    """Whether a chat row also counts for the vision role (multimodal chat)."""
+    return role == "vision" and row["role"] == "chat" and bool(row["vision"])
+
+
 def _pick_recommended(rows: list[dict[str, Any]]) -> None:
     """Mark the best pick per role on ``rows``, in place.
 
@@ -418,9 +452,17 @@ def _pick_recommended(rows: list[dict[str, Any]]) -> None:
     A role whose model is already installed marks nothing: the user has made
     that choice, and re-recommending a different size over the top of it is how
     a panel starts nagging.
+
+    The vision role is served by the multimodal CHAT picks as well as the
+    dedicated vision fallback, so a machine that runs a chat model which
+    already sees the screen is not told to download a second one for it. (A
+    coder that happens to see images is not offered as the screen model — it
+    is sized for repository work, not for a screen reader.) A row can therefore
+    be the pick of more than one role; ``recommended_for`` lists them and
+    ``recommended`` stays the boolean the panel already renders.
     """
     for role in ROLE_ORDER:
-        in_role = [r for r in rows if r["role"] == role]
+        in_role = [r for r in rows if r["role"] == role or _serves_vision(role, r)]
         if not in_role or any(r["installed"] for r in in_role):
             continue
         comfortable = [r for r in in_role if r["fit"] == "comfortable"]
@@ -430,6 +472,7 @@ def _pick_recommended(rows: list[dict[str, Any]]) -> None:
             else min(in_role, key=lambda r: r["size_gb"])
         )
         pick["recommended"] = True
+        pick["recommended_for"].append(role)
 
 
 async def recommendations() -> dict[str, Any]:
@@ -462,6 +505,7 @@ async def recommendations() -> dict[str, Any]:
                 "fit": verdict,
                 "fit_note": note,
                 "recommended": False,
+                "recommended_for": [],
             }
         )
     _pick_recommended(models)
@@ -481,6 +525,10 @@ async def recommendations() -> dict[str, Any]:
         "accelerator_gb": round(accel, 1),
         "accelerator_source": accel_source,
         "roles": list(ROLE_ORDER),
+        # ISO date so the panel can say "Shortlist reviewed 2026-08-24" — the
+        # honest answer to "how current is this list?", next to the live
+        # catalogue's own "fetched N minutes ago".
+        "curated_reviewed_on": CURATED_REVIEWED_ON.isoformat(),
         "models": models,
         "installed": sorted(installed),
     }
