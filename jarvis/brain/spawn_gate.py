@@ -690,7 +690,16 @@ SPAWN_BLOCKED_MODEL_FEEDBACK: str = (
     "delegate this to a background agent. Answer the user's turn directly "
     "yourself, right now, inline. If (and only if) the task genuinely needs "
     "multi-minute background work, you may ASK the user whether to start a "
-    "background agent — a clear yes on their next turn unlocks this function."
+    "background agent — a clear yes on their next turn unlocks this function. "
+    # 2026-08-24: the offer must be a YES/NO question about the vehicle and
+    # nothing else. Live voice session 10:24: blocked three turns running, the
+    # model answered each block by asking WHICH worker and WHAT the task was —
+    # a task the user had already spelled out in full. Re-asking for a brief
+    # the user just gave reads as amnesia, and it cost him the whole session.
+    "Ask only WHETHER to start one. Never ask what the task is or which agent "
+    "to use: the user has already told you, it is in this conversation, and "
+    "asking again reads as if you forgot. Restate the task in your offer so "
+    "they only have to say yes."
 )
 
 
