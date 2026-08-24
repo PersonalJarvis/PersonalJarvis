@@ -17,11 +17,9 @@ import {
   Brain,
   Check,
   ChevronUp,
-  FileText,
   Files,
   FolderGit2,
   GripVertical,
-  Image as ImageIcon,
   ListChecks,
   Loader2,
   Minus,
@@ -73,23 +71,17 @@ import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
 import { isVoiceActive } from "./useVoiceCall";
 import { PromptEditor } from "./PromptEditor";
+// One strip of chips, one drop handler and one paste handler for every
+// surface that writes to an agent (see ./PromptAttachments).
+import { AttachmentStrip, usePromptAttachments } from "./PromptAttachments";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkspaceExplorer } from "./WorkspaceExplorer";
 import { WorkspaceFileViewer } from "./WorkspaceFileViewer";
-import { usePaneFileDrag } from "./paneFileDrag";
 import { sameRows } from "./paneRows";
 import type { WorkspaceView } from "./workspaceView";
-import {
-  extractPaneDrop,
-  extractPasteFiles,
-  isEmptyPayload,
-  nameClipboardFile,
-  type PaneDropPayload,
-} from "./paneDrop";
 import { usePaneArrange, type DropZone } from "./paneArrange";
 import {
   addTerminal,
-  attachToTerminal,
   closeTerminal,
   closeTerminals,
   moveTerminal,
@@ -103,7 +95,6 @@ import {
   syncAgenticIdeSurface,
   setTerminalRecap,
   promptTerminal,
-  type DropAttachment,
   type IdeAccountState,
   type IdeState,
   type PaneNotification,
@@ -1954,54 +1945,23 @@ export function AgenticGrid({
    * is still saved and still referenced; the description is the floor under it,
    * not a replacement for it.
    */
-  const [attachments, setAttachments] = useState<DropAttachment[]>([]);
-  const [analyzing, setAnalyzing] = useState(0);
-
-  const attach = useCallback(
-    async (payload: PaneDropPayload) => {
-      if (isEmptyPayload(payload)) return;
-      if (!target) {
-        pushToast("warning", "Pick a terminal first — a dropped file belongs to one.");
-        return;
-      }
-      setAnalyzing((n) => n + 1);
-      try {
-        const result = await attachToTerminal(target, {
-          ...payload,
-          analyze: true,
-          // Held, not typed: the user is still writing the sentence that says
-          // what to do with it, and it goes in with that sentence.
-          deliver: false,
-        });
-        const found = result.analysis ?? [];
-        if (found.length === 0) {
-          pushToast("warning", "That drop carried nothing this prompt could use.");
-          return;
-        }
-        setAttachments((prev) => [...prev, ...found]);
-      } catch (e) {
-        pushToast("error", (e as Error).message);
-      } finally {
-        setAnalyzing((n) => Math.max(0, n - 1));
-      }
-    },
-    [target],
-  );
-
-  const { dragging, handlers: dragHandlers } = usePaneFileDrag(
+  const {
+    attachments,
+    analyzing,
+    dragging,
+    dragHandlers,
+    attachFiles,
+    onPaste: onComposerPaste,
+    remove: dropAttachment,
+    clear: clearAttachments,
+  } = usePromptAttachments(
+    target,
     useCallback(
-      (dt: DataTransfer) => {
-        // Read BEFORE any await — a DataTransfer empties the moment this
-        // handler returns (see ./paneDrop).
-        void attach(extractPaneDrop(dt));
-      },
-      [attach],
+      (message: string, severity: "warning" | "error") => pushToast(severity, message),
+      [pushToast],
     ),
   );
 
-  const dropAttachment = useCallback((name: string) => {
-    setAttachments((prev) => prev.filter((a) => a.name !== name));
-  }, []);
 
   /**
    * Compose and deliver in one request — the same thing "prompt Mika …" does
@@ -2028,7 +1988,7 @@ export function AgenticGrid({
     try {
       const result = await promptTerminal(target, text, { compose: true, attachments });
       replacePrompt("");
-      setAttachments([]);
+      clearAttachments();
       // The pane's badge flips to "working" NOW, not when the poll catches the
       // screen moving: the user just watched this send succeed, and a badge
       // still saying "done" for the next several seconds reads as a send that
@@ -2796,16 +2756,7 @@ export function AgenticGrid({
         hidden={composerCollapsed}
         style={{ height: composerHeight }}
         {...dragHandlers}
-        onPaste={(event) => {
-            // Clipboard IMAGES only. Pasted text belongs to the textarea, and
-            // intercepting it would break ordinary paste into the prompt.
-            const images = extractPasteFiles(event.clipboardData).map((f) =>
-              nameClipboardFile(f, target || "prompt"),
-            );
-            if (images.length === 0) return;
-            event.preventDefault();
-            void attach({ paths: [], files: images });
-          }}
+        onPaste={onComposerPaste}
           className={cn(
             /*
              * The height the seam dragged belongs to THIS element; the padding
@@ -2923,7 +2874,7 @@ export function AgenticGrid({
           sending={sending}
           seed={promptSeed}
           onSend={send}
-          onAttach={(files) => void attach({ paths: [], files })}
+          onAttach={attachFiles}
         />
         </div>
       </div>
@@ -3202,86 +3153,6 @@ function TerminalFontSizeControl({
       >
         <Plus className="h-3.5 w-3.5" />
       </button>
-    </div>
-  );
-}
-
-/**
- * The files waiting to go in with the next prompt.
- *
- * Each chip says what was actually LEARNED from the file, not just that one was
- * attached. That distinction is the whole feature: "screenshot.png" tells the
- * user nothing about whether the agent will be able to see it, while "described"
- * and "not described" are the two outcomes they need to be able to tell apart
- * before they press Send — and the second one happens for real, on any install
- * whose providers cannot see images.
- */
-function AttachmentStrip({
-  attachments,
-  analyzing,
-  onRemove,
-}: {
-  attachments: DropAttachment[];
-  analyzing: number;
-  onRemove: (name: string) => void;
-}) {
-  return (
-    <div
-      data-testid="agentic-attachments"
-      className="mb-2 flex max-h-20 shrink-0 flex-wrap items-center gap-1.5 overflow-y-auto scrollbar-jarvis"
-    >
-      {attachments.map((item) => {
-        const read = item.described_by !== "none" && item.detail.length > 0;
-        return (
-          <span
-            key={item.name}
-            data-testid={`agentic-attachment-${item.name}`}
-            title={
-              read
-                ? `${item.detail.slice(0, 400)}${item.detail.length > 400 ? "…" : ""}`
-                : item.note || "Attached as a file."
-            }
-            className={cn(
-              "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]",
-              read
-                ? "border-primary/40 bg-primary/10 text-foreground"
-                : "border-border text-muted-foreground",
-            )}
-          >
-            {item.kind === "image" ? (
-              <ImageIcon className="h-3 w-3 shrink-0" />
-            ) : (
-              <FileText className="h-3 w-3 shrink-0" />
-            )}
-            <span className="max-w-[12rem] truncate font-mono">{item.name}</span>
-            <span className="shrink-0 text-[10px] text-muted-foreground">
-              {read
-                ? item.described_by === "vision"
-                  ? "described"
-                  : "text read"
-                : "not described"}
-            </span>
-            <button
-              type="button"
-              aria-label={`Remove ${item.name}`}
-              data-testid={`agentic-attachment-remove-${item.name}`}
-              onClick={() => onRemove(item.name)}
-              className="shrink-0 rounded text-muted-foreground hover:text-destructive"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        );
-      })}
-      {analyzing > 0 && (
-        <span
-          data-testid="agentic-attachment-working"
-          className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground"
-        >
-          <Loader2 className="h-3 w-3 animate-spin" />
-          Reading {analyzing === 1 ? "the dropped file" : `${analyzing} dropped files`}…
-        </span>
-      )}
     </div>
   );
 }
