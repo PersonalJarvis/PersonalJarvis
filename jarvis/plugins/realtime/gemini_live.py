@@ -1092,8 +1092,38 @@ class GeminiLiveProvider:
         ("google_api_key", "GOOGLE_API_KEY"),
     )
 
+    # The transcript a transport rebuild replays into the fresh session.
+    # Declared at class level so ``VertexLiveProvider`` — and any other
+    # subclass that writes its own ``__init__`` — always has a valid default.
+    _history_seed: tuple[dict[str, str], ...] = ()
+
     def __init__(self, *, api_key: str | None = None) -> None:
         self._api_key = (api_key or "").strip()
+        self._history_seed = ()
+
+    def set_history_snapshot(self, history: tuple[dict[str, str], ...]) -> None:
+        """Refresh the transcript a transport rebuild would restore (BUG-088).
+
+        This adapter has no in-protocol resume and Gemini's server drops the
+        Live socket on its own schedule (GoAway, 1006), so ``rebuild_on_
+        transport_death`` reopens a fresh session mid-call and re-seeds it.
+        Until now the seed could only ever be the ``history`` handed in when
+        the call was OPENED: everything said since was gone the moment the
+        socket dropped. Live 2026-08-24 10:24, the maintainer's report — "he
+        forgot the context after about 50 tokens" — is what that looks like
+        from the outside.
+
+        The orchestrator pushes the bounded call transcript here after every
+        completed turn (``RealtimeVoiceSession._remember_delegate_turn``); the
+        capability is probed, never required (AP-21). Local state only, never
+        a wire call.
+        """
+        self._history_seed = tuple(
+            {"role": str(message.get("role", "")), "text": str(message.get("text", ""))}
+            for message in (history or ())
+            if str(message.get("role", "")) in {"user", "assistant"}
+            and str(message.get("text", "")).strip()
+        )
 
     async def can_open_duplex_session(self) -> bool:
         return bool(self._api_key)
@@ -1196,7 +1226,12 @@ class GeminiLiveProvider:
         # (BUG-104). Probed by SDK capability, never a model-name pin (AP-21):
         # an SDK without HistoryConfig cannot seed legally, so it opens an
         # amnesiac session instead of a doomed one.
-        history = tuple(getattr(cfg, "history", ()) or ())
+        # The live snapshot wins over the open-time config: on a mid-call
+        # rebuild ``cfg`` still carries the history the CALL started with, so
+        # preferring it would replay a stale transcript and drop everything
+        # said since. Falls back to cfg for the first open, when no turn has
+        # completed yet and the snapshot is legitimately empty.
+        history = self._history_seed or tuple(getattr(cfg, "history", ()) or ())
         history_config_cls = getattr(types, "HistoryConfig", None)
         seed_declared = bool(history) and history_config_cls is not None
         if history and not seed_declared:

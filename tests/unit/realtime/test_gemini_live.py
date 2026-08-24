@@ -7,7 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.brain.model_catalog import REALTIME_MODELS
-from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider, _GeminiLiveSession
+from jarvis.plugins.realtime.gemini_live import (
+    GeminiLiveProvider,
+    VertexLiveProvider,
+    _GeminiLiveSession,
+)
 from jarvis.realtime.protocol import RealtimeSessionConfig
 
 
@@ -1838,3 +1842,63 @@ async def test_a_second_empty_boundary_after_a_supersede_is_not_withheld() -> No
         "interrupted",
         "turn_complete",
     ]
+
+
+# ── transport rebuild must not cost the conversation (BUG-088 parity) ──────
+
+
+def test_provider_accepts_a_history_snapshot() -> None:
+    """The orchestrator's optional capability must actually be here.
+
+    Gemini drops the Live socket on its own schedule and this adapter has no
+    in-protocol resume, so ``rebuild_on_transport_death`` reopens a fresh
+    session mid-call. Without this method the reopened session could only be
+    seeded with the history the CALL STARTED WITH — every turn since was
+    lost, which the maintainer experienced on 2026-08-24 10:24 as Jarvis
+    forgetting a task he had restated one turn earlier.
+    """
+    provider = GeminiLiveProvider(api_key="test-key")
+    assert provider._history_seed == ()
+
+    provider.set_history_snapshot(
+        (
+            {"role": "user", "text": "spawn a sub agent for my morning briefing"},
+            {"role": "assistant", "text": "Starting one now."},
+        )
+    )
+
+    assert provider._history_seed == (
+        {"role": "user", "text": "spawn a sub agent for my morning briefing"},
+        {"role": "assistant", "text": "Starting one now."},
+    )
+
+
+def test_history_snapshot_drops_unusable_entries() -> None:
+    """Only user/assistant turns with real text reach the seed."""
+    provider = GeminiLiveProvider(api_key="test-key")
+    provider.set_history_snapshot(
+        (
+            {"role": "system", "text": "not a conversation turn"},
+            {"role": "user", "text": "   "},
+            {"role": "assistant", "text": "kept"},
+        )
+    )
+    assert provider._history_seed == ({"role": "assistant", "text": "kept"},)
+
+
+def test_every_rebuilding_adapter_can_take_a_snapshot() -> None:
+    """Capability parity, not a provider-name check (AP-21).
+
+    An adapter that rebuilds its transport mid-call MUST be able to take the
+    updated transcript, or the rebuild silently costs the conversation. Pins
+    the pair together so a future rebuilding adapter cannot ship without it.
+    """
+    for provider in (
+        GeminiLiveProvider(api_key="test-key"),
+        VertexLiveProvider(api_key="test-key"),
+    ):
+        if getattr(provider, "rebuild_on_transport_death", False):
+            assert callable(getattr(provider, "set_history_snapshot", None)), (
+                f"{type(provider).__name__} rebuilds its transport but cannot "
+                "restore the conversation into the fresh session"
+            )
