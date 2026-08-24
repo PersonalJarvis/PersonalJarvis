@@ -12322,3 +12322,117 @@ so anything the app has switched off must be absent, not merely failing — and
 when it does fail anyway, the failure has to name the door that IS open. Both
 defects here came from the same habit of answering "is it wired?" when the
 question was "can it answer?".
+
+## BUG-176: asked about the calendar, answered about Vercel — the retry after a blocked answer pointed at evidence that had just been thrown away (HIGH, FIXED 2026-08-24)
+
+**Symptom (maintainer, 2026-08-24).** "Jarvis keeps producing context-less
+nonsense. I clearly asked what is in my calendar and he comes back with
+Vercel." The transcript shows the tool ran: a `Google Calendar` badge, 1.2 s,
+right under the question. What was spoken:
+
+> "I tried to fetch your recent Vercel deployments, but it looks like there's
+> an issue with the Vercel integration. I can try again in a moment, or you
+> could check the plugin settings in the UI to make sure your account is still
+> connected correctly."
+
+No Vercel tool ran that turn. Nothing about Vercel had been said in the call.
+
+**Forensics (`data/sessions.db`, session `95b85f31`, turn 0).** The tool layer
+was blameless end to end:
+
+```
+ActionProposed  {"tool_name": "google_calendar", "action": "list_events"}
+ActionExecuted  {"tool_name": "google_calendar", "success": true,
+                 "duration_ms": 1232,
+                 "output_preview": "{'events': [{'summary': 'Busy',
+                                     'start': '2026-08-24T05:15:00Z', ...}]"}
+```
+
+Right tool, right arguments, real events back, no timeout and no exception.
+`tool_calls_json` for the turn is `["google_calendar"]` and nothing else.
+
+**Timeline (`data/jarvis_desktop.log`).** The turn was answered twice:
+
+```
+10:57:05.792  gemini-live: function call(s) google_calendar
+10:57:07.031  gemini-live: tool response sent for google_calendar
+10:57:09.155  gemini-live: text input sent (527 chars)
+10:57:09.156  realtime[95b85f31] retrying one blocked output in English
+10:57:09.178  gemini-live: interrupted (our own text input; the generation is
+              superseded) — audio=4.8s transcript=82 chars function_calls=1
+10:57:09.946  gemini-live: generation started
+10:57:10.307  first_audio        <- the Vercel answer
+```
+
+The first generation was grounded and already 4.8 s into its audio. The output-
+language gate blocked it at the speech boundary, and everything the user heard
+came from the second one.
+
+**Root cause: a prompt that pointed at state the same handler had just
+destroyed.** `_direct_tool_result_retry_prompt` said, verbatim, "Use only the
+function result that is already present in this conversation … Do not call any
+function and do not repeat the action." That is an ASSUMPTION about provider
+state, and on this path it is false in three ways at once:
+`_handle_output_language_mismatch` had already called
+`_retire_active_provider_response()`, drained the gate and cleared
+`_output_transcript`; Gemini Live marks a generation abandoned this way as
+superseded server-side; and the last clause closes the only remaining route to
+the facts. The model was told to answer from a result it could not see, and
+forbidden to fetch one.
+
+A model in that position does not fall silent. It substitutes the most
+plausible neighbour in its declared tool set — `vercel` sits in the same
+catalog, and its own not-connected string ("connect it in the Plugins view")
+is the shape the spoken sentence copied. The Vercel name is a symptom of an
+empty context, not of a mis-routed call.
+
+**Not a one-off.** The same `retrying one blocked output` →
+`dropping a reply the provider abandoned` pair fired three times that morning
+and three times the day before. 10:25:21 (session `6f51622a`): the user asked
+for the day's date and a morning briefing, tools `["run-skill",
+"google_calendar", "gmail", "search_web"]` all ran, and the spoken answer was
+"I've checked your active missions, and currently there are no background tasks
+running." Two of three blocked turns drifted to an unrelated topic.
+
+**Fix (`jarvis/realtime/session.py`).** The evidence travels WITH the request.
+
+* `_tool_grounding_block()` renders the turn's own `_direct_tool_results` plus
+  the user's question — deterministic, no LLM (AP-11). Nothing new is
+  disclosed: each payload already crossed the wire to this model as the
+  function response for its own call, bounded by `_bounded_result`.
+* Both retry prompts carry a closed-world rule: the block is the COMPLETE
+  record of the turn, no service, integration or topic outside it may be
+  named, and a question the results do not answer is reported as unanswered
+  rather than filled in.
+* A tool-less turn gets its blocked answer handed back verbatim
+  (`_output_language_blocked_reply`, captured before the teardown clears it).
+  That turns "repeat the same answer" from an impossible request into a
+  translation.
+* Tools ran but nothing was retained (a legacy bridge): the retry is refused
+  outright and the turn takes its deterministic local line, because "answer
+  from the function result" with no result in reach is exactly the prompt that
+  invents one.
+
+Transports that genuinely retain the result see the historical prompt
+unchanged: an empty grounding block appends nothing.
+
+**Regression guard.**
+`tests/unit/realtime/test_blocked_answer_retry_stays_grounded.py` — the retry
+for a calendar turn must contain the calendar data and the closed-world rule;
+a turn with no retained result must not be retried at all; a tool-less turn
+must get its own wording back.
+
+**Open, not fixed here.** The gate flagged an English reply in an English call,
+so this turn's block was itself a false positive. `validate_output_language`
+(`jarvis/core/turn_language.py`) is a pinned contract behind a blocking guard
+(`test_turn_language`) and was deliberately left alone: the recovery has to be
+safe whether the flag is right or wrong, and now it is. Separately, the home
+surface showed "Thought for 2m 18s" for a turn whose measured `think_ms` was
+3181 and whose total latency was 11.7 s — a duration computed independently in
+`TurnSteps.tsx`, unrelated to this bug.
+
+**Lesson.** A prompt may not point at provider state it cannot guarantee. When
+a recovery tears down a response, whatever the replacement must be grounded in
+has to be re-supplied by the side that still holds it — and the request has to
+name its evidence as complete, or the model will quietly widen it. "Use the
+result already in this conversation" is a promise about someone else's memory.
