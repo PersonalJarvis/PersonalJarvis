@@ -77,7 +77,7 @@
     "plugins": "Plugins",
     "docs": "Documentos",
     "mcps": "MCPs",
-    "tasks": "Tareas",
+    "tasks": "Automatizaciones",
     "sessions": "Transcripción",
     "run_inspector": "Run Inspector",
     "costs": "Gastos",
@@ -758,7 +758,7 @@
     }
   },
   "tasks_view": {
-    "title": "Tareas",
+    "title": "Automatizaciones",
     "subtitle": "Cola persistente de tareas — recordatorios, despachos y llamadas a herramientas.",
     "filter_all": "Todas",
     "filter_active": "Activas",
@@ -775,6 +775,7 @@
     "state": {
       "pending": "esperando",
       "scheduled": "programada",
+      "paused": "en pausa",
       "running": "en ejecución",
       "completed": "hecha",
       "failed": "fallida",
@@ -854,6 +855,93 @@
     "done_at": "listo",
     "in_prefix": "en",
     "due_now": "pendiente"
+  },
+  "automations_view": {
+    "title": "Automatizaciones",
+    "subtitle": "Tareas recurrentes del agente: las tuyas y un catálogo de plantillas listas.",
+    "new_button": "Nueva automatización",
+    "refresh": "Actualizar",
+    "tab_automations": "Automatizaciones",
+    "tab_runs": "Ejecuciones",
+    "yours_heading": "Tus automatizaciones",
+    "yours_empty": "Aún no hay automatizaciones.",
+    "yours_empty_hint": "Añade una del catálogo de abajo o crea la tuya con «Nueva automatización».",
+    "catalogue_heading": "Catálogo",
+    "catalogue_hint": "Automatizaciones listas: añade una y ajusta su horario.",
+    "catalogue_loading": "Cargando catálogo…",
+    "catalogue_error": "No se pudo cargar el catálogo",
+    "catalogue_empty": "El catálogo está vacío.",
+    "catalogue_unavailable": "El catálogo aún no está disponible: reinicia la app para activarlo.",
+    "route_unavailable": "Esta acción necesita el backend actualizado: reinicia la app.",
+    "already_running": "Esta automatización ya se está ejecutando.",
+    "category": {
+      "news": "Noticias",
+      "productivity": "Productividad",
+      "finance": "Finanzas",
+      "research": "Investigación",
+      "developer": "Desarrollo"
+    },
+    "add": "Añadir",
+    "added": "Añadida",
+    "show_installed": "Mostrar tu automatización",
+    "needs": "Necesita {tools}",
+    "needs_warning": "Esta automatización necesita {tools}, que no está conectado. Puedes añadirla igualmente; se ejecutará cuando el plugin esté conectado.",
+    "add_dialog_title": "Añadir: {name}",
+    "add_error": "No se pudo añadir la automatización.",
+    "added_notice": "«{name}» añadida.",
+    "required": "Obligatorio",
+    "kind": {
+      "hourly": "Cada hora",
+      "daily": "Diario",
+      "weekly": "Semanal"
+    },
+    "weekday_label": "Día de la semana",
+    "time_label": "Hora",
+    "weekday": {
+      "0": "Lunes",
+      "1": "Martes",
+      "2": "Miércoles",
+      "3": "Jueves",
+      "4": "Viernes",
+      "5": "Sábados",
+      "6": "Domingos"
+    },
+    "schedule": {
+      "hourly": "Cada hora",
+      "daily": "Diario a las {time}",
+      "weekly": "{day} a las {time}",
+      "every_minutes": "Cada {n} min",
+      "every_hours": "Cada {n} h",
+      "on_event": "Cuando ocurre un evento"
+    },
+    "schedule_label": "Horario",
+    "next_run": "Próxima ejecución",
+    "last_run": "Última ejecución",
+    "never_ran": "nunca ejecutada",
+    "run_now": "Ejecutar ahora",
+    "run_started": "Ejecutándose ahora.",
+    "run_error": "No se pudo iniciar la ejecución.",
+    "pause": "Pausar",
+    "resume": "Reanudar",
+    "paused_notice": "En pausa.",
+    "resumed": "Reanudada.",
+    "toggle_error": "No se pudo cambiar la automatización.",
+    "deleted": "Eliminada.",
+    "delete_error": "No se pudo eliminar la automatización.",
+    "delete_confirm": "¿Eliminar?",
+    "keep": "Conservar",
+    "details": "Detalles",
+    "latest_result": "Último resultado",
+    "result": "Resultado",
+    "timeline": "Cronología",
+    "no_result_yet": "Aún no hay resultado.",
+    "runs_empty": "Aún no hay ejecuciones: aparecerán aquí cuando la primera automatización se haya ejecutado.",
+    "runs_filter": {
+      "all": "Todas",
+      "running": "En curso",
+      "done": "Hechas",
+      "problems": "Problemas"
+    }
   },
   "plugins_view": {
     "title": "Plugins",
@@ -1668,7 +1756,6 @@
     "no_providers_in_tier": "No hay proveedores disponibles en esta categoría.",
     "model_picker_activate_hint": "Activa este proveedor para elegir su voz o modelo.",
     "active_tooltip": "Ya activo",
-    "click_to_activate": "Clic para activar este proveedor",
     "click_to_activate": "Clic para activar este proveedor y abrir sus ajustes",
     "provider_active": "Activo",
     "provider_set_active": "Activar",
@@ -1925,9 +2012,9 @@
       "title": "Pausa para pensar",
       "description": "Cuánto espera {name} en silencio antes de tomar tu turno. En Automático cada modo de voz mantiene su propio ajuste de fábrica: la pausa más corta. Súbelo para darte más tiempo para pausar y terminar una idea; si sigues hablando dentro de la pausa, lo dicho se añade a la misma petición. Se aplica a ambos modos de voz: Pipeline de inmediato, Realtime a partir de la siguiente llamada.",
       "unit_seconds": "s",
-        "automatic_label": "Automático",
-        "automatic_caption": "Ajuste de fábrica del proveedor: la pausa más corta.",
-        "saved_toast_automatic": "Pausa para pensar fijada en Automático.",
+      "automatic_label": "Automático",
+      "automatic_caption": "Ajuste de fábrica del proveedor: la pausa más corta.",
+      "saved_toast_automatic": "Pausa para pensar fijada en Automático.",
       "reset": "Restablecer al valor predeterminado (Automático)",
       "saved_toast": "Pausa para pensar fijada en {0}.",
       "restart_caption": "Guardado — se aplica en el próximo inicio."
@@ -2535,156 +2622,158 @@
     "install_failed": "{0}: instalación fallida (exit {1}). Prueba otro método."
   },
   "onboarding": {
-    "progress_label": "Progreso de la introducción",
+    "progress_label": "Progreso de la configuración",
+    "eyebrow": "Primer inicio",
+    "step_progress": "{0} de {1}",
     "nav": {
-      "next": "Siguiente",
+      "next": "Continuar",
       "back": "Atrás",
       "skip": "Omitir"
     },
+    "steps": {
+      "welcome": {
+        "label": "Antes de empezar",
+        "title": "Antes de empezar",
+        "hint": "{name} actúa en tu ordenador. Lee lo que eso significa y luego decide."
+      },
+      "language": {
+        "label": "Idioma",
+        "title": "¿En qué idioma debe hablar {name}?",
+        "hint": "La interfaz y las respuestas pueden diferir. Ambos se pueden cambiar después en Ajustes."
+      },
+      "api-keys": {
+        "label": "Tu clave",
+        "title": "Una clave basta para empezar",
+        "hint": "Pega una clave API de un proveedor que ya uses, o trabaja totalmente en local. Los proveedores de voz se pueden añadir después en Claves API."
+      },
+      "permissions": {
+        "label": "Permisos",
+        "title": "Permitir el acceso en este Mac",
+        "hint": "macOS pide cada capacidad por separado. Concédelas y vuelve — la lista se actualiza sola."
+      },
+      "wake-word": {
+        "label": "Activación",
+        "title": "¿Cómo quieres llamar a {name}?",
+        "hint": "Una palabra de activación propia o un atajo de teclado. Ambos se pueden cambiar después."
+      },
+      "finish": {
+        "label": "Listo",
+        "title": "{name} está listo",
+        "hint": "Esto es lo que has configurado. Un reinicio lo aplica todo."
+      }
+    },
     "welcome": {
-      "title": "Bienvenido a Personal Jarvis",
-      "subtitle": "Tu asistente de IA por voz. Vamos a configurarlo.",
-      "cta": "Empezar",
-      "skip_setup": "Omitir la configuración por ahora"
-    },
-    "tutorial": {
-      "title": "Mira el recorrido de 2 minutos",
-      "body": "Un repaso rápido de lo que hace Personal Jarvis y cómo es la configuración. Puedes omitirlo y empezar enseguida.",
-      "continue": "Continuar",
-      "skip": "Omitir el vídeo",
-      "play": "Reproducir el vídeo del tutorial"
-    },
-    "risk": {
-      "title": "Antes de continuar",
-      "lead": "Personal Jarvis es un software potente y experimental.",
-      "body": "Puede controlar tu ordenador, ejecutar comandos, abrir aplicaciones, enviar mensajes y modificar archivos en tu nombre, y puede cometer errores. Podría hacer cosas no deseadas o incluso destructivas.",
-      "liability": "Lo usas completamente bajo tu propia responsabilidad. Los desarrolladores no aceptan responsabilidad alguna por daños, pérdida de datos u otras consecuencias. Continúa solo si lo entiendes y lo aceptas.",
-      "accept_label": "Entiendo los riesgos y acepto que uso Personal Jarvis bajo mi propia responsabilidad.",
-      "proceed": "Lo entiendo — continuar",
+      "capabilities_label": "Qué puede hacer {name}",
+      "cap_commands": "Ejecutar comandos, abrir aplicaciones y modificar archivos en tu nombre",
+      "cap_screen": "Ver tu pantalla y actuar sobre ella cuando se lo pidas",
+      "cap_cloud": "Enviar lo que dices al proveedor de IA que elijas",
+      "cap_costs": "Usar tu cuenta del proveedor — el uso se factura allí, por ellos",
+      "cap_mistakes": "Cometer errores — incluidos no deseados o destructivos",
+      "liability": "Lo usas completamente bajo tu propia responsabilidad. Los desarrolladores no aceptan responsabilidad alguna por daños, pérdida de datos u otras consecuencias.",
+      "accept_label": "Entiendo los riesgos y uso {name} bajo mi propia responsabilidad.",
+      "view_terms": "Leer las Condiciones de uso completas",
+      "hide_terms": "Ocultar las Condiciones",
+      "terms_loading": "Cargando condiciones…",
+      "proceed": "Entendido — continuar",
       "decline": "Rechazar y salir",
-      "declined_title": "Jarvis se está cerrando",
-      "declined_body": "Has rechazado los términos, así que Personal Jarvis se cierra ahora — no se configuró ni se guardó nada. Vuelve a iniciar la aplicación cuando quieras si cambias de opinión; esta pregunta aparecerá de nuevo.",
-      "view_terms": "Ver los Términos de uso completos",
-      "terms_loading": "Cargando los términos…"
+      "accept_failed": "No se pudo guardar tu aceptación. Comprueba que la aplicación esté en marcha e inténtalo de nuevo.",
+      "declined_title": "{name} se está cerrando",
+      "declined_body": "Has rechazado las Condiciones, así que no se configuró ni se guardó nada. Vuelve a abrir la aplicación cuando quieras; esta pantalla preguntará de nuevo.",
+      "summary_accepted": "Condiciones aceptadas"
     },
     "intro": {
-      "scene_1": "Te presentamos a tu asistente de voz.",
-      "scene_2": "Solo habla: escucha y actúa.",
-      "scene_3": "Sigue trabajando en segundo plano cuando tú no.",
+      "scene_1": "Conoce a tu asistente por voz.",
+      "scene_2": "Solo habla — escucha y actúa.",
+      "scene_3": "Sigue trabajando en segundo plano mientras tú no.",
       "scene_4": "Tus claves, tus datos, tus reglas."
     },
-    "terms": {
-      "title": "Términos y descargo de responsabilidad",
-      "intro": "Léelos y acéptalos antes de continuar.",
-      "accept_label": "He leído y acepto los Términos y el descargo de responsabilidad.",
-      "continue": "Aceptar y continuar"
-    },
     "language": {
-      "title": "Elige tu idioma",
       "ui_label": "Idioma de la interfaz",
-      "reply_label": "Idioma de respuesta"
+      "ui_hint": "Menús, botones y ajustes",
+      "reply_label": "Idioma de respuesta",
+      "reply_hint": "En qué responde {name} — Auto sigue el idioma en el que hablas",
+      "auto": "Auto — sígueme",
+      "summary": "{0} · respuestas {1}"
+    },
+    "api_keys": {
+      "providers_label": "Proveedores",
+      "loading": "Cargando proveedores…",
+      "load_failed": "No se pudo cargar la lista de proveedores. Puedes añadir una clave después en Claves API.",
+      "recommended": "Recomendado",
+      "configured": "Clave guardada",
+      "not_configured": "Sin clave",
+      "active": "Activo",
+      "show_more": "Mostrar {0} más",
+      "show_less": "Mostrar menos",
+      "local_label": "¿Sin clave a mano?",
+      "local_title": "Totalmente local con Ollama",
+      "local_checking": "Buscando un Ollama local…",
+      "local_detected": "Ollama está en marcha en este equipo — {name} puede pensar totalmente en local, sin clave.",
+      "local_detected_empty": "Ollama está en marcha pero aún no tiene ningún modelo — descarga uno primero (p. ej. ollama pull qwen3.5).",
+      "local_use_button": "Usar modelo local",
+      "local_active": "Cerebro local activo — Ollama responde desde este equipo.",
+      "local_missing": "Instala Ollama y {name} funcionará totalmente en local — sin cuenta en la nube.",
+      "local_missing_link": "Obtener Ollama",
+      "security_note": "Las claves se guardan en el llavero de tu sistema y solo se envían al proveedor que elegiste — nunca al chat ni a la voz.",
+      "later": "Más tarde — añadir una clave en Ajustes",
+      "later_hint": "El chat y la voz permanecen desactivados hasta que se guarde una clave.",
+      "summary_none": "Aún sin clave",
+      "summary_local": "Local · Ollama"
     },
     "permissions": {
-      "title": "Permite el acceso en este Mac",
-      "body": "macOS pide aprobar cada capacidad por separado. Usa los botones de abajo y vuelve aquí; el estado se actualizará automáticamente.",
-      "privacy_note": "Estos avisos proceden de macOS. El instalador no puede aprobarlos de forma silenciosa y Personal Jarvis nunca elude Ajustes del Sistema. El aviso del Llavero al iniciar la app solo significa que Personal Jarvis guarda tus claves API cifradas en el Llavero de macOS — nunca salen de tu Mac.",
+      "privacy_note": "Estas solicitudes vienen de macOS. El instalador no puede aprobarlas en silencio y {name} nunca se salta los Ajustes del Sistema. La solicitud del Llavero al iniciar solo significa que tus claves API se guardan cifradas en el Llavero de macOS — nunca salen de tu Mac.",
       "continue": "Continuar",
-      "text_only": "Continuar solo con texto"
+      "text_only": "Continuar solo con texto",
+      "summary_ready": "Concedidos",
+      "summary_skipped": "Solo texto"
     },
     "wake_word": {
-      "choice_title": "¿Cómo quieres activar a {name}?",
-      "choice_body": "Elige lo que mejor se adapte a tu forma de trabajar — puedes cambiarlo después en Ajustes.",
+      "mode_label": "Activación",
       "mode_wake_title": "Palabra de activación",
-      "mode_wake_body": "Di tu propia palabra en cualquier momento — {name} escucha todo el tiempo. Necesita un pequeño modelo local para tu palabra exacta.",
+      "mode_wake_body": "Di tu propia palabra en cualquier momento — siempre escucha. Necesita un pequeño modelo local para tu palabra exacta.",
       "mode_shortcut_title": "Atajo de teclado",
-      "mode_shortcut_body": "Sin palabra de activación — pulsa el atajo de Llamar para iniciar una sesión de voz.",
-      "back_to_choice": "Atrás",
-      "shortcut_note": "Activarás a {name} con el atajo de Llamar en lugar de una palabra de activación. Puedes configurarlo en cualquier momento en Ajustes → Atajos de voz.",
-      "shortcut_cta": "Continuar",
-      "title": "Elige tu palabra de activación",
-      "body": "Elige la palabra que activa tu asistente. \"Hey\" queda fija — tú eliges el resto.",
+      "mode_shortcut_body": "Sin palabra de activación — pulsa el atajo de Llamada para iniciar una sesión de voz.",
+      "selected": "Seleccionado",
+      "shortcut_note": "Activarás {name} con el atajo de Llamada en lugar de una palabra de activación. Puedes configurarlo en Ajustes → Atajos de voz.",
+      "word_label": "Tu palabra",
+      "body": "«Hey» se mantiene fijo — tú eliges el resto.",
       "prefix": "Hey",
       "input_label": "Tu palabra de activación",
       "placeholder": "p. ej. Nova",
-      "notice": "Elige cualquier palabra — solo asegúrate de que no sea la marca de otra persona.",
+      "notice": "Elige cualquier palabra — solo asegúrate de que no sea una marca registrada de otra persona.",
       "learn_more": "Cómo comprobarlo",
       "references_title": "Dónde comprobar nombres protegidos",
-      "references_caveat": "Estas referencias son informativas y pueden estar incompletas o desactualizadas; no sustituyen tu propia comprobación.",
+      "references_caveat": "Estas referencias son informativas y pueden estar incompletas o desactualizadas — no sustituyen tu propia comprobación.",
       "ack_label": "Soy responsable de la palabra de activación que elijo.",
-      "cta": "Guardar palabra de activación",
+      "cta": "Guardar y continuar",
       "saving": "Guardando…",
-      "derived_name": "Tu asistente se llamará: {0}",
+      "derived_name": "Tu asistente se llamará {0}",
       "continue_anyway": "Continuar de todos modos",
+      "summary_shortcut": "Atajo de teclado",
       "mic_check": {
-        "title": "Comprobación del micrófono",
-        "test_button": "Probar micrófono",
-        "say_once_button": "Di tu palabra de activación una vez",
+        "title": "Micrófono",
+        "test_button": "Probar el micrófono",
         "checking": "Escuchando…",
-        "listening": "Escuchando — habla ahora…",
+        "listening": "Escuchando — di tu palabra ahora.",
         "good": "Suena bien — tu micrófono captó tu voz con claridad.",
-        "too_quiet": "Eso sonó muy bajo. Sube el volumen del micrófono o acércate y vuelve a intentarlo.",
-        "no_device": "No se detectó ningún micrófono — puedes terminar la configuración igualmente y solucionarlo más tarde en Ajustes.",
-        "permission_required": "Concede acceso al micrófono en Permisos antes de ejecutar esta comprobación.",
+        "too_quiet": "Eso fue muy bajo. Sube el volumen del micrófono o acércate e inténtalo de nuevo.",
+        "no_device": "No se detectó ningún micrófono — puedes terminar la configuración y arreglarlo después en Ajustes.",
+        "permission_required": "Concede acceso al Micrófono en Permisos antes de ejecutar esta prueba.",
         "error": "No se pudo comprobar el micrófono en este momento."
       }
     },
-    "api_keys": {
-      "title": "Configura las claves API después de la introducción",
-      "body": "Termina primero la introducción. Después abre Claves API y proveedores. No necesitas rellenar todos los campos de claves API.",
-      "screenshot_alt": "Vista de Claves API de Personal Jarvis con la navegación de Claves API y el selector Realtime o Pipeline resaltados",
-      "api_location_title": "Abre Claves API",
-      "api_location_body": "Después de la introducción, selecciona Claves API en la barra lateral izquierda. Pega las claves de proveedor únicamente en esta vista segura.",
-      "voice_mode_title": "Elige el modo de voz",
-      "realtime_label": "Realtime (recomendado, research preview):",
-      "realtime_body": "Añade una clave de OpenAI o Gemini para escucha, razonamiento y voz en un solo modelo.",
-      "pipeline_label": "Pipeline (no recomendado):",
-      "pipeline_body": "Añade claves únicamente para los proveedores de razonamiento, salida de voz y entrada de voz que elijas.",
-      "security_note": "Pega las claves únicamente en la vista segura de Claves API, nunca en el chat ni por voz.",
-      "local_title": "¿Sin clave API? Funciona totalmente en local",
-      "local_checking": "Buscando un Ollama local…",
-      "local_detected": "Ollama detectado en este equipo: Jarvis puede pensar totalmente en local, sin clave.",
-      "local_detected_empty": "Ollama está en marcha pero aún no tiene ningún modelo: descarga uno primero (p. ej. ollama pull qwen3.5).",
-      "local_use_button": "Usar modelo local",
-      "local_active": "Cerebro local activo: Ollama responde desde este equipo y la voz queda en Pipeline para que se use de verdad.",
-      "local_missing": "¿Sin clave API a mano? Instala Ollama y Jarvis funciona totalmente en local, sin cuenta en la nube.",
-      "local_missing_link": "Obtener Ollama",
-      "continue": "Continuar la introducción"
-    },
-    "mic_test": {
-      "title": "Comprobación del micrófono",
-      "body": "Asegurémonos de que tu asistente pueda oírte.",
-      "no_mic": "No se detectó ningún micrófono. Aún puedes hablar por texto o a través de un canal como Telegram.",
-      "skip": "Omitir la comprobación del micrófono"
-    },
-    "system_style": {
-      "title": "Elige tu estilo",
-      "body": "¿Cómo debería aparecer tu asistente en pantalla? Puedes cambiarlo cuando quieras en Ajustes.",
-      "recommended": "Recomendado",
-      "options": {
-        "jarvis_bar": "Barra de Jarvis",
-        "mascot": "Mascota",
-        "voice_orb": "Orbe de voz",
-        "none": "Sin superposición"
-      },
-      "captions": {
-        "jarvis_bar": "Una barra de voz flotante y delgada, siempre a mano.",
-        "mascot": "Un acompañante flotante que reacciona cuando hablas.",
-        "voice_orb": "Una esfera luminosa de luz en movimiento — arrástrala a cualquier pantalla.",
-        "none": "Solo la ventana de la app — sin elementos flotantes en pantalla."
-      },
-      "needs_restart": "Casi listo — este estilo se aplica tras un breve reinicio.",
-      "restart_now": "Reiniciar ahora",
-      "restarting": "Reiniciando…",
-      "save_error": "No se pudo guardar — se mantiene la opción recomendada. Puedes cambiarlo más tarde en Ajustes.",
-      "skip": "Omitir — mantener la Barra de Jarvis"
-    },
     "finish": {
-      "title": "¡Todo listo!",
-      "body": "Tu asistente está listo. Di tu palabra de activación o escribe un comando para empezar.",
-      "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
-      "start_cta": "Empezar",
-      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras tu asistente se inicia — es completamente normal.",
-      "autostart_label": "Iniciar Jarvis automáticamente al iniciar sesión"
+      "summary_label": "Tu configuración",
+      "skipped": "Omitido — configúralo cuando quieras en Ajustes",
+      "autostart_label": "Iniciar {name} al iniciar sesión",
+      "autostart_hint": "Se ejecuta en silencio en segundo plano tras iniciar sesión.",
+      "tour_label": "¿Nuevo por aquí?",
+      "tour_title": "Ver el recorrido de 2 minutos",
+      "tour_body": "Se abre en YouTube en tu navegador.",
+      "boot_notice": "El primer inicio tarda unos 10 segundos mientras {name} se prepara — es normal.",
+      "start_cta": "Iniciar {name}",
+      "starting": "Iniciando…",
+      "start_failed": "No se pudo terminar la configuración. Comprueba que la aplicación esté en marcha e inténtalo de nuevo."
     }
   },
   "language_select": {
@@ -4305,21 +4394,45 @@
       "coding_mode_on_open": "Se activa al abrir",
       "terminal_plan": "Plan de terminales",
       "steps": {
-        "folder": { "label": "Carpeta", "title": "Elige la carpeta del proyecto", "hint": "Todo lo que hagan los agentes permanece dentro de esta carpeta." },
-        "layout": { "label": "Diseño", "title": "Diseña el espacio de trabajo", "hint": "Elige cuántos paneles de terminal independientes deben abrirse." },
-        "agents": { "label": "Agentes" },
-        "view": { "label": "Vista", "title": "Elige cómo leer el espacio", "hint": "Después ambas quedan a un clic: el conmutador está en la barra del espacio de trabajo." },
-        "review": { "label": "Revisar", "title": "Revisa antes de abrir", "hint": "Nada empieza hasta que abras el espacio de trabajo." }
+        "folder": {
+          "label": "Carpeta",
+          "title": "Elige la carpeta del proyecto",
+          "hint": "Todo lo que hagan los agentes permanece dentro de esta carpeta."
+        },
+        "layout": {
+          "label": "Diseño",
+          "title": "Diseña el espacio de trabajo",
+          "hint": "Elige cuántos paneles de terminal independientes deben abrirse."
+        },
+        "agents": {
+          "label": "Agentes"
+        },
+        "view": {
+          "label": "Vista",
+          "title": "Elige cómo leer el espacio",
+          "hint": "Después ambas quedan a un clic: el conmutador está en la barra del espacio de trabajo."
+        },
+        "review": {
+          "label": "Revisar",
+          "title": "Revisa antes de abrir",
+          "hint": "Nada empieza hasta que abras el espacio de trabajo."
+        }
       },
       "views": {
-        "grid": { "title": "Cuadrícula de terminales", "description": "Todos los paneles a la vez, uno junto a otro: la pared completa de terminales." },
-        "chat": { "title": "Chat", "description": "El chat de agentes, en la carpeta de este espacio de trabajo: escribe en lugar de mirar terminales." }
+        "grid": {
+          "title": "Cuadrícula de terminales",
+          "description": "Todos los paneles a la vez, uno junto a otro: la pared completa de terminales."
+        },
+        "chat": {
+          "title": "Chat",
+          "description": "El chat de agentes, en la carpeta de este espacio de trabajo: escribe en lugar de mirar terminales."
+        }
       }
     },
     "crowded": {
-        "warning": "{0} terminales son muchos para una sola pantalla: a cada uno le queda poco sitio. En una pantalla grande no hay problema; en un portátil, con menos se sigue mejor. Siempre puedes maximizar un panel para leerlo.",
-        "measured": "{0} terminales salen a unas {1} columnas cada uno en esta ventana: estrecho para la salida de un agente. En esta ventana caben {2} en paralelo con comodidad con tu tamaño de texto. Maximiza un panel cuando quieras leerlo a tamaño completo."
-      },
+      "warning": "{0} terminales son muchos para una sola pantalla: a cada uno le queda poco sitio. En una pantalla grande no hay problema; en un portátil, con menos se sigue mejor. Siempre puedes maximizar un panel para leerlo.",
+      "measured": "{0} terminales salen a unas {1} columnas cada uno en esta ventana: estrecho para la salida de un agente. En esta ventana caben {2} en paralelo con comodidad con tu tamaño de texto. Maximiza un panel cuando quieras leerlo a tamaño completo."
+    },
     "resume": {
       "eyebrow": "Espacio de trabajo anterior",
       "title": "Recupera el espacio de trabajo, no solo las ventanas",

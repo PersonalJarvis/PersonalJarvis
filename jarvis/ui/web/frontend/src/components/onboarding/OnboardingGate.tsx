@@ -3,41 +3,34 @@ import { useOnboarding } from "@/hooks/useOnboarding";
 
 /**
  * Code-split: a completed install renders this gate exactly once per mount —
- * a no-op `null` return, forever — yet the risk screen, the intro video and
- * the full six-step flow (with its own step components) used to travel in the
- * entry chunk anyway, on every boot, for every returning user. Split the same
- * way MainView.tsx splits section views: only the gate's own show/hide logic
- * stays static, the screens load on the one boot that actually shows them.
+ * a no-op `null` return, forever — yet the full six-step flow (with its own
+ * step components) used to travel in the entry chunk anyway, on every boot,
+ * for every returning user. Split the same way MainView.tsx splits section
+ * views: only the gate's own show/hide logic stays static, the flow loads on
+ * the one boot that actually shows it.
  */
 const OnboardingFlow = lazy(() =>
   import("./OnboardingFlow").then((m) => ({ default: m.OnboardingFlow })),
 );
-const RiskGate = lazy(() =>
-  import("./RiskGate").then((m) => ({ default: m.RiskGate })),
-);
-const IntroVideoScreen = lazy(() =>
-  import("./IntroVideoScreen").then((m) => ({ default: m.IntroVideoScreen })),
-);
 
 /**
- * Blocking overlay that shows the onboarding flow until it is completed.
- * Fails open (renders nothing) while loading or on a fetch error so a broken
- * guide never traps the user. `?onboarding=force` forces the flow for
- * non-destructive dev replay.
+ * The first-run stage. It covers the whole window on the app's own ground —
+ * no scrim, no blur, no floating card: on a fresh install there is nothing
+ * behind it worth hinting at, and a dialog over a half-built app looked
+ * exactly like what it was. Fails open (renders nothing) while loading or on
+ * a fetch error so a broken guide never traps the user. `?onboarding=force`
+ * forces the flow for non-destructive dev replay.
+ *
+ * The risk acknowledgement lives INSIDE the flow's first step now (it used to
+ * be a separate screen before a separate video screen before the wizard).
+ * Its acceptance is awaited and persisted there; nothing about
+ * onboarding/completed state changes until the final step, so the
+ * restart-loop bug cannot come back through this path.
  */
 export function OnboardingGate() {
   const onb = useOnboarding();
-  // Risk acknowledgement is gated in local state only — never persisted and
-  // never touching onboarding/completed state, so it shows once per fresh open
-  // of an unfinished guide and cannot reintroduce the restart-loop bug.
-  const [riskAck, setRiskAck] = useState(false);
-  // The tutorial video is the second screen — shown after the risk gate and
-  // before the step flow. Local-state only (like riskAck), so it never touches
-  // onboarding/completed state and re-shows on a fresh open / ?onboarding=force
-  // replay. A null mutation guarantees it cannot reintroduce the restart-loop.
-  const [videoSeen, setVideoSeen] = useState(false);
-  // Set once the user completes the guide (the "Get started" / complete() path
-  // dispatches jarvis:onboarding-changed). It dismisses the overlay even under
+  // Set once the user completes the guide (the "Start" / complete() path
+  // dispatches jarvis:onboarding-changed). It dismisses the stage even under
   // ?onboarding=force, so a dev replay closes on finish exactly like a real
   // first run instead of staying stuck open.
   const [dismissed, setDismissed] = useState(false);
@@ -63,32 +56,16 @@ export function OnboardingGate() {
   const show = (forced || !onb.state.completed) && !dismissed;
   if (!show) return null;
 
-  const showVideo = !videoSeen;
-
   return (
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm"
+      className="fixed inset-0 z-50 bg-background text-foreground"
     >
-      {/* Fallback is empty: the backdrop above already gives the user
-          something to look at while the first-run chunk fetches. */}
+      {/* Fallback is empty: the stage ground is already painted while the
+          first-run chunk fetches. */}
       <Suspense fallback={null}>
-        {!riskAck ? (
-          <RiskGate
-            onAccept={() => {
-              // Persist the Terms record (fail-open: a warming/erroring backend
-              // must never block the gate; the fast-boot path usually answers
-              // immediately). The ack itself stays local-state-only by design.
-              void onb.acceptTerms().catch(() => undefined);
-              setRiskAck(true);
-            }}
-          />
-        ) : showVideo ? (
-          <IntroVideoScreen onContinue={() => setVideoSeen(true)} />
-        ) : (
-          <OnboardingFlow onb={onb} />
-        )}
+        <OnboardingFlow onb={onb} />
       </Suspense>
     </div>
   );

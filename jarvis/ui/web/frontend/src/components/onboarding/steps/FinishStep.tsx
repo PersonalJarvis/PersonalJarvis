@@ -1,18 +1,39 @@
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { ExternalLink, Play } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
 import type { StepProps } from "../OnboardingFlow";
+import { StatusLine, StepFooter, StepSection } from "../primitives";
 
 interface AutostartState {
   enabled: boolean;
   supported: boolean;
 }
 
-export function FinishStep({ onb, goNext }: StepProps) {
-  const t = useT();
-  const skipped = onb.state?.skipped_steps ?? [];
+// The public onboarding walkthrough on YouTube. It used to be a full screen
+// of its own between the risk gate and the wizard; now it is one line on the
+// last step that opens in the user's browser, so nobody is asked to sit
+// through a video before they may type a key.
+const TOUR_URL = "https://www.youtube.com/watch?v=FXz1HclXL1g";
 
-  // "Start Jarvis at login" toggle (formerly a terminal-wizard question).
+/** The steps whose summary the review reads back, in register order. */
+const REVIEW_STEPS = ["language", "api-keys", "permissions", "wake-word"] as const;
+
+/**
+ * The review: what was set up, as a definition list of the register's own
+ * summaries, plus the autostart switch and the one gold action that starts
+ * the assistant. Completion is awaited — the backend restarts the app once
+ * the marker is written — and a failure shows in place instead of leaving
+ * the button dead.
+ */
+export function FinishStep({ onb, goBack, summaries }: StepProps) {
+  const t = useT();
+  const skipped = new Set(onb.state?.skipped_steps ?? []);
+  const steps = onb.state?.steps ?? [];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // "Start at login" toggle (formerly a terminal-wizard question).
   // Capability-gated: hidden on hosts where autostart is unsupported
   // (headless Linux) or when the probe fails — Settings stays the recovery
   // path either way.
@@ -42,35 +63,107 @@ export function FinishStep({ onb, goNext }: StepProps) {
     }
   };
 
+  const start = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // Awaited through the hook (which dispatches jarvis:onboarding-changed
+      // on success) so a failed POST is visible here instead of a dead button.
+      await onb.complete();
+    } catch {
+      setError(t("onboarding.finish.start_failed"));
+      setBusy(false);
+    }
+  };
+
+  const review = REVIEW_STEPS.filter((key) => steps.includes(key)).map((key) => ({
+    key,
+    label: t(`onboarding.steps.${key}.label`),
+    value: summaries[key] ?? (skipped.has(key) ? t("onboarding.finish.skipped") : "—"),
+    muted: !summaries[key],
+  }));
+
   return (
-    <div className="flex flex-col gap-4 text-center">
-      <h2 className="font-display text-xl font-semibold">{t("onboarding.finish.title")}</h2>
-      <p className="text-sm text-muted-foreground">{t("onboarding.finish.body")}</p>
-      {skipped.length > 0 && (
-        <div className="text-xs text-muted-foreground">
-          <div className="font-medium">{t("onboarding.finish.skipped_title")}</div>
-          <ul className="mt-1">
-            {skipped.map((s) => (
-              <li key={s}>{s}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {autostart?.supported && (
-        <label className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm">
-          <span>{t("onboarding.finish.autostart_label")}</span>
-          <input
-            type="checkbox"
-            checked={autostart.enabled}
-            onChange={(e) => void toggleAutostart(e.target.checked)}
-          />
-        </label>
-      )}
-      <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-left text-xs text-muted-foreground">
-        <span aria-hidden className="mt-px text-primary">⏱</span>
-        <span>{t("onboarding.finish.boot_notice")}</span>
-      </div>
-      <Button className="w-full" onClick={goNext}>{t("onboarding.finish.start_cta")}</Button>
+    <div className="space-y-8">
+      <StepSection label={t("onboarding.finish.summary_label")}>
+        <dl className="border-y border-border/70" data-testid="onboarding-review">
+          {review.map((row) => (
+            <div
+              key={row.key}
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-4 border-b border-border/50 py-3 text-sm last:border-b-0"
+            >
+              <dt className="text-muted-foreground">{row.label}</dt>
+              <dd
+                className={
+                  row.muted
+                    ? "text-right text-[13px] text-muted-foreground/80"
+                    : "text-right font-medium text-foreground"
+                }
+              >
+                {row.value}
+              </dd>
+            </div>
+          ))}
+          {autostart?.supported && (
+            <div className="flex items-center justify-between gap-4 border-b border-border/50 py-3 last:border-b-0">
+              <div className="min-w-0">
+                <span className="block text-sm font-medium text-foreground">
+                  {t("onboarding.finish.autostart_label")}
+                </span>
+                <span className="mt-0.5 block text-[13px] text-muted-foreground">
+                  {t("onboarding.finish.autostart_hint")}
+                </span>
+              </div>
+              <Switch
+                checked={autostart.enabled}
+                onCheckedChange={(v) => void toggleAutostart(v)}
+                aria-label={t("onboarding.finish.autostart_label")}
+                data-testid="onboarding-autostart"
+              />
+            </div>
+          )}
+        </dl>
+      </StepSection>
+
+      <StepSection label={t("onboarding.finish.tour_label")}>
+        <a
+          href={TOUR_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="group flex items-center gap-3 border-y border-border/70 py-3 text-sm"
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control border border-border bg-card/60 text-foreground transition-colors group-hover:border-primary/60 group-hover:text-primary">
+            <Play className="h-3.5 w-3.5 translate-x-px fill-current" />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-medium text-foreground">
+              {t("onboarding.finish.tour_title")}
+            </span>
+            <span className="block text-[13px] text-muted-foreground">
+              {t("onboarding.finish.tour_body")}
+            </span>
+          </span>
+          <ExternalLink className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </a>
+      </StepSection>
+
+      <p className="text-[13px] leading-relaxed text-muted-foreground">
+        {t("onboarding.finish.boot_notice")}
+      </p>
+
+      {error && <StatusLine tone="error">{error}</StatusLine>}
+
+      <StepFooter
+        onBack={goBack}
+        primary={{
+          label: busy ? t("onboarding.finish.starting") : t("onboarding.finish.start_cta"),
+          onClick: () => void start(),
+          busy,
+          testId: "onboarding-start",
+        }}
+        hidePrimaryArrow
+      />
     </div>
   );
 }

@@ -3,8 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 vi.mock("@/i18n", () => ({ useT: () => (k: string) => k }));
 import { FinishStep } from "./FinishStep";
 
-// Default stub: capability probe answers "unsupported" so the legacy tests
-// exercise the step without the autostart toggle.
+// Default stub: capability probe answers "unsupported" so the tests exercise
+// the step without the autostart toggle.
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
@@ -19,29 +19,63 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("calls goNext (= complete) on the start CTA", () => {
-  const goNext = vi.fn();
-  render(<FinishStep onb={{ state: { skipped_steps: [] } } as never} goNext={goNext} goBack={vi.fn()} skip={vi.fn()} isFirst={false} isLast />);
-  fireEvent.click(screen.getByRole("button", { name: "onboarding.finish.start_cta" }));
-  expect(goNext).toHaveBeenCalled();
+const STEPS = ["welcome", "language", "api-keys", "permissions", "wake-word", "finish"];
+
+function props(overrides: Record<string, unknown> = {}) {
+  return {
+    onb: {
+      state: { skipped_steps: [], steps: STEPS },
+      complete: vi.fn().mockResolvedValue(undefined),
+    } as never,
+    goNext: vi.fn(),
+    goBack: vi.fn(),
+    skip: vi.fn(),
+    isFirst: false,
+    isLast: true,
+    setSummary: vi.fn(),
+    summaries: { language: "Deutsch · Auto", "api-keys": "OpenRouter", "wake-word": "Hey Nova" },
+    ...overrides,
+  };
+}
+
+it("awaits complete() on the start CTA", async () => {
+  const p = props();
+  render(<FinishStep {...p} />);
+  fireEvent.click(screen.getByTestId("onboarding-start"));
+  await waitFor(() =>
+    expect((p.onb as never as { complete: ReturnType<typeof vi.fn> }).complete).toHaveBeenCalled(),
+  );
 });
 
-it("lists skipped steps", () => {
-  render(<FinishStep onb={{ state: { skipped_steps: ["api-keys", "mic-test"] } } as never} goNext={vi.fn()} goBack={vi.fn()} skip={vi.fn()} isFirst={false} isLast />);
-  expect(screen.getByText("api-keys")).toBeDefined();
-  expect(screen.getByText("mic-test")).toBeDefined();
+it("a failed completion shows the error and re-enables the button", async () => {
+  const p = props({
+    onb: {
+      state: { skipped_steps: [], steps: STEPS },
+      complete: vi.fn().mockRejectedValue(new Error("HTTP 500")),
+    } as never,
+  });
+  render(<FinishStep {...p} />);
+  fireEvent.click(screen.getByTestId("onboarding-start"));
+  await waitFor(() => expect(screen.getByText("onboarding.finish.start_failed")).toBeDefined());
+  expect((screen.getByTestId("onboarding-start") as HTMLButtonElement).disabled).toBe(false);
 });
 
-const stepProps = {
-  onb: { state: { skipped_steps: [] } } as never,
-  goNext: vi.fn(),
-  goBack: vi.fn(),
-  skip: vi.fn(),
-  isFirst: false,
-  isLast: true,
-};
+it("reads back the register summaries and marks skipped steps", () => {
+  const p = props({
+    onb: {
+      state: { skipped_steps: ["api-keys"], steps: STEPS },
+      complete: vi.fn(),
+    } as never,
+    summaries: { language: "Deutsch · Auto", "wake-word": "Hey Nova" },
+  });
+  render(<FinishStep {...p} />);
+  const review = screen.getByTestId("onboarding-review");
+  expect(review.textContent).toContain("Deutsch · Auto");
+  expect(review.textContent).toContain("Hey Nova");
+  expect(review.textContent).toContain("onboarding.finish.skipped");
+});
 
-it("shows the autostart toggle when supported and PUTs on change", async () => {
+it("shows the autostart switch when supported and PUTs on change", async () => {
   const calls: Array<[string, RequestInit | undefined]> = [];
   vi.stubGlobal(
     "fetch",
@@ -56,9 +90,9 @@ it("shows the autostart toggle when supported and PUTs on change", async () => {
       });
     }),
   );
-  render(<FinishStep {...stepProps} />);
-  const toggle = (await screen.findByRole("checkbox")) as HTMLInputElement;
-  expect(toggle.checked).toBe(true);
+  render(<FinishStep {...props()} />);
+  const toggle = await screen.findByTestId("onboarding-autostart");
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
 
   fireEvent.click(toggle);
   await waitFor(() =>
@@ -73,13 +107,19 @@ it("shows the autostart toggle when supported and PUTs on change", async () => {
   );
 });
 
-it("hides the toggle when autostart is unsupported (headless)", async () => {
-  render(<FinishStep {...stepProps} />);
-  await waitFor(() => expect(screen.queryByRole("checkbox")).toBeNull());
+it("hides the switch when autostart is unsupported (headless) or the probe fails", async () => {
+  render(<FinishStep {...props()} />);
+  await waitFor(() => expect(screen.queryByTestId("onboarding-autostart")).toBeNull());
+  cleanup();
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("net")));
+  render(<FinishStep {...props()} />);
+  await waitFor(() => expect(screen.queryByTestId("onboarding-autostart")).toBeNull());
 });
 
-it("hides the toggle when the capability probe fails (fail quiet)", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("net")));
-  render(<FinishStep {...stepProps} />);
-  await waitFor(() => expect(screen.queryByRole("checkbox")).toBeNull());
+it("the tour is an external link, not an embedded player", () => {
+  render(<FinishStep {...props()} />);
+  const link = screen.getByRole("link", { name: /tour_title/ }) as HTMLAnchorElement;
+  expect(link.href).toContain("youtube.com");
+  expect(link.target).toBe("_blank");
+  expect(document.querySelector("iframe")).toBeNull();
 });

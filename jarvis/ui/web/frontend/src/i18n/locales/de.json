@@ -77,7 +77,7 @@
     "plugins": "Plugins",
     "docs": "Docs",
     "mcps": "MCPs",
-    "tasks": "Aufgaben",
+    "tasks": "Automatisierungen",
     "sessions": "Transkription",
     "run_inspector": "Run Inspector",
     "costs": "Kosten",
@@ -760,7 +760,7 @@
     }
   },
   "tasks_view": {
-    "title": "Aufgaben",
+    "title": "Automatisierungen",
     "subtitle": "Persistente Task-Queue — Erinnerungen, Harness-Dispatches, Tool-Calls.",
     "filter_all": "Alle",
     "filter_active": "Aktiv",
@@ -777,6 +777,7 @@
     "state": {
       "pending": "wartet",
       "scheduled": "geplant",
+      "paused": "pausiert",
       "running": "läuft",
       "completed": "fertig",
       "failed": "fehler",
@@ -856,6 +857,93 @@
     "done_at": "fertig",
     "in_prefix": "in",
     "due_now": "fällig"
+  },
+  "automations_view": {
+    "title": "Automatisierungen",
+    "subtitle": "Wiederkehrende Agenten-Aufgaben — deine eigenen und ein Katalog fertiger Vorlagen.",
+    "new_button": "Neue Automatisierung",
+    "refresh": "Aktualisieren",
+    "tab_automations": "Automatisierungen",
+    "tab_runs": "Läufe",
+    "yours_heading": "Deine Automatisierungen",
+    "yours_empty": "Noch keine Automatisierungen.",
+    "yours_empty_hint": "Füge eine aus dem Katalog unten hinzu oder erstelle deine eigene mit „Neue Automatisierung“.",
+    "catalogue_heading": "Katalog",
+    "catalogue_hint": "Fertige Automatisierungen — hinzufügen und den Zeitplan anpassen.",
+    "catalogue_loading": "Lade Katalog…",
+    "catalogue_error": "Katalog konnte nicht geladen werden",
+    "catalogue_empty": "Der Katalog ist leer.",
+    "catalogue_unavailable": "Der Katalog ist noch nicht verfügbar — starte die App neu, um ihn zu aktivieren.",
+    "route_unavailable": "Diese Aktion braucht das aktualisierte Backend — starte die App neu.",
+    "already_running": "Diese Automatisierung läuft gerade schon.",
+    "category": {
+      "news": "Nachrichten",
+      "productivity": "Produktivität",
+      "finance": "Finanzen",
+      "research": "Recherche",
+      "developer": "Entwickler"
+    },
+    "add": "Hinzufügen",
+    "added": "Hinzugefügt",
+    "show_installed": "Deine Automatisierung anzeigen",
+    "needs": "Braucht {tools}",
+    "needs_warning": "Diese Automatisierung braucht {tools} — das ist nicht verbunden. Du kannst sie trotzdem hinzufügen; sie läuft, sobald das Plugin verbunden ist.",
+    "add_dialog_title": "Hinzufügen: {name}",
+    "add_error": "Automatisierung konnte nicht hinzugefügt werden.",
+    "added_notice": "„{name}“ hinzugefügt.",
+    "required": "Pflichtfeld",
+    "kind": {
+      "hourly": "Stündlich",
+      "daily": "Täglich",
+      "weekly": "Wöchentlich"
+    },
+    "weekday_label": "Wochentag",
+    "time_label": "Uhrzeit",
+    "weekday": {
+      "0": "Montags",
+      "1": "Dienstags",
+      "2": "Mittwochs",
+      "3": "Donnerstags",
+      "4": "Freitags",
+      "5": "Samstags",
+      "6": "Sonntags"
+    },
+    "schedule": {
+      "hourly": "Stündlich",
+      "daily": "Täglich um {time}",
+      "weekly": "{day} um {time}",
+      "every_minutes": "Alle {n} Min.",
+      "every_hours": "Alle {n} Std.",
+      "on_event": "Bei einem Ereignis"
+    },
+    "schedule_label": "Zeitplan",
+    "next_run": "Nächster Lauf",
+    "last_run": "Letzter Lauf",
+    "never_ran": "noch nie gelaufen",
+    "run_now": "Jetzt ausführen",
+    "run_started": "Läuft jetzt.",
+    "run_error": "Lauf konnte nicht gestartet werden.",
+    "pause": "Pausieren",
+    "resume": "Fortsetzen",
+    "paused_notice": "Pausiert.",
+    "resumed": "Fortgesetzt.",
+    "toggle_error": "Automatisierung konnte nicht geändert werden.",
+    "deleted": "Gelöscht.",
+    "delete_error": "Automatisierung konnte nicht gelöscht werden.",
+    "delete_confirm": "Löschen?",
+    "keep": "Behalten",
+    "details": "Details",
+    "latest_result": "Letztes Ergebnis",
+    "result": "Ergebnis",
+    "timeline": "Verlauf",
+    "no_result_yet": "Noch kein Ergebnis.",
+    "runs_empty": "Noch keine Läufe — sie erscheinen hier, sobald die erste Automatisierung gelaufen ist.",
+    "runs_filter": {
+      "all": "Alle",
+      "running": "Laufend",
+      "done": "Fertig",
+      "problems": "Probleme"
+    }
   },
   "plugins_view": {
     "title": "Plugins",
@@ -1670,7 +1758,6 @@
     "no_providers_in_tier": "In dieser Kategorie sind keine Provider verfügbar.",
     "model_picker_activate_hint": "Aktiviere diesen Provider, um seine Stimme oder sein Modell zu wählen.",
     "active_tooltip": "Bereits aktiv",
-    "click_to_activate": "Klick aktiviert diesen Provider",
     "click_to_activate": "Klick aktiviert diesen Provider und öffnet die Einstellungen",
     "provider_active": "Aktiv",
     "provider_set_active": "Aktivieren",
@@ -1927,9 +2014,9 @@
       "title": "Denkpause",
       "description": "Wie lange {name} in Stille wartet, bevor er deinen Satz übernimmt. Auf Automatisch nutzt jeder Sprachmodus seine eigene Werkseinstellung — das ist die kürzeste Pause. Höher stellen, um mehr Zeit zum Innehalten und Zu-Ende-Denken zu haben; sprichst du innerhalb der Pause weiter, wird das Gesagte an dieselbe Anfrage angehängt. Gilt für beide Sprachmodi — Pipeline sofort, Realtime ab dem nächsten Anruf.",
       "unit_seconds": "s",
-        "automatic_label": "Automatisch",
-        "automatic_caption": "Werkseinstellung des Anbieters — kürzeste Pause.",
-        "saved_toast_automatic": "Denkpause auf Automatisch gesetzt.",
+      "automatic_label": "Automatisch",
+      "automatic_caption": "Werkseinstellung des Anbieters — kürzeste Pause.",
+      "saved_toast_automatic": "Denkpause auf Automatisch gesetzt.",
       "reset": "Auf Standard zurücksetzen (Automatisch)",
       "saved_toast": "Denkpause auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
@@ -2537,156 +2624,158 @@
     "install_failed": "{0}: Install fehlgeschlagen (exit {1}). Versuch eine andere Methode."
   },
   "onboarding": {
-    "progress_label": "Onboarding-Fortschritt",
+    "progress_label": "Einrichtungsfortschritt",
+    "eyebrow": "Erster Start",
+    "step_progress": "{0} von {1}",
     "nav": {
       "next": "Weiter",
       "back": "Zurück",
       "skip": "Überspringen"
     },
+    "steps": {
+      "welcome": {
+        "label": "Bevor wir starten",
+        "title": "Bevor wir starten",
+        "hint": "{name} handelt auf deinem Computer. Lies, was das bedeutet, und entscheide dann."
+      },
+      "language": {
+        "label": "Sprache",
+        "title": "Welche Sprache soll {name} sprechen?",
+        "hint": "Oberfläche und Antworten dürfen sich unterscheiden. Beides lässt sich später in den Einstellungen ändern."
+      },
+      "api-keys": {
+        "label": "Dein Schlüssel",
+        "title": "Ein Schlüssel genügt zum Start",
+        "hint": "Füge einen API-Schlüssel eines Anbieters ein, den du schon nutzt — oder arbeite komplett lokal. Sprachanbieter kannst du später unter API-Schlüssel ergänzen."
+      },
+      "permissions": {
+        "label": "Berechtigungen",
+        "title": "Zugriff auf diesem Mac erlauben",
+        "hint": "macOS fragt jede Fähigkeit einzeln ab. Erteile sie und komm zurück — die Liste aktualisiert sich selbst."
+      },
+      "wake-word": {
+        "label": "Aktivierung",
+        "title": "Wie möchtest du {name} rufen?",
+        "hint": "Ein eigenes Aktivierungswort oder ein Tastenkürzel. Beides lässt sich später ändern."
+      },
+      "finish": {
+        "label": "Bereit",
+        "title": "{name} ist bereit",
+        "hint": "Das hast du eingerichtet. Ein Neustart übernimmt alles."
+      }
+    },
     "welcome": {
-      "title": "Willkommen bei Personal Jarvis",
-      "subtitle": "Dein sprachgesteuerter KI-Assistent. Lass uns alles einrichten.",
-      "cta": "Los geht's",
-      "skip_setup": "Einrichtung vorerst überspringen"
-    },
-    "tutorial": {
-      "title": "Sieh dir die 2-Minuten-Tour an",
-      "body": "Ein kurzer Überblick, was Personal Jarvis kann und wie die Einrichtung läuft. Du kannst überspringen und sofort loslegen.",
-      "continue": "Weiter",
-      "skip": "Video überspringen",
-      "play": "Tutorial-Video abspielen"
-    },
-    "risk": {
-      "title": "Bevor du fortfährst",
-      "lead": "Personal Jarvis ist mächtige, experimentelle Software.",
-      "body": "Sie kann deinen Computer steuern, Befehle ausführen, Apps öffnen, Nachrichten senden und Dateien in deinem Namen verändern — und sie kann Fehler machen. Sie kann ungewollte oder sogar zerstörerische Dinge tun.",
-      "liability": "Die Nutzung erfolgt vollständig auf eigenes Risiko. Die Entwickler übernehmen keine Haftung für Schäden, Datenverlust oder andere Folgen. Fahre nur fort, wenn du das verstehst und akzeptierst.",
-      "accept_label": "Ich verstehe die Risiken und akzeptiere, dass ich Personal Jarvis auf eigenes Risiko nutze.",
-      "proceed": "Verstanden — fortfahren",
-      "decline": "Ablehnen & beenden",
-      "declined_title": "Jarvis wird beendet",
-      "declined_body": "Du hast die Bedingungen abgelehnt, deshalb wird Personal Jarvis jetzt geschlossen — es wurde nichts eingerichtet und nichts gespeichert. Starte die App jederzeit erneut, wenn du es dir anders überlegst; diese Frage erscheint dann wieder.",
-      "view_terms": "Vollständige Nutzungsbedingungen anzeigen",
-      "terms_loading": "Bedingungen werden geladen…"
+      "capabilities_label": "Was {name} kann",
+      "cap_commands": "Befehle ausführen, Apps öffnen und Dateien in deinem Namen ändern",
+      "cap_screen": "Deinen Bildschirm sehen und auf Wunsch darauf handeln",
+      "cap_cloud": "Was du sagst an den KI-Anbieter senden, den du wählst",
+      "cap_costs": "Dein Anbieterkonto nutzen — abgerechnet wird dort, vom Anbieter",
+      "cap_mistakes": "Fehler machen — auch ungewollte oder zerstörerische",
+      "liability": "Die Nutzung erfolgt vollständig auf eigenes Risiko. Die Entwickler übernehmen keine Haftung für Schäden, Datenverlust oder andere Folgen.",
+      "accept_label": "Ich verstehe die Risiken und nutze {name} auf eigenes Risiko.",
+      "view_terms": "Die vollständigen Nutzungsbedingungen lesen",
+      "hide_terms": "Nutzungsbedingungen ausblenden",
+      "terms_loading": "Bedingungen werden geladen…",
+      "proceed": "Verstanden — weiter",
+      "decline": "Ablehnen und beenden",
+      "accept_failed": "Deine Zustimmung konnte nicht gespeichert werden. Prüfe, ob die App läuft, und versuche es erneut.",
+      "declined_title": "{name} wird beendet",
+      "declined_body": "Du hast die Bedingungen abgelehnt — nichts wurde eingerichtet und nichts gespeichert. Starte die App jederzeit neu; dieser Bildschirm fragt dann erneut.",
+      "summary_accepted": "Bedingungen akzeptiert"
     },
     "intro": {
-      "scene_1": "Triff deinen sprachgesteuerten Assistenten.",
-      "scene_2": "Sprich einfach — er hört zu und handelt.",
-      "scene_3": "Er arbeitet im Hintergrund weiter, wenn du es nicht tust.",
+      "scene_1": "Dein sprachgesteuerter Assistent.",
+      "scene_2": "Einfach sprechen — er hört zu und handelt.",
+      "scene_3": "Er arbeitet im Hintergrund weiter, während du es nicht tust.",
       "scene_4": "Deine Schlüssel, deine Daten, deine Regeln."
     },
-    "terms": {
-      "title": "Nutzungsbedingungen & Haftungsausschluss",
-      "intro": "Bitte lies und akzeptiere sie, bevor du fortfährst.",
-      "accept_label": "Ich habe die Nutzungsbedingungen & den Haftungsausschluss gelesen und akzeptiere sie.",
-      "continue": "Akzeptieren & weiter"
-    },
     "language": {
-      "title": "Wähle deine Sprache",
-      "ui_label": "Oberflächensprache",
-      "reply_label": "Antwortsprache"
+      "ui_label": "Sprache der Oberfläche",
+      "ui_hint": "Menüs, Schaltflächen und Einstellungen",
+      "reply_label": "Antwortsprache",
+      "reply_hint": "Worin {name} antwortet — Auto folgt der Sprache, in der du sprichst",
+      "auto": "Auto — folgt mir",
+      "summary": "{0} · Antworten {1}"
+    },
+    "api_keys": {
+      "providers_label": "Anbieter",
+      "loading": "Anbieter werden geladen…",
+      "load_failed": "Die Anbieterliste konnte nicht geladen werden. Du kannst später unter API-Schlüssel einen Schlüssel hinzufügen.",
+      "recommended": "Empfohlen",
+      "configured": "Schlüssel gespeichert",
+      "not_configured": "Kein Schlüssel",
+      "active": "Aktiv",
+      "show_more": "{0} weitere anzeigen",
+      "show_less": "Weniger anzeigen",
+      "local_label": "Kein Schlüssel zur Hand?",
+      "local_title": "Komplett lokal mit Ollama",
+      "local_checking": "Suche nach einem lokalen Ollama…",
+      "local_detected": "Ollama läuft auf diesem Rechner — {name} kann komplett lokal denken, ganz ohne Schlüssel.",
+      "local_detected_empty": "Ollama läuft, hat aber noch kein Modell — lade zuerst eines (z. B. ollama pull qwen3.5).",
+      "local_use_button": "Lokales Modell nutzen",
+      "local_active": "Lokales Gehirn aktiv — Ollama antwortet von diesem Rechner.",
+      "local_missing": "Installiere Ollama, und {name} läuft komplett lokal — ohne Cloud-Konto.",
+      "local_missing_link": "Ollama holen",
+      "security_note": "Schlüssel liegen im Schlüsselbund deines Systems und gehen nur an den Anbieter, den du gewählt hast — nie in Chat oder Sprache.",
+      "later": "Später — Schlüssel in den Einstellungen hinzufügen",
+      "later_hint": "Chat und Sprache bleiben aus, bis ein Schlüssel gespeichert ist.",
+      "summary_none": "Noch kein Schlüssel",
+      "summary_local": "Lokal · Ollama"
     },
     "permissions": {
-      "title": "Zugriff auf diesem Mac erlauben",
-      "body": "macOS lässt jede Funktion einzeln bestätigen. Nutze die Schaltflächen unten und kehre danach hierher zurück; der Status wird automatisch aktualisiert.",
-      "privacy_note": "Diese Abfragen kommen von macOS. Das Installationsprogramm kann sie nicht stillschweigend freigeben, und Personal Jarvis umgeht niemals die Systemeinstellungen. Die Schlüsselbund-Abfrage beim App-Start bedeutet nur, dass Personal Jarvis deine API-Keys verschlüsselt im macOS-Schlüsselbund speichert — sie verlassen deinen Mac nicht.",
+      "privacy_note": "Diese Abfragen kommen von macOS. Der Installer kann sie nicht still genehmigen, und {name} umgeht die Systemeinstellungen nie. Die Schlüsselbund-Abfrage beim App-Start bedeutet nur, dass deine API-Schlüssel verschlüsselt im macOS-Schlüsselbund gespeichert werden — sie verlassen deinen Mac nie.",
       "continue": "Weiter",
-      "text_only": "Nur mit Text fortfahren"
+      "text_only": "Nur mit Text weitermachen",
+      "summary_ready": "Erteilt",
+      "summary_skipped": "Nur Text"
     },
     "wake_word": {
-      "choice_title": "Wie möchtest du {name} aktivieren?",
-      "choice_body": "Wähle, was zu deiner Arbeitsweise passt — du kannst das später in den Einstellungen ändern.",
+      "mode_label": "Aktivierung",
       "mode_wake_title": "Aktivierungswort",
-      "mode_wake_body": "Sag jederzeit dein eigenes Wort — {name} hört ständig mit. Braucht ein kleines lokales Modell für genau dein Wort.",
-      "mode_shortcut_title": "Tastenkombination",
-      "mode_shortcut_body": "Kein Aktivierungswort — drücke das Anruf-Tastenkürzel, um eine Sprachsitzung zu starten.",
-      "back_to_choice": "Zurück",
-      "shortcut_note": "Du aktivierst {name} über das Anruf-Tastenkürzel statt über ein Aktivierungswort. Du kannst es jederzeit unter Einstellungen → Sprach-Tastenkürzel festlegen.",
-      "shortcut_cta": "Weiter",
-      "title": "Wähle dein Aktivierungswort",
-      "body": "Wähle das Wort, das deinen Assistenten aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
+      "mode_wake_body": "Sag jederzeit dein eigenes Wort — hört immer zu. Braucht ein kleines lokales Modell für genau dein Wort.",
+      "mode_shortcut_title": "Tastenkürzel",
+      "mode_shortcut_body": "Kein Aktivierungswort — drücke das Anruf-Kürzel, um eine Sprachsitzung zu starten.",
+      "selected": "Gewählt",
+      "shortcut_note": "Du aktivierst {name} mit dem Anruf-Kürzel statt mit einem Aktivierungswort. Du kannst es jederzeit unter Einstellungen → Sprach-Tastenkürzel anpassen.",
+      "word_label": "Dein Wort",
+      "body": "„Hey“ bleibt fest — den Rest wählst du.",
       "prefix": "Hey",
       "input_label": "Dein Aktivierungswort",
       "placeholder": "z. B. Nova",
-      "notice": "Nimm irgendein Wort — achte nur darauf, dass es keine fremde Marke ist.",
-      "learn_more": "Wie prüfen?",
+      "notice": "Wähle ein beliebiges Wort — achte nur darauf, dass es keine fremde Marke ist.",
+      "learn_more": "So prüfst du das",
       "references_title": "Wo du geschützte Namen prüfen kannst",
-      "references_caveat": "Diese Referenzen dienen nur zur Information und können unvollständig oder veraltet sein — sie ersetzen nicht deine eigene Prüfung.",
-      "ack_label": "Ich bin für mein gewähltes Weckwort selbst verantwortlich.",
-      "cta": "Aktivierungswort speichern",
-      "saving": "Speichern…",
-      "derived_name": "Dein Assistent heißt dann: {0}",
-      "continue_anyway": "Trotzdem fortfahren",
+      "references_caveat": "Diese Verweise sind informativ und können unvollständig oder veraltet sein — sie ersetzen deine eigene Prüfung nicht.",
+      "ack_label": "Ich bin für das gewählte Aktivierungswort verantwortlich.",
+      "cta": "Speichern und weiter",
+      "saving": "Wird gespeichert…",
+      "derived_name": "Dein Assistent heißt dann {0}",
+      "continue_anyway": "Trotzdem weiter",
+      "summary_shortcut": "Tastenkürzel",
       "mic_check": {
-        "title": "Mikrofon-Check",
+        "title": "Mikrofon",
         "test_button": "Mikrofon testen",
-        "say_once_button": "Aktivierungswort einmal sagen",
         "checking": "Höre zu…",
-        "listening": "Höre zu — sprich jetzt…",
+        "listening": "Höre zu — sag jetzt dein Wort.",
         "good": "Klingt gut — dein Mikrofon hat deine Stimme klar aufgenommen.",
-        "too_quiet": "Das war sehr leise. Erhöhe die Mikrofonlautstärke oder rücke näher heran und versuche es erneut.",
+        "too_quiet": "Das war sehr leise. Dreh das Mikrofon lauter oder geh näher heran und versuche es erneut.",
         "no_device": "Kein Mikrofon erkannt — du kannst die Einrichtung trotzdem abschließen und das später in den Einstellungen beheben.",
-        "permission_required": "Erteile unter Berechtigungen zuerst den Mikrofonzugriff, bevor du diesen Check startest.",
+        "permission_required": "Erteile unter Berechtigungen zuerst den Mikrofonzugriff, bevor du diesen Test startest.",
         "error": "Das Mikrofon konnte gerade nicht geprüft werden."
       }
     },
-    "api_keys": {
-      "title": "API-Schlüssel nach dem Onboarding einrichten",
-      "body": "Schließe zuerst das Onboarding ab. Öffne danach API Keys & Providers. Du musst nicht jedes API-Key-Feld ausfüllen.",
-      "screenshot_alt": "Personal-Jarvis-Ansicht mit Markierungen bei der API-Keys-Navigation und beim Schalter Realtime oder Pipeline",
-      "api_location_title": "API Keys öffnen",
-      "api_location_body": "Wähle nach dem Onboarding links in der Seitenleiste API Keys. Füge Anbieter-Schlüssel nur in dieser sicheren Ansicht ein.",
-      "voice_mode_title": "Wähle deinen Sprachmodus",
-      "realtime_label": "Realtime (empfohlen, Research-Preview):",
-      "realtime_body": "Füge einen OpenAI- oder Gemini-Schlüssel für Zuhören, Denken und Sprechen in einem Modell hinzu.",
-      "pipeline_label": "Pipeline (nicht empfohlen):",
-      "pipeline_body": "Füge nur Schlüssel für die ausgewählten Anbieter für Denken, Sprachausgabe und Spracheingabe hinzu.",
-      "security_note": "Füge Schlüssel ausschließlich in der sicheren API-Keys-Ansicht ein — niemals im Chat oder per Sprache.",
-      "local_title": "Kein API-Key? Komplett lokal starten",
-      "local_checking": "Suche nach einem lokalen Ollama…",
-      "local_detected": "Ollama auf diesem Rechner gefunden — Jarvis kann komplett lokal denken, ganz ohne Key.",
-      "local_detected_empty": "Ollama läuft, hat aber noch kein Modell — lade zuerst eins (z. B. ollama pull qwen3.5).",
-      "local_use_button": "Lokales Modell verwenden",
-      "local_active": "Lokales Gehirn aktiv — Ollama antwortet von diesem Rechner, und die Sprache steht auf Pipeline, damit es auch genutzt wird.",
-      "local_missing": "Kein API-Key zur Hand? Installiere Ollama und Jarvis läuft komplett lokal — ohne Cloud-Konto.",
-      "local_missing_link": "Ollama holen",
-      "continue": "Onboarding fortsetzen"
-    },
-    "mic_test": {
-      "title": "Mikrofon-Check",
-      "body": "Stellen wir sicher, dass dein Assistent dich hören kann.",
-      "no_mic": "Kein Mikrofon erkannt. Du kannst trotzdem per Text oder über einen Kanal wie Telegram sprechen.",
-      "skip": "Mikrofon-Check überspringen"
-    },
-    "system_style": {
-      "title": "Wähle deinen Stil",
-      "body": "Wie soll dein Assistent auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
-      "recommended": "Empfohlen",
-      "options": {
-        "jarvis_bar": "Jarvis-Leiste",
-        "mascot": "Maskottchen",
-        "voice_orb": "Voice-Orb",
-        "none": "Kein Overlay"
-      },
-      "captions": {
-        "jarvis_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
-        "mascot": "Ein schwebender Begleiter, der auf deine Stimme reagiert.",
-        "voice_orb": "Eine leuchtende Kugel aus ziehendem Licht — auf jeden Bildschirm ziehbar.",
-        "none": "Nur das App-Fenster — kein schwebendes Element auf dem Bildschirm."
-      },
-      "needs_restart": "Fast geschafft — dieser Stil wird nach einem kurzen Neustart aktiv.",
-      "restart_now": "Jetzt neu starten",
-      "restarting": "Wird neu gestartet…",
-      "save_error": "Konnte das nicht speichern — die empfohlene Voreinstellung bleibt. Du kannst es später in den Einstellungen ändern.",
-      "skip": "Überspringen — Jarvis-Leiste behalten"
-    },
     "finish": {
-      "title": "Alles bereit!",
-      "body": "Dein Assistent ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
-      "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
-      "start_cta": "Loslegen",
-      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal.",
-      "autostart_label": "Jarvis beim Anmelden automatisch starten"
+      "summary_label": "Deine Einrichtung",
+      "skipped": "Übersprungen — jederzeit in den Einstellungen nachholbar",
+      "autostart_label": "{name} beim Anmelden starten",
+      "autostart_hint": "Läuft nach der Anmeldung leise im Hintergrund.",
+      "tour_label": "Neu hier?",
+      "tour_title": "Die 2-Minuten-Tour ansehen",
+      "tour_body": "Öffnet YouTube in deinem Browser.",
+      "boot_notice": "Der erste Start dauert etwa 10 Sekunden, während {name} aufwärmt — das ist normal.",
+      "start_cta": "{name} starten",
+      "starting": "Startet…",
+      "start_failed": "Die Einrichtung konnte nicht abgeschlossen werden. Prüfe, ob die App läuft, und versuche es erneut."
     }
   },
   "language_select": {
@@ -4307,21 +4396,45 @@
       "coding_mode_on_open": "Wird beim Öffnen aktiviert",
       "terminal_plan": "Terminal-Plan",
       "steps": {
-        "folder": { "label": "Ordner", "title": "Projektordner auswählen", "hint": "Alles, was die Agents tun, bleibt in diesem Ordner." },
-        "layout": { "label": "Layout", "title": "Arbeitsbereich aufteilen", "hint": "Lege fest, wie viele unabhängige Terminal-Fenster geöffnet werden." },
-        "agents": { "label": "Agents" },
-        "view": { "label": "Ansicht", "title": "Darstellung des Arbeitsbereichs auswählen", "hint": "Danach ist beides einen Klick entfernt — der Schalter sitzt in der Workspace-Leiste." },
-        "review": { "label": "Prüfen", "title": "Vor dem Öffnen prüfen", "hint": "Nichts startet, bevor du den Arbeitsbereich öffnest." }
+        "folder": {
+          "label": "Ordner",
+          "title": "Projektordner auswählen",
+          "hint": "Alles, was die Agents tun, bleibt in diesem Ordner."
+        },
+        "layout": {
+          "label": "Layout",
+          "title": "Arbeitsbereich aufteilen",
+          "hint": "Lege fest, wie viele unabhängige Terminal-Fenster geöffnet werden."
+        },
+        "agents": {
+          "label": "Agents"
+        },
+        "view": {
+          "label": "Ansicht",
+          "title": "Darstellung des Arbeitsbereichs auswählen",
+          "hint": "Danach ist beides einen Klick entfernt — der Schalter sitzt in der Workspace-Leiste."
+        },
+        "review": {
+          "label": "Prüfen",
+          "title": "Vor dem Öffnen prüfen",
+          "hint": "Nichts startet, bevor du den Arbeitsbereich öffnest."
+        }
       },
       "views": {
-        "grid": { "title": "Terminal-Raster", "description": "Alle Fenster gleichzeitig nebeneinander — die vollständige Terminal-Wand." },
-        "chat": { "title": "Chat", "description": "Der Agenten-Chat, im Ordner dieses Workspaces — schreiben statt Terminals zuschauen." }
+        "grid": {
+          "title": "Terminal-Raster",
+          "description": "Alle Fenster gleichzeitig nebeneinander — die vollständige Terminal-Wand."
+        },
+        "chat": {
+          "title": "Chat",
+          "description": "Der Agenten-Chat, im Ordner dieses Workspaces — schreiben statt Terminals zuschauen."
+        }
       }
     },
     "crowded": {
-        "warning": "{0} Terminals sind viel für einen Bildschirm — jedes bekommt wenig Platz. Auf einem großen Display kein Problem; auf einem Laptop lassen sich weniger leichter verfolgen. Ein Fenster kannst du jederzeit maximieren, um es zu lesen.",
-        "measured": "{0} Terminals werden auf diesem Fenster etwa {1} Spalten breit — schmal für die Ausgabe eines Agenten. Bequem passen bei deiner Schriftgröße {2} nebeneinander. Maximiere ein Fenster, wann immer du es in voller Größe lesen willst."
-      },
+      "warning": "{0} Terminals sind viel für einen Bildschirm — jedes bekommt wenig Platz. Auf einem großen Display kein Problem; auf einem Laptop lassen sich weniger leichter verfolgen. Ein Fenster kannst du jederzeit maximieren, um es zu lesen.",
+      "measured": "{0} Terminals werden auf diesem Fenster etwa {1} Spalten breit — schmal für die Ausgabe eines Agenten. Bequem passen bei deiner Schriftgröße {2} nebeneinander. Maximiere ein Fenster, wann immer du es in voller Größe lesen willst."
+    },
     "resume": {
       "eyebrow": "Vorheriger Arbeitsstand",
       "title": "Den Arbeitsraum wiederherstellen, nicht nur die Fenster",

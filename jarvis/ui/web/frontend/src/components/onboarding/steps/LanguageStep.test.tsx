@@ -9,14 +9,30 @@ vi.mock("@/i18n", () => ({
   setReplyLanguage: vi.fn(),
 }));
 import { LanguageStep } from "./LanguageStep";
-afterEach(() => { cleanup(); setUiLanguage.mockClear(); });
+afterEach(() => {
+  cleanup();
+  setUiLanguage.mockClear();
+});
 
-it("changes UI language and advances", async () => {
+it("changes UI language, reports the summary, and advances", async () => {
   const goNext = vi.fn();
-  render(<LanguageStep onb={{} as never} goNext={goNext} goBack={vi.fn()} skip={vi.fn()} isFirst={false} isLast={false} />);
+  const setSummary = vi.fn();
+  render(
+    <LanguageStep
+      onb={{} as never}
+      goNext={goNext}
+      goBack={vi.fn()}
+      skip={vi.fn()}
+      isFirst={false}
+      isLast={false}
+      setSummary={setSummary}
+      summaries={{}}
+    />,
+  );
+  expect(setSummary).toHaveBeenCalledWith("onboarding.language.summary");
   fireEvent.click(screen.getByLabelText("onboarding.language.ui_label"));
   fireEvent.click(await screen.findByText("Deutsch"));
   expect(setUiLanguage).toHaveBeenCalledWith("de");
-  fireEvent.click(screen.getByRole("button", { name: "onboarding.nav.next" }));
+  fireEvent.click(screen.getByTestId("onboarding-primary"));
   expect(goNext).toHaveBeenCalled();
 });

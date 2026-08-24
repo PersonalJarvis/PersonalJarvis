@@ -1,25 +1,101 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("@/i18n", () => ({ useT: () => (k: string) => k }));
-vi.mock("../IntroClip", () => ({ IntroClip: () => <div data-testid="clip" /> }));
+vi.mock("../IntroSequence", () => ({ IntroSequence: () => <div data-testid="intro" /> }));
 import { WelcomeStep } from "./WelcomeStep";
-afterEach(cleanup);
-
-it("renders the clip and advances on the CTA", () => {
-  const goNext = vi.fn();
-  render(
-    <WelcomeStep onb={{} as never} goNext={goNext} goBack={vi.fn()} skip={vi.fn()} isFirst isLast={false} />,
-  );
-  expect(screen.getByTestId("clip")).toBeDefined();
-  fireEvent.click(screen.getByRole("button", { name: "onboarding.welcome.cta" }));
-  expect(goNext).toHaveBeenCalled();
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
 });
 
-it("skip-setup calls skip", () => {
-  const skip = vi.fn();
+const base = {
+  goBack: vi.fn(),
+  skip: vi.fn(),
+  isFirst: true,
+  isLast: false,
+  summaries: {},
+};
+
+it("renders the intro and the capability register; continue stays disabled until accepted", () => {
   render(
-    <WelcomeStep onb={{} as never} goNext={vi.fn()} goBack={vi.fn()} skip={skip} isFirst isLast={false} />,
+    <WelcomeStep
+      {...base}
+      onb={{ acceptTerms: vi.fn() } as never}
+      goNext={vi.fn()}
+      setSummary={vi.fn()}
+    />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "onboarding.welcome.skip_setup" }));
-  expect(skip).toHaveBeenCalled();
+  expect(screen.getByTestId("intro")).toBeDefined();
+  expect(screen.getByText("onboarding.welcome.cap_commands")).toBeDefined();
+  expect(screen.getByText("onboarding.welcome.cap_mistakes")).toBeDefined();
+  const cta = screen.getByTestId("onboarding-primary") as HTMLButtonElement;
+  expect(cta.disabled).toBe(true);
+});
+
+it("AWAITS the terms record before advancing and reports the summary", async () => {
+  const goNext = vi.fn();
+  const setSummary = vi.fn();
+  let resolveAccept: () => void = () => undefined;
+  const acceptTerms = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        resolveAccept = resolve;
+      }),
+  );
+  render(
+    <WelcomeStep
+      {...base}
+      onb={{ acceptTerms } as never}
+      goNext={goNext}
+      setSummary={setSummary}
+    />,
+  );
+  fireEvent.click(screen.getByTestId("onboarding-accept"));
+  expect(setSummary).toHaveBeenLastCalledWith("onboarding.welcome.summary_accepted");
+  fireEvent.click(screen.getByTestId("onboarding-primary"));
+  expect(acceptTerms).toHaveBeenCalled();
+  // Not yet: the POST is still in flight.
+  expect(goNext).not.toHaveBeenCalled();
+  resolveAccept();
+  await waitFor(() => expect(goNext).toHaveBeenCalled());
+});
+
+it("a failed acceptance stays on the step and says so", async () => {
+  const goNext = vi.fn();
+  render(
+    <WelcomeStep
+      {...base}
+      onb={{ acceptTerms: vi.fn().mockRejectedValue(new Error("HTTP 503")) } as never}
+      goNext={goNext}
+      setSummary={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByTestId("onboarding-accept"));
+  fireEvent.click(screen.getByTestId("onboarding-primary"));
+  await waitFor(() =>
+    expect(screen.getByText("onboarding.welcome.accept_failed")).toBeDefined(),
+  );
+  expect(goNext).not.toHaveBeenCalled();
+});
+
+it("decline posts decline-terms and renders the goodbye state", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      calls.push(url);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }),
+  );
+  render(
+    <WelcomeStep
+      {...base}
+      onb={{ acceptTerms: vi.fn() } as never}
+      goNext={vi.fn()}
+      setSummary={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByTestId("onboarding-decline"));
+  expect(screen.getByTestId("onboarding-declined")).toBeDefined();
+  await waitFor(() => expect(calls).toContain("/api/onboarding/decline-terms"));
 });

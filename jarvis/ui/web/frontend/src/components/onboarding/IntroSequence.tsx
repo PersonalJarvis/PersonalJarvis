@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { MascotGigi } from "@/components/MascotGigi";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 const SCENE_KEYS = [
   "onboarding.intro.scene_1",
@@ -21,12 +22,13 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * Auto-advancing, captioned brand intro shown inside IntroClip when no video
- * asset is present. Stops on the last scene; renders the final scene immediately
- * (no motion) when the user prefers reduced motion. Decorative — the Welcome
- * step owns the CTA below it.
+ * Auto-advancing, captioned brand intro on the first step. The mascot and one
+ * line of copy on the stage's own ground, framed by a hairline — not a boxed
+ * video placeholder. Stops on the last scene; renders the final scene
+ * immediately (no motion) when the user prefers reduced motion. Decorative —
+ * the step owns the CTA below it.
  */
-export function IntroSequence() {
+export function IntroSequence({ className }: { className?: string }) {
   const t = useT();
   const reduced = prefersReducedMotion();
   const [scene, setScene] = useState(reduced ? SCENE_KEYS.length - 1 : 0);
@@ -41,21 +43,27 @@ export function IntroSequence() {
 
   return (
     <div
-      className="relative flex aspect-video w-full flex-col items-center justify-center gap-4 overflow-hidden rounded-xl border border-border bg-gradient-to-br from-background to-card"
+      className={cn(
+        "relative flex flex-col items-center justify-center gap-5 border-y border-border/70 px-6 py-8",
+        className,
+      )}
       aria-live="polite"
     >
-      <MascotGigi size={96} reactToVoice={false} enableComments={false} />
+      <MascotGigi size={104} reactToVoice={false} enableComments={false} />
       <p
         key={scene}
-        className="animate-in fade-in px-6 text-center text-sm font-medium text-foreground"
+        className="animate-in fade-in text-center text-[17px] font-medium leading-snug tracking-tight text-foreground [text-wrap:balance] motion-reduce:animate-none"
       >
         {t(SCENE_KEYS[scene])}
       </p>
-      <div className="absolute bottom-3 flex gap-1.5" aria-hidden>
+      <div className="flex gap-1.5" aria-hidden>
         {SCENE_KEYS.map((k, i) => (
           <span
             key={k}
-            className={`h-1 w-5 rounded-full transition-colors ${i <= scene ? "bg-primary" : "bg-muted"}`}
+            className={cn(
+              "h-1 w-5 rounded-full transition-colors",
+              i <= scene ? "bg-primary" : "bg-muted",
+            )}
           />
         ))}
       </div>

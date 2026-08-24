@@ -1,10 +1,9 @@
-import { ShieldCheck } from "lucide-react";
-import { useCallback, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useState } from "react";
 import type { PermissionId, PermissionSnapshot } from "@/hooks/usePermissions";
 import { useT } from "@/i18n";
 import { PermissionRows } from "@/views/settings/PermissionsPanel";
 import type { StepProps } from "../OnboardingFlow";
+import { StepFooter } from "../primitives";
 
 const EXPECTED_MACOS_PERMISSIONS = new Set<PermissionId>([
   "microphone",
@@ -42,46 +41,52 @@ export function permissionSnapshotReady(snapshot: PermissionSnapshot | null): bo
   );
 }
 
-export function PermissionsStep({ goNext, skip }: StepProps) {
+/**
+ * macOS only — the flow hides this step on Windows and Linux (see
+ * `visibleSteps`). The rows are the Settings panel's own, so what the user
+ * grants here is exactly what they will see there.
+ */
+export function PermissionsStep({ goNext, goBack, skip, setSummary }: StepProps) {
   const t = useT();
   const [allReady, setAllReady] = useState(false);
   const onSnapshot = useCallback((snapshot: PermissionSnapshot | null) => {
     setAllReady(permissionSnapshotReady(snapshot));
   }, []);
 
+  useEffect(() => {
+    setSummary(allReady ? t("onboarding.permissions.summary_ready") : null);
+  }, [allReady, setSummary, t]);
+
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <ShieldCheck className="h-5 w-5" />
-        </div>
-        <div>
-          <h2 className="font-display text-lg font-semibold">
-            {t("onboarding.permissions.title")}
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {t("onboarding.permissions.body")}
-          </p>
-        </div>
+    <div className="space-y-6">
+      <div className="border-y border-border/70 py-3">
+        <PermissionRows compact deferRestartNote onSnapshot={onSnapshot} />
       </div>
 
-      <PermissionRows compact deferRestartNote onSnapshot={onSnapshot} />
-
-      <p className="text-xs text-muted-foreground">
+      <p className="text-[13px] leading-relaxed text-muted-foreground">
         {t("onboarding.permissions.privacy_note")}
       </p>
-      <Button className="w-full" disabled={!allReady} onClick={goNext}>
-        {t("onboarding.permissions.continue")}
-      </Button>
-      {!allReady && (
-        <button
-          type="button"
-          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          onClick={skip}
-        >
-          {t("onboarding.permissions.text_only")}
-        </button>
-      )}
+
+      <StepFooter
+        onBack={goBack}
+        primary={{
+          label: t("onboarding.permissions.continue"),
+          onClick: goNext,
+          disabled: !allReady,
+        }}
+        secondary={
+          allReady
+            ? null
+            : {
+                label: t("onboarding.permissions.text_only"),
+                onClick: () => {
+                  setSummary(t("onboarding.permissions.summary_skipped"));
+                  skip();
+                },
+                testId: "onboarding-permissions-skip",
+              }
+        }
+      />
     </div>
   );
 }

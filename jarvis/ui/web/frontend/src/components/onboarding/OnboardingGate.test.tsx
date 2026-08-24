@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("./OnboardingFlow", () => ({ OnboardingFlow: () => <div data-testid="flow" /> }));
@@ -57,53 +57,19 @@ it("stays hidden when completed, even with an outdated accepted terms version", 
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
-it("persists terms acceptance when the risk gate is accepted", async () => {
-  const calls: Array<[string, RequestInit | undefined]> = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      calls.push([url, init]);
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ ...base, completed: false, ok: true }),
-      });
-    }),
-  );
-  render(<OnboardingGate />);
-  await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
-
-  // RiskGate is a lazy chunk now — its controls appear only once it resolves.
-  fireEvent.click(await screen.findByRole("checkbox"));
-  fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-
-  await waitFor(() =>
-    expect(
-      calls.some(
-        ([url, init]) => url === "/api/onboarding/accept-terms" && init?.method === "POST",
-      ),
-    ).toBe(true),
-  );
-});
-
-it("shows the tutorial video after the risk gate, then the step flow", async () => {
+it("renders the step flow directly — no separate risk or video screens", async () => {
   stub({ ...base, completed: false });
   render(<OnboardingGate />);
   await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
-
-  // Accept the risk gate (tick the box, then the proceed button). RiskGate is
-  // a lazy chunk, so its controls appear only once it resolves.
-  fireEvent.click(await screen.findByRole("checkbox"));
-  fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-
-  // Second screen: the tutorial video, its own lazy chunk. It uses a
-  // click-to-play thumbnail facade, so the YouTube embed only mounts once the
-  // user presses play.
-  fireEvent.click(await screen.findByRole("button", { name: /play the tutorial video/i }));
-  const frame = screen.getByTitle(/tour/i) as HTMLIFrameElement;
-  expect(frame.src).toContain("youtube-nocookie.com");
-
-  // Continue past the video → the step flow (mocked, but still a lazy import)
-  // renders.
-  fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+  // The flow is a lazy chunk; nothing else stands between the gate and it.
   expect(await screen.findByTestId("flow")).toBeDefined();
+  expect(document.querySelector("iframe")).toBeNull();
+});
+
+it("closes when the flow reports completion", async () => {
+  stub({ ...base, completed: false });
+  render(<OnboardingGate />);
+  await screen.findByTestId("flow");
+  window.dispatchEvent(new CustomEvent("jarvis:onboarding-changed"));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });

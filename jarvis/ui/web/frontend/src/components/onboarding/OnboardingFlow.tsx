@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { MascotGigi } from "@/components/MascotGigi";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import type { useOnboarding } from "@/hooks/useOnboarding";
 import { WelcomeStep } from "./steps/WelcomeStep";
 import { LanguageStep } from "./steps/LanguageStep";
@@ -16,6 +17,14 @@ export interface StepProps {
   skip: () => void;
   isFirst: boolean;
   isLast: boolean;
+  /**
+   * The one line the register shows under this step's name once it is done —
+   * "Deutsch · replies Auto", "OpenRouter", "Hey Nova". Steps report it as
+   * soon as they know it; the register is the progress indicator.
+   */
+  setSummary: (text: string | null) => void;
+  /** Every step's current summary, keyed by step id (the finish step reads it). */
+  summaries: Record<string, string | null>;
 }
 
 // Restart batching (2026-07-18): permissions + wake-word sit LAST before
@@ -35,25 +44,69 @@ const REGISTRY: Record<string, (p: StepProps) => JSX.Element> = {
 // the silent fallback div instead of a real step.
 export const STEP_KEYS = Object.keys(REGISTRY);
 
+/**
+ * Which backend steps this machine actually needs. The permissions step is
+ * macOS TCC only — on Windows and Linux it used to render a "nothing to do
+ * here" card the user had to click through. Now it is not in the register at
+ * all. Unknown platform (probe failed, still warming) keeps the step: showing
+ * an unnecessary screen is a small cost, hiding a necessary one is not.
+ */
+export function visibleSteps(steps: string[], platform: string | null): string[] {
+  if (platform === "win32" || platform === "linux") {
+    return steps.filter((s) => s !== "permissions");
+  }
+  return steps;
+}
+
+function usePlatform(): string | null {
+  const [platform, setPlatform] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/permissions/status");
+        if (!res.ok) return;
+        const data = (await res.json()) as { platform?: string };
+        if (!cancelled && typeof data?.platform === "string") setPlatform(data.platform);
+      } catch {
+        // Best-effort: an unreachable probe keeps every step visible.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return platform;
+}
+
+/**
+ * The first-run guide as a full-window stage in the workspace launcher's
+ * editorial language: a header with an eyebrow step counter, a numbered
+ * register on the left that doubles as the progress indicator (each entry
+ * carries a live one-line summary of what was chosen), and the step's own
+ * content on the right, separated by rules rather than nested cards.
+ */
 export function OnboardingFlow({
   onb,
 }: {
   onb: ReturnType<typeof useOnboarding>;
 }) {
   const t = useT();
-  const steps = onb.state?.steps ?? ["welcome", "finish"];
+  const platform = usePlatform();
+  const allSteps = onb.state?.steps ?? ["welcome", "finish"];
+  const steps = useMemo(() => visibleSteps(allSteps, platform), [allSteps, platform]);
   // Always begin at the first step so every run walks each step in order. We do
   // NOT resume to a saved current_step: a user who already finished once would
   // otherwise be auto-jumped to the last step, which feels like the flow skipped
   // itself.
   const [idx, setIdx] = useState(0);
+  const [maxVisited, setMaxVisited] = useState(0);
   const [skipped, setSkipped] = useState<string[]>(onb.state?.skipped_steps ?? []);
+  const [summaries, setSummaries] = useState<Record<string, string | null>>({});
 
-  const StepComp = useMemo(
-    () => REGISTRY[steps[idx]] ?? ((_: StepProps) => <div>{steps[idx]}</div>),
-    [steps, idx],
-  );
-  const isApiKeysGuide = steps[idx] === "api-keys";
+  const safeIdx = Math.min(idx, steps.length - 1);
+  const stepKey = steps[safeIdx];
+  const StepComp = REGISTRY[stepKey] ?? ((_: StepProps) => <div>{stepKey}</div>);
 
   const advance = (next: number, nextSkipped = skipped) => {
     if (next >= steps.length) {
@@ -62,53 +115,128 @@ export function OnboardingFlow({
     }
     setSkipped(nextSkipped);
     setIdx(next);
+    setMaxVisited((m) => Math.max(m, next));
     void onb.saveStep(steps[next], nextSkipped);
   };
 
+  const setSummary = useCallback(
+    (text: string | null) => {
+      setSummaries((s) => (s[stepKey] === text ? s : { ...s, [stepKey]: text }));
+    },
+    [stepKey],
+  );
+
   const props: StepProps = {
     onb,
-    goNext: () => advance(idx + 1),
+    goNext: () => advance(safeIdx + 1),
     goBack: () => setIdx((i) => Math.max(0, i - 1)),
-    skip: () => advance(idx + 1, [...new Set([...skipped, steps[idx]])]),
-    isFirst: idx === 0,
-    isLast: idx === steps.length - 1,
+    skip: () => advance(safeIdx + 1, [...new Set([...skipped, stepKey])]),
+    isFirst: safeIdx === 0,
+    isLast: safeIdx === steps.length - 1,
+    setSummary,
+    summaries,
   };
+
+  const title = t(`onboarding.steps.${stepKey}.title`);
+  const hint = t(`onboarding.steps.${stepKey}.hint`);
 
   return (
     <div
-      className={`flex max-h-[calc(100vh-2rem)] w-full flex-col gap-6 overflow-y-auto overscroll-contain rounded-2xl border border-border bg-card p-8 shadow-2xl scrollbar-jarvis ${
-        isApiKeysGuide ? "max-w-4xl" : "max-w-lg"
-      }`}
+      data-testid="onboarding-flow"
+      className="flex h-full min-h-0 flex-col font-display"
     >
-      <div className="flex items-center justify-between">
-        <div
-          className="flex gap-1.5"
-          role="progressbar"
-          aria-label={t("onboarding.progress_label")}
-          aria-valuemin={1}
-          aria-valuemax={steps.length}
-          aria-valuenow={idx + 1}
-        >
-          {steps.map((s, i) => (
-            <span
-              key={s}
-              aria-hidden="true"
-              className={`h-1.5 w-6 rounded-full ${i <= idx ? "bg-primary" : "bg-muted"}`}
-            />
-          ))}
+      <header className="shrink-0 border-b border-border/70 px-5 py-5 sm:px-8">
+        <div className="mx-auto flex w-full max-w-5xl items-start justify-between gap-6">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
+              {t("onboarding.eyebrow")}
+              <span className="px-2 text-muted-foreground/50">/</span>
+              <span
+                role="progressbar"
+                aria-label={t("onboarding.progress_label")}
+                aria-valuemin={1}
+                aria-valuemax={steps.length}
+                aria-valuenow={safeIdx + 1}
+                className="font-mono tabular-nums"
+              >
+                {t("onboarding.step_progress")
+                  .replace("{0}", String(safeIdx + 1).padStart(2, "0"))
+                  .replace("{1}", String(steps.length).padStart(2, "0"))}
+              </span>
+            </p>
+            <h1 className="mt-2 text-xl font-semibold tracking-tight text-foreground [text-wrap:balance] sm:text-2xl">
+              {title}
+            </h1>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              {hint}
+            </p>
+          </div>
+          <div className="shrink-0 pt-0.5">
+            <MascotGigi size={44} reactToVoice={false} enableComments={false} />
+          </div>
         </div>
-        <MascotGigi size={48} reactToVoice={false} enableComments={false} />
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
+        <div className="mx-auto grid w-full max-w-5xl gap-x-10 gap-y-4 px-5 pb-8 pt-5 sm:px-8 lg:grid-cols-[200px_minmax(0,1fr)]">
+          <nav aria-label={t("onboarding.progress_label")} className="min-w-0">
+            <ol
+              className="grid border-b border-border/70 lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6"
+              style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}
+            >
+              {steps.map((key, index) => {
+                const selected = index === safeIdx;
+                const enabled = index <= maxVisited;
+                const summary = summaries[key];
+                return (
+                  <li key={key}>
+                    <button
+                      type="button"
+                      data-testid={`onboarding-step-${key}`}
+                      aria-current={selected ? "step" : undefined}
+                      disabled={!enabled}
+                      onClick={() => setIdx(index)}
+                      className={cn(
+                        "group relative w-full min-w-0 px-2 py-3 text-left transition-colors lg:px-0 lg:py-3.5",
+                        "disabled:cursor-not-allowed disabled:opacity-35",
+                        selected ? "text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "absolute bottom-[-1px] left-0 right-0 h-0.5 lg:bottom-0 lg:left-auto lg:right-[-25px] lg:top-0 lg:h-auto lg:w-0.5",
+                          selected ? "bg-primary" : "bg-transparent",
+                        )}
+                      />
+                      <span className="block font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                        {(index + 1).toString().padStart(2, "0")}
+                      </span>
+                      <span className="mt-1 block truncate text-sm font-medium">
+                        {t(`onboarding.steps.${key}.label`)}
+                      </span>
+                      <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground lg:block">
+                        {summary ?? " "}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+
+          <section
+            key={stepKey}
+            className="profile-rise min-w-0 pt-2"
+            aria-labelledby="onboarding-step-title"
+          >
+            <h2 id="onboarding-step-title" className="sr-only">
+              {title}
+            </h2>
+            <StepComp {...props} />
+          </section>
+        </div>
       </div>
-      <StepComp {...props} />
-      {!props.isFirst && (
-        <button
-          type="button"
-          className="self-start touch-manipulation text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={props.goBack}
-        >
-          {t("onboarding.nav.back")}
-        </button>
-      )}
     </div>
   );
 }
