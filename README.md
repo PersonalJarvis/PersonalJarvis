@@ -62,18 +62,18 @@ Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own conf
 and it runs on a headless server just as well as on a desktop with a microphone.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-chat.webp" alt="The desktop app's chat view: voice history in the sidebar, the ghost mascot over a golden wave wallpaper, and the Ready for commands prompt" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-chat.webp" alt="The desktop app's home view: every section in the sidebar, the realtime voice bar waiting for a wake word, and the ghost mascot on a wallpaper" width="900" />
 </p>
 
 <p align="center">
-  <sub>The desktop app, ready for commands. The assistant takes whatever name you pick as your wake word &mdash; this install answers to George.</sub>
+  <sub>The desktop app, waiting for a wake word. Every section is one click away in the sidebar, and the bar at the bottom is the live voice channel &mdash; the assistant takes whatever name you pick as your wake word, and this install answers to George.</sub>
 </p>
 
 ## What you can say
 
 | You say | What happens |
 |---|---|
-| *"Research vector databases."* | An isolated agent does the research. The finished report lands in **Outputs** as a file you can download. |
+| *"Research vector databases."* | An isolated agent does the research. The finished report lands in **Artifacts** as a file you can download. |
 | *"Call the clinic and book the next open appointment."* | A real outbound phone call goes out over the optional Twilio line. |
 | *"Remember: Alex prefers Signal over email."* | Written to the Knowledge Wiki, and still known in every later session. |
 | *"Switch the voice over to Cartesia."* | The speech provider changes while you talk, and Jarvis reads the change back to you, old then new. |
@@ -118,6 +118,15 @@ can keep your voice, your screen and your files on the machine they started on.
 
 Mixing is normal and expected: a local recognizer with a hosted brain, or a local brain
 with a hosted voice. Nothing forces the whole chain one way.
+
+You do not have to know which model fits which job. The app has a **Local models** section:
+it sees the server and the graphics memory it has to work with, lists the jobs a local model
+can take over, and picks a download for each one, so filling a slot is a button rather than
+a research project.
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-local-models.webp" alt="The Local models section: the running server, available graphics memory, and one recommended download per job" width="900" />
+</p>
 
 Two capabilities stay outside this promise, and it would be dishonest to imply otherwise.
 The outbound phone call goes over Twilio, which is a hosted service by definition, and the
@@ -288,7 +297,19 @@ VPS, terminate TLS with an HTTPS reverse proxy such as Caddy or Nginx. Plain
 Anything non-trivial, say "research X and write me a report", spawns a worker in an
 isolated `git worktree`: a private sandbox copy of the workspace, with crash containment. A
 critic reviews the result, for up to three rounds, before you ever hear it, and
-deliverables land in **Outputs** as downloadable files.
+deliverables land in **Artifacts** as downloadable files.
+
+### Automations
+
+Work that repeats without being asked for: a morning brief, a weekly review, a digest of
+the unread mail, a watch on the topics you follow. Ten ready-made ones sit in a catalogue —
+add one and adjust its schedule — or describe your own in plain language and it becomes a
+job with a schedule, a run history, and an honest error when a run fails instead of silent
+nothing. One-off moments ("do this on Friday at nine") live in the same place.
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-automations.webp" alt="The automations catalogue: ready-made recurring jobs grouped by news, productivity, finance, research and developer" width="900" />
+</p>
 
 ### Agentic IDE
 
@@ -390,12 +411,14 @@ pipeline when it is unavailable.
 
 ### Wallpaper gallery
 
-501 wallpapers across 21 art styles, from oil painting and pixel art to synthwave and
+504 wallpapers across 23 art styles, from oil painting and pixel art to synthwave and
 woodblock, each tagged light or dark so the app can match the wallpaper to your theme.
-Filter the grid, preview fullscreen, mark favorites, or add your own image.
+Filter by style or by light and dark, preview fullscreen, mark favorites, or add your own
+image. The app opens on a plain colour by default; picking a picture here is what switches
+it, and one control puts the plain ground back.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v1.3.1/readme-demo-wallpapers.gif" alt="Scrolling the wallpaper gallery and opening a fullscreen preview" width="860" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-wallpapers.webp" alt="The wallpaper gallery filtered to one art style, with every style listed above the grid" width="900" />
 </p>
 
 ## Drive it from the terminal
