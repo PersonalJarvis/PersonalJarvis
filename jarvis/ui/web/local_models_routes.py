@@ -1,4 +1,9 @@
-"""REST surface of the "Local models" section: inventory, unload, delete.
+"""REST surface of the "Local models" section.
+
+Inventory, unload and delete; the four roles; per-model options and the
+suggestion for this machine; the public catalogue; Hugging Face GGUF
+browsing (off until switched on); and the server itself (status, stop,
+probe, log, environment guide).
 
 Everything the section shows about what is INSTALLED on the pull-capable
 local server (Ollama today) lives here, separate from ``provider_routes.py``
@@ -27,6 +32,13 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from jarvis.brain import ollama_inventory as inventory
+from jarvis.brain import (
+    ollama_library,
+    ollama_profiles,
+    ollama_pull,
+    ollama_roles,
+    ollama_runtime,
+)
 from jarvis.brain.ollama_inventory import (
     OllamaModelInfo,
     OllamaModelNotFound,
@@ -34,6 +46,8 @@ from jarvis.brain.ollama_inventory import (
     OllamaServerError,
     same_model,
 )
+from jarvis.core import config as cfg_mod
+from jarvis.core.config import OLLAMA_MODEL_OPTION_KEYS, OllamaModelOptions
 from jarvis.ui.web.provider_routes import _require_pull_capable, _resolve_cfg
 
 log = logging.getLogger(__name__)
@@ -372,3 +386,528 @@ def _reassign_roles(cfg: Any, roles: list[str], target: str) -> list[str]:
             status_code=500, detail=f"Could not rewrite the roles to {target}: {exc}"
         ) from exc
     return done
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Roles
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class RoleRow(BaseModel):
+    id: str
+    label_key: str
+    config_key: str
+    #: Configured tag; ``""`` = the plugin discovers one.
+    current: str
+    #: ``current`` is on the server right now.
+    installed: bool
+    required: list[str]
+    recommended_capabilities: list[str]
+    #: Installed tags declaring every required capability.
+    qualifying: list[str]
+    #: The shortlist's pick for this machine (``""`` when it has none).
+    recommended: str
+    writable: bool
+    advanced: bool
+    #: One sentence when the slot is served by something other than Ollama.
+    note: str = ""
+
+
+class RolesResponse(BaseModel):
+    provider: str
+    server: str
+    roles: list[RoleRow]
+    error: str | None = None
+
+
+class RoleSetBody(BaseModel):
+    #: ``""`` = back to discovery (brain roles only).
+    model: str = Field(default="", max_length=200)
+
+
+class RoleSetResponse(BaseModel):
+    ok: bool
+    role: str
+    model: str
+    config_key: str
+    message: str
+
+
+def _role_row(state: ollama_roles.RoleState) -> RoleRow:
+    spec = state.spec
+    return RoleRow(
+        id=spec.id,
+        label_key=spec.label_key,
+        config_key=spec.config_key,
+        current=state.current,
+        installed=state.installed,
+        required=list(spec.required),
+        recommended_capabilities=list(spec.recommended),
+        qualifying=list(state.qualifying),
+        recommended=state.recommended,
+        writable=spec.writable,
+        advanced=spec.advanced,
+        note=state.note,
+    )
+
+
+@router.get("/roles", response_model=RolesResponse)
+async def get_roles(provider_id: str, request: Request) -> RolesResponse:
+    """Every model slot with its pick, what qualifies, and the recommendation."""
+    _require_pull_capable(provider_id)
+    root = _server_root()
+    states, error = await ollama_roles.list_roles(root, _resolve_cfg(request))
+    return RolesResponse(
+        provider=provider_id, server=root, roles=[_role_row(s) for s in states], error=error
+    )
+
+
+@router.put("/roles/{role}", response_model=RoleSetResponse)
+async def set_role(
+    provider_id: str, role: str, body: RoleSetBody, request: Request
+) -> RoleSetResponse:
+    """Assign ``model`` to a role through the config writers; ``""`` = discovery."""
+    _require_pull_capable(provider_id)
+    cfg = _resolve_cfg(request)
+    try:
+        written = ollama_roles.set_role(role, body.model, cfg=cfg)
+    except ValueError as exc:
+        status = 404 if "Unknown role" in str(exc) else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — a failed TOML write is a 500 with the reason
+        log.warning("local-models: role %s -> %s failed: %s", role, body.model, exc)
+        raise HTTPException(status_code=500, detail=f"Could not save the role: {exc}") from exc
+    tag = written["model"]
+    message = (
+        f"{role} now uses {tag}."
+        if tag
+        else f"{role} is back to discovery: Jarvis picks the smallest capable download."
+    )
+    return RoleSetResponse(
+        ok=True, role=role, model=tag, config_key=written["config_key"], message=message
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Per-model options
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class OllamaModelOptionsBody(BaseModel):
+    """The PUT body — one field per :data:`OLLAMA_MODEL_OPTION_KEYS`, in order.
+
+    ``tests/unit/core/test_ollama_model_options_parity.py`` pins the field
+    list against the tuple. Values are clamped by the writer, never rejected.
+    """
+
+    num_ctx: int | None = None
+    num_gpu: int | None = None
+    num_thread: int | None = None
+    num_predict: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    repeat_penalty: float | None = None
+    seed: int | None = None
+    stop: list[str] | str | None = None
+    keep_alive: str | int | None = None
+    think: bool | str | None = None
+
+
+assert tuple(OllamaModelOptionsBody.model_fields) == OLLAMA_MODEL_OPTION_KEYS
+
+
+class ModelOptionsResponse(BaseModel):
+    model: str
+    #: Only the knobs that are set.
+    options: dict[str, Any]
+    #: True when ``[brain.providers.ollama.models."<tag>"]`` exists.
+    configured: bool
+    #: The derived alias the brain streams through when a bakeable knob is
+    #: set; ``null`` when the options ride the request alone.
+    profile_alias: str | None = None
+
+
+class SuggestedOptionsResponse(BaseModel):
+    model: str
+    options: dict[str, Any]
+    #: One plain sentence per knob (and one for the memory budget).
+    reasons: list[str]
+    size_gb: float
+    native_context: int | None
+    accelerator_gb: float
+    accelerator_source: str
+    ram_gb: float | None
+
+
+def _options_for(cfg: Any, name: str) -> tuple[str | None, OllamaModelOptions | None]:
+    """``(stored key, options)`` for ``name`` (``:latest`` tolerant)."""
+    provider = _ollama_provider_cfg(cfg)
+    models = getattr(provider, "models", None) or {}
+    if not isinstance(models, dict):
+        return None, None
+    for key, value in models.items():
+        if same_model(str(key), name) and isinstance(value, OllamaModelOptions):
+            return str(key), value
+    return None, None
+
+
+def _options_response(name: str, opts: OllamaModelOptions | None) -> ModelOptionsResponse:
+    if opts is None:
+        return ModelOptionsResponse(model=name, options={}, configured=False)
+    compact = opts.model_dump(exclude_none=True)
+    alias = ollama_profiles.profile_name(name, opts) if ollama_profiles.has_bakeable(opts) else None
+    return ModelOptionsResponse(model=name, options=compact, configured=True, profile_alias=alias)
+
+
+@router.get("/models/{name:path}/options", response_model=ModelOptionsResponse)
+async def get_model_options(provider_id: str, name: str, request: Request) -> ModelOptionsResponse:
+    """The per-model profile as configured (empty when none)."""
+    _require_pull_capable(provider_id)
+    _key, opts = _options_for(_resolve_cfg(request), name)
+    return _options_response(name, opts)
+
+
+@router.put("/models/{name:path}/options", response_model=ModelOptionsResponse)
+async def put_model_options(
+    provider_id: str, name: str, body: OllamaModelOptionsBody, request: Request
+) -> ModelOptionsResponse:
+    """Replace the profile of ``name`` with ``body`` (whole set; nothing set = clear)."""
+    _require_pull_capable(provider_id)
+    tag = name.strip()
+    if not tag:
+        raise HTTPException(status_code=422, detail="A model name is needed.")
+    raw = {k: v for k, v in body.model_dump().items() if v is not None}
+    from jarvis.core import config_writer
+
+    try:
+        written = config_writer.set_ollama_model_options(tag, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — a failed TOML write is a 500 with the reason
+        log.warning("local-models: options for %s failed: %s", tag, exc)
+        raise HTTPException(status_code=500, detail=f"Could not save the options: {exc}") from exc
+    cfg = _resolve_cfg(request)
+    provider = _ollama_provider_cfg(cfg)
+    opts = OllamaModelOptions.model_validate(written) if written else None
+    if provider is not None and isinstance(getattr(provider, "models", None), dict):
+        stored_key, _old = _options_for(cfg, tag)
+        if stored_key is not None:
+            provider.models.pop(stored_key, None)
+        if opts is not None:
+            provider.models[tag] = opts
+    return _options_response(tag, opts)
+
+
+@router.delete("/models/{name:path}/options", response_model=ModelOptionsResponse)
+async def delete_model_options(
+    provider_id: str, name: str, request: Request
+) -> ModelOptionsResponse:
+    """Reset: drop the profile so Ollama's defaults apply again."""
+    _require_pull_capable(provider_id)
+    from jarvis.core import config_writer
+
+    try:
+        config_writer.clear_ollama_model_options(name)
+    except Exception as exc:  # noqa: BLE001 — a failed TOML write is a 500 with the reason
+        log.warning("local-models: clearing options for %s failed: %s", name, exc)
+        raise HTTPException(status_code=500, detail=f"Could not reset the options: {exc}") from exc
+    cfg = _resolve_cfg(request)
+    stored_key, _old = _options_for(cfg, name)
+    provider = _ollama_provider_cfg(cfg)
+    if stored_key is not None and provider is not None:
+        provider.models.pop(stored_key, None)
+    return _options_response(name, None)
+
+
+@router.get("/models/{name:path}/suggested-options", response_model=SuggestedOptionsResponse)
+async def get_suggested_options(provider_id: str, name: str) -> SuggestedOptionsResponse:
+    """An advisory profile for ``name`` on THIS machine, with one reason per knob."""
+    _require_pull_capable(provider_id)
+    root = _server_root()
+    try:
+        info = await inventory.get_model(root, name)
+    except OllamaServerError as exc:
+        raise _http_error(exc) from exc
+    accel, source = ollama_pull.accelerator_gb()
+    ram = ollama_pull.total_memory_gb()
+    size_gb = round(info.size_bytes / (1024**3), 2)
+    opts, reasons = ollama_profiles.suggest_options(
+        size_gb=size_gb,
+        native_context=info.context_length,
+        accelerator_gb=accel,
+        source=source,
+        ram_gb=ram,
+    )
+    return SuggestedOptionsResponse(
+        model=info.name,
+        options=opts.model_dump(exclude_none=True),
+        reasons=reasons,
+        size_gb=size_gb,
+        native_context=info.context_length,
+        accelerator_gb=round(accel, 1),
+        accelerator_source=source,
+        ram_gb=ram,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Catalogue
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@router.get("/catalog")
+async def get_catalog(
+    provider_id: str,
+    q: str = Query(default="", max_length=120),
+    sort: str = Query(default="popular", description="popular | newest"),
+    capability: str | None = Query(
+        default=None, description="tools | vision | embedding | thinking"
+    ),
+    limit: int = Query(default=50, ge=1, le=50),
+) -> dict[str, Any]:
+    """Browse ollama.com; ``error`` is a normal outcome offline, never a 5xx."""
+    _require_pull_capable(provider_id)
+    return await ollama_library.search_library(q, sort=sort, capability=capability, limit=limit)
+
+
+@router.get("/catalog/recommended")
+async def get_catalog_recommended(provider_id: str) -> dict[str, Any]:
+    """The curated shortlist ranked for this machine, with its review date."""
+    _require_pull_capable(provider_id)
+    return await ollama_pull.recommendations()
+
+
+@router.get("/catalog/{name:path}/tags")
+async def get_catalog_tags(provider_id: str, name: str) -> dict[str, Any]:
+    """Every tag of one library model with size, quantization, context and fit."""
+    _require_pull_capable(provider_id)
+    return await ollama_library.library_tags(name)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Hugging Face (off until switched on)
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class HfEnabledBody(BaseModel):
+    enabled: bool
+
+
+class HfEnabledResponse(BaseModel):
+    enabled: bool
+
+
+class HfPullBody(BaseModel):
+    user: str = Field(max_length=96)
+    repo: str = Field(max_length=96)
+    quant: str | None = Field(default=None, max_length=96)
+
+
+_HF_OFF = (
+    "Hugging Face browsing is switched off. Turn it on under Local models → "
+    "Hugging Face; until then Jarvis makes no request to huggingface.co."
+)
+
+
+def _require_hf(request: Request) -> None:
+    if not cfg_mod.ollama_hf_enabled(_resolve_cfg(request)):
+        raise HTTPException(status_code=404, detail=_HF_OFF)
+
+
+@router.get("/hf/enabled", response_model=HfEnabledResponse)
+async def get_hf_enabled(provider_id: str, request: Request) -> HfEnabledResponse:
+    _require_pull_capable(provider_id)
+    return HfEnabledResponse(enabled=cfg_mod.ollama_hf_enabled(_resolve_cfg(request)))
+
+
+@router.put("/hf/enabled", response_model=HfEnabledResponse)
+async def put_hf_enabled(
+    provider_id: str, body: HfEnabledBody, request: Request
+) -> HfEnabledResponse:
+    """Switch Hugging Face browsing on or off (``[brain.providers.ollama].hf_enabled``)."""
+    _require_pull_capable(provider_id)
+    from jarvis.core import config_writer
+
+    try:
+        config_writer.set_ollama_hf_enabled(body.enabled)
+    except Exception as exc:  # noqa: BLE001 — a failed TOML write is a 500 with the reason
+        log.warning("local-models: hf_enabled=%s failed: %s", body.enabled, exc)
+        raise HTTPException(status_code=500, detail=f"Could not save the switch: {exc}") from exc
+    provider = _ollama_provider_cfg(_resolve_cfg(request))
+    if provider is not None:
+        provider.hf_enabled = body.enabled
+    return HfEnabledResponse(enabled=body.enabled)
+
+
+@router.get("/hf/search")
+async def get_hf_search(
+    provider_id: str,
+    request: Request,
+    q: str = Query(default="", max_length=120),
+    sort: str = Query(default="downloads", description="downloads | lastModified | trendingScore"),
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, Any]:
+    """GGUF repositories on Hugging Face; ``error`` is a sentence, never a 5xx."""
+    _require_pull_capable(provider_id)
+    _require_hf(request)
+    from jarvis.brain import hf_gguf  # lazy: only an install that switched HF on imports it
+
+    return await hf_gguf.search(q, sort=sort, limit=limit)
+
+
+@router.get("/hf/{user}/{repo}/files")
+async def get_hf_files(provider_id: str, user: str, repo: str, request: Request) -> dict[str, Any]:
+    """The ``.gguf`` files of one repository with quantization, size and fit."""
+    _require_pull_capable(provider_id)
+    _require_hf(request)
+    from jarvis.brain import hf_gguf
+
+    return await hf_gguf.files(user, repo)
+
+
+@router.post("/hf/pull")
+async def post_hf_pull(provider_id: str, body: HfPullBody, request: Request) -> dict[str, Any]:
+    """Start pulling ``hf.co/<user>/<repo>[:<quant>]`` through the normal pull path."""
+    _require_pull_capable(provider_id)
+    _require_hf(request)
+    from jarvis.brain import hf_gguf
+
+    try:
+        name = hf_gguf.pull_name(body.user, body.repo, body.quant)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await ollama_pull.start_pull(name)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Server
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class ServerResponse(BaseModel):
+    installed: bool
+    binary: str
+    running: bool
+    version: str
+    detail: str
+    base_url: str
+    host_kind: str
+    models_dir: str
+    running_models: list[RunningModelRow] = Field(default_factory=list)
+    disk_bytes: int = 0
+    loaded_vram_bytes: int = 0
+    #: Sentence when the inventory could not be read while the probe ran.
+    error: str | None = None
+
+
+class ServerActionResponse(BaseModel):
+    ok: bool
+    message: str
+
+
+class ServerTestBody(BaseModel):
+    base_url: str = Field(max_length=300)
+
+
+class ServerProbeResponse(BaseModel):
+    ok: bool
+    version: str
+    latency_ms: int
+    detail: str
+
+
+class ServerLogResponse(BaseModel):
+    lines: list[str]
+
+
+class EnvGuideRow(BaseModel):
+    key: str
+    purpose: str
+    command: str
+    restart: str
+
+
+class EnvGuideResponse(BaseModel):
+    os: str
+    rows: list[EnvGuideRow]
+
+
+@router.get("/server", response_model=ServerResponse)
+async def get_server(provider_id: str) -> ServerResponse:
+    """Runtime picture plus what is loaded and how much disk the downloads take."""
+    _require_pull_capable(provider_id)
+    status = ollama_runtime.runtime_status()
+    root = str(status.get("base_url") or _server_root())
+    running: list[RunningModelRow] = []
+    disk = 0
+    error: str | None = None
+    if status.get("running"):
+        try:
+            disk = await inventory.disk_usage(root)
+        except OllamaServerError as exc:
+            log.info("local-models: disk usage unavailable at %s: %s", root, exc)
+            error = str(exc)
+        running = [RunningModelRow(**asdict(r)) for r in (await _running_by_name(root)).values()]
+    return ServerResponse(
+        installed=bool(status.get("installed")),
+        binary=str(status.get("binary") or ""),
+        running=bool(status.get("running")),
+        version=str(status.get("version") or ""),
+        detail=str(status.get("detail") or ""),
+        base_url=root,
+        host_kind=str(status.get("host_kind") or "local"),
+        models_dir=str(status.get("models_dir") or ""),
+        running_models=running,
+        disk_bytes=disk,
+        loaded_vram_bytes=sum(r.size_vram_bytes for r in running),
+        error=error,
+    )
+
+
+@router.post(
+    "/server/stop",
+    response_model=ServerActionResponse,
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def post_server_stop(provider_id: str) -> ServerActionResponse:
+    """Stop the Ollama Jarvis itself started — never one started elsewhere."""
+    _require_pull_capable(provider_id)
+    ok, message = ollama_runtime.stop_server()
+    return ServerActionResponse(ok=ok, message=message)
+
+
+@router.post("/server/test", response_model=ServerProbeResponse)
+async def post_server_test(provider_id: str, body: ServerTestBody) -> ServerProbeResponse:
+    """Probe a host before saving it: version and latency, or the reason it failed."""
+    _require_pull_capable(provider_id)
+    probe = await ollama_runtime.probe_host(body.base_url)
+    return ServerProbeResponse(
+        ok=bool(probe.get("ok")),
+        version=str(probe.get("version") or ""),
+        latency_ms=int(str(probe.get("latency_ms") or 0)),
+        detail=str(probe.get("detail") or ""),
+    )
+
+
+@router.get("/server/log", response_model=ServerLogResponse)
+async def get_server_log(
+    provider_id: str, lines: int = Query(default=40, ge=1, le=500)
+) -> ServerLogResponse:
+    """The last lines of the server log Jarvis writes when it starts Ollama."""
+    _require_pull_capable(provider_id)
+    return ServerLogResponse(lines=ollama_runtime.tail_log(lines))
+
+
+@router.get("/server/env-guide", response_model=EnvGuideResponse)
+async def get_server_env_guide(
+    provider_id: str,
+    os: str = Query(default="", description="windows | macos | linux; empty = this OS"),
+) -> EnvGuideResponse:
+    """Copyable per-OS commands for the server's environment variables."""
+    _require_pull_capable(provider_id)
+    rows = ollama_runtime.env_guide(os or None)
+    return EnvGuideResponse(
+        os=ollama_runtime._normalize_os(os or None), rows=[EnvGuideRow(**row) for row in rows]
+    )
