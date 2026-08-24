@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import Event, TaskScheduled
-from jarvis.tasks.schema import TaskSpec
+from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
 if TYPE_CHECKING:
     from jarvis.control.cancel import CancelToken
@@ -37,6 +37,15 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+
+
+class TaskNotFound(LookupError):
+    """No task row with that id."""
+
+
+class TaskStateConflict(RuntimeError):
+    """The requested transition is not allowed from the task's current
+    state (or for its trigger type). Maps onto HTTP 409."""
 
 
 class _Dispatchable(Protocol):
@@ -138,6 +147,123 @@ class TaskScheduler:
         self._wakeup.set()
         return task_id
 
+    async def run_now(self, task_id: str) -> None:
+        """Run the task's action NOW, out of band — the schedule is untouched.
+
+        A recurring (``every``) task keeps its heap entry and its
+        ``due_at_ns``; the runner hands it back as ``scheduled`` afterwards,
+        exactly like a regular firing minus the re-arm. A paused recurring
+        task is restored to ``paused`` once the run settles. A one-shot task
+        (``after_delay``/``at_time``) is consumed by the run: it leaves the
+        heap so the scheduler cannot fire it a second time.
+
+        Raises :class:`TaskNotFound` for an unknown id and
+        :class:`TaskStateConflict` while the task is already ``running`` or
+        already terminal.
+        """
+        task = await self._store.get(task_id)
+        if task is None:
+            raise TaskNotFound(task_id)
+        state = task["state"]
+        if state == "running":
+            raise TaskStateConflict(f"task is already running (state={state})")
+        if state in TERMINAL_STATES:
+            raise TaskStateConflict(f"task is already final (state={state})")
+        if self._runner is None:
+            raise TaskStateConflict("no runner attached — nothing can execute the task")
+        spec = await self._store.get_spec(task_id)
+        if spec is None:
+            raise TaskNotFound(task_id)
+        if spec.trigger.type in ("after_delay", "at_time"):
+            self._remove_from_memory(task_id)
+        restore_state = "paused" if state == "paused" else None
+        await self._store.append_step(task_id, "log", {"event": "run_now"})
+        task_obj = asyncio.create_task(
+            self._run_now_and_settle(task_id, restore_state),
+            name=f"task-run-now-{task_id}",
+        )
+        self._runner_tasks.add(task_obj)
+        task_obj.add_done_callback(self._runner_tasks.discard)
+
+    async def _run_now_and_settle(
+        self, task_id: str, restore_state: str | None,
+    ) -> None:
+        await self._safe_run(task_id, None)
+        if restore_state is None:
+            return
+        # The runner leaves a recurring task as `scheduled` (or `failed`);
+        # a manual run must not silently switch a paused automation back on.
+        try:
+            task = await self._store.get(task_id)
+            if task is not None and task["state"] not in ("running", "cancelled"):
+                await self._store.update_state(task_id, restore_state)  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001
+            log.exception("run_now: could not restore state=%s for task=%s",
+                          restore_state, task_id)
+
+    async def pause(self, task_id: str) -> None:
+        """Switch a recurring/``on_event`` task off: it leaves the heap and
+        the event index and its state becomes ``paused``. Idempotent.
+
+        Raises :class:`TaskNotFound` / :class:`TaskStateConflict` (one-shot
+        trigger, running, or terminal).
+        """
+        task = await self._store.get(task_id)
+        if task is None:
+            raise TaskNotFound(task_id)
+        if task["trigger_type"] not in PAUSABLE_TRIGGER_TYPES:
+            raise TaskStateConflict(
+                f"only recurring tasks can be paused (trigger={task['trigger_type']})"
+            )
+        state = task["state"]
+        if state == "paused":
+            return
+        if state == "running":
+            raise TaskStateConflict("task is running — wait for it to finish")
+        if state in TERMINAL_STATES:
+            raise TaskStateConflict(f"task is already final (state={state})")
+        self._remove_from_memory(task_id)
+        await self._store.update_state(task_id, "paused")
+        await self._store.append_step(task_id, "log", {"event": "paused"})
+        self._wakeup.set()
+
+    async def resume(self, task_id: str, *, now_ns: int | None = None) -> int | None:
+        """Switch a paused task back on and re-register it for its NEXT
+        occurrence. Returns the new ``due_at_ns`` (``None`` for ``on_event``).
+
+        An ``every`` task anchored with ``start_at`` keeps its wall-clock
+        anchor: the next due time is ``start_at + k * interval``, the first
+        such moment strictly in the future. Without an anchor it is
+        ``now + interval``.
+        """
+        task = await self._store.get(task_id)
+        if task is None:
+            raise TaskNotFound(task_id)
+        if task["state"] != "paused":
+            raise TaskStateConflict(f"task is not paused (state={task['state']})")
+        spec = await self._store.get_spec(task_id)
+        if spec is None:
+            raise TaskNotFound(task_id)
+        now = time.time_ns() if now_ns is None else now_ns
+        due: int | None = None
+        if spec.trigger.type == "every":
+            due = next_every_due_ns(spec, now)
+            await self._store.set_next_due(task_id, due)
+        await self._store.update_state(task_id, "scheduled")
+        await self._store.append_step(task_id, "log", {"event": "resumed"})
+        self._register_in_memory(spec, task_id, stored_due_at_ns=due)
+        self._wakeup.set()
+        return due
+
+    def _remove_from_memory(self, task_id: str) -> None:
+        """Drop a task from the heap, the event index and the known set."""
+        self._heap = [(due, tid) for (due, tid) in self._heap if tid != task_id]
+        heapq.heapify(self._heap)
+        for ids in self._on_event_index.values():
+            ids.discard(task_id)
+        self._firings_left.pop(task_id, None)
+        self._known.discard(task_id)
+
     async def cancel_task(self, task_id: str, reason: str = "user_cancel") -> bool:
         """Marks a task as ``cancelled`` if it isn't already terminal.
 
@@ -151,18 +277,13 @@ class TaskScheduler:
         task = await self._store.get(task_id)
         if task is None:
             return False
-        if task["state"] in ("completed", "failed", "cancelled", "interrupted"):
+        if task["state"] in TERMINAL_STATES:
             return False
         running_token = self._running_tokens.get(task_id)
         if running_token is not None:
             running_token.cancel(reason)
-        # Remove from heap (linear scan, small enough — a typical queue is < 100).
-        self._heap = [(due, tid) for (due, tid) in self._heap if tid != task_id]
-        heapq.heapify(self._heap)
-        # Remove from the event index
-        for ids in self._on_event_index.values():
-            ids.discard(task_id)
-        self._known.discard(task_id)
+        # Linear scan over the heap — small enough, a typical queue is < 100.
+        self._remove_from_memory(task_id)
 
         await self._store.update_state(task_id, "cancelled", error=reason)
         await self._store.append_step(task_id, "log", {"event": "cancelled", "reason": reason})
@@ -444,6 +565,35 @@ class TaskScheduler:
             return
         with contextlib.suppress(Exception):
             await asyncio.wait(tasks, timeout=2.0)
+
+
+# ----------------------------------------------------------------------
+# Recurring schedule arithmetic
+# ----------------------------------------------------------------------
+
+def next_every_due_ns(spec: TaskSpec, now_ns: int) -> int:
+    """Next due time of an ``every`` trigger strictly after ``now_ns``.
+
+    ``start_at``-anchored tasks stay on their wall-clock grid
+    (``start_at + k * interval``); unanchored ones fire one interval from now.
+    A malformed ``start_at`` degrades to the unanchored rule.
+    """
+    trig = spec.trigger
+    if trig.type != "every":
+        raise ValueError(f"not a recurring trigger: {trig.type}")
+    interval_ns = int(trig.interval_seconds * 1e9)
+    start_at = trig.start_at
+    if start_at:
+        try:
+            anchor = parse_iso_timestamp_to_ns(start_at)
+        except ValueError:
+            anchor = None
+        if anchor is not None:
+            if anchor > now_ns:
+                return anchor
+            k = (now_ns - anchor) // interval_ns + 1
+            return anchor + k * interval_ns
+    return now_ns + interval_ns
 
 
 # ----------------------------------------------------------------------

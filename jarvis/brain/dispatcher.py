@@ -38,10 +38,16 @@ class BrainDispatcher:
         max_tokens: int = 8192,
         deadline_s: float | None = None,
         reasoning_effort: Literal["none"] | None = None,
+        tool_context: dict[str, Any] | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools or {}
         self._executor = executor
+        # Extra keys merged into every tool's ``ExecutionContext.config`` for
+        # this dispatcher's turns (e.g. ``{"delivery": "written"}`` for a
+        # scheduled task whose result is a written digest, not speech). The
+        # loop's per-turn keys (output_language, voice_confirm) always win.
+        self._tool_context = dict(tool_context or {})
         self._system_prompt = system_prompt
         self._max_turns = max_turns
         self._max_tokens_total = max_tokens_total
@@ -74,6 +80,7 @@ class BrainDispatcher:
             max_tokens=self._max_tokens,
             deadline_s=self._deadline_s,
             reasoning_effort=self._reasoning_effort,
+            tool_context=self._tool_context,
         )
 
     def set_tools(self, tools: dict[str, Tool]) -> None:
@@ -141,6 +148,7 @@ class BrainDispatcher:
                 max_tokens=self._max_tokens,
                 deadline_s=self._deadline_s,
                 reasoning_effort=self._reasoning_effort,
+                tool_context=self._tool_context,
             )
             return await loop.run(
                 messages,

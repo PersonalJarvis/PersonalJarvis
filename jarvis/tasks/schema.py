@@ -166,6 +166,7 @@ class RetryPolicy(BaseModel):
 TaskState = Literal[
     "pending",          # never scheduled yet (e.g. created_from_api, waiting for hydrate)
     "scheduled",        # in the heap or waiting for an event
+    "paused",           # recurring/on_event task the user switched off (resumable)
     "running",          # the TaskRunner is currently executing it
     "completed",        # finished successfully
     "failed",           # given up after max_attempts
@@ -175,9 +176,14 @@ TaskState = Literal[
 
 
 TASK_STATES: tuple[str, ...] = (
-    "pending", "scheduled", "running", "completed",
+    "pending", "scheduled", "paused", "running", "completed",
     "failed", "cancelled", "interrupted",
 )
+
+#: States a task never leaves on its own (hard-delete is allowed here).
+TERMINAL_STATES: tuple[str, ...] = ("completed", "failed", "cancelled", "interrupted")
+#: Trigger types that can be paused/resumed — the recurring ones.
+PAUSABLE_TRIGGER_TYPES: tuple[str, ...] = ("every", "on_event")
 
 
 class TaskSpec(BaseModel):

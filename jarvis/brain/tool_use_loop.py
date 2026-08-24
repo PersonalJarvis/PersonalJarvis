@@ -581,10 +581,14 @@ class ToolUseLoop:
         max_tokens: int = 8192,
         deadline_s: float | None = None,
         reasoning_effort: Literal["none"] | None = None,
+        tool_context: dict[str, Any] | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools
         self._executor = executor
+        # Caller-supplied keys for every tool's ``ExecutionContext.config``
+        # (see BrainDispatcher.tool_context). Per-turn keys set below win.
+        self._tool_context = dict(tool_context or {})
         # Canonical form → registered name, for hyphen/underscore-tolerant
         # lookup. A canonical collision (two registered tools differing only in
         # separator/case) maps to None: an inexact name must never guess
@@ -1282,6 +1286,7 @@ class ToolUseLoop:
                         tool, tool_args,
                         user_utterance=user_utterance,
                         config_snapshot={
+                            **self._tool_context,
                             "output_language": out_lang,
                             "voice_confirm": voice_confirm,
                         },

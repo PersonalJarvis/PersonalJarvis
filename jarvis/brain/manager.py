@@ -12681,9 +12681,82 @@ class BrainManager:
 
         Unknown grants (e.g. a plugin that isn't connected) are silently
         skipped — the task runs with whatever of its allowlist is live.
+
+        A grant is matched by :func:`jarvis.tasks.templates.grant_matches`:
+        exact name, or the plugin prefix of a bridged MCP tool — the grant
+        ``github`` covers every ``github/<tool>``. (Exact matching alone left
+        a template with a ``github`` grant running with ZERO tools.)
+
+        A grant naming one of :data:`_TASK_ONLY_TOOLS` that is NOT in the live
+        (router) set is loaded from its entry point on demand: ``remember`` is
+        deliberately outside ``ROUTER_TOOLS`` (ADR-0011), yet a scheduled
+        task that was granted it must be able to store what it found. The
+        instance is cached per manager and only ever reaches the task's own
+        dispatcher — never the router surface.
         """
-        allow = set(allowed_tools)
-        return {name: tool for name, tool in self._tools.items() if name in allow}
+        from jarvis.tasks.templates import grant_matches  # noqa: PLC0415
+
+        if not allowed_tools:
+            return {}
+        selected = {
+            name: tool for name, tool in self._tools.items()
+            if any(grant_matches(grant, name) for grant in allowed_tools)
+        }
+        for grant in allowed_tools:
+            if grant in selected or grant not in _TASK_ONLY_TOOLS:
+                continue
+            tool = self._load_task_only_tool(grant)
+            if tool is not None:
+                selected[grant] = tool
+        return selected
+
+    def _load_task_only_tool(self, name: str) -> Tool | None:
+        """Instantiate (once) an entry-point tool that only scheduled tasks
+        may use. Returns ``None`` — and logs why — when it cannot be built,
+        so the task runs with the rest of its allowlist."""
+        cache: dict[str, Tool | None] = self.__dict__.setdefault("_task_only_tool_cache", {})
+        if name in cache:
+            return cache[name]
+        from importlib.metadata import entry_points  # noqa: PLC0415
+
+        tool: Tool | None = None
+        for ep in entry_points(group="jarvis.tool"):
+            if ep.name != name:
+                continue
+            try:
+                tool = ep.load()()
+            except Exception as exc:  # noqa: BLE001 — a broken tool must not kill the task
+                log.warning("task-only tool %r failed to load: %s", name, exc)
+                tool = None
+            break
+        else:
+            log.warning("task-only tool %r has no entry point", name)
+        cache[name] = tool
+        return tool
+
+    def _task_fallback_provider(self) -> str | None:
+        """The one provider a scheduled task retries on when the active brain
+        rejects the turn with a credential/credit/rate error.
+
+        A different credential FAMILY than the active provider (AP-22: a
+        same-family fallback is a brick), registered, not dead-listed this
+        session, with a fast model and a portable credential on this box.
+        The persistent active provider is never touched (user-only lock).
+        """
+        active = self._active_name
+        active_family = self._tool_model_family(active)
+        available = set(self._registry.available())
+        for name in _TASK_FALLBACK_ORDER:
+            if name == active or name not in available or name in self._dead_providers:
+                continue
+            if self._tool_model_family(name) == active_family:
+                continue
+            if not self._fast_model(name):
+                continue
+            if not self._tool_model_credential_ready(name):
+                continue
+            return name
+        return None
 
     async def run_task(
         self,
@@ -12703,24 +12776,58 @@ class BrainManager:
         actions still hit the approval gate (which, with no human present,
         means they block until the unattended-approval wave wires Option B).
 
+        Provider fallback (2026-08-24): when the active provider rejects the
+        turn with a credential / credit / rate-limit error (401/402/403/429
+        — the same classes the chat path dead-lists or cools down), the SAME
+        turn is retried exactly once on the next provider of a different
+        credential family (:meth:`_task_fallback_provider`). Any other error,
+        or a second failure, propagates so the runner records it in
+        ``last_error``. The persistent active provider is never switched.
+
         Returns the final assistant text.
         """
-        name = self._active_name
-        if model_tier == "deep":
-            model = self._deep_model(name) or self._fast_model(name)
-            intent = "deep"
-        else:
-            # "fast" and "auto" both resolve to the fast model — the cheapest
-            # correct default for an unattended background turn.
-            model = self._fast_model(name)
-            intent = "fast"
-        brain = self._get_brain(name, model)
+        intent = "deep" if model_tier == "deep" else "fast"
         tools = self._select_task_tools(allowed_tools)
-        dispatcher = self._build_dispatcher(brain, tools_override=tools)
-        agg = await dispatcher.dispatch(
-            prompt, history=[], intent_level=intent, trace_id=trace_id,
-        )
-        return agg.text or ""
+        attempts: list[str] = [self._active_name]
+        failures: list[str] = []
+        while attempts:
+            name = attempts.pop(0)
+            if intent == "deep":
+                model = self._deep_model(name) or self._fast_model(name)
+            else:
+                # "fast" and "auto" both resolve to the fast model — the
+                # cheapest correct default for an unattended background turn.
+                model = self._fast_model(name)
+            try:
+                brain = self._get_brain(name, model)
+                dispatcher = self._build_dispatcher(
+                    brain, tools_override=tools,
+                    tool_context={"delivery": "written"},
+                )
+                agg = await dispatcher.dispatch(
+                    prompt, history=[], intent_level=intent, trace_id=trace_id,
+                )
+                return agg.text or ""
+            except Exception as exc:
+                kind = _classify_provider_error(str(exc), default="call_fail")
+                if kind not in _TASK_FALLBACK_KINDS:
+                    raise
+                failures.append(f"{name}: {_short_provider_error(exc)}")
+                if failures and len(failures) == 1:
+                    fallback = self._task_fallback_provider()
+                    if fallback is not None:
+                        log.warning(
+                            "run_task: %s rejected the turn (%s) — retrying once on %s",
+                            name, kind, fallback,
+                        )
+                        attempts.append(fallback)
+                        continue
+                    log.warning(
+                        "run_task: %s rejected the turn (%s) and no cross-family "
+                        "fallback provider is usable", name, kind,
+                    )
+                    raise
+        raise RuntimeError("all brain providers failed: " + "; ".join(failures))
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -12733,6 +12840,32 @@ class BrainManager:
             "fast_model": self._fast_model(self._active_name),
             "deep_model": self._deep_model(self._active_name),
         }
+
+
+#: Entry-point tools a scheduled task may be granted although they are NOT
+#: router tools (ADR-0011 keeps the router a pure dispatcher). Loaded lazily
+#: by ``_select_task_tools`` for the task's own dispatcher only. Never a
+#: spawn tool (AP-5/AP-14).
+_TASK_ONLY_TOOLS: frozenset[str] = frozenset({"remember"})
+
+#: Error classes that make a scheduled task retry once on another provider
+#: family: the dead-list kinds (missing/bad key, 402 credits) plus a rate limit.
+_TASK_FALLBACK_KINDS: frozenset[str] = frozenset(
+    {"missing_key", "account_blocked", "bad_key", "rate_limit"}
+)
+
+#: Cross-provider order for the scheduled-task fallback (mirrors the chat
+#: path's ``cross_order``; family-filtered at runtime).
+_TASK_FALLBACK_ORDER: tuple[str, ...] = (
+    "gemini", "claude-api", "openai", "openrouter", "grok", "nvidia",
+)
+
+
+def _short_provider_error(exc: Exception) -> str:
+    """One readable line for ``last_error`` / the fallback summary — the
+    exception class and the first 160 characters of its message."""
+    msg = " ".join(str(exc).split())
+    return f"{type(exc).__name__}: {msg[:160]}" if msg else type(exc).__name__
 
 
 def _is_rate_limit_exc(exc: Exception) -> bool:

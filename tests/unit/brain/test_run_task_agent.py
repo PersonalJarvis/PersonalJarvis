@@ -69,7 +69,9 @@ async def test_run_task_filters_tools_and_isolates_history(monkeypatch) -> None:
             captured["history"] = kw.get("history")
             return SimpleNamespace(text="briefing result")
 
-    def _fake_build(brain: Any, *, tools_override: dict[str, Any] | None = None) -> Any:
+    def _fake_build(
+        brain: Any, *, tools_override: dict[str, Any] | None = None, **_: Any,
+    ) -> Any:
         captured["tools"] = set((tools_override or {}).keys())
         return _FakeDispatcher()
 

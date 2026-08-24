@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     trace_id        TEXT NOT NULL,
     spec_json       TEXT NOT NULL,                -- serialized TaskSpec (Pydantic)
     state           TEXT NOT NULL CHECK(state IN (
-                        'pending','scheduled','running','completed',
+                        'pending','scheduled','paused','running','completed',
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
                         'after_delay','at_time','on_event','every')),

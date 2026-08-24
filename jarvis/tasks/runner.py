@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol
@@ -172,7 +173,7 @@ class TaskRunner:
             return
         except Exception as exc:  # noqa: BLE001
             duration_ms = int((time.perf_counter() - start) * 1000)
-            error_msg = f"{type(exc).__name__}: {exc}"
+            error_msg = readable_error(exc)
             await self._store.update_state(task_id, "failed", error=error_msg)
             await self._store.append_step(task_id, "log",
                                           {"event": "error", "message": error_msg})
@@ -612,6 +613,35 @@ def _targets_computer_use(harness_name: str) -> bool:
     except Exception:  # noqa: BLE001 — gate module unavailable (minimal env)
         return harness_name == "screenshot"
     return harness_name == HARNESS_NAME
+
+
+_ERROR_MESSAGE_RE = re.compile(r"""['"]message['"]\s*:\s*['"]([^'"]{1,300})['"]""")
+_ERROR_CODE_RE = re.compile(r"\b(?:Error code|status(?: code)?)[:=]?\s*(\d{3})\b", re.IGNORECASE)
+_LAST_ERROR_MAX_CHARS = 400
+
+
+def readable_error(exc: BaseException) -> str:
+    """The one line ``last_error`` shows in the Runs tab.
+
+    Provider SDK errors stringify to a class name plus a dumped JSON body
+    (``APIStatusError: Error code: 402 - {'error': {'message': 'Insufficient
+    credits. Add more using …', 'code': 402, 'metadata': {…}}}``). A reader
+    wants the HTTP code and the human message, not the dict: this pulls both
+    out when present, collapses whitespace, and caps the length. Anything
+    else keeps the ``Type: message`` form the runner always recorded.
+    """
+    raw = " ".join(str(exc).split())
+    name = type(exc).__name__
+    if not raw:
+        return name
+    code = _ERROR_CODE_RE.search(raw)
+    message = _ERROR_MESSAGE_RE.search(raw)
+    if message:
+        body = message.group(1).strip()
+        text = f"{name}: {code.group(1)} — {body}" if code else f"{name}: {body}"
+    else:
+        text = f"{name}: {raw}"
+    return text[:_LAST_ERROR_MAX_CHARS]
 
 
 class _SafeDict(dict):

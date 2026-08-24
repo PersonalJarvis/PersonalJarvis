@@ -73,9 +73,10 @@ class TaskAutoApprover:
     @staticmethod
     def _tool_is_granted(tool_name: str, granted: frozenset[str]) -> bool:
         """A tool is covered if its name (native tool) or its plugin prefix
-        (MCP tools are namespaced ``plugin/tool``) is in the grant set.
+        (MCP tools are namespaced ``plugin/tool``) is in the grant set — the
+        same rule the brain's tool allowlist uses (``grant_matches``), so a
+        tool the turn can SEE is exactly a tool the grant can pre-authorize.
         """
-        if tool_name in granted:
-            return True
-        prefix = tool_name.split("/", 1)[0]
-        return prefix in granted
+        from jarvis.tasks.templates import grant_matches  # noqa: PLC0415
+
+        return any(grant_matches(grant, tool_name) for grant in granted)

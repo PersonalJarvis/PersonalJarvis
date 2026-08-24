@@ -15,25 +15,27 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
-from .schema import TaskSpec, TaskState
+from .schema import TERMINAL_STATES, TaskSpec, TaskState
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
-# Rebuild target for the legacy trigger_type-CHECK migration. Mirrors the
-# `tasks` table in schema.sql but as `tasks_new` and with `every` in the
-# CHECK. Kept here (not in schema.sql) because it only runs during migration.
+# Rebuild target for the CHECK-constraint migrations (trigger_type gained
+# `every` 2026-06-17, state gained `paused` 2026-08-24). Mirrors the `tasks`
+# table in schema.sql but as `tasks_new`. Kept here (not in schema.sql)
+# because it only runs during migration.
 _TASKS_REBUILD_SQL = """
 CREATE TABLE tasks_new (
     id              TEXT PRIMARY KEY,
     trace_id        TEXT NOT NULL,
     spec_json       TEXT NOT NULL,
     state           TEXT NOT NULL CHECK(state IN (
-                        'pending','scheduled','running','completed',
+                        'pending','scheduled','paused','running','completed',
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
                         'after_delay','at_time','on_event','every')),
@@ -87,6 +89,8 @@ class TaskStore:
         # (added 2026-06-17). CREATE TABLE IF NOT EXISTS never alters an
         # existing table, so this explicit migration is required.
         await self._migrate_trigger_type_check()
+        # Same dance for the state CHECK, which predates `paused` (2026-08-24).
+        await self._migrate_state_check()
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -115,6 +119,31 @@ class TaskStore:
         no-op once the live CHECK already mentions ``'every'`` (or has no
         CHECK at all).
         """
+        table_sql = await self._tasks_table_sql()
+        if table_sql is None:
+            return
+        if "trigger_type" not in table_sql or "CHECK" not in table_sql:
+            return  # loose schema — nothing to migrate
+        if "'every'" in table_sql:
+            return  # fresh schema or already migrated
+        await self._rebuild_tasks_table()
+
+    async def _migrate_state_check(self) -> None:
+        """Rebuild ``tasks`` if its state CHECK predates ``paused``.
+
+        Mirrors :meth:`_migrate_trigger_type_check`; without it, pausing an
+        automation on a DB created before 2026-08-24 fails the CHECK.
+        """
+        table_sql = await self._tasks_table_sql()
+        if table_sql is None:
+            return
+        if "state" not in table_sql or "CHECK" not in table_sql:
+            return  # loose schema — nothing to migrate
+        if "'paused'" in table_sql:
+            return  # fresh schema or already migrated
+        await self._rebuild_tasks_table()
+
+    async def _tasks_table_sql(self) -> str | None:
         conn = self._require_conn()
         cur = await conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
@@ -122,13 +151,12 @@ class TaskStore:
         row = await cur.fetchone()
         await cur.close()
         if row is None:
-            return
-        table_sql = row["sql"] or ""
-        if "trigger_type" not in table_sql or "CHECK" not in table_sql:
-            return  # loose schema — nothing to migrate
-        if "'every'" in table_sql:
-            return  # fresh schema or already migrated
+            return None
+        return str(row["sql"] or "")
 
+    async def _rebuild_tasks_table(self) -> None:
+        """create-copy-drop-rename ``tasks`` onto :data:`_TASKS_REBUILD_SQL`."""
+        conn = self._require_conn()
         await conn.execute("PRAGMA foreign_keys = OFF")
         try:
             await conn.execute("BEGIN")
@@ -262,12 +290,20 @@ class TaskStore:
         if state == "running":
             sets.append("started_at_ns = ?")
             params.append(now_ns)
-        if state in ("completed", "failed", "cancelled", "interrupted"):
+        # A run has finished when the state is terminal — or when a recurring
+        # task hands back a ``result`` on its way to ``scheduled``. Either way
+        # ``finished_at_ns`` marks the end of the LAST run, and a successful
+        # result clears the error of a previous failed run so the list view's
+        # ``last_run_state`` reflects the latest run only.
+        finished = state in TERMINAL_STATES or result is not None
+        if finished:
             sets.append("finished_at_ns = ?")
             params.append(now_ns)
         if error is not None:
             sets.append("last_error = ?")
             params.append(error)
+        elif result is not None:
+            sets.append("last_error = NULL")
         if result is not None:
             sets.append("result_json = ?")
             params.append(json.dumps(result, ensure_ascii=False))
@@ -315,12 +351,16 @@ class TaskStore:
         *,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Returns a list of task rows (without steps), filtered by state."""
+        """Returns a list of task rows (without steps), filtered by state.
+
+        ``spec_json`` is included so the API can derive spec-level summary
+        fields (tags, created_by, interval) without a second query per row.
+        """
         conn = self._require_conn()
         sql = (
             "SELECT id, trace_id, state, trigger_type, due_at_ns, title, "
-            "created_at_ns, started_at_ns, finished_at_ns, attempts, last_error "
-            "FROM tasks"
+            "created_at_ns, started_at_ns, finished_at_ns, attempts, last_error, "
+            "spec_json FROM tasks"
         )
         params: list[Any] = []
         if state_filter is not None:
@@ -365,6 +405,42 @@ class TaskStore:
             for r in step_rows
         ]
         return task
+
+    async def latest_agent_results(
+        self, task_ids: Sequence[str] | None = None, *, max_chars: int = 400,
+    ) -> dict[str, str]:
+        """``{task_id: text}`` of the newest ``agent_result`` log step per
+        task, truncated to ``max_chars`` — ONE query for the whole list view,
+        no per-task round trip. ``task_ids=None`` covers every task.
+        """
+        conn = self._require_conn()
+        sql = (
+            "SELECT s.task_id AS task_id, s.payload_json AS payload_json "
+            "FROM task_steps s JOIN ("
+            "  SELECT task_id, MAX(seq) AS seq FROM task_steps"
+            "  WHERE kind = 'log'"
+            "    AND json_extract(payload_json, '$.event') = 'agent_result'"
+            "  GROUP BY task_id"
+            ") latest ON latest.task_id = s.task_id AND latest.seq = s.seq"
+        )
+        params: list[Any] = []
+        if task_ids is not None:
+            if not task_ids:
+                return {}
+            placeholders = ",".join(["?"] * len(task_ids))
+            sql += f" WHERE s.task_id IN ({placeholders})"  # noqa: S608 — placeholders only
+            params.extend(task_ids)
+        cur = await conn.execute(sql, tuple(params))
+        rows = await cur.fetchall()
+        await cur.close()
+        out: dict[str, str] = {}
+        for r in rows:
+            try:
+                text = str(json.loads(r["payload_json"]).get("text") or "")
+            except (ValueError, AttributeError):
+                continue
+            out[str(r["task_id"])] = text[:max_chars]
+        return out
 
     async def get_spec(self, task_id: str) -> TaskSpec | None:
         """Deserializes ``spec_json`` back into a TaskSpec."""

@@ -65,6 +65,30 @@ _ANSWER_INSTRUCTION: Final[str] = (
     "answer the question, say that briefly instead of reciting them."
 )
 
+# The written counterpart: a scheduled digest (Automations) or any other
+# background turn whose result is READ, not heard. Sources and dates are
+# welcome there; the raw-hit dump is still not.
+_WRITTEN_ANSWER_INSTRUCTION: Final[str] = (
+    "These 'results' are RAW web hits (title/snippet/url) for retrieval only. "
+    "Answer the actual question in writing using the relevant facts from "
+    "them; you may name a source or a date where it adds credibility. Do not "
+    "paste the hits as a list. If the hits do not actually answer the "
+    "question, say so briefly instead of reciting them."
+)
+
+
+def _answer_instruction_for(ctx: ExecutionContext) -> str:
+    """Spoken by default; written when the turn declares written delivery
+    (``ExecutionContext.config["delivery"] == "written"`` — set by
+    ``BrainManager.run_task`` for scheduled tasks). Anything else, including a
+    context without the key, keeps the historical spoken behaviour."""
+    try:
+        delivery = (ctx.config or {}).get("delivery")
+    except Exception:  # noqa: BLE001 — a foreign ctx shape must not break search
+        delivery = None
+    return _WRITTEN_ANSWER_INSTRUCTION if delivery == "written" else _ANSWER_INSTRUCTION
+
+
 _WEATHER_INTENT_RE = re.compile(
     r"\b(weather|forecast|wetter\w*|wettervorhersage|vorhersage|"
     r"temperatur\w*|temperature|tiempo|clima)\b",
@@ -343,7 +367,7 @@ class SearchWebTool:
                     output={
                         "query": query,
                         "results": weather,
-                        "answer_instruction": _ANSWER_INSTRUCTION,
+                        "answer_instruction": _answer_instruction_for(ctx),
                     },
                 )
 
@@ -390,5 +414,5 @@ class SearchWebTool:
         elif outcome.status == "ok" and outcome.results:
             # Steer the brain to synthesize a short spoken answer rather than
             # reading the raw hits aloud (live forensic 2026-06-28, Turn 4).
-            output["answer_instruction"] = _ANSWER_INSTRUCTION
+            output["answer_instruction"] = _answer_instruction_for(ctx)
         return ToolResult(success=True, output=output)

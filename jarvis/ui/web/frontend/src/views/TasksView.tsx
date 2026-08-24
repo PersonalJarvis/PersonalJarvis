@@ -1,478 +1,219 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ListTodo,
-  RefreshCw,
-  X,
-  Trash2,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  Zap,
-  CalendarClock,
-  Repeat,
-  Plus,
-} from "lucide-react";
-import { ViewHeader } from "@/views/ChatsView";
-import { ScrollArea } from "@/components/ui/scroll-area";
+/**
+ * The Runs tab of the Automations section — the run history.
+ *
+ * This file used to be the whole "Tasks" section. The section became
+ * Automations (`AutomationsView.tsx`) and the task list folded into its
+ * Runs tab; the file keeps its name so history and the route stay traceable.
+ *
+ * Every task that ran or is running (recurring and one-shot alike) plus the
+ * still-pending one-shots, newest activity first, with filter chips. A row
+ * expands to the readable result text and the step timeline.
+ */
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, History, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
-import { TaskCreateDialog } from "./tasks/TaskCreateDialog";
+import { cn } from "@/lib/utils";
+import { useCancelTask, useDeleteTask, useTaskDetail } from "@/hooks/useAutomations";
+import {
+  filterRuns,
+  formatDuration,
+  isActive,
+  isRecurringTrigger,
+  selectRuns,
+  type RunFilter,
+  type TaskSummary,
+} from "./automations/automationsModel";
+import {
+  ResultText,
+  SectionLabel,
+  StateDot,
+  StepTimeline,
+  formatWhen,
+  useStateLabels,
+} from "./automations/shared";
 
-type TaskState =
-  | "pending"
-  | "scheduled"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "interrupted";
+const FILTERS: RunFilter[] = ["all", "running", "done", "problems"];
 
-type TriggerType = "after_delay" | "at_time" | "on_event" | "every";
-
-interface TaskSummary {
-  id: string;
-  title: string;
-  state: TaskState;
-  trigger_type: TriggerType;
-  due_at_ns: number | null;
-  created_at_ns: number | null;
-  started_at_ns: number | null;
-  finished_at_ns: number | null;
-  attempts: number;
-  last_error: string | null;
-}
-
-interface TaskStep {
-  seq: number;
-  kind: string;
-  payload: Record<string, unknown>;
-  timestamp_ns: number;
-}
-
-interface TaskDetail extends TaskSummary {
-  spec: Record<string, unknown> | null;
-  steps: TaskStep[];
-}
-
-interface TasksListResponse {
+export interface RunsTabProps {
   tasks: TaskSummary[];
-  total: number;
+  onNotice: (text: string, kind?: "info" | "error") => void;
 }
 
-async function fetchTasks(state?: string): Promise<TasksListResponse> {
-  const url = state ? `/api/tasks?state=${encodeURIComponent(state)}` : "/api/tasks";
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
-
-async function fetchTask(id: string): Promise<TaskDetail> {
-  const res = await fetch(`/api/tasks/${id}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
-
-async function cancelTask(id: string): Promise<void> {
-  const res = await fetch(`/api/tasks/${id}/cancel`, { method: "POST" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-}
-
-async function deleteTask(id: string): Promise<void> {
-  const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-}
-
-function makeStateLabels(t: (k: string) => string): Record<TaskState, string> {
-  return {
-    pending: t("tasks_view.state.pending"),
-    scheduled: t("tasks_view.state.scheduled"),
-    running: t("tasks_view.state.running"),
-    completed: t("tasks_view.state.completed"),
-    failed: t("tasks_view.state.failed"),
-    cancelled: t("tasks_view.state.cancelled"),
-    interrupted: t("tasks_view.state.interrupted"),
-  };
-}
-
-const STATE_VARIANT: Record<
-  TaskState,
-  "default" | "secondary" | "destructive" | "outline"
-> = {
-  pending: "outline",
-  scheduled: "secondary",
-  running: "default",
-  completed: "secondary",
-  failed: "destructive",
-  cancelled: "outline",
-  interrupted: "destructive",
-};
-
-const TRIGGER_ICON: Record<TriggerType, typeof Clock> = {
-  after_delay: Clock,
-  at_time: CalendarClock,
-  on_event: Zap,
-  every: Repeat,
-};
-
-function makeTriggerLabels(t: (k: string) => string): Record<TriggerType, string> {
-  return {
-    after_delay: t("tasks_view.trigger_label.after_delay"),
-    at_time: t("tasks_view.trigger_label.at_time"),
-    on_event: t("tasks_view.trigger_label.on_event"),
-    every: t("tasks_view.trigger_label.every"),
-  };
-}
-
-function makeStateFilters(t: (k: string) => string): { id: string; label: string }[] {
-  return [
-    { id: "all", label: t("tasks_view.filter_all") },
-    { id: "scheduled,running", label: t("tasks_view.filter_active") },
-    { id: "completed", label: t("tasks_view.filter_done") },
-    { id: "failed,cancelled,interrupted", label: t("tasks_view.filter_problems") },
-  ];
-}
-
-export function TasksView() {
+export function RunsTab({ tasks, onNotice }: RunsTabProps) {
   const t = useT();
-  const STATE_FILTERS = makeStateFilters(t);
-  const [stateFilter, setStateFilter] = useState<string>("all");
+  const [filter, setFilter] = useState<RunFilter>("all");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [showCreate, setShowCreate] = useState(false);
-  const qc = useQueryClient();
+  const cancelMut = useCancelTask();
+  const deleteMut = useDeleteTask();
 
-  const effectiveFilter = stateFilter === "all" ? undefined : stateFilter;
-  const { data, isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: ["tasks", stateFilter],
-    queryFn: () => fetchTasks(effectiveFilter),
-    refetchInterval: 3000,
-  });
-
-  const cancelMut = useMutation({
-    mutationFn: cancelTask,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
-  });
-  const deleteMut = useMutation({
-    mutationFn: deleteTask,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
-  });
-
-  const tasks = data?.tasks ?? [];
+  const runs = useMemo(() => filterRuns(selectRuns(tasks), filter), [tasks, filter]);
 
   return (
-    <div className="flex h-full flex-col">
-      <ViewHeader
-        icon={<ListTodo className="h-4 w-4 text-primary" />}
-        title={t("tasks_view.title")}
-        subtitle={t("tasks_view.subtitle")}
-        right={
-          <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => refetch()}
-              disabled={isRefetching}
-            >
-              <RefreshCw
-                className={isRefetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}
-              />
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              {t("tasks_view.create_button")}
-            </Button>
-          </div>
-        }
-      />
-      {showCreate && <TaskCreateDialog onClose={() => setShowCreate(false)} />}
-
-      <div className="flex items-center gap-2 border-b border-border px-6 py-3">
-        {STATE_FILTERS.map((f) => (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {FILTERS.map((f) => (
           <button
-            key={f.id}
+            key={f}
             type="button"
-            onClick={() => setStateFilter(f.id)}
+            onClick={() => setFilter(f)}
+            aria-pressed={filter === f}
             className={cn(
               "rounded-md border px-2.5 py-1 text-xs transition-colors",
-              stateFilter === f.id
+              filter === f
                 ? "border-primary/60 bg-primary/10 text-primary"
                 : "border-border text-muted-foreground hover:border-primary/30 hover:text-foreground",
             )}
           >
-            {f.label}
+            {t(`automations_view.runs_filter.${f}`)}
           </button>
         ))}
         <div className="ml-auto text-xs text-muted-foreground">
-          {data ? `${data.total} ${t("tasks_view.entries")}` : ""}
+          {runs.length} {t("tasks_view.entries")}
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="space-y-2 p-6">
-          {isLoading && (
-            <div className="text-sm text-muted-foreground">{t("tasks_view.loading")}</div>
-          )}
-          {error && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-              {t("tasks_view.load_error")}: {(error as Error).message}
-            </div>
-          )}
-          {!isLoading && !error && tasks.length === 0 && (
-            <EmptyState />
-          )}
-          {tasks.map((t) => (
-            <TaskCard
-              key={t.id}
-              task={t}
-              isExpanded={!!expanded[t.id]}
-              onToggle={() =>
-                setExpanded((prev) => ({ ...prev, [t.id]: !prev[t.id] }))
+      {runs.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/60 p-10 text-center">
+          <History className="h-7 w-7 text-muted-foreground/50" />
+          <p className="text-sm text-muted-foreground">{t("automations_view.runs_empty")}</p>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {runs.map((run) => (
+            <RunRow
+              key={run.id}
+              run={run}
+              expanded={!!expanded[run.id]}
+              onToggle={() => setExpanded((prev) => ({ ...prev, [run.id]: !prev[run.id] }))}
+              onCancel={() =>
+                cancelMut.mutate(run.id, {
+                  onError: (err) => onNotice(`${t("common.error")}: ${(err as Error).message}`, "error"),
+                })
               }
-              onCancel={() => cancelMut.mutate(t.id)}
-              onDelete={() => deleteMut.mutate(t.id)}
-              isCancelling={cancelMut.isPending && cancelMut.variables === t.id}
-              isDeleting={deleteMut.isPending && deleteMut.variables === t.id}
+              onDelete={() =>
+                deleteMut.mutate(
+                  { id: run.id, active: isActive(run.state) },
+                  { onError: (err) => onNotice(`${t("common.error")}: ${(err as Error).message}`, "error") },
+                )
+              }
+              busy={{
+                cancel: cancelMut.isPending && cancelMut.variables === run.id,
+                delete: deleteMut.isPending && deleteMut.variables?.id === run.id,
+              }}
             />
           ))}
-        </div>
-      </ScrollArea>
+        </ul>
+      )}
     </div>
   );
 }
 
-function EmptyState() {
-  const t = useT();
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/60 bg-background/30 p-10 text-center">
-      <ListTodo className="h-7 w-7 text-muted-foreground/50" />
-      <p className="text-sm text-muted-foreground">{t("tasks_view.empty_text")}</p>
-      <p className="max-w-xl text-[11px] leading-relaxed text-muted-foreground/70">
-        {t("tasks_view.empty_hint")}
-      </p>
-    </div>
-  );
-}
-
-function TaskCard({
-  task,
-  isExpanded,
+function RunRow({
+  run,
+  expanded,
   onToggle,
   onCancel,
   onDelete,
-  isCancelling,
-  isDeleting,
+  busy,
 }: {
-  task: TaskSummary;
-  isExpanded: boolean;
+  run: TaskSummary;
+  expanded: boolean;
   onToggle: () => void;
   onCancel: () => void;
   onDelete: () => void;
-  isCancelling: boolean;
-  isDeleting: boolean;
+  busy: { cancel: boolean; delete: boolean };
 }) {
   const t = useT();
-  const STATE_LABEL = makeStateLabels(t);
-  const TRIGGER_LABEL = makeTriggerLabels(t);
-  const Icon = TRIGGER_ICON[task.trigger_type] ?? Clock;
-  const canCancel =
-    task.state === "scheduled" ||
-    task.state === "running" ||
-    task.state === "pending";
-  const canDelete =
-    task.state === "completed" ||
-    task.state === "failed" ||
-    task.state === "cancelled" ||
-    task.state === "interrupted";
+  const labels = useStateLabels();
+  const when = formatWhen(run.finished_at_ns ?? run.started_at_ns ?? run.due_at_ns ?? run.created_at_ns);
+  const duration = formatDuration(run.started_at_ns, run.finished_at_ns);
+  const active = isActive(run.state);
+  // A recurring automation's row is its latest run; deleting it is the
+  // card's job on the Automations tab, so only one-shots offer Delete here.
+  const canDelete = !isRecurringTrigger(run.trigger_type) || !active;
 
   return (
-    <article className="card-outline overflow-hidden transition-all hover:shadow-[0_0_24px_rgba(255,214,10,0.06)]">
-      <header className="flex items-start gap-3 p-4">
+    <li className="card-outline">
+      <div className="flex items-center gap-3 px-4 py-3">
         <button
           type="button"
           onClick={onToggle}
-          className="mt-0.5 rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
-          aria-label={isExpanded ? t("tasks_view.collapse") : t("tasks_view.expand")}
+          className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
+          aria-label={expanded ? t("tasks_view.collapse") : t("tasks_view.expand")}
+          aria-expanded={expanded}
         >
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-secondary/40">
-          <Icon className="h-3.5 w-3.5 text-primary" />
-        </div>
+        <StateDot state={run.state} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold">{task.title || t("tasks_view.untitled")}</h3>
-            <Badge variant={STATE_VARIANT[task.state]}>{STATE_LABEL[task.state]}</Badge>
-            {task.attempts > 1 && (
-              <span className="text-[10px] font-mono text-muted-foreground">
-                #{task.attempts}
-              </span>
-            )}
+            <span className="truncate text-sm font-medium">{run.title || t("tasks_view.untitled")}</span>
+            <span className="shrink-0 text-[11px] text-muted-foreground">{labels[run.state]}</span>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-            <span>{TRIGGER_LABEL[task.trigger_type]}</span>
-            <TriggerWhen task={task} />
-            <span className="font-mono">{task.id.slice(0, 8)}</span>
-          </div>
-          {task.last_error && (
-            <p className="mt-1.5 line-clamp-2 text-xs text-destructive/90">
-              {task.last_error}
+          {(run.last_result || run.last_error) && (
+            <p
+              className={cn(
+                "mt-0.5 truncate text-xs",
+                run.last_error && !run.last_result ? "text-destructive/90" : "text-muted-foreground",
+              )}
+            >
+              {run.last_result || run.last_error}
             </p>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {canCancel && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onCancel}
-              disabled={isCancelling}
-              title={t("tasks_view.cancel")}
-            >
+        <div className="shrink-0 text-right text-[11px] text-muted-foreground">
+          <div>{when}</div>
+          {duration && <div className="font-mono">{duration}</div>}
+        </div>
+        <div className="flex shrink-0 items-center">
+          {active && (
+            <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy.cancel} title={t("tasks_view.cancel")}>
               <X className="h-4 w-4" />
             </Button>
           )}
           {canDelete && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onDelete}
-              disabled={isDeleting}
-              title={t("tasks_view.delete")}
-            >
+            <Button size="sm" variant="ghost" onClick={onDelete} disabled={busy.delete} title={t("tasks_view.delete")}>
               <Trash2 className="h-4 w-4" />
             </Button>
           )}
         </div>
-      </header>
-
-      {isExpanded && <TaskDetailBody taskId={task.id} />}
-    </article>
+      </div>
+      {expanded && <RunDetail taskId={run.id} fallbackResult={run.last_result} />}
+    </li>
   );
 }
 
-function TaskDetailBody({ taskId }: { taskId: string }) {
+function RunDetail({ taskId, fallbackResult }: { taskId: string; fallbackResult?: string | null }) {
   const t = useT();
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["tasks", "detail", taskId],
-    queryFn: () => fetchTask(taskId),
-    refetchInterval: 3000,
-  });
-
+  const { data, isLoading, error } = useTaskDetail(taskId);
   if (isLoading) {
     return (
-      <div className="border-t border-border bg-background/30 px-5 py-3 text-xs text-muted-foreground">
+      <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
         {t("tasks_view.loading_details")}
       </div>
     );
   }
   if (error) {
     return (
-      <div className="border-t border-border bg-destructive/10 px-5 py-3 text-xs text-destructive">
+      <div className="border-t border-border px-4 py-3 text-xs text-destructive">
         {t("common.error")}: {(error as Error).message}
       </div>
     );
   }
-  if (!data) return null;
-
-  const steps = data.steps ?? [];
-
+  const steps = data?.steps ?? [];
   return (
-    <div className="space-y-3 border-t border-border bg-background/30 px-5 py-4">
-      {data.spec ? (
-        <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-            Spec
-          </div>
-          <pre className="max-h-40 overflow-auto rounded-md border border-border bg-card/60 p-3 text-[11px] leading-relaxed">
-            {JSON.stringify(data.spec, null, 2)}
-          </pre>
-        </div>
-      ) : null}
-
+    <div className="space-y-3 border-t border-border px-4 py-3">
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-          Timeline ({steps.length})
-        </div>
-        {steps.length === 0 ? (
-          <div className="text-xs text-muted-foreground">{t("tasks_view.no_steps")}</div>
-        ) : (
-          <ul className="space-y-1.5">
-            {steps.map((s) => (
-              <li
-                key={s.seq}
-                className="flex items-start gap-3 rounded-md border border-border/60 bg-card/40 p-2 text-xs"
-              >
-                <span className="w-6 font-mono text-muted-foreground">{s.seq}</span>
-                <span className="w-20 text-primary">{s.kind}</span>
-                <span className="flex-1 font-mono text-muted-foreground break-all">
-                  {summarizePayload(s.payload)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <SectionLabel className="mb-1.5">{t("automations_view.result")}</SectionLabel>
+        <ResultText steps={steps} fallback={fallbackResult} />
+      </div>
+      <div>
+        <SectionLabel className="mb-1.5">
+          {t("automations_view.timeline")} ({steps.length})
+        </SectionLabel>
+        <StepTimeline steps={steps} />
       </div>
     </div>
   );
-}
-
-function TriggerWhen({ task }: { task: TaskSummary }) {
-  const t = useT();
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => setTick((x) => x + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const label = useMemo(() => {
-    if (task.trigger_type === "on_event") return t("tasks_view.waiting_for_event");
-    if (task.state === "running") return t("tasks_view.running_now");
-    if (task.finished_at_ns)
-      return `${t("tasks_view.done_at")} ${formatWhen(task.finished_at_ns)}`;
-    if (task.due_at_ns) {
-      const delta = task.due_at_ns - Date.now() * 1e6;
-      if (delta > 0) return `${t("tasks_view.in_prefix")} ${formatDelta(delta)}`;
-      return t("tasks_view.due_now");
-    }
-    return "—";
-    // `tick` forces a re-render for the countdown
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task, tick, t]);
-
-  return <span>{label}</span>;
-}
-
-function formatDelta(ns: number): string {
-  const sec = Math.max(0, Math.round(ns / 1e9));
-  if (sec < 60) return `${sec}s`;
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}min`;
-  const hr = Math.round(min / 60);
-  if (hr < 48) return `${hr}h`;
-  const day = Math.round(hr / 24);
-  return `${day}d`;
-}
-
-function formatWhen(ns: number): string {
-  try {
-    const d = new Date(ns / 1e6);
-    return d.toLocaleTimeString();
-  } catch {
-    return "";
-  }
-}
-
-function summarizePayload(p: Record<string, unknown>): string {
-  try {
-    const s = JSON.stringify(p);
-    return s.length > 140 ? s.slice(0, 139) + "…" : s;
-  } catch {
-    return "(unlesbar)";
-  }
 }

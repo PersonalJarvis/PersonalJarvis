@@ -118,31 +118,53 @@ const inputCls =
   "w-full rounded-lg border border-border bg-background/60 px-3 py-2 text-sm text-foreground " +
   "placeholder:text-muted-foreground/60 focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/40";
 
-export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
+export interface TaskCreateDialogProps {
+  onClose: () => void;
+  /** Optional prefill (a template, a voice command). Every field is optional;
+   * anything absent keeps the dialog's own default. */
+  initialDraft?: Partial<TaskDraft>;
+}
+
+export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProps) {
   const t = useT();
   const uiLang = useUiLanguage();
   const qc = useQueryClient();
+  const init = initialDraft ?? {};
 
-  const [title, setTitle] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [triggerMode, setTriggerMode] = useState<"schedule" | "event">("schedule");
-  const [whenKey, setWhenKey] = useState<WhenKey>("mission_succeeded");
-  const [thenKind, setThenKind] = useState<ThenKind>("computer_use");
-  const [cuPrompt, setCuPrompt] = useState("");
-  const [announceText, setAnnounceText] = useState("");
-  const [scheduleMode, setScheduleMode] = useState<"once" | "recurring">("recurring");
-  const [onceMode, setOnceMode] = useState<"delay" | "at_time">("at_time");
-  const [delayValue, setDelayValue] = useState(1);
-  const [delayUnit, setDelayUnit] = useState<"minutes" | "hours">("hours");
+  const [title, setTitle] = useState(init.title ?? "");
+  const [prompt, setPrompt] = useState(init.prompt ?? "");
+  const [triggerMode, setTriggerMode] = useState<"schedule" | "event">(init.triggerMode ?? "schedule");
+  const [whenKey, setWhenKey] = useState<WhenKey>(init.whenKey ?? "mission_succeeded");
+  const [thenKind, setThenKind] = useState<ThenKind>(init.thenKind ?? "computer_use");
+  const [cuPrompt, setCuPrompt] = useState(init.cuPrompt ?? "");
+  const [announceText, setAnnounceText] = useState(init.announceText ?? "");
+  const [scheduleMode, setScheduleMode] = useState<"once" | "recurring">(init.scheduleMode ?? "recurring");
+  const [onceMode, setOnceMode] = useState<"delay" | "at_time">(init.onceMode ?? "at_time");
+  const [delayValue, setDelayValue] = useState(() =>
+    init.delaySeconds ? Math.max(1, Math.round(init.delaySeconds / (init.delaySeconds >= 3600 ? 3600 : 60))) : 1,
+  );
+  const [delayUnit, setDelayUnit] = useState<"minutes" | "hours">(
+    init.delaySeconds && init.delaySeconds < 3600 ? "minutes" : "hours",
+  );
   // Pre-fill with a real, editable value (now + 1h) so the native picker never
   // shows the browser's raw, locale-ugly "TT.mm.jjjj --:--" empty placeholder.
-  const [atTimeLocal, setAtTimeLocal] = useState(() => defaultAtTimeLocal());
-  const [recurringMode, setRecurringMode] = useState<"hourly" | "daily" | "custom">("daily");
-  const [dailyTime, setDailyTime] = useState("07:00");
-  const [customValue, setCustomValue] = useState(30);
-  const [customUnit, setCustomUnit] = useState<"minutes" | "hours">("minutes");
-  const [modelTier, setModelTier] = useState<ModelTier>("auto");
-  const [grants, setGrants] = useState<Record<string, ScopeValue>>({});
+  const [atTimeLocal, setAtTimeLocal] = useState(() => init.atTimeLocal || defaultAtTimeLocal());
+  const [recurringMode, setRecurringMode] = useState<"hourly" | "daily" | "custom">(
+    init.recurringMode ?? "daily",
+  );
+  const [dailyTime, setDailyTime] = useState(init.dailyTime ?? "07:00");
+  const [customValue, setCustomValue] = useState(() =>
+    init.customIntervalSeconds
+      ? Math.max(1, Math.round(init.customIntervalSeconds / (init.customIntervalSeconds >= 3600 ? 3600 : 60)))
+      : 30,
+  );
+  const [customUnit, setCustomUnit] = useState<"minutes" | "hours">(
+    init.customIntervalSeconds && init.customIntervalSeconds >= 3600 ? "hours" : "minutes",
+  );
+  const [modelTier, setModelTier] = useState<ModelTier>(init.modelTier ?? "auto");
+  const [grants, setGrants] = useState<Record<string, ScopeValue>>(() =>
+    Object.fromEntries((init.grants ?? []).map((g) => [g.plugin_id, g.scope])),
+  );
 
   const { data: pluginsData, isLoading: pluginsLoading } = useQuery({
     queryKey: ["marketplace-plugins"],
