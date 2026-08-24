@@ -11,6 +11,7 @@ so dispatch is stable as the curated surface grows. A parity test
 (``tests/unit/cli_ctl/test_dispatch.py``) asserts none of these collide with a
 launcher flag or command.
 """
+
 from __future__ import annotations
 
 # Control command groups + meta commands routed to the control CLI.
@@ -44,6 +45,7 @@ RESERVED_CONTROL_NAMES: frozenset[str] = frozenset(
         "clis",
         "mcps",
         "marketplace",
+        "local-models",
         "docs",
         "frontier",
         "ide",

@@ -85,6 +85,9 @@ const WikiView = lazyView(() =>
 const ApiKeysView = lazyView(() =>
   import("@/views/ApiKeysView").then((m) => ({ default: m.ApiKeysView })),
 );
+const LocalModelsView = lazyView(() =>
+  import("@/views/LocalModelsView").then((m) => ({ default: m.LocalModelsView })),
+);
 const ExtensionsView = lazyView(() =>
   import("@/views/ExtensionsView").then((m) => ({ default: m.ExtensionsView })),
 );
@@ -94,8 +97,8 @@ const ExtensionsView = lazyView(() =>
 const AgenticIdeView = lazyPropView<AgenticIdeViewProps>(() =>
   import("@/views/AgenticIdeView").then((m) => ({ default: m.AgenticIdeView })),
 );
-const TasksView = lazyView(() =>
-  import("@/views/TasksView").then((m) => ({ default: m.TasksView })),
+const AutomationsView = lazyView(() =>
+  import("@/views/AutomationsView").then((m) => ({ default: m.AutomationsView })),
 );
 const SessionsView = lazyView(() =>
   import("@/views/SessionsView").then((m) => ({ default: m.SessionsView })),
@@ -434,7 +437,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "docs":
       return <DocsView />;
     case "tasks":
-      return <TasksView />;
+      return <AutomationsView />;
     case "sessions":
       return <SessionsView />;
     case "run_inspector":
@@ -454,6 +457,10 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "apikeys":
     case "telephony":
       return <ApiKeysView />;
+    // The local-model section: server, installed models and the catalogue.
+    // Reached from the sidebar row and the "Open" button on the Ollama row.
+    case "local-models":
+      return <LocalModelsView />;
     // Dedicated telephony setup page (scripts + step-by-step guide). Not a
     // sidebar entry — reached only via the "Setup script" button in the
     // telephony credentials card.

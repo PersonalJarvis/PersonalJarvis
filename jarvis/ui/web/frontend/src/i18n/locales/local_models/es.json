@@ -1,0 +1,28 @@
+{
+  "local_models": {
+    "title": "Modelos locales",
+    "subtitle": "Modelos que se ejecutan en esta máquina o en un servidor que tú indiques.",
+    "back": "Claves API",
+    "mode_label": "Nivel de detalle",
+    "mode_simple": "Sencillo",
+    "mode_advanced": "Avanzado",
+    "tabs_label": "Áreas de modelos locales",
+    "tab_overview": "Resumen",
+    "tab_models": "Modelos",
+    "tab_catalogue": "Catálogo",
+    "tab_huggingface": "Hugging Face",
+    "tab_server": "Servidor",
+    "overview_title": "Resumen",
+    "overview_placeholder": "Los roles, la memoria gráfica y el uso de disco llegarán en el siguiente paso. Mientras tanto, Catálogo y Servidor ya funcionan.",
+    "models_title": "Modelos instalados",
+    "models_placeholder": "La lista de modelos instalados llega con el siguiente paso.",
+    "catalogue_title": "Catálogo",
+    "catalogue_subtitle": "Descargas recomendadas y toda la biblioteca pública.",
+    "huggingface_title": "Hugging Face",
+    "huggingface_placeholder": "Descargar modelos GGUF desde Hugging Face está desactivado por defecto y llegará en un paso posterior.",
+    "server_title": "Servidor",
+    "server_subtitle": "Dónde se ejecutan los modelos y cómo llegar a ellos.",
+    "no_provider": "Esta versión no incluye ningún servidor de modelos locales. Nada puede funcionar aquí hasta que exista un proveedor que admita descargas.",
+    "loading": "Buscando el servidor de modelos locales…"
+  }
+}

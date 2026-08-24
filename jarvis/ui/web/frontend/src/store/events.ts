@@ -70,6 +70,9 @@ export type SectionId =
   | "profile"
   | "memory"
   | "apikeys"
+  // Local models: the Ollama server, its installed models and the catalogue,
+  // in one section instead of a card body inside API Keys.
+  | "local-models"
   | "settings"
   | "telephony"
   | "telephony-setup"
@@ -122,6 +125,7 @@ export const SECTION_IDS = [
   "profile",
   "memory",
   "apikeys",
+  "local-models",
   "settings",
   "telephony",
   "telephony-setup",
@@ -210,6 +214,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   profile: "Profile",
   memory: "Notes",
   apikeys: "API Keys",
+  "local-models": "Local models",
   settings: "Settings",
   telephony: "Telephony",
   "telephony-setup": "Telephony setup",

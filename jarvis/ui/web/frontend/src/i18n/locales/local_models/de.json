@@ -1,0 +1,28 @@
+{
+  "local_models": {
+    "title": "Lokale Modelle",
+    "subtitle": "Modelle, die auf diesem Rechner oder auf einem Server deiner Wahl laufen.",
+    "back": "API-Keys",
+    "mode_label": "Detailgrad",
+    "mode_simple": "Einfach",
+    "mode_advanced": "Erweitert",
+    "tabs_label": "Bereiche der lokalen Modelle",
+    "tab_overview": "Überblick",
+    "tab_models": "Modelle",
+    "tab_catalogue": "Katalog",
+    "tab_huggingface": "Hugging Face",
+    "tab_server": "Server",
+    "overview_title": "Überblick",
+    "overview_placeholder": "Rollen, Grafikspeicher und Speicherplatz kommen im nächsten Schritt hierher. Bis dahin funktionieren Katalog und Server bereits.",
+    "models_title": "Installierte Modelle",
+    "models_placeholder": "Die Liste der installierten Modelle kommt mit dem nächsten Schritt.",
+    "catalogue_title": "Katalog",
+    "catalogue_subtitle": "Empfohlene Downloads und die gesamte öffentliche Bibliothek.",
+    "huggingface_title": "Hugging Face",
+    "huggingface_placeholder": "GGUF-Modelle von Hugging Face zu laden ist standardmäßig aus und kommt in einem späteren Schritt.",
+    "server_title": "Server",
+    "server_subtitle": "Wo die Modelle laufen und wie sie erreichbar sind.",
+    "no_provider": "In dieser Version gibt es keinen lokalen Modellserver. Hier kann nichts laufen, solange kein Anbieter Downloads unterstützt.",
+    "loading": "Suche den lokalen Modellserver…"
+  }
+}

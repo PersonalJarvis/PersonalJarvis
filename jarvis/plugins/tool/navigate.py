@@ -11,6 +11,7 @@ A direct safe-gated UI action, never a spawn — it never enters a worker tool-s
 (AP-5/AP-14). ``KNOWN`` mirrors the frontend ``SECTION_IDS`` (store/events.ts);
 a parity test (tests/unit/plugins/tool/test_navigate.py) guards against drift.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,6 +41,8 @@ KNOWN: frozenset[str] = frozenset(
         "profile",
         "memory",
         "apikeys",
+        # Local models: the Ollama server, installed models and the catalogue.
+        "local-models",
         "settings",
         "telephony",
         "telephony-setup",
@@ -134,6 +137,13 @@ _ALIASES: dict[str, str] = {
     "notizen": "memory",
     "notiz": "memory",
     "wiki": "memory",
+    "local models": "local-models",
+    "local-models": "local-models",
+    "local model": "local-models",
+    "ollama": "local-models",
+    "lokale modelle": "local-models",  # i18n-allow: input vocab
+    "lokale models": "local-models",  # i18n-allow: input vocab
+    "modelos locales": "local-models",  # i18n-allow: input vocab
     "api keys": "apikeys",
     "api-keys": "apikeys",
     "api key": "apikeys",
@@ -264,8 +274,7 @@ class NavigateTool:
                 "type": "string",
                 "enum": sorted(KNOWN),
                 "description": (
-                    "The sidebar section id to open "
-                    "(e.g. 'socials', 'settings', 'agents')."
+                    "The sidebar section id to open (e.g. 'socials', 'settings', 'agents')."
                 ),
             }
         },

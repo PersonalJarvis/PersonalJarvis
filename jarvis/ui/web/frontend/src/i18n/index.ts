@@ -79,13 +79,18 @@ const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
  * it mounts. Until the chunk has arrived, `t()` returns the key, so a view
  * that cares waits for `ready` before it paints.
  */
-export type LocaleChunk = "marketplace";
+export type LocaleChunk = "marketplace" | "local_models";
 
 const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknown>>> = {
   marketplace: {
     en: () => import("./locales/marketplace/en.json"),
     de: () => import("./locales/marketplace/de.json"),
     es: () => import("./locales/marketplace/es.json"),
+  },
+  local_models: {
+    en: () => import("./locales/local_models/en.json"),
+    de: () => import("./locales/local_models/de.json"),
+    es: () => import("./locales/local_models/es.json"),
   },
 };
 

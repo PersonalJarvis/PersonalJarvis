@@ -1025,6 +1025,7 @@ export function ProviderCard({
   const [consentPending, setConsentPending] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const recordVerdict = useProviderTestStore((s) => s.record);
   // The card only escalates to red for a real "set up but failing" error — the
   // amber "needs setup" case stays on the tab + the open/ready badge so a fresh,
@@ -1431,6 +1432,24 @@ export function ProviderCard({
           </p>
         </div>
 
+        {/* Pull-capable servers have a section of their own; the row still
+            opens/activates the provider as before (rowGestures ignores anything
+            marked data-agent-card-control). */}
+        {descriptor.supports_model_pull && (
+          <button
+            type="button"
+            data-agent-card-control
+            data-testid={`provider-open-local-models-${descriptor.id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveSection("local-models");
+            }}
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/70 px-2.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-secondary/60 hover:text-foreground"
+          >
+            <Cpu aria-hidden="true" className="h-3.5 w-3.5" />
+            {t("apikeys_view.local_models_open")}
+          </button>
+        )}
         <ActiveControl
           descriptor={
             isCodexBrain
@@ -2892,15 +2911,20 @@ function ManagedServerPanel({
  * stopped it offers Start, when it is absent it offers a confirmed Install
  * (official ollama.com artifacts only, backend-authored status sentences
  * rendered verbatim). Mounted on pull-capable cards and inside the managed
- * realtime card's blocked-brain state.
+ * realtime card's blocked-brain state. The Local models section mounts it
+ * with `alwaysVisible`, where a healthy server shows one green running line
+ * instead of disappearing — a dedicated Server tab must never look empty.
  */
-function OllamaRuntimePanel({
+export function OllamaRuntimePanel({
   providerId,
   onChanged,
+  alwaysVisible = false,
 }: {
   /** The pull-capable card whose runtime routes this panel drives. */
   providerId: string;
   onChanged: () => void;
+  /** Render the healthy state too (a green running line) instead of nothing. */
+  alwaysVisible?: boolean;
 }) {
   const t = useT();
   const [status, setStatus] = useState<OllamaRuntimeStatus | null>(null);
@@ -2983,7 +3007,25 @@ function OllamaRuntimePanel({
   };
 
   if (status === null) return null;
-  if (status.running && !installing) return null; // healthy — stay out of the way
+  if (status.running && !installing) {
+    if (!alwaysVisible) return null; // healthy — stay out of the way
+    return (
+      <div
+        className="flex items-start gap-2 text-xs"
+        data-testid="ollama-runtime-panel"
+        data-state="running"
+      >
+        <span
+          aria-hidden="true"
+          className="mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+        />
+        <span className="text-muted-foreground">
+          {status.detail ||
+            t("apikeys_view.ollama_running_line").replace("{0}", status.version || "")}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -3057,7 +3099,7 @@ function OllamaRuntimePanel({
  * the field still pulls whatever is typed, so a machine that cannot reach the
  * public catalog keeps the exact-name path it always had.
  */
-function LibraryBrowser({
+export function LibraryBrowser({
   providerId,
   onPull,
   onInstalledSelect,
@@ -3704,6 +3746,18 @@ export function AuthWidget({
               coveredNote={descriptor.credential_note ?? null}
               sharedWith={descriptor.secret_shared_with?.[k] ?? []}
               credentialHelp={descriptor.credential_help}
+              // A pasted key is checked right away — the dictation polish
+              // family owns its own probe, so it keeps the manual Test button.
+              testAfterSave={
+                descriptor.tier === "dictation"
+                  ? undefined
+                  : {
+                      id: descriptor.id,
+                      label: descriptor.label,
+                      section: descriptor.tier,
+                      active: descriptor.active,
+                    }
+              }
               onChanged={onChanged}
               onSavedActivate={onSavedActivate}
             />

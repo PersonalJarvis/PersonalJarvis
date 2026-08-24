@@ -1,0 +1,28 @@
+{
+  "local_models": {
+    "title": "Local models",
+    "subtitle": "Models that run on this machine or on a server you name.",
+    "back": "API Keys",
+    "mode_label": "Detail level",
+    "mode_simple": "Simple",
+    "mode_advanced": "Advanced",
+    "tabs_label": "Local model areas",
+    "tab_overview": "Overview",
+    "tab_models": "Models",
+    "tab_catalogue": "Catalogue",
+    "tab_huggingface": "Hugging Face",
+    "tab_server": "Server",
+    "overview_title": "Overview",
+    "overview_placeholder": "Roles, graphics memory and disk usage land here next. Until then the Catalogue and Server tabs already work.",
+    "models_title": "Installed models",
+    "models_placeholder": "The installed-models ledger arrives with the next step.",
+    "catalogue_title": "Catalogue",
+    "catalogue_subtitle": "Recommended downloads and the whole public library.",
+    "huggingface_title": "Hugging Face",
+    "huggingface_placeholder": "Pulling GGUF models from Hugging Face is off by default and arrives with a later step.",
+    "server_title": "Server",
+    "server_subtitle": "Where the models run and how to reach them.",
+    "no_provider": "No local model server is available in this build. Nothing here can run until a pull-capable provider exists.",
+    "loading": "Looking for the local model server…"
+  }
+}
