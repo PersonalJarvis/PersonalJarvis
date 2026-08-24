@@ -460,8 +460,8 @@ JARGON_COMPOUND_RE = re.compile(
 # 2026-08-24: the compound is REPLACED by the user-facing brand, not deleted.
 # Live voice session 10:24: "…a complete overview using a Sub-Agent for your
 # morning briefing…" was spoken as "…using a for your morning briefing…", and
-# "Ich starte dafür einen Subagenten." became "Ich starte dafür einen." —
-# Jarvis could not even announce the thing he was starting. This is exactly
+# "Ich starte dafür einen Subagenten." became "Ich starte dafür einen."  # i18n-allow
+# so Jarvis could not even announce what he was starting. This is exactly
 # the failure the OF-04 audit recorded four lines above for "Provider" and
 # "MCP": a noun cannot be deleted out of the middle of a sentence by regex,
 # and a bare remnant falls through to the residue guard and is spoken as an
