@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useLayoutEffect, useState, type FormEvent } from "react";
 import { Loader2, Send } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
+import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { useT } from "@/i18n";
 import {
   useFriendMessages,
@@ -26,16 +28,15 @@ export function ChatThread({ friend }: { friend: FriendDetail }) {
   const messages = useFriendMessages(friend.id);
   const send = useSendFriendMessage();
   const [draft, setDraft] = useState("");
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const list = messages.data ?? [];
   const hasChannel = friend.channels.length > 0;
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [list.length]);
+  // This used to set scrollTop on the CONTENT div inside the ScrollArea, which
+  // does not scroll — so the thread never moved at all. The rule now lives in
+  // one place and lands on the actual viewport (hooks/useStickToBottom).
+  const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
+  useLayoutEffect(follow, [follow, list.length]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -65,8 +66,8 @@ export function ChatThread({ friend }: { friend: FriendDetail }) {
         {list.length === 0 ? (
           <EmptyThread hasChannel={hasChannel} />
         ) : (
-          <ScrollArea className="h-full">
-            <div ref={scrollRef} className="space-y-3 px-5 py-4">
+          <ScrollArea ref={rootRef} className="h-full">
+            <div ref={contentRef} className="space-y-3 px-5 py-4">
               {list.map((m, idx) => (
                 <FriendMessageBubble key={`${m.timestamp_ns}-${idx}`} message={m} />
               ))}
@@ -77,8 +78,9 @@ export function ChatThread({ friend }: { friend: FriendDetail }) {
 
       <form
         onSubmit={handleSubmit}
-        className="flex items-center gap-2 border-t border-border bg-card/30 px-5 py-3"
+        className="relative flex items-center gap-2 border-t border-border bg-card/30 px-5 py-3"
       >
+        {list.length > 0 && !atEnd && <ScrollToEndButton onClick={jumpToEnd} />}
         <input
           type="text"
           value={draft}

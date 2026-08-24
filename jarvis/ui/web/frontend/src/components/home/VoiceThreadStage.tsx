@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo } from "react";
 import { AudioLines, Mic } from "lucide-react";
 
 import { useEventStore, type ChatMessage } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
+import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { ThoughtTraceDisclosure } from "@/components/ThinkingTrace";
 import { transcriptFromMessages } from "@/lib/homeTranscript";
 import { fill, useT } from "@/i18n";
@@ -37,11 +39,11 @@ export function VoiceThreadStage() {
     [activeThreadId, conversations],
   );
 
-  const endRef = useRef<HTMLDivElement | null>(null);
-  // A reopened thread lands at its end, where the conversation stopped.
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [activeThreadId, messages.length]);
+  // A reopened thread lands at its end, where the conversation stopped — but
+  // a reader who has scrolled up into it stays there when the rest of a long
+  // thread finishes loading (hooks/useStickToBottom).
+  const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
+  useLayoutEffect(follow, [follow, activeThreadId, messages.length]);
 
   const continueByVoice = () => {
     seedTranscript(transcriptFromMessages(messages));
@@ -54,8 +56,11 @@ export function VoiceThreadStage() {
       data-testid="voice-thread-stage"
       data-thread={activeThreadId ?? ""}
     >
-      <ScrollArea className="min-h-0 w-full flex-1">
-        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-6 pb-6 pt-8">
+      <ScrollArea ref={rootRef} className="min-h-0 w-full flex-1">
+        <div
+          ref={contentRef}
+          className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-6 pb-6 pt-8"
+        >
           <header className="flex items-center gap-2.5 border-b border-border pb-3">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary/50">
               <Mic aria-hidden className="h-3.5 w-3.5 text-primary" />
@@ -77,11 +82,11 @@ export function VoiceThreadStage() {
           ) : (
             messages.map((m) => <SpokenTurn key={m.id} message={m} />)
           )}
-          <div ref={endRef} />
         </div>
       </ScrollArea>
 
-      <div className="w-full max-w-[760px] px-6 pb-5 pt-2">
+      <div className="relative w-full max-w-[760px] px-6 pb-5 pt-2">
+        {messages.length > 0 && !atEnd && <ScrollToEndButton onClick={jumpToEnd} />}
         <div className="flex items-center gap-3 rounded-2xl border border-border bg-card/60 px-4 py-3">
           <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
             {t("voice_thread.read_only")}

@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render as rtlRender, screen } from "@testing-l
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { NEAR_END_PX, VoiceStage, hintFor, isNearEnd, waveformPhase } from "@/components/home/VoiceStage";
+import { VoiceStage, hintFor, waveformPhase } from "@/components/home/VoiceStage";
+import { NEAR_END_PX, isNearEnd } from "@/hooks/useStickToBottom";
 import { stateKey } from "@/components/home/JarvisBar";
 import { greetingKey } from "@/components/home/Greeting";
 import { useHomeStore } from "@/store/home";

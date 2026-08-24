@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { useLayoutEffect, useMemo } from "react";
 
 import { useEventStore, type VoiceState } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import type { WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
+import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { Greeting } from "@/components/home/Greeting";
 import { JarvisBar } from "@/components/home/JarvisBar";
 import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
@@ -36,10 +37,11 @@ import { traceModel } from "@/lib/thinkingSteps";
  * steps render between your words and the answer — live while the turn runs,
  * folded afterwards (components/home/TurnSteps).
  *
- * Scrolling follows the Claude app. New output pulls the view along ONLY
- * while the view is already at the end; scrolled up to read something, you
- * keep your place while the conversation goes on below, and a button over
- * the bar takes you back to the end. Nothing yanks the page out from under
+ * Scrolling follows the Claude app, through the rule every conversation
+ * surface here shares (hooks/useStickToBottom): new output pulls the view
+ * along ONLY while the view is already at the end; scrolled up to read
+ * something, you keep your place while the conversation goes on below, and a
+ * button over the bar takes you back. Nothing yanks the page out from under
  * someone mid-sentence.
  */
 export function VoiceStage() {
@@ -75,61 +77,8 @@ export function VoiceStage() {
       : "";
   const hasLines = lines.length > 0 || Boolean(liveLine) || Boolean(liveAnswer);
 
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const columnRef = useRef<HTMLDivElement | null>(null);
-  // Whether new output pulls the view along. A ref, not state: the auto-scroll
-  // below runs in a layout effect and must read the CURRENT answer, not the
-  // one a re-render would deliver a frame later. `atEnd` mirrors it for the
-  // button, which only has to be right by the next paint.
-  const stickRef = useRef(true);
-  const [atEnd, setAtEnd] = useState(true);
-
-  const jumpToEnd = useCallback(() => {
-    const viewport = viewportOf(rootRef.current);
-    if (!viewport) return;
-    stickRef.current = true;
-    setAtEnd(true);
-    if (!prefersReducedMotion() && typeof viewport.scrollTo === "function") {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-    } else {
-      viewport.scrollTop = viewport.scrollHeight;
-    }
-  }, []);
-
-  // One listener answers both questions: does new output pull the view along,
-  // and is the "back to the end" button needed.
-  useEffect(() => {
-    const viewport = viewportOf(rootRef.current);
-    if (!viewport) return;
-    const read = () => {
-      const near = isNearEnd(viewport.scrollTop, viewport.scrollHeight, viewport.clientHeight);
-      stickRef.current = near;
-      setAtEnd(near);
-    };
-    read();
-    viewport.addEventListener("scroll", read, { passive: true });
-    return () => viewport.removeEventListener("scroll", read);
-  }, [hasLines]);
-
-  useLayoutEffect(() => {
-    const viewport = viewportOf(rootRef.current);
-    if (!viewport || !stickRef.current) return;
-    viewport.scrollTop = viewport.scrollHeight;
-  }, [lines, liveLine, liveAnswer]);
-
-  // An answer and its steps grow WITHOUT a new line arriving, so the effect
-  // above never fires for them; the column's own size is the honest signal
-  // where the platform has ResizeObserver.
-  useEffect(() => {
-    const column = columnRef.current;
-    const viewport = viewportOf(rootRef.current);
-    if (!column || !viewport || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      if (stickRef.current) viewport.scrollTop = viewport.scrollHeight;
-    });
-    ro.observe(column);
-    return () => ro.disconnect();
-  }, [hasLines]);
+  const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
+  useLayoutEffect(follow, [follow, lines, liveLine, liveAnswer]);
 
   const phase = waveformPhase(voiceState, connected);
   const hint = hintFor({ connected, warming, connecting, voiceState, wakePhrase, t });
@@ -157,7 +106,7 @@ export function VoiceStage() {
     >
       <ScrollArea ref={rootRef} className="min-h-0 w-full flex-1" data-testid="voice-transcript">
         <div
-          ref={columnRef}
+          ref={contentRef}
           className="mx-auto flex w-full max-w-[760px] flex-col gap-3 px-6 pb-4 pt-6"
           aria-live="polite"
         >
@@ -190,50 +139,11 @@ export function VoiceStage() {
       </ScrollArea>
 
       <div className="relative w-full max-w-[760px] px-6 pb-6 pt-2">
-        {!atEnd && (
-          <button
-            type="button"
-            onClick={jumpToEnd}
-            data-testid="voice-scroll-end"
-            aria-label={t("home.transcript_to_end")}
-            title={t("home.transcript_to_end")}
-            className={cn(
-              "absolute -top-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center",
-              "rounded-full border border-border bg-card/95 text-muted-foreground shadow-md backdrop-blur",
-              "transition-colors hover:border-primary/40 hover:text-foreground",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            )}
-          >
-            <ArrowDown aria-hidden className="h-4 w-4" />
-          </button>
-        )}
+        {!atEnd && <ScrollToEndButton onClick={jumpToEnd} testId="voice-scroll-end" />}
         <JarvisBar phase={phase} hint={hint} />
       </div>
     </div>
   );
-}
-
-/**
- * Within this many pixels of the bottom counts as "at the end", so sub-pixel
- * rounding — or the half line a growing answer adds between two frames —
- * never reads as "they scrolled away".
- */
-export const NEAR_END_PX = 72;
-
-export function isNearEnd(scrollTop: number, scrollHeight: number, clientHeight: number): boolean {
-  return scrollHeight - scrollTop - clientHeight <= NEAR_END_PX;
-}
-
-/** Radix renders the scrolling element as the viewport inside our ScrollArea root. */
-function viewportOf(root: HTMLElement | null): HTMLElement | null {
-  if (!root) return null;
-  return (root.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null) ?? root;
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function"
-    ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    : false;
 }
 
 /**

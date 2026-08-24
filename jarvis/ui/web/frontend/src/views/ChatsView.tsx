@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, type ReactNode } from "react";
 import { MessageSquare, Mic, Plus, Trash2, AudioLines } from "lucide-react";
 import {
   useEventStore,
@@ -7,12 +7,14 @@ import {
   type ConversationSummary,
 } from "@/store/events";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { ChatInput } from "@/components/ChatInput";
 import { MascotGigi } from "@/components/MascotGigi";
 import { ThinkingTrace, ThoughtTraceDisclosure } from "@/components/ThinkingTrace";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useResizablePane } from "@/hooks/useResizablePane";
+import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import {
@@ -46,7 +48,6 @@ export function ChatsView({
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
   const pushToast = useEventStore((s) => s.pushToast);
-  const endRef = useRef<HTMLDivElement | null>(null);
 
   // Drag-resizable history pane. Width persists across reloads (localStorage);
   // bounds keep it from collapsing or swallowing the chat column.
@@ -57,9 +58,11 @@ export function ChatsView({
     max: 560,
   });
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, chatThinking]);
+  // Follow the answer, but never drag the reader back: `chatThinking` ticks
+  // through a whole reply, so an unconditional scroll here made it impossible
+  // to look back at anything while the assistant was still writing.
+  const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
+  useLayoutEffect(follow, [follow, messages.length, chatThinking]);
 
   const refresh = useCallback(async () => {
     try {
@@ -177,19 +180,19 @@ export function ChatsView({
           {!hasContent ? (
             <EmptyState />
           ) : (
-            <ScrollArea className="h-full">
-              <div className="space-y-3 px-6 py-4">
+            <ScrollArea ref={rootRef} className="h-full">
+              <div ref={contentRef} className="space-y-3 px-6 py-4">
                 {messages.map((m) => (
                   <MessageBubble key={m.id} message={m} />
                 ))}
                 {chatThinking && <ThinkingTrace />}
-                <div ref={endRef} />
               </div>
             </ScrollArea>
           )}
         </div>
 
-        <div className="border-t border-border px-6 py-4">
+        <div className="relative border-t border-border px-6 py-4">
+          {hasContent && !atEnd && <ScrollToEndButton onClick={jumpToEnd} />}
           <ChatInput />
         </div>
       </div>
