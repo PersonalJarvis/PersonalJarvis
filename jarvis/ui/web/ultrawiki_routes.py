@@ -483,9 +483,14 @@ async def _status_payload(
                 "starting or its init failed"
             ],
         }
-    data = await service.status()
+    # The slot probes are three credential walks. They are skipped on the same
+    # condition as the leg probe and for the same reason: only the Ultra body
+    # renders them, and it is not mounted while the mode is off. The stored
+    # choices still come back, so a client can always say WHICH provider was
+    # picked — it simply is not told "ready" about a mode nobody switched on.
+    data = await service.status(probe_slots=want_legs)
     backend = dict(data.get("backend") or {})
-    slots = dict(data.get("slots") or {})
+    slots = dict(data.get("slots") or {}) or _slots_from_config(uw)
     started = bool(data.get("started"))
     reembed = dict(data.get("reembed") or {})
     slots["storage"] = {

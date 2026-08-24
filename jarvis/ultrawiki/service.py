@@ -749,8 +749,16 @@ class UltraWikiService:
 
     # -- status --------------------------------------------------------------
 
-    async def status(self) -> dict[str, Any]:
-        """Honest capability + backlog report for the settings surface."""
+    async def status(self, *, probe_slots: bool = True) -> dict[str, Any]:
+        """Honest capability + backlog report for the settings surface.
+
+        ``probe_slots=False`` returns an empty ``slots`` map instead of running
+        the three credential probes, and the caller fills in the stored choices.
+        Only the Ultra body renders those reports, and it is not mounted while
+        the mode is off — but this route is what the Wiki section asks before it
+        can draw EITHER body, so a dormant install was paying a keyring walk per
+        poll for a payload nothing read (measured 0.9 s of the route's total).
+        """
         started = self._store is not None
         counts = PipelineCounts()
         sources: list[dict[str, Any]] = []
@@ -788,7 +796,9 @@ class UltraWikiService:
         )
         # Every slot probe walks credentials (keyring / .env) or an endpoint —
         # all three go to a worker thread together, never on the event loop.
-        slots = await asyncio.to_thread(self._slot_statuses)
+        slots = (
+            await asyncio.to_thread(self._slot_statuses) if probe_slots else {}
+        )
         # What the WORKER has actually been told by the provider. The slot
         # probe above is a credential check by contract (AP-21), so it cannot
         # see a key that exists and is refused; only the worker can, and

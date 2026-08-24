@@ -2005,3 +2005,29 @@ def test_switching_the_mode_tells_the_live_brain_its_tools_changed(env) -> None:
     response = env.client.post("/api/ultrawiki/deactivate")
     assert response.status_code == 200, response.text
     assert any(reason == "ultrawiki_mode:off" for reason in seen), seen
+
+
+def test_status_does_not_probe_the_slots_while_the_mode_is_off(env, monkeypatch) -> None:
+    """The other half of the same wait: three credential walks per poll.
+
+    `_slot_statuses` probes the embedding, distill and rerank credentials
+    (keyring / .env / an endpoint). Only the Ultra body renders those reports,
+    and it is not mounted while the mode is off — but the section asks this
+    route before it can draw EITHER body. Measured on a dormant install: ~0.9 s
+    of the route's total, paid on every poll for a payload nothing read.
+    """
+    probes: list[int] = []
+
+    def _never():  # pragma: no cover - the assertion is that this is unused
+        probes.append(1)
+        return {}
+
+    monkeypatch.setattr(env.service, "_slot_statuses", _never)
+
+    body = env.client.get("/api/ultrawiki/status").json()
+
+    assert probes == []
+    # The stored CHOICES still come back — a client can always say which
+    # provider was picked, it is simply not told "ready" about a dormant mode.
+    assert "embedding" in body["slots"]
+    assert body["slots"]["embedding"]["ready"] is False

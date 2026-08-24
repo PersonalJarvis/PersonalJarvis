@@ -12271,6 +12271,12 @@ nothing renders those legs — only the Ultra body does, and it is not mounted �
 so the wait bought nothing. A visit with no remembered mode paid it in full,
 staring at an empty section.
 
+The leg probe was only half of it. `UltraWikiService.status()` also ran the
+three capability-slot probes on every call - embedding, distill and rerank,
+each walking the keyring / `.env` or an endpoint. Removing the leg probe alone
+took the route from 2.1 s to 0.9 s and no further; the slots were the rest.
+They are read by the Ultra body too, and by nothing else.
+
 **Fix.**
 
 * `jarvis/commands/capabilities.py` resolves a command's `requires` against the
@@ -12292,8 +12298,14 @@ staring at an empty section.
   one missing-tool bug for its mirror image.
 * `/api/ultrawiki/status` skips the leg probe while the mode is off and says
   `search_legs.probed: false` with a reason, rather than reporting legs nobody
-  measured. `/health` — which grades those legs, and would read an absent
-  keyword leg as "search cannot answer" — asks for the probe explicitly.
+  measured. `/health` - which grades those legs, and would read an absent
+  keyword leg as "search cannot answer" - asks for the probe explicitly.
+* `status(probe_slots=False)` skips the credential probes on the same
+  condition. The stored CHOICES still come back, so a client can always say
+  which provider was picked; it is simply not told "ready" about a mode
+  nobody switched on. Measured end to end on a dev backend with the mode
+  off: **2.1 s -> 0.22 s**, level with `/api/wiki/tree` (0.26 s) and
+  `/api/wiki/health` (0.24 s) on the same process.
 
 **Tests.** `tests/unit/commands/test_capabilities.py` pins mode-off, fail-open,
 that the steer names tools that actually work, and — the one that matters in a
