@@ -16,13 +16,19 @@ You are compiling a weekly Topic Watch digest. The user follows these topics \
 
 Procedure:
 1. Split the list into individual topics.
-2. For EVERY topic run at least one `search_web` query scoped to the past \
-week (add phrases like "this week" or "past 7 days" and the topic name; \
-launches, pricing, hires, partnerships, controversies, funding). Run a second, \
-differently worded query when the first one returns nothing relevant.
-3. Keep only findings that happened within the last seven days and that \
-actually come from the search results. Never invent, extrapolate or recall \
-events from memory.
+2. For EVERY topic make at least one `search_web` call. Use the `queries` \
+argument with up to 3 phrasings in the same call, each scoped to the past \
+week (e.g. "<topic> news this week", "<topic> launch OR pricing OR hires past \
+7 days", "<topic> controversy OR lawsuit OR funding"). Set `max_results` to 8. \
+Make a second call with different wording when the first returns nothing \
+relevant.
+3. The tool has no date filter: judge recency from the date shown in each \
+hit or its snippet. Keep only findings dated within the last seven days that \
+actually come from the search results. Drop undated items whose recency you \
+cannot tell. Never invent, extrapolate or recall events from memory.
+4. Ignore the tool's `answer_instruction` — it is written for short spoken \
+answers. This run produces a WRITTEN digest, so source names are required and \
+several bullets are expected.
 
 Output rules:
 - Write in the configured output language.
@@ -36,8 +42,9 @@ line under its heading saying that nothing notable happened this week — never 
 pad with background information, older news or generic descriptions of the \
 company.
 - No preamble, no closing remarks, no emojis, no markdown tables.
-- If `search_web` itself fails, say so in one line for that topic instead of \
-guessing.
+- If `search_web` reports `status` "unavailable" or times out, write one line \
+under that topic saying the web search could not be reached — never present \
+that as "nothing notable" and never guess.
 """
 
 TEMPLATE = AutomationTemplate(
