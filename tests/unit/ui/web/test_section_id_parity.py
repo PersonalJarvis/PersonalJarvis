@@ -33,7 +33,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _FRONTEND = _REPO_ROOT / "jarvis" / "ui" / "web" / "frontend" / "src"
 _EVENTS_TS = _FRONTEND / "store" / "events.ts"
 _MAIN_VIEW_TSX = _FRONTEND / "components" / "layout" / "MainView.tsx"
-_SIDEBAR_TSX = _FRONTEND / "components" / "layout" / "Sidebar.tsx"
+# The nav rows moved out of Sidebar.tsx into navGroups.ts (the mission deck
+# needs the same list without the sidebar's dependency tree). The guard
+# follows the list, not the file that happens to render it.
+_NAV_GROUPS_TS = _FRONTEND / "components" / "layout" / "navGroups.ts"
 _VOICE_HUB_TSX = _FRONTEND / "views" / "VoiceHubView.tsx"
 _LOCALES = _FRONTEND / "i18n" / "locales"
 
@@ -118,12 +121,12 @@ def _voice_hub_routed_ids() -> set[str]:
 
 
 def _sidebar_voice_match_ids() -> set[str]:
-    """The ``matchIds`` of the single sidebar row labelled ``nav.voice``."""
+    """The ``matchIds`` of the single nav row labelled ``nav.voice``."""
     body = re.search(
         r'labelKey:\s*"nav\.voice"\s*,[\s\S]{0,400}?matchIds:\s*\[([^\]]*)\]',
-        _read(_SIDEBAR_TSX),
+        _read(_NAV_GROUPS_TS),
     )
-    assert body is not None, "voice NavItem with matchIds not found in Sidebar.tsx"
+    assert body is not None, "voice NavItem with matchIds not found in navGroups.ts"
     return set(re.findall(r'"([a-z0-9_-]+)"', body.group(1)))
 
 

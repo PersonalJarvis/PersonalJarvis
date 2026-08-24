@@ -297,6 +297,7 @@ async def get_summary(
     model: Annotated[list[str] | None, Query()] = None,
     role: Annotated[list[str] | None, Query()] = None,
     surface: Annotated[list[str] | None, Query()] = None,
+    ref: Annotated[list[str] | None, Query()] = None,
     search: str = "",
     top: Annotated[int, Query(ge=1, le=100)] = 12,
 ) -> CostSummary:
@@ -314,6 +315,7 @@ async def get_summary(
         models=_split(model),
         roles=_split(role),
         surfaces=_split(surface),
+        refs=_split(ref),
         search=search,
     )
     report = build_report(selected, since_ms=start, until_ms=end, top_n=top)
@@ -334,6 +336,7 @@ async def get_entries(
     model: Annotated[list[str] | None, Query()] = None,
     role: Annotated[list[str] | None, Query()] = None,
     surface: Annotated[list[str] | None, Query()] = None,
+    ref: Annotated[list[str] | None, Query()] = None,
     search: str = "",
     sort: Annotated[str, Query(pattern="^(recent|cost|tokens)$")] = "recent",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -348,6 +351,7 @@ async def get_entries(
         models=_split(model),
         roles=_split(role),
         surfaces=_split(surface),
+        refs=_split(ref),
         search=search,
     )
     if sort == "cost":

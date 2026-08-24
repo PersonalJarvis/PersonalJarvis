@@ -119,6 +119,7 @@ def filter_entries(
     models: set[str] | None = None,
     roles: set[str] | None = None,
     surfaces: set[str] | None = None,
+    refs: set[str] | None = None,
     search: str = "",
 ) -> list[CostEntry]:
     """Narrow the line items. An empty filter set means "everything"."""
@@ -132,6 +133,8 @@ def filter_entries(
         if roles and e.role not in roles:
             return False
         if surfaces and e.surface not in surfaces:
+            return False
+        if refs and e.ref_id not in refs:
             return False
         if needle and needle not in f"{e.model} {e.provider} {e.label}".casefold():
             return False

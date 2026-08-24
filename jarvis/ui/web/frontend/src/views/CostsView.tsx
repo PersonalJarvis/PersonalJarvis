@@ -208,6 +208,9 @@ export function CostsView() {
 
         <ActiveFilterChips
           filters={filters}
+          labelFor={(value) =>
+            data?.top_refs.find((r) => r.key === value)?.label || `${value.slice(0, 8)}…`
+          }
           onRemove={(key, value) => toggle(key, value)}
           onClear={() => {
             setVisible(ENTRY_PAGE);
@@ -334,6 +337,25 @@ export function CostsView() {
               dimension={dimension}
               active={activeFor(dimension)}
               onToggle={(key) => toggle(filterKeyFor(dimension), key)}
+              money={money}
+              loading={summary.isLoading}
+            />
+          </div>
+        </Panel>
+
+        {/* Where it went ----------------------------------------------- */}
+        <Panel>
+          <div className="px-4 pt-4">
+            <PanelHeader
+              title={t("costs_view.top_refs_title")}
+              subtitle={t("costs_view.top_refs_subtitle")}
+            />
+          </div>
+          <div className="mt-3">
+            <TopRefsTable
+              rows={data?.top_refs ?? []}
+              active={filters.refs}
+              onToggle={(key) => toggle("refs", key)}
               money={money}
               loading={summary.isLoading}
             />
@@ -482,16 +504,20 @@ const CHIP_KEYS: { key: keyof CostFilters; labelKey: string }[] = [
   { key: "models", labelKey: "costs_view.dim_model" },
   { key: "roles", labelKey: "costs_view.dim_role" },
   { key: "surfaces", labelKey: "costs_view.dim_surface" },
+  { key: "refs", labelKey: "costs_view.dim_ref" },
 ];
 
 function ActiveFilterChips({
   filters,
   onRemove,
   onClear,
+  labelFor,
 }: {
   filters: CostFilters;
   onRemove: (key: keyof CostFilters, value: string) => void;
   onClear: () => void;
+  /** Renders an opaque id (a session) as the words the user recognises. */
+  labelFor?: (value: string) => string;
 }) {
   const t = useT();
   if (!hasActiveFilters(filters)) return null;
@@ -506,7 +532,9 @@ function ActiveFilterChips({
             className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-card/60 px-2.5 text-xs text-foreground transition-colors hover:bg-sheen/[0.06]"
           >
             <span className="text-muted-foreground">{t(labelKey)}</span>
-            <span className="font-medium">{value}</span>
+            <span className="font-medium">
+              {key === "refs" && labelFor ? labelFor(value) : value}
+            </span>
             <X className="h-3 w-3 text-muted-foreground" />
           </button>
         )),
@@ -657,6 +685,110 @@ const ROLE_KEYS: Record<string, true> = {
   agent: true,
   worker: true,
 };
+
+// ---------------------------------------------------------------------------
+// Where it went — the most expensive conversations, missions and agent runs
+// ---------------------------------------------------------------------------
+
+interface RefRowShape extends CostBucket {
+  label: string;
+  surface: string;
+}
+
+/**
+ * The breakdown answers "which model"; this one answers "which conversation".
+ *
+ * A session id means nothing to a person, so each row leads with what was
+ * actually said (or asked of a mission) and keeps the id only as the filter
+ * value behind the click.
+ */
+function TopRefsTable({
+  rows,
+  active,
+  onToggle,
+  money,
+  loading,
+}: {
+  rows: RefRowShape[];
+  active: string[];
+  onToggle: (key: string) => void;
+  money: (usd: number) => string;
+  loading?: boolean;
+}) {
+  const t = useT();
+  const columns: Column[] = [
+    { id: "what", label: t("costs_view.col_session") },
+    { id: "share", label: t("costs_view.col_share"), width: "150px" },
+    { id: "cost", label: t("costs_view.col_cost"), width: "110px", align: "right" },
+    { id: "tokens", label: t("costs_view.stat_tokens"), width: "96px", align: "right" },
+    { id: "when", label: t("costs_view.col_when"), width: "132px", align: "right" },
+  ];
+
+  if (!loading && rows.length === 0) {
+    return (
+      <div className="px-4 pb-4">
+        <EmptyRow>{t("costs_view.top_refs_empty")}</EmptyRow>
+      </div>
+    );
+  }
+
+  return (
+    <Table label={t("costs_view.top_refs_title")}>
+      <TableHead columns={columns} />
+      {rows.map((row) => {
+        const isActive = active.includes(row.key);
+        return (
+          <TableRow
+            key={row.key}
+            columns={columns}
+            selected={isActive}
+            onClick={() => onToggle(row.key)}
+            ariaLabel={row.label || row.key}
+          >
+            <Cell>
+              <div className="min-w-0">
+                <div className="truncate font-medium text-foreground">
+                  {row.label || `${row.key.slice(0, 8)}…`}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {t(surfaceLabelKey(row.surface))}
+                  {row.members.length > 0 ? ` · ${row.members.join(" · ")}` : ""}
+                </div>
+              </div>
+            </Cell>
+            <Cell>
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-sheen/[0.08]">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.max(2, Math.round(row.cost_share * 100))}%`,
+                      background: keyColor(row.surface),
+                    }}
+                  />
+                </div>
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {formatShare(row.cost_share)}
+                </span>
+              </div>
+            </Cell>
+            <Cell align="right">
+              <span className="font-medium tabular-nums text-foreground">{money(row.cost_usd)}</span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums" title={formatExact(row.tokens_total)}>
+                {formatTokens(row.tokens_total)}
+              </span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums">{formatTimestamp(row.last_ts_ms)}</span>
+            </Cell>
+          </TableRow>
+        );
+      })}
+    </Table>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Line items

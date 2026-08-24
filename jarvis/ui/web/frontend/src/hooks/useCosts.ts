@@ -150,6 +150,8 @@ export interface CostFilters {
   models: string[];
   roles: CostRole[];
   surfaces: CostSurface[];
+  /** Session / mission ids — set by clicking a row in "Where it went". */
+  refs: string[];
   search: string;
 }
 
@@ -159,6 +161,7 @@ export const EMPTY_FILTERS: CostFilters = {
   models: [],
   roles: [],
   surfaces: [],
+  refs: [],
   search: "",
 };
 
@@ -169,6 +172,7 @@ export function hasActiveFilters(f: CostFilters): boolean {
     f.models.length > 0 ||
     f.roles.length > 0 ||
     f.surfaces.length > 0 ||
+    f.refs.length > 0 ||
     f.search.trim().length > 0
   );
 }
@@ -183,6 +187,7 @@ function toParams(f: CostFilters): URLSearchParams {
   for (const m of f.models) params.append("model", m);
   for (const r of f.roles) params.append("role", r);
   for (const s of f.surfaces) params.append("surface", s);
+  for (const r of f.refs) params.append("ref", r);
   if (f.search.trim()) params.set("search", f.search.trim());
   return params;
 }
