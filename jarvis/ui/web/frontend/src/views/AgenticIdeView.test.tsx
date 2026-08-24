@@ -831,6 +831,15 @@ describe("Agentic IDE running workspace", () => {
     expect(screen.queryByTestId("workspace-launcher")).toBeNull();
   });
 
+  it("offers no surface switch while the wizard is the screen", async () => {
+    // Nothing is open, so neither surface has anything to show — and a
+    // control that changes nothing visible reads as broken.
+    render(<AgenticIdeView />);
+    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+
+    expect(screen.queryByTestId("agentic-view-switch")).toBeNull();
+  });
+
   it("switches between the chat and the grid from one control in the bar", async () => {
     vi.mocked(api.fetchIdeState).mockResolvedValue(
       stateWith(sessionWith(["Mika"])),

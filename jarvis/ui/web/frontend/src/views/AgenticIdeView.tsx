@@ -887,7 +887,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     <WorkspaceBar
       embedded={embedded}
       actions={embedded ? undefined : <TopBarActions />}
-      viewSwitch={<ViewSwitch view={ideView} onView={setIdeView} />}
+      /* Only with a workspace open: with none there is nothing to show on
+         either surface, and the wizard is the screen. A switch that changes
+         nothing visible is a dead control. */
+      viewSwitch={
+        session && !addingNew ? (
+          <ViewSwitch view={ideView} onView={setIdeView} />
+        ) : undefined
+      }
       workspaces={barWorkspaces}
       activeId={session?.id ?? null}
       addingNew={addingNew}
