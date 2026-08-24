@@ -649,6 +649,20 @@ class FasterWhisperProvider:
         # 2026-06-29) or return garbage. This lock makes the model call mutually
         # exclusive per instance so the two callers serialize instead of racing.
         self._infer_lock = threading.Lock()
+        # Serialize the model CONSTRUCTION separately from inference. Building a
+        # ``WhisperModel`` reads gigabytes of weights and, on CUDA, resolves DLLs
+        # and allocates VRAM — a cold large-v3 measured 90+ s (live forensic
+        # 2026-08-24). Two callers arriving during that window used to each start
+        # their OWN build (nothing guarded ``_ensure_model``), doubling both the
+        # wait and the VRAM. A DEDICATED lock (never the inference lock) means the
+        # second caller waits for the first engine instead of building a rival
+        # one, and it can never deadlock: ``_ensure_model`` only ever takes this
+        # lock, so the order is always infer -> load, never the reverse.
+        self._load_lock = threading.Lock()
+        # True while a build is actually in flight. Callers that supervise the
+        # warm-up read it to tell "still loading a cold engine" (wait) apart from
+        # "wedged" (replace the instance, AP-24) — see ``is_loading``.
+        self._loading = False
         # One-shot latch for the "auto-detect on an English-only model" warning
         # below, so a long dictation cannot fill the log with the same line.
         self._warned_english_only_autodetect = False
@@ -670,6 +684,19 @@ class FasterWhisperProvider:
     def is_warm(self) -> bool:
         """True when the model is constructed AND primed (safe to poll)."""
         return self._warm
+
+    @property
+    def is_loading(self) -> bool:
+        """True while the native engine is being CONSTRUCTED right now.
+
+        A cold local checkpoint takes as long as it takes — 90+ s for large-v3 on
+        CUDA with a cold file cache. A supervisor that gives up on a slow warm-up
+        and builds a REPLACEMENT instance does not shorten that wait, it restarts
+        it from zero (the load cascade that turned a 4 s load into 114.7 s, TTU
+        forensic 2026-07-02; and again 2026-08-24 on the dictation path). This
+        flag lets the supervisor keep waiting while the engine is demonstrably
+        making progress and reserve instance replacement for a real wedge."""
+        return self._loading
 
     @property
     def last_used_model(self) -> str:
@@ -698,8 +725,24 @@ class FasterWhisperProvider:
         self._initial_prompt = normalized
 
     def _ensure_model(self) -> None:
+        """Build the native engine if it is missing. BLOCKING — never call this
+        from the event loop; every async entry point ships it to a thread."""
         if self._model is not None:
             return
+        # Capture the lock locally so a concurrent ``recover()`` swapping in a
+        # fresh one still releases THIS one (same reasoning as the infer lock).
+        lock = self._load_lock
+        with lock:
+            if self._model is not None:
+                # Another caller finished the build while we waited on the lock.
+                return
+            self._loading = True
+            try:
+                self._build_model()
+            finally:
+                self._loading = False
+
+    def _build_model(self) -> None:
         model_name = _normalize_model_name(self._model_name)
         device, compute_type = self._device, self._compute_type
         # Adopt the boot-prefetched engine when its exact key matches (see the
@@ -762,6 +805,12 @@ class FasterWhisperProvider:
         )
         self._model = None
         self._infer_lock = threading.Lock()
+        # The load lock is swapped for the same reason as the inference one: a
+        # thread wedged INSIDE the native build still holds the old one, and the
+        # fresh path must not queue up behind it. The orphaned lock dies with the
+        # orphaned build if it ever returns.
+        self._load_lock = threading.Lock()
+        self._loading = False
         self._warm = False
         self._adopted_primed = False
         # (recover() drops a wedged engine; the next _ensure_model must load
@@ -817,7 +866,7 @@ class FasterWhisperProvider:
         This is enough for Phase 1 — the VAD layer in front already delivers
         clean utterances, so "in one go" is the natural granularity.
         """
-        self._ensure_model()
+        await self._ensure_model_async()
 
         # Concatenate all chunks into one float32 array
         pieces: list[np.ndarray] = []
@@ -848,12 +897,33 @@ class FasterWhisperProvider:
         the same window separates a genuine wake (the unprimed ear still
         hears speech) from a prompt echo on noise/breath (it hears nothing).
         """
-        self._ensure_model()
+        await self._ensure_model_async()
         audio_np = pcm_bytes_to_np(pcm_bytes)
         return await self._transcribe_np(
             audio_np, sample_rate, language=language,
             ignore_initial_prompt=ignore_initial_prompt,
         )
+
+    async def _ensure_model_async(self) -> None:
+        """Build the engine off the event loop.
+
+        Constructing a ``WhisperModel`` is a long BLOCKING call: weights off
+        disk, DLL resolution and a VRAM allocation on CUDA. Awaiting it inline
+        froze the whole backend — every WebSocket frame, HTTP route and brain
+        turn queues behind the loop thread, and the caller's own
+        ``asyncio.wait_for`` cannot even fire, because a timeout needs a running
+        loop to fire ON (live forensic 2026-08-24: the loop watchdog logged a
+        75 s stall with ``_ensure_model`` -> ``WhisperModel`` on the stack, and
+        the abandoned build kept the engine busy so the retries all came back
+        ``TranscribeBusy`` and the dictation ended with zero characters).
+
+        The fast path — model already built — costs one attribute read and no
+        thread hop at all, so the steady state is unchanged."""
+        if self._model is not None:
+            return
+        import asyncio
+
+        await asyncio.to_thread(self._ensure_model)
 
     async def _transcribe_np(
         self, audio_np: np.ndarray, sample_rate: int,

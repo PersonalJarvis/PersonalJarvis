@@ -947,6 +947,16 @@ _DICTATION_TRANSCRIBE_TIMEOUT_PER_AUDIO_S = 2.0
 # abandon its whole provider instance rather than racing its native session.
 _DICTATION_WARMUP_JOIN_TIMEOUT_S = 20.0
 
+# ...unless the provider says it is still BUILDING its native engine. That is
+# not an unhealthy warmer, it is an honest cold start: a large local checkpoint
+# on a cold file cache measured 90+ s (live forensic 2026-08-24, whisper-large-v3
+# on CUDA). Replacing the instance there does not shorten the wait — it throws
+# the half-built engine away and starts the same load from zero, so the user
+# waits twice and the first dictation comes back empty. While the engine reports
+# progress we keep waiting, up to this hard ceiling; only silence past it is a
+# genuine wedge worth replacing (AP-24).
+_DICTATION_WARMUP_COLD_LOAD_TIMEOUT_S = 180.0
+
 
 def _dictation_retry_worthwhile(exc: BaseException | None) -> bool:
     """Whether re-sending the SAME audio to this provider could work.
@@ -10554,6 +10564,58 @@ class SpeechPipeline:
             name="dictation-stt-warmup",
         )
 
+    async def _await_warmup_or_cold_load(
+        self, task: asyncio.Task, provider: Any
+    ) -> None:
+        """Join a warm-up, staying patient while its engine is still building.
+
+        Raises ``TimeoutError`` exactly like a bare ``wait_for`` would, so the
+        caller's wedge handling is unchanged — but only after the provider has
+        stopped making progress. A provider that does not expose ``is_loading``
+        (every cloud one) keeps the plain short join it has always had.
+        """
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_DICTATION_WARMUP_JOIN_TIMEOUT_S
+            )
+            return
+        except TimeoutError:
+            if not getattr(provider, "is_loading", False):
+                raise
+        # Still constructing the native engine. Keep joining in short hops so a
+        # build that finishes — or stalls — is noticed promptly either way. The
+        # load gets the long ceiling; once it ends, whatever the warm-up still
+        # owes (its priming inference) gets a fresh short one, because that part
+        # IS bounded work and a hang there is the wedge the caller handles.
+        log.info(
+            "Dictation STT is still building its local engine after %.0fs; "
+            "waiting for it instead of restarting the load from zero.",
+            _DICTATION_WARMUP_JOIN_TIMEOUT_S,
+        )
+        load_deadline = (
+            time.monotonic()
+            + _DICTATION_WARMUP_COLD_LOAD_TIMEOUT_S
+            - _DICTATION_WARMUP_JOIN_TIMEOUT_S
+        )
+        prime_deadline: float | None = None
+        while True:
+            deadline = load_deadline if prime_deadline is None else prime_deadline
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task), timeout=min(2.0, remaining)
+                )
+                return
+            except TimeoutError:
+                if prime_deadline is None and not getattr(
+                    provider, "is_loading", False
+                ):
+                    prime_deadline = (
+                        time.monotonic() + _DICTATION_WARMUP_JOIN_TIMEOUT_S
+                    )
+
     async def _join_dictation_warmup(self, provider: Any) -> Any:
         """Join matching warm-up before authoritative STT, returning its provider.
 
@@ -10593,9 +10655,7 @@ class SpeechPipeline:
         ):
             return provider
         try:
-            await asyncio.wait_for(
-                asyncio.shield(task), timeout=_DICTATION_WARMUP_JOIN_TIMEOUT_S
-            )
+            await self._await_warmup_or_cold_load(task, provider)
             return provider
         except TimeoutError:
             log.warning(
