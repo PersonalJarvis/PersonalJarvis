@@ -209,6 +209,7 @@ class _EntryCache:
                 return self._entries
         # The coding-CLI source pre-aggregates, so it has to know the grain
         # the report will draw at before it reads a row.
+        _refresher.nudge(sources.cli_index_dir)
         entries = collect_entries(
             sources,
             since_ms=since_ms,
@@ -223,6 +224,67 @@ class _EntryCache:
 
 
 _cache = _EntryCache()
+
+
+# ---------------------------------------------------------------------------
+# The coding-CLI index — kept current in the background, never in a request
+# ---------------------------------------------------------------------------
+
+
+class _IndexRefresher:
+    """Nudges :mod:`jarvis.costs.cli_usage_index` forward on its own thread.
+
+    Reading a vendor transcript is seconds of I/O on gigabytes, so it can
+    never happen while a request waits. Instead every summary request asks
+    this to run, and it does so at most once a minute, one thread at a time,
+    reporting whatever it managed. The section always renders from what the
+    index already has; a first run on a busy machine simply fills in over the
+    next few refreshes rather than blocking the page (AP-26: nothing here
+    starts at import or at boot either — the first request arms it).
+    """
+
+    _MIN_GAP_S = 60.0
+    _BUDGET_S = 20.0
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._running = False
+        self._last = 0.0
+
+    def nudge(self, data_dir: Path | None) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if self._running or (self._last and now - self._last < self._MIN_GAP_S):
+                return
+            self._running = True
+        threading.Thread(
+            target=self._run, args=(data_dir,), name="cli-usage-index", daemon=True
+        ).start()
+
+    def _run(self, data_dir: Path | None) -> None:
+        try:
+            from jarvis.costs.cli_usage_index import refresh
+
+            result = refresh(data_dir=data_dir, deadline_s=self._BUDGET_S)
+            if result.turns_added:
+                log.debug(
+                    "cli usage index: +%d turns from %d files",
+                    result.turns_added,
+                    result.files_scanned,
+                )
+        except Exception as exc:  # noqa: BLE001 — a background index must never
+            # take the section down with it; the report just stays as current
+            # as the last successful run.
+            log.warning("cli usage index: refresh failed (%s)", exc)
+        finally:
+            with self._lock:
+                self._running = False
+                self._last = time.monotonic()
+
+
+_refresher = _IndexRefresher()
+
+
 
 
 # ---------------------------------------------------------------------------

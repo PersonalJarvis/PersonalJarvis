@@ -335,7 +335,14 @@ export function CostsView() {
           <StatTile
             icon={<AlertTriangle className="h-4 w-4" />}
             label={t("costs_view.stat_gap")}
-            value={formatTokens(totals?.gap_tokens ?? 0)}
+            // A gap in the speech layer spends characters, not tokens, so
+            // its token count is a truthful zero. Fall back to naming the
+            // calls, or the tile would report "0 unpriced" while warning.
+            value={
+              (totals?.gap_tokens ?? 0) > 0
+                ? formatTokens(totals?.gap_tokens ?? 0)
+                : formatExact(totals?.gap_entries ?? 0)
+            }
             hint={
               (totals?.gap_tokens ?? 0) > 0
                 ? fill(t("costs_view.stat_gap_hint"), {

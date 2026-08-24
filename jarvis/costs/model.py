@@ -137,7 +137,11 @@ class CostEntry:
     @property
     def is_gap(self) -> bool:
         """True when tokens were spent at a price nobody knows."""
-        return self.price_source == "unknown" and self.tokens_total > 0
+        # No token guard: both pricing functions answer ``recorded`` when
+        # nothing was consumed, so ``unknown`` already means something WAS.
+        # Requiring tokens hid every speech gap, which is billed in characters
+        # and audio seconds and carries no tokens by design.
+        return self.price_source == "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return {

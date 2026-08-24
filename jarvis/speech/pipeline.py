@@ -143,6 +143,8 @@ from jarvis.speech.stt_failure import (
     normalize_stt_failure,
     stt_failure_message,
 )
+from jarvis.speech.usage_meter import meter_stt, meter_tts
+from jarvis.speech.usage_sink import SpeechSpendRecorder
 from jarvis.speech.wake_verifier import (
     CUSTOM_WAKE_MIN_RMS,
     pcm_tail_rms,
@@ -2851,6 +2853,20 @@ class SpeechPipeline:
         # Optional event-bus integration. With no bus, transition and emit
         # calls are backward-compatible no-ops.
         self._bus = bus
+        # Speech spend. The meter wraps the providers rather than the dozen
+        # call sites that use them, so a synthesis added later is counted
+        # without anyone remembering to count it. Only the two that bill are
+        # wrapped: ``self._stt`` is the local wake/VAD Whisper, free and
+        # called many times a second, and metering it would be noise on the
+        # hot path for a number that is always zero.
+        # No bus means nothing can be published, so nothing is wrapped either:
+        # ``meter_*`` hands the provider straight back for a null sink, which
+        # keeps a bus-less pipeline byte-for-byte what it was.
+        self._speech_spend = SpeechSpendRecorder(bus) if bus is not None else None
+        self._tts = meter_tts(self._tts, self._speech_spend, trace_id=self._speech_trace)
+        self._utterance_stt = meter_stt(
+            self._utterance_stt, self._speech_spend, trace_id=self._speech_trace
+        )
         self._supervisor = supervisor
         # Permanent Vision (Wave 2 B7) is optional. Without an injected
         # provider, every vision hook is a no-op.
@@ -3096,8 +3112,10 @@ class SpeechPipeline:
         """
         old = type(self._tts).__name__
         new = type(new_tts).__name__
-        log.info("TTS-Live-Switch: %s -> %s (Caches invalidiert)", old, new)
-        self._tts = new_tts
+        log.info("TTS live switch: %s -> %s (caches invalidated)", old, new)
+        # The replacement is metered like the one it replaces, or spend would
+        # stop being recorded the first time someone changed voice.
+        self._tts = meter_tts(new_tts, self._speech_spend, trace_id=self._speech_trace)
         self._ack_pcm = b""
         self._task_ack_pcm.clear()
 
@@ -12836,13 +12854,52 @@ class SpeechPipeline:
                 # two with nothing the user touched explaining it.
                 translate_to = resolve_translate_target(cfg)
                 prefix_raw, prefix_text = polished_prefix or ("", "")
+
+                # Prompt Mode outranks both passes: the whole dictation is
+                # rewritten into an English brief for a coding agent, so
+                # neither the formatter nor the translator has anything left
+                # to do — and the incremental prefix, formatted while the
+                # user was still speaking, is superseded by the brief. When
+                # it cannot deliver (no writer, timeout, an answer that is
+                # not a prompt) the dictation falls through to the passes
+                # below exactly as if the switch were off.
+                from jarvis.dictation.prompt_mode import (
+                    STATUS_PROMPTED,
+                    compose_prompt,
+                    prompt_mode_enabled,
+                )
+
+                prompted = False
+                if prompt_mode_enabled(cfg):
+                    result = await compose_prompt(
+                        cleaned,
+                        cfg=cfg,
+                        protected_terms=self._dictation_protected_terms(),
+                    )
+                    prompted = result.status == STATUS_PROMPTED
+                    log.info(
+                        "dictation prompt mode: %s (%s, %d ms%s).",
+                        result.status,
+                        result.provider or "no writer",
+                        result.latency_ms,
+                        f", {result.reason}" if result.reason else "",
+                    )
+                    if prompted:
+                        cleaned = result.text
+                        polish_status = result.status
+                        polish_provider = result.provider
+                        polish_latency_ms = result.latency_ms
+
                 incremental = bool(
-                    prefix_raw
+                    not prompted
+                    and prefix_raw
                     and not translate_to
                     and polish_enabled(cfg)
                     and raw_text.startswith(prefix_raw)
                 )
-                if incremental:
+                if prompted:
+                    pass  # delivered above; the passes below are superseded
+                elif incremental:
                     # Only the tail is left: clean it the same way the whole
                     # text was cleaned above and format it in the light of the
                     # already-formatted prefix.
@@ -13660,6 +13717,16 @@ class SpeechPipeline:
             # returned early) so it cannot leak into the next turn.
             self._continuation_pending_drop = None
             self._emit_latency_turn_complete()
+            # Close this turn's speech buckets: one priced event per stage and
+            # provider, however many sentences the reply was split into.
+            recorder = getattr(self, "_speech_spend", None)
+            if recorder is not None:
+                recorder.flush()
+
+    def _speech_trace(self) -> str:
+        """The turn a metered speech call belongs to, or "" between turns."""
+        tracker = getattr(self, "_latency_tracker", None)
+        return str(getattr(tracker, "trace_id", "") or "")
 
     def _emit_latency_turn_complete(self) -> None:
         """Fire-and-forget flush of this turn's stage snapshot.

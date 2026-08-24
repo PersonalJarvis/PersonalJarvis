@@ -487,7 +487,13 @@ class DictionaryCorrectingSTT:
         naming which provider actually ran — the one fact you need when a
         provider is the thing failing, which is exactly when someone reads it.
         """
-        inner = getattr(self._inner, "provider_label", "")
+        inner = getattr(self._inner, "provider_label", "") or getattr(
+            self._inner, "name", ""
+        )
+        # ``name`` before the class name: every provider carries the id the
+        # rest of the app knows it by ("groq-api"), and a log line naming
+        # ``GroqWhisperAPI`` answers a question nobody asked. The class name
+        # stays as the last resort for an object that has neither.
         return str(inner) if inner else type(self._inner).__name__
 
     def __getattr__(self, name: str) -> Any:
