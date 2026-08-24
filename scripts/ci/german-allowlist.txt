@@ -463,3 +463,7 @@ docs/commands-reference.md
 #     German voice fixtures — content under test (reason 4). ---
 jarvis/brain/artifact_gate.py
 tests/unit/brain/test_artifact_tool_hide.py
+
+# --- Automation templates (2026-08-24): localized card copy (en/de/es) lives
+#     next to each template so ten authors never edit one shared i18n file ---
+jarvis/tasks/templates/*
