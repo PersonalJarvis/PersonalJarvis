@@ -58,6 +58,7 @@ class Bucket(BaseModel):
     tokens_total: int
     entries: int
     gap_tokens: int
+    subscription_usd: float = 0.0
     last_ts_ms: int
     cost_share: float
     token_share: float
@@ -82,6 +83,9 @@ class Totals(BaseModel):
     """Tokens spent at a rate no price table knows — the accounting hole."""
     gap_entries: int
     free_tokens: int
+    #: Of ``cost_usd``, the share a monthly seat covered — priced as the API
+    #: would have, but no invoice carries it.
+    subscription_usd: float = 0.0
     """Tokens on local engines, subscription seats or ``:free`` models."""
     estimated_usd: float
     """Share of ``cost_usd`` this section re-derived rather than read back."""

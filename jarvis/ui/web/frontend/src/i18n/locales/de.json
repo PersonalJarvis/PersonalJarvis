@@ -4283,7 +4283,7 @@
       "setup_label": "Arbeitsbereich einrichten",
       "reading_mode": "Darstellung",
       "reading_mode_label": "Darstellung des Arbeitsbereichs",
-      "view_hint": "Es geht nichts verloren: Die Terminals arbeiten hinter dem Chat weiter, und der Schalter in der Workspace-Leiste wechselt jederzeit zwischen beiden.",
+      "view_hint": "Nur die Darstellung ändert sich — Agents, Fenster und Unterhaltungen bleiben gleich, und die Toolbar kann jederzeit wechseln.",
       "selected": "Ausgewählt",
       "workspace": "Arbeitsbereich",
       "opens_as": "Wird geöffnet als",
@@ -4294,12 +4294,12 @@
         "folder": { "label": "Ordner", "title": "Projektordner auswählen", "hint": "Alles, was die Agents tun, bleibt in diesem Ordner." },
         "layout": { "label": "Layout", "title": "Arbeitsbereich aufteilen", "hint": "Lege fest, wie viele unabhängige Terminal-Fenster geöffnet werden." },
         "agents": { "label": "Agents" },
-        "view": { "label": "Ansicht", "title": "Darstellung des Arbeitsbereichs auswählen", "hint": "Danach ist beides einen Klick entfernt — der Schalter sitzt in der Workspace-Leiste." },
+        "view": { "label": "Ansicht", "title": "Darstellung des Arbeitsbereichs auswählen", "hint": "Die Agents bleiben gleich — die Toolbar kann jederzeit umschalten." },
         "review": { "label": "Prüfen", "title": "Vor dem Öffnen prüfen", "hint": "Nichts startet, bevor du den Arbeitsbereich öffnest." }
       },
       "views": {
         "grid": { "title": "Terminal-Raster", "description": "Alle Fenster gleichzeitig nebeneinander — die vollständige Terminal-Wand." },
-        "chat": { "title": "Chat", "description": "Der Agenten-Chat, im Ordner dieses Workspaces — schreiben statt Terminals zuschauen." }
+        "chat": { "title": "Chat-Ansicht", "description": "Ein Agent im Mittelpunkt, die anderen in einer Leiste — lesbar wie eine Unterhaltung." }
       }
     },
     "crowded": {
@@ -4999,6 +4999,14 @@
     "subtitle": "{entries} Aufrufe · {models} Modelle · {providers} Anbieter",
     "subtitle_loading": "Liest, was jeder Anbieter, jedes Modell und jede Rolle gekostet hat",
     "range_label": "Zeitraum",
+    "area": {
+      "all": "Gesamt",
+      "jarvis": "{name}",
+      "agentic_ide": "Agentic IDE",
+      "jarvis_voice": "{name} Voice"
+    },
+    "area_label": "Welchen Bereich der App anzeigen",
+    "role_filter_label": "Nach der Aufgabe des Modells filtern",
     "range_days": "{days} T",
     "range_all": "Alles",
     "currency_label": "Währung",
@@ -5009,8 +5017,10 @@
     "load_error": "Die Kosten konnten nicht gelesen werden. Dieser Bereich liest die eigenen Datenbanken der App — wenn das bleibt, ist der Datenordner nicht erreichbar.",
     "stat_total": "Gesamtkosten",
     "stat_total_hint": "{perDay} pro Tag im Schnitt",
+    "stat_total_hint_seat": "{perDay}/Tag · {seat} über ein Abo",
     "stat_tokens": "Tokens",
     "stat_tokens_hint": "{in} rein · {out} raus",
+    "stat_tokens_hint_cached": "{in} rein · {cached} Cache · {out} raus",
     "stat_top_provider": "Größter Posten",
     "stat_top_provider_hint": "{amount} · {share} der Gesamtkosten",
     "stat_none": "Noch nichts erfasst",
@@ -5070,18 +5080,23 @@
       "tool": "Tool-Modell",
       "pipeline": "Pipeline-Gehirn",
       "agent": "Coding-Agent",
-      "worker": "Missions-Worker"
+      "worker": "Missions-Worker",
+      "stt": "Sprache zu Text",
+      "tts": "Text zu Sprache"
     },
     "surface": {
       "voice": "Sprache",
       "agent_chat": "Agenten-Chat",
-      "mission": "Mission"
+      "mission": "Mission",
+      "agentic_ide": "Agentic IDE",
+      "jarvis_voice": "{name} Voice"
     },
     "price_source": {
       "recorded": "Abgerechnet",
       "derived": "Geschätzt",
       "free": "Kostenlos",
-      "unknown": "Ohne Preis"
+      "unknown": "Ohne Preis",
+      "subscription": "Abo"
     }
   },
   "all_chats": {

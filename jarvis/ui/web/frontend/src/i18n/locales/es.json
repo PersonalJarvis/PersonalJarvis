@@ -4283,7 +4283,7 @@
       "setup_label": "Configurar espacio de trabajo",
       "reading_mode": "Modo de lectura",
       "reading_mode_label": "Cómo se abre el espacio de trabajo",
-      "view_hint": "No se pierde nada: las terminales siguen trabajando detrás del chat y el conmutador de la barra cambia entre ambas en cualquier momento.",
+      "view_hint": "Solo cambia la presentación: los agentes, paneles y conversaciones siguen iguales, y la barra permite cambiar en cualquier momento.",
       "selected": "Seleccionado",
       "workspace": "Espacio de trabajo",
       "opens_as": "Se abre como",
@@ -4294,12 +4294,12 @@
         "folder": { "label": "Carpeta", "title": "Elige la carpeta del proyecto", "hint": "Todo lo que hagan los agentes permanece dentro de esta carpeta." },
         "layout": { "label": "Diseño", "title": "Diseña el espacio de trabajo", "hint": "Elige cuántos paneles de terminal independientes deben abrirse." },
         "agents": { "label": "Agentes" },
-        "view": { "label": "Vista", "title": "Elige cómo leer el espacio", "hint": "Después ambas quedan a un clic: el conmutador está en la barra del espacio de trabajo." },
+        "view": { "label": "Vista", "title": "Elige cómo leer el espacio", "hint": "Los agentes son los mismos y la barra permite cambiar en cualquier momento." },
         "review": { "label": "Revisar", "title": "Revisa antes de abrir", "hint": "Nada empieza hasta que abras el espacio de trabajo." }
       },
       "views": {
         "grid": { "title": "Cuadrícula de terminales", "description": "Todos los paneles a la vez, uno junto a otro: la pared completa de terminales." },
-        "chat": { "title": "Chat", "description": "El chat de agentes, en la carpeta de este espacio de trabajo: escribe en lugar de mirar terminales." }
+        "chat": { "title": "Vista de chat", "description": "Un agente en el centro y los demás en una barra, como una conversación." }
       }
     },
     "crowded": {
@@ -4999,6 +4999,14 @@
     "subtitle": "{entries} llamadas · {models} modelos · {providers} proveedores",
     "subtitle_loading": "Leyendo lo que costó cada proveedor, modelo y función",
     "range_label": "Periodo",
+    "area": {
+      "all": "Total",
+      "jarvis": "{name}",
+      "agentic_ide": "Agentic IDE",
+      "jarvis_voice": "{name} Voice"
+    },
+    "area_label": "Qué parte de la aplicación mostrar",
+    "role_filter_label": "Filtrar por la tarea del modelo",
     "range_days": "{days} d",
     "range_all": "Todo",
     "currency_label": "Moneda",
@@ -5009,8 +5017,10 @@
     "load_error": "No se pudieron leer los gastos. Esta sección lee las bases de datos de la propia app; si sigue fallando, la carpeta de datos no es accesible.",
     "stat_total": "Gasto total",
     "stat_total_hint": "{perDay} al día de media",
+    "stat_total_hint_seat": "{perDay}/día · {seat} con una suscripción",
     "stat_tokens": "Tokens",
     "stat_tokens_hint": "{in} entrada · {out} salida",
+    "stat_tokens_hint_cached": "{in} entrada · {cached} caché · {out} salida",
     "stat_top_provider": "Mayor gasto",
     "stat_top_provider_hint": "{amount} · {share} del total",
     "stat_none": "Todavía no hay datos",
@@ -5070,18 +5080,23 @@
       "tool": "Modelo de herramientas",
       "pipeline": "Cerebro de la cadena",
       "agent": "Agente de código",
-      "worker": "Trabajador de misión"
+      "worker": "Trabajador de misión",
+      "stt": "Voz a texto",
+      "tts": "Texto a voz"
     },
     "surface": {
       "voice": "Voz",
       "agent_chat": "Chat de agentes",
-      "mission": "Misión"
+      "mission": "Misión",
+      "agentic_ide": "Agentic IDE",
+      "jarvis_voice": "{name} Voice"
     },
     "price_source": {
       "recorded": "Facturado",
       "derived": "Estimado",
       "free": "Gratis",
-      "unknown": "Sin precio"
+      "unknown": "Sin precio",
+      "subscription": "Suscripción"
     }
   },
   "all_chats": {

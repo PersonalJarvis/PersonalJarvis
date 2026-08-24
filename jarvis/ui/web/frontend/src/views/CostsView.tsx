@@ -16,6 +16,7 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
+  AudioLines,
   ChevronDown,
   Coins,
   Hash,
@@ -23,10 +24,14 @@ import {
   RefreshCw,
   Search,
   Sigma,
+  Sparkles,
   Tag,
+  Terminal,
+  Wallet,
   X,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import {
   Cell,
   Column,
@@ -55,6 +60,9 @@ import {
   priceSourceTone,
   roleColor,
   roleLabelKey,
+  SURFACE_GROUPS,
+  surfaceGroupFor,
+  surfaceGroupLabelKey,
   surfaceLabelKey,
 } from "@/components/costs/costFormat";
 import {
@@ -130,6 +138,20 @@ export function CostsView() {
 
   const activeFor = (d: Dimension): string[] => filters[filterKeyFor(d)] as string[];
 
+  // The switch is not extra state: it reads the surface filter and writes it.
+  // Anything else would let a row click and the switch disagree about which
+  // area is on screen.
+  const area = surfaceGroupFor(filters.surfaces);
+  const pickArea = (id: string) => {
+    const group = SURFACE_GROUPS.find((g) => g.id === id);
+    if (!group) return;
+    setVisible(ENTRY_PAGE);
+    // Roles are cleared with the area: "pipeline brain" means nothing once you
+    // are looking at the speech layer, and a stale role filter would silently
+    // empty the new area.
+    setFilters((f) => ({ ...f, surfaces: [...group.surfaces], roles: [] }));
+  };
+
   const topSpender = data?.by_provider[0];
   const rangeMs = Math.max(1, (data?.until_ms ?? 0) - (data?.since_ms ?? 0));
   const perDay = totals ? totals.cost_usd / Math.max(1, rangeMs / 86_400_000) : 0;
@@ -193,6 +215,21 @@ export function CostsView() {
           }
         />
 
+        {/* ---------------------------------------------------------------
+            Which part of the app you are looking at. Roles answer "what kind
+            of model"; this answers "where" — and the two together are the
+            question people actually ask ("what does the coding agent cost me").
+        --------------------------------------------------------------- */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+          <AreaSwitch value={area?.id ?? null} onChange={pickArea} />
+          <RoleFilters
+            roles={(area ?? SURFACE_GROUPS[0]).roles}
+            available={data?.facets.roles ?? []}
+            active={filters.roles}
+            onToggle={(role) => toggle("roles", role)}
+          />
+        </div>
+
         {searchOpen ? (
           <div className="max-w-sm">
             <InlineSearch
@@ -229,21 +266,47 @@ export function CostsView() {
             one number without the other hides that.
         --------------------------------------------------------------- */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {/*
+            The headline is everything the work was worth. A subscription seat
+            did some of it, and that part is named rather than netted out —
+            hiding it would make the total disagree with every breakdown below.
+          */}
           <StatTile
             icon={<Coins className="h-4 w-4" />}
             label={t("costs_view.stat_total")}
             value={money(totals?.cost_usd ?? 0)}
-            hint={fill(t("costs_view.stat_total_hint"), { perDay: money(perDay) })}
+            hint={
+              (totals?.subscription_usd ?? 0) > 0
+                ? fill(t("costs_view.stat_total_hint_seat"), {
+                    perDay: money(perDay),
+                    seat: money(totals?.subscription_usd ?? 0),
+                  })
+                : fill(t("costs_view.stat_total_hint"), { perDay: money(perDay) })
+            }
             loading={summary.isLoading}
           />
+          {/*
+            The headline is in + cached + out. Cache reads bill at their own
+            rate, so the read model keeps them out of `tokens_in` — naming only
+            two of the three buckets made the tile look like it could not add
+            up. The cached term appears only when there is cache to report.
+          */}
           <StatTile
             icon={<Sigma className="h-4 w-4" />}
             label={t("costs_view.stat_tokens")}
             value={formatTokens(totals?.tokens_total ?? 0)}
-            hint={fill(t("costs_view.stat_tokens_hint"), {
-              in: formatTokens(totals?.tokens_in ?? 0),
-              out: formatTokens(totals?.tokens_out ?? 0),
-            })}
+            hint={fill(
+              t(
+                (totals?.tokens_cached ?? 0) > 0
+                  ? "costs_view.stat_tokens_hint_cached"
+                  : "costs_view.stat_tokens_hint",
+              ),
+              {
+                in: formatTokens(totals?.tokens_in ?? 0),
+                cached: formatTokens(totals?.tokens_cached ?? 0),
+                out: formatTokens(totals?.tokens_out ?? 0),
+              },
+            )}
             loading={summary.isLoading}
           />
           <StatTile
@@ -456,6 +519,136 @@ export function CostsView() {
 }
 
 // ---------------------------------------------------------------------------
+// Which area of the app — and which kind of model inside it
+// ---------------------------------------------------------------------------
+
+/** One lucide mark per area, so the switch reads without its labels too. */
+const AREA_ICONS = {
+  all: Wallet,
+  jarvis: Sparkles,
+  "agentic-ide": Terminal,
+  "jarvis-voice": AudioLines,
+} as const;
+
+/**
+ * Overall · Jarvis · Agentic IDE · Jarvis Voice.
+ *
+ * The same pill the front page uses for Voice/Chat (`home/SurfaceSwitch`) —
+ * one shape for "which area am I in", wherever the question appears.
+ *
+ * `value` is null when a breakdown row produced a surface selection no area
+ * matches. Nothing is lit then, which is the honest state: the chips under
+ * the header say what is actually filtered.
+ */
+function AreaSwitch({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (id: string) => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      role="tablist"
+      aria-label={t("costs_view.area_label")}
+      data-testid="costs-area-switch"
+      // Hugs its labels on a real window and only goes full width when
+      // there is no room to sit beside itself — a control stretched across
+      // 1400px reads as a header bar, not as a choice between four things.
+      className={cn(
+        "flex w-full flex-wrap items-center gap-0.5 rounded-xl border border-border bg-secondary p-0.5",
+        "sm:w-auto sm:flex-nowrap sm:self-start",
+      )}
+    >
+      {SURFACE_GROUPS.map((group) => {
+        const active = group.id === value;
+        const Icon = AREA_ICONS[group.id as keyof typeof AREA_ICONS] ?? Wallet;
+        return (
+          <button
+            key={group.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            data-testid={`costs-area-${group.id}`}
+            onClick={() => onChange(group.id)}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-medium transition-colors sm:flex-none",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              active
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon aria-hidden className="h-3.5 w-3.5" />
+            <span className="truncate">{t(surfaceGroupLabelKey(group.id))}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The roles that can occur in the chosen area, as toggles.
+ *
+ * Only roles the data has actually seen are offered — an area that has never
+ * run shows no chips rather than a row of dead buttons. A single possible
+ * role is not a choice, so the row hides itself entirely.
+ */
+function RoleFilters({
+  roles,
+  available,
+  active,
+  onToggle,
+}: {
+  roles: CostRole[];
+  available: CostRole[];
+  active: CostRole[];
+  onToggle: (role: CostRole) => void;
+}) {
+  const t = useT();
+  const shown = roles.filter((r) => available.includes(r));
+  if (shown.length < 2) return null;
+  return (
+    <div
+      role="group"
+      aria-label={t("costs_view.role_filter_label")}
+      data-testid="costs-role-filters"
+      className="flex flex-wrap items-center gap-1"
+    >
+      <span className="mr-1 hidden h-4 w-px shrink-0 bg-border sm:block" aria-hidden />
+      {shown.map((role) => {
+        const on = active.includes(role);
+        return (
+          <button
+            key={role}
+            type="button"
+            aria-pressed={on}
+            data-testid={`costs-role-${role}`}
+            onClick={() => onToggle(role)}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              on
+                ? "bg-sheen/[0.08] font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <span
+              className="h-2 w-2 shrink-0 rounded-[3px]"
+              style={{ background: roleColor(role) }}
+              aria-hidden
+            />
+            {t(roleLabelKey(role))}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Active filters
 // ---------------------------------------------------------------------------
 
@@ -559,6 +752,15 @@ function BreakdownTable({
       {rows.map((row) => {
         const isActive = active.includes(row.key);
         const color = dimension === "role" ? roleColor(row.key) : keyColor(row.key);
+        // A provider row IS its vendor; a model row belongs to one. Roles and
+        // surfaces are ours, not a vendor's — they keep the colour chip that
+        // ties the row to its stack in the chart above.
+        const logoId =
+          dimension === "provider"
+            ? row.key
+            : dimension === "model"
+              ? (row.members[0] ?? row.key)
+              : null;
         return (
           <TableRow
             key={row.key}
@@ -569,11 +771,15 @@ function BreakdownTable({
           >
             <Cell>
               <div className="flex min-w-0 items-center gap-2.5">
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                  style={{ background: color }}
-                  aria-hidden
-                />
+                {logoId ? (
+                  <ProviderLogo providerId={logoId} label={row.key} size="sm" />
+                ) : (
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                    style={{ background: color }}
+                    aria-hidden
+                  />
+                )}
                 <div className="min-w-0">
                   <div className="truncate font-medium text-foreground">
                     {dimension === "role"
