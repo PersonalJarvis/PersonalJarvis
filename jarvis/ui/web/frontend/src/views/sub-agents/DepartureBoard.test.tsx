@@ -10,7 +10,7 @@ type JarvisAgentNode = NonNullable<
   ComponentProps<typeof DepartureBoard>["agents"]
 >[number];
 
-function cancelledNode(): JarvisAgentNode {
+function node(over: Partial<JarvisAgentNode> = {}): JarvisAgentNode {
   return {
     trace_id: "mission-cancelled",
     kind: "jarvis_agent",
@@ -33,19 +33,114 @@ function cancelledNode(): JarvisAgentNode {
     review_iterations: 0,
     depth: 0,
     ui_appeared_at: 1,
+    ...over,
   };
+}
+
+/**
+ * The headline tile carrying `label`, so its number can be asserted.
+ *
+ * Addressed by its group role, not by its text: "Failed" is both a tile label
+ * and a row status, so a plain text lookup matches two nodes as soon as one
+ * agent actually failed.
+ */
+function tile(label: string): HTMLElement {
+  return screen.getByRole("group", { name: label });
 }
 
 describe("DepartureBoard cancellation status", () => {
   it("renders cancellation distinctly and does not count it as failed", () => {
-    render(<DepartureBoard agents={[cancelledNode()]} />);
+    render(<DepartureBoard agents={[node()]} />);
 
-    const row = screen.getByRole("button", { name: /cancelled mission/i });
-    expect(within(row).getByText("CANCELLED")).toBeTruthy();
-    expect(within(row).queryByText("FAILED")).toBeNull();
+    const row = screen.getByRole("row", { name: /cancelled mission/i });
+    expect(within(row).getByText("Cancelled")).toBeTruthy();
+    expect(within(row).queryByText("Failed")).toBeNull();
 
-    const failedMetric = screen.getByText("Failed").parentElement;
-    expect(failedMetric).not.toBeNull();
-    expect(within(failedMetric as HTMLElement).getByText("0")).toBeTruthy();
+    // A cancellation is a decision, not a fault: the Failed tile stays at 0
+    // and the Done tile does not absorb it either.
+    expect(within(tile("Failed")).getByText("0")).toBeTruthy();
+    expect(within(tile("Done")).getByText("0")).toBeTruthy();
+  });
+
+  it("counts a real failure in the Failed tile", () => {
+    render(
+      <DepartureBoard
+        agents={[node({ trace_id: "m-failed", status: "failed", utterance: "Broken mission" })]}
+      />,
+    );
+
+    expect(within(tile("Failed")).getByText("1")).toBeTruthy();
+    const row = screen.getByRole("row", { name: /broken mission/i });
+    expect(within(row).getByText("Failed")).toBeTruthy();
+  });
+});
+
+describe("DepartureBoard empty state", () => {
+  it("says nothing is running rather than showing an empty table", () => {
+    render(<DepartureBoard agents={[]} />);
+
+    expect(screen.getByText(/no .*-agents are running right now/i)).toBeTruthy();
+    expect(screen.queryByRole("row", { name: /mission/i })).toBeNull();
+  });
+});
+
+describe("DepartureBoard drilldown", () => {
+  it("opens a running agent's tool calls and details inline", () => {
+    render(
+      <DepartureBoard
+        agents={[
+          node({
+            trace_id: "m-running",
+            status: "running",
+            utterance: "Audit the release notes",
+            duration_ms: null,
+            error: null,
+            context_hints: ["docs/CHANGELOG.md"],
+            tool_calls: [
+              {
+                tool_name: "Grep",
+                args_preview: "pattern=BUG-",
+                started_ns: 1,
+                output_preview: "",
+                status: "completed",
+                duration_ms: 1200,
+              },
+            ],
+          }),
+        ]}
+      />,
+    );
+
+    // A running agent with tool calls opens itself — the operator should not
+    // have to click to see what is happening right now.
+    expect(screen.getByText("Grep")).toBeTruthy();
+    expect(screen.getByText("pattern=BUG-")).toBeTruthy();
+    expect(screen.getByText("docs/CHANGELOG.md")).toBeTruthy();
+    expect(screen.getByText(/trace m-running/)).toBeTruthy();
+
+    // The drilldown is a table row, so the grid it sits in stays valid.
+    const rows = screen.getAllByRole("row");
+    expect(rows.length).toBeGreaterThan(2);
+  });
+
+  it("leaves an agent with nothing to show collapsed and unclickable", () => {
+    render(
+      <DepartureBoard
+        agents={[
+          node({
+            trace_id: "m-bare",
+            status: "completed",
+            utterance: "Nothing to drill into",
+            error: null,
+            prompts: [],
+            tool_calls: [],
+          }),
+        ]}
+      />,
+    );
+
+    const row = screen.getByRole("row", { name: /nothing to drill into/i });
+    expect(row.getAttribute("tabindex")).toBeNull();
+    expect(screen.queryByText(/trace m-bare/)).toBeNull();
   });
 });

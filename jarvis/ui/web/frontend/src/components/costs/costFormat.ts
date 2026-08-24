@@ -15,19 +15,9 @@ export const ROLE_COLORS: Record<CostRole, string> = {
   pipeline: "hsl(268 72% 68%)", // violet — the classic brain path
   agent: "hsl(152 58% 52%)", // green — coding agents
   worker: "hsl(18 88% 62%)", // orange — autonomous missions
-  stt: "hsl(340 75% 65%)", // rose — the ear
-  tts: "hsl(30 90% 60%)", // amber — the voice
 };
 
-export const ROLE_ORDER: CostRole[] = [
-  "realtime",
-  "tool",
-  "pipeline",
-  "agent",
-  "worker",
-  "stt",
-  "tts",
-];
+export const ROLE_ORDER: CostRole[] = ["realtime", "tool", "pipeline", "agent", "worker"];
 
 /** Fallback for a bucket key that is not a role (provider, model, day). */
 export const NEUTRAL_COLOR = "hsl(0 0% 62%)";
@@ -149,57 +139,9 @@ export function priceSourceTone(source: PriceSource): "ok" | "warn" | "off" | "e
       return "warn";
     case "free":
       return "off";
-    case "subscription":
-      // Not a warning and not a gap: the number is sound, it just is not a
-      // bill. It reads as its own thing rather than borrowing another's tone.
-      return "ok";
     default:
       return "error";
   }
 }
 
-export const ALL_SURFACES: CostSurface[] = [
-  "voice",
-  "agent-chat",
-  "mission",
-  "agentic-ide",
-  "jarvis-voice",
-];
-
-/**
- * The top-level areas the section can be read as, and which surfaces each one
- * covers.
- *
- * Surfaces are how the read model records a line item; these are how a person
- * thinks about the app. The two are not the same shape — "Jarvis" is three
- * surfaces at once — so the grouping lives here rather than being inferred.
- * `surfaces: []` means no filter at all, which is what "Overall" is.
- */
-export interface SurfaceGroup {
-  id: string;
-  surfaces: CostSurface[];
-  /** Roles that can occur in this area, in the order they should be offered. */
-  roles: CostRole[];
-}
-
-export const SURFACE_GROUPS: SurfaceGroup[] = [
-  { id: "all", surfaces: [], roles: ROLE_ORDER },
-  {
-    id: "jarvis",
-    surfaces: ["voice", "agent-chat", "mission"],
-    roles: ["realtime", "tool", "pipeline", "agent", "worker"],
-  },
-  { id: "agentic-ide", surfaces: ["agentic-ide"], roles: ["agent", "worker"] },
-  { id: "jarvis-voice", surfaces: ["jarvis-voice"], roles: ["stt", "tts"] },
-];
-
-/** The group whose surfaces are exactly the ones selected, if any. */
-export function surfaceGroupFor(surfaces: readonly string[]): SurfaceGroup | null {
-  const want = [...surfaces].sort().join(",");
-  if (!want) return SURFACE_GROUPS[0];
-  return SURFACE_GROUPS.find((g) => g.surfaces.length > 0 && [...g.surfaces].sort().join(",") === want) ?? null;
-}
-
-export function surfaceGroupLabelKey(id: string): string {
-  return `costs_view.area.${id.replace(/-/g, "_")}`;
-}
+export const ALL_SURFACES: CostSurface[] = ["voice", "agent-chat", "mission"];

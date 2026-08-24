@@ -12,24 +12,10 @@ import { useQuery } from "@tanstack/react-query";
 // ---------------------------------------------------------------------------
 
 /** Which model in a turn spent this. */
-export type CostRole =
-  | "realtime"
-  | "tool"
-  | "pipeline"
-  | "agent"
-  | "worker"
-  // The speech layer bills by audio second and by character, not by token —
-  // its own two roles rather than a shape forced onto the token vocabulary.
-  | "stt"
-  | "tts";
+export type CostRole = "realtime" | "tool" | "pipeline" | "agent" | "worker";
 
 /** Which part of the app it was spent in. */
-export type CostSurface =
-  | "voice"
-  | "agent-chat"
-  | "mission"
-  | "agentic-ide"
-  | "jarvis-voice";
+export type CostSurface = "voice" | "agent-chat" | "mission";
 
 /**
  * How confident the price is.
@@ -37,10 +23,8 @@ export type CostSurface =
  * - `derived`  re-priced here from the rate tables
  * - `free`     local engine, subscription seat, or a `:free` model
  * - `unknown`  tokens spent at a rate nobody publishes — an accounting gap
- * - `subscription` a monthly seat did the work; the amount is what the same
- *   call would have cost through the API, not money that moved
  */
-export type PriceSource = "recorded" | "derived" | "free" | "unknown" | "subscription";
+export type PriceSource = "recorded" | "derived" | "free" | "unknown";
 
 export interface CostBucket {
   key: string;
@@ -51,8 +35,6 @@ export interface CostBucket {
   tokens_total: number;
   entries: number;
   gap_tokens: number;
-  /** Of `cost_usd`, the part a monthly seat already paid for. */
-  subscription_usd: number;
   last_ts_ms: number;
   cost_share: number;
   token_share: number;
@@ -80,8 +62,6 @@ export interface CostTotals {
   gap_entries: number;
   free_tokens: number;
   estimated_usd: number;
-  /** Of `cost_usd`, the part covered by a subscription rather than invoiced. */
-  subscription_usd: number;
   first_ts_ms: number;
   last_ts_ms: number;
 }

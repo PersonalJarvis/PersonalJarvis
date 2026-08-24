@@ -1,26 +1,23 @@
 /**
- * SubAgentsView — live board of all active Jarvis-Agents.
+ * JarvisAgentsView — live board of all active Jarvis-Agents.
  *
- * Instead of a ReactFlow canvas with cards, the view now renders a
- * train-station departure board (DepartureBoard) that continuously fills
- * from the empty standby state to the active drilldown state. All
- * tool calls are expandable inline per agent row — no box layout,
- * no canvas, everything in one column.
+ * This file is the data half: it hydrates the board from the REST snapshot,
+ * keeps it live off the mission WebSocket, and sweeps expired nodes. All of
+ * the presentation — header, headline numbers, table and per-row drilldown —
+ * lives in `DepartureBoard`, which renders it with the shared
+ * `components/extensions/primitives` so this section looks like Spend, Skills,
+ * Plugins, MCPs and CLIs rather than like a screen of its own.
  */
-import { Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { ExplicitSpawnHint } from "@/components/ExplicitSpawnHint";
 import { useSubAgentStore, type SubAgentTreeSnapshot } from "@/store/jarvisAgents";
 import { DepartureBoard } from "./sub-agents/DepartureBoard";
 import { selectTaskRows } from "./sub-agents/rows";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
 import { useMissionsStore } from "@/components/missions/store";
-import { useT } from "@/i18n";
 import { useSectionHealth } from "@/hooks/useProviders";
 
 export function JarvisAgentsView() {
-  const t = useT();
   const { health } = useSectionHealth();
   const subAgents = useSubAgentStore((s) => s.subAgents);
   const sweepExpired = useSubAgentStore((s) => s.sweepExpired);
@@ -86,39 +83,12 @@ export function JarvisAgentsView() {
     return () => window.clearTimeout(id);
   }, [missionLastSeq, loadSnapshot]);
 
-  const activeCount = nodesList.filter((n) => n.status === "running").length;
-
   return (
-    <div className="relative h-full w-full flex flex-col bg-background">
-      <header className="px-4 py-3 border-b border-border flex items-center justify-between shrink-0 z-10 bg-background/80 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <Users className="h-5 w-5 text-sky-600 dark:text-sky-400" />
-          <div>
-            <div className="text-sm font-semibold text-foreground">{t("subagents_view.title")}</div>
-            <div className="text-[11px] text-muted-foreground">
-              {activeCount} {t("subagents_view.stat_active")} · {nodesList.length} {t("subagents_view.stat_total")}
-            </div>
-          </div>
-        </div>
-        <button
-          onClick={() => clear()}
-          className="text-xs px-2 py-1 rounded border border-border bg-secondary text-secondary-foreground hover:bg-sheen/[0.08] flex items-center gap-1.5"
-          title={t("subagents_view.clear_tooltip")}
-        >
-          <Trash2 className="h-3 w-3" />
-          {t("subagents_view.clear")}
-        </button>
-      </header>
-
-      <ExplicitSpawnHint className="shrink-0 border-b border-border bg-sheen/[0.03]" />
-
-      <div className="flex-1 relative overflow-hidden">
-        <DepartureBoard
-          agents={nodesList}
-          snapshotError={snapshotError}
-          health={health["subagents"] ?? null}
-        />
-      </div>
-    </div>
+    <DepartureBoard
+      agents={nodesList}
+      snapshotError={snapshotError}
+      health={health["subagents"] ?? null}
+      onClear={() => clear()}
+    />
   );
 }

@@ -4999,14 +4999,6 @@
     "subtitle": "{entries} calls · {models} models · {providers} providers",
     "subtitle_loading": "Reading what every provider, model and role cost",
     "range_label": "Time range",
-    "area": {
-      "all": "Overall",
-      "jarvis": "{name}",
-      "agentic_ide": "Agentic IDE",
-      "jarvis_voice": "{name} Voice"
-    },
-    "area_label": "Which part of the app to show",
-    "role_filter_label": "Filter by what the model was doing",
     "range_days": "{days}d",
     "range_all": "All",
     "currency_label": "Currency",
@@ -5017,10 +5009,8 @@
     "load_error": "Spend could not be read. This section reads the app's own databases — if it keeps failing, the data folder is unreachable.",
     "stat_total": "Total spend",
     "stat_total_hint": "{perDay} per day on average",
-    "stat_total_hint_seat": "{perDay}/day · {seat} on a subscription",
     "stat_tokens": "Tokens",
     "stat_tokens_hint": "{in} in · {out} out",
-    "stat_tokens_hint_cached": "{in} in · {cached} cached · {out} out",
     "stat_top_provider": "Biggest spender",
     "stat_top_provider_hint": "{amount} · {share} of the total",
     "stat_none": "Nothing recorded yet",
@@ -5080,23 +5070,18 @@
       "tool": "Tool model",
       "pipeline": "Pipeline brain",
       "agent": "Coding agent",
-      "worker": "Mission worker",
-      "stt": "Speech to text",
-      "tts": "Text to speech"
+      "worker": "Mission worker"
     },
     "surface": {
       "voice": "Voice",
       "agent_chat": "Agent chat",
-      "mission": "Mission",
-      "agentic_ide": "Agentic IDE",
-      "jarvis_voice": "{name} Voice"
+      "mission": "Mission"
     },
     "price_source": {
       "recorded": "Billed",
       "derived": "Estimated",
       "free": "Free",
-      "unknown": "Unpriced",
-      "subscription": "Subscription"
+      "unknown": "Unpriced"
     }
   },
   "all_chats": {
