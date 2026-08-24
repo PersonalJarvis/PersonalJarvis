@@ -1,18 +1,33 @@
 /**
- * JarvisAgentsView — live board of all active Jarvis-Agents.
+ * JarvisAgentsView — board of every Jarvis-Agent, live and past.
  *
- * This file is the data half: it hydrates the board from the REST snapshot,
- * keeps it live off the mission WebSocket, and sweeps expired nodes. All of
- * the presentation — header, headline numbers, table and per-row drilldown —
- * lives in `DepartureBoard`, which renders it with the shared
+ * This file is the data half. It reads TWO sources and merges them:
+ *
+ * - `/api/sub-agents/tree` — the live registry. Carries tool calls and a
+ *   running clock, but it is an in-memory bus subscriber that drops a finished
+ *   node after 60s and starts empty on every app start.
+ * - `/api/missions` — the durable record of the same runs. No tool calls, but
+ *   it survives, so the board is not blank whenever nothing happens to be
+ *   running in this exact minute.
+ *
+ * Before the merge the board was live-only, which meant every number read 0
+ * and the table read "no agents are running right now" even with hundreds of
+ * finished runs on disk. See `missionRows.ts` for the mapping and why a run
+ * present in both wins as its live node.
+ *
+ * All of the presentation — header, headline numbers, table and per-row
+ * drilldown — lives in `DepartureBoard`, which renders it with the shared
  * `components/extensions/primitives` so this section looks like Spend, Skills,
  * Plugins, MCPs and CLIs rather than like a screen of its own.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { useSubAgentStore, type SubAgentTreeSnapshot } from "@/store/jarvisAgents";
 import { DepartureBoard } from "./sub-agents/DepartureBoard";
 import { selectTaskRows } from "./sub-agents/rows";
+import { mergeBoardRows } from "./sub-agents/missionRows";
+import { fetchMissions } from "@/components/missions/api";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
 import { useMissionsStore } from "@/components/missions/store";
 import { useSectionHealth } from "@/hooks/useProviders";
@@ -22,7 +37,6 @@ export function JarvisAgentsView() {
   const subAgents = useSubAgentStore((s) => s.subAgents);
   const sweepExpired = useSubAgentStore((s) => s.sweepExpired);
   const hydrateSnapshot = useSubAgentStore((s) => s.hydrateSnapshot);
-  const clear = useSubAgentStore((s) => s.clear);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
   // One row per task: collapse each worker into its mission row so a single
@@ -31,7 +45,22 @@ export function JarvisAgentsView() {
   // nodes for the DetailPanel; this only filters the displayed list. Header
   // counts and the DepartureBoard metric panel both derive from this array,
   // so they stay consistent with the rows actually shown.
-  const nodesList = useMemo(() => selectTaskRows(subAgents), [subAgents]);
+  const liveRows = useMemo(() => selectTaskRows(subAgents), [subAgents]);
+
+  // The durable half. Shares its query key with the Missions view, so opening
+  // both costs one request. A failure here is not surfaced as an error: the
+  // live board still works without history, and the section already has a
+  // banner for the snapshot it cannot do without.
+  const historyQuery = useQuery({
+    queryKey: ["missions"],
+    queryFn: fetchMissions,
+    refetchInterval: 30_000,
+  });
+
+  const nodesList = useMemo(
+    () => mergeBoardRows(liveRows, historyQuery.data?.missions ?? []),
+    [liveRows, historyQuery.data],
+  );
 
   const loadSnapshot = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -88,7 +117,7 @@ export function JarvisAgentsView() {
       agents={nodesList}
       snapshotError={snapshotError}
       health={health["subagents"] ?? null}
-      onClear={() => clear()}
+      historyError={historyQuery.isError}
     />
   );
 }

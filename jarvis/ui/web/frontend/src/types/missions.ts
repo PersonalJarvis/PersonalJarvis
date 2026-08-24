@@ -234,6 +234,8 @@ export interface MissionSummary {
   state: MissionState;
   language: string;
   created_ms: number;
+  /** Last state change — the end of a landed run. Sent by `GET /api/missions`. */
+  updated_ms?: number;
   iteration: number;
   cost_usd: number;
   parent_mission_id?: string | null;

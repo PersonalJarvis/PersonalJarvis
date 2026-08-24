@@ -29,7 +29,6 @@ import {
   CircleAlert,
   Radio,
   TerminalSquare,
-  Trash2,
   Wrench,
 } from "lucide-react";
 
@@ -40,7 +39,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Cell,
   type Column,
-  IconButton,
   Panel,
   PanelHeader,
   StatTile,
@@ -114,6 +112,11 @@ function resultLabel(node: SubAgentNode, t: (key: string) => string): string {
   if (summary) return summary.replace("[summary] ", "");
   if (node.status === "completed") return t("subagents_view.result_done");
   if (node.status === "running") return t("subagents_view.result_running");
+  // A row from the durable record carries no error text, so without these two
+  // a failed or cancelled past run showed an em dash next to a red status —
+  // as if the outcome were unknown rather than stated one column to the left.
+  if (node.status === "failed") return t("subagents_view.result_failed");
+  if (node.status === "cancelled") return t("subagents_view.result_cancelled");
   return "—";
 }
 
@@ -121,14 +124,15 @@ interface Props {
   agents?: SubAgentNode[];
   snapshotError?: string | null;
   health?: SectionHealth | null;
-  onClear?: () => void;
+  /** The durable half could not be loaded; the live half still renders. */
+  historyError?: boolean;
 }
 
 export function DepartureBoard({
   agents = [],
   snapshotError = null,
   health = null,
-  onClear,
+  historyError = false,
 }: Props) {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
@@ -196,17 +200,6 @@ export function DepartureBoard({
               active: activeCount,
               total: agents.length,
             })}
-            actions={
-              onClear ? (
-                <IconButton
-                  label={t("subagents_view.clear_tooltip")}
-                  onClick={onClear}
-                  disabled={agents.length === 0}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </IconButton>
-              ) : null
-            }
           />
 
           {health && (health.status === "needs_setup" || health.status === "error") && (
@@ -226,6 +219,10 @@ export function DepartureBoard({
             <Notice tone="error">
               {fill(t("subagents_view.snapshot_error"), { detail: snapshotError })}
             </Notice>
+          )}
+
+          {historyError && !snapshotError && (
+            <Notice tone="warn">{t("subagents_view.history_error")}</Notice>
           )}
 
           {/* ---------------------------------------------------------------
