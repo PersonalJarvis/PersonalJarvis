@@ -221,6 +221,80 @@ def test_agent_chat_usage_is_bucketed_by_direction(sources: CostSources) -> None
     assert entry.cost_usd == pytest.approx(0.31)
 
 
+# ---------------------------------------------------------------------------
+# Speech — its own database, so the counts every other test asserts stay put
+# ---------------------------------------------------------------------------
+
+
+def _speech_sources(tmp_path: Path) -> CostSources:
+    path = tmp_path / "speech.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(_SESSIONS_DDL)
+    for payload in (
+        {
+            "stage": "stt",
+            "provider": "deepgram",
+            "voice": "nova-3",
+            "chars": 0,
+            "audio_ms": 4200.0,
+            "cost_usd": 0.0003,
+            "price_source": "derived",
+        },
+        {
+            "stage": "tts",
+            "provider": "cartesia",
+            "voice": "ben",
+            "chars": 412,
+            "audio_ms": 8200.0,
+            "cost_usd": 0.0124,
+            "price_source": "derived",
+        },
+        # A stage nobody knows must not become a cost row.
+        {"stage": "hum", "provider": "x", "chars": 9, "cost_usd": 1.0},
+        # Nothing consumed — not a row either.
+        {"stage": "tts", "provider": "cartesia", "chars": 0, "audio_ms": 0.0},
+    ):
+        conn.execute(
+            "INSERT INTO voice_events (session_id, turn_id, ts_ms, kind, payload_json) "
+            "VALUES (?,?,?,?,?)",
+            ("sess-1", "turn-1", T0 + 2_000, "SpeechUsageRecorded", json.dumps(payload)),
+        )
+    conn.commit()
+    conn.close()
+    return CostSources(sessions_db=path)
+
+
+def test_speech_is_its_own_surface_with_no_tokens(tmp_path: Path) -> None:
+    """Hearing and speaking cost money and consume no tokens.
+
+    Folding characters or audio seconds into the token columns would make
+    them sum with the brain's tokens — a different unit and a wrong total.
+    """
+    rows = list(collect_entries(_speech_sources(tmp_path)))
+    assert {e.surface for e in rows} == {"jarvis-voice"}
+    assert {e.role for e in rows} == {"stt", "tts"}
+    assert all(e.tokens_in == e.tokens_out == e.tokens_cached == 0 for e in rows)
+    assert sum(e.cost_usd for e in rows) == pytest.approx(0.0127)
+
+
+def test_speech_label_names_the_billed_quantity(tmp_path: Path) -> None:
+    """The unit that was actually bought, since the token columns cannot say."""
+    rows = {e.role: e for e in collect_entries(_speech_sources(tmp_path))}
+    assert "412" in rows["tts"].label and "character" in rows["tts"].label
+    assert "4.2" in rows["stt"].label
+
+
+def test_speech_rows_with_nothing_consumed_are_dropped(tmp_path: Path) -> None:
+    """A zero-quantity row is not spend, and an unknown stage is not ours."""
+    assert len(list(collect_entries(_speech_sources(tmp_path)))) == 2
+
+
+def test_speech_keeps_the_price_the_meter_settled(tmp_path: Path) -> None:
+    """The meter priced it in the vendor's unit; re-deriving it here from a
+    token rate would be nonsense, so its verdict must survive the read."""
+    rows = list(collect_entries(_speech_sources(tmp_path)))
+    assert {e.price_source for e in rows} == {"derived"}
+
 def test_missing_sources_are_skipped(tmp_path: Path) -> None:
     empty = CostSources(sessions_db=tmp_path / "nope.db")
     assert collect_entries(empty) == []
