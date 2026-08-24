@@ -28,8 +28,17 @@ _OUTPUT_RATE = 24_000
 # Compression trades verbatim recall of the oldest audio for a bounded
 # context; the orchestrator separately keeps a 20-turn text transcript for
 # rebuilds, so nothing the user said is lost to the conversation logic.
-_COMPRESSION_TRIGGER_TOKENS = 32_000
-_COMPRESSION_TARGET_TOKENS = 16_000
+#
+# Maintainer mandate (2026-08-24): the window is NOT a cost lever. The
+# previous 32k/16k pair was sized for the older 32k Live models and threw
+# away tool results one turn after the model had spoken them (a sender's
+# address vanished while the name survived in the model's own reply).
+# Native-audio Live models allow 128k per session; the trigger sits just
+# below that ceiling so compression only ever fires to keep the session
+# alive (Gemini hard-ends a call via GoAway at the limit), and the target
+# keeps ~100k of the newest context verbatim.
+_COMPRESSION_TRIGGER_TOKENS = 120_000
+_COMPRESSION_TARGET_TOKENS = 100_000
 
 
 def _compression_kwargs(types: Any) -> dict[str, Any]:
