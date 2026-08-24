@@ -648,3 +648,80 @@ export function SegmentedFilter<T extends string>({
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Stat tile — the headline numbers above a table
+// ---------------------------------------------------------------------------
+
+/**
+ * One number with a label above it and a line of context below.
+ *
+ * Lives here rather than next to its first caller because two sections now
+ * open with a row of these (Spend and the agent board) and a second copy is
+ * exactly the drift this file exists to prevent. Four per row on a wide pane,
+ * two on a narrow one — the caller supplies the grid.
+ *
+ * `tone` colours only the icon; the value itself always stays `foreground` so
+ * a row of tiles reads as one block of numbers rather than a traffic light.
+ */
+export function StatTile({
+  icon,
+  label,
+  value,
+  hint,
+  tone = "ok",
+  loading,
+}: {
+  icon?: ReactNode;
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  tone?: "ok" | "warn" | "danger" | "primary" | "success";
+  loading?: boolean;
+}) {
+  return (
+    // A named group, so a screen reader announces "Failed, 0, nothing broke"
+    // as one figure rather than three loose numbers in a row of five tiles.
+    <div
+      role="group"
+      aria-label={label}
+      className="rounded-xl border border-border bg-card/50 px-4 py-3.5"
+    >
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        {icon ? (
+          <span
+            className={cn(
+              tone === "warn" && "text-amber-500",
+              tone === "danger" && "text-destructive",
+              tone === "primary" && "text-primary",
+              // Emerald carries a meaning the token set has no name for
+              // ("finished cleanly") and needs its own value per theme: the
+              // 400 shade glows on charcoal and drops to ~2:1 on paper.
+              tone === "success" && "text-emerald-600 dark:text-emerald-400",
+            )}
+          >
+            {icon}
+          </span>
+        ) : null}
+        <span className="truncate">{label}</span>
+      </div>
+      <div
+        className={cn(
+          "mt-1.5 truncate font-display text-[22px] font-semibold tabular-nums tracking-tight text-foreground",
+          loading && "opacity-40",
+        )}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </div>
+      {hint ? (
+        <div
+          className="mt-0.5 truncate text-[11px] text-muted-foreground"
+          title={typeof hint === "string" ? hint : undefined}
+        >
+          {hint}
+        </div>
+      ) : null}
+    </div>
+  );
+}

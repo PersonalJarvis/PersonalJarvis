@@ -23,6 +23,7 @@ from .model import (
     ROLE_REALTIME,
     ROLE_TOOL,
     ROLE_WORKER,
+    SUBSCRIPTION_RUNNERS,
     SURFACE_AGENT_CHAT,
     SURFACE_MISSION,
     SURFACE_VOICE,
@@ -281,13 +282,21 @@ _AGENT_IN_KEYS = (
     "cache_creation_input_tokens",
     "cache_write_input_tokens",
 )
-_AGENT_OUT_KEYS = (
-    "output_tokens",
-    "completion_tokens",
-    "reasoning_output_tokens",
-    "thinking_tokens",
+_AGENT_OUT_KEYS = ("output_tokens", "completion_tokens")
+
+# Reasoning is a BREAKDOWN of the output count, not a sibling of it — both
+# Anthropic and OpenAI report it inside ``output_tokens_details``. Summing it
+# alongside counted those tokens twice. It stands in only when a runner reports
+# no primary output count at all.
+_AGENT_OUT_DETAIL_KEYS = ("reasoning_output_tokens", "thinking_tokens")
+
+_AGENT_CACHED_KEYS = (
+    "cache_read_input_tokens",
+    "cached_input_tokens",
+    "cache_read_tokens",
+    # What the in-process API runner and the brain plugins call it.
+    "cache_hit_tokens",
 )
-_AGENT_CACHED_KEYS = ("cache_read_input_tokens", "cached_input_tokens", "cache_read_tokens")
 
 
 def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator[CostEntry]:
@@ -305,6 +314,33 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
             ):
                 sessions[str(row["session_id"])] = row
 
+        # ``turn_started`` is where the runner is named, and it is the only
+        # place that says whether a monthly seat or an API key answered: the
+        # ``claude-api`` row means either, decided at call time. It also holds
+        # the model AS IT WAS, which the session row does not — that one moves
+        # with the picker and would re-label every past turn.
+        #
+        # Unfiltered by time on purpose: a turn that started before the window
+        # and finished inside it still needs its own runner.
+        starts: dict[str, dict[str, str]] = {}
+        for row in conn.execute(
+            "SELECT payload FROM agent_chat_events WHERE kind = 'turn_started'"
+        ):
+            try:
+                started = json.loads(row["payload"] or "{}")
+            except (TypeError, ValueError) as exc:
+                log.debug("cost read model: unparsable turn_started (%s)", exc)
+                continue
+            if not isinstance(started, dict):
+                continue
+            turn_id = str(started.get("turn_id") or "")
+            if turn_id:
+                starts[turn_id] = {
+                    "runner": str(started.get("runner") or ""),
+                    "provider": str(started.get("provider") or ""),
+                    "model": str(started.get("model") or ""),
+                }
+
         for row in conn.execute(
             "SELECT session_id, ts_ms, payload FROM agent_chat_events "
             "WHERE kind = 'turn_finished' AND ts_ms BETWEEN ? AND ?",
@@ -321,19 +357,24 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
             usage = usage if isinstance(usage, dict) else {}
             tokens_in = sum(_int(usage.get(k)) for k in _AGENT_IN_KEYS)
             tokens_out = sum(_int(usage.get(k)) for k in _AGENT_OUT_KEYS)
+            if tokens_out <= 0:
+                tokens_out = sum(_int(usage.get(k)) for k in _AGENT_OUT_DETAIL_KEYS)
             tokens_cached = sum(_int(usage.get(k)) for k in _AGENT_CACHED_KEYS)
             recorded = _float(payload.get("cost_usd"))
             if tokens_in + tokens_out + tokens_cached <= 0 and recorded <= 0:
                 continue
             session = sessions.get(str(row["session_id"] or ""))
-            provider = str(session["provider"] if session is not None else "") or "agent-cli"
-            model = str(session["model"] if session is not None else "")
+            start = starts.get(str(payload.get("turn_id") or ""), {})
+            session_provider = str(session["provider"] if session is not None else "")
+            provider = start.get("provider") or session_provider or "agent-cli"
+            model = start.get("model") or str(session["model"] if session is not None else "")
             cost, source = price_entry(
                 provider=provider,
                 model=model,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 recorded_usd=recorded,
+                subscription=start.get("runner", "") in SUBSCRIPTION_RUNNERS,
             )
             yield CostEntry(
                 ts_ms=_int(row["ts_ms"]),

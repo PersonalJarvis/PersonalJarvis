@@ -39,6 +39,8 @@ class Bucket:
     tokens_cached: int = 0
     entries: int = 0
     gap_tokens: int = 0
+    #: Of ``cost_usd``, how much a monthly seat covered rather than an invoice.
+    subscription_usd: float = 0.0
     last_ts_ms: int = 0
     #: Secondary dimension — which providers/models/roles fed this bucket.
     members: dict[str, float] = field(default_factory=lambda: defaultdict(float))
@@ -51,6 +53,8 @@ class Bucket:
         self.entries += 1
         if entry.is_gap:
             self.gap_tokens += entry.tokens_total
+        if entry.price_source == "subscription":
+            self.subscription_usd += entry.cost_usd
         self.last_ts_ms = max(self.last_ts_ms, entry.ts_ms)
         if member:
             self.members[member] += entry.cost_usd
@@ -67,6 +71,7 @@ class Bucket:
             "tokens_total": tokens,
             "entries": self.entries,
             "gap_tokens": self.gap_tokens,
+            "subscription_usd": round(self.subscription_usd, 6),
             "last_ts_ms": self.last_ts_ms,
             "cost_share": round(self.cost_usd / total_cost, 6) if total_cost > 0 else 0.0,
             "token_share": round(tokens / total_tokens, 6) if total_tokens > 0 else 0.0,
@@ -166,6 +171,7 @@ def build_report(
     gap_tokens = gap_entries = 0
     free_tokens = 0
     derived_cost = 0.0
+    subscription_cost = 0.0
 
     hourly = (until_ms - since_ms) <= _HOURLY_RANGE_MS
     bucket_kind = "hour" if hourly else "day"
@@ -182,6 +188,8 @@ def build_report(
             free_tokens += e.tokens_total
         if e.price_source == "derived":
             derived_cost += e.cost_usd
+        if e.price_source == "subscription":
+            subscription_cost += e.cost_usd
 
         _bucket(providers, e.provider).add(e, member=e.model or e.role)
         _bucket(models, e.model or f"{e.provider} (unnamed)").add(e, member=e.provider)
@@ -215,6 +223,10 @@ def build_report(
         "gap_entries": gap_entries,
         "free_tokens": free_tokens,
         "estimated_usd": round(derived_cost, 6),
+        # Part of ``cost_usd``, not beside it: the work was done and is worth
+        # this much, a seat just already paid for it. Subtracting it here would
+        # make the section disagree with itself the moment anyone filtered.
+        "subscription_usd": round(subscription_cost, 6),
         "first_ts_ms": entries[0].ts_ms if entries else 0,
         "last_ts_ms": entries[-1].ts_ms if entries else 0,
     }

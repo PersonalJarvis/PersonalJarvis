@@ -16,9 +16,13 @@ four very different things, and the UI must be able to tell them apart:
 ``derived``   the source stored 0.0, we re-priced it from the rate tables
 ``free``      a local engine or an explicitly free model — 0.0 is the truth
 ``unknown``   tokens were spent, no rate exists anywhere — 0.0 is a GAP
+``subscription`` a seat paid monthly — the amount is what the same work
+              would have cost through the API, not money that moved
 
 Only ``unknown`` is a hole in the accounting, and it is reported as tokens,
-never quietly folded into the total as if it were free.
+never quietly folded into the total as if it were free. ``subscription`` is
+the opposite kind of honesty: the number is real arithmetic on real tokens,
+but no invoice carries it, so it is named rather than mixed in silently.
 """
 from __future__ import annotations
 
@@ -51,7 +55,7 @@ ROLE_WORKER = "worker"
 ROLES: tuple[str, ...] = (ROLE_REALTIME, ROLE_TOOL, ROLE_PIPELINE, ROLE_AGENT, ROLE_WORKER)
 SURFACES: tuple[str, ...] = (SURFACE_VOICE, SURFACE_AGENT_CHAT, SURFACE_MISSION)
 
-PriceSource = Literal["recorded", "derived", "free", "unknown"]
+PriceSource = Literal["recorded", "derived", "free", "unknown", "subscription"]
 
 # Providers that run on the user's own hardware: 0.00 is the correct price,
 # not a missing one. Matched on the provider id as the stores record it.
@@ -65,6 +69,8 @@ LOCAL_PROVIDERS: frozenset[str] = frozenset(
         "lmstudio",
         "vllm",
         "whisper-local",
+        # Any OpenAI-compatible server the user points at themselves.
+        "local-openai",
     }
 )
 
@@ -75,6 +81,20 @@ SUBSCRIPTION_PROVIDERS: frozenset[str] = frozenset(
         "codex-subscription-realtime",
         "codex-subscription",
         "claude-subscription",
+    }
+)
+
+# The other half of the same question, and the reliable one. A provider id
+# cannot answer it: ``claude-api`` is one row for two billing worlds — the
+# Claude Code CLI on a Max seat when it is installed, the Anthropic API
+# otherwise (:mod:`jarvis.agent_chat.catalog`). Only the runner that actually
+# answered the turn knows, and it is recorded on every ``turn_started``.
+SUBSCRIPTION_RUNNERS: frozenset[str] = frozenset(
+    {
+        "claude-cli",
+        "codex-cli",
+        "agy-cli",
+        "grok-cli",
     }
 )
 
@@ -137,6 +157,7 @@ def price_entry(
     tokens_in: int,
     tokens_out: int,
     recorded_usd: float,
+    subscription: bool = False,
 ) -> tuple[float, PriceSource]:
     """Settle what a call actually cost and how confident that number is.
 
@@ -144,11 +165,29 @@ def price_entry(
     modality (audio vs text) and we do not. Everything else is re-derived from
     the shared rate tables so a model the price table gained later stops
     showing up as free.
+
+    ``subscription`` says a monthly seat answered the turn. The amount is still
+    the API-equivalent — a seat that reports one (Claude Code does) is quoting
+    exactly that, and a seat that reports nothing gets the rate tables applied
+    like any other call. What changes is the label, so a report can show the
+    worth of the work without claiming the money moved. A seat whose model has
+    no rate anywhere is still a gap: the tokens are real and unpriced.
     """
+    tokens = max(0, tokens_in) + max(0, tokens_out)
+    if subscription and tokens > 0:
+        if recorded_usd > 0:
+            return float(recorded_usd), "subscription"
+        # Lazy, like the branch below: a report of nothing but priced seats
+        # never has to load the catalogue.
+        from jarvis.brain.cost import calculate_cost_usd, resolve_rates
+
+        if model and resolve_rates(model) is not None:
+            return calculate_cost_usd(model, tokens_in, tokens_out), "subscription"
+        return 0.0, "unknown"
+
     if recorded_usd > 0:
         return float(recorded_usd), "recorded"
 
-    tokens = max(0, tokens_in) + max(0, tokens_out)
     if tokens <= 0:
         # Nothing was consumed — a 0.0 with no tokens is not a pricing gap.
         return 0.0, "recorded"
