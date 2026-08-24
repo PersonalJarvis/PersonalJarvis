@@ -29,7 +29,13 @@ from pathlib import Path
 import tomlkit
 from tomlkit import TOMLDocument
 
-from .config import DEFAULT_CONFIG_FILE, PROJECT_ROOT, clear_config_cache
+from .config import (
+    DEFAULT_CONFIG_FILE,
+    OLLAMA_MODEL_OPTION_KEYS,
+    PROJECT_ROOT,
+    OllamaModelOptions,
+    clear_config_cache,
+)
 
 log = logging.getLogger(__name__)
 
@@ -2185,6 +2191,165 @@ def set_provider_base_url(
             provider,
             exc,
         )
+
+
+#: Closed list of per-provider boolean flags :func:`set_provider_flag` may
+#: write. Each entry is a real field on ``BrainProviderConfig`` with a reader;
+#: adding one here without a reader is the AP-31 shape.
+PROVIDER_FLAG_KEYS: tuple[str, ...] = ("hf_enabled",)
+
+
+def _provider_block(doc: TOMLDocument, provider: str) -> tomlkit.items.Table:
+    """``[brain.providers.<provider>]`` of ``doc``, created when absent.
+
+    ``providers`` is a super-table via the factory (``tomlkit.table(True)``) —
+    assigning ``is_super_table`` shadows a METHOD and a later ``dumps()``
+    crashes (see :func:`set_brain_provider_model`).
+    """
+    brain = doc.get("brain")
+    if brain is None:
+        brain = tomlkit.table()
+        doc["brain"] = brain
+    providers = brain.get("providers")
+    if providers is None:
+        providers = tomlkit.table(True)
+        brain["providers"] = providers
+    block = providers.get(provider)
+    if block is None:
+        block = tomlkit.table()
+        providers[provider] = block
+    return block
+
+
+def _read_doc(path: Path) -> tuple[TOMLDocument, bool]:
+    raw = path.read_text(encoding="utf-8")
+    had_bom = raw.startswith(_BOM)
+    if had_bom:
+        raw = raw[len(_BOM) :]
+    return tomlkit.parse(raw), had_bom
+
+
+def _write_doc(path: Path, doc: TOMLDocument, had_bom: bool) -> None:
+    out = tomlkit.dumps(doc)
+    if had_bom:
+        out = _BOM + out
+    _atomic_write(path, out)
+
+
+def set_ollama_model_options(
+    model: str,
+    options: dict[str, object],
+    *,
+    provider: str = "ollama",
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> dict[str, object]:
+    """Persist the per-model option table ``[brain.providers.ollama.models."<tag>"]``.
+
+    REPLACE semantics: ``options`` is the whole new option set for ``model``;
+    a key absent from it is removed from the table, and an empty (or all-
+    ``None``) set removes the table like :func:`clear_ollama_model_options`.
+    Keys must come from the closed :data:`OLLAMA_MODEL_OPTION_KEYS` list —
+    anything else raises ``ValueError`` (pattern: ``ULTRAWIKI_SLOT_KEYS``).
+    Values pass through :class:`OllamaModelOptions`, so an out-of-range number
+    is clamped and a value of the wrong shape is dropped, never written — the
+    file holds only what the reader will accept. Returns the values written.
+
+    TOML-only by design, deliberately NOT pinned in ``config-soll.json``: the  # i18n-allow
+    table is keyed by arbitrary model tags, and pinning it would bring back the
+    "flipped back" symptom (BUG-010 class) the first time a sync helper is
+    missed — the same rationale as ``[ultrawiki]``. The drift-guard therefore
+    never touches this table. Atomic write under the module lock (AP-7); the
+    tag is written as a quoted key (``"qwen3.5:9b"``) by tomlkit itself.
+    """
+    tag = (model or "").strip()
+    if not tag:
+        raise ValueError("model tag must not be empty")
+    unknown = sorted(set(options) - set(OLLAMA_MODEL_OPTION_KEYS))
+    if unknown:
+        raise ValueError(
+            f"unknown Ollama model option key(s) {', '.join(unknown)} "
+            f"(allowed: {', '.join(OLLAMA_MODEL_OPTION_KEYS)})"
+        )
+    clamped = OllamaModelOptions.model_validate(options).model_dump(exclude_none=True)
+    values: dict[str, object] = {k: clamped[k] for k in OLLAMA_MODEL_OPTION_KEYS if k in clamped}
+    if not values:
+        clear_ollama_model_options(tag, provider=provider, path=path)
+        return {}
+
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        doc, had_bom = _read_doc(path)
+        block = _provider_block(doc, provider)
+        models = block.get("models")
+        if models is None:
+            models = tomlkit.table(True)
+            block["models"] = models
+        table = tomlkit.table()
+        for key, value in values.items():
+            table[key] = value
+        models[tag] = table
+        _write_doc(path, doc, had_bom)
+    clear_config_cache()
+    return values
+
+
+def clear_ollama_model_options(
+    model: str,
+    *,
+    provider: str = "ollama",
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> bool:
+    """Remove ``[brain.providers.ollama.models."<tag>"]``; ``True`` when it existed.
+
+    The "Reset" of the Tune sheet. A missing table is a no-op, not an error.
+    TOML-only for the same reason as :func:`set_ollama_model_options`.
+    """
+    tag = (model or "").strip()
+    if not tag:
+        raise ValueError("model tag must not be empty")
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        doc, had_bom = _read_doc(path)
+        models = (
+            (doc.get("brain") or {}).get("providers", {}).get(provider, {}).get("models")
+        )
+        if models is None or tag not in models:
+            return False
+        del models[tag]
+        _write_doc(path, doc, had_bom)
+    clear_config_cache()
+    return True
+
+
+def set_provider_flag(
+    provider: str, key: str, value: bool, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist one boolean flag under ``[brain.providers.<provider>]``.
+
+    ``key`` must come from the closed :data:`PROVIDER_FLAG_KEYS` list. TOML-
+    only: these flags are not pinned in ``config-soll.json`` (same rationale  # i18n-allow
+    as :func:`set_ollama_model_options`), so a plain atomic write is final.
+    """
+    if key not in PROVIDER_FLAG_KEYS:
+        raise ValueError(
+            f"unknown provider flag {key!r} (allowed: {', '.join(PROVIDER_FLAG_KEYS)})"
+        )
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        doc, had_bom = _read_doc(path)
+        block = _provider_block(doc, provider)
+        block[key] = bool(value)
+        _write_doc(path, doc, had_bom)
+    clear_config_cache()
+
+
+def set_ollama_hf_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Switch Hugging Face GGUF browsing on the Ollama card on or off.
+
+    Thin wrapper over :func:`set_provider_flag`; read by
+    :func:`jarvis.core.config.ollama_hf_enabled`.
+    """
+    set_provider_flag("ollama", "hf_enabled", bool(enabled), path=path)
 
 
 def set_local_realtime_launch_command(

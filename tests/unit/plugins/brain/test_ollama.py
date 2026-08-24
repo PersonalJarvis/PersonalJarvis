@@ -363,9 +363,7 @@ async def test_image_turn_picks_a_vision_capable_download(monkeypatch, fake_tags
     assert await brain._resolve_model(need_vision=True) == "qwen3-vl:8b"
 
 
-async def test_image_turn_without_a_vision_download_errors_honestly(
-    monkeypatch, fake_tags
-) -> None:
+async def test_image_turn_without_a_vision_download_errors_honestly(monkeypatch, fake_tags) -> None:
     _no_override(monkeypatch)
     fake_tags.payload = {"models": [{"name": "qwen3.5:4b", "size": 1_000}]}
     fake_tags.show_caps = {"qwen3.5:4b": ["completion", "tools"]}
@@ -378,9 +376,7 @@ async def test_image_turn_without_a_vision_download_errors_honestly(
     assert brain.supports_vision is False
 
 
-async def test_unprobeable_model_is_never_used_for_an_image_turn(
-    monkeypatch, fake_tags
-) -> None:
+async def test_unprobeable_model_is_never_used_for_an_image_turn(monkeypatch, fake_tags) -> None:
     """Vision is the ONE requirement that fails CLOSED: a model whose
     ``/api/show`` probe does not answer may back a chat turn, never an image
     turn — a blind answer is indistinguishable from a sighted one."""
@@ -449,3 +445,137 @@ def test_tags_payload_shape_matches_documented_api() -> None:
     payload = json.loads('{"models": [{"name": "qwen3.5:9b", "size": 1}]}')
     names = [m.get("name") for m in payload["models"]]
     assert names == ["qwen3.5:9b"]
+
+
+# ── Per-model options (profile alias, warm ping, request overrides) ──────
+class _FakeStreamer:
+    """Records what ``complete`` hands to the shared streamer."""
+
+    calls: list[tuple[str, Any]] = []
+
+    @classmethod
+    async def stream(cls, client: Any, model: str, req: Any, **kwargs: Any):
+        cls.calls.append((model, req))
+        from jarvis.core.protocols import BrainDelta
+
+        yield BrainDelta(content="ok", finish_reason="stop")
+
+
+class _FakeProfiles:
+    """Stands in for ``ollama_profiles.ensure_profile`` / ``warm``."""
+
+    ensured: list[tuple[str, str, Any]] = []
+    warmed: list[tuple[str, str, Any]] = []
+    fail: bool = False
+
+    @classmethod
+    async def ensure_profile(cls, root: str, base: str, opts: Any, **kwargs: Any) -> str:
+        if cls.fail:
+            raise RuntimeError("server said no")
+        cls.ensured.append((root, base, opts))
+        return f"{base.replace(':', '-')}-jarvis-deadbeef"
+
+    @classmethod
+    async def warm(cls, root: str, model: str, keep_alive: Any, **kwargs: Any) -> bool:
+        cls.warmed.append((root, model, keep_alive))
+        return True
+
+
+@pytest.fixture()
+def wired(monkeypatch):
+    import openai
+
+    from jarvis.brain import ollama_profiles
+    from jarvis.plugins.brain import ollama as plugin
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAI)
+    monkeypatch.setattr(plugin, "stream_complete", _FakeStreamer.stream)
+    monkeypatch.setattr(ollama_profiles, "ensure_profile", _FakeProfiles.ensure_profile)
+    monkeypatch.setattr(ollama_profiles, "warm", _FakeProfiles.warm)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    _FakeStreamer.calls = []
+    _FakeProfiles.ensured = []
+    _FakeProfiles.warmed = []
+    _FakeProfiles.fail = False
+    return _FakeProfiles
+
+
+def _config_with_options(monkeypatch, models: dict[str, dict[str, Any]]) -> None:
+    conf = JarvisConfig(brain=BrainConfig(providers={"ollama": BrainProviderConfig(models=models)}))
+    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+
+
+def _req(**kwargs: Any):
+    from jarvis.core.protocols import BrainMessage, BrainRequest
+
+    return BrainRequest(messages=(BrainMessage(role="user", content="hi"),), **kwargs)
+
+
+async def _run(brain: OllamaBrain, req: Any) -> None:
+    async for _ in brain.complete(req):
+        pass
+
+
+async def test_no_options_means_no_profile_no_warm_no_override(monkeypatch, wired) -> None:
+    _config_with_options(monkeypatch, {})
+    brain = OllamaBrain(model="qwen3.5:9b")
+    await _run(brain, _req())
+    model, req = _FakeStreamer.calls[0]
+    assert model == "qwen3.5:9b"
+    assert req.temperature == 0.7 and req.reasoning_effort is None
+    assert wired.ensured == [] and wired.warmed == []
+    assert brain.context_window == OllamaBrain.context_window
+
+
+async def test_bakeable_options_stream_through_the_profile_alias(monkeypatch, wired) -> None:
+    _config_with_options(
+        monkeypatch,
+        {"qwen3.5:9b": {"num_ctx": 16384, "num_gpu": -1, "keep_alive": "30m", "think": False}},
+    )
+    brain = OllamaBrain(model="qwen3.5:9b")
+    await _run(brain, _req())
+    model, req = _FakeStreamer.calls[0]
+    assert model == "qwen3.5-9b-jarvis-deadbeef"
+    assert [(b, o.num_ctx) for _, b, o in wired.ensured] == [("qwen3.5:9b", 16384)]
+    # The warm ping targets the alias (that is what the turn will load).
+    assert wired.warmed == [(DEFAULT_SERVER_ROOT, "qwen3.5-9b-jarvis-deadbeef", "30m")]
+    assert brain.context_window == 16384
+    assert req.reasoning_effort == "none"
+
+
+async def test_request_only_options_never_create_a_profile(monkeypatch, wired) -> None:
+    _config_with_options(monkeypatch, {"qwen3.5:9b": {"temperature": 0.1, "num_predict": 300}})
+    brain = OllamaBrain(model="qwen3.5:9b")
+    await _run(brain, _req())
+    model, req = _FakeStreamer.calls[0]
+    assert model == "qwen3.5:9b"
+    assert wired.ensured == [] and wired.warmed == []
+    assert req.temperature == 0.1 and req.max_tokens == 300
+
+
+async def test_a_caller_that_chose_its_own_knob_keeps_it(monkeypatch, wired) -> None:
+    """A deterministic tool step's temperature=0 / reasoning "none" wins over the profile."""
+    _config_with_options(monkeypatch, {"qwen3.5:9b": {"temperature": 0.9, "think": "high"}})
+    brain = OllamaBrain(model="qwen3.5:9b")
+    await _run(brain, _req(temperature=0.0, reasoning_effort="none"))
+    _, req = _FakeStreamer.calls[0]
+    assert req.temperature == 0.0 and req.reasoning_effort == "none"
+
+
+async def test_profile_failure_degrades_to_the_base_model(monkeypatch, wired) -> None:
+    _config_with_options(monkeypatch, {"qwen3.5:9b": {"num_ctx": 8192}})
+    wired.fail = True
+    brain = OllamaBrain(model="qwen3.5:9b")
+    await _run(brain, _req())
+    model, _ = _FakeStreamer.calls[0]
+    assert model == "qwen3.5:9b"
+    assert brain.context_window == 8192
+
+
+async def test_discovered_model_is_tuned_like_a_pinned_one(monkeypatch, wired, fake_tags) -> None:
+    _config_with_options(monkeypatch, {"qwen3.5:4b": {"num_ctx": 4096}})
+    fake_tags.payload = {"models": [{"name": "qwen3.5:4b", "size": 1_000}]}
+    brain = OllamaBrain()
+    await _run(brain, _req())
+    model, _ = _FakeStreamer.calls[0]
+    assert model == "qwen3.5-4b-jarvis-deadbeef"

@@ -37,11 +37,13 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import AsyncIterator
+from dataclasses import fields, replace
 from typing import Any
 
 import httpx
 
 from jarvis.core import config as cfg
+from jarvis.core.config import OllamaModelOptions
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
 from ._openai_base import stream_complete
@@ -199,9 +201,7 @@ class OllamaBrain:
             )
         return self._client
 
-    async def _resolve_model(
-        self, *, need_tools: bool = False, need_vision: bool = False
-    ) -> str:
+    async def _resolve_model(self, *, need_tools: bool = False, need_vision: bool = False) -> str:
         """The configured model, else the smallest CAPABLE download.
 
         Hard rules for the silent default (three live incidents 2026-07-25):
@@ -324,9 +324,7 @@ class OllamaBrain:
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         client = self._ensure_client()
         need_vision = _request_has_images(req)
-        model = await self._resolve_model(
-            need_tools=bool(req.tools), need_vision=need_vision
-        )
+        model = await self._resolve_model(need_tools=bool(req.tools), need_vision=need_vision)
         if need_vision and self._model and not await self._pinned_model_can_see(model):
             # A pinned text-only model is the user's own choice, so we do not
             # silently swap it — but we also refuse to answer about a picture
@@ -343,11 +341,73 @@ class OllamaBrain:
             # The negotiated model DOES see — keep the instance flag honest for
             # the next synchronous resolver question.
             self.supports_vision = True
+        run_model, req = await self._apply_model_options(model, req)
         # Invariant at this point: either the request carries no images, or the
         # model just negotiated declares ``vision`` — so the streamer may encode
         # them.
-        async for delta in stream_complete(client, model, req, supports_vision=True):
+        async for delta in stream_complete(client, run_model, req, supports_vision=True):
             yield delta
+
+    def _model_options(self, model: str) -> OllamaModelOptions | None:
+        """The user's per-model knobs for ``model`` from
+        ``[brain.providers.ollama.models."<tag>"]``, or ``None``.
+
+        Keyed by the RESOLVED tag, so a discovered model is tuned exactly like
+        a pinned one. A config that cannot be read is logged and treated as
+        "no options" — the turn must not die on a settings glitch (AP-30).
+        """
+        try:
+            provider = cfg.load_config().brain.providers.get("ollama")
+        except Exception as exc:  # noqa: BLE001 — a config glitch must not kill the turn
+            log.warning("ollama: could not read per-model options: %s", exc)
+            return None
+        if provider is None:
+            return None
+        return provider.models.get(model) or provider.models.get(f"{model}:latest")
+
+    async def _apply_model_options(self, model: str, req: BrainRequest) -> tuple[str, BrainRequest]:
+        """Turn the per-model options into ``(model to stream, request)``.
+
+        Bakeable knobs go through a derived profile alias (``/api/create``);
+        ``keep_alive`` through the warm ping; ``temperature`` / ``num_predict``
+        / ``think`` override the request — but only where the caller left the
+        field at its default, so a deterministic tool step that asked for
+        ``temperature=0`` or ``reasoning_effort="none"`` keeps its own choice.
+        ``num_ctx`` also narrows ``context_window`` so the manager budgets
+        against the real window instead of the class floor.
+        """
+        opts = self._model_options(model)
+        if opts is None:
+            return model, req
+        from jarvis.brain.ollama_profiles import (  # noqa: PLC0415 — lazy (AP-26)
+            ensure_profile,
+            has_bakeable,
+            to_v1_kwargs,
+            warm,
+        )
+
+        root = self._resolve_root()
+        run_model = model
+        if has_bakeable(opts):
+            try:
+                run_model = await ensure_profile(root, model, opts)
+            except Exception as exc:  # noqa: BLE001 — degrade to the base model, say so
+                log.warning(
+                    "ollama: profile for %s unavailable, running the base model (%s)",
+                    model,
+                    exc,
+                )
+                run_model = model
+        if opts.num_ctx:
+            self.context_window = opts.num_ctx
+        if opts.keep_alive is not None:
+            await warm(root, run_model, opts.keep_alive)
+        overrides: dict[str, Any] = {}
+        defaults = {f.name: f.default for f in fields(BrainRequest)}
+        for key, value in to_v1_kwargs(opts).items():
+            if getattr(req, key, None) == defaults.get(key):
+                overrides[key] = value
+        return run_model, (replace(req, **overrides) if overrides else req)
 
     def estimate_cost(self, req: BrainRequest) -> float:
         # Local inference has no per-token bill.

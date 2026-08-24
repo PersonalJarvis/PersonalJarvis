@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 import threading
@@ -636,6 +637,192 @@ class TTSConfig(BaseModel):
     service_account_path: str | None = None
 
 
+#: The closed vocabulary of per-model Ollama options a user may pin under
+#: ``[brain.providers.ollama.models."<tag>"]``. Source of truth for the
+#: config_writer's closed-key check and the TS mirror
+#: (``src/lib/ollamaModelOptions.ts``); a parity test pins the three together
+#: (AP-4). Everything here is an Ollama *request option* except the last two:
+#: ``keep_alive`` rides the warm ping and ``think`` rides the OpenAI-compat
+#: ``reasoning_effort`` field (verified live on Ollama 0.32.15).
+OLLAMA_MODEL_OPTION_KEYS: tuple[str, ...] = (
+    "num_ctx",
+    "num_gpu",
+    "num_thread",
+    "num_predict",
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "repeat_penalty",
+    "seed",
+    "stop",
+    "keep_alive",
+    "think",
+)
+
+#: Graded thinking levels Ollama's ``think`` field accepts besides a bool.
+OLLAMA_THINK_LEVELS: tuple[str, ...] = ("low", "medium", "high", "max")
+
+#: Go duration as Ollama parses ``keep_alive`` ("5m", "2h", "1h30m", "-1").
+_GO_DURATION_RE = re.compile(r"^-?(?:\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h))+$")
+
+
+def _clamped_optional_int(value: object, *, low: int, high: int) -> int | None:
+    """Clamp a hand-edited integer into range; ``None`` (or garbage) stays unset.
+
+    Same AP-16 contract as :func:`_clamped_polish_int`, minus the shipped
+    default: an unset per-model knob means "Ollama's own default", which is
+    already a working value, so there is nothing to fall back to.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return max(low, min(high, number))
+
+
+def _clamped_optional_float(value: object, *, low: float, high: float) -> float | None:
+    """The float twin of :func:`_clamped_optional_int`."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):  # NaN / ±inf
+        return None
+    return max(low, min(high, number))
+
+
+class OllamaModelOptions(BaseModel):
+    """Per-model knobs for one Ollama tag.
+
+    TOML path: ``[brain.providers.ollama.models."<tag>"]`` ·
+    Attribute path: ``JarvisConfig.brain.providers["ollama"].models["<tag>"]``
+
+    Every field is optional and ``None`` means "leave Ollama's default alone".
+    Values are CLAMPED, never rejected (AP-16): this table is reachable by hand
+    in ``jarvis.toml`` and a typo must not cost a boot. Unknown keys are kept
+    (``extra="allow"``) so a newer build's option survives a downgrade.
+
+    How each knob reaches the server (the OpenAI-compatible ``/v1`` endpoint
+    ignores request options): the bakeable ones (``num_ctx``, ``num_gpu``,
+    ``num_thread``, ``top_p``, ``top_k``, ``min_p``, ``repeat_penalty``,
+    ``seed``, ``stop``) are baked into a derived model via ``/api/create``
+    (``jarvis.brain.ollama_profiles``); ``temperature`` and ``num_predict`` ride
+    the ``/v1`` request as ``temperature`` / ``max_tokens``; ``think`` rides as
+    ``reasoning_effort``; ``keep_alive`` rides the warm ping.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    num_ctx: int | None = None
+    num_gpu: int | None = None
+    num_thread: int | None = None
+    num_predict: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    repeat_penalty: float | None = None
+    seed: int | None = None
+    stop: list[str] | None = None
+    keep_alive: str | int | None = None
+    think: bool | str | None = None
+
+    @field_validator("num_ctx", mode="before")
+    @classmethod
+    def _clamp_num_ctx(cls, value: object) -> int | None:
+        return _clamped_optional_int(value, low=512, high=1_048_576)
+
+    @field_validator("num_gpu", mode="before")
+    @classmethod
+    def _clamp_num_gpu(cls, value: object) -> int | None:
+        return _clamped_optional_int(value, low=-1, high=999)
+
+    @field_validator("num_thread", mode="before")
+    @classmethod
+    def _clamp_num_thread(cls, value: object) -> int | None:
+        return _clamped_optional_int(value, low=0, high=512)
+
+    @field_validator("num_predict", mode="before")
+    @classmethod
+    def _clamp_num_predict(cls, value: object) -> int | None:
+        return _clamped_optional_int(value, low=-2, high=1_048_576)
+
+    @field_validator("temperature", mode="before")
+    @classmethod
+    def _clamp_temperature(cls, value: object) -> float | None:
+        return _clamped_optional_float(value, low=0.0, high=2.0)
+
+    @field_validator("top_p", "min_p", mode="before")
+    @classmethod
+    def _clamp_unit_interval(cls, value: object) -> float | None:
+        return _clamped_optional_float(value, low=0.0, high=1.0)
+
+    @field_validator("top_k", mode="before")
+    @classmethod
+    def _clamp_top_k(cls, value: object) -> int | None:
+        return _clamped_optional_int(value, low=0, high=1000)
+
+    @field_validator("repeat_penalty", mode="before")
+    @classmethod
+    def _clamp_repeat_penalty(cls, value: object) -> float | None:
+        return _clamped_optional_float(value, low=0.0, high=3.0)
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def _clamp_seed(cls, value: object) -> int | None:
+        return _clamped_optional_int(value, low=0, high=2**31 - 1)
+
+    @field_validator("stop", mode="before")
+    @classmethod
+    def _coerce_stop(cls, value: object) -> list[str] | None:
+        """A single string becomes a one-element list; junk becomes unset."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return [value] if value else None
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(item) for item in value if isinstance(item, str) and item]
+            return cleaned or None
+        return None
+
+    @field_validator("keep_alive", mode="before")
+    @classmethod
+    def _coerce_keep_alive(cls, value: object) -> str | int | None:
+        """Go duration string, integer seconds, or ``-1`` (forever); else unset."""
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return max(-1, int(value))
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if text.lstrip("-").isdigit():
+                return max(-1, int(text))
+            return text if _GO_DURATION_RE.match(text) else None
+        return None
+
+    @field_validator("think", mode="before")
+    @classmethod
+    def _coerce_think(cls, value: object) -> bool | str | None:
+        """``bool`` or one of :data:`OLLAMA_THINK_LEVELS`; else unset."""
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in ("true", "on", "yes"):
+                return True
+            if text in ("false", "off", "no"):
+                return False
+            return text if text in OLLAMA_THINK_LEVELS else None
+        return None
+
+
 class BrainProviderConfig(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -667,6 +854,28 @@ class BrainProviderConfig(BaseModel):
     # ``> 0``   → fixed token cap for the thinking portion.
     # Currently only evaluated by ``GeminiBrain``; other providers ignore it.
     thinking_budget: int | None = None
+    # Per-model Ollama options keyed by model tag (``"qwen3.5:9b"``), read by
+    # the Ollama brain plugin on every turn. Only meaningful for the Ollama
+    # card; other providers ignore the table. TOML-only by design — not pinned
+    # in config-soll.json (see config_writer.set_ollama_model_options).
+    models: dict[str, OllamaModelOptions] = Field(default_factory=dict)
+    # Hugging Face GGUF browsing for the Ollama card. OFF by default so an
+    # install that wants no outbound Hugging Face traffic makes none; read via
+    # :func:`ollama_hf_enabled` by the local-models routes.
+    hf_enabled: bool = False
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def _drop_non_table_models(cls, value: object) -> dict[str, Any]:
+        """A hand-edited ``models`` that is not a table of tables is ignored
+        rather than rejected (AP-16) — a typo here must not cost a boot."""
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(tag): opts
+            for tag, opts in value.items()
+            if isinstance(opts, (dict, OllamaModelOptions))
+        }
 
     @property
     def cu_model(self) -> str | None:
@@ -5307,6 +5516,19 @@ def _cached_endpoint_route(
     if identity is not None:
         _ENDPOINT_ROUTE_CACHE[key] = route
     return route
+
+
+def ollama_hf_enabled(config: JarvisConfig | None = None) -> bool:
+    """Whether Hugging Face GGUF browsing is switched on for the Ollama card.
+
+    The ONE reader of ``[brain.providers.ollama].hf_enabled`` (AP-31): the
+    local-models Hugging Face routes answer 404 with a sentence while this is
+    false, so an install that never turned it on makes no outbound Hugging
+    Face request. ``config`` exists for tests; production passes ``None``.
+    """
+    conf = config or load_config()
+    provider = conf.brain.providers.get("ollama")
+    return bool(provider is not None and provider.hf_enabled)
 
 
 def resolve_provider_endpoint(
