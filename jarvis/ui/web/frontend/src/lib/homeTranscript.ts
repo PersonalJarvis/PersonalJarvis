@@ -79,8 +79,14 @@ export interface TranscriptStepsLine extends TranscriptLineBase {
 
 export type TranscriptLine = TranscriptTextLine | TranscriptStepsLine;
 
-/** How many lines are kept. The lane shows the tail; this bounds memory. */
-export const TRANSCRIPT_MAX = 40;
+/**
+ * How many lines are kept. Since the lane scrolls through ALL of them
+ * (components/home/VoiceStage) rather than showing a window onto the last
+ * few, this number is what a person can actually scroll back to — long
+ * enough for a whole sitting, and still nothing on the heap: a few hundred
+ * short strings.
+ */
+export const TRANSCRIPT_MAX = 300;
 /** Consecutive spoken pieces of one answer are joined when this close. */
 const JOIN_WITHIN_MS = 6_000;
 /** A repeat of the same words within this window is the same utterance. */

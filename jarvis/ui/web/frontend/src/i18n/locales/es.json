@@ -541,6 +541,7 @@
     "greeting_evening": "Buenas noches{name_part}",
     "voice_subtitle": "Di tu palabra de activación o toca la barra — la conversación aparece aquí.",
     "transcript_you": "Tú",
+    "transcript_to_end": "Ir a lo más reciente",
     "hint_idle": "Di «{wake}» o toca la barra para empezar",
     "hint_idle_nowake": "Toca la barra para empezar",
     "hint_listening": "Escuchando…",

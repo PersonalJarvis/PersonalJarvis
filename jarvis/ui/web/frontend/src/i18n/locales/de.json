@@ -541,6 +541,7 @@
     "greeting_evening": "Guten Abend{name_part}",
     "voice_subtitle": "Sag dein Wake‑Wort oder tippe auf die Leiste — die Unterhaltung erscheint hier.",
     "transcript_you": "Du",
+    "transcript_to_end": "Zum Neuesten springen",
     "hint_idle": "Sag „{wake}“ oder tippe auf die Leiste",
     "hint_idle_nowake": "Tippe auf die Leiste, um zu starten",
     "hint_listening": "Ich höre zu…",

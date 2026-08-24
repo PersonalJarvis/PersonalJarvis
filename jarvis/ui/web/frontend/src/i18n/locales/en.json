@@ -541,6 +541,7 @@
     "greeting_evening": "Good evening{name_part}",
     "voice_subtitle": "Say your wake word or tap the bar — the conversation shows up here.",
     "transcript_you": "You",
+    "transcript_to_end": "Jump to the newest",
     "hint_idle": "Say “{wake}” or tap the bar to start",
     "hint_idle_nowake": "Tap the bar to start",
     "hint_listening": "Listening…",

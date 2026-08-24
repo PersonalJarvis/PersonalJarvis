@@ -1,39 +1,46 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown } from "lucide-react";
 
 import { useEventStore, type VoiceState } from "@/store/events";
 import { useHomeStore } from "@/store/home";
-import type { TranscriptLine as TranscriptEntry } from "@/lib/homeTranscript";
 import type { WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { useVoiceCall } from "@/components/agentic/useVoiceCall";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Greeting } from "@/components/home/Greeting";
 import { JarvisBar } from "@/components/home/JarvisBar";
 import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
 import { traceModel } from "@/lib/thinkingSteps";
 
-/** How many finished lines the lane keeps above the bar. */
-const TRANSCRIPT_LINES = 8;
-
 /**
  * The voice stage — what the front page opens on.
  *
- * Vertically centred, one column: the greeting, the last few lines of the
- * conversation, the Jarvis bar, and one quiet line that says what to do
- * next. No microphone button (maintainer, 2026-08-23): you tap the bar, or
- * you say the wake word. The bar IS the control — the same start/stop path
- * the IDE's voice bubble uses, so there is exactly one way voice begins.
+ * Empty, it is one centred column: the greeting, the Jarvis bar, and one
+ * quiet line that says what to do next. No microphone button (maintainer,
+ * 2026-08-23): you tap the bar, or you say the wake word. The bar IS the
+ * control — the same start/stop path the IDE's voice bubble uses, so there
+ * is exactly one way voice begins.
  *
- * The transcript lane reads the home store's transcript (lib/homeTranscript:
- * heard words, the turn's reasoning steps, spoken answers and typed turns
- * merged into one list) plus the live, not-yet-final transcription, so what
- * you are saying appears while you say it. A turn's steps render between
- * your words and the answer — live while the turn runs, folded afterwards
- * (components/home/TurnSteps). Older lines scroll away; this is the live
- * turn, not an archive — the archive is one click away in the sidebar's
- * recent chats.
+ * Once anything has been said the page becomes a document, the way the chat
+ * stage next door already is: the whole conversation scrolls in its own
+ * viewport and the bar docks to the bottom. WHOLE, not a window onto the
+ * last few turns — until 2026-08-24 the lane rendered only the last 8 lines,
+ * so anything that scrolled off was gone from the DOM and could not be
+ * scrolled back to. The lane reads the home store's transcript
+ * (lib/homeTranscript: heard words, the turn's reasoning steps, spoken
+ * answers and typed turns merged into one list) plus the live, not-yet-final
+ * transcription, so what you are saying appears while you say it. A turn's
+ * steps render between your words and the answer — live while the turn runs,
+ * folded afterwards (components/home/TurnSteps).
+ *
+ * Scrolling follows the Claude app. New output pulls the view along ONLY
+ * while the view is already at the end; scrolled up to read something, you
+ * keep your place while the conversation goes on below, and a button over
+ * the bar takes you back to the end. Nothing yanks the page out from under
+ * someone mid-sentence.
  */
 export function VoiceStage() {
   const t = useT();
@@ -49,15 +56,11 @@ export function VoiceStage() {
   const wakePhrase = wakeConfig?.phrase.trim() || "";
 
   // Steps blocks with nothing to show (a sub-second brain call, no tools)
-  // are dropped BEFORE the lane is cut to its last lines, so an empty block
-  // never takes a slot — or leaves a blank gap — in the lane.
+  // are dropped so an empty block never leaves a blank gap in the lane.
   const lines = useMemo(
     () =>
-      recentLines(
-        transcript.filter(
-          (m) => m.who !== "steps" || traceWorthShowing(m.steps, m.durationMs, m.live),
-        ),
-        TRANSCRIPT_LINES,
+      transcript.filter(
+        (m) => m.who !== "steps" || traceWorthShowing(m.steps, m.durationMs, m.live),
       ),
     [transcript],
   );
@@ -70,27 +73,96 @@ export function VoiceStage() {
     liveReply && !(lastLine?.who === "assistant" && lastLine.text.startsWith(liveReply))
       ? liveReply
       : "";
-  // A live turn keeps the lane pinned to its end as steps arrive.
-  const liveSteps = lines.some((m) => m.who === "steps" && m.live);
+  const hasLines = lines.length > 0 || Boolean(liveLine) || Boolean(liveAnswer);
 
-  const laneEnd = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const columnRef = useRef<HTMLDivElement | null>(null);
+  // Whether new output pulls the view along. A ref, not state: the auto-scroll
+  // below runs in a layout effect and must read the CURRENT answer, not the
+  // one a re-render would deliver a frame later. `atEnd` mirrors it for the
+  // button, which only has to be right by the next paint.
+  const stickRef = useRef(true);
+  const [atEnd, setAtEnd] = useState(true);
+
+  const jumpToEnd = useCallback(() => {
+    const viewport = viewportOf(rootRef.current);
+    if (!viewport) return;
+    stickRef.current = true;
+    setAtEnd(true);
+    if (!prefersReducedMotion() && typeof viewport.scrollTo === "function") {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    } else {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+  }, []);
+
+  // One listener answers both questions: does new output pull the view along,
+  // and is the "back to the end" button needed.
   useEffect(() => {
-    laneEnd.current?.scrollIntoView({ block: "end" });
-  }, [lines, liveLine, liveAnswer, liveSteps]);
+    const viewport = viewportOf(rootRef.current);
+    if (!viewport) return;
+    const read = () => {
+      const near = isNearEnd(viewport.scrollTop, viewport.scrollHeight, viewport.clientHeight);
+      stickRef.current = near;
+      setAtEnd(near);
+    };
+    read();
+    viewport.addEventListener("scroll", read, { passive: true });
+    return () => viewport.removeEventListener("scroll", read);
+  }, [hasLines]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportOf(rootRef.current);
+    if (!viewport || !stickRef.current) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [lines, liveLine, liveAnswer]);
+
+  // An answer and its steps grow WITHOUT a new line arriving, so the effect
+  // above never fires for them; the column's own size is the honest signal
+  // where the platform has ResizeObserver.
+  useEffect(() => {
+    const column = columnRef.current;
+    const viewport = viewportOf(rootRef.current);
+    if (!column || !viewport || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) viewport.scrollTop = viewport.scrollHeight;
+    });
+    ro.observe(column);
+    return () => ro.disconnect();
+  }, [hasLines]);
 
   const phase = waveformPhase(voiceState, connected);
   const hint = hintFor({ connected, warming, connecting, voiceState, wakePhrase, t });
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col items-center overflow-hidden" data-testid="voice-stage">
-      <div className="flex min-h-0 w-full max-w-[760px] flex-1 flex-col justify-center gap-7 px-6 pb-14 pt-6">
-        <Greeting subtitle={t("home.voice_subtitle")} muted={lines.length > 0 || Boolean(liveLine)} />
+  if (!hasLines) {
+    return (
+      <div
+        className="flex min-h-0 flex-1 flex-col items-center overflow-hidden"
+        data-testid="voice-stage"
+        data-empty="true"
+      >
+        <div className="flex w-full max-w-[760px] flex-1 flex-col justify-center gap-8 px-6 pb-14">
+          <Greeting subtitle={t("home.voice_subtitle")} />
+          <JarvisBar phase={phase} hint={hint} />
+        </div>
+      </div>
+    );
+  }
 
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col items-center overflow-hidden"
+      data-testid="voice-stage"
+      data-empty="false"
+    >
+      <ScrollArea ref={rootRef} className="min-h-0 w-full flex-1" data-testid="voice-transcript">
         <div
-          className="flex max-h-[44vh] min-h-[96px] flex-col justify-end gap-3 overflow-y-auto px-1 scrollbar-jarvis"
-          data-testid="voice-transcript"
+          ref={columnRef}
+          className="mx-auto flex w-full max-w-[760px] flex-col gap-3 px-6 pb-4 pt-6"
           aria-live="polite"
         >
+          <Greeting subtitle={t("home.voice_subtitle")} muted />
+          <div className="h-2 shrink-0" aria-hidden />
           {lines.map((m) =>
             m.who === "steps" ? (
               <div key={m.id} className="pl-[80px]" data-testid="transcript-steps">
@@ -112,19 +184,56 @@ export function VoiceStage() {
               />
             ),
           )}
-          {liveLine && (
-            <TranscriptLine who={t("home.transcript_you")} text={liveLine} user live />
-          )}
-          {liveAnswer && (
-            <TranscriptLine who={assistantName} text={liveAnswer} user={false} live />
-          )}
-          <div ref={laneEnd} />
+          {liveLine && <TranscriptLine who={t("home.transcript_you")} text={liveLine} user live />}
+          {liveAnswer && <TranscriptLine who={assistantName} text={liveAnswer} user={false} live />}
         </div>
+      </ScrollArea>
 
+      <div className="relative w-full max-w-[760px] px-6 pb-6 pt-2">
+        {!atEnd && (
+          <button
+            type="button"
+            onClick={jumpToEnd}
+            data-testid="voice-scroll-end"
+            aria-label={t("home.transcript_to_end")}
+            title={t("home.transcript_to_end")}
+            className={cn(
+              "absolute -top-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center",
+              "rounded-full border border-border bg-card/95 text-muted-foreground shadow-md backdrop-blur",
+              "transition-colors hover:border-primary/40 hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+          >
+            <ArrowDown aria-hidden className="h-4 w-4" />
+          </button>
+        )}
         <JarvisBar phase={phase} hint={hint} />
       </div>
     </div>
   );
+}
+
+/**
+ * Within this many pixels of the bottom counts as "at the end", so sub-pixel
+ * rounding — or the half line a growing answer adds between two frames —
+ * never reads as "they scrolled away".
+ */
+export const NEAR_END_PX = 72;
+
+export function isNearEnd(scrollTop: number, scrollHeight: number, clientHeight: number): boolean {
+  return scrollHeight - scrollTop - clientHeight <= NEAR_END_PX;
+}
+
+/** Radix renders the scrolling element as the viewport inside our ScrollArea root. */
+function viewportOf(root: HTMLElement | null): HTMLElement | null {
+  if (!root) return null;
+  return (root.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null) ?? root;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    : false;
 }
 
 /**
@@ -166,16 +275,14 @@ function TranscriptLine({
       >
         {text}
         {live && (
-          <span className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-0.5 animate-pulse bg-primary motion-reduce:animate-none" aria-hidden />
+          <span
+            className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-0.5 animate-pulse bg-primary motion-reduce:animate-none"
+            aria-hidden
+          />
         )}
       </span>
     </div>
   );
-}
-
-/** The last N lines of the transcript, oldest first. */
-export function recentLines(lines: TranscriptEntry[], limit: number): TranscriptEntry[] {
-  return lines.length > limit ? lines.slice(lines.length - limit) : lines;
 }
 
 export function waveformPhase(state: VoiceState, connected: boolean): WaveformPhase {
