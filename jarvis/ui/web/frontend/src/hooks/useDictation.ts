@@ -342,14 +342,15 @@ export interface DictationSettings {
   translate_drift_max_shrink: number;
   translate_drift_max_growth: number;
   /**
-   * Rewrite every dictation into a finished, English prompt for an AI coding
-   * agent — the Agentic IDE's own prompt doctrine applied to a transcript,
-   * written by the same model that writes its briefs. Outranks the wording
-   * pass and the translation while on; falls back to them when no writer
-   * answers in time. Ships OFF: it changes WHAT the text says, on purpose.
+   * Rewrite every dictation into a finished prompt for an AI coding agent —
+   * plain text, in the spoken language, every dictated task kept — the
+   * Agentic IDE's own prompt doctrine applied to a transcript, on the wording
+   * pass's fast model. Outranks the wording pass and the translation while
+   * on; falls back to them when no model answers in time. Ships OFF: it
+   * changes WHAT the text says, on purpose.
    */
   prompt_mode: boolean;
-  /** Wall-clock ceiling for one Prompt Mode call. Seconds, not the polish 1.2 s. */
+  /** Ceiling for one Prompt Mode call from the finished transcript (2-10 s). */
   prompt_mode_timeout_ms: number;
 }
 

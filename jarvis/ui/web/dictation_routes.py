@@ -579,19 +579,21 @@ class SettingsBody(BaseModel):
     prompt_mode: bool | None = Field(
         default=None,
         description=(
-            "Turn every dictation into a finished, English prompt for an AI "
-            "coding agent: the goal you described, the context and limits you "
-            "stated, nothing invented. Written by the same model that writes "
-            "the Agentic IDE's briefs. While on, it replaces the wording "
-            "clean-up and the translation; if no model answers in time, the "
-            "dictation falls back to those. Off by default."
+            "Turn every dictation into a finished prompt for an AI coding "
+            "agent: plain text, in the language you spoke, worded the way you "
+            "would say it - the goal, the context and limits you stated, every "
+            "task you mentioned, nothing invented. Runs on the wording pass's "
+            "fast model. While on, it replaces the wording clean-up and the "
+            "translation; if no model answers in time, the dictation falls "
+            "back to those. Off by default."
         ),
     )
     prompt_mode_timeout_ms: int | None = Field(
         default=None,
         description=(
-            "How long Prompt Mode may take before the dictation falls back to "
-            "the ordinary passes, in milliseconds"
+            "How long Prompt Mode may take from the finished transcript before "
+            "the dictation falls back to the ordinary passes, in milliseconds "
+            "(2000-10000)"
         ),
     )
     persist: bool = Field(

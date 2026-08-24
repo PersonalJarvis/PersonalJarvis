@@ -3576,28 +3576,30 @@ class DictationConfig(BaseModel):
     # Prompt Mode — a dictation comes out as the prompt for a coding agent
     # ------------------------------------------------------------------
 
-    #: Rewrite every dictation into a finished, English prompt for an AI
-    #: coding agent: the goal, the stated context and constraints, nothing
-    #: invented — the Agentic IDE's own prompt doctrine
-    #: (``jarvis/agentic_ide/prompt_blueprint.py``) applied to a transcript.
-    #: The writer is the one the Agentic IDE uses (``agentic_ide.prompt_writer``:
-    #: the pinned Tool Model, then the API tier, then a connected coding CLI);
-    #: no second picker, because "which model turns my words into a prompt"
-    #: is one question with one answer.
+    #: Rewrite every dictation into a finished prompt for an AI coding agent:
+    #: plain text, in the language it was spoken, sounding like a person
+    #: talking — the goal, the stated context and constraints, every task
+    #: that was dictated, nothing invented. The Agentic IDE's own prompt
+    #: doctrine (``jarvis/agentic_ide/prompt_blueprint.py``) applied to a
+    #: transcript. It runs on the polish pass's own fast model chain
+    #: (``polish_provider``), asking for the family's stronger fast model,
+    #: because the bar is 5-7 s from the finished transcript and nothing
+    #: slower fits that window.
     #:
-    #: Outranks the polish and translate passes while on — a prompt is always
-    #: English and always restructured, so neither has anything left to do.
-    #: When no writer answers in time the dictation falls through to those
-    #: passes exactly as if this switch were off; the raw words are never lost.
+    #: Outranks the polish and translate passes while on — a prompt is
+    #: already restructured, so neither has anything left to do. When no
+    #: model answers in time the dictation falls through to those passes
+    #: exactly as if this switch were off; the raw words are never lost.
     #:
     #: Ships OFF. It changes WHAT the text says, on purpose, and it sends the
-    #: words to a cloud writer on most installs. Chosen, never inherited.
+    #: words to a cloud model on most installs. Chosen, never inherited.
     prompt_mode: bool = False
 
-    #: Wall-clock ceiling for one Prompt Mode call. Seconds, not the polish
-    #: pass's 1.2 s: this is a thinking-grade writer producing a brief, and
-    #: the user chose to wait for it. Clamped, never rejected (AP-16).
-    prompt_mode_timeout_ms: int = Field(default=20_000, ge=2_000, le=120_000)
+    #: Wall-clock ceiling for one Prompt Mode call, from the finished
+    #: transcript. Longer than the polish pass's 1.2 s because a brief is a
+    #: rewrite and completeness outranks speed inside the window; bounded at
+    #: 10 s so it stays dictation. Clamped, never rejected (AP-16).
+    prompt_mode_timeout_ms: int = Field(default=6_000, ge=2_000, le=10_000)
 
     @field_validator("paste_chord", mode="before")
     @classmethod
@@ -3738,7 +3740,7 @@ class DictationConfig(BaseModel):
     @field_validator("prompt_mode_timeout_ms", mode="before")
     @classmethod
     def _clamp_prompt_mode_timeout_ms(cls, value: object) -> int:
-        return _clamped_polish_int(value, default=20_000, low=2_000, high=120_000)
+        return _clamped_polish_int(value, default=6_000, low=2_000, high=10_000)
 
 
 class MarketplaceConfig(BaseModel):
