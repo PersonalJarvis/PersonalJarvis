@@ -1180,6 +1180,26 @@ _SPAWN_DECLINE_RE = re.compile(
 )
 
 
+# A leading "No," answers the ASSISTANT'S last proposal; it does not negate the
+# vehicle named after it. English collapses two German words into one — "kein"
+# (negates the noun) and "nein" (contradicts the previous statement) are both
+# "no" — and ``_SPAWN_DECLINE_RE``'s char-window arm reads either as the first.
+# Live bug 2026-08-24 (voice session 10:24, Turn 4): Jarvis offered to do the
+# job inline, the user corrected him with "No, no, a worker should do it." and
+# the gate scored that explicit delegation ORDER as a decline — the exact
+# opposite — so the third spawn request in a row was refused. The German arms
+# were never affected because they key on "kein/nicht/ohne/niemals", never on
+# "nein". Stripped only when the particle is punctuated off ("No, …"), which is
+# what makes it a reply rather than a determiner: "No subagent please" has no
+# comma, keeps its window, and still declines. Any real negation that follows
+# ("No, do not spawn …", "No, no subagent!") matches on its own merits after
+# the strip. Pure regex (AP-11).
+_CONTRADICTION_LEAD_RE = re.compile(
+    r"^(?:\s*(?:no|nope|nah|nein|nee|noe)\s*[,;:]+)+\s*",  # i18n-allow: spoken input
+    re.IGNORECASE,
+)
+
+
 def _is_spawn_decline(user_text: str) -> bool:
     """True when the user explicitly declines a worker spawn — "don't spawn a
     subagent", "no sub-agent", "talk to me directly". Must override the
@@ -1187,9 +1207,12 @@ def _is_spawn_decline(user_text: str) -> bool:
 
     See ``_SPAWN_DECLINE_RE`` for the full rationale (live bug 2026-06-19,
     Turn 2): an explicit decline that NAMES the vehicle ("Subagent"/"spawn")
-    must never be read as a spawn request.
+    must never be read as a spawn request. A leading contradiction particle is
+    dropped first — see ``_CONTRADICTION_LEAD_RE`` (live bug 2026-08-24).
     """
-    return bool(_SPAWN_DECLINE_RE.search(user_text or ""))
+    return bool(
+        _SPAWN_DECLINE_RE.search(_CONTRADICTION_LEAD_RE.sub("", user_text or ""))
+    )
 
 
 # The user NAMING the auto-spawn *feature* — talking about it, complaining about

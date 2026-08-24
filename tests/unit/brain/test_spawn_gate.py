@@ -85,6 +85,47 @@ def test_spawn_decline_blocks_even_though_it_names_the_vehicle() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # voice-session 2026-08-24 10:24 Turn 4 — the user CORRECTS the
+        # assistant's offer to do the job inline. "No" answers that offer;
+        # "worker" is the vehicle he wants, not one he refuses.
+        "No, no, which a worker should do it.",
+        "No, no, a worker should do it.",
+        # the same shape without the stutter, and the positive command form
+        "No, do it with a subagent.",
+        "No, I want an agent for this.",
+        # German never had the bug ("nein" ≠ "kein") — pinned so it stays so
+        "Nein, nein, ein Worker soll das machen.",  # i18n-allow: DE live turn
+    ],
+)
+def test_leading_contradiction_is_not_a_spawn_decline(utterance: str) -> None:
+    """A "No," that answers the assistant's offer must not read as "no worker".
+
+    English collapses German "kein" (negates the noun) and "nein"
+    (contradicts the statement) into one word, and the decline regex's
+    char-window read either as the first. Live: the user asked for a worker
+    three turns running and was refused every time.
+    """
+    assert llm_spawn_allowed(utterance) is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "No subagent please, just talk to me.",
+        "No, no subagent!",
+        "No, do not spawn a subagent, talk to me directly.",
+        "No, I don't want a subagent.",
+        "No uses un subagente.",  # i18n-allow: ES decline
+    ],
+)
+def test_real_declines_survive_the_contradiction_strip(utterance: str) -> None:
+    """Dropping the leading particle must not disarm an actual refusal."""
+    assert llm_spawn_allowed(utterance) is False
+
+
 def test_auto_spawn_feature_complaint_blocks() -> None:
     assert (
         llm_spawn_allowed(
