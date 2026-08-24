@@ -40,6 +40,24 @@ usage record; it is on ``turn_context`` records and is carried forward within
 the file (and across a resumed scan, which is why the resume row stores it).
 The session id comes from the ``session_meta`` record, or from the filename.
 
+Two Codex conventions differ from Claude's and both cost real money when
+missed (a 37 000 USD "bill" on one machine, 2026-08-24):
+
+* ``input_tokens`` INCLUDES ``cached_input_tokens`` — the OpenAI usage
+  object reports cache hits as a breakdown of the input count, whereas
+  Anthropic reports them as a separate field. The cached share is subtracted
+  so ``tokens_in`` means "uncached input" for every agent alike.
+* A forked or resumed thread starts a NEW rollout file and replays its whole
+  parent history into it as fresh ``token_count`` records — thousands of
+  them, stamped with the moment of the fork. Byte offsets are new, so they
+  cannot identify a turn across files. The running total can: within one
+  lineage it is monotonic and unique per real model call, and the lineage is
+  what ``session_meta.session_id`` names (a fork keeps its parent's
+  ``session_id`` and gets its own ``id``). The dedup key is therefore
+  ``session_id + total_token_usage`` and the replay collapses onto the
+  original. A replayed row can arrive BEFORE the parent's ``turn_context``
+  and so carry no model; the insert lets a later row with a model fill it in.
+
 **agy** — ``<root>/sessions/**/wire.jsonl``. Two generations ship under one
 binary and keep separate roots (``~/.kimi``, ``~/.kimi-code``); both are read,
 since a machine can carry both histories. The usage record shape is taken from
@@ -160,6 +178,12 @@ _FILE_BYTE_BUDGET = 48 * 1024 * 1024
 #: The trailing UUID of ``rollout-<iso>-<uuid>.jsonl``.
 _ROLLOUT_ID = re.compile(r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$")
 
+# Bumped whenever a reader's accounting changes so rows already indexed under
+# the old rule would be wrong. An older index is dropped and rebuilt from the
+# transcripts, which are the source of truth; nothing is lost but time.
+#   2 — Codex: cached input subtracted from input; lineage-based dedup.
+_SCHEMA_VERSION = 2
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indexed_files (
     path        TEXT PRIMARY KEY,
@@ -190,11 +214,16 @@ CREATE TABLE IF NOT EXISTS cli_turns (
 CREATE INDEX IF NOT EXISTS idx_cli_turns_ts ON cli_turns (ts_ms);
 """
 
+# A duplicate is ignored except for one field: a row indexed without a model
+# (a Codex replay ahead of its ``turn_context``) takes the model from the copy
+# that knows it. Nothing else may change — the first sighting is the record.
 _INSERT_TURN = (
-    "INSERT OR IGNORE INTO cli_turns "
+    "INSERT INTO cli_turns "
     "(agent, dedup_key, path, session_id, ts_ms, model, "
     " tokens_in, tokens_out, tokens_cached, cwd, label) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    "ON CONFLICT(agent, dedup_key) DO UPDATE SET model=excluded.model "
+    "WHERE cli_turns.model = '' AND excluded.model <> ''"
 )
 
 _UPSERT_FILE = (
@@ -646,14 +675,15 @@ def _codex_row(
     tokens_in, tokens_out, tokens_cached = _usage_totals(usage)
     if tokens_in + tokens_out + tokens_cached <= 0:
         return None
+    # OpenAI counts cache hits INSIDE ``input_tokens``; the convention here
+    # (and Anthropic's) keeps them apart. See the module docstring.
+    tokens_in = max(0, tokens_in - tokens_cached)
+    session_id = cursor.session_id or _codex_session_id(cand.path)
     return (
         cand.agent,
-        # Codex records carry no id of their own, so the line's place in the
-        # file is its identity. A rewritten file has its rows dropped first,
-        # so an offset can never mean two different turns.
-        f"{cand.key}:{offset}",
+        _codex_dedup_key(session_id, info, cand, offset),
         cand.key,
-        cursor.session_id or _codex_session_id(cand.path),
+        session_id,
         _iso_ms(record.get("timestamp")),
         cursor.model,
         tokens_in,
@@ -662,6 +692,28 @@ def _codex_row(
         cursor.cwd,
         cursor.label,
     )
+
+
+def _codex_dedup_key(
+    session_id: str, info: Mapping[str, Any], cand: _Candidate, offset: int
+) -> str:
+    """One key per real model call, the same in every file that replays it.
+
+    The cumulative ``total_token_usage`` after a call is unique within a
+    lineage (it only ever grows), so ``session_id`` plus that total names the
+    call wherever it is written down. Records without a running total fall
+    back to the line's place in the file — a rewritten file has its rows
+    dropped first, so an offset never means two different turns.
+    """
+    total = info.get("total_token_usage")
+    if isinstance(total, Mapping) and session_id:
+        counts = [
+            _int(total.get(k))
+            for k in ("input_tokens", "cached_input_tokens", "output_tokens", "total_tokens")
+        ]
+        if any(counts):
+            return f"{session_id}:" + ":".join(str(c) for c in counts)
+    return f"{cand.key}:{offset}"
 
 
 def _codex_session_id(path: Path) -> str:
@@ -836,12 +888,38 @@ def _open_rw(path: Path) -> sqlite3.Connection | None:
         # fsyncs. A lost tail after a crash costs a re-read, never a wrong sum.
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        version = _int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version < _SCHEMA_VERSION:
+            # Rows counted under an older rule are wrong, not stale. Rebuild.
+            if _has_rows(conn):
+                log.info(
+                    "cli usage index: schema %d < %d, rebuilding from the transcripts",
+                    version,
+                    _SCHEMA_VERSION,
+                )
+            conn.executescript(
+                "DROP TABLE IF EXISTS cli_turns; DROP TABLE IF EXISTS indexed_files;"
+            )
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         conn.executescript(_SCHEMA)
         conn.commit()
         return conn
     except (OSError, sqlite3.Error) as exc:
         log.warning("cli usage index: %s not writable (%s)", path, exc)
         return None
+
+
+def _has_rows(conn: sqlite3.Connection) -> bool:
+    """Whether an index holds any turn at all (decides if a rebuild is news)."""
+    try:
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cli_turns'"
+        ).fetchone()
+        if table is None:
+            return False
+        return conn.execute("SELECT 1 FROM cli_turns LIMIT 1").fetchone() is not None
+    except sqlite3.Error:
+        return False
 
 
 def _open_ro(path: Path) -> sqlite3.Connection | None:

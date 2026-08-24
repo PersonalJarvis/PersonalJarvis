@@ -385,6 +385,7 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 tokens_out=tokens_out,
                 recorded_usd=recorded,
                 subscription=start.get("runner", "") in SUBSCRIPTION_RUNNERS,
+                tokens_cached=tokens_cached,
             )
             yield CostEntry(
                 ts_ms=_int(row["ts_ms"]),
@@ -603,6 +604,7 @@ def _cli_entries(
             tokens_out=turn.tokens_out,
             recorded_usd=0.0,
             subscription=True,
+            tokens_cached=turn.tokens_cached,
         )
         yield CostEntry(
             ts_ms=turn.ts_ms,

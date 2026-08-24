@@ -150,31 +150,65 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
+# What a prompt-cache READ costs relative to a fresh input token. Every
+# vendor bills cache hits at a flat discount off its own input rate, so the
+# fraction — not a second price table — is what has to be known per family:
+# Anthropic, OpenAI and xAI charge 10 %, Google's implicit caching 25 %.
+# Cache WRITES are not here: they are counted as plain input by every reader
+# (``cache_creation_input_tokens`` sits in ``tokens_in``), which under-prices
+# Anthropic's 1.25x write premium slightly rather than inventing a rate.
+CACHE_READ_FRACTION_DEFAULT = 0.10
+CACHE_READ_FRACTION_BY_PREFIX: tuple[tuple[str, float], ...] = (
+    ("gemini", 0.25),
+    ("google/", 0.25),
+)
+
+
+def cache_read_fraction(model: str | None) -> float:
+    """The share of the input rate a cached input token bills at."""
+    key = (model or "").strip().casefold()
+    for prefix, fraction in CACHE_READ_FRACTION_BY_PREFIX:
+        if key.startswith(prefix):
+            return fraction
+    return CACHE_READ_FRACTION_DEFAULT
+
+
 def calculate_cost_usd(
     model: str | None,
     tokens_in: int,
     tokens_out: int,
+    tokens_cached: int = 0,
 ) -> float:
     """Return the cost in USD for a single brain call.
 
     Args:
         model: Canonical model ID (e.g. ``"claude-opus-4-7-20251022"``).
             ``None`` or unknown → 0.0.
-        tokens_in: Prompt tokens.
+        tokens_in: Prompt tokens that were NOT served from the prompt cache.
         tokens_out: Completion tokens.
+        tokens_cached: Prompt tokens served from the cache, billed at
+            :func:`cache_read_fraction` of the input rate. A coding session
+            re-sends its whole context every turn and nearly all of it is a
+            cache hit, so pricing these at the full rate multiplies a real
+            bill by ten and ignoring them hides most of a Claude Code bill.
 
     Returns:
         Cost in USD. 0.0 if the model is not in the pricing table
         or if the token counts are non-positive.
     """
-    if not model or tokens_in <= 0 and tokens_out <= 0:
+    if not model or (tokens_in <= 0 and tokens_out <= 0 and tokens_cached <= 0):
         return 0.0
     rates = resolve_rates(model)
     if rates is None:
         log.debug("Cost pricing missing for model %r — returning 0.0", model)
         return 0.0
     in_rate, out_rate = rates
-    return (max(0, tokens_in) * in_rate + max(0, tokens_out) * out_rate) / 1_000_000
+    cached_rate = in_rate * cache_read_fraction(model)
+    return (
+        max(0, tokens_in) * in_rate
+        + max(0, tokens_cached) * cached_rate
+        + max(0, tokens_out) * out_rate
+    ) / 1_000_000
 
 
 # ----------------------------------------------------------------------

@@ -187,6 +187,7 @@ def price_entry(
     tokens_out: int,
     recorded_usd: float,
     subscription: bool = False,
+    tokens_cached: int = 0,
 ) -> tuple[float, PriceSource]:
     """Settle what a call actually cost and how confident that number is.
 
@@ -201,8 +202,13 @@ def price_entry(
     like any other call. What changes is the label, so a report can show the
     worth of the work without claiming the money moved. A seat whose model has
     no rate anywhere is still a gap: the tokens are real and unpriced.
+
+    ``tokens_cached`` are prompt tokens the vendor served from its cache. They
+    are priced at the cache-read discount (:func:`jarvis.brain.cost.
+    cache_read_fraction`), never at the full input rate and never at zero —
+    for a coding agent they are nine tenths of every bill.
     """
-    tokens = max(0, tokens_in) + max(0, tokens_out)
+    tokens = max(0, tokens_in) + max(0, tokens_out) + max(0, tokens_cached)
     if subscription and tokens > 0:
         if recorded_usd > 0:
             return float(recorded_usd), "subscription"
@@ -211,7 +217,10 @@ def price_entry(
         from jarvis.brain.cost import calculate_cost_usd, resolve_rates
 
         if model and resolve_rates(model) is not None:
-            return calculate_cost_usd(model, tokens_in, tokens_out), "subscription"
+            return (
+                calculate_cost_usd(model, tokens_in, tokens_out, tokens_cached),
+                "subscription",
+            )
         return 0.0, "unknown"
 
     if recorded_usd > 0:
@@ -233,4 +242,4 @@ def price_entry(
 
     if not model or resolve_rates(model) is None:
         return 0.0, "unknown"
-    return calculate_cost_usd(model, tokens_in, tokens_out), "derived"
+    return calculate_cost_usd(model, tokens_in, tokens_out, tokens_cached), "derived"

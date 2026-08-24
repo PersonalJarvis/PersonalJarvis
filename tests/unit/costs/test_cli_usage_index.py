@@ -103,7 +103,14 @@ def _codex_token_line(
     ts: str = "2026-08-13T15:05:55.557Z",
     last: dict[str, int] | None = None,
     total: dict[str, int] | None = None,
+    turn: int = 1,
 ) -> str:
+    """One ``token_count`` record.
+
+    ``turn`` moves the running total the way a real session does — it only
+    ever grows — because the total is what identifies a call across files.
+    Two records with the same total ARE the same call.
+    """
     return json.dumps(
         {
             "timestamp": ts,
@@ -113,12 +120,12 @@ def _codex_token_line(
                 "info": {
                     "total_token_usage": total
                     or {
-                        "input_tokens": 900_000,
-                        "cached_input_tokens": 400_000,
+                        "input_tokens": 900_000 + 100 * turn,
+                        "cached_input_tokens": 400_000 + 40 * turn,
                         "cache_write_input_tokens": 0,
-                        "output_tokens": 90_000,
+                        "output_tokens": 90_000 + 30 * turn,
                         "reasoning_output_tokens": 40_000,
-                        "total_tokens": 990_000,
+                        "total_tokens": 990_000 + 130 * turn,
                     },
                     "last_token_usage": last
                     or {
@@ -382,7 +389,7 @@ def test_codex_uses_last_token_usage_and_ignores_the_running_total(tmp_path: Pat
     session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
     _write(
         _codex_path(tmp_path, session),
-        [*_codex_prelude(session), _codex_token_line(), _codex_token_line()],
+        [*_codex_prelude(session), _codex_token_line(turn=1), _codex_token_line(turn=2)],
     )
 
     refresh(data_dir=data, home=tmp_path)
@@ -390,8 +397,9 @@ def test_codex_uses_last_token_usage_and_ignores_the_running_total(tmp_path: Pat
     turns = _all(data)
     assert len(turns) == 2
     assert {t.agent for t in turns} == {AGENT_CODEX}
-    # last_token_usage only: 100 input + 5 cache write, 30 output, 40 cached.
-    assert [t.tokens_in for t in turns] == [105, 105]
+    # last_token_usage only. OpenAI reports the 40 cache hits INSIDE the 100
+    # input tokens, so uncached input is 100 - 40 + 5 cache write = 65.
+    assert [t.tokens_in for t in turns] == [65, 65]
     assert [t.tokens_out for t in turns] == [30, 30]
     assert [t.tokens_cached for t in turns] == [40, 40]
     # The model lives on turn_context and is carried forward to the usage rows.
@@ -430,14 +438,94 @@ def test_codex_turns_are_not_recounted_after_an_append(tmp_path: Path) -> None:
     data = tmp_path / "data"
     session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
     path = _codex_path(tmp_path, session)
-    _write(path, [*_codex_prelude(session), _codex_token_line()])
+    _write(path, [*_codex_prelude(session), _codex_token_line(turn=1)])
     refresh(data_dir=data, home=tmp_path)
 
-    _append(path, [_codex_token_line(ts="2026-08-13T15:09:00.000Z")])
+    _append(path, [_codex_token_line(ts="2026-08-13T15:09:00.000Z", turn=2)])
     result = refresh(data_dir=data, home=tmp_path)
 
     assert result.turns_added == 1
     assert len(_all(data)) == 2
+
+
+def test_codex_fork_replays_its_parent_but_is_counted_once(tmp_path: Path) -> None:
+    """A fork writes the whole parent history into a new file (2026-08-24).
+
+    Real shape: 1 787 ``token_count`` records inside 100 ms, all stamped
+    with the moment of the fork, before any ``turn_context`` — so no model.
+    The running total identifies each call, so the replay collapses onto the
+    parent's rows, and the parent's model fills the rows the replay lacked.
+    """
+    data = tmp_path / "data"
+    parent = "019fb38d-0077-7823-a306-c7c256d64efe"
+    fork = "019fb88c-ebde-7d11-b851-5ae72a0885cb"
+    fork_meta = json.dumps(
+        {
+            "timestamp": "2026-07-31T14:21:11.072Z",
+            "type": "session_meta",
+            "payload": {
+                "session_id": parent,
+                "id": fork,
+                "forked_from_id": parent,
+                "cwd": "/work/downloads",
+            },
+        }
+    )
+    replay = [
+        _codex_token_line(ts="2026-07-31T14:21:11.389Z", turn=1),
+        _codex_token_line(ts="2026-07-31T14:21:11.389Z", turn=2),
+    ]
+    # The fork is the NEWER file, so it is scanned first — with no model.
+    fork_path = tmp_path / ".codex" / "sessions" / "2026" / "07" / "31" / (
+        f"rollout-2026-07-31T16-21-11-{fork}.jsonl"
+    )
+    _write(fork_path, [fork_meta, *replay, _codex_token_line(turn=3)])
+    parent_path = tmp_path / ".codex" / "sessions" / "2026" / "07" / "30" / (
+        f"rollout-2026-07-30T17-03-10-{parent}.jsonl"
+    )
+    _write(
+        parent_path,
+        [*_codex_prelude(parent), _codex_token_line(turn=1), _codex_token_line(turn=2)],
+    )
+    import os
+
+    os.utime(parent_path, ns=(1, 1))
+
+    refresh(data_dir=data, home=tmp_path)
+
+    turns = _all(data)
+    # Two real calls in the parent, one new call in the fork. Not five.
+    assert len(turns) == 3
+    assert {t.session_id for t in turns} == {parent}
+    # The replayed rows had no model; the parent's copy supplied it.
+    assert sum(1 for t in turns if t.model == "gpt-5.6-terra") == 2
+    assert sum(1 for t in turns if t.model == "") == 1
+
+
+def test_an_index_built_under_an_older_rule_is_rebuilt(tmp_path: Path) -> None:
+    """A schema bump throws the old rows away rather than mixing two rules."""
+    import sqlite3
+
+    from jarvis.costs.cli_usage_index import index_db_path
+
+    data = tmp_path / "data"
+    session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
+    _write(_codex_path(tmp_path, session), [*_codex_prelude(session), _codex_token_line()])
+    refresh(data_dir=data, home=tmp_path)
+    assert len(_all(data)) == 1
+
+    db = index_db_path(data)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE cli_turns SET tokens_in = 999999"
+        )  # a number the old rule produced
+        conn.execute("PRAGMA user_version=1")
+
+    refresh(data_dir=data, home=tmp_path)
+
+    turns = _all(data)
+    assert len(turns) == 1
+    assert turns[0].tokens_in == 65
 
 
 # ---------------------------------------------------------------------------

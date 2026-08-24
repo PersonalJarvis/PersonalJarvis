@@ -201,18 +201,23 @@ export interface SurfaceGroup {
 
 export const SURFACE_GROUPS: SurfaceGroup[] = [
   { id: "all", surfaces: [], roles: ROLE_ORDER },
-  // Talking. Everything a spoken turn costs, whichever path served it: the
-  // realtime model, the tool model it delegated to, the classic pipeline
-  // brain, and the ears and mouth around them. Naming this area after the
-  // speech layer alone would leave it nearly empty while the feature it is
-  // named after is the biggest spender in the app.
+  // The assistant itself — every model that thinks on its behalf, whichever
+  // channel the turn came in on: the realtime model and the tool model it
+  // delegated to, the classic pipeline brain, the agent chat and the
+  // missions it hands off to. "{name}" IS the assistant, so this area is
+  // named after it (maintainer decision 2026-08-24).
   {
-    id: "jarvis-voice",
-    surfaces: ["voice", "jarvis-voice"],
-    roles: ["realtime", "tool", "pipeline", "stt", "tts"],
+    id: "jarvis",
+    surfaces: ["voice", "agent-chat", "mission"],
+    roles: ["realtime", "tool", "pipeline", "agent", "worker"],
   },
-  // Typing — the agent chat and the missions it hands off to.
-  { id: "jarvis", surfaces: ["agent-chat", "mission"], roles: ["agent", "worker"] },
+  // The assistant's voice — the speech layer built around the brain: the
+  // ears (speech to text) and the mouth (text to speech). Bills by audio
+  // second and by character, never by token, which is why it is its own
+  // surface. A speech-to-speech realtime model has no separate ears or
+  // mouth, so a machine that only talks through one keeps this area empty —
+  // and that empty is the truth, not a gap.
+  { id: "jarvis-voice", surfaces: ["jarvis-voice"], roles: ["stt", "tts"] },
   // Coding — the workspaces, billed through vendor CLI seats.
   { id: "agentic-ide", surfaces: ["agentic-ide"], roles: ["agent", "worker"] },
 ];

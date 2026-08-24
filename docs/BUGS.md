@@ -12436,3 +12436,59 @@ a recovery tears down a response, whatever the replacement must be grounded in
 has to be re-supplied by the side that still holds it — and the request has to
 name its evidence as complete, or the model will quietly widen it. "Use the
 result already in this conversation" is a promise about someone else's memory.
+
+---
+
+## BUG-177: the Costs section bills Agentic IDE at 37 000 USD and the speech area is empty — Codex cache hits priced twice at full rate, forks counted again, and the speech meter had not run yet (HIGH, FIXED 2026-08-24)
+
+**Symptom (maintainer, 2026-08-24).** The Costs section's Agentic IDE area
+showed a subscription-equivalent of ~40 000 USD, 17.6 BILLION input tokens on
+`codex-cli`, and a 3.7-billion-token bucket with no model name. The speech
+area (`jarvis-voice`) showed nothing at all.
+
+**Evidence.** Straight from the index (`data/cli_usage_index.db`):
+
+* The biggest Codex row: `tokens_in=334 298, tokens_cached=332 544`. OpenAI's
+  usage object reports cache hits INSIDE `input_tokens`; Anthropic reports them
+  BESIDE it. One rule for both meant Codex input was counted at full price
+  including the 99 % that was a cache hit, and the cached share was then
+  ignored by the pricer on top.
+* One forked Codex thread: 1 787 `token_count` records written within 100 ms
+  of the fork, all before any `turn_context` (hence no model). A fork or
+  resume starts a NEW rollout file and replays the parent's entire history.
+  The dedup key was the byte offset in the file, which is new for a copy, so
+  every fork counted its parent's whole bill again.
+* `SpeechUsageRecorded` rows in `sessions.db`: 0. The meter shipped at 16:34;
+  the desktop app had been running since 09:58. Not a defect — the code had
+  never executed. It also only ever fills from the classic STT → brain → TTS
+  path; a speech-to-speech realtime model has no separate ears or mouth.
+
+**Fix.**
+
+* `jarvis/costs/cli_usage_index.py` — Codex `tokens_in` is
+  `input_tokens - cached_input_tokens`; the dedup key is
+  `session_id + total_token_usage` (the running total is monotonic within a
+  lineage, and a fork keeps its parent's `session_id`), so a replay collapses
+  onto the original; the insert lets a row with a model fill one indexed
+  without. `PRAGMA user_version` = 2 drops an index built under the old rule
+  and rebuilds it from the transcripts (~2 minutes for 3 300 files here).
+* `jarvis/brain/cost.py` — `calculate_cost_usd` takes `tokens_cached` and
+  bills it at `cache_read_fraction(model)` of the input rate (10 %, Gemini
+  25 %). Before, cache reads were priced at zero — which also hid most of a
+  Claude Code bill (7.9 billion cached tokens on this machine).
+* `jarvis/costs/model.py` / `sources.py` — `price_entry` carries the cached
+  count through for the CLI and agent-chat readers.
+* Result on the same data: Codex 37 687 → 2 901 USD, the model-less bucket
+  3.7 billion → 0.4 million tokens, Claude 2 535 → 4 278 USD (cache reads now
+  counted). Agentic IDE total 7 623 USD API-equivalent over the seat's life.
+* `costFormat.ts` — the areas are regrouped the way the maintainer reads
+  them: "{name}" is the assistant (every brain, whichever channel: realtime,
+  tool model, pipeline, agent chat, missions), "{name} Voice" is the speech
+  layer alone (STT + TTS), Agentic IDE unchanged. Order: Overall · {name} ·
+  {name} Voice · Agentic IDE.
+
+**Lesson.** Two vendors, one word, two meanings. "input tokens" is a superset
+of cache hits at one vendor and disjoint from them at the other, and a reader
+that normalises both into one column has to know which it is holding. And a
+dedup key that is a position in a file is only an identity for that file —
+anything a tool can copy needs a key made from the content.

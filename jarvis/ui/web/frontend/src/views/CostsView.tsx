@@ -547,7 +547,7 @@ const AREA_ICONS = {
 } as const;
 
 /**
- * Overall · Jarvis · Agentic IDE · Jarvis Voice.
+ * Overall · Jarvis · Jarvis Voice · Agentic IDE.
  *
  * The same pill the front page uses for Voice/Chat (`home/SurfaceSwitch`) —
  * one shape for "which area am I in", wherever the question appears.

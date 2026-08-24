@@ -360,6 +360,42 @@ def test_known_model_is_re_derived() -> None:
     assert cost > 0
 
 
+def test_cached_tokens_bill_at_the_cache_read_rate() -> None:
+    """A coding session is nine tenths cache hits — neither free nor full price."""
+    fresh, _ = price_entry(
+        provider="anthropic",
+        model="claude-opus-4-7-20251022",
+        tokens_in=1_000_000,
+        tokens_out=0,
+        recorded_usd=0.0,
+    )
+    cached, source = price_entry(
+        provider="anthropic",
+        model="claude-opus-4-7-20251022",
+        tokens_in=0,
+        tokens_out=0,
+        recorded_usd=0.0,
+        tokens_cached=1_000_000,
+    )
+    assert source == "derived"
+    assert 0 < cached < fresh
+    assert cached == pytest.approx(fresh * 0.10)
+
+
+def test_a_seat_with_only_cached_tokens_is_still_priced() -> None:
+    cost, source = price_entry(
+        provider="claude-cli",
+        model="claude-opus-4-7-20251022",
+        tokens_in=0,
+        tokens_out=0,
+        recorded_usd=0.0,
+        subscription=True,
+        tokens_cached=1_000_000,
+    )
+    assert source == "subscription"
+    assert cost > 0
+
+
 def test_no_tokens_no_gap() -> None:
     """A 0.0 with nothing consumed is not a pricing hole."""
     assert price_entry(
