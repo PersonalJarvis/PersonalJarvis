@@ -624,7 +624,10 @@ def _targets_computer_use(harness_name: str) -> bool:
 
 
 _ERROR_MESSAGE_RE = re.compile(r"""['"]message['"]\s*:\s*['"]([^'"]{1,300})['"]""")
-_ERROR_CODE_RE = re.compile(r"\b(?:Error code|status(?: code)?)[:=]?\s*(\d{3})\b", re.IGNORECASE)
+_ERROR_CODE_RE = re.compile(
+    r"""\b(?:Error code|status(?: code)?)[:=]?\s*(\d{3})\b|['"]code['"]\s*:\s*(\d{3})\b""",
+    re.IGNORECASE,
+)
 _LAST_ERROR_MAX_CHARS = 400
 
 
@@ -646,11 +649,18 @@ def readable_error(exc: BaseException) -> str:
         # Already one readable line per provider — extracting the first
         # code/message would silently drop every provider after it.
         return f"{name}: {raw}"[:_LAST_ERROR_MAX_CHARS]
-    code = _ERROR_CODE_RE.search(raw)
-    message = _ERROR_MESSAGE_RE.search(raw)
-    if message:
-        body = message.group(1).strip()
-        text = f"{name}: {code.group(1)} — {body}" if code else f"{name}: {body}"
+    code_match = _ERROR_CODE_RE.search(raw)
+    code = (code_match.group(1) or code_match.group(2)) if code_match else None
+    # Some SDKs nest a JSON document inside the outer "message" (Gemini's
+    # ``{'message': '{"error": {"code": 429, "message": "You exceeded…"}}'``)
+    # — skip any message whose body is itself a JSON object.
+    body = next(
+        (m.group(1).strip() for m in _ERROR_MESSAGE_RE.finditer(raw)
+         if not m.group(1).lstrip().startswith("{")),
+        None,
+    )
+    if body:
+        text = f"{name}: {code} — {body}" if code else f"{name}: {body}"
     else:
         text = f"{name}: {raw}"
     return text[:_LAST_ERROR_MAX_CHARS]
