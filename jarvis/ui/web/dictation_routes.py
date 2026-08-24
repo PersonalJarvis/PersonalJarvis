@@ -253,15 +253,39 @@ async def _format_restored_text(
         # handed back the original language while the live path translates would
         # be a quiet lie about what the button does.
         translate_to = resolve_translate_target(cfg)
-        if text.strip() and (polish_enabled(cfg) or translate_to):
-            pipeline = _pipeline()
-            terms = ()
-            getter = getattr(pipeline, "_dictation_protected_terms", None)
-            if callable(getter):
-                try:
-                    terms = tuple(getter())
-                except Exception as exc:  # noqa: BLE001 — a guard input, not a gate
-                    log.debug("restore protected terms unavailable: %s", exc)
+        pipeline = _pipeline()
+        terms = ()
+        getter = getattr(pipeline, "_dictation_protected_terms", None)
+        if callable(getter):
+            try:
+                terms = tuple(getter())
+            except Exception as exc:  # noqa: BLE001 — a guard input, not a gate
+                log.debug("restore protected terms unavailable: %s", exc)
+
+        # Prompt Mode first, for the reason every other step here is the live
+        # path's: a Restore that handed back a polished sentence while the
+        # live path delivers a brief would be a quiet lie about the button.
+        prompted = False
+        if text.strip():
+            from jarvis.dictation.prompt_mode import (
+                STATUS_PROMPTED,
+                compose_prompt,
+                prompt_mode_enabled,
+            )
+
+            if prompt_mode_enabled(cfg):
+                result = await compose_prompt(text, cfg=cfg, protected_terms=terms)
+                prompted = result.status == STATUS_PROMPTED
+                if prompted:
+                    text = result.text
+                log.info(
+                    "restore prompt mode: %s (%s, %d ms).",
+                    result.status,
+                    result.provider or "no writer",
+                    result.latency_ms,
+                )
+
+        if text.strip() and not prompted and (polish_enabled(cfg) or translate_to):
             result = await polish_transcript(
                 text,
                 language=language,
@@ -550,6 +574,26 @@ class SettingsBody(BaseModel):
     )
     translate_drift_max_shrink: float | None = None
     translate_drift_max_growth: float | None = None
+    # Prompt Mode. Same FastAPI trap once more: an undeclared body key is
+    # dropped before the handler ever sees it.
+    prompt_mode: bool | None = Field(
+        default=None,
+        description=(
+            "Turn every dictation into a finished, English prompt for an AI "
+            "coding agent: the goal you described, the context and limits you "
+            "stated, nothing invented. Written by the same model that writes "
+            "the Agentic IDE's briefs. While on, it replaces the wording "
+            "clean-up and the translation; if no model answers in time, the "
+            "dictation falls back to those. Off by default."
+        ),
+    )
+    prompt_mode_timeout_ms: int | None = Field(
+        default=None,
+        description=(
+            "How long Prompt Mode may take before the dictation falls back to "
+            "the ordinary passes, in milliseconds"
+        ),
+    )
     persist: bool = Field(
         default=True, description="Also write the change to jarvis.toml"
     )
@@ -1286,6 +1330,17 @@ _POLISH_PRECISION_SAMPLE = (
     "to the three people who are in charge of it tomorrow"
 )
 
+#: The sample Prompt Mode's dry run uses. A TASK, spoken the way people
+#: actually dictate one — a false start, a name for the assistant, a symptom
+#: and one file — so the probe shows a transcript turning into a brief rather
+#: than a sentence turning into a sentence.
+_PROMPT_MODE_SAMPLE = (
+    "okay so um the login page is broken again when you type a wrong password "
+    "it just shows a blank screen instead of the error message i think it's "
+    "in the auth handler file can you have a look and fix it so the message "
+    "shows up like it used to"
+)
+
 
 @router.post("/polish/test")
 async def test_polish(request: Request) -> dict[str, Any]:
@@ -1321,6 +1376,41 @@ async def test_polish(request: Request) -> dict[str, Any]:
     sample = (
         _POLISH_PRECISION_SAMPLE if precision_enabled(cfg) else _POLISH_SAMPLE
     )
+
+    pipeline = _pipeline()
+    terms: tuple[str, ...] = ()
+    getter = getattr(pipeline, "_dictation_protected_terms", None)
+    if callable(getter):
+        try:
+            terms = tuple(getter())
+        except Exception as exc:  # noqa: BLE001 — a guard input, never a gate
+            log.debug("polish test protected terms unavailable: %s", exc)
+
+    # Prompt Mode outranks both passes, exactly as it does on a live
+    # dictation, and the probe runs it with its own sample: the formatter's
+    # sentence is a sentence, not a task, and rewriting it into a brief would
+    # show the user a prompt about shipping a report.
+    from jarvis.dictation.prompt_mode import (
+        STATUS_PROMPTED,
+        compose_prompt,
+        prompt_mode_enabled,
+    )
+
+    if prompt_mode_enabled(cfg):
+        result = await compose_prompt(_PROMPT_MODE_SAMPLE, cfg=cfg, protected_terms=terms)
+        if result.status == STATUS_PROMPTED or not (polish_enabled(cfg) or translate_to):
+            return {
+                "status": result.status,
+                "provider": result.provider,
+                "model": result.model,
+                "latency_ms": result.latency_ms,
+                "reason": result.reason,
+                "sample_in": _PROMPT_MODE_SAMPLE,
+                "sample_out": result.text,
+            }
+        # Fell through, as a live dictation would: report the pass that
+        # actually delivered, on the sample that pass is tuned for.
+
     if not polish_enabled(cfg) and not translate_to:
         # Reported rather than refused: "you switched it off" is a complete
         # answer to "why is my dictation not being polished", and a 409 here
@@ -1334,15 +1424,6 @@ async def test_polish(request: Request) -> dict[str, Any]:
             "sample_in": sample,
             "sample_out": sample,
         }
-
-    pipeline = _pipeline()
-    terms: tuple[str, ...] = ()
-    getter = getattr(pipeline, "_dictation_protected_terms", None)
-    if callable(getter):
-        try:
-            terms = tuple(getter())
-        except Exception as exc:  # noqa: BLE001 — a guard input, never a gate
-            log.debug("polish test protected terms unavailable: %s", exc)
 
     result = await polish_transcript(
         sample,

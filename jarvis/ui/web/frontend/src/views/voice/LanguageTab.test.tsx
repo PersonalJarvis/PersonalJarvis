@@ -98,6 +98,8 @@ const SETTINGS = {
   translate_target: "en",
   translate_drift_max_shrink: 0.4,
   translate_drift_max_growth: 2.5,
+  prompt_mode: false,
+  prompt_mode_timeout_ms: 20000,
 };
 
 const CHOICES = {
@@ -610,6 +612,59 @@ describe("LanguageTab — the wording pass", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("dictation-precision-toggle")).toBeTruthy(),
     );
+  });
+
+  // ------------------------------------------------------------------
+  // Prompt Mode — the dictation becomes a brief for a coding agent
+  // ------------------------------------------------------------------
+
+  it("keeps Prompt Mode off until it is asked for, and says where the words go", async () => {
+    installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    const toggle = await waitFor(() =>
+      screen.getByTestId("dictation-prompt-mode-toggle"),
+    );
+    // Off by default: it rewrites WHAT the dictation says, on purpose, and
+    // sends the words to the Agentic IDE's writer — a cloud model on most
+    // installs. Neither is inherited from a default.
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(
+      screen.getByTestId("dictation-prompt-mode-sends-text").textContent,
+    ).toBeTruthy();
+    // The "outranks the other passes" note describes nothing while off.
+    expect(screen.queryByTestId("dictation-prompt-mode-outranks")).toBeNull();
+  });
+
+  it("saves the Prompt Mode switch and then explains what steps back", async () => {
+    const calls = installFetchMock(
+      routes({
+        "PUT /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, prompt_mode: true }, persisted: true },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    fireEvent.click(
+      await waitFor(() => screen.getByTestId("dictation-prompt-mode-toggle")),
+    );
+
+    await waitFor(() => {
+      const put = calls.find(
+        (c) => c.method === "PUT" && c.url === "/api/dictation/settings",
+      );
+      expect(JSON.parse(put?.body ?? "{}")).toMatchObject({
+        prompt_mode: true,
+        persist: true,
+      });
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-prompt-mode-outranks")).toBeTruthy(),
+    );
+    expect(
+      screen.getByTestId("dictation-prompt-mode-writer-hint").textContent,
+    ).toBeTruthy();
   });
 
   // ------------------------------------------------------------------

@@ -101,6 +101,10 @@ export const POLISH_STATUSES = [
   "timeout",
   "provider_error",
   "rejected_drift",
+  // Prompt Mode rewrote the dictation into a prompt for a coding agent. Like
+  // applied and translated, the delivered text differs from what was
+  // recognized — here by design and by a lot.
+  "prompted",
 ] as const;
 
 export type PolishStatus = (typeof POLISH_STATUSES)[number];
@@ -337,6 +341,16 @@ export interface DictationSettings {
   translate_target: string;
   translate_drift_max_shrink: number;
   translate_drift_max_growth: number;
+  /**
+   * Rewrite every dictation into a finished, English prompt for an AI coding
+   * agent — the Agentic IDE's own prompt doctrine applied to a transcript,
+   * written by the same model that writes its briefs. Outranks the wording
+   * pass and the translation while on; falls back to them when no writer
+   * answers in time. Ships OFF: it changes WHAT the text says, on purpose.
+   */
+  prompt_mode: boolean;
+  /** Wall-clock ceiling for one Prompt Mode call. Seconds, not the polish 1.2 s. */
+  prompt_mode_timeout_ms: number;
 }
 
 /**

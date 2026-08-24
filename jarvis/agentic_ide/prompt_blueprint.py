@@ -106,16 +106,35 @@ _SKELETON = """\
 - <an observable outcome the user actually stated>\
 """
 
+# The two rules every prompt-writing surface shares — the Agentic IDE composer
+# here and the dictation Prompt Mode (``jarvis.dictation.prompt_mode``). ONE
+# text each, imported by both: a rule spelled twice is how "goal, not route"
+# ends up meaning something subtly different depending on whether the prompt
+# was spoken at a pane or dictated into a field.
+GOAL_NOT_IMPLEMENTATION_RULE = """\
+Give the agent the GOAL, the CONTEXT and the CONSTRAINTS - never the \
+implementation. Which approach, which mechanism, which order are its decisions, \
+made against code it can see and you cannot; a solution you guess at gets built \
+even when it is wrong or already there. Say what must be true when it is done, \
+and leave the route open."""
+
+FORBIDDEN_SUBJECTS_RULE = """\
+Two subjects must not appear in the prompt AT ALL - not as a requirement and \
+not as a prohibition. Say nothing about either; the agent handles both \
+correctly on its own, and raising them measurably degrades its work:
+- Verification. No "verify your work", no "double-check", and equally no "do \
+not double-check". Write neither.
+- Its own reasoning. No "explain your reasoning", "show your thinking" or \
+"narrate your steps", and equally no instruction forbidding those. Write \
+neither. (A line like "Do not narrate your internal reasoning" in the finished \
+prompt is this rule being LEAKED instead of followed - it is a defect.)"""
+
 _SHARED_RULES = f"""\
 You turn a spoken instruction into a brief for a coding agent (Claude Code or \
 Codex) already running inside the user's repository. The agent will act on what \
 you write, so write the brief you would want to receive.
 
-Give the agent the GOAL, the CONTEXT and the CONSTRAINTS - never the \
-implementation. Which approach, which mechanism, which order are its decisions, \
-made against code it can see and you cannot; a solution you guess at gets built \
-even when it is wrong or already there. Say what must be true when it is done, \
-and leave the route open.
+{GOAL_NOT_IMPLEMENTATION_RULE}
 
 The user is SPEAKING to Jarvis about this agent, so their words name the \
 handover as well as the work: "prompt T2 and T3 to ...", "write Alex the prompt \
@@ -162,15 +181,7 @@ popup open and the prompt is never submitted.
 - Preserve every constraint, file, symbol and intent expressed; drop speech \
 artefacts and the clause addressing the agent by name.
 
-Two subjects must not appear in the prompt AT ALL - not as a requirement and \
-not as a prohibition. Say nothing about either; the agent handles both \
-correctly on its own, and raising them measurably degrades its work:
-- Verification. No "verify your work", no "double-check", and equally no "do \
-not double-check". Write neither.
-- Its own reasoning. No "explain your reasoning", "show your thinking" or \
-"narrate your steps", and equally no instruction forbidding those. Write \
-neither. (A line like "Do not narrate your internal reasoning" in the finished \
-prompt is this rule being LEAKED instead of followed - it is a defect.)\
+{FORBIDDEN_SUBJECTS_RULE}\
 """
 
 # Per-kind guardrails. Short on purpose: a short coherent set is followed, a
@@ -502,6 +513,8 @@ def looks_like_brief(text: str) -> bool:
 
 
 __all__ = [
+    "FORBIDDEN_SUBJECTS_RULE",
+    "GOAL_NOT_IMPLEMENTATION_RULE",
     "MAX_BODY_CHARS",
     "TARGET_MAX_CHARS",
     "TARGET_MIN_CHARS",

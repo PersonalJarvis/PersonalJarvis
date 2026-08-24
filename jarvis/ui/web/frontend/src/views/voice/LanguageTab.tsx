@@ -7,6 +7,7 @@ import {
   MessageSquare,
   PlugZap,
   Scissors,
+  Sparkles,
   Wand2,
 } from "lucide-react";
 
@@ -142,6 +143,18 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
     }
   }
 
+  async function onTogglePromptMode(next: boolean) {
+    // The dry run switches to Prompt Mode's own sample while this is on, so a
+    // result from the other mode would show a sentence this one never writes.
+    setTestResult(null);
+    try {
+      await saveSettings({ prompt_mode: next });
+      pushToast("success", t("dictation.saved"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    }
+  }
+
   async function onToggleTranslate(next: boolean) {
     setTestResult(null);
     try {
@@ -197,6 +210,10 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   // Ships OFF, unlike the wording pass: this changes WHICH WORDS come out, not
   // just how they are written, so it is never on until someone asks for it.
   const translateOn = settings?.translate ?? false;
+  // Ships OFF too, and for a stronger reason than translation: it rewrites the
+  // dictation into a brief for a coding agent, so WHAT the text says changes
+  // by design. Chosen, never inherited.
+  const promptModeOn = settings?.prompt_mode ?? false;
   const translateTarget = settings?.translate_target ?? "en";
   // No "auto" in this list, and none is added here — there is nothing to detect
   // on the output side, so an auto entry would be a choice that does nothing.
@@ -505,6 +522,67 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                     </div>
                   </div>
                 )}
+              </>
+            )}
+          </div>
+
+          {/* Prompt Mode sits between the wording pass and the translation
+              because it outranks both: while it is on, the dictation is
+              rewritten into an English brief for a coding agent by the
+              Agentic IDE's own writer, and neither pass has anything left to
+              do. The card says so, and says where the words go. */}
+          <div
+            className="rounded-lg border border-border bg-card/60 p-4"
+            data-testid="dictation-prompt-mode-card"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h4 className="flex items-center gap-2 font-display text-sm font-semibold">
+                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5 text-primary" />
+                  {t("voice.prompt_mode.title")}
+                </h4>
+                <p
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="dictation-prompt-mode-description"
+                >
+                  {t("voice.prompt_mode.description")}
+                </p>
+                <p
+                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  data-testid="dictation-prompt-mode-sends-text"
+                >
+                  {t("voice.prompt_mode.sends_text")}
+                </p>
+              </div>
+              <Switch
+                checked={promptModeOn}
+                disabled={loading}
+                onCheckedChange={(next) => void onTogglePromptMode(next)}
+                aria-label={t("voice.prompt_mode.title")}
+                data-testid="dictation-prompt-mode-toggle"
+              />
+            </div>
+
+            {promptModeOn && (
+              <>
+                {/* The two facts someone who just switched this on needs: the
+                    other two passes step back, and where the writer is chosen.
+                    Shown only while on — while off they describe nothing. */}
+                <div
+                  className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-background/40 p-3"
+                  data-testid="dictation-prompt-mode-outranks"
+                >
+                  <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("voice.prompt_mode.outranks")}
+                  </p>
+                </div>
+                <p
+                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  data-testid="dictation-prompt-mode-writer-hint"
+                >
+                  {t("voice.prompt_mode.writer_hint")}
+                </p>
               </>
             )}
           </div>

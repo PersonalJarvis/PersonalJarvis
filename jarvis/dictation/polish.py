@@ -144,6 +144,7 @@ POLISH_STATUSES: Final[tuple[str, ...]] = (
     "timeout",        # exceeded polish_timeout_ms
     "provider_error",  # HTTP / SDK failure after the fallback chain
     "rejected_drift",  # a guard fired -> raw delivered
+    "prompted",       # Prompt Mode: the text was rewritten into an agent prompt
 )
 
 #: Consecutive provider failures that open the breaker, and how long it stays

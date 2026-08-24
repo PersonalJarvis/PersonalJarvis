@@ -362,7 +362,8 @@
       "skipped_long": "Zu lang zum Aufräumen",
       "timeout": "Hat zu lange gedauert — dein Rohtext wurde verwendet",
       "provider_error": "Modell nicht erreichbar — dein Rohtext wurde verwendet",
-      "rejected_drift": "Umformulierung abgelehnt — dein Rohtext wurde verwendet"
+      "rejected_drift": "Umformulierung abgelehnt — dein Rohtext wurde verwendet",
+      "prompted": "In einen Prompt verwandelt"
     },
     "cleanup_reason": {
       "disabled": "Füllwort-Entfernung aus",
@@ -417,6 +418,13 @@
       "test_hint": "Schickt eine feste Beispielzeile durch deine Einstellung. Es wird nichts gespeichert.",
       "sample_before": "Vorher",
       "sample_after": "Nachher"
+    },
+    "prompt_mode": {
+      "title": "Prompt-Modus",
+      "description": "Sag in deinen Worten und in jeder Sprache, was erledigt werden soll. Im Feld landet ein fertiger Prompt für einen KI-Coding-Agenten, auf Englisch: das Ziel, das du beschrieben hast, der Kontext und die Grenzen, die du genannt hast — und nichts Erfundenes.",
+      "sends_text": "Dein Transkript geht an das Modell, das auch die Briefings der Agentic IDE schreibt — ausgewählt unter API-Schlüssel → Agenten. Das ist meist ein Cloud-Modell und darf ein paar Sekunden nachdenken. Dein Rohtext bleibt immer in deinem Verlauf.",
+      "outranks": "Solange das an ist, treten das Aufräumen der Formulierung und die Übersetzung zurück: Ein Prompt ist immer Englisch und immer neu strukturiert. Antwortet kein Modell rechtzeitig, kommt dieses Diktat so an, als wäre der Prompt-Modus aus.",
+      "writer_hint": "Welches Modell schreibt: API-Schlüssel → Agenten → „Wer die Aufgaben-Briefings schreibt“."
     },
     "translate": {
       "title": "Immer in einer Sprache schreiben",

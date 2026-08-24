@@ -878,6 +878,10 @@ DICTATION_SETTING_KEYS = (
     "translate_target",
     "translate_drift_max_shrink",
     "translate_drift_max_growth",
+    # Prompt Mode. Same rule again: a key missing here is a switch the UI
+    # appears to save and loses on the next restart.
+    "prompt_mode",
+    "prompt_mode_timeout_ms",
 )
 
 

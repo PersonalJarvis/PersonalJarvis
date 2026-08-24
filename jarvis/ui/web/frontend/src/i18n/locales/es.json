@@ -362,7 +362,8 @@
       "skipped_long": "Demasiado largo para pulir",
       "timeout": "Tardó demasiado: se usó tu texto original",
       "provider_error": "Modelo inaccesible: se usó tu texto original",
-      "rejected_drift": "Reescritura rechazada: se usó tu texto original"
+      "rejected_drift": "Reescritura rechazada: se usó tu texto original",
+      "prompted": "Convertido en un prompt"
     },
     "cleanup_reason": {
       "disabled": "Eliminación de muletillas desactivada",
@@ -417,6 +418,13 @@
       "test_hint": "Pasa una muestra fija por tu configuración. No se guarda nada.",
       "sample_before": "Antes",
       "sample_after": "Después"
+    },
+    "prompt_mode": {
+      "title": "Modo prompt",
+      "description": "Di con tus palabras y en cualquier idioma qué quieres que se haga. En el campo aparece un prompt terminado para un agente de programación con IA, en inglés: el objetivo que describiste, el contexto y los límites que mencionaste, y nada inventado.",
+      "sends_text": "Tu transcripción se envía al modelo que escribe los briefings del Agentic IDE, el elegido en Claves API → Agentes. Suele ser un modelo en la nube y puede tardar unos segundos en pensar. Tu texto original siempre se guarda en tu historial.",
+      "outranks": "Mientras esté activo, la limpieza de redacción y la traducción pasan a segundo plano: un prompt siempre está en inglés y siempre se reestructura. Si ningún modelo responde a tiempo, este dictado llega como si el modo prompt estuviera apagado.",
+      "writer_hint": "Qué modelo lo escribe: Claves API → Agentes → «Quién escribe los briefings de tareas»."
     },
     "translate": {
       "title": "Escribir siempre en un idioma",

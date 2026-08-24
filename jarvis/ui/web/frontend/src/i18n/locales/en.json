@@ -362,7 +362,8 @@
       "skipped_long": "Too long to clean up",
       "timeout": "Took too long — your raw text was used",
       "provider_error": "Model unreachable — your raw text was used",
-      "rejected_drift": "Rewrite rejected — your raw text was used"
+      "rejected_drift": "Rewrite rejected — your raw text was used",
+      "prompted": "Turned into a prompt"
     },
     "cleanup_reason": {
       "disabled": "Filler removal off",
@@ -417,6 +418,13 @@
       "test_hint": "Runs one fixed sample through your setup. Nothing is saved.",
       "sample_before": "Before",
       "sample_after": "After"
+    },
+    "prompt_mode": {
+      "title": "Prompt Mode",
+      "description": "Say what you want done, in your own words and any language. What lands in the field is a finished prompt for an AI coding agent, in English: the goal you described, the context and limits you stated, and nothing made up.",
+      "sends_text": "Your transcript is sent to the model that writes the Agentic IDE's briefs — the one chosen under API Keys → Agents. That is usually a cloud model, and it may take a few seconds to think. Your raw text is always kept in your history.",
+      "outranks": "While this is on, the wording clean-up and the translation step back: a prompt is always English and always restructured. If no model answers in time, this dictation is delivered as it would be with Prompt Mode off.",
+      "writer_hint": "Which model writes it: API Keys → Agents → \"Who writes the task briefs\"."
     },
     "translate": {
       "title": "Always write in one language",
