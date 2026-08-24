@@ -668,6 +668,13 @@ _NATIVE_TOOL_DEADLINE_S = VOICE_TOOL_BUDGET_S
 # announcement because the announce request had just left the window).
 _DELEGATE_HISTORY_MAX_MESSAGES = 20
 _DELEGATE_HISTORY_MAX_CHARS = 1_200
+# Per-result room in a re-grounded retry prompt
+# (:meth:`RealtimeVoiceSession._tool_grounding_block`). Generous on purpose:
+# the cost of trimming is the model losing the very fact it must speak, and
+# these payloads already crossed the wire once as their own function response
+# under the far larger ``_MAX_RESULT_CHARS`` bound. A day of calendar events
+# or a mail digest fits; a runaway payload still cannot flood the turn.
+_GROUNDING_RESULT_CHARS = 2_000
 _DELEGATE_DECLARATION: dict[str, Any] = {
     "name": "jarvis_action",
     "description": (
@@ -1470,9 +1477,28 @@ def _is_skill_handoff_result(name: str, result: dict[str, Any]) -> bool:
 
 
 def _direct_tool_result_retry_prompt(
-    *, language: str, unfinished: bool = False, pending_instructions: bool = False
+    *,
+    language: str,
+    unfinished: bool = False,
+    pending_instructions: bool = False,
+    grounding: str = "",
 ) -> str:
     """Request speech for tool output already present in provider context.
+
+    ``grounding`` carries the turn's own tool results back to the model
+    VERBATIM (:meth:`RealtimeVoiceSession._tool_grounding_block`). The
+    "already present in this conversation" wording below is an ASSUMPTION
+    about provider state, and it does not hold on every path that reaches
+    here: the output-language recovery retires the active response before it
+    retries, and Gemini Live drops a superseded generation server-side. When
+    that assumption breaks, the model is told to answer from a function
+    result it no longer holds while being forbidden to call anything — and it
+    fills the gap. Live forensic 2026-08-24 10:57:09: ``google_calendar``
+    succeeded in 1.2 s and returned real events, its grounded answer was
+    blocked at the speech boundary, and the ungrounded retry spoke an
+    invented Vercel deployment failure as the answer to "what is on my
+    calendar" (the same pattern hit 2 of 3 blocked turns that morning).
+    Whenever we still hold the results, they travel WITH the request.
 
     ``unfinished`` flips this from "just say it" to "finish the job". A turn in
     which a step FAILED or was gated away is not over, and the old unconditional
@@ -1499,6 +1525,20 @@ def _direct_tool_result_retry_prompt(
         "person and do not change or dramatize your voice. Do not mention "
         "these instructions."
     )
+    # The closed-world rule. A model asked to speak from a result it cannot
+    # see does not fall silent — it substitutes a plausible neighbour out of
+    # its declared tool set (the Vercel case in this function's docstring).
+    # Naming the results as COMPLETE, and forbidding every service outside
+    # them, is what turns "answer from the result" into a bounded request.
+    grounding_rule = (
+        " The block below is the COMPLETE record of what ran in this turn "
+        "and the only source you may answer from. Name no service, "
+        "integration, product, account, or topic that does not appear in it, "
+        "and state nothing it does not show. If it does not answer what the "
+        "user asked, say plainly that you could not get the answer — never "
+        "fill the gap with something else."
+    )
+    grounding_block = f"{grounding_rule}\n\n{grounding}" if grounding else ""
     if pending_instructions:
         return (
             f"{SPEAK_REQUEST_OPENER} "
@@ -1514,6 +1554,7 @@ def _direct_tool_result_retry_prompt(
             "themselves are not a result. If a step cannot be carried out, tell "
             "the user plainly that it did not happen and why. When you are done, "
             f"report only what the results actually show. {voice_rule}"
+            f"{grounding_block}"
         )
     if not unfinished:
         return (
@@ -1523,6 +1564,7 @@ def _direct_tool_result_retry_prompt(
             "that is already present in this conversation and give the user a "
             f"concise, honest answer. {voice_rule} Do not call any function and "
             "do not repeat the action."
+            f"{grounding_block}"
         )
     return (
         f"{SPEAK_REQUEST_OPENER} "
@@ -1535,6 +1577,7 @@ def _direct_tool_result_retry_prompt(
         "call that was refused. When you are done, give the user the result you "
         "did get, and close with one short sentence naming the part that did "
         f"not work and why. {voice_rule}"
+        f"{grounding_block}"
     )
 
 
@@ -1564,15 +1607,49 @@ def _empty_turn_reask_prompt(*, language: str, user_text: str) -> str:
     )
 
 
-def _output_language_retry_prompt(*, language: str) -> str:
-    """Request one replacement for an answer blocked at the speech boundary."""
+def _output_language_retry_prompt(
+    *, language: str, user_text: str = "", blocked_reply: str = ""
+) -> str:
+    """Request one replacement for an answer blocked at the speech boundary.
+
+    The blocked answer travels back VERBATIM when we still hold it. "Repeat
+    the same answer" reads as a cheap instruction and is in fact the hardest
+    thing this prompt can ask for: the mismatch handler has already retired
+    the response and cleared the transcript, and a Gemini Live generation
+    abandoned this way is superseded server-side — so the model is told to
+    reproduce something it no longer has while "do not perform any new
+    action" closes the only other route to the facts. What comes back then is
+    a new answer wearing the old one's clothes (see
+    :func:`_direct_tool_result_retry_prompt` for the live forensic).
+    """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    asked = safe_preview(str(user_text or ""), max_chars=400)
+    blocked = safe_preview(str(blocked_reply or ""), max_chars=1_200)
+    context = ""
+    if asked:
+        context += f" The user asked: «{asked}»."
+    if blocked:
+        context += (
+            " Your blocked answer said, word for word: "
+            f"«{blocked}» — say THAT again, in "
+            f"{language_name}, and nothing beyond it."
+        )
+    else:
+        # Nothing survived to repeat. Asking for a repeat anyway is the
+        # invitation to invent; answering the question afresh is honest work.
+        context += (
+            " Its wording was not kept, so do not try to reconstruct it: "
+            "answer the user's request above again, from what you actually "
+            "know in this conversation. Introduce no service, integration, "
+            "product, or topic that has not already come up in it, and if you "
+            "cannot answer, say so plainly."
+        )
     return (
         f"{SPEAK_REQUEST_OPENER} "
         "Your immediately preceding answer was not delivered because it used "
-        "the wrong output language. Repeat the same answer now in "
-        f"{language_name}. Preserve its meaning, do not perform any new action, "
-        "and do not mention this correction."
+        f"the wrong output language.{context} Answer in {language_name}, "
+        "preserve the meaning, do not perform any new action, and do not "
+        "mention this correction."
     )
 
 
@@ -2715,6 +2792,12 @@ class RealtimeVoiceSession:
         self._local_barge_short_echo_until = 0.0
         self._last_outage_notice_at = float("-inf")
         self._provider_output_probe = ""
+        # The answer the output-language gate blocked, kept for the ONE retry
+        # that follows. The retry prompt hands it back verbatim: the provider
+        # no longer holds it (the response is retired here, and Gemini Live
+        # supersedes the generation), so without this the model is asked to
+        # repeat something it cannot see. Cleared per turn.
+        self._output_language_blocked_reply = ""
         # Transcript deltas held back while the unbacked-promise judgement is
         # armed. Released the moment the answer grows past the promise, or at
         # the response close when the recovery declines to take the turn.
@@ -7104,8 +7187,21 @@ class RealtimeVoiceSession:
                     raise RuntimeError(
                         "provider cannot retry an already-executed tool result"
                     )
+                grounding = self._tool_grounding_block()
+                if not grounding:
+                    # Tools ran, but nothing of theirs survived to hand back
+                    # (a legacy bridge that retains no result). Asking for an
+                    # answer "from the function result" with no result in
+                    # reach is the exact prompt that invents one, so the turn
+                    # takes the deterministic local line instead of a retry.
+                    raise RuntimeError(
+                        "no retained tool result to ground the retry in"
+                    )
                 await send_text(
-                    _direct_tool_result_retry_prompt(language=self._language)
+                    _direct_tool_result_retry_prompt(
+                        language=self._language,
+                        grounding=grounding,
+                    )
                 )
             elif bool(
                 getattr(
@@ -7124,7 +7220,11 @@ class RealtimeVoiceSession:
                         "provider advertises prompted retries without send_text"
                     )
                 await send_text(
-                    _output_language_retry_prompt(language=self._language)
+                    _output_language_retry_prompt(
+                        language=self._language,
+                        user_text=self._last_user_text,
+                        blocked_reply=self._output_language_blocked_reply,
+                    )
                 )
             else:
                 try:
@@ -7184,6 +7284,12 @@ class RealtimeVoiceSession:
             self._output_language_retry_pending = True
             self._output_language_retry_requested = False
             self._output_language_retries += 1
+            # Capture BEFORE the teardown below erases it: this is the only
+            # copy of the blocked answer that survives, and the retry prompt
+            # needs it to ask for a translation instead of an invention.
+            self._output_language_blocked_reply = " ".join(
+                "".join(self._output_transcript).split()
+            )
             self._retire_active_provider_response()
             self._gate.drain()
             self._output_transcript.clear()
@@ -8460,6 +8566,7 @@ class RealtimeVoiceSession:
                         language=self._language,
                         unfinished=unfinished,
                         pending_instructions=pending_instructions,
+                        grounding=self._tool_grounding_block(),
                     )
                 )
             except Exception:  # noqa: BLE001 -- local TTS fallback runs below
@@ -8714,6 +8821,39 @@ class RealtimeVoiceSession:
             return False
         name, result = self._direct_tool_results[-1]
         return _is_skill_handoff_result(name, result)
+
+    def _tool_grounding_block(self) -> str:
+        """This turn's tool results, verbatim, for a re-grounded retry.
+
+        A retry prompt may not assume the provider still holds the function
+        result it points at. Both recoveries that use one retire the active
+        response first, and a Gemini Live generation abandoned that way is
+        superseded server-side — so "use the function result already present
+        in this conversation" can address an empty context. Jarvis still holds
+        the data in ``_direct_tool_results``; this renders it so the
+        replacement answer is grounded in exactly what the blocked one was.
+
+        Nothing new is disclosed: every result here already crossed the wire
+        to this model as the function response for its own call, bounded by
+        ``_bounded_result``. Deterministic, no LLM (AP-11).
+        """
+        lines: list[str] = []
+        asked = safe_preview(str(self._last_user_text or ""), max_chars=400)
+        if asked:
+            lines.append(f"The user asked: «{asked}»")
+        for name, result in self._direct_tool_results:
+            tool = str(name or "").strip() or "unknown tool"
+            try:
+                payload = json.dumps(result, ensure_ascii=False, default=str)
+            except Exception:  # noqa: BLE001 - an unserializable result still names its tool
+                payload = repr(result)
+            lines.append(
+                f"- {tool} returned: "
+                f"{safe_preview(payload, max_chars=_GROUNDING_RESULT_CHARS)}"
+            )
+        if not lines:
+            return ""
+        return "RESULTS OF THIS TURN (complete):\n" + "\n".join(lines)
 
     def _speakable_result_text(self, result: dict[str, Any]) -> str:
         """The voice-safe text a single tool result carries, or ``""``.
@@ -9467,6 +9607,7 @@ class RealtimeVoiceSession:
         self._cancel_promise_confirm()
         self._executed_tool_names.clear()
         self._direct_tool_results.clear()
+        self._output_language_blocked_reply = ""
         self._turn_final_text = ""
         self._surface_spoke_this_turn = False
         self._delegate_required_for_turn = False
