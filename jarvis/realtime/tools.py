@@ -983,6 +983,20 @@ class RealtimeToolBridge:
             # Deterministic — prompt-side discouragement failed repeatedly.
             # See jarvis/brain/spawn_gate.py.
             message = spawn_blocked_feedback(user_text)
+        elif name in SPAWN_VEHICLE_TOOL_NAMES:
+            # The spawn gate above already said YES for this exact tool, and it
+            # is the STRICTER test: it demands the user name the vehicle
+            # ("agent", "worker", "spawn") or confirm an offer. Falling through
+            # to the generic turn-shape check would let a WEAKER, tool-agnostic
+            # rule overrule that specific decision — which is what happened
+            # live on 2026-08-24 10:24. "No, no, a worker should do it." and
+            # "just follow the sub and then do it" both cleared the spawn gate
+            # and were then refused as "a question, a remark, or a greeting",
+            # because neither is phrased as an imperative and both are longer
+            # than the four-word confirmation bypass below. The board stayed at
+            # "0 running · 0 in total" while the user asked three times.
+            # Naming the vehicle IS the order; nothing weaker may veto it.
+            return ""
         elif name in CU_VEHICLE_TOOL_NAMES and not llm_computer_use_allowed(
             user_text
         ):
