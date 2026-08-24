@@ -10,6 +10,8 @@ function row(kind: ConversationSummary["kind"], id: string, title: string): Conv
   return { kind, id, title, preview: title, created_ms: 500, updated_ms: 1_000, message_count: 2 };
 }
 
+const CONVERSATIONS = [row("voice", "v1", "Spoken thread"), row("text", "t1", "Typed thread")];
+
 const DETAIL = {
   kind: "voice",
   id: "v1",
@@ -35,11 +37,13 @@ describe("RecentChats", () => {
       vi.fn(async (url: string) =>
         String(url).endsWith("/resume")
           ? new Response(JSON.stringify(DETAIL), { status: 200 })
-          : new Response(JSON.stringify([]), { status: 200 }),
+          : // The block polls GET /api/chats on mount; answering with the same
+            // rows keeps the refresh from wiping what the test just seeded.
+            new Response(JSON.stringify(CONVERSATIONS), { status: 200 }),
       ),
     );
     useEventStore.setState({
-      conversations: [row("voice", "v1", "Spoken thread"), row("text", "t1", "Typed thread")],
+      conversations: CONVERSATIONS,
       activeThreadId: null,
       messages: [],
       activeSection: "board",
@@ -64,6 +68,7 @@ describe("RecentChats", () => {
       ],
       activeSessionId: null,
       loadSessions: async () => {},
+      newChat: vi.fn(),
       openSession: vi.fn((id: string) => useAgentChatStore.setState({ activeSessionId: id })),
     });
   });
@@ -98,12 +103,49 @@ describe("RecentChats", () => {
     expect(useHomeStore.getState().transcript).toEqual([]);
   });
 
-  it("opens a voice session on the chat surface when that is where you are", async () => {
+  it("clears the voice thread when an agent chat takes the stage", async () => {
+    useEventStore.setState({ activeKind: "voice", activeThreadId: "v1" });
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTitle("Agent chat"));
+    await flush();
+    // Both conversations claiming the stage is what made a click look like it
+    // did nothing: the chat stage kept showing the previous one.
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(useEventStore.getState().messages).toEqual([]);
+  });
+
+  it("loads a voice session onto the chat surface when that is where you are", async () => {
     useHomeStore.setState({ surface: "chat" });
     render(<RecentChats />);
     fireEvent.click(screen.getByTitle("Spoken thread"));
     await flush();
     expect(useHomeStore.getState().surface).toBe("chat");
+    // Read on the chat stage (components/home/VoiceThreadStage), not seeded
+    // into the voice lane — and the agent session is ended so it cannot keep
+    // the stage.
+    expect(useEventStore.getState().activeThreadId).toBe("v1");
+    expect(useEventStore.getState().messages.map((m) => m.content)).toEqual(["hello", "Hi there."]);
+    expect(useAgentChatStore.getState().newChat).toHaveBeenCalled();
     expect(useHomeStore.getState().transcript).toEqual([]);
+  });
+
+  it("offers the whole archive behind one button", async () => {
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTestId("see-all-chats"));
+    await flush();
+    expect(screen.getByTestId("all-chats-dialog")).toBeTruthy();
+    // Both kinds are listed there, whatever the sidebar had room for.
+    const rows = screen.getAllByTestId("all-chats-row");
+    expect(rows.map((r) => r.getAttribute("data-kind")).sort()).toEqual(["agent", "voice"]);
+  });
+
+  it("filters the archive by what you type", async () => {
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTestId("see-all-chats"));
+    await flush();
+    fireEvent.change(screen.getByTestId("all-chats-search"), { target: { value: "spoken" } });
+    const rows = screen.getAllByTestId("all-chats-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute("data-kind")).toBe("voice");
   });
 });

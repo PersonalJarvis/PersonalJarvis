@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { AgentComposer } from "@/components/agentchat/AgentComposer";
 import { AgentTimeline } from "@/components/agentchat/AgentTimeline";
 import { Greeting } from "@/components/home/Greeting";
+import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { useT } from "@/i18n";
 
@@ -24,6 +25,13 @@ import { useT } from "@/i18n";
  * scrolls and the composer docks to the bottom. The history is the
  * sidebar's (components/home/RecentChats), visible from every section.
  *
+ * One conversation is on stage at a time. The sidebar's history mixes agent
+ * chats with VOICE sessions, and a voice session opened from here is read in
+ * components/home/VoiceThreadStage — the same column, no composer. Which of
+ * the two shows is decided by the event store's active thread: opening either
+ * kind clears the other (components/home/chatRows), so the two can never both
+ * claim the stage and leave a click looking like it did nothing.
+ *
  * Scrolling follows the Claude app: when the person sends, their message
  * is brought to the TOP of the scroll area and the answer grows below it —
  * the eye stays where the new turn begins instead of chasing the bottom.
@@ -40,6 +48,7 @@ export function ChatStage() {
   const decide = useAgentChatStore((s) => s.decide);
   const loadCatalog = useAgentChatStore((s) => s.loadCatalog);
   const loadSessions = useAgentChatStore((s) => s.loadSessions);
+  const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
   const hasContent = items.length > 0;
 
   useEffect(() => {
@@ -123,6 +132,10 @@ export function ChatStage() {
   }, [hasContent]);
 
   const subtitle = useMemo(() => t("agent_chat.empty_subtitle"), [t]);
+
+  // A spoken thread was opened from the history: read it here, in the column
+  // the composer would otherwise own. An agent chat opening clears this.
+  if (voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
 
   if (!hasContent) {
     return (

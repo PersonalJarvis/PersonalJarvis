@@ -462,6 +462,7 @@
     "show_all": "Mostrar todo",
     "show_less": "Mostrar menos",
     "no_chats": "Aún no hay conversaciones",
+    "see_all_chats": "Ver todos los chats",
     "collapse": "Contraer la navegación",
     "expand": "Expandir la navegación",
     "wake_hint": "Di tu palabra de activación…",
@@ -5036,5 +5037,28 @@
       "free": "Gratis",
       "unknown": "Sin precio"
     }
+  },
+  "all_chats": {
+    "title": "Todos los chats",
+    "description": "Todas las conversaciones, habladas y escritas. Búscalas o retoma donde lo dejaste.",
+    "close": "Cerrar",
+    "search_placeholder": "Buscar chats…",
+    "filter_all": "Todos",
+    "filter_chats": "Chats",
+    "filter_voice": "Voz",
+    "empty": "Aún no hay conversaciones. Di algo o empieza un chat.",
+    "no_match": "Nada coincide con esa búsqueda.",
+    "group_today": "Hoy",
+    "group_yesterday": "Ayer",
+    "group_week": "Últimos 7 días",
+    "group_month": "Últimos 30 días",
+    "group_older": "Anteriores"
+  },
+  "voice_thread": {
+    "untitled": "Sesión de voz",
+    "subtitle": "Conversación hablada · {count} turnos",
+    "empty": "No se grabó nada en esta sesión.",
+    "read_only": "Una conversación hablada. Continúala hablando.",
+    "continue": "Continuar por voz"
   }
 }

@@ -462,6 +462,7 @@
     "show_all": "Show all",
     "show_less": "Show less",
     "no_chats": "No conversations yet",
+    "see_all_chats": "See all chats",
     "collapse": "Collapse the navigation",
     "expand": "Expand the navigation",
     "wake_hint": "Say your wake word…",
@@ -5036,5 +5037,28 @@
       "free": "Free",
       "unknown": "Unpriced"
     }
+  },
+  "all_chats": {
+    "title": "All chats",
+    "description": "Every conversation — spoken and typed. Search it, or pick up where you left off.",
+    "close": "Close",
+    "search_placeholder": "Search chats…",
+    "filter_all": "All",
+    "filter_chats": "Chats",
+    "filter_voice": "Voice",
+    "empty": "No conversations yet. Say something, or start a chat.",
+    "no_match": "Nothing matches that search.",
+    "group_today": "Today",
+    "group_yesterday": "Yesterday",
+    "group_week": "Previous 7 days",
+    "group_month": "Previous 30 days",
+    "group_older": "Older"
+  },
+  "voice_thread": {
+    "untitled": "Voice session",
+    "subtitle": "Spoken conversation · {count} turns",
+    "empty": "Nothing was recorded in this session.",
+    "read_only": "A spoken conversation. Continue it by talking.",
+    "continue": "Continue by voice"
   }
 }

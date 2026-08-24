@@ -43,6 +43,8 @@ import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/comp
 
 const DRAFT_KEY = "jarvis.agentChat.draft.v1";
 const RECONNECT_MS = 1500;
+/** How many sessions the list holds — the "All chats" archive shows them all. */
+const SESSION_LIST_LIMIT = 500;
 
 export interface ComposerDraft {
   provider: string;
@@ -314,7 +316,7 @@ export const useAgentChatStore = create<AgentChatStore>((set, get) => {
 
     loadSessions: async () => {
       try {
-        const sessions = await fetchAgentChatSessions();
+        const sessions = await fetchAgentChatSessions(SESSION_LIST_LIMIT);
         set({ sessions });
       } catch {
         /* offline / headless — keep the list as-is */

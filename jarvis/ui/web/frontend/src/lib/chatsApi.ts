@@ -30,9 +30,15 @@ export class ChatsApiError extends Error {
   }
 }
 
-export async function fetchConversations(days = 0): Promise<ConversationSummary[]> {
-  const q = days > 0 ? `?days=${days}` : "";
-  const res = await fetch(`/api/chats${q}`);
+/**
+ * The voice/text history. `limit` is deliberately generous: the sidebar shows
+ * a handful, but the "All chats" archive promises everything, and a cap that
+ * quietly hides old conversations reads as data loss.
+ */
+export async function fetchConversations(days = 0, limit = 500): Promise<ConversationSummary[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (days > 0) params.set("days", String(days));
+  const res = await fetch(`/api/chats?${params.toString()}`);
   if (!res.ok) throw new ChatsApiError("list-failed", res.status);
   return (await res.json()) as ConversationSummary[];
 }

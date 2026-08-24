@@ -84,6 +84,12 @@ describe("ChatStage (agent chat)", () => {
       writable: true,
       value: scrollTo,
     });
+    // jsdom implements neither; the column scrolls with one or the other.
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
     window.localStorage.clear();
     useEventStore.setState({ connected: true, wsWarming: false, assistantName: "Jarvis" });
     useAgentChatStore.setState({
@@ -374,5 +380,53 @@ describe("ChatStage (agent chat)", () => {
     expect(footer.textContent).toContain("12s");
     expect(footer.textContent).toContain("219");
     expect(footer.textContent).toContain("$0.8483");
+  });
+
+  it("reads an opened voice session in the chat column instead of the previous chat", () => {
+    // The regression this guards: the sidebar's history lists voice sessions
+    // next to agent chats, and clicking one used to load its words into the
+    // event store while the stage kept rendering the agent timeline — the
+    // screen did not change at all.
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { turn_id: "t1", text: "Earlier agent chat" }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: null, timeline });
+    useEventStore.setState({
+      activeKind: "voice",
+      activeThreadId: "v1",
+      conversations: [
+        {
+          kind: "voice",
+          id: "v1",
+          title: "Kitchen timer",
+          preview: "set a timer",
+          created_ms: 1,
+          updated_ms: 2,
+          message_count: 2,
+        },
+      ],
+      messages: [
+        { id: "m1", role: "user", content: "set a timer", ts: 1 },
+        { id: "m2", role: "assistant", content: "Ten minutes, running.", ts: 2 },
+      ],
+      thinkingTraces: {},
+    });
+    render(<ChatStage />);
+
+    const stage = screen.getByTestId("voice-thread-stage");
+    expect(stage.getAttribute("data-thread")).toBe("v1");
+    expect(stage.textContent).toContain("Kitchen timer");
+    expect(stage.textContent).toContain("Ten minutes, running.");
+    // A spoken thread has no composer: it is continued by talking.
+    expect(screen.queryByTestId("agent-composer")).toBeNull();
+    expect(screen.getByTestId("continue-by-voice")).toBeTruthy();
+  });
+
+  it("gives the stage back to the agent chat once a session is open", () => {
+    useEventStore.setState({ activeKind: "voice", activeThreadId: "v1", messages: [] });
+    useAgentChatStore.setState({ activeSessionId: "s1", timeline: EMPTY_TIMELINE });
+    render(<ChatStage />);
+    expect(screen.queryByTestId("voice-thread-stage")).toBeNull();
+    expect(screen.getByTestId("chat-stage")).toBeTruthy();
   });
 });

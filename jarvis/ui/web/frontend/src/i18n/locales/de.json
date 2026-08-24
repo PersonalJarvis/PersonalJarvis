@@ -462,6 +462,7 @@
     "show_all": "Alle anzeigen",
     "show_less": "Weniger anzeigen",
     "no_chats": "Noch keine Unterhaltungen",
+    "see_all_chats": "Alle Chats ansehen",
     "collapse": "Navigation einklappen",
     "expand": "Navigation ausklappen",
     "wake_hint": "Sag dein Wake-Word…",
@@ -5036,5 +5037,28 @@
       "free": "Kostenlos",
       "unknown": "Ohne Preis"
     }
+  },
+  "all_chats": {
+    "title": "Alle Chats",
+    "description": "Jede Unterhaltung — gesprochen und getippt. Durchsuchen oder dort weitermachen, wo du aufgehört hast.",
+    "close": "Schließen",
+    "search_placeholder": "Chats durchsuchen…",
+    "filter_all": "Alle",
+    "filter_chats": "Chats",
+    "filter_voice": "Sprache",
+    "empty": "Noch keine Unterhaltungen. Sag etwas oder starte einen Chat.",
+    "no_match": "Nichts passt zu dieser Suche.",
+    "group_today": "Heute",
+    "group_yesterday": "Gestern",
+    "group_week": "Letzte 7 Tage",
+    "group_month": "Letzte 30 Tage",
+    "group_older": "Älter"
+  },
+  "voice_thread": {
+    "untitled": "Sprachsitzung",
+    "subtitle": "Gesprochene Unterhaltung · {count} Beiträge",
+    "empty": "In dieser Sitzung wurde nichts aufgezeichnet.",
+    "read_only": "Eine gesprochene Unterhaltung. Sprich weiter, um sie fortzusetzen.",
+    "continue": "Per Sprache fortsetzen"
   }
 }
