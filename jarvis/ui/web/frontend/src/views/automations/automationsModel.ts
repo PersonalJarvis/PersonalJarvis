@@ -133,6 +133,11 @@ export function isRecurringTrigger(trigger: TriggerType): boolean {
   return trigger === "every" || trigger === "on_event";
 }
 
+/** A one-off timed task (a "schedule") — the `after_delay` / `at_time` triggers. */
+export function isOneShotTrigger(trigger: TriggerType): boolean {
+  return trigger === "after_delay" || trigger === "at_time";
+}
+
 /** The template key a task was created from (`template:<key>` tag), if any. */
 export function templateKeyOf(task: Pick<TaskSummary, "tags">): string | null {
   for (const tag of task.tags ?? []) {
@@ -152,23 +157,92 @@ export function selectAutomations(tasks: TaskSummary[]): TaskSummary[] {
 }
 
 /**
- * The run history: everything that ran or is running (any trigger), plus the
- * still-pending one-shots (after_delay / at_time) so they have a home too.
- * Newest activity first.
+ * The user's schedules: one-off timed tasks that are still waiting for their
+ * moment. Soonest first — a schedule is read as "what happens next", not as
+ * "what happened last", so this list is the only one sorted forwards.
+ *
+ * A one-shot that is already running belongs to the run history instead; the
+ * three selections here are deliberately disjoint so no task shows up on two
+ * tabs and gets deleted twice.
  */
-export function selectRuns(tasks: TaskSummary[]): TaskSummary[] {
+export function selectSchedules(tasks: TaskSummary[]): TaskSummary[] {
   return tasks
     .filter(
       (t) =>
-        isTerminal(t.state) ||
-        t.state === "running" ||
-        (!isRecurringTrigger(t.trigger_type) && isActive(t.state)),
+        isOneShotTrigger(t.trigger_type) &&
+        (t.state === "pending" || t.state === "scheduled" || t.state === "paused"),
     )
+    .sort((a, b) => (a.due_at_ns ?? Number.MAX_SAFE_INTEGER) - (b.due_at_ns ?? Number.MAX_SAFE_INTEGER));
+}
+
+/**
+ * The run history: everything that ran or is running, newest activity first.
+ * A still-waiting one-shot is NOT a run — it lives on the Schedules tab until
+ * it fires.
+ */
+export function selectRuns(tasks: TaskSummary[]): TaskSummary[] {
+  return tasks
+    .filter((t) => isTerminal(t.state) || t.state === "running")
     .sort((a, b) => activityNs(b) - activityNs(a));
 }
 
 function activityNs(t: TaskSummary): number {
   return t.finished_at_ns ?? t.started_at_ns ?? t.due_at_ns ?? t.created_at_ns ?? 0;
+}
+
+/** The four headline numbers above the tabs. */
+export interface AutomationStats {
+  /** Automations that are armed (everything except a paused one). */
+  active: number;
+  paused: number;
+  /** The soonest upcoming moment across armed automations and schedules. */
+  nextDueNs: number | null;
+  /** Title of the task that owns `nextDueNs` ("" when nothing is due). */
+  nextTitle: string;
+  /** One-off schedules still waiting to fire. */
+  schedules: number;
+  /** Automations whose last run failed or was interrupted. */
+  problems: number;
+  /** Title of one such automation, for the tile's second line. */
+  problemTitle: string;
+}
+
+/**
+ * Derives the headline numbers from the task list.
+ *
+ * Deliberately NOT "runs in the last 7 days": a recurring task carries only
+ * its latest run, so a per-week count would silently undercount and read as a
+ * broken number. Every figure here is one the list can actually answer.
+ */
+export function automationStats(tasks: TaskSummary[]): AutomationStats {
+  const automations = selectAutomations(tasks);
+  const schedules = selectSchedules(tasks);
+
+  let nextDueNs: number | null = null;
+  let nextTitle = "";
+  for (const task of [...automations, ...schedules]) {
+    if (task.state === "paused") continue;
+    const due = task.next_due_at_ns ?? task.due_at_ns ?? null;
+    if (due == null) continue;
+    if (nextDueNs == null || due < nextDueNs) {
+      nextDueNs = due;
+      nextTitle = task.title;
+    }
+  }
+
+  const broken = automations.filter(
+    (t) => t.last_run_state === "failed" || t.last_run_state === "interrupted",
+  );
+
+  return {
+    active: automations.filter((t) => t.state !== "paused").length,
+    paused: automations.filter((t) => t.state === "paused").length,
+    nextDueNs,
+    nextTitle,
+    schedules: schedules.length,
+    problems: broken.length,
+    problemTitle: broken[0]?.title ?? "",
+  };
 }
 
 export type RunFilter = "all" | "running" | "done" | "problems";

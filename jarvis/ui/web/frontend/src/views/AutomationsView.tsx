@@ -1,17 +1,44 @@
 /**
- * The Automations section: the user's recurring automations, the catalogue
- * of ready-made ones (grouped by category), and a Runs tab with the history.
+ * The Automations section — everything Jarvis does on its own, in one place.
+ *
+ * Four tabs over one content column: the user's recurring automations, the
+ * one-off schedules waiting to fire, the run history, and the catalogue of
+ * ready-made automations. The split is what the section was missing: a
+ * waiting one-shot used to be filed under "Runs", so schedules had no home
+ * and nobody found them, and the catalogue printed one sparse grid per
+ * category down an unbounded-width page.
+ *
+ * The layout is the section design the rest of the app converged on: the
+ * section header bar, a centred content column, a row of headline numbers,
+ * a chip rail of tabs, and panels holding tables — the same shapes as Spend,
+ * Local models and the extensions section.
  *
  * Degrades honestly against an older backend: when the catalogue route does
- * not exist yet (404 — it goes live with the next restart) the section says
- * so inline, and a failed run/pause/delete call becomes a notice instead of
- * a crash.
+ * not exist yet (404 — it goes live with the next restart) the tab says so
+ * inline, and a failed run/pause/delete call becomes a notice, not a crash.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { History, Plus, RefreshCw, Workflow, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  LayoutGrid,
+  Plus,
+  RefreshCw,
+  Timer,
+  Workflow,
+  X,
+  Zap,
+} from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
+import {
+  IconButton,
+  Panel,
+  PanelHeader,
+  SegmentedFilter,
+  SoftButton,
+  StatTile,
+} from "@/components/extensions/primitives";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -23,33 +50,41 @@ import {
   useTemplates,
 } from "@/hooks/useAutomations";
 import { TaskCreateDialog } from "./tasks/TaskCreateDialog";
-import { AutomationCard } from "./automations/AutomationCard";
-import { CatalogueCard } from "./automations/CatalogueCard";
+import type { TaskDraft } from "./tasks/taskSpec";
+import { AutomationsPanel } from "./automations/AutomationsPanel";
+import { CataloguePanel } from "./automations/CataloguePanel";
+import { RunsPanel, RUN_FILTERS } from "./automations/RunsPanel";
+import { SchedulesPanel } from "./automations/SchedulesPanel";
 import { TemplateAddDialog } from "./automations/TemplateAddDialog";
 import {
-  groupTemplates,
+  automationStats,
+  formatDelta,
   selectAutomations,
   selectRuns,
+  selectSchedules,
   templateKeyOf,
   type AutomationTemplate,
-  type TaskSummary,
+  type RunFilter,
 } from "./automations/automationsModel";
-import { SectionLabel } from "./automations/shared";
-import { RunsTab } from "./TasksView";
+import { useTick } from "./automations/shared";
 
-type Tab = "automations" | "runs";
+type Tab = "automations" | "schedules" | "runs" | "catalogue";
 
 interface Notice {
   text: string;
   kind: "info" | "error";
 }
 
+/** The create dialog opened as "a schedule" starts on the one-off branch. */
+const SCHEDULE_DRAFT: Partial<TaskDraft> = { triggerMode: "schedule", scheduleMode: "once" };
+
 export function AutomationsView() {
   const t = useT();
   const [tab, setTab] = useState<Tab>("automations");
-  const [showCreate, setShowCreate] = useState(false);
+  const [createDraft, setCreateDraft] = useState<Partial<TaskDraft> | null>(null);
   const [adding, setAdding] = useState<AutomationTemplate | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [runFilter, setRunFilter] = useState<RunFilter>("all");
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -58,17 +93,25 @@ export function AutomationsView() {
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(null), kind === "error" ? 8000 : 4000);
   }, []);
-  useEffect(() => () => {
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
 
   const tasksQuery = useTasks();
   const templatesQuery = useTemplates();
   const tasks = useMemo(() => tasksQuery.data?.tasks ?? [], [tasksQuery.data]);
   const automations = useMemo(() => selectAutomations(tasks), [tasks]);
+  const schedules = useMemo(() => selectSchedules(tasks), [tasks]);
   const runsCount = useMemo(() => selectRuns(tasks).length, [tasks]);
+  const stats = useMemo(() => automationStats(tasks), [tasks]);
 
-  const templates = templatesQuery.data?.templates ?? [];
+  const templates = useMemo(
+    () => templatesQuery.data?.templates ?? [],
+    [templatesQuery.data],
+  );
   const templatesByKey = useMemo(
     () => new Map(templates.map((tpl) => [tpl.key, tpl])),
     [templates],
@@ -82,7 +125,6 @@ export function AutomationsView() {
     }
     return map;
   }, [automations]);
-  const groups = useMemo(() => groupTemplates(templates), [templates]);
 
   const runNow = useRunNow();
   const setEnabled = useSetEnabled();
@@ -134,9 +176,11 @@ export function AutomationsView() {
   const scrollToTask = useCallback((taskId: string) => {
     setTab("automations");
     setHighlightId(taskId);
-    // The card exists already (installed) — give React a frame to switch tabs.
+    // The row exists already (installed) — give React a frame to switch tabs.
     requestAnimationFrame(() => {
-      document.getElementById(`automation-${taskId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      document
+        .getElementById(`automation-${taskId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     setTimeout(() => setHighlightId((cur) => (cur === taskId ? null : cur)), 2500);
   }, []);
@@ -152,6 +196,9 @@ export function AutomationsView() {
   );
 
   const catalogueUnavailable = templatesQuery.data?.unavailable === true;
+  const openCreate = useCallback(() => setCreateDraft({}), []);
+  const openScheduleCreate = useCallback(() => setCreateDraft(SCHEDULE_DRAFT), []);
+  const openCatalogue = useCallback(() => setTab("catalogue"), []);
 
   return (
     <div className="flex h-full flex-col">
@@ -161,163 +208,237 @@ export function AutomationsView() {
         subtitle={t("automations_view.subtitle")}
         right={
           <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="ghost"
+            <IconButton
+              label={t("automations_view.refresh")}
               onClick={() => {
                 tasksQuery.refetch();
                 templatesQuery.refetch();
               }}
               disabled={tasksQuery.isRefetching}
-              aria-label={t("automations_view.refresh")}
-              title={t("automations_view.refresh")}
             >
               <RefreshCw className={cn("h-4 w-4", tasksQuery.isRefetching && "animate-spin")} />
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
+            </IconButton>
+            <SoftButton primary onClick={openCreate}>
+              <Plus className="h-3.5 w-3.5" />
               {t("automations_view.new_button")}
-            </Button>
+            </SoftButton>
           </div>
         }
       />
-      {showCreate && <TaskCreateDialog onClose={() => setShowCreate(false)} />}
+      {createDraft && (
+        <TaskCreateDialog initialDraft={createDraft} onClose={() => setCreateDraft(null)} />
+      )}
       {adding && (
         <TemplateAddDialog template={adding} onClose={() => setAdding(null)} onAdded={handleAdded} />
       )}
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border px-6">
-        <TabButton active={tab === "automations"} onClick={() => setTab("automations")} icon={Workflow}>
-          {t("automations_view.tab_automations")}
-          <Count n={automations.length} />
-        </TabButton>
-        <TabButton active={tab === "runs"} onClick={() => setTab("runs")} icon={History}>
-          {t("automations_view.tab_runs")}
-          <Count n={runsCount} />
-        </TabButton>
-        {notice && (
-          <div
-            role="status"
-            className={cn(
-              "ml-auto flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs",
-              notice.kind === "error"
-                ? "border-destructive/50 text-destructive"
-                : "border-primary/40 text-primary",
-            )}
-          >
-            <span className="max-w-md truncate">{notice.text}</span>
-            <button type="button" onClick={() => setNotice(null)} aria-label={t("common.close")}>
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        )}
-      </div>
-
       <ScrollArea className="flex-1">
-        <div className="p-6">
-          {tasksQuery.isLoading && (
-            <div className="text-sm text-muted-foreground">{t("tasks_view.loading")}</div>
+        <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-6 py-6">
+          {notice && (
+            <div
+              role="status"
+              className={cn(
+                "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+                notice.kind === "error"
+                  ? "border-destructive/50 bg-destructive/5 text-destructive"
+                  : "border-primary/40 bg-primary/5 text-primary",
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">{notice.text}</span>
+              <button
+                type="button"
+                onClick={() => setNotice(null)}
+                aria-label={t("common.close")}
+                className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           )}
+
           {tasksQuery.error && (
-            <div className="mb-4 rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {t("tasks_view.load_error")}: {(tasksQuery.error as Error).message}
             </div>
           )}
 
-          {tab === "automations" ? (
-            <div className="space-y-8">
-              <section aria-labelledby="your-automations">
-                <div className="mb-3 flex items-baseline justify-between">
-                  <h3 id="your-automations" className="text-sm font-semibold">
-                    {t("automations_view.yours_heading")}
-                  </h3>
-                  <span className="text-[11px] text-muted-foreground">
-                    {automations.length} {t("tasks_view.entries")}
-                  </span>
-                </div>
-                {!tasksQuery.isLoading && automations.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/60 p-8 text-center">
-                    <Workflow className="h-7 w-7 text-muted-foreground/50" />
-                    <p className="text-sm text-muted-foreground">{t("automations_view.yours_empty")}</p>
-                    <p className="max-w-xl text-[11px] leading-relaxed text-muted-foreground/70">
-                      {t("automations_view.yours_empty_hint")}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {automations.map((task: TaskSummary) => {
-                      const key = templateKeyOf(task);
-                      return (
-                        <AutomationCard
-                          key={task.id}
-                          task={task}
-                          template={key ? templatesByKey.get(key) : undefined}
-                          highlighted={highlightId === task.id}
-                          onRunNow={handleRunNow}
-                          onSetEnabled={handleSetEnabled}
-                          onDelete={handleDelete}
-                          busy={{
-                            run: runNow.isPending && runNow.variables === task.id,
-                            toggle: setEnabled.isPending && setEnabled.variables?.id === task.id,
-                            delete: deleteTask.isPending && deleteTask.variables?.id === task.id,
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
+          {/* Headline numbers — what is armed, what happens next, what broke. */}
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <StatTile
+              icon={<Zap className="h-4 w-4" />}
+              label={t("automations_view.stat_active")}
+              value={stats.active}
+              hint={
+                stats.paused > 0
+                  ? fill(t("automations_view.stat_active_paused"), { n: stats.paused })
+                  : t("automations_view.stat_active_hint")
+              }
+              tone="primary"
+              loading={tasksQuery.isLoading}
+            />
+            <StatTile
+              icon={<Timer className="h-4 w-4" />}
+              label={t("automations_view.stat_next")}
+              value={<NextRunValue dueNs={stats.nextDueNs} />}
+              hint={stats.nextTitle || t("automations_view.stat_next_hint")}
+              loading={tasksQuery.isLoading}
+            />
+            <StatTile
+              icon={<CalendarClock className="h-4 w-4" />}
+              label={t("automations_view.stat_schedules")}
+              value={stats.schedules}
+              hint={t("automations_view.stat_schedules_hint")}
+              loading={tasksQuery.isLoading}
+            />
+            <StatTile
+              icon={<AlertTriangle className="h-4 w-4" />}
+              label={t("automations_view.stat_problems")}
+              value={stats.problems}
+              hint={stats.problemTitle || t("automations_view.stat_problems_hint")}
+              tone={stats.problems > 0 ? "danger" : "success"}
+              loading={tasksQuery.isLoading}
+            />
+          </div>
 
-              <section aria-labelledby="catalogue">
-                <div className="mb-3 flex items-baseline justify-between">
-                  <h3 id="catalogue" className="text-sm font-semibold">
-                    {t("automations_view.catalogue_heading")}
-                  </h3>
-                  <span className="text-[11px] text-muted-foreground">
-                    {t("automations_view.catalogue_hint")}
-                  </span>
-                </div>
-                {catalogueUnavailable ? (
-                  <div className="rounded-2xl border border-dashed border-border/60 p-6 text-center text-sm text-muted-foreground">
-                    {t("automations_view.catalogue_unavailable")}
-                  </div>
-                ) : templatesQuery.isLoading ? (
-                  <div className="text-sm text-muted-foreground">{t("automations_view.catalogue_loading")}</div>
-                ) : templatesQuery.error ? (
-                  <div className="rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
-                    {t("automations_view.catalogue_error")}: {(templatesQuery.error as Error).message}
-                  </div>
-                ) : groups.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-border/60 p-6 text-center text-sm text-muted-foreground">
-                    {t("automations_view.catalogue_empty")}
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    {groups.map((group) => (
-                      <div key={group.category}>
-                        <SectionLabel className="mb-2">
-                          {t(`automations_view.category.${group.category}`)}
-                        </SectionLabel>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                          {group.templates.map((tpl) => (
-                            <CatalogueCard
-                              key={tpl.key}
-                              template={tpl}
-                              installedTaskId={installedByKey.get(tpl.key)}
-                              onAdd={setAdding}
-                              onShowInstalled={scrollToTask}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
+          <SegmentedFilter<Tab>
+            label={t("automations_view.tabs_label")}
+            value={tab}
+            onChange={setTab}
+            options={[
+              { id: "automations", label: t("automations_view.tab_automations"), count: automations.length },
+              { id: "schedules", label: t("automations_view.tab_schedules"), count: schedules.length },
+              { id: "runs", label: t("automations_view.tab_runs"), count: runsCount },
+              { id: "catalogue", label: t("automations_view.tab_catalogue"), count: templates.length },
+            ]}
+          />
+
+          {tab === "automations" && (
+            <Panel>
+              <div className="px-4 pt-4">
+                <PanelHeader
+                  title={t("automations_view.yours_heading")}
+                  subtitle={t("automations_view.yours_subtitle")}
+                  actions={
+                    <SoftButton onClick={openCatalogue}>
+                      <LayoutGrid className="h-3.5 w-3.5" />
+                      {t("automations_view.browse_catalogue")}
+                    </SoftButton>
+                  }
+                />
+              </div>
+              <div className="mt-3">
+                <AutomationsPanel
+                  automations={automations}
+                  templatesByKey={templatesByKey}
+                  highlightId={highlightId}
+                  onRunNow={handleRunNow}
+                  onSetEnabled={handleSetEnabled}
+                  onDelete={handleDelete}
+                  onCreate={openCreate}
+                  onBrowseCatalogue={openCatalogue}
+                  busy={{
+                    runId: runNow.isPending ? runNow.variables : undefined,
+                    toggleId: setEnabled.isPending ? setEnabled.variables?.id : undefined,
+                    deleteId: deleteTask.isPending ? deleteTask.variables?.id : undefined,
+                  }}
+                  loading={tasksQuery.isLoading}
+                />
+              </div>
+            </Panel>
+          )}
+
+          {tab === "schedules" && (
+            <Panel>
+              <div className="px-4 pt-4">
+                <PanelHeader
+                  title={t("automations_view.schedules_heading")}
+                  subtitle={t("automations_view.schedules_subtitle")}
+                  actions={
+                    <SoftButton primary onClick={openScheduleCreate}>
+                      <Plus className="h-3.5 w-3.5" />
+                      {t("automations_view.new_schedule")}
+                    </SoftButton>
+                  }
+                />
+              </div>
+              <div className="mt-3">
+                <SchedulesPanel
+                  schedules={schedules}
+                  onRunNow={handleRunNow}
+                  onDelete={handleDelete}
+                  onCreate={openScheduleCreate}
+                  busy={{
+                    runId: runNow.isPending ? runNow.variables : undefined,
+                    deleteId: deleteTask.isPending ? deleteTask.variables?.id : undefined,
+                  }}
+                  loading={tasksQuery.isLoading}
+                />
+              </div>
+            </Panel>
+          )}
+
+          {tab === "runs" && (
+            <Panel>
+              <div className="px-4 pt-4">
+                <PanelHeader
+                  title={t("automations_view.runs_heading")}
+                  subtitle={t("automations_view.runs_subtitle")}
+                  actions={
+                    <SegmentedFilter<RunFilter>
+                      label={t("automations_view.runs_filter_label")}
+                      value={runFilter}
+                      onChange={setRunFilter}
+                      options={RUN_FILTERS.map((f) => ({
+                        id: f,
+                        label: t(`automations_view.runs_filter.${f}`),
+                      }))}
+                    />
+                  }
+                />
+              </div>
+              <div className="mt-3">
+                <RunsPanel tasks={tasks} filter={runFilter} onNotice={showNotice} />
+              </div>
+            </Panel>
+          )}
+
+          {tab === "catalogue" && (
+            <div className="space-y-3">
+              <PanelHeader
+                title={t("automations_view.catalogue_heading")}
+                subtitle={t("automations_view.catalogue_hint")}
+              />
+              {catalogueUnavailable ? (
+                <Panel className="p-6 text-center text-sm text-muted-foreground">
+                  {t("automations_view.catalogue_unavailable")}
+                </Panel>
+              ) : templatesQuery.isLoading ? (
+                <p className="text-sm text-muted-foreground">
+                  {t("automations_view.catalogue_loading")}
+                </p>
+              ) : templatesQuery.error ? (
+                <Panel className="p-4 text-sm text-destructive">
+                  {t("automations_view.catalogue_error")}:{" "}
+                  {(templatesQuery.error as Error).message}
+                </Panel>
+              ) : templates.length === 0 ? (
+                <Panel className="p-6 text-center text-sm text-muted-foreground">
+                  {t("automations_view.catalogue_empty")}
+                </Panel>
+              ) : (
+                <CataloguePanel
+                  templates={templates}
+                  installedByKey={installedByKey}
+                  onAdd={setAdding}
+                  onShowInstalled={scrollToTask}
+                  onCreateCustom={openCreate}
+                />
+              )}
             </div>
-          ) : (
-            <RunsTab tasks={tasks} onNotice={showNotice} />
+          )}
+
+          {tasksQuery.isLoading && (
+            <p className="text-sm text-muted-foreground">{t("tasks_view.loading")}</p>
           )}
         </div>
       </ScrollArea>
@@ -325,41 +446,12 @@ export function AutomationsView() {
   );
 }
 
-function TabButton({
-  active,
-  onClick,
-  icon: Icon,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: typeof Workflow;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={cn(
-        "-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors",
-        active
-          ? "border-primary font-medium text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      <Icon className={cn("h-3.5 w-3.5", active ? "text-primary" : "text-muted-foreground")} />
-      {children}
-    </button>
-  );
-}
-
-function Count({ n }: { n: number }) {
-  if (!n) return null;
-  return (
-    <span className="rounded-full border border-border px-1.5 text-[10px] font-mono leading-4 text-muted-foreground">
-      {n}
-    </span>
-  );
+/** The countdown as a tile value — "3h", "7min", "due now". Ticks each second. */
+function NextRunValue({ dueNs }: { dueNs: number | null }) {
+  const t = useT();
+  useTick();
+  if (dueNs == null) return <>—</>;
+  const delta = dueNs - Date.now() * 1e6;
+  if (delta <= 0) return <>{t("tasks_view.due_now")}</>;
+  return <>{formatDelta(delta)}</>;
 }

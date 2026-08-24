@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const TEMPLATED: Record<string, string> = {
   "automations_view.needs": "Needs {tools}",
   "automations_view.added_notice": '"{title}" added.',
+  "automations_view.stat_active_paused": "{n} paused",
 };
 
 vi.mock("@/i18n", () => ({
@@ -27,9 +28,12 @@ vi.mock("@/views/ChatsView", () => ({
   ),
 }));
 
-// The create dialog has its own tests; here it only needs to be openable.
+// The create dialog has its own tests; here it only needs to be openable, and
+// the draft it opens with is what tells "New schedule" apart from "New".
 vi.mock("@/views/tasks/TaskCreateDialog", () => ({
-  TaskCreateDialog: () => <div>CREATE_DIALOG</div>,
+  TaskCreateDialog: ({ initialDraft }: { initialDraft?: { scheduleMode?: string } }) => (
+    <div>CREATE_DIALOG:{initialDraft?.scheduleMode ?? "default"}</div>
+  ),
 }));
 
 import { AutomationsView } from "@/views/AutomationsView";
@@ -97,6 +101,26 @@ const AUTOMATION = {
   last_result: "Three mails need a reply.",
 };
 
+/** A one-off that has NOT fired yet — the whole point of the Schedules tab. */
+const SCHEDULE = {
+  id: "sched1",
+  title: "Call the dentist",
+  state: "scheduled",
+  trigger_type: "at_time",
+  due_at_ns: NOW_NS + 1800e9,
+  created_at_ns: NOW_NS - 10e9,
+  started_at_ns: null,
+  finished_at_ns: null,
+  attempts: 0,
+  last_error: null,
+  tags: [],
+  created_by: "user",
+  interval_seconds: null,
+  next_due_at_ns: null,
+  last_run_state: null,
+  last_result: null,
+};
+
 const RUN = {
   id: "run1",
   title: "Weekly report",
@@ -124,7 +148,7 @@ interface Call {
 
 function installFetch(opts: { templatesStatus?: number; tasks?: unknown[] } = {}) {
   const calls: Call[] = [];
-  const tasks = opts.tasks ?? [AUTOMATION, RUN];
+  const tasks = opts.tasks ?? [AUTOMATION, SCHEDULE, RUN];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -145,6 +169,8 @@ function installFetch(opts: { templatesStatus?: number; tasks?: unknown[] } = {}
     if (url === "/api/tasks/auto1" && method === "PATCH") return json(200, { ok: true });
     if (url === "/api/tasks/auto1/cancel" && method === "POST") return json(200, { ok: true });
     if (url === "/api/tasks/auto1" && method === "DELETE") return json(200, { ok: true });
+    if (url === "/api/tasks/sched1/cancel" && method === "POST") return json(200, { ok: true });
+    if (url === "/api/tasks/sched1" && method === "DELETE") return json(200, { ok: true });
     if (url === "/api/tasks/run1") {
       return json(200, {
         ...RUN,
@@ -160,6 +186,7 @@ function installFetch(opts: { templatesStatus?: number; tasks?: unknown[] } = {}
         ],
       });
     }
+    if (url === "/api/tasks/sched1") return json(200, { ...SCHEDULE, spec: null, steps: [] });
     if (url === "/api/tasks/auto1") return json(200, { ...AUTOMATION, spec: null, steps: [] });
     throw new Error(`unexpected fetch ${method} ${url}`);
   });
@@ -176,40 +203,117 @@ function renderView() {
   );
 }
 
+/** Switch tabs by the chip rail's accessible name. */
+function goToTab(key: string) {
+  fireEvent.click(screen.getByRole("tab", { name: new RegExp(`automations_view.tab_${key}`) }));
+}
+
+/** Open a row's "⋯" menu and pick an entry by its label. */
+function pickRowAction(rowLabel: string, action: string) {
+  const row = screen.getByRole("row", { name: rowLabel });
+  fireEvent.click(within(row).getByLabelText("automations_view.col_actions"));
+  fireEvent.click(screen.getByRole("menuitem", { name: action }));
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
 describe("AutomationsView", () => {
-  it("renders the user's automations and the catalogue grouped by category", async () => {
+  it("opens on the user's automations, with the headline numbers above them", async () => {
     installFetch();
     renderView();
-    // The user's card (from the template tag it borrows the template's description).
-    const card = await screen.findByText("My inbox triage");
-    expect(card).toBeTruthy();
-    expect(screen.getByText("Three mails need a reply.")).toBeTruthy();
-    // Catalogue groups in order with localized headings.
-    expect(await screen.findByText("automations_view.category.news")).toBeTruthy();
-    expect(screen.getByText("automations_view.category.productivity")).toBeTruthy();
-    expect(screen.getByText("Morning briefing")).toBeTruthy();
+    expect(await screen.findByText("My inbox triage")).toBeTruthy();
+    // The row borrows the template's description via its `template:` tag.
+    expect(screen.getByText("Sort the inbox.")).toBeTruthy();
+    // One armed automation, one waiting schedule, nothing broken.
+    const armed = screen.getByRole("group", { name: "automations_view.stat_active" });
+    expect(within(armed).getByText("1")).toBeTruthy();
+    const scheduled = screen.getByRole("group", { name: "automations_view.stat_schedules" });
+    expect(within(scheduled).getByText("1")).toBeTruthy();
+    const problems = screen.getByRole("group", { name: "automations_view.stat_problems" });
+    expect(within(problems).getByText("automations_view.stat_problems_hint")).toBeTruthy();
+  });
+
+  it("the header button opens the create dialog", async () => {
+    installFetch();
+    renderView();
+    await screen.findByText("My inbox triage");
+    expect(screen.queryByText(/CREATE_DIALOG/)).toBeNull();
+    fireEvent.click(screen.getByText("automations_view.new_button"));
+    expect(screen.getByText("CREATE_DIALOG:default")).toBeTruthy();
+  });
+
+  it("a waiting one-shot lives on the Schedules tab, not in the run history", async () => {
+    installFetch();
+    renderView();
+    await screen.findByText("My inbox triage");
+    // Not a row on the automations tab (it IS named by the "next run" tile,
+    // which is the point of that tile — so this asks about rows, not text).
+    expect(screen.queryByRole("row", { name: "Call the dentist" })).toBeNull();
+
+    goToTab("schedules");
+    expect(await screen.findByRole("row", { name: "Call the dentist" })).toBeTruthy();
+
+    goToTab("runs");
+    expect(await screen.findByRole("row", { name: "Weekly report" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Call the dentist" })).toBeNull();
+  });
+
+  it("the Schedules tab creates a one-off, not a recurring automation", async () => {
+    installFetch();
+    renderView();
+    await screen.findByText("My inbox triage");
+    goToTab("schedules");
+    fireEvent.click(await screen.findByText("automations_view.new_schedule"));
+    expect(screen.getByText("CREATE_DIALOG:once")).toBeTruthy();
+  });
+
+  it("the catalogue filters by category and offers a custom automation", async () => {
+    installFetch();
+    renderView();
+    await screen.findByText("My inbox triage");
+    goToTab("catalogue");
+
+    expect(await screen.findByText("Morning briefing")).toBeTruthy();
+    expect(screen.getByText("Inbox triage")).toBeTruthy();
     // The installed template says "Added"; the not-ready one names what it needs.
     const triage = screen.getByTestId("catalogue-inbox_triage");
     expect(within(triage).getByText("automations_view.added")).toBeTruthy();
     expect(within(triage).getByText("Needs Gmail")).toBeTruthy();
+
+    // "Build your own" sits in the grid, so creating is never a hunt.
+    fireEvent.click(screen.getByTestId("catalogue-custom"));
+    expect(screen.getByText("CREATE_DIALOG:default")).toBeTruthy();
+  });
+
+  it("a category chip narrows the grid", async () => {
+    installFetch();
+    renderView();
+    await screen.findByText("My inbox triage");
+    goToTab("catalogue");
+    await screen.findByText("Morning briefing");
+    fireEvent.click(screen.getByRole("tab", { name: /automations_view.category.news/ }));
+    expect(screen.getByText("Morning briefing")).toBeTruthy();
+    expect(screen.queryByText("Inbox triage")).toBeNull();
+    // The custom tile belongs to the unfiltered grid only.
+    expect(screen.queryByTestId("catalogue-custom")).toBeNull();
   });
 
   it("shows an honest note when the catalogue route does not exist yet", async () => {
     installFetch({ templatesStatus: 404 });
     renderView();
+    await screen.findByText("My inbox triage");
+    goToTab("catalogue");
     expect(await screen.findByText("automations_view.catalogue_unavailable")).toBeTruthy();
-    // The user's automations still render.
-    expect(screen.getByText("My inbox triage")).toBeTruthy();
   });
 
   it("Add opens the dialog, validates required inputs and posts to the template route", async () => {
     const calls = installFetch();
     renderView();
+    await screen.findByText("My inbox triage");
+    goToTab("catalogue");
     const briefing = await screen.findByTestId("catalogue-morning_briefing");
     fireEvent.click(within(briefing).getByText("automations_view.add"));
     const dialog = await screen.findByRole("dialog");
@@ -223,7 +327,12 @@ describe("AutomationsView", () => {
     await waitFor(() => {
       const add = calls.find((c) => c.url === "/api/tasks/templates/morning_briefing/add");
       expect(add?.method).toBe("POST");
-      const body = add?.body as { inputs: Record<string, string>; schedule: { kind: string; time: string }; title: string; locale: string };
+      const body = add?.body as {
+        inputs: Record<string, string>;
+        schedule: { kind: string; time: string };
+        title: string;
+        locale: string;
+      };
       expect(body.inputs).toEqual({ city: "Hamburg" });
       expect(body.schedule).toEqual({ kind: "daily", time: "07:30", weekday: 0 });
       expect(body.title).toBe("Morning briefing");
@@ -243,7 +352,7 @@ describe("AutomationsView", () => {
       const patch = calls.find((c) => c.url === "/api/tasks/auto1" && c.method === "PATCH");
       expect(patch?.body).toEqual({ enabled: false });
     });
-    fireEvent.click(screen.getByText("automations_view.run_now"));
+    pickRowAction("My inbox triage", "automations_view.run_now");
     await waitFor(() => {
       expect(calls.some((c) => c.url === "/api/tasks/auto1/run" && c.method === "POST")).toBe(true);
     });
@@ -254,9 +363,9 @@ describe("AutomationsView", () => {
     const calls = installFetch();
     renderView();
     await screen.findByText("My inbox triage");
-    fireEvent.click(screen.getByLabelText("tasks_view.delete"));
+    pickRowAction("My inbox triage", "tasks_view.delete");
     expect(screen.getByText("automations_view.delete_confirm")).toBeTruthy();
-    fireEvent.click(screen.getByText("tasks_view.delete"));
+    fireEvent.click(screen.getByRole("button", { name: "tasks_view.delete" }));
     await waitFor(() => {
       const idx = (m: string, u: string) => calls.findIndex((c) => c.url === u && c.method === m);
       const cancel = idx("POST", "/api/tasks/auto1/cancel");
@@ -266,21 +375,17 @@ describe("AutomationsView", () => {
     });
   });
 
-  it("the Runs tab lists finished runs and expands to the readable result text", async () => {
+  it("a run row expands to the readable result text, and the chips filter", async () => {
     installFetch();
     renderView();
     await screen.findByText("My inbox triage");
-    fireEvent.click(screen.getByRole("tab", { name: /automations_view.tab_runs/ }));
-    expect(await screen.findByText("Weekly report")).toBeTruthy();
-    // The recurring automation is not a "run" row unless it is running/finished.
-    expect(screen.queryByText("My inbox triage")).toBeNull();
-    fireEvent.click(screen.getByLabelText("tasks_view.expand"));
+    goToTab("runs");
+    fireEvent.click(await screen.findByRole("row", { name: "Weekly report" }));
     const result = await screen.findByTestId("run-result");
     expect(result.textContent).toContain("The report is done.");
     expect(result.textContent).toContain("Two items are open.");
     expect(result.textContent).not.toContain("agent_result");
-    // Filter chips: "problems" hides the completed run.
-    fireEvent.click(screen.getByText("automations_view.runs_filter.problems"));
+    fireEvent.click(screen.getByRole("tab", { name: "automations_view.runs_filter.problems" }));
     expect(screen.queryByText("Weekly report")).toBeNull();
   });
 });

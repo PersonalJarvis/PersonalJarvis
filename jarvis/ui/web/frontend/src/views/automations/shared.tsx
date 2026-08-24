@@ -132,6 +132,29 @@ export function formatWhen(ns: number | null | undefined, locale?: string): stri
   }
 }
 
+/**
+ * A schedule's moment, written out: "Wed, 27.08., 07:00".
+ *
+ * `formatWhen` above answers "when did this happen" and drops the weekday for
+ * anything today; a schedule is read forwards, and the weekday is the part a
+ * person checks first ("is that before or after the weekend?").
+ */
+export function formatDueAt(ns: number | null | undefined, locale?: string): string {
+  if (!ns) return "—";
+  try {
+    const d = new Date(ns / 1e6);
+    return d.toLocaleString(locale, {
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 /** The run's result as readable text (the `agent_result` step), never raw JSON. */
 export function ResultText({ steps, fallback }: { steps: TaskStep[] | undefined; fallback?: string | null }) {
   const t = useT();

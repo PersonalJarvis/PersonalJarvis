@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  automationStats,
   extractAgentResult,
   filterRuns,
   firstLine,
@@ -9,6 +10,7 @@ import {
   scheduleLineForTask,
   selectAutomations,
   selectRuns,
+  selectSchedules,
   templateKeyOf,
   type AutomationTemplate,
   type ScheduleWords,
@@ -93,15 +95,62 @@ describe("selection", () => {
     expect(selectAutomations(all).map((t) => t.id)).toEqual(["b", "a", "f"]);
   });
 
-  it("runs = ran/running + pending one-shots, newest activity first", () => {
-    expect(selectRuns(all).map((t) => t.id)).toEqual(["e", "f", "c", "d"]);
+  it("schedules = waiting one-shots, soonest first", () => {
+    const later = task({ id: "g", trigger_type: "after_delay", state: "pending", due_at_ns: 9 });
+    expect(selectSchedules([...all, later]).map((t) => t.id)).toEqual(["d", "g"]);
+  });
+
+  it("runs = ran/running only — a waiting one-shot is a schedule, not a run", () => {
+    expect(selectRuns(all).map((t) => t.id)).toEqual(["e", "f", "c"]);
+  });
+
+  it("a waiting one-shot lives on exactly one tab", () => {
+    // The bug this split fixes: a schedule that had not fired yet was listed
+    // under Runs, so it read as history and its own tab looked empty. A
+    // RECURRING automation that is running right now is a different story —
+    // it is legitimately both something you own and something happening, so
+    // only the one-shot is pinned down here.
+    const onTabs = (id: string) =>
+      [selectAutomations(all), selectSchedules(all), selectRuns(all)].filter((list) =>
+        list.some((t) => t.id === id),
+      ).length;
+    expect(onTabs("d")).toBe(1);
+    expect(onTabs("e")).toBe(1);
   });
 
   it("filters runs by chip", () => {
     const runs = selectRuns(all);
     expect(filterRuns(runs, "done").map((t) => t.id)).toEqual(["e"]);
     expect(filterRuns(runs, "problems").map((t) => t.id)).toEqual(["c"]);
-    expect(filterRuns(runs, "running").map((t) => t.id)).toEqual(["f", "d"]);
+    expect(filterRuns(runs, "running").map((t) => t.id)).toEqual(["f"]);
+  });
+});
+
+describe("headline numbers", () => {
+  const now = Date.now() * 1e6;
+
+  it("counts what is armed, finds the soonest moment and names what broke", () => {
+    const stats = automationStats([
+      task({ id: "a", title: "Digest", state: "scheduled", next_due_at_ns: now + 7200e9 }),
+      task({ id: "b", title: "Triage", state: "paused", next_due_at_ns: now + 60e9 }),
+      task({ id: "c", title: "Pulse", state: "scheduled", next_due_at_ns: now + 600e9, last_run_state: "failed" }),
+      task({ id: "d", title: "Ping", trigger_type: "at_time", state: "pending", due_at_ns: now + 300e9 }),
+      task({ id: "e", title: "Old", state: "completed", trigger_type: "after_delay" }),
+    ]);
+    expect(stats.active).toBe(2);
+    expect(stats.paused).toBe(1);
+    expect(stats.schedules).toBe(1);
+    // The paused one is due soonest but is not armed, so it must not win.
+    expect(stats.nextTitle).toBe("Ping");
+    expect(stats.problems).toBe(1);
+    expect(stats.problemTitle).toBe("Pulse");
+  });
+
+  it("says nothing rather than zero when there is nothing to say", () => {
+    const stats = automationStats([]);
+    expect(stats.nextDueNs).toBeNull();
+    expect(stats.nextTitle).toBe("");
+    expect(stats.problemTitle).toBe("");
   });
 });
 
