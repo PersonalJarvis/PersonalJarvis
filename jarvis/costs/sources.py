@@ -21,10 +21,13 @@ from .model import (
     ROLE_AGENT,
     ROLE_PIPELINE,
     ROLE_REALTIME,
+    ROLE_STT,
     ROLE_TOOL,
+    ROLE_TTS,
     ROLE_WORKER,
     SUBSCRIPTION_RUNNERS,
     SURFACE_AGENT_CHAT,
+    SURFACE_JARVIS_VOICE,
     SURFACE_MISSION,
     SURFACE_VOICE,
     CostEntry,
@@ -472,6 +475,78 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Speech — sessions.db, but nothing like the token path above
+# ---------------------------------------------------------------------------
+
+
+def _speech_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator[CostEntry]:
+    """What a turn spent on hearing and on speaking.
+
+    These rows carry no tokens and never will: an STT provider bills per audio
+    second and a TTS provider per character. Writing those quantities into the
+    token columns would make them add up with the brain's tokens, which is a
+    different unit and a wrong number. They stay zero, the cost is real, and
+    the quantity that WAS billed goes into the label so the line item can say
+    what was actually bought.
+    """
+    conn = _connect(path)
+    if conn is None:
+        return
+    try:
+        if not _has_table(conn, "voice_events"):
+            return
+        for row in conn.execute(
+            "SELECT session_id, ts_ms, payload_json FROM voice_events "
+            "WHERE kind = 'SpeechUsageRecorded' AND ts_ms BETWEEN ? AND ?",
+            (since_ms, until_ms),
+        ):
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError) as exc:
+                log.debug("cost read model: unparsable speech payload (%s)", exc)
+                continue
+            if not isinstance(payload, dict):
+                continue
+            stage = str(payload.get("stage") or "")
+            if stage not in (ROLE_STT, ROLE_TTS):
+                continue
+            chars = _int(payload.get("chars"))
+            audio_ms = _float(payload.get("audio_ms"))
+            if chars <= 0 and audio_ms <= 0:
+                continue
+            source = str(payload.get("price_source") or "unknown")
+            yield CostEntry(
+                ts_ms=_int(row["ts_ms"]),
+                surface=SURFACE_JARVIS_VOICE,
+                role=stage,
+                provider=str(payload.get("provider") or "speech"),
+                model=str(payload.get("voice") or ""),
+                tokens_in=0,
+                tokens_out=0,
+                tokens_cached=0,
+                cost_usd=_float(payload.get("cost_usd")),
+                # The meter priced it against the vendor's own unit; re-deriving
+                # it here from a token rate would be nonsense.
+                price_source=source,  # type: ignore[arg-type]
+                ref_id=str(row["session_id"] or ""),
+                label=_speech_label(stage, chars, audio_ms),
+            )
+    except sqlite3.Error as exc:
+        log.warning("cost read model: speech source failed (%s)", exc)
+    finally:
+        conn.close()
+
+
+def _speech_label(stage: str, chars: int, audio_ms: float) -> str:
+    """The quantity that was billed, in the unit it was billed in."""
+    if stage == ROLE_TTS and chars > 0:
+        return f"{chars:,} characters spoken".replace(",", " ")
+    if audio_ms > 0:
+        return f"{audio_ms / 1000:.1f} s heard"
+    return ""
+
+
 def collect_entries(
     sources: CostSources,
     *,
@@ -483,5 +558,6 @@ def collect_entries(
     entries.extend(_voice_entries(sources.sessions_db, since_ms, until_ms))
     entries.extend(_agent_chat_entries(sources.agent_chat_db, since_ms, until_ms))
     entries.extend(_mission_entries(sources.missions_db, since_ms, until_ms))
+    entries.extend(_speech_entries(sources.sessions_db, since_ms, until_ms))
     entries.sort(key=lambda e: e.ts_ms)
     return entries

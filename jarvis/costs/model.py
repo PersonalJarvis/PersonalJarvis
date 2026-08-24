@@ -36,6 +36,11 @@ from typing import Any, Literal
 SURFACE_VOICE = "voice"
 SURFACE_AGENT_CHAT = "agent-chat"
 SURFACE_MISSION = "mission"
+#: The speech layer. Its own surface because it does not bill by token:
+#: hearing costs audio seconds, speaking costs characters.
+SURFACE_JARVIS_VOICE = "jarvis-voice"
+#: Coding agents driven by a vendor CLI, indexed from their session logs.
+SURFACE_AGENTIC_IDE = "agentic-ide"
 
 ROLE_REALTIME = "realtime"
 """Speech-to-speech model — audio tokens, billed per Live/Realtime API rates."""
@@ -50,6 +55,8 @@ ROLE_AGENT = "agent"
 """A coding-agent turn (Claude Code, Codex, …) run from the chat surface."""
 
 ROLE_WORKER = "worker"
+ROLE_STT = "stt"
+ROLE_TTS = "tts"
 """An autonomous mission worker."""
 
 ROLES: tuple[str, ...] = (ROLE_REALTIME, ROLE_TOOL, ROLE_PIPELINE, ROLE_AGENT, ROLE_WORKER)

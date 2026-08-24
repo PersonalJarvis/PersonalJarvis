@@ -106,6 +106,10 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         # Transcription view only shows the conversational reply and silently
         # drops everything else the user actually heard (2026-06-15).
         "SpeechSpoken",
+        # What the turn spent on hearing and speaking. Already aggregated per
+        # turn by the speech meter, so this is two rows a turn at most — the
+        # per-frame audio streams stay excluded, as the note below says.
+        "SpeechUsageRecorded",
         # Run Inspector forensic events (2026-06-17). The recorder is a read-only
         # wildcard subscriber, so persisting these adds no hot-path cost; they
         # power the latency waterfall, decision path, and error panel. _payload_for
@@ -1156,6 +1160,13 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "tokens_in",
         "tokens_out",
         "cost_usd",
+        # SpeechUsageRecorded: speech bills by audio second and by character,
+        # never by token, so it needs its own fields. ``voice`` is already
+        # whitelisted below for SpeechSpoken and carries this too.
+        "stage",
+        "chars",
+        "audio_ms",
+        "price_source",
         "text_len",
         "finish_reason",
         # SpeechSpoken: the phrase-kind tag (timeout / announcement / clarify /

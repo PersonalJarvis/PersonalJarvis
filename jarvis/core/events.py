@@ -1573,6 +1573,35 @@ class LatencyTurnComplete(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class SpeechUsageRecorded(Event):
+    """What one turn spent on hearing and on speaking.
+
+    The speech layer does not bill by token: an STT provider charges per
+    audio second and a TTS provider per character, which is why none of this
+    fits the token counters on :class:`BrainTurnCompleted` and why speech
+    spend was invisible until now.
+
+    One event per turn per (stage, provider, voice) — the aggregator behind
+    the metered providers sums a turn's sentence-by-sentence synthesis calls
+    before publishing, so a chatty streaming turn still costs the recorder two
+    rows rather than fifteen.
+    """
+
+    #: ``"stt"`` (hearing) or ``"tts"`` (speaking).
+    stage: str = ""
+    provider: str = ""
+    #: The TTS voice or the STT model — whichever the provider bills by.
+    voice: str = ""
+    #: What TTS bills by.
+    chars: int = 0
+    #: What STT bills by.
+    audio_ms: float = 0.0
+    cost_usd: float = 0.0
+    #: How trustworthy ``cost_usd`` is — see :mod:`jarvis.costs.model`.
+    price_source: str = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceBootStatus(Event):
     """Voice warm-up readiness signal — drives the UI "voice starting" badge.
 
