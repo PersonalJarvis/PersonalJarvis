@@ -12871,8 +12871,13 @@ _TASK_FALLBACK_ORDER: tuple[str, ...] = (
 def _short_provider_error(exc: Exception) -> str:
     """One readable line for ``last_error`` / the fallback summary — the
     exception class and the first 160 characters of its message."""
-    msg = " ".join(str(exc).split())
-    return f"{type(exc).__name__}: {msg[:160]}" if msg else type(exc).__name__
+    from jarvis.tasks.runner import readable_error
+
+    # The same code + human-message extraction the Runs tab uses, so a
+    # two-provider failure reads "openrouter: 402 — Insufficient credits…;
+    # gemini: 429 — You exceeded your current quota…" and not two dumped
+    # JSON bodies of which only the first survives the length cap.
+    return readable_error(exc)[:160]
 
 
 def _is_rate_limit_exc(exc: Exception) -> bool:

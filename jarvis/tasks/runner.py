@@ -642,6 +642,10 @@ def readable_error(exc: BaseException) -> str:
     name = type(exc).__name__
     if not raw:
         return name
+    if raw.startswith("all brain providers failed"):
+        # Already one readable line per provider — extracting the first
+        # code/message would silently drop every provider after it.
+        return f"{name}: {raw}"[:_LAST_ERROR_MAX_CHARS]
     code = _ERROR_CODE_RE.search(raw)
     message = _ERROR_MESSAGE_RE.search(raw)
     if message:
