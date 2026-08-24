@@ -413,8 +413,9 @@ async def test_correcting_the_assistant_still_starts_the_worker():
 
     The model had just offered to do the job itself. "No, no, which a worker
     should do it." is the user OVERRULING that offer and naming the vehicle,
-    and it must reach the executor. It used to score as a spawn DECLINE — the
-    English "no" read as the German "kein" — so the board stayed empty at
+    and it must reach the executor. It used to score as a spawn DECLINE: the
+    leading "no" was read as a determiner negating the vehicle rather than as
+    a contradiction of the assistant's offer, so the board stayed empty at
     "0 running · 0 in total" while the user asked three times.
     """
     bridge, executor = _spawn_bridge()
