@@ -509,6 +509,66 @@ def test_set_secret_emits_event(server_with_brain: WebServer, secret_store: _InM
     assert any(e.key == "openai_api_key" and e.action == "set" for e in received)
 
 
+def test_set_secret_on_scoped_card_writes_the_family_slot(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """The first Gemini key typed on the Realtime card serves every Gemini surface."""
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/secrets/realtime_gemini_api_key", json={"value": "AIza-1"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["written"] == ["gemini_api_key"]
+    assert secret_store.data == {"gemini_api_key": "AIza-1"}
+
+
+def test_set_secret_asks_before_a_second_different_key(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    secret_store.set("gemini_api_key", "AIza-1")
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/secrets/jarvis_agent_gemini_api_key", json={"value": "AIza-2"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False and body["choice_required"] is True
+        assert body["choice_kind"] == "dedicated_vs_family"
+        assert body["family_label"] == "Google Gemini"
+        # Nothing was written while the question is open.
+        assert secret_store.data == {"gemini_api_key": "AIza-1"}
+
+        here = client.post(
+            "/api/secrets/jarvis_agent_gemini_api_key",
+            json={"value": "AIza-2", "scope": "here"},
+        )
+        assert here.json()["written"] == ["jarvis_agent_gemini_api_key"]
+    assert secret_store.data["jarvis_agent_gemini_api_key"] == "AIza-2"
+    assert secret_store.data["gemini_api_key"] == "AIza-1"
+
+
+def test_set_secret_everywhere_replaces_family_and_old_copies(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    secret_store.set("openai_api_key", "sk-old")
+    secret_store.set("realtime_openai_api_key", "sk-old")
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post(
+            "/api/secrets/realtime_openai_api_key",
+            json={"value": "sk-new", "scope": "everywhere"},
+        )
+        body = resp.json()
+        assert body["written"] == ["openai_api_key"]
+        assert body["removed"] == ["realtime_openai_api_key"]
+    assert secret_store.data == {"openai_api_key": "sk-new"}
+
+
+def test_set_secret_rejects_unknown_scope(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/secrets/openai_api_key", json={"value": "x", "scope": "there"})
+        assert resp.status_code == 422
+
+
 def test_delete_secret(server_with_brain: WebServer, secret_store: _InMemorySecretStore) -> None:
     secret_store.set("gemini_api_key", "old")
     with TestClient(server_with_brain.app) as client:

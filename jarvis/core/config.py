@@ -3363,6 +3363,33 @@ class DictationConfig(BaseModel):
     translate_drift_max_shrink: float = Field(default=0.40, ge=0.0, le=1.0)
     translate_drift_max_growth: float = Field(default=2.50, ge=1.0, le=10.0)
 
+    # ------------------------------------------------------------------
+    # Prompt Mode — a dictation comes out as the prompt for a coding agent
+    # ------------------------------------------------------------------
+
+    #: Rewrite every dictation into a finished, English prompt for an AI
+    #: coding agent: the goal, the stated context and constraints, nothing
+    #: invented — the Agentic IDE's own prompt doctrine
+    #: (``jarvis/agentic_ide/prompt_blueprint.py``) applied to a transcript.
+    #: The writer is the one the Agentic IDE uses (``agentic_ide.prompt_writer``:
+    #: the pinned Tool Model, then the API tier, then a connected coding CLI);
+    #: no second picker, because "which model turns my words into a prompt"
+    #: is one question with one answer.
+    #:
+    #: Outranks the polish and translate passes while on — a prompt is always
+    #: English and always restructured, so neither has anything left to do.
+    #: When no writer answers in time the dictation falls through to those
+    #: passes exactly as if this switch were off; the raw words are never lost.
+    #:
+    #: Ships OFF. It changes WHAT the text says, on purpose, and it sends the
+    #: words to a cloud writer on most installs. Chosen, never inherited.
+    prompt_mode: bool = False
+
+    #: Wall-clock ceiling for one Prompt Mode call. Seconds, not the polish
+    #: pass's 1.2 s: this is a thinking-grade writer producing a brief, and
+    #: the user chose to wait for it. Clamped, never rejected (AP-16).
+    prompt_mode_timeout_ms: int = Field(default=20_000, ge=2_000, le=120_000)
+
     @field_validator("paste_chord", mode="before")
     @classmethod
     def _coerce_paste_chord(cls, value: object) -> str:
@@ -3498,6 +3525,11 @@ class DictationConfig(BaseModel):
     @classmethod
     def _clamp_translate_drift_max_growth(cls, value: object) -> float:
         return _clamped_polish_float(value, default=2.50, low=1.0, high=10.0)
+
+    @field_validator("prompt_mode_timeout_ms", mode="before")
+    @classmethod
+    def _clamp_prompt_mode_timeout_ms(cls, value: object) -> int:
+        return _clamped_polish_int(value, default=20_000, low=2_000, high=120_000)
 
 
 class MarketplaceConfig(BaseModel):
@@ -4974,6 +5006,203 @@ def jarvis_agent_secret_slot(provider: str) -> tuple[str, str] | None:
     """Return the dedicated ``(keyring slot, ENV name)`` for an Agent family."""
     candidates = JARVIS_AGENT_SECRET_CANDIDATES.get(provider, ())
     return candidates[0] if candidates else None
+
+
+# ----------------------------------------------------------------------
+# One key per provider family (2026-08-24)
+# ----------------------------------------------------------------------
+#
+# Every surface of a provider family (Brain, Tool Model, Jarvis-Agents, TTS,
+# STT, Realtime) reads the family's PRIMARY slot through the chains above, and
+# the scoped slots (``realtime_*``, ``jarvis_agent_*``, ``codex_*``) only exist
+# so a user who WANTS a second key for one surface can have one. The save
+# planner below turns that into the rule the user sees: the first key saved
+# anywhere becomes the family key, and only a genuinely different second key
+# asks "just here, or everywhere?".
+
+# The families that own a primary slot. Realtime/Agent/Codex variants are
+# scoped views of one of these, never families of their own.
+_SECRET_BASE_FAMILIES: tuple[str, ...] = (
+    "claude-api",
+    "openai",
+    "openrouter",
+    "groq",
+    "nvidia",
+    "gemini",
+    "vertex",
+    "grok",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SecretSlotScope:
+    """Where one keyring slot sits inside its provider family."""
+
+    family: str
+    primary_slot: str
+    # True for a surface-scoped slot (realtime / agent / codex); False for the
+    # family's primary slot itself.
+    dedicated: bool
+
+
+def secret_family_primary_slot(family: str) -> str | None:
+    """The slot every surface of ``family`` reads first (``gemini_api_key``…)."""
+    if family not in _SECRET_BASE_FAMILIES:
+        return None
+    candidates = PROVIDER_SECRET_CANDIDATES.get(family, ())
+    return candidates[0][0] if candidates else None
+
+
+def secret_slot_scope(slot: str) -> SecretSlotScope | None:
+    """Classify ``slot`` as a family primary, a scoped slot, or neither.
+
+    A scoped slot is the FIRST entry of a resolution chain whose tail contains a
+    base family's primary slot (``realtime_gemini_api_key`` → ``gemini``). Legacy
+    aliases such as ``google_api_key`` sit in the middle of a chain and belong
+    to no scope: they are saved verbatim. Derived from the chains, so a new
+    scoped slot is classified the moment its chain is declared (BUG-008 class).
+    """
+    for family in _SECRET_BASE_FAMILIES:
+        primary = secret_family_primary_slot(family)
+        if primary == slot:
+            return SecretSlotScope(family=family, primary_slot=primary, dedicated=False)
+    for chains in (PROVIDER_SECRET_CANDIDATES, JARVIS_AGENT_SECRET_CANDIDATES):
+        for candidates in chains.values():
+            if not candidates or candidates[0][0] != slot:
+                continue
+            # A base family's own chain starts with its primary (caught above),
+            # so any chain reaching a primary from a different first slot is a
+            # scoped view — including the Agent chains, which reuse the family
+            # name as their key.
+            tail = {candidate_slot for candidate_slot, _env in candidates[1:]}
+            for family in _SECRET_BASE_FAMILIES:
+                primary = secret_family_primary_slot(family)
+                if primary in tail:
+                    return SecretSlotScope(family=family, primary_slot=primary, dedicated=True)
+    return None
+
+
+def secret_family_scoped_slots(family: str) -> tuple[str, ...]:
+    """Every surface-scoped slot that falls back to ``family``'s primary slot."""
+    found: dict[str, None] = {}
+    for chains in (PROVIDER_SECRET_CANDIDATES, JARVIS_AGENT_SECRET_CANDIDATES):
+        for candidates in chains.values():
+            if not candidates:
+                continue
+            scope = secret_slot_scope(candidates[0][0])
+            if scope is not None and scope.dedicated and scope.family == family:
+                found.setdefault(candidates[0][0])
+    return tuple(found)
+
+
+@dataclass(frozen=True, slots=True)
+class SecretSavePlan:
+    """What a save of one slot should actually write — or the question to ask.
+
+    ``choice_required`` means nothing was decided yet: the caller must ask the
+    user whether the new key is for this surface only (``scope="here"``) or
+    for every surface of the family (``scope="everywhere"``) and plan again.
+    """
+
+    writes: tuple[str, ...]
+    deletes: tuple[str, ...] = ()
+    choice_required: bool = False
+    family: str | None = None
+    primary_slot: str | None = None
+    # Which question to ask. "dedicated_vs_family": a scoped slot is being
+    # saved while the family already has a different key. "family_vs_dedicated":
+    # the family key is being replaced while some surfaces hold their own
+    # different key.
+    choice_kind: str | None = None
+    # The scoped slots holding a different key from the one being saved.
+    conflicting_slots: tuple[str, ...] = ()
+
+
+def plan_secret_save(slot: str, value: str, scope: str | None = None) -> SecretSavePlan:
+    """Decide where a key entered on one surface should be stored.
+
+    Rules, in the user's words ("one key per provider, unless I say otherwise"):
+
+    * A slot outside any family (Twilio, ElevenLabs aliases…) is written as-is.
+    * Saving on a SCOPED surface (Realtime card, Agent row, Codex) while the
+      family has no key yet stores the key as the FAMILY key, so every surface
+      of that provider works at once. Same when the family already holds this
+      exact key: the scoped copy is redundant and is dropped.
+    * Saving a DIFFERENT key on a scoped surface asks: only here, or replace
+      the family key everywhere? ``"here"`` writes the scoped slot; ``"everywhere"``
+      writes the family slot and drops every scoped copy of the OLD family key
+      (so no surface silently keeps running on the key just replaced).
+    * Replacing the FAMILY key while some surfaces hold their own different key
+      asks whether those keep their key (``"here"``) or follow (``"everywhere"``,
+      which drops them). Scoped copies equal to the old family key were never
+      a deliberate second key and always follow.
+
+    Pure planning: nothing is written here. ``scope`` is ``None`` (ask if
+    needed), ``"here"`` or ``"everywhere"``.
+    """
+    if scope not in (None, "here", "everywhere"):
+        raise ValueError(f"unknown secret save scope: {scope!r}")
+    info = secret_slot_scope(slot)
+    if info is None:
+        return SecretSavePlan(writes=(slot,))
+    family, primary = info.family, info.primary_slot
+
+    if info.dedicated:
+        family_value = get_secret(primary)
+        own_value = get_secret(slot)
+        drop_own = (slot,) if own_value else ()
+        if not family_value or family_value == value:
+            return SecretSavePlan(
+                writes=(primary,), deletes=drop_own, family=family, primary_slot=primary
+            )
+        if scope is None:
+            return SecretSavePlan(
+                writes=(),
+                choice_required=True,
+                family=family,
+                primary_slot=primary,
+                choice_kind="dedicated_vs_family",
+                conflicting_slots=(primary,),
+            )
+        if scope == "here":
+            return SecretSavePlan(writes=(slot,), family=family, primary_slot=primary)
+        # everywhere: the family key changes; scoped mirrors of the old key
+        # follow, a scoped slot holding a third key is a deliberate choice.
+        mirrors = tuple(
+            s for s in secret_family_scoped_slots(family) if get_secret(s) == family_value
+        )
+        deletes = tuple(dict.fromkeys((*drop_own, *mirrors)))
+        return SecretSavePlan(
+            writes=(primary,), deletes=deletes, family=family, primary_slot=primary
+        )
+
+    # The family primary itself.
+    old_value = get_secret(primary)
+    mirrors: list[str] = []
+    distinct: list[str] = []
+    for scoped in secret_family_scoped_slots(family):
+        held = get_secret(scoped)
+        if not held or held == value:
+            if held:
+                mirrors.append(scoped)
+            continue
+        if old_value and held == old_value:
+            mirrors.append(scoped)
+        else:
+            distinct.append(scoped)
+    if distinct and scope is None:
+        return SecretSavePlan(
+            writes=(),
+            choice_required=True,
+            family=family,
+            primary_slot=primary,
+            choice_kind="family_vs_dedicated",
+            conflicting_slots=tuple(distinct),
+        )
+    deletes = tuple(mirrors) if scope != "everywhere" else tuple((*mirrors, *distinct))
+    return SecretSavePlan(
+        writes=(primary,), deletes=deletes, family=family, primary_slot=primary
+    )
 
 
 @contextmanager

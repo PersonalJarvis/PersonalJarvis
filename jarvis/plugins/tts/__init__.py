@@ -60,9 +60,13 @@ _INWORLD_ALIASES = frozenset({
 # single-provider resilience, AP-22). Families absent here are left untouched.
 _TTS_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "inworld": (("inworld_api_key", "INWORLD_API_KEY"),),
+    # Same order as the brain's gemini chain; the trailing realtime slot is the
+    # last-resort cross-read so a realtime-only Gemini install keeps its voice.
     "gemini-flash-tts": (
         ("gemini_api_key", "GEMINI_API_KEY"),
+        ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
+        ("realtime_gemini_api_key", "JARVIS_REALTIME_GEMINI_API_KEY"),
     ),
     "elevenlabs": (
         ("elevenlabs_api_key", "ELEVENLABS_API_KEY"),

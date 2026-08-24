@@ -9,16 +9,63 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { ApiKeyForm } from "@/components/ApiKeyForm";
-import { deleteSecret } from "@/hooks/useProviders";
+import { deleteSecret, postSecret } from "@/hooks/useProviders";
 
 vi.mock("@/hooks/useProviders", () => ({
   deleteSecret: vi.fn(async () => undefined),
-  postSecret: vi.fn(async () => undefined),
+  postSecret: vi.fn(async (key: string) => ({ ok: true, key, written: [key] })),
 }));
 
 afterEach(cleanup);
 beforeEach(() => {
   vi.mocked(deleteSecret).mockClear();
+  vi.mocked(postSecret).mockClear();
+});
+
+describe("ApiKeyForm one-key-per-family scope question", () => {
+  it("asks 'only here or everywhere' when the family already holds a different key", async () => {
+    vi.mocked(postSecret).mockResolvedValueOnce({
+      ok: false,
+      key: "realtime_gemini_api_key",
+      choice_required: true,
+      choice_kind: "dedicated_vs_family",
+      family_label: "Google Gemini",
+      conflicting_labels: ["Google Gemini"],
+    });
+    render(
+      <ApiKeyForm secretKey="realtime_gemini_api_key" dashboardUrl={null} configured={false} />,
+    );
+    fireEvent.change(screen.getByLabelText(/enter realtime_gemini_api_key/i), {
+      target: { value: "AIza-second" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.getByTestId("secret-scope-choice")).toBeTruthy());
+    expect(screen.getByText(/Google Gemini already has a different key/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /everywhere for Google Gemini/i }));
+    await waitFor(() =>
+      expect(postSecret).toHaveBeenLastCalledWith(
+        "realtime_gemini_api_key",
+        "AIza-second",
+        "everywhere",
+      ),
+    );
+    // The question disappears once the scoped save went through.
+    await waitFor(() => expect(screen.queryByTestId("secret-scope-choice")).toBeNull());
+  });
+
+  it("saves straight through when no choice is needed", async () => {
+    render(<ApiKeyForm secretKey="gemini_api_key" dashboardUrl={null} configured={false} />);
+    fireEvent.change(screen.getByLabelText(/enter gemini_api_key/i), {
+      target: { value: "AIza-first" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(postSecret).toHaveBeenCalledWith("gemini_api_key", "AIza-first", undefined),
+    );
+    expect(screen.queryByTestId("secret-scope-choice")).toBeNull();
+  });
 });
 
 describe("ApiKeyForm credential help", () => {

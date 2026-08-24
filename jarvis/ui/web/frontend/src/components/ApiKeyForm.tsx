@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Eye, EyeOff, ExternalLink, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { deleteSecret, postSecret } from "@/hooks/useProviders";
+import {
+  deleteSecret,
+  postSecret,
+  type SecretSaveResult,
+  type SecretSaveScope,
+} from "@/hooks/useProviders";
 import { keyFormatConfirmed, keyMatchesSecret } from "@/lib/keyFormat";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
@@ -80,6 +85,9 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
   const coveredByShared = !configured && Boolean(effectiveConfigured);
   const [editing, setEditing] = useState(!configured && !effectiveConfigured);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // One key per provider family: when the family already holds a DIFFERENT
+  // key, the backend writes nothing and hands back the question instead.
+  const [scopeChoice, setScopeChoice] = useState<SecretSaveResult | null>(null);
   const pushToast = useEventStore((s) => s.pushToast);
 
   // Live, client-side format recognition — the entered value never leaves the
@@ -87,18 +95,27 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
   // hints; never blocks the save.
   const fmt = value.trim() ? keyMatchesSecret(secretKey, value) : null;
 
-  async function handleSave() {
+  async function handleSave(scope?: SecretSaveScope) {
     const trimmed = value.trim();
     if (!trimmed) return;
     setPending(true);
     try {
-      await postSecret(secretKey, trimmed);
+      const result = await postSecret(secretKey, trimmed, scope);
+      if (result?.choice_required) {
+        setScopeChoice(result);
+        return;
+      }
+      setScopeChoice(null);
       pushToast("success", t("apikeys_view.key_saved_toast").replace("{0}", secretKey));
       setValue("");
       setEditing(false);
       onChanged?.();
       onSavedActivate?.();
-      announceSecretChange(secretKey, "set");
+      // The family slot may have been written instead of (or alongside) the
+      // card's own slot; every surface reading either must refresh.
+      for (const slot of new Set([secretKey, ...(result?.written ?? [])])) {
+        announceSecretChange(slot, "set");
+      }
     } catch (e) {
       pushToast("error", `${t("common.save_failed")}: ${(e as Error).message}`);
     } finally {
@@ -155,6 +172,49 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
         ? t("apikeys_view.get_key_at").replace("{0}", dashboardHost)
         : t("apikeys_view.get_key_here")}
     </a>
+  ) : null;
+
+  // "Just here, or everywhere?" — asked only when a second, different key
+  // meets an existing family key. Two plain choices, no default clicked for
+  // the user: which one is right lives in their head.
+  const familyLabel = scopeChoice?.family_label ?? "";
+  const scopeQuestion = scopeChoice ? (
+    <div
+      data-testid="secret-scope-choice"
+      className="space-y-2 rounded-control border border-border bg-background/60 px-3 py-2"
+    >
+      <p className="text-xs leading-relaxed text-foreground">
+        {scopeChoice.choice_kind === "family_vs_dedicated"
+          ? t("apikeys_view.scope_family_question")
+              .replace("{0}", familyLabel)
+              .replace("{1}", (scopeChoice.conflicting_labels ?? []).join(", "))
+          : t("apikeys_view.scope_dedicated_question").replace("{0}", familyLabel)}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          onClick={() => void handleSave("everywhere")}
+          disabled={pending}
+          className="h-8 rounded-control"
+        >
+          {t("apikeys_view.scope_everywhere").replace("{0}", familyLabel)}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void handleSave("here")}
+          disabled={pending}
+          className="h-8 rounded-control"
+        >
+          {scopeChoice.choice_kind === "family_vs_dedicated"
+            ? t("apikeys_view.scope_keep_dedicated")
+            : t("apikeys_view.scope_here")}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setScopeChoice(null)} className="h-8">
+          {t("common.cancel")}
+        </Button>
+      </div>
+    </div>
   ) : null;
 
   const sharedDeleteConfirm = confirmingDelete ? (
@@ -266,7 +326,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
               "focus:outline-none focus:ring-1 focus:ring-primary",
             )}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void handleSave();
+              if (e.key === "Enter" && !scopeChoice) void handleSave();
             }}
           />
           <button
@@ -281,8 +341,8 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
         </div>
         <Button
           size="sm"
-          onClick={handleSave}
-          disabled={pending || !value.trim()}
+          onClick={() => void handleSave()}
+          disabled={pending || !value.trim() || Boolean(scopeChoice)}
           className="h-9 rounded-control"
         >
           {pending ? "…" : t("common.save")}
@@ -298,6 +358,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
           </Button>
         )}
       </div>
+      {scopeQuestion}
       {fmt && !fmt.match && fmt.detected && (
         <div className="space-y-1">
           <p className="flex items-start gap-1 text-xs text-amber-500">

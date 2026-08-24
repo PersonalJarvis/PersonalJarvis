@@ -601,16 +601,43 @@ export function sectionHealthFromProviderTest(
   };
 }
 
-export async function postSecret(key: string, value: string): Promise<void> {
+/** "here" = this surface only; "everywhere" = the whole provider family. */
+export type SecretSaveScope = "here" | "everywhere";
+
+export interface SecretSaveResult {
+  ok: boolean;
+  key: string;
+  /** Nothing was written — the backend needs a scope decision first. */
+  choice_required?: boolean;
+  choice_kind?: "dedicated_vs_family" | "family_vs_dedicated" | null;
+  family_label?: string | null;
+  /** Surfaces holding a DIFFERENT key from the one being saved. */
+  conflicting_labels?: string[];
+  /** Slots actually written — the family slot when a first key was saved on a scoped card. */
+  written?: string[];
+  restart_required?: boolean;
+}
+
+/**
+ * One key per provider family: a key saved on any card becomes the family key
+ * unless the family already holds a different one — then the backend answers
+ * `choice_required` and the caller re-posts with an explicit `scope`.
+ */
+export async function postSecret(
+  key: string,
+  value: string,
+  scope?: SecretSaveScope,
+): Promise<SecretSaveResult> {
   const res = await fetch(`/api/secrets/${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value }),
+    body: JSON.stringify(scope ? { value, scope } : { value }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
+  return (await res.json()) as SecretSaveResult;
 }
 
 export async function deleteSecret(key: string): Promise<void> {

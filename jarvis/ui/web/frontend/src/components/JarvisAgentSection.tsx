@@ -1094,6 +1094,7 @@ function CodexConnectionCard({
               secretKey={row.secret_key}
               dashboardUrl={row.dashboard_url}
               configured={row.dedicated_key_set}
+              effectiveConfigured={row.shared_key_set}
               credentialHelp={row.credential_help}
               onChanged={onChanged}
             />
@@ -1515,6 +1516,7 @@ function ClaudeApiCard({
               secretKey={row.secret_key}
               dashboardUrl={row.dashboard_url}
               configured={row.dedicated_key_set}
+              effectiveConfigured={row.shared_key_set}
               credentialHelp={row.credential_help}
               onChanged={onChanged}
             />
@@ -1657,11 +1659,15 @@ function SubagentProviderCard({
       body={
         row.secret_key || row.credential_help || !row.key_set ? (
           <>
+            {/* The shared family key already serves this row (the runtime
+                falls back to it), so an empty box here asked for a second
+                key nobody needs — same "covered" state as the tier cards. */}
             {row.secret_key && (
               <ApiKeyForm
                 secretKey={row.secret_key}
                 dashboardUrl={row.dashboard_url}
                 configured={row.dedicated_key_set}
+                effectiveConfigured={row.shared_key_set}
                 credentialHelp={row.credential_help}
                 onChanged={onSwitched}
               />

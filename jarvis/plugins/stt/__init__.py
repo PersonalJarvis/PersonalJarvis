@@ -38,7 +38,12 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     # collision in the shared model-catalog / provider-spec namespaces.
     "openrouter-stt": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
     # OpenAI Whisper STT reuses the SAME openai_api_key slot as the OpenAI brain.
-    "openai-api": (("openai_api_key", "OPENAI_API_KEY"),),
+    # The trailing realtime slot is the same last-resort cross-read the brain
+    # chain has: a realtime-only OpenAI install must not lose cloud STT.
+    "openai-api": (
+        ("openai_api_key", "OPENAI_API_KEY"),
+        ("realtime_openai_api_key", "JARVIS_REALTIME_OPENAI_API_KEY"),
+    ),
     # Gemini STT reuses the SAME AI-Studio key slots as the Gemini brain/TTS, so
     # the Gemini-only downloader (the recommended-default persona) gets cloud
     # voice input with no second credential.
@@ -46,6 +51,7 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("gemini_api_key", "GEMINI_API_KEY"),
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
+        ("realtime_gemini_api_key", "JARVIS_REALTIME_GEMINI_API_KEY"),
     ),
     # Vertex STT reuses the shared Vertex credential — the same slots the Vertex
     # brain, TTS and realtime tiers read, so one Cloud setup serves the whole

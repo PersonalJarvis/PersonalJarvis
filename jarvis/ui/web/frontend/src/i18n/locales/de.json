@@ -596,6 +596,8 @@
     "build_hint": "Bau-Modus — der Agent darf Dateien ändern. Klick für Plan-Modus.",
     "plan_hint": "Plan-Modus — der Agent liest und plant, ändert nichts. Klick für Bau-Modus.",
     "folder": "Arbeitsordner",
+    "jarvis_tools": "Jarvis · {count} Tools",
+    "jarvis_tools_hint": "Dieser Chat steuert Jarvis: {count} Jarvis-Tools stehen ihm zur Verfügung — dieselben, die auch per Sprache laufen.",
     "send": "Senden",
     "stop": "Durchgang stoppen",
     "hint_connect": "{provider} ist noch nicht verbunden.",
@@ -1573,6 +1575,11 @@
     "shared_delete_prefix": "Dieser Schlüssel wird auch verwendet von:",
     "shared_delete_suffix": "Beim Löschen werden auch diese Provider deaktiviert.",
     "delete_anyway": "Trotzdem löschen",
+    "scope_dedicated_question": "Für {0} ist bereits ein anderer Schlüssel gespeichert. Den neuen Schlüssel nur hier verwenden oder überall ersetzen, wo {0} genutzt wird?",
+    "scope_family_question": "Einige Bereiche von {0} haben einen eigenen Schlüssel ({1}). Diese auch ersetzen oder behalten?",
+    "scope_everywhere": "Überall bei {0}",
+    "scope_here": "Nur hier",
+    "scope_keep_dedicated": "Eigene Schlüssel behalten",
     "key_saved_label": "Schlüssel gespeichert",
     "key_saved_toast": "Schlüssel gespeichert ({0})",
     "key_removed_toast": "Schlüssel entfernt ({0})",
@@ -4284,7 +4291,7 @@
       "setup_label": "Arbeitsbereich einrichten",
       "reading_mode": "Darstellung",
       "reading_mode_label": "Darstellung des Arbeitsbereichs",
-      "view_hint": "Nur die Darstellung ändert sich — Agents, Fenster und Unterhaltungen bleiben gleich, und die Toolbar kann jederzeit wechseln.",
+      "view_hint": "Es geht nichts verloren: Die Terminals arbeiten hinter dem Chat weiter, und der Schalter in der Workspace-Leiste wechselt jederzeit zwischen beiden.",
       "selected": "Ausgewählt",
       "workspace": "Arbeitsbereich",
       "opens_as": "Wird geöffnet als",
@@ -4295,12 +4302,12 @@
         "folder": { "label": "Ordner", "title": "Projektordner auswählen", "hint": "Alles, was die Agents tun, bleibt in diesem Ordner." },
         "layout": { "label": "Layout", "title": "Arbeitsbereich aufteilen", "hint": "Lege fest, wie viele unabhängige Terminal-Fenster geöffnet werden." },
         "agents": { "label": "Agents" },
-        "view": { "label": "Ansicht", "title": "Darstellung des Arbeitsbereichs auswählen", "hint": "Die Agents bleiben gleich — die Toolbar kann jederzeit umschalten." },
+        "view": { "label": "Ansicht", "title": "Darstellung des Arbeitsbereichs auswählen", "hint": "Danach ist beides einen Klick entfernt — der Schalter sitzt in der Workspace-Leiste." },
         "review": { "label": "Prüfen", "title": "Vor dem Öffnen prüfen", "hint": "Nichts startet, bevor du den Arbeitsbereich öffnest." }
       },
       "views": {
         "grid": { "title": "Terminal-Raster", "description": "Alle Fenster gleichzeitig nebeneinander — die vollständige Terminal-Wand." },
-        "chat": { "title": "Chat-Ansicht", "description": "Ein Agent im Mittelpunkt, die anderen in einer Leiste — lesbar wie eine Unterhaltung." }
+        "chat": { "title": "Chat", "description": "Der Agenten-Chat, im Ordner dieses Workspaces — schreiben statt Terminals zuschauen." }
       }
     },
     "crowded": {

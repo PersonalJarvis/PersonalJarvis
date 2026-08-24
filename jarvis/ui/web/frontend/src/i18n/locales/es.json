@@ -1573,6 +1573,11 @@
     "shared_delete_prefix": "Esta clave también la usan:",
     "shared_delete_suffix": "Al eliminarla, esos proveedores también se desactivan.",
     "delete_anyway": "Eliminar de todos modos",
+    "scope_dedicated_question": "{0} ya tiene otra clave guardada. ¿Usar la nueva clave solo aquí o reemplazarla en todos los sitios donde se usa {0}?",
+    "scope_family_question": "Algunas áreas de {0} tienen su propia clave ({1}). ¿Reemplazarlas también o mantenerlas?",
+    "scope_everywhere": "En todas partes para {0}",
+    "scope_here": "Solo aquí",
+    "scope_keep_dedicated": "Mantener sus propias claves",
     "key_saved_label": "Clave guardada",
     "key_saved_toast": "Clave guardada ({0})",
     "key_removed_toast": "Clave eliminada ({0})",
@@ -4284,7 +4289,7 @@
       "setup_label": "Configurar espacio de trabajo",
       "reading_mode": "Modo de lectura",
       "reading_mode_label": "Cómo se abre el espacio de trabajo",
-      "view_hint": "Solo cambia la presentación: los agentes, paneles y conversaciones siguen iguales, y la barra permite cambiar en cualquier momento.",
+      "view_hint": "No se pierde nada: las terminales siguen trabajando detrás del chat y el conmutador de la barra cambia entre ambas en cualquier momento.",
       "selected": "Seleccionado",
       "workspace": "Espacio de trabajo",
       "opens_as": "Se abre como",
@@ -4295,12 +4300,12 @@
         "folder": { "label": "Carpeta", "title": "Elige la carpeta del proyecto", "hint": "Todo lo que hagan los agentes permanece dentro de esta carpeta." },
         "layout": { "label": "Diseño", "title": "Diseña el espacio de trabajo", "hint": "Elige cuántos paneles de terminal independientes deben abrirse." },
         "agents": { "label": "Agentes" },
-        "view": { "label": "Vista", "title": "Elige cómo leer el espacio", "hint": "Los agentes son los mismos y la barra permite cambiar en cualquier momento." },
+        "view": { "label": "Vista", "title": "Elige cómo leer el espacio", "hint": "Después ambas quedan a un clic: el conmutador está en la barra del espacio de trabajo." },
         "review": { "label": "Revisar", "title": "Revisa antes de abrir", "hint": "Nada empieza hasta que abras el espacio de trabajo." }
       },
       "views": {
         "grid": { "title": "Cuadrícula de terminales", "description": "Todos los paneles a la vez, uno junto a otro: la pared completa de terminales." },
-        "chat": { "title": "Vista de chat", "description": "Un agente en el centro y los demás en una barra, como una conversación." }
+        "chat": { "title": "Chat", "description": "El chat de agentes, en la carpeta de este espacio de trabajo: escribe en lugar de mirar terminales." }
       }
     },
     "crowded": {

@@ -205,10 +205,12 @@ class GeminiFlashTTS:
         """
         if self._api_key:
             return self._api_key
-        for env_var in ("GEMINI_API_KEY", "GOOGLE_AIStudio_API_KEY", "GOOGLE_API_KEY"):
-            val = cfg.get_secret(env_var.lower(), env_fallback=env_var)
-            if val:
-                return val
+        # The family chain (config.PROVIDER_SECRET_CANDIDATES["gemini"]) is the
+        # one list of Gemini slots; a private copy here drifted from it and
+        # left a realtime-only install without TTS.
+        val = cfg.get_provider_secret("gemini")
+        if val:
+            return val
         raise RuntimeError(
             "Gemini API key not found. Set GEMINI_API_KEY or "
             "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."

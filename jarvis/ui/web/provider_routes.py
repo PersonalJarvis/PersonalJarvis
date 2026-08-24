@@ -105,6 +105,10 @@ ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 
 class SecretBody(BaseModel):
     value: str = Field(..., min_length=1, description="Raw secret value (API key, token, etc.)")
+    # One key per provider family: omitted = "ask if the family already holds
+    # a different key"; "here" = this surface only; "everywhere" = replace the
+    # family key on every surface. See config.plan_secret_save.
+    scope: Literal["here", "everywhere"] | None = Field(default=None)
 
 
 class SwitchBody(BaseModel):
@@ -3923,18 +3927,71 @@ _RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _secret_slot_labels(slots: tuple[str, ...]) -> list[str]:
+    """Human names of the surfaces that own ``slots`` (for the scope question)."""
+    labels: dict[str, None] = {}
+    for slot in slots:
+        found = False
+        for spec in PROVIDERS:
+            if slot in spec.secret_keys:
+                labels.setdefault(spec.label)
+                found = True
+        if not found:
+            # Agent rows are not provider specs; name the section instead.
+            labels.setdefault("Jarvis-Agents" if slot.startswith("jarvis_agent_") else slot)
+    return list(labels)
+
+
 @router.post("/secrets/{key}", openapi_extra={"x-jarvis-dangerous": True})
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
+    """Save a key for its whole provider family, or ask which scope was meant.
+
+    The slot in the URL is the surface the user typed on, not necessarily
+    where the value lands: the first Gemini key entered on the Realtime card
+    becomes ``gemini_api_key`` so Brain, Tool Model, Agents, TTS and STT all
+    work at once. Only a genuinely different second key returns
+    ``choice_required`` (HTTP 200, nothing written) so the UI can ask
+    "just here, or everywhere?" and re-post with ``scope``.
+    """
     if key not in ALLOWED_SECRET_KEYS:
         raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
-    if not cfg_mod.set_secret(key, body.value):
-        raise HTTPException(status_code=500, detail="Keyring write failed")
-    await _emit(request, SecretConfigured(key=key, action="set"))
+    plan = cfg_mod.plan_secret_save(key, body.value, body.scope)
+    if plan.choice_required:
+        family_spec = get_spec(plan.family) if plan.family else None
+        return {
+            "ok": False,
+            "key": key,
+            "choice_required": True,
+            "choice_kind": plan.choice_kind,
+            "family": plan.family,
+            "family_label": family_spec.label if family_spec else plan.family,
+            "conflicting_labels": _secret_slot_labels(plan.conflicting_slots),
+        }
+    for slot in plan.writes:
+        if not cfg_mod.set_secret(slot, body.value):
+            raise HTTPException(status_code=500, detail="Keyring write failed")
+    for slot in plan.deletes:
+        if not cfg_mod.delete_secret(slot):
+            # The new key IS saved; a leftover scoped copy only means one
+            # surface keeps its old key. Say so instead of failing the save.
+            log.warning(
+                "Saved %s but could not remove the superseded scoped copy %s.",
+                ", ".join(plan.writes),
+                slot,
+            )
+    touched = (*plan.writes, *plan.deletes)
+    for slot in plan.writes:
+        await _emit(request, SecretConfigured(key=slot, action="set"))
+    for slot in plan.deletes:
+        await _emit(request, SecretConfigured(key=slot, action="delete"))
     _invalidate_section_health_state(request)
     return {
         "ok": True,
         "key": key,
-        "restart_required": key in _RESTART_REQUIRED_SECRET_KEYS,
+        "written": list(plan.writes),
+        "removed": list(plan.deletes),
+        "family": plan.family,
+        "restart_required": any(s in _RESTART_REQUIRED_SECRET_KEYS for s in touched),
     }
 
 

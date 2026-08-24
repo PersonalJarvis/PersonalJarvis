@@ -146,6 +146,26 @@ a dedicated key is optional. Dedicated Realtime or worker slots take priority
 when present, while compatible shared keys keep single-key installations
 working.
 
+### One key per provider
+
+You enter a provider's key once, on whichever card you happen to be on. The
+first key saved for a provider family becomes that family's key and serves
+every area that uses the provider — Brain, Tool Model, Jarvis-Agents, voice
+output, voice input and Realtime. Saving the same key again on another card
+changes nothing.
+
+Only a genuinely different second key raises a question:
+
+- On a Realtime, Jarvis-Agents or Codex card while the provider already has a
+  key: **Only here** keeps the new key for that area; **Everywhere** replaces
+  the provider's key in every area and drops old copies of the replaced key.
+- On the main provider card while some areas hold their own different key:
+  **Keep their own keys** leaves those areas alone; **Everywhere** makes every
+  area follow the new key.
+
+Nothing is written until you answer. Areas that keep their own key show it as
+**Key saved**; areas served by the shared key show the covered note.
+
 Brain and Computer Use changes apply to the next request. Voice input applies
 to the next transcription. Voice output switches the running Pipeline when it
 can, otherwise the saved choice is used when speech starts again. Activating a
