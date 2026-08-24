@@ -17,6 +17,38 @@
   scrollbar-color: hsl(var(--border)) transparent;
 }
 
+/* Selecting text is the app's decision, not the window frame's.
+   PLAIN CSS and `html body` rather than `body`, both deliberately:
+
+   pywebview — every desktop window the app runs in — injects
+   `body {user-select: none; cursor: default}` at load time unless it was
+   created with `text_select=True` (jarvis/ui/desktop_app.py fixes that at the
+   source). That injected <style> lands LAST in the head, so an equally
+   specific `body` rule here would lose to it. `html body` outranks it, which
+   makes this stylesheet the authority whatever shell, version or window the
+   page ends up in — including one that was never updated.
+
+   Everything readable is therefore selectable. Chrome that is pressed rather
+   than read opts out below, so dragging across a toolbar does not paint it
+   blue; a component that needs an exception uses Tailwind's `select-none`,
+   whose class beats both rules. */
+html body {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: auto;
+}
+
+button,
+label,
+[role="button"],
+[role="tab"],
+[role="switch"],
+[role="menuitem"],
+[role="option"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 @layer components {
   /*
    * Voice-orb state language. The procedural material stays inside the sphere;

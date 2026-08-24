@@ -12147,6 +12147,71 @@ dev GET unchanged).
 why the recovery still needs one restart: an app that booted with `style=none`
 has no Tk root, so the bar cannot be swapped in live.
 
+---
+
+## BUG-173: the chat says a turn cost "10 tokens" when it cost fifty thousand — the live counter reads the placeholder and skips the cache (MEDIUM, FIXED 2026-08-24)
+
+**Symptom (maintainer, 2026-08-23).** The live status line under a running
+agent-chat turn read `Noodling… (31s · ↓10 tokens)` after half a minute of work
+that included two tool calls and a thinking block. "I did not use just 8
+tokens."
+
+**Evidence.** One real Claude Code turn, `--output-format stream-json`, the
+`assistant` line's own usage object:
+
+```json
+{"input_tokens": 2, "cache_creation_input_tokens": 30420,
+ "cache_read_input_tokens": 21355, "output_tokens": 1}
+```
+
+and the `result` line that closes the same turn:
+
+```json
+{"input_tokens": 2, "cache_creation_input_tokens": 30420,
+ "cache_read_input_tokens": 21355, "output_tokens": 4}
+```
+
+**Root cause — two mistakes stacked.**
+
+1. `translate_claude_line` counted `input_tokens` and `output_tokens` only, so
+   the 51 775 cached tokens that carry the turn were dropped. The input side
+   read as **2** instead of **51 777** — the CLI reports the cached part BESIDE
+   `input_tokens`, never inside it.
+2. `output_tokens` in an `assistant` line is the `message_start` snapshot: a
+   placeholder that only becomes true in the `result` line. Summing one
+   placeholder per message is a message counter wearing a token counter's
+   clothes — ten messages read as "10 tokens".
+
+The finished-turn receipt was right all along: the `result` branch of the same
+translator already read all four fields. Only the live line was blind, which is
+why the number looked plausible until someone compared it with a bill.
+
+**Fix.**
+
+* `jarvis/agent_chat/runner_cli.py` — `_CLAUDE_USAGE_KEYS` counts all four
+  fields, and a message's usage is merged with `max()` so a placeholder can
+  never walk a real count back down.
+* `jarvis/ui/web/frontend/src/components/agentchat/toolView.ts` — `inputTokens`
+  adds `cache_read_input_tokens` and `cache_creation_input_tokens`. The OpenAI
+  shape (`cached_input_tokens`) is deliberately NOT added: there the cached
+  tokens are already inside `prompt_tokens`, and adding them would double-count.
+* `AgentTimeline.tsx` — the live line no longer shows a token count at all.
+  There is no honest one to show: measured against a real multi-step turn, every
+  `assistant` line reports `output_tokens: 2` and only the closing `result` line
+  carries the true 981, while the input side legitimately re-counts the whole
+  conversation at every step (21 355 → 51 902 → 54 094 cached tokens read). The
+  sum is arithmetically right — it matches the CLI's own `result` to the token —
+  but "↑283.2k" under a one-sentence question reads as a bug, and a live figure
+  that is either far too small or unbelievably large is worse than none. The
+  receipt, which runs on the authoritative `result` line, keeps ↑ in / ↓ out /
+  cost. If a CLI ever streams true usage, the line can come back.
+
+**Lesson.** Two readers of one stream drift apart. The receipt path and the live
+path sat thirty lines from each other in the same file; one was extended for
+cache tokens, the other was not. A number that crosses layers needs one reader
+and a parity test (AP-4) — a second, hand-rolled reader is a bug with a delay
+fuse.
+
 ## BUG-174: right after a restart, voice on local models is unusably slow or returns nothing — the Whisper engine was built ON the event loop, and a slow build was answered by starting it again from zero (HIGH, FIXED 2026-08-24)
 
 **Symptom (maintainer, 2026-08-24 morning).** "I used it after a restart with
@@ -12223,6 +12288,7 @@ supervisor and the supervised were on the same thread. And "it is taking too
 long" is not a diagnosis: replacing a worker only helps when the worker is
 stuck, never when it is merely loading. Patience needs evidence, so the engine
 had to say which one it was.
+
 ## BUG-175: "ask him what Jarvis version 2 can do" answers nothing — the model was handed a wiki tool whose mode is switched off, and the wiki that WAS working sat unused beside it (HIGH, FIXED 2026-08-24)
 
 **Symptom (maintainer, 2026-08-24).** A question typed into the chat, sixteen
@@ -12540,5 +12606,41 @@ the plain path (`docs/os-parity.md` P-25).
 in another process, either measure it (here: who read the clipboard) or say
 so — and never let a fallback fire on the absence of evidence when the
 fallback's failure mode is doing the thing twice.
+
+---
+
+## BUG-179: nothing in the app can be selected or copied — every window was created on pywebview's kiosk default (HIGH, FIXED 2026-08-24)
+
+**Symptom.** Drag the mouse across an agent's answer in the Agentic IDE chat
+and nothing highlights. Same on the timeline, the tool rows, the receipts,
+every view in the app, on every platform. Copying a path, an error message or
+a block of generated code out of Jarvis is impossible with the mouse. Typing
+still works, which is why it reads as a quirk of one view rather than a window
+setting.
+
+**Root cause.** `webview.create_window()` takes `text_select=False` by default,
+and on that default pywebview injects `body {-webkit-user-select: none;
+user-select: none; cursor: default}` into every page it loads
+(`webview/js/customize.js`), on Windows, macOS and Linux alike. No window in
+this repo ever passed the flag, so the whole app ran as a kiosk. `user-select`
+blocks only mouse SELECTION, not keyboard input — hence the app feeling 95 %
+normal and the missing 5 % being exactly copy and paste.
+
+**Fix.**
+* `jarvis/ui/desktop_app.py` — `TEXT_SELECTABLE`, spread into the kwargs of
+  every `create_window` (main window, tray-reopened main window, detached
+  view) — and `jarvis/ui/shell/shell.py` pass `text_select=True`.
+* `src/index.css` states the app's own policy at `html body`. Specificity, not
+  order, is what makes that stick: the injected `<style>` lands LAST in the
+  head, so an equally specific `body` rule would lose to it, and a shell that
+  was not updated (an older install, a different frontend host) cannot
+  re-impose the kiosk. Chrome that is pressed rather than read — buttons,
+  tabs, switches, menu items — opts back out, so dragging across a toolbar
+  does not paint it blue.
+
+**Lesson.** A library default that silences an interaction is invisible in
+review: nothing in the diff is wrong, the flag was simply never named. When a
+window frame can change what the page is allowed to do, the page states its own
+policy as well, so the app does not depend on every shell agreeing with it.
 
 ---

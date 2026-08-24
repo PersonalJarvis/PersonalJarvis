@@ -86,6 +86,10 @@ class JarvisShell:
             frameless=self._cfg.frameless,
             easy_drag=self._cfg.easy_drag,
             confirm_close=self._cfg.confirm_close,
+            # Same reason as jarvis/ui/desktop_app.py's TEXT_SELECTABLE: left at
+            # pywebview's default this window injects `user-select: none` into
+            # the page and nothing in the app can be selected or copied.
+            text_select=True,
         )
 
         # Close button = hide (minimize-to-tray behavior)

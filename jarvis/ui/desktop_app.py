@@ -69,6 +69,23 @@ if sys.platform == "win32":
 
 LOCK_FILE_PATH = DATA_DIR / "jarvis.lock"
 
+# Every window that shows the app must let people select text with the mouse.
+#
+# This is not a preference — it repairs a default. pywebview's ``create_window``
+# takes ``text_select=False`` unless told otherwise, and on that default it
+# injects ``body {user-select: none; cursor: default}`` into every page it
+# loads, on all three platforms. The whole app then behaves like a kiosk: no
+# dragging over an answer to copy it, no I-beam cursor, nothing selectable
+# anywhere. Typing still works, which is why it reads as a mysterious quirk of
+# one view rather than a window flag (maintainer, 2026-08-24: "man kann keine
+# Sachen kopieren").
+#
+# Spread into the kwargs of every window created here so no future window can
+# quietly inherit the kiosk again. The page still decides where selection is
+# unwanted (chrome, buttons) in its own CSS — that belongs to the UI, not to
+# the window frame.
+TEXT_SELECTABLE: dict[str, Any] = {"text_select": True}
+
 # Views the desktop shell can split off into their own solo window, mapped to
 # the window-title label. Keys mirror the frontend ``SECTION_IDS``
 # (``store/events.ts``); labels are deliberately the stable English section
@@ -4506,6 +4523,7 @@ class DesktopApp:
                 resizable=True,
                 confirm_close=False,
                 background_color=self._window_background(),
+                **TEXT_SELECTABLE,
             )
         except Exception as exc:  # noqa: BLE001
             # WebViewException on a backend that cannot create runtime windows
@@ -4668,6 +4686,7 @@ class DesktopApp:
             "resizable": True,
             "confirm_close": False,
             "background_color": self._window_background(),
+            **TEXT_SELECTABLE,
         }
 
     def _hook_main_window_lifecycle(self) -> None:
