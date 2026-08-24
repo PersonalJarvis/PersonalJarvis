@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jarvis.core.bus import EventBus
+from jarvis.core.events import BrainToolsChanged
 from jarvis.core.config import JarvisConfig
 from jarvis.ui.web.server import WebServer
 from jarvis.ui.web.ultrawiki_routes import ULTRAWIKI_ANSWER_STATUSES
@@ -220,9 +221,62 @@ def test_status_answers_while_disabled(env) -> None:
     assert body["enabled"] is False
     assert body["started"] is False
     assert body["db_backend"] == "sqlite"
-    assert "search_legs" in body
-    assert body["search_legs"]["keyword"] == {"available": True}
-    assert body["search_legs"]["vector"]["available"] is False
+    # The legs are NOT measured while the mode is off — see the next test.
+    assert body["search_legs"]["probed"] is False
+
+
+def test_status_does_not_probe_the_search_legs_while_the_mode_is_off(
+    env, monkeypatch
+) -> None:
+    """The probe is what made opening the Wiki section feel broken.
+
+    This route is what the section asks before it can draw either body, and the
+    leg probe walks credentials and touches the local embedding endpoint:
+    measured 2026-08-24 at 0.7-2.1 s against under 150 ms for every other wiki
+    route. On a first visit with nothing remembered, the section renders
+    nothing for that whole span. Nothing reads the legs while the mode is off
+    (only the Ultra body does, and it is not mounted), so the wait bought
+    nothing at all.
+    """
+    from jarvis.ui.web import ultrawiki_routes
+
+    probes: list[int] = []
+
+    def _never(cfg):  # pragma: no cover - the assertion is that this is unused
+        probes.append(1)
+        return {"keyword": {"available": True}}
+
+    monkeypatch.setattr(ultrawiki_routes, "_search_legs", _never)
+
+    body = env.client.get("/api/ultrawiki/status").json()
+
+    assert probes == []
+    assert body["search_legs"]["probed"] is False
+    # Honest about WHY, so no client reads a missing leg as a broken one.
+    assert "mode is off" in body["search_legs"]["reason"]
+
+
+def test_health_still_measures_the_legs_while_the_mode_is_off(env, monkeypatch) -> None:
+    """The one caller that grades the legs must still pay for the probe.
+
+    `health._search_check` reads an absent keyword leg as "search cannot
+    answer" — a blocked verdict. A mode that is simply off is not an outage,
+    so the checklist asks for the real measurement explicitly.
+    """
+    from jarvis.ui.web import ultrawiki_routes
+
+    probes: list[int] = []
+
+    def _probe(cfg):
+        probes.append(1)
+        return {"keyword": {"available": True}, "vector": {"available": False}}
+
+    monkeypatch.setattr(ultrawiki_routes, "_search_legs", _probe)
+
+    response = env.client.get("/api/ultrawiki/health")
+
+    assert response.status_code == 200, response.text
+    assert probes == [1]
 
 
 def test_activate_flips_mode_and_creates_pending_sources(env) -> None:
@@ -1928,3 +1982,26 @@ def test_a_folder_source_that_imported_nothing_says_why(env) -> None:
     row = next(r for r in listing.json()["sources"] if r["id"] == source_id)
     assert row["last_notice"], "an empty import must explain itself"
     assert "folder" in row["last_notice"].lower()
+
+
+def test_switching_the_mode_tells_the_live_brain_its_tools_changed(env) -> None:
+    """Activation must bring the UltraWiki tools BACK without a restart.
+
+    The tool set is composed once per brain build, and the capability gate in
+    `jarvis.commands.capabilities` withholds the four `/api/ultrawiki/*`
+    commands while the mode is off. Without this event, switching the mode ON
+    would leave them missing until the app restarts — the mirror image of the
+    bug the gate exists to fix.
+    """
+    seen: list[str] = []
+    env.server.bus.subscribe(
+        BrainToolsChanged, lambda event: seen.append(event.reason)
+    )
+
+    _activate(env)
+
+    assert any(reason == "ultrawiki_mode:on" for reason in seen), seen
+
+    response = env.client.post("/api/ultrawiki/deactivate")
+    assert response.status_code == 200, response.text
+    assert any(reason == "ultrawiki_mode:off" for reason in seen), seen

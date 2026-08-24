@@ -63,17 +63,31 @@ def _fake_app(calls: dict) -> FastAPI:
     return app
 
 
-def _tools(calls: dict | None = None) -> dict[str, object]:
+def _config(*, ultrawiki: bool = True) -> SimpleNamespace:
+    """A config stub for the capability gate.
+
+    Passed explicitly so expansion never depends on whatever app a previously
+    imported test left in ``runtime_refs`` — the gate reads the LIVE config by
+    design, which makes it order-dependent unless a test pins it.
+    """
+    return SimpleNamespace(ultrawiki=SimpleNamespace(enabled=ultrawiki))
+
+
+def _tools(calls: dict | None = None, *, ultrawiki: bool = True) -> dict[str, object]:
     app = _fake_app(calls if calls is not None else {})
     loader = AppCommandTool(
         transport=httpx.ASGITransport(app=app),
         control_key_resolver=lambda: None,
+        config_resolver=lambda: _config(ultrawiki=ultrawiki),
     )
     return {t.name: t for t in loader.expand()}
 
 
 def test_loader_expands_one_flat_tool_per_registry_command() -> None:
-    loader = AppCommandTool(control_key_resolver=lambda: None)
+    loader = AppCommandTool(
+        control_key_resolver=lambda: None,
+        config_resolver=lambda: _config(ultrawiki=True),
+    )
     assert loader.is_virtual_loader is True
     tools = {t.name: t for t in loader.expand()}
     assert set(tools) == {c.id for c in get_registry()}
@@ -424,3 +438,62 @@ async def test_installing_a_wallpaper_by_name_reports_what_landed() -> None:
     # verdict, not just an `ok: true` the model would have to interpret.
     assert response["state"] == "installed"
     assert response["ready"] is True
+
+
+# ---------------------------------------------------------------------------
+# Capability gate — the 2026-08-24 "ultrawiki_ask FAILED 0.0s" forensic
+# ---------------------------------------------------------------------------
+
+
+def test_ultrawiki_commands_withheld_while_the_mode_is_off() -> None:
+    """A tool whose endpoint always refuses must not be offered at all.
+
+    Live 10:13 (data/jarvis_desktop.log): asked what Jarvis version 2 can do,
+    the realtime model called `ultrawiki_ask`, took `409 Conflict` in 0.0 s and
+    ended the turn — with `wiki-recall` sitting unused in the same tool set.
+    """
+    off = _tools(ultrawiki=False)
+    for command_id in (
+        "ultrawiki-ask", "people-list", "person-profile", "identity-queue-list",
+    ):
+        assert command_id not in off
+
+    # Everything that does not depend on the mode is untouched.
+    assert "brain-switch" in off
+    assert "wiki-ingest" in off
+
+
+def test_ultrawiki_commands_return_when_the_mode_is_on() -> None:
+    """The gate subtracts only while the mode is off — it is not a deletion."""
+    on = _tools(ultrawiki=True)
+    assert "ultrawiki-ask" in on
+    assert "people-list" in on
+
+
+async def test_mode_switched_off_mid_session_steers_to_the_wiki_tools() -> None:
+    """A stale tool set must redirect, not fail.
+
+    The mode switch applies live, so a session can hold a tool built while the
+    mode was on. Re-checking at execute time turns the dead end into an
+    instruction the model can act on within the same turn.
+    """
+    calls: dict = {}
+    app = _fake_app(calls)
+    # Built with the mode ON (the tool exists), executed with it OFF.
+    enabled = {"value": True}
+    loader = AppCommandTool(
+        transport=httpx.ASGITransport(app=app),
+        control_key_resolver=lambda: None,
+        config_resolver=lambda: _config(ultrawiki=enabled["value"]),
+    )
+    tool = {t.name: t for t in loader.expand()}["ultrawiki-ask"]
+    enabled["value"] = False
+
+    result = await tool.execute({"question": "what can version 2 do"}, SimpleNamespace())
+
+    assert result.success is False
+    # The redirect names the tools that DO work, so the model has somewhere to go.
+    assert "wiki-recall" in result.error
+    assert result.output["capability"] == "ultrawiki"
+    # Nothing was sent to the endpoint that would have refused it.
+    assert calls == {}

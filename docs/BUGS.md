@@ -12223,3 +12223,90 @@ supervisor and the supervised were on the same thread. And "it is taking too
 long" is not a diagnosis: replacing a worker only helps when the worker is
 stuck, never when it is merely loading. Patience needs evidence, so the engine
 had to say which one it was.
+## BUG-175: "ask him what Jarvis version 2 can do" answers nothing — the model was handed a wiki tool whose mode is switched off, and the wiki that WAS working sat unused beside it (HIGH, FIXED 2026-08-24)
+
+**Symptom (maintainer, 2026-08-24).** A question typed into the chat, sixteen
+seconds of thinking, and one red row: `ultrawiki_ask · what Jarvis Version 2 can
+do — FAILED 0.0s`. No answer, no second attempt. The maintainer's reading was
+that "the wiki tool is broken"; measured, the wiki was fine and every part of
+this failure was in the tool set.
+
+**Timeline (`data/jarvis_desktop.log`).**
+
+```
+09:04:12  ultrawiki: service constructed (mode disabled — dormant)
+10:13:58.280  gemini-live: function call(s) ultrawiki_ask_55466fa18d
+10:13:58.737  POST http://127.0.0.1/api/ultrawiki/ask "HTTP/1.1 409 Conflict"
+10:13:58.739  gemini-live: tool response sent (model_generating=True)
+```
+
+0.0 s is the tell: nothing was searched. `_require_active` refuses before any
+retrieval, by design — `[ultrawiki] enabled = false` in this install.
+
+**Root cause: a tool set that promised what the app had switched off.**
+`AppCommandTool.expand()` turned EVERY Command-Registry entry into a callable
+tool, unconditionally. Four of them are `/api/ultrawiki/*` routes
+(`ultrawiki-ask`, `people-list`, `person-profile`, `identity-queue-list`), and
+that whole family answers 409 while the mode is off. So the model was offered
+four tools that could not succeed, with nothing in their schemas to say so —
+the registry description reads "Answer one question from UltraWiki evidence",
+which is exactly what had been asked for.
+
+Verified on the live app: `GET /api/tools` listed all four alongside the
+classic wiki tools. `wiki-recall` was in the same set the whole time and
+answers that question from the Obsidian vault in 13 ms (27 entities, hits with
+scores). The knowledge was there; the tool set pointed at the one locked door.
+
+This is AP-21 (gate on the capability, never on a name) applied to tools rather
+than providers: a tool's presence is a claim that it can answer.
+
+**Root cause, second defect: the section that would not open.** Reported in the
+same breath — "sometimes I go into the section and it does not come up". The
+Wiki view renders NEITHER body until `GET /api/ultrawiki/status` answers, and
+that route probed the search legs on every call: a credential walk plus a
+request to the local embedding endpoint. Measured 2026-08-24 against the live
+app: 0.7-2.1 s per call, where every other wiki route is under 150 ms
+(`/api/wiki/tree` 13 ms, `/api/wiki/health` 66 ms). While the mode is off
+nothing renders those legs — only the Ultra body does, and it is not mounted —
+so the wait bought nothing. A visit with no remembered mode paid it in full,
+staring at an empty section.
+
+**Fix.**
+
+* `jarvis/commands/capabilities.py` resolves a command's `requires` against the
+  LIVE config (the mode switch mutates it in place, so a toggle counts at
+  once). `AppCommand.requires` is backend-only — the UI and CLI catalogs still
+  list every command, because both of those surfaces can turn the mode ON.
+  Only the LLM tool set, which cannot, is filtered.
+* The gate FAILS OPEN. An unreadable config leaves the tool in place: a wrong
+  "available" is caught by the execute-time re-check, while a wrong
+  "unavailable" would silently remove the tool for the whole session.
+* `RegistryCommandTool.execute()` re-checks before sending, because the mode
+  applies live and a session can hold a tool built while it was on. The refusal
+  carries a redirect naming `wiki-recall` / `wiki-list` / `wiki-page-read`, so
+  the model has somewhere to go inside the same turn instead of ending it on a
+  failure — the behaviour `ultrawiki-search` already had and `ultrawiki-ask`
+  never did.
+* Switching the mode publishes `BrainToolsChanged`, so activation brings the
+  four commands BACK without a restart. Without it the gate would have traded
+  one missing-tool bug for its mirror image.
+* `/api/ultrawiki/status` skips the leg probe while the mode is off and says
+  `search_legs.probed: false` with a reason, rather than reporting legs nobody
+  measured. `/health` — which grades those legs, and would read an absent
+  keyword leg as "search cannot answer" — asks for the probe explicitly.
+
+**Tests.** `tests/unit/commands/test_capabilities.py` pins mode-off, fail-open,
+that the steer names tools that actually work, and — the one that matters in a
+year — derives the gated set from the registry's own PATHS, so a future
+`/api/ultrawiki/*` command that forgets `requires=` fails the build.
+`tests/unit/plugins/tool/test_app_command.py` pins the withheld four, their
+return when the mode is on, and the mid-session steer that sends nothing to the
+endpoint. `tests/unit/web/test_ultrawiki_routes.py` pins that status does not
+probe while off, that `/health` still does, and that both toggle directions
+publish `BrainToolsChanged`.
+
+**Lesson.** A tool in the set is a promise. The model cannot see a config flag,
+so anything the app has switched off must be absent, not merely failing — and
+when it does fail anyway, the failure has to name the door that IS open. Both
+defects here came from the same habit of answering "is it wired?" when the
+question was "can it answer?".

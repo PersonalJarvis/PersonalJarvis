@@ -490,6 +490,15 @@ export interface UltraWikiStatus {
     vector?: UltraWikiSearchLeg;
     rerank?: UltraWikiSearchLeg;
     error?: string;
+    /**
+     * `false` when the legs were deliberately not measured — the mode is off,
+     * nothing renders them, and the probe is what made opening the Wiki
+     * section wait (0.7-2.1 s against <150 ms for every other wiki route).
+     * Absent on a probed answer. Never read a missing leg as a broken one:
+     * check this first, then `reason`.
+     */
+    probed?: boolean;
+    reason?: string;
   };
   degradations: string[];
 }

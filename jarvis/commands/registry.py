@@ -53,6 +53,19 @@ class AppCommand:
     worker_allowed: bool = False  # Explicit least-privilege Jarvis-Agent grant
     ui_section: str = "settings"  # sidebar section hosting the same action
     voice_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Capability this command's endpoint needs before it can answer at all.
+    #:
+    #: Empty for the vast majority: they run whenever the app runs. A named
+    #: capability means the backing route refuses the call outright while that
+    #: mode is off, so offering the command as a tool is a promise the app
+    #: cannot keep. ``jarvis.commands.capabilities`` resolves the name against
+    #: the live config, and the ``app-command`` loader drops what is off.
+    #:
+    #: Backend-only on purpose, hence its absence from :meth:`as_dict`: the
+    #: catalog the UI and CLI read still lists every command, because both of
+    #: those surfaces can (and do) turn the mode ON. Only the LLM tool set,
+    #: which cannot, is filtered.
+    requires: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -514,6 +527,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             method="POST",
             path="/api/ultrawiki/ask",
             worker_allowed=True,
+            requires="ultrawiki",
             params={
                 "type": "object",
                 "properties": {
@@ -554,6 +568,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ),
             method="GET",
             path="/api/ultrawiki/identity/people",
+            requires="ultrawiki",
             params={
                 "type": "object",
                 "properties": {
@@ -587,6 +602,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ),
             method="GET",
             path="/api/ultrawiki/identity/people/{entity_id}",
+            requires="ultrawiki",
             params={
                 "type": "object",
                 "properties": {
@@ -617,6 +633,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ),
             method="GET",
             path="/api/ultrawiki/identity/queue",
+            requires="ultrawiki",
             params={
                 "type": "object",
                 "properties": {

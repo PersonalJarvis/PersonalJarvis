@@ -27,10 +27,13 @@ configuration mutation and dangerous commands remain supervisor-only.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import quote
 
 from jarvis.core.protocols import ToolResult
+
+log = logging.getLogger(__name__)
 
 _TYPE_CHECKS: dict[str, type | tuple[type, ...]] = {
     "string": str,
@@ -215,12 +218,21 @@ class _Runtime:
         app_resolver: Any | None = None,
         control_key_resolver: Any | None = None,
         transport: Any | None = None,
+        config_resolver: Any | None = None,
     ) -> None:
         # Lazy resolvers (spawn-worker pattern): the FastAPI app is built after
         # the brain, so it must be looked up at execute time, not now.
         self._app_resolver = app_resolver
         self._control_key_resolver = control_key_resolver
         self._transport = transport
+        # Same lazy shape for the capability gate. Left unset it reads the live
+        # config off the running app, which is what makes a mode toggled during
+        # a session take effect; a caller that supplies one gets a deterministic
+        # answer without a running app.
+        self._config_resolver = config_resolver
+
+    def config(self) -> Any | None:
+        return self._config_resolver() if self._config_resolver is not None else None
 
     def resolve_transport(self) -> Any | None:
         if self._transport is not None:
@@ -271,6 +283,19 @@ class RegistryCommandTool:
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
         cmd = self._cmd
+        # The mode may have been switched off since this tool set was built
+        # (the switch applies live, no rebuild). Answer with the redirect the
+        # endpoint's 409 cannot carry, so the model reaches for the wiki tools
+        # that do work instead of ending the turn on a failure.
+        from jarvis.commands.capabilities import steer_for, unavailable_capability
+
+        blocked_by = unavailable_capability(cmd, config=self._runtime.config())
+        if blocked_by:
+            return ToolResult(
+                success=False,
+                output={"command_id": cmd.id, "capability": blocked_by},
+                error=steer_for(blocked_by),
+            )
         cmd_args = _with_defaults(cmd.params, args or {})
         cmd_args = _apply_visible_terminal_context(cmd.id, cmd_args, ctx)
         problems = _validate_args(cmd.params, cmd_args)
@@ -367,10 +392,41 @@ class AppCommandTool:
         app_resolver: Any | None = None,
         control_key_resolver: Any | None = None,
         transport: Any | None = None,
+        config_resolver: Any | None = None,
     ) -> None:
-        self._runtime = _Runtime(app_resolver, control_key_resolver, transport)
+        self._runtime = _Runtime(
+            app_resolver, control_key_resolver, transport, config_resolver
+        )
 
     def expand(self) -> list[RegistryCommandTool]:
+        """Every registry command whose capability can actually answer.
+
+        A command bound to a switched-off mode is dropped rather than offered:
+        its endpoint refuses the call, and a tool that cannot succeed is worse
+        than an absent one — the model spends its turn on it and stops, instead
+        of reaching for the tool that would have worked (see
+        :mod:`jarvis.commands.capabilities` for the live forensic).
+
+        Evaluated at build time, which is when the tool set is composed. A mode
+        switched during a session leaves this set stale until the next brain
+        build, so :meth:`RegistryCommandTool.execute` re-checks and steers.
+        """
+        from jarvis.commands.capabilities import unavailable_capability
         from jarvis.commands.registry import get_registry
 
-        return [RegistryCommandTool(cmd, self._runtime) for cmd in get_registry()]
+        cfg = self._runtime.config()
+        tools: list[RegistryCommandTool] = []
+        dropped: list[str] = []
+        for cmd in get_registry():
+            blocked_by = unavailable_capability(cmd, config=cfg)
+            if blocked_by:
+                dropped.append(f"{cmd.id} ({blocked_by} off)")
+                continue
+            tools.append(RegistryCommandTool(cmd, self._runtime))
+        if dropped:
+            log.info(
+                "app-command: %d command(s) withheld from the tool set: %s",
+                len(dropped),
+                ", ".join(dropped),
+            )
+        return tools

@@ -39,6 +39,19 @@ router = APIRouter(prefix="/api/ultrawiki", tags=["ultrawiki"])
 
 _MODE_OFF_DETAIL = "UltraWiki mode is off — the normal wiki answers today."
 
+#: ``search_legs`` when the probe was deliberately not run. Says so instead of
+#: reporting absent legs: an empty dict reads as "keyword search is down" to
+#: ``jarvis.ultrawiki.health._search_check``, and a mode that is simply off is
+#: not an outage. The probe costs a credential walk plus a call to the local
+#: embedding endpoint, which nothing renders while the mode is off.
+_LEGS_NOT_PROBED: dict[str, Any] = {
+    "probed": False,
+    "reason": (
+        "UltraWiki mode is off, so the search legs were not measured — "
+        "switching the mode on probes them."
+    ),
+}
+
 #: The flat ``[ultrawiki]`` slot keys the settings surface may change.
 _SLOT_KEYS = (
     "db_backend",
@@ -221,6 +234,39 @@ def _apply_live(request: Request, values: dict[str, str], *, enabled: bool | Non
             uw.enabled = enabled
         except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
             log.debug("in-memory ultrawiki.enabled update skipped: %s", exc)
+        else:
+            _publish_brain_tools_changed(
+                request, f"ultrawiki_mode:{'on' if enabled else 'off'}"
+            )
+
+
+def _publish_brain_tools_changed(request: Request, reason: str) -> None:
+    """Tell the live brain its tool set just changed shape.
+
+    The mode decides whether the four ``/api/ultrawiki/*`` commands can answer
+    at all, and the tool set is composed once per brain build. Without this
+    event, switching the mode ON left them missing until the next restart —
+    the mirror image of the bug the gate fixes, and the reason the gate can
+    afford to subtract at all.
+
+    Same convention as ``mcp_routes._publish_brain_tools_changed``; a missing
+    bus (headless, early boot) is a silent no-op, and a failure to notify must
+    never turn a successful mode switch into an error.
+    """
+    bus = getattr(request.app.state, "bus", None)
+    if bus is None:
+        return
+    from jarvis.core.events import BrainToolsChanged  # noqa: PLC0415 — lazy (AP-26)
+
+    event = BrainToolsChanged(source_layer="ultrawiki_routes", reason=reason)
+    try:
+        result = bus.publish(event)
+        if asyncio.iscoroutine(result):
+            # Called from sync helpers on the loop's own thread: hand the
+            # coroutine to the loop rather than awaiting it here.
+            asyncio.create_task(result, name="ultrawiki-brain-tools-changed")
+    except Exception as exc:  # noqa: BLE001 — notification, never the outcome
+        log.debug("BrainToolsChanged publish failed: %s", exc)
 
 
 def _is_configured(uw: Any) -> bool:
@@ -371,10 +417,35 @@ def _embed_eta_phrase(throughput: dict[str, Any] | None) -> str:
 
 @router.get("/status", summary="UltraWiki mode status")
 async def get_status(request: Request) -> dict[str, Any]:
-    """Honest capability, backlog, and source report — answers even when the mode is off."""
+    """Honest capability, backlog, and source report — answers even when the mode is off.
+
+    The leg probe is skipped while the mode is OFF, because nothing renders it
+    then and the wait is paid by the one screen that must not wait. This route
+    is what the Wiki section asks before it can draw either body, and the probe
+    walks credentials and touches the local embedding endpoint: measured
+    2026-08-24 at 0.7-2.1 s per call on a warm backend, against under 150 ms
+    for every other wiki route. On a first visit with no remembered answer the
+    section renders nothing at all for that whole span — the "I open the Wiki
+    and it does not come up" report. ``search_legs`` therefore says it was not
+    probed rather than reporting legs nobody measured; ``/health``, the one
+    caller that genuinely needs them, asks for the probe explicitly.
+    """
+    return await _status_payload(request, probe_legs=None)
+
+
+async def _status_payload(
+    request: Request, *, probe_legs: bool | None
+) -> dict[str, Any]:
+    """The status body. ``probe_legs=None`` means "probe only if the mode is on"."""
     cfg = _config(request)
     uw = getattr(cfg, "ultrawiki", None)
     enabled = bool(getattr(uw, "enabled", False))
+    want_legs = enabled if probe_legs is None else bool(probe_legs)
+
+    async def legs() -> dict[str, Any]:
+        if want_legs:
+            return await _search_legs_async(cfg)
+        return dict(_LEGS_NOT_PROBED)
     configured_backend = str(getattr(uw, "db_backend", "sqlite") or "sqlite")
     service = getattr(request.app.state, "ultrawiki", None)
     if service is None:
@@ -406,7 +477,7 @@ async def get_status(request: Request) -> dict[str, Any]:
             },
             "sources": [],
             "jobs": [],
-            "search_legs": await _search_legs_async(cfg),
+            "search_legs": await legs(),
             "degradations": [
                 "the UltraWiki service is not wired — the app is still "
                 "starting or its init failed"
@@ -446,7 +517,7 @@ async def get_status(request: Request) -> dict[str, Any]:
         "sources": data.get("sources", []),
         "jobs": data.get("jobs", []),
         "search_legs": _apply_reembed_to_legs(
-            await _search_legs_async(cfg), reembed, data.get("throughput") or {}
+            await legs(), reembed, data.get("throughput") or {}
         ),
         "degradations": data.get("degradations", []),
     }
@@ -466,7 +537,10 @@ async def get_health(request: Request) -> dict[str, Any]:
     """
     from jarvis.ultrawiki import health as health_mod  # noqa: PLC0415 — lazy (AP-26)
 
-    status = await get_status(request)
+    # The checklist grades the search legs, so it pays for the probe the
+    # status route skips while the mode is off — this is the one caller that
+    # would otherwise read "not measured" as "keyword search is down".
+    status = await _status_payload(request, probe_legs=True)
 
     def _candidates() -> list[dict[str, Any]]:
         # Walks the keyring + mcp.json; keep it off the event loop.
