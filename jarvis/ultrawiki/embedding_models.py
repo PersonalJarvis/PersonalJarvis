@@ -143,11 +143,14 @@ async def _get_json(
 
 
 async def _ollama(cfg: Any, transport: Any) -> EmbeddingModelList:
-    """Everything the local Ollama has pulled.
+    """The local Ollama downloads that DECLARE the ``embedding`` capability.
 
-    Ollama exposes no "is this an embedding model" flag, so the list is what is
-    installed and the user picks. That is honest: guessing by name would hide a
-    freshly pulled model behind a filter the user cannot see.
+    ``/api/show`` names each download's capabilities, so a chat model no
+    longer sits in the embedding picker waiting to 400 on the first embed.
+    Fail-open, per model and as a whole: a download whose probe does not
+    answer stays listed (unknown is not "no"), and when nothing declares the
+    capability at all — an old server that predates the field — the full
+    list is offered exactly as before, with the reason logged.
     """
     ultrawiki = getattr(cfg, "ultrawiki", None)
     endpoint = str(
@@ -157,18 +160,56 @@ async def _ollama(cfg: Any, transport: Any) -> EmbeddingModelList:
     rows = data.get("models") if isinstance(data, dict) else None
     if not isinstance(rows, list):
         raise ValueError("unexpected /api/tags shape")
-    models = [
-        EmbeddingModel(id=str(row["name"]), label=str(row["name"]))
-        for row in rows
-        if isinstance(row, dict) and row.get("name")
+    names = [
+        str(row["name"]) for row in rows if isinstance(row, dict) and row.get("name")
     ]
-    if not models:
+    if not names:
         return _curated(
             "ollama",
             "Ollama is running but has no models pulled yet — "
             "'ollama pull qwen3-embedding:4b' installs the current default.",
         )
-    return _live(models)
+    from jarvis.brain.ollama_inventory import is_hidden_alias
+
+    names = [n for n in names if not is_hidden_alias(n)]
+    declared = await _ollama_capabilities(endpoint, names, transport)
+    keep = [n for n in names if declared.get(n) is None or "embedding" in declared[n]]
+    if not keep:
+        return _curated(
+            "ollama",
+            "None of the installed Ollama models declares the embedding "
+            "capability — 'ollama pull qwen3-embedding:4b' installs the current "
+            "default.",
+        )
+    return _live([EmbeddingModel(id=n, label=n) for n in keep])
+
+
+async def _ollama_capabilities(
+    endpoint: str, names: list[str], transport: Any
+) -> dict[str, tuple[str, ...] | None]:
+    """``name -> declared capabilities`` from ``/api/show``.
+
+    ``None`` when the probe failed or the server predates the field: that
+    download stays offered (fail-open — unknown is not "no"), and the reason
+    is logged so a filter that seems to do nothing can be explained.
+    """
+    out: dict[str, tuple[str, ...] | None] = {}
+    async with httpx.AsyncClient(timeout=_TIMEOUT, transport=transport) as client:
+        for name in names:
+            try:
+                response = await client.post(f"{endpoint}/api/show", json={"model": name})
+                response.raise_for_status()
+                caps = response.json().get("capabilities")
+            except Exception as exc:  # noqa: BLE001 — unknown stays offered
+                log.info(
+                    "ultrawiki: /api/show failed for %s (%s); offering it unfiltered",
+                    name,
+                    type(exc).__name__,
+                )
+                out[name] = None
+                continue
+            out[name] = tuple(str(c) for c in caps) if isinstance(caps, list) else None
+    return out
 
 
 async def _gemini(cfg: Any, transport: Any) -> EmbeddingModelList:

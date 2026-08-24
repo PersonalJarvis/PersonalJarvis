@@ -186,3 +186,45 @@ def test_the_catalog_default_model_is_in_its_curated_list():
     for spec in provider_catalog.EMBEDDING_PROVIDERS:
         ids = {i for i, _label in em.CURATED_EMBEDDING_MODELS[spec.id]}
         assert spec.default_model in ids, spec.id
+
+
+async def test_ollama_keeps_only_downloads_that_declare_embedding(cfg):
+    """A chat model in the embedding picker 400s on the first embed — /api/show
+    says which downloads actually embed, so only those are offered."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "qwen3.5:4b"},
+                        {"name": "qwen3-embedding:4b"},
+                        {"name": "qwen3.5-4b-jarvis-ab12cd34:latest"},
+                    ]
+                },
+            )
+        if request.url.path == "/api/show":
+            name = json.loads(request.content)["model"]
+            caps = ["embedding"] if "embedding" in name else ["completion", "tools"]
+            return httpx.Response(200, json={"capabilities": caps})
+        return httpx.Response(404, json={"error": "nope"})
+
+    result = await em.list_embedding_models(
+        "ollama", cfg, transport=httpx.MockTransport(handler)
+    )
+    assert result.source == "live"
+    assert [m.id for m in result.models] == ["qwen3-embedding:4b"]
+
+
+async def test_ollama_with_only_chat_models_says_what_to_pull(cfg):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3.5:4b"}]})
+        return httpx.Response(200, json={"capabilities": ["completion"]})
+
+    result = await em.list_embedding_models(
+        "ollama", cfg, transport=httpx.MockTransport(handler)
+    )
+    assert result.source == "curated"
+    assert "pull" in result.reason

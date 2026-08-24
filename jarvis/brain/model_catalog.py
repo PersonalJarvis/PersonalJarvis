@@ -172,6 +172,14 @@ class ModelInfo:
     # only source, and every new model generation shipped as "$0.00" until
     # someone noticed (2026-07-28 and 2026-08-18 audits).
     pricing: tuple[float, float] | None = None
+    # Local-server facts from Ollama's ``/api/show`` (``model_info.<arch>.
+    # context_length`` and ``details``). ``None`` for every gateway/cloud
+    # catalog — they carry no such manifest — so nothing downstream changes for
+    # them. Read by the Local models section and the per-model option sheet
+    # (native context caps the ``num_ctx`` chips).
+    context_length: int | None = None
+    quantization_level: str | None = None
+    parameter_size: str | None = None
 
 
 def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
@@ -1806,7 +1814,8 @@ class ModelCatalog:
                 try:
                     resp = await client.post(f"{root}/api/show", json={"model": info.id})
                     resp.raise_for_status()
-                    caps = resp.json().get("capabilities")
+                    shown = resp.json()
+                    caps = shown.get("capabilities")
                 except Exception as exc:  # noqa: BLE001 — unknown stays capable
                     log.debug("ollama: /api/show failed for %s: %s", info.id, exc)
                     return info
@@ -1815,10 +1824,19 @@ class ModelCatalog:
                 declared = {str(c) for c in caps}
                 if "completion" not in declared:
                     return None
+                # Keep the manifest facts instead of dropping them: the Local
+                # models section and the option sheet read them from the SAME
+                # cached catalog the pickers use (no second probe per model).
+                from jarvis.brain.ollama_inventory import native_context_length
+
+                details = shown.get("details") if isinstance(shown.get("details"), dict) else {}
                 return replace(
                     info,
                     input_modalities=("text", "image") if "vision" in declared else ("text",),
                     supported_parameters=("tools",) if "tools" in declared else (),
+                    context_length=native_context_length(shown.get("model_info")),
+                    quantization_level=str(details.get("quantization_level") or "") or None,
+                    parameter_size=str(details.get("parameter_size") or "") or None,
                 )
 
         probed = await asyncio.gather(*(probe(m) for m in models))
