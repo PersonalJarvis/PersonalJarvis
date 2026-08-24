@@ -38,7 +38,7 @@ const launcherEnglish = vi.hoisted<Record<string, string>>(() => ({
     "No coding-agent CLI was found on this machine's PATH.",
   "workspace_launcher.wizard.open_clis": "Open CLIs",
   "workspace_launcher.wizard.views.grid.title": "Terminal grid",
-  "workspace_launcher.wizard.views.chat.title": "Chat view",
+  "workspace_launcher.wizard.views.chat.title": "Chat",
 }));
 vi.mock("@/i18n", () => ({
   useT: () => (key: string) => launcherEnglish[key] ?? key,
@@ -521,9 +521,7 @@ describe("Agentic IDE launcher", () => {
     ).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: /review workspace/i }));
-    expect(screen.getByTestId("review-view-mode").textContent).toBe(
-      "Chat view",
-    );
+    expect(screen.getByTestId("review-view-mode").textContent).toBe("Chat");
     fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
 
     // The workspace comes up on the CHAT surface — the agent chat in this

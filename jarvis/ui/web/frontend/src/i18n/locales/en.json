@@ -4283,7 +4283,7 @@
       "setup_label": "Workspace setup",
       "reading_mode": "Reading mode",
       "reading_mode_label": "How the workspace opens",
-      "view_hint": "Only how the workspace is read changes — the agents, panes and conversations stay the same, and the toolbar can switch at any time.",
+      "view_hint": "Nothing is given up either way: the terminals keep working behind the chat, and the switch in the workspace bar moves between the two at any time.",
       "selected": "Selected",
       "workspace": "Workspace",
       "opens_as": "Opens as",
@@ -4294,12 +4294,12 @@
         "folder": { "label": "Folder", "title": "Choose the project folder", "hint": "Everything the agents do stays inside this folder." },
         "layout": { "label": "Layout", "title": "Shape the workspace", "hint": "Choose how many independent terminal panes should open." },
         "agents": { "label": "Agents" },
-        "view": { "label": "View", "title": "Choose how to read the workspace", "hint": "The same agents either way — the toolbar can switch at any time." },
+        "view": { "label": "View", "title": "Choose how to read the workspace", "hint": "Both are one click apart afterwards — the switch is in the workspace bar." },
         "review": { "label": "Review", "title": "Review before opening", "hint": "Nothing starts until you open the workspace." }
       },
       "views": {
         "grid": { "title": "Terminal grid", "description": "Every pane on screen at once, side by side — the full wall of terminals." },
-        "chat": { "title": "Chat view", "description": "One agent at a time on a calm stage, the rest on a rail — read like a conversation." }
+        "chat": { "title": "Chat", "description": "The agent chat, running in this workspace's folder — type instead of watching terminals." }
       }
     },
     "crowded": {

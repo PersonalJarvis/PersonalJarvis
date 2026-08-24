@@ -4283,7 +4283,7 @@
       "setup_label": "Arbeitsbereich einrichten",
       "reading_mode": "Darstellung",
       "reading_mode_label": "Darstellung des Arbeitsbereichs",
-      "view_hint": "Nur die Darstellung ändert sich — Agents, Fenster und Unterhaltungen bleiben gleich, und die Toolbar kann jederzeit wechseln.",
+      "view_hint": "Es geht nichts verloren: Die Terminals arbeiten hinter dem Chat weiter, und der Schalter in der Workspace-Leiste wechselt jederzeit zwischen beiden.",
       "selected": "Ausgewählt",
       "workspace": "Arbeitsbereich",
       "opens_as": "Wird geöffnet als",
@@ -4294,12 +4294,12 @@
         "folder": { "label": "Ordner", "title": "Projektordner auswählen", "hint": "Alles, was die Agents tun, bleibt in diesem Ordner." },
         "layout": { "label": "Layout", "title": "Arbeitsbereich aufteilen", "hint": "Lege fest, wie viele unabhängige Terminal-Fenster geöffnet werden." },
         "agents": { "label": "Agents" },
-        "view": { "label": "Ansicht", "title": "Darstellung des Arbeitsbereichs auswählen", "hint": "Die Agents bleiben gleich — die Toolbar kann jederzeit umschalten." },
+        "view": { "label": "Ansicht", "title": "Darstellung des Arbeitsbereichs auswählen", "hint": "Danach ist beides einen Klick entfernt — der Schalter sitzt in der Workspace-Leiste." },
         "review": { "label": "Prüfen", "title": "Vor dem Öffnen prüfen", "hint": "Nichts startet, bevor du den Arbeitsbereich öffnest." }
       },
       "views": {
         "grid": { "title": "Terminal-Raster", "description": "Alle Fenster gleichzeitig nebeneinander — die vollständige Terminal-Wand." },
-        "chat": { "title": "Chat-Ansicht", "description": "Ein Agent im Mittelpunkt, die anderen in einer Leiste — lesbar wie eine Unterhaltung." }
+        "chat": { "title": "Chat", "description": "Der Agenten-Chat, im Ordner dieses Workspaces — schreiben statt Terminals zuschauen." }
       }
     },
     "crowded": {

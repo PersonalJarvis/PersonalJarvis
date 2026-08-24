@@ -582,12 +582,13 @@ function StepNavigation({
 }
 
 /**
- * The last decision before review: how the workspace is read.
+ * The last decision before review: which surface the workspace opens on.
  *
- * Two ways of looking at the SAME panes (see WorkspaceView in AgenticGrid) —
- * the grid shows every terminal at once, chat puts one agent on a stage like a
- * conversation. A choice of presentation, not of substance, which is why the
- * step needs no gate: every answer is valid and one is preselected.
+ * Two surfaces, not two skins (see WorkspaceView): the grid is the wall of
+ * terminals, chat is the agent chat running in this workspace's folder. Both
+ * stay alive either way — the terminals keep working behind the chat — so the
+ * step needs no gate: every answer is valid, one is preselected, and the
+ * switch in the workspace bar changes it afterwards.
  */
 function ViewChoice({
   view,
@@ -712,24 +713,29 @@ function GridPreview() {
   );
 }
 
+/**
+ * A conversation, not a workspace: message rows down a centred column with the
+ * composer under them. It used to draw a rail and one big pane, which is the
+ * surface this one replaced.
+ */
 function ChatPreview() {
   return (
-    <span aria-hidden className="flex gap-1.5">
-      <span className="flex w-1/4 flex-col gap-1.5">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            data-view-preview-pane
-            className={cn(
-              "block flex-1 border",
-              i === 0 ? VIEW_PREVIEW_PANE_ACTIVE : VIEW_PREVIEW_PANE,
-            )}
-          />
-        ))}
-      </span>
+    <span aria-hidden className="mx-auto flex h-[4.875rem] w-3/4 flex-col gap-1.5">
       <span
         data-view-preview-pane
-        className={cn("block h-[4.875rem] flex-1 border", VIEW_PREVIEW_PANE)}
+        className={cn("ml-auto block h-4 w-2/3 border", VIEW_PREVIEW_PANE_ACTIVE)}
+      />
+      <span
+        data-view-preview-pane
+        className={cn("block h-6 w-full border", VIEW_PREVIEW_PANE)}
+      />
+      <span
+        data-view-preview-pane
+        className={cn("ml-auto block h-3 w-1/2 border", VIEW_PREVIEW_PANE_ACTIVE)}
+      />
+      <span
+        data-view-preview-pane
+        className={cn("mt-auto block h-5 w-full border", VIEW_PREVIEW_PANE)}
       />
     </span>
   );
