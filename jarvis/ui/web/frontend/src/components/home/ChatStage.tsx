@@ -7,6 +7,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatInput } from "@/components/ChatInput";
 import { TurnSteps } from "@/components/home/TurnSteps";
 import { Greeting } from "@/components/home/Greeting";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
+import { prettyProviderName } from "@/lib/prettyProviderName";
 import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -241,25 +243,70 @@ function useElapsedMs(startedTs: number | null): number {
  * only this block does.
  */
 function LiveTurn() {
-  const assistantName = useEventStore((s) => s.assistantName);
   const steps = useEventStore((s) => s.thinkingSteps);
   const startedTs = useEventStore((s) => s.thinkingStartedTs);
   const liveText = useEventStore((s) => s.liveReply?.text ?? "");
   const elapsed = useElapsedMs(startedTs);
   return (
-    <div className="flex flex-col gap-1.5 px-1" data-testid="chat-turn-live">
-      <Byline name={assistantName} />
+    <Turn live testId="chat-turn-live">
       <TurnSteps steps={steps} live durationMs={elapsed} />
       {liveText.trim() !== "" && <Prose text={liveText} testId="chat-live-text" />}
-    </div>
+    </Turn>
   );
 }
 
-function Byline({ name }: { name: string }) {
+/**
+ * One assistant turn: the byline that says who answered, and a hairline rail
+ * everything the turn produced hangs off — the steps it took, then the answer.
+ * The rail glows while the turn runs, so the block reads as one live unit
+ * rather than a list of disconnected rows.
+ *
+ * The byline names the BRAIN, with its vendor's own mark: the provider and
+ * model configured under Agents / API keys, which is what a typed turn runs
+ * on. It is deliberately not the voice engine — that one only answers speech.
+ */
+function Turn({
+  children,
+  live = false,
+  testId,
+  messageId,
+}: {
+  children: React.ReactNode;
+  live?: boolean;
+  testId?: string;
+  messageId?: string;
+}) {
+  const assistantName = useEventStore((s) => s.assistantName);
+  const provider = useEventStore((s) => s.brainProvider);
+  const model = useEventStore((s) => s.brainModel);
+  const label = provider ? prettyProviderName(provider) : "";
   return (
-    <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
-      <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
-      {name}
+    <div className="flex flex-col gap-1.5" data-testid={testId} data-message-id={messageId}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
+        <span
+          className={cn("h-1 w-1 rounded-full bg-primary", live && "motion-safe:animate-pulse")}
+          aria-hidden
+        />
+        <span>{assistantName}</span>
+        {provider && (
+          <span className="inline-flex items-center gap-1.5 normal-case tracking-normal text-muted-foreground">
+            <ProviderLogo providerId={provider} label={label} size="sm" />
+            <span>{label}</span>
+            {model && <span className="text-muted-foreground/70">· {model}</span>}
+          </span>
+        )}
+      </div>
+      <div className="relative flex flex-col gap-1.5 pl-4">
+        <span
+          aria-hidden
+          data-testid="chat-turn-rail"
+          className={cn(
+            "absolute bottom-1 left-[3px] top-1 w-px rounded-full",
+            live ? "agent-rail-live" : "bg-border",
+          )}
+        />
+        {children}
+      </div>
     </div>
   );
 }
@@ -342,14 +389,9 @@ function MessageRow({ message }: { message: ChatMessage }) {
   }
 
   return (
-    <div
-      className="flex flex-col gap-1.5 px-1"
-      data-testid="chat-message-assistant"
-      data-message-id={message.id}
-    >
-      <Byline name={assistantName} />
+    <Turn testId="chat-message-assistant" messageId={message.id}>
       {trace && <TurnSteps steps={trace.steps} durationMs={trace.durationMs} className="mb-1" />}
       <Prose text={message.content} />
-    </div>
+    </Turn>
   );
 }

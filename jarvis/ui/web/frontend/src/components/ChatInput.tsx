@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUp, Mic, Square } from "lucide-react";
 import { getWSClient } from "@/hooks/useWebSocket";
-import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
+import { prettyProviderName } from "@/lib/prettyProviderName";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -26,9 +27,15 @@ export function ChatInput() {
   const [value, setValue] = useState("");
   const connected = useEventStore((s) => s.connected);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
-  // What will answer: the classic brain, or the realtime engine when voice
-  // mode is realtime — the same resolver the header and the sidebar use.
-  const engine = useVoiceEngineDisplay();
+  // What will answer HERE. A typed turn always runs the classic brain
+  // (desktop_app._on_user_message -> BrainManager) — the realtime engine is
+  // the voice stage's, it never sees a typed prompt. Naming it here said the
+  // chat ran on "Gemini Live" while the answer actually came from the
+  // configured brain provider, which is the pick people make under Agents /
+  // API keys (maintainer, 2026-08-24).
+  const brainProvider = useEventStore((s) => s.brainProvider);
+  const brainModel = useEventStore((s) => s.brainModel);
+  const brainLabel = brainProvider ? prettyProviderName(brainProvider) : "";
   const wsWarming = useEventStore((s) => s.wsWarming);
   // The turn's progress is no longer mirrored in the composer — the chat
   // column renders the live steps (components/home/TurnSteps) as the
@@ -240,9 +247,12 @@ export function ChatInput() {
           data-testid="composer-model"
           className="inline-flex h-8 max-w-[280px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
-          <span className="truncate font-medium text-foreground">{engine.providerLabel}</span>
-          {engine.model && (
-            <span className="truncate font-mono text-[10px] text-muted-foreground">{engine.model}</span>
+          {brainProvider && (
+            <ProviderLogo providerId={brainProvider} label={brainLabel} size="sm" />
+          )}
+          <span className="truncate font-medium text-foreground">{brainLabel || "—"}</span>
+          {brainModel && (
+            <span className="truncate font-mono text-[10px] text-muted-foreground">{brainModel}</span>
           )}
         </button>
         <button

@@ -29,6 +29,8 @@ function render(ui: React.ReactElement) {
 
 const IDLE = {
   connected: true,
+  brainProvider: "grok",
+  brainModel: "grok-4.3",
   wsWarming: false,
   assistantName: "Jarvis",
   activeKind: "text" as const,
@@ -73,6 +75,33 @@ describe("ChatStage (Jarvis, typed)", () => {
     expect(screen.queryByTestId("composer-effort")).toBeNull();
     expect(screen.queryByTestId("composer-permission")).toBeNull();
     expect(screen.queryByTestId("composer-plan")).toBeNull();
+  });
+
+  it("names the brain that answers, never the realtime voice engine", () => {
+    useEventStore.setState({
+      activeThreadId: "t1",
+      messages: [
+        { id: "m1", role: "user", content: "hi", ts: 1 },
+        { id: "m2", role: "assistant", content: "Hello.", ts: 2 },
+      ],
+    });
+    render(<ChatStage />);
+
+    // A typed turn runs the classic brain; the realtime engine only answers
+    // speech, so its name must not appear on this surface.
+    const composer = screen.getByTestId("chat-composer");
+    expect(within(composer).getByTestId("composer-model").textContent).toContain("grok-4.3");
+    expect(screen.getByTestId("chat-message-assistant").textContent).toContain("grok-4.3");
+    expect(document.body.textContent).not.toContain("Live");
+  });
+
+  it("hangs the turn off a rail, the way the timeline always did", () => {
+    useEventStore.setState({
+      activeThreadId: "t1",
+      messages: [{ id: "m2", role: "assistant", content: "Done.", ts: 2 }],
+    });
+    render(<ChatStage />);
+    expect(screen.getByTestId("chat-turn-rail")).toBeTruthy();
   });
 
   it("renders a turn: the person's bubble, then Jarvis' answer as prose", () => {
