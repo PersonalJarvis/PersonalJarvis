@@ -336,6 +336,16 @@ async def run_api_turn(handle: TurnHandle, user_text: str) -> None:
                         if delta.usage:
                             for k, v in delta.usage.items():
                                 usage_total[k] = usage_total.get(k, 0) + int(v or 0)
+                            # Tokens as they are counted, so the live line can
+                            # say what the turn has spent so far. Providers
+                            # report usage a handful of times per turn, not per
+                            # token, so this needs no throttling of its own.
+                            await handle.emit(
+                                make_event(
+                                    "usage_delta",
+                                    {"turn_id": handle.turn_id, "usage": dict(usage_total)},
+                                )
+                            )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 — provider error ends the turn honestly

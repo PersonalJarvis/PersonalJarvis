@@ -204,6 +204,47 @@ describe("ChatStage (agent chat)", () => {
     }
   });
 
+  it("draws a different glyph per permission mode in the pill and the list", async () => {
+    render(<ChatStage />);
+    const pill = screen.getByTestId("composer-permission");
+    // acceptEdits wears the pen, not the column's shield.
+    expect(pill.querySelector("svg.lucide-file-pen")).not.toBeNull();
+    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
+    fireEvent.click(pill);
+    const panel = await screen.findByTestId("composer-permission-panel");
+    const glyphs = within(panel)
+      .getAllByRole("option")
+      .map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
+    // default → question shield, acceptEdits → pen, bypass → shield off; plan lives on the switch.
+    expect(glyphs.some((c) => c.includes("lucide-shield-question"))).toBe(true);
+    expect(glyphs.some((c) => c.includes("lucide-file-pen"))).toBe(true);
+    expect(glyphs.some((c) => c.includes("lucide-shield-off"))).toBe(true);
+    expect(new Set(glyphs).size).toBe(glyphs.length);
+  });
+
+  it("grows the text box with the typed text and caps it at its max height", () => {
+    render(<ChatStage />);
+    const box = screen.getByPlaceholderText("Ask anything…") as HTMLTextAreaElement;
+    // jsdom has no layout: stand in for scrollHeight and the max-height rule.
+    let scrollHeight = 48;
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    const computed = vi.spyOn(window, "getComputedStyle").mockImplementation(
+      () => ({ maxHeight: "192px" }) as CSSStyleDeclaration,
+    );
+    try {
+      scrollHeight = 120;
+      fireEvent.change(box, { target: { value: "one two three four five" } });
+      expect(box.style.height).toBe("120px");
+      expect(box.style.overflowY).toBe("hidden");
+      scrollHeight = 400;
+      fireEvent.change(box, { target: { value: "a much longer prompt".repeat(40) } });
+      expect(box.style.height).toBe("192px");
+      expect(box.style.overflowY).toBe("auto");
+    } finally {
+      computed.mockRestore();
+    }
+  });
+
   it("shows no restart notice when the catalog carries the permission ladders", () => {
     render(<ChatStage />);
     expect(screen.queryByTestId("composer-backend-outdated")).toBeNull();
@@ -264,5 +305,74 @@ describe("ChatStage (agent chat)", () => {
     expect(decide).toHaveBeenCalledWith("a1", "allow");
     // The composer offers Stop while the turn runs.
     expect(screen.getByTestId("composer-stop")).toBeTruthy();
+  });
+
+  it("always shows that the turn is alive: glyph, a word, the clock and the tokens", () => {
+    vi.useFakeTimers();
+    try {
+      const started = Date.now();
+      const timeline = reduceEvents(EMPTY_TIMELINE, [
+        ev("user_message", { text: "dig into it" }),
+        { seq: 2, ts_ms: started, kind: "turn_started", payload: { turn_id: "t1", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" } },
+        { seq: 0, ts_ms: started, kind: "reasoning_started", payload: { turn_id: "t1", message_id: "m1" } },
+        { seq: 0, ts_ms: started, kind: "usage_delta", payload: { turn_id: "t1", usage: { input_tokens: 12, output_tokens: 4800 } } },
+      ]);
+      useAgentChatStore.setState({ activeSessionId: "s1", timeline });
+      render(<ChatStage />);
+
+      // The redacted thought is a row of its own — thinking you cannot read
+      // is still thinking you can see.
+      const reasoning = screen.getByTestId("agent-reasoning");
+      expect(reasoning.getAttribute("data-live")).toBe("true");
+
+      const live = screen.getByTestId("agent-turn-live");
+      expect(within(live).getByTestId("agent-glyph")).toBeTruthy();
+      expect(live.textContent).toMatch(/4\.8k/);
+      // The clock moves on its own.
+      act(() => {
+        vi.advanceTimersByTime(12_000);
+      });
+      expect(live.textContent).toMatch(/1[0-9]s|12s/);
+      // The rail marks the whole block as running.
+      expect(screen.getByTestId("agent-turn-rail").className).toContain("agent-rail-live");
+      // A running turn shows no receipt yet.
+      expect(screen.queryByTestId("agent-turn-footer")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("names tools the way the agent's log does and closes with time and tokens", () => {
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "check the repo" }),
+      ev("turn_started", { turn_id: "t9", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" }),
+      ev("tool_call", { turn_id: "t9", call_id: "c1", name: "PowerShell", input: { command: "Get-ChildItem -Path 'C:\\Users'" } }),
+      ev("tool_result", { turn_id: "t9", call_id: "c1", output: "ok", is_error: false }),
+      ev("tool_call", { turn_id: "t9", call_id: "c2", name: "mcp__github__create_issue", input: { title: "Bug" } }),
+      ev("tool_result", { turn_id: "t9", call_id: "c2", output: "#12", is_error: false }),
+      ev("reasoning", { turn_id: "t9", text: "", duration_ms: 8585 }),
+      ev("assistant_text", { turn_id: "t9", message_id: "m1", text: "Done." }),
+      ev("turn_finished", { turn_id: "t9", status: "done", duration_ms: 12_000, usage: { input_tokens: 2, output_tokens: 219 }, cost_usd: 0.8483 }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: "s9", timeline });
+    render(<ChatStage />);
+
+    const tools = screen.getAllByTestId("agent-tool");
+    expect(tools[0].getAttribute("data-tool")).toBe("PowerShell");
+    expect(tools[0].textContent).toContain("PowerShell");
+    expect(tools[0].textContent).toContain("Get-ChildItem");
+    // An MCP call is named after its server, and wears its mark.
+    expect(tools[1].getAttribute("data-family")).toBe("mcp");
+    expect(tools[1].textContent).toContain("GitHub");
+
+    // Thinking with no readable text still shows its time and does not open.
+    const reasoning = screen.getByTestId("agent-reasoning");
+    expect(reasoning.textContent).toMatch(/9s|8\.6s|8s/);
+    expect(within(reasoning).getByRole("button").hasAttribute("disabled")).toBe(true);
+
+    const footer = screen.getByTestId("agent-turn-footer");
+    expect(footer.textContent).toContain("12s");
+    expect(footer.textContent).toContain("219");
+    expect(footer.textContent).toContain("$0.8483");
   });
 });

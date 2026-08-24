@@ -318,3 +318,129 @@ def test_codex_stream_translation_maps_items_to_tools():
     assert st.vendor_session == "th-9"
     assert st.usage == {"input_tokens": 10, "output_tokens": 4}
     assert st.emitted_text
+
+
+def test_claude_redacted_thinking_is_announced_and_tokens_count_live():
+    """Claude Code redacts thinking: the UI still learns WHEN it thinks and how many tokens flow."""
+    st = _ClaudeState(turn_id="t")
+    lines = [
+        {"type": "stream_event", "event": {"type": "message_start", "message": {"id": "m1"}}},
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        },
+        # Redacted: the finished block carries no text, only that it happened.
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "content": [{"type": "thinking", "thinking": ""}],
+                "usage": {"input_tokens": 3, "output_tokens": 40},
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "content": [{"type": "text", "text": "done"}],
+                "usage": {"input_tokens": 3, "output_tokens": 55},
+            },
+        },
+        {
+            "type": "stream_event",
+            "event": {"type": "message_start", "message": {"id": "m2"}},
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m2",
+                "content": [{"type": "text", "text": "more"}],
+                "usage": {"input_tokens": 1, "output_tokens": 10},
+            },
+        },
+    ]
+    events = [ev for obj in lines for ev in translate_claude_line(obj, st)]
+    kinds = [ev["kind"] for ev in events]
+    assert kinds[:3] == ["reasoning_started", "usage_delta", "reasoning"]
+    # The same message re-reporting its usage replaces, a new message adds.
+    usage = [ev["payload"]["usage"] for ev in events if ev["kind"] == "usage_delta"]
+    assert usage[0] == {"input_tokens": 3, "output_tokens": 40}
+    assert usage[1] == {"input_tokens": 3, "output_tokens": 55}
+    assert usage[-1] == {"input_tokens": 4, "output_tokens": 65}
+    reasoning = next(ev for ev in events if ev["kind"] == "reasoning")
+    assert reasoning["payload"]["text"] == ""
+    assert reasoning["payload"]["duration_ms"] is not None
+
+
+def test_claude_live_usage_counts_cache_and_never_walks_back():
+    """The real CLI shape: the cache carries the turn, output starts as a placeholder.
+
+    A warm session reports two new input tokens beside fifty thousand cached
+    ones, and ``output_tokens: 1`` until the ``result`` line lands. Counting
+    only the two uncached fields made a 50k-token turn read as "10 tokens"
+    (BUG-173).
+    """
+    st = _ClaudeState(turn_id="t")
+    lines = [
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {
+                    "input_tokens": 2,
+                    "cache_creation_input_tokens": 30420,
+                    "cache_read_input_tokens": 21355,
+                    "output_tokens": 1,
+                },
+            },
+        },
+        # The same message reported again with the true output count.
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {
+                    "input_tokens": 2,
+                    "cache_creation_input_tokens": 30420,
+                    "cache_read_input_tokens": 21355,
+                    "output_tokens": 412,
+                },
+            },
+        },
+        # …and once more as the placeholder: it must not undo the real count.
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {"input_tokens": 2, "output_tokens": 1},
+            },
+        },
+    ]
+    events = [ev for obj in lines for ev in translate_claude_line(obj, st)]
+    usage = [ev["payload"]["usage"] for ev in events if ev["kind"] == "usage_delta"]
+    assert usage[0] == {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 30420,
+        "cache_read_input_tokens": 21355,
+        "output_tokens": 1,
+    }
+    assert usage[-1]["output_tokens"] == 412
+    assert usage[-1]["cache_read_input_tokens"] == 21355
+    assert usage[-1]["cache_creation_input_tokens"] == 30420
+
+
+def test_codex_reasoning_start_is_announced():
+    st = _CodexState(turn_id="t")
+    lines = [
+        {"type": "item.started", "item": {"id": "r1", "type": "reasoning"}},
+        {"type": "item.completed", "item": {"id": "r1", "type": "reasoning", "text": "plan"}},
+    ]
+    kinds = [ev["kind"] for obj in lines for ev in translate_codex_line(obj, st)]
+    assert kinds == ["reasoning_started", "reasoning"]

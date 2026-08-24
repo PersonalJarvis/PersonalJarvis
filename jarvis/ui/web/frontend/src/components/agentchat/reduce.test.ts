@@ -69,4 +69,55 @@ describe("agent-chat reduce", () => {
     expect(tl.sessionPatch).toBeNull();
     expect((tl.items[0] as TurnItem).status).toBe("cancelled");
   });
+
+  it("shows redacted thinking: announced live, closed by the textless finished block", () => {
+    let tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "t5" }),
+      ev("reasoning_started", { turn_id: "t5", message_id: "m1" }, false),
+    ]);
+    let turn = tl.items[0] as TurnItem;
+    expect(turn.blocks[0]).toMatchObject({ kind: "reasoning", text: "", live: true });
+    // A second announcement for the same thought does not add a row.
+    tl = reduceEvent(tl, ev("reasoning_started", { turn_id: "t5", message_id: "m1" }, false));
+    expect((tl.items[0] as TurnItem).blocks).toHaveLength(1);
+    tl = reduceEvent(tl, ev("reasoning", { turn_id: "t5", text: "", duration_ms: 8500 }));
+    turn = tl.items[0] as TurnItem;
+    expect(turn.blocks[0]).toMatchObject({ kind: "reasoning", text: "", live: false, durationMs: 8500 });
+    // A textless finished block with a duration and no live row still lands.
+    tl = reduceEvent(tl, ev("reasoning", { turn_id: "t5", text: "", duration_ms: 1200 }));
+    expect((tl.items[0] as TurnItem).blocks).toHaveLength(2);
+    // ...but one with neither text nor time is nothing.
+    tl = reduceEvent(tl, ev("reasoning", { turn_id: "t5", text: "", duration_ms: 0 }));
+    expect((tl.items[0] as TurnItem).blocks).toHaveLength(2);
+  });
+
+  it("ends a live thought when text or a tool call follows, and times tool calls from the log", () => {
+    let tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "t6" }),
+      ev("reasoning_started", { turn_id: "t6", message_id: "m1" }, false),
+      ev("tool_call", { turn_id: "t6", call_id: "c1", name: "Grep", input: { pattern: "x" } }),
+    ]);
+    let turn = tl.items[0] as TurnItem;
+    expect(turn.blocks[0]).toMatchObject({ kind: "reasoning", live: false });
+    expect(turn.blocks[1]).toMatchObject({ kind: "tool", name: "Grep" });
+    const callTs = (turn.blocks[1] as { startedMs: number }).startedMs;
+    const result = ev("tool_result", { turn_id: "t6", call_id: "c1", output: "hit", is_error: false });
+    result.ts_ms = callTs + 340;
+    tl = reduceEvent(tl, result);
+    turn = tl.items[0] as TurnItem;
+    expect(turn.blocks[1]).toMatchObject({ kind: "tool", output: "hit", durationMs: 340 });
+  });
+
+  it("counts tokens live and keeps them when the finished turn brings no usage", () => {
+    let tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "t7" }),
+      ev("usage_delta", { turn_id: "t7", usage: { input_tokens: 3, output_tokens: 40 } }, false),
+      ev("usage_delta", { turn_id: "t7", usage: { input_tokens: 4, output_tokens: 65 } }, false),
+    ]);
+    expect((tl.items[0] as TurnItem).liveUsage).toEqual({ input_tokens: 4, output_tokens: 65 });
+    tl = reduceEvent(tl, ev("turn_finished", { turn_id: "t7", status: "done" }));
+    const turn = tl.items[0] as TurnItem;
+    expect(turn.usage).toEqual({ input_tokens: 4, output_tokens: 65 });
+    expect(turn.durationMs).not.toBeNull();
+  });
 });

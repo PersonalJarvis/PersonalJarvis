@@ -25,10 +25,13 @@ export interface TextBlock {
 export interface ReasoningBlock {
   kind: "reasoning";
   id: string;
+  /** Empty when the vendor redacts its thinking — the block still says it happened. */
   text: string;
   durationMs: number | null;
   /** Still streaming — the finished block carries the duration. */
   live: boolean;
+  /** When the model began to think (drives the live elapsed counter). */
+  startedMs: number;
 }
 
 export interface ApprovalState {
@@ -47,6 +50,8 @@ export interface ToolBlock {
   isError: boolean;
   durationMs: number | null;
   approval: ApprovalState | null;
+  /** When the call was made; a result without its own duration is timed from here. */
+  startedMs: number;
 }
 
 export type TurnBlock = TextBlock | ReasoningBlock | ToolBlock;
@@ -72,6 +77,8 @@ export interface TurnItem {
   startedMs: number;
   durationMs: number | null;
   usage: Record<string, unknown> | null;
+  /** Tokens so far while the turn runs (``usage_delta``); the finished usage replaces it. */
+  liveUsage: Record<string, number> | null;
   costUsd: number | null;
   error: string | null;
 }
@@ -145,6 +152,21 @@ function updateTurn(
   return { ...tl, items: replaceAt(tl.items, idx, next) };
 }
 
+/** A live reasoning block that text or a tool call is about to follow is over. */
+function closeLiveReasoning(turn: TurnItem, nowMs: number): TurnItem {
+  const i = turn.blocks.findIndex((b) => b.kind === "reasoning" && b.live);
+  if (i < 0) return turn;
+  const block = turn.blocks[i] as ReasoningBlock;
+  return {
+    ...turn,
+    blocks: replaceAt(turn.blocks, i, {
+      ...block,
+      live: false,
+      durationMs: block.durationMs ?? Math.max(0, nowMs - block.startedMs),
+    }),
+  };
+}
+
 function upsertBlock<B extends TurnBlock>(
   turn: TurnItem,
   match: (b: TurnBlock) => boolean,
@@ -193,6 +215,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             startedMs: ev.ts_ms,
             durationMs: null,
             usage: null,
+            liveUsage: null,
             costUsd: null,
             error: null,
           },
@@ -205,7 +228,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       if (!delta) return base;
       return updateTurn(base, turnId, (turn) =>
         upsertBlock<TextBlock>(
-          turn,
+          closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "text" && b.id === id,
           (ex) => ({ kind: "text", id, text: (ex?.text ?? "") + delta }),
         ),
@@ -217,12 +240,35 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       const text = str(p.text);
       return updateTurn(base, turnId, (turn) =>
         upsertBlock<TextBlock>(
-          turn,
+          closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "text" && b.id === id,
           (ex) => (ex && ex.text === text ? ex : { kind: "text", id, text }),
         ),
       );
     }
+
+    case "reasoning_started":
+      // The model began to think. Its thinking may never stream (Claude Code
+      // redacts it), so this is what the person sees meanwhile: one live
+      // row, "Thinking…", counting the seconds until the finished block.
+      return updateTurn(base, turnId, (turn) => {
+        const last = turn.blocks[turn.blocks.length - 1];
+        if (last && last.kind === "reasoning" && last.live) return turn;
+        return {
+          ...turn,
+          blocks: [
+            ...turn.blocks,
+            {
+              kind: "reasoning",
+              id: `r-${turn.blocks.length}`,
+              text: "",
+              durationMs: null,
+              live: true,
+              startedMs: ev.ts_ms,
+            },
+          ],
+        };
+      });
 
     case "reasoning_delta": {
       const delta = str(p.text);
@@ -243,7 +289,14 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
           ...turn,
           blocks: [
             ...turn.blocks,
-            { kind: "reasoning", id: `r-${turn.blocks.length}`, text: delta, durationMs: null, live: true },
+            {
+              kind: "reasoning",
+              id: `r-${turn.blocks.length}`,
+              text: delta,
+              durationMs: null,
+              live: true,
+              startedMs: ev.ts_ms,
+            },
           ],
         };
       });
@@ -260,17 +313,26 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             blocks: replaceAt(turn.blocks, turn.blocks.length - 1, {
               ...last,
               text: text || last.text,
-              durationMs,
+              durationMs: durationMs ?? Math.max(0, ev.ts_ms - last.startedMs),
               live: false,
             }),
           };
         }
-        if (!text) return turn;
+        // A finished block with no text is still a fact worth a row when it
+        // took time ("Thought for 8s") — redacted thinking is thinking too.
+        if (!text && !(durationMs && durationMs > 0)) return turn;
         return {
           ...turn,
           blocks: [
             ...turn.blocks,
-            { kind: "reasoning", id: `r-${turn.blocks.length}`, text, durationMs, live: false },
+            {
+              kind: "reasoning",
+              id: `r-${turn.blocks.length}`,
+              text,
+              durationMs,
+              live: false,
+              startedMs: ev.ts_ms - (durationMs ?? 0),
+            },
           ],
         };
       });
@@ -280,7 +342,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       const callId = str(p.call_id);
       return updateTurn(base, turnId, (turn) =>
         upsertBlock<ToolBlock>(
-          turn,
+          closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "tool" && b.callId === callId,
           (ex) =>
             ex ?? {
@@ -292,6 +354,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
               isError: false,
               durationMs: null,
               approval: null,
+              startedMs: ev.ts_ms,
             },
         ),
       );
@@ -310,11 +373,27 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             input: ex?.input,
             output: str(p.output, ""),
             isError: Boolean(p.is_error),
-            durationMs: num(p.duration_ms),
+            // The runner rarely knows how long a call took; the log does —
+            // the result's timestamp minus the call's.
+            durationMs:
+              num(p.duration_ms) ?? (ex ? Math.max(0, ev.ts_ms - ex.startedMs) : null),
             approval: ex?.approval ?? null,
+            startedMs: ex?.startedMs ?? ev.ts_ms,
           }),
         ),
       );
+    }
+
+    case "usage_delta": {
+      const usage = p.usage;
+      if (!usage || typeof usage !== "object") return base;
+      const counts: Record<string, number> = {};
+      for (const [k, v] of Object.entries(usage as Record<string, unknown>)) {
+        const n = num(v);
+        if (n !== null) counts[k] = n;
+      }
+      if (Object.keys(counts).length === 0) return base;
+      return updateTurn(base, turnId, (turn) => ({ ...turn, liveUsage: counts }));
     }
 
     case "approval_required": {
@@ -341,6 +420,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             isError: ex?.isError ?? false,
             durationMs: ex?.durationMs ?? null,
             approval: { approvalId, summary: pending.summary, decision: null },
+            startedMs: ex?.startedMs ?? ev.ts_ms,
           }),
         ),
       );
@@ -382,9 +462,16 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         ...turn,
         status: status === "running" ? "done" : status,
         // A turn that ended mid-stream closes its live reasoning block.
-        blocks: turn.blocks.map((b) => (b.kind === "reasoning" && b.live ? { ...b, live: false } : b)),
-        durationMs: num(p.duration_ms),
-        usage: p.usage && typeof p.usage === "object" ? (p.usage as Record<string, unknown>) : null,
+        blocks: turn.blocks.map((b) =>
+          b.kind === "reasoning" && b.live
+            ? { ...b, live: false, durationMs: b.durationMs ?? Math.max(0, ev.ts_ms - b.startedMs) }
+            : b,
+        ),
+        durationMs: num(p.duration_ms) ?? Math.max(0, ev.ts_ms - turn.startedMs),
+        usage:
+          p.usage && typeof p.usage === "object" && Object.keys(p.usage as object).length > 0
+            ? (p.usage as Record<string, unknown>)
+            : turn.liveUsage,
         costUsd: num(p.cost_usd),
         error: str(p.error, "") || null,
       }));

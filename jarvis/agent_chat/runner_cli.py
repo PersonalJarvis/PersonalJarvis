@@ -545,6 +545,17 @@ def supports_cli_runner(runner: str) -> bool:
 
 # ------------------------------------------------------------ translation
 
+#: The token fields a Claude CLI message reports. The two cache fields carry
+#: the bulk of a real turn — a warm session reads tens of thousands of cached
+#: tokens while ``input_tokens`` counts only the handful that were new — so a
+#: counter that skips them under-reports by orders of magnitude (BUG-173).
+_CLAUDE_USAGE_KEYS: Final[tuple[str, ...]] = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+
 
 @dataclass(slots=True)
 class _ClaudeState:
@@ -554,6 +565,10 @@ class _ClaudeState:
     text_acc: dict[str, str] = field(default_factory=dict)
     thinking_acc: dict[str, str] = field(default_factory=dict)
     thinking_started: dict[str, float] = field(default_factory=dict)
+    #: Message ids whose thinking block was announced live (one card each).
+    thinking_announced: set[str] = field(default_factory=set)
+    #: Per-message usage as the CLI reports it — summed into the live counter.
+    usage_by_message: dict[str, dict[str, int]] = field(default_factory=dict)
     emitted_tool_ids: set[str] = field(default_factory=set)
     emitted_text: bool = False
     status: str = "done"
@@ -613,6 +628,17 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
                 mid = st.current_message_id or uuid.uuid4().hex
                 st.current_message_id = mid
                 st.thinking_started.setdefault(mid, time.perf_counter())
+                # Claude Code redacts thinking text in its stream, so without
+                # this the UI learned of eight seconds of thought only once it
+                # was over. Announce the block the moment it opens.
+                if mid not in st.thinking_announced:
+                    st.thinking_announced.add(mid)
+                    out.append(
+                        make_event(
+                            "reasoning_started",
+                            {"turn_id": st.turn_id, "message_id": mid},
+                        )
+                    )
         elif et == "content_block_delta":
             delta = ev.get("delta") or {}
             mid = st.current_message_id or uuid.uuid4().hex
@@ -638,6 +664,34 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
         message = obj.get("message") or {}
         mid = str(message.get("id") or st.current_message_id or uuid.uuid4().hex)
         st.current_message_id = mid
+        usage_now = message.get("usage")
+        if isinstance(usage_now, dict):
+            counted = {
+                k: int(usage_now[k])
+                for k in _CLAUDE_USAGE_KEYS
+                if isinstance(usage_now.get(k), int | float)
+            }
+            # A message's first usage report is the ``message_start`` snapshot:
+            # the input side is already final, ``output_tokens`` is a placeholder
+            # that only becomes true later. Keep the largest value seen so a
+            # placeholder can never walk a real count back down (BUG-173).
+            previous = st.usage_by_message.get(mid)
+            if previous:
+                counted = {
+                    k: max(counted.get(k, 0), previous.get(k, 0)) for k in (*counted, *previous)
+                }
+            if counted and counted != previous:
+                st.usage_by_message[mid] = counted
+                totals: dict[str, int] = {}
+                for per_message in st.usage_by_message.values():
+                    for k, v in per_message.items():
+                        totals[k] = totals.get(k, 0) + v
+                out.append(
+                    make_event(
+                        "usage_delta",
+                        {"turn_id": st.turn_id, "usage": totals},
+                    )
+                )
         content = message.get("content") or []
         if not isinstance(content, list):
             content = [{"type": "text", "text": str(content)}]
@@ -837,6 +891,14 @@ def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str,
         return out
     if itype == "reasoning":
         text = str(item.get("text") or "")
+        if phase == "started":
+            out.append(
+                make_event(
+                    "reasoning_started",
+                    {"turn_id": st.turn_id, "message_id": item_id},
+                )
+            )
+            return out
         if phase == "completed" and text.strip():
             out.append(
                 make_event(
