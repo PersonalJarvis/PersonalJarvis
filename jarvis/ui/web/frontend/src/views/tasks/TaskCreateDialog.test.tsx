@@ -74,7 +74,7 @@ describe("TaskCreateDialog", () => {
     fireEvent.change(boxes[0], { target: { value: "Morning Briefing" } });
     fireEvent.change(boxes[1], { target: { value: "Summarize inbox" } });
     fireEvent.click(screen.getByRole("switch")); // enable gmail (default scope read)
-    fireEvent.click(screen.getByText("Create task"));
+    fireEvent.click(screen.getByText("Create"));
 
     await waitFor(() => expect(posted.length).toBe(1));
     const spec = posted[0] as {
@@ -146,7 +146,7 @@ describe("TaskCreateDialog", () => {
     installFetch();
     renderDialog();
     await screen.findByText("Gmail");
-    const saveBtn = screen.getByText("Create task").closest("button") as HTMLButtonElement;
+    const saveBtn = screen.getByText("Create").closest("button") as HTMLButtonElement;
     expect(saveBtn.disabled).toBe(true);
     const boxes = screen.getAllByRole("textbox");
     fireEvent.change(boxes[0], { target: { value: "X" } });

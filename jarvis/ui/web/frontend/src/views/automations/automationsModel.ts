@@ -176,13 +176,32 @@ export function selectSchedules(tasks: TaskSummary[]): TaskSummary[] {
 }
 
 /**
- * The run history: everything that ran or is running, newest activity first.
+ * The state a run row should show.
+ *
+ * A recurring automation goes straight back to `scheduled` after a run, so its
+ * own `state` says nothing about how that run went — `last_run_state` does.
+ * One value, derived in one place, so the dot, the label and the "problems"
+ * filter can never disagree about the same row.
+ */
+export function runStateOf(task: TaskSummary): TaskState {
+  if (isTerminal(task.state) || task.state === "running") return task.state;
+  return task.last_run_state ?? task.state;
+}
+
+/**
+ * The run history: everything that has actually run, newest activity first.
+ *
+ * A recurring automation belongs here once it has a run behind it — the task
+ * row carries only its LATEST one, which is why the tab is worded as the last
+ * run of each rather than a full log. Without this the tab was permanently
+ * empty for anyone whose automations are all recurring, which is everyone.
+ *
  * A still-waiting one-shot is NOT a run — it lives on the Schedules tab until
  * it fires.
  */
 export function selectRuns(tasks: TaskSummary[]): TaskSummary[] {
   return tasks
-    .filter((t) => isTerminal(t.state) || t.state === "running")
+    .filter((t) => isTerminal(t.state) || t.state === "running" || Boolean(t.last_run_state))
     .sort((a, b) => activityNs(b) - activityNs(a));
 }
 
@@ -250,13 +269,14 @@ export type RunFilter = "all" | "running" | "done" | "problems";
 export function filterRuns(runs: TaskSummary[], filter: RunFilter): TaskSummary[] {
   switch (filter) {
     case "running":
-      return runs.filter((r) => r.state === "running" || r.state === "pending" || r.state === "scheduled");
+      return runs.filter((r) => r.state === "running");
     case "done":
-      return runs.filter((r) => r.state === "completed");
+      return runs.filter((r) => runStateOf(r) === "completed");
     case "problems":
-      return runs.filter(
-        (r) => r.state === "failed" || r.state === "interrupted" || r.state === "cancelled",
-      );
+      return runs.filter((r) => {
+        const state = runStateOf(r);
+        return state === "failed" || state === "interrupted" || state === "cancelled";
+      });
     default:
       return runs;
   }

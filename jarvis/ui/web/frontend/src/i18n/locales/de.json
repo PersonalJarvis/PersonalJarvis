@@ -804,8 +804,8 @@
     "finished_at": "Beendet",
     "no_steps": "Noch keine Schritte.",
     "create": {
-      "title": "Neue geplante Aufgabe",
-      "subtitle": "Führt deinen Prompt nach Zeitplan aus, mit den Plugins, die du erlaubst.",
+      "title": "Neue Automatisierung",
+      "subtitle": "Läuft nach Zeitplan oder bei einem Ereignis — mit den Plugins, die du erlaubst.",
       "name_label": "Name",
       "name_placeholder": "z. B. Morgen-Briefing",
       "prompt_label": "Was soll sie tun?",
@@ -852,7 +852,7 @@
       "announce_placeholder": "z. B. Deine Mission ist fertig — ich habe sie im Browser geöffnet.",
       "when_then_hint": "Wird jedes Mal ausgelöst. Du kannst {result_uri}, {summary_de} oder {mission_id} als Platzhalter im Text oben verwenden.",
       "cancel": "Abbrechen",
-      "save": "Aufgabe erstellen",
+      "save": "Anlegen",
       "save_error": "Aufgabe konnte nicht erstellt werden."
     },
     "untitled": "(ohne Titel)",
@@ -899,7 +899,7 @@
     "new_schedule": "Neuer Zeitplan",
     "cancel_schedule": "Termin absagen",
     "runs_heading": "Läufe",
-    "runs_subtitle": "Was gelaufen ist und was dabei herauskam.",
+    "runs_subtitle": "Der letzte Lauf von allem, was schon gelaufen ist — mit dem Ergebnis.",
     "runs_filter_label": "Filter",
     "category_all": "Alle",
     "category_label": "Kategorie",

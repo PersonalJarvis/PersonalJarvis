@@ -118,6 +118,22 @@ describe("selection", () => {
     expect(onTabs("e")).toBe(1);
   });
 
+  it("a recurring automation joins the runs once it has one behind it", () => {
+    // Without this the Runs tab was permanently empty for anyone whose
+    // automations all recur: such a task returns to "scheduled" after a run,
+    // so only `last_run_state` remembers that anything happened.
+    const ran = task({
+      id: "h",
+      trigger_type: "every",
+      state: "scheduled",
+      last_run_state: "failed",
+      finished_at_ns: 12,
+    });
+    const runs = selectRuns([...all, ran]);
+    expect(runs.map((t) => t.id)).toEqual(["h", "e", "f", "c"]);
+    expect(filterRuns(runs, "problems").map((t) => t.id)).toEqual(["h", "c"]);
+  });
+
   it("filters runs by chip", () => {
     const runs = selectRuns(all);
     expect(filterRuns(runs, "done").map((t) => t.id)).toEqual(["e"]);

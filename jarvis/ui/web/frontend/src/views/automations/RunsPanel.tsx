@@ -27,6 +27,7 @@ import {
   formatDuration,
   isActive,
   isRecurringTrigger,
+  runStateOf,
   selectRuns,
   type RunFilter,
   type TaskSummary,
@@ -73,7 +74,10 @@ export function RunsPanel({ tasks, filter, onNotice }: RunsPanelProps) {
     <Table label={t("automations_view.tab_runs")}>
       <TableHead columns={columns} />
       {runs.map((run) => {
-        const active = isActive(run.state);
+        // A recurring automation sits at "scheduled" between runs; the row is
+        // about the run, so it reads the derived state, not the task's.
+        const state = runStateOf(run);
+        const active = run.state === "running";
         // A recurring automation's row is its latest run; deleting it is the
         // Automations tab's job, so only one-shots offer Delete here.
         const canDelete = !isRecurringTrigger(run.trigger_type) || !active;
@@ -89,13 +93,13 @@ export function RunsPanel({ tasks, filter, onNotice }: RunsPanelProps) {
             >
               <Cell>
                 <span className="flex min-w-0 items-center gap-2.5">
-                  <StateDot state={run.state} />
+                  <StateDot state={state} />
                   <span className="min-w-0">
                     <span className="block truncate font-medium text-foreground">
                       {run.title || t("tasks_view.untitled")}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {stateLabels[run.state]}
+                      {stateLabels[state]}
                     </span>
                   </span>
                 </span>

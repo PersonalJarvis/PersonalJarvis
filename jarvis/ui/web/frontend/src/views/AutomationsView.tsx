@@ -233,7 +233,7 @@ export function AutomationsView() {
       )}
 
       <ScrollArea className="flex-1">
-        <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-6 py-6">
+        <div className="mx-auto flex max-w-[1440px] flex-col gap-4 px-6 py-6">
           {notice && (
             <div
               role="status"

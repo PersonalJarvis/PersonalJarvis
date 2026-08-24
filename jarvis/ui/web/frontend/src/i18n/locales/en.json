@@ -804,8 +804,8 @@
     "finished_at": "Finished",
     "no_steps": "No steps yet.",
     "create": {
-      "title": "New scheduled task",
-      "subtitle": "Runs your prompt on a schedule, with the plugins you allow.",
+      "title": "New automation",
+      "subtitle": "Runs on a schedule or on an event — with the plugins you allow.",
       "name_label": "Name",
       "name_placeholder": "e.g. Morning Briefing",
       "prompt_label": "What should it do?",
@@ -852,7 +852,7 @@
       "announce_placeholder": "e.g. Your mission is ready — I opened it in the browser.",
       "when_then_hint": "Fires every time this happens. You can use {result_uri}, {summary_en} or {mission_id} as placeholders in the text above.",
       "cancel": "Cancel",
-      "save": "Create task",
+      "save": "Create",
       "save_error": "Could not create the task."
     },
     "untitled": "(untitled)",
@@ -899,7 +899,7 @@
     "new_schedule": "New schedule",
     "cancel_schedule": "Cancel schedule",
     "runs_heading": "Runs",
-    "runs_subtitle": "What ran, and what came out of it.",
+    "runs_subtitle": "The latest run of everything that has run — with what it produced.",
     "runs_filter_label": "Filter",
     "category_all": "All",
     "category_label": "Category",

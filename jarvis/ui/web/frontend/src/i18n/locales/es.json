@@ -802,8 +802,8 @@
     "finished_at": "Finalizada",
     "no_steps": "Aún no hay pasos.",
     "create": {
-      "title": "Nueva tarea programada",
-      "subtitle": "Ejecuta tu prompt según un horario, con los plugins que permitas.",
+      "title": "Nueva automatización",
+      "subtitle": "Se ejecuta según un horario o ante un evento, con los plugins que permitas.",
       "name_label": "Nombre",
       "name_placeholder": "p. ej. Resumen matutino",
       "prompt_label": "¿Qué debe hacer?",
@@ -850,7 +850,7 @@
       "announce_placeholder": "p. ej. Tu misión está lista — la abrí en el navegador.",
       "when_then_hint": "Se activa cada vez que ocurre. Puedes usar {result_uri}, {summary_en} o {mission_id} como variables en el texto de arriba.",
       "cancel": "Cancelar",
-      "save": "Crear tarea",
+      "save": "Crear",
       "save_error": "No se pudo crear la tarea."
     },
     "untitled": "(sin título)",
@@ -897,7 +897,7 @@
     "new_schedule": "Nueva programación",
     "cancel_schedule": "Cancelar programación",
     "runs_heading": "Ejecuciones",
-    "runs_subtitle": "Qué se ejecutó y qué resultado dio.",
+    "runs_subtitle": "La última ejecución de todo lo que ya se ejecutó, con su resultado.",
     "runs_filter_label": "Filtro",
     "category_all": "Todas",
     "category_label": "Categoría",

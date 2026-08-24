@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { useT, useUiLanguage } from "@/i18n";
+import { humanizeToolName } from "@/views/automations/automationsModel";
 import {
   buildTaskSpec,
   defaultAtTimeLocal,
@@ -541,7 +542,10 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                       >
                         <div className="flex items-center gap-2.5">
                           <Switch checked={on} onCheckedChange={() => togglePlugin(p.id)} />
-                          <span className="text-sm">{p.name || p.id}</span>
+                          {/* A catalog entry without a display name would
+                              otherwise show its raw id — "google_calendar",
+                              "youtube_music" — in a list a person reads. */}
+                          <span className="text-sm">{p.name || humanizeToolName(p.id)}</span>
                         </div>
                         {on && (
                           <Segmented
