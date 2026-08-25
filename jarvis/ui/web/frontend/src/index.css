@@ -1603,69 +1603,6 @@ label,
     }
   }
 
-  /* ===========================================================
-     Agent chat — the live "it is working" glyph.
-     A slow-turning asterisk that breathes with the accent colour,
-     the way the Claude CLI marks a running turn. Under reduced
-     motion it stands still and simply stays accent-coloured, which
-     still reads as "in progress" beside the ticking timer.
-     =========================================================== */
-  @keyframes agent-glyph-spin {
-    0% {
-      transform: rotate(0deg);
-    }
-    100% {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes agent-glyph-breathe {
-    0%,
-    100% {
-      opacity: 0.55;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-  .agent-glyph {
-    animation:
-      agent-glyph-spin 3.6s linear infinite,
-      agent-glyph-breathe 1.9s ease-in-out infinite;
-    transform-origin: 50% 50%;
-  }
-  /* The row a running turn owns: a hairline rail that glows along the
-     accent while it works, so the whole block reads as one live unit. */
-  @keyframes agent-rail-travel {
-    0% {
-      background-position: 50% 200%;
-    }
-    100% {
-      background-position: 50% -200%;
-    }
-  }
-  .agent-rail-live {
-    background: linear-gradient(
-      180deg,
-      hsl(var(--border)) 0%,
-      hsl(var(--border)) 30%,
-      hsl(var(--primary)) 50%,
-      hsl(var(--border)) 70%,
-      hsl(var(--border)) 100%
-    );
-    background-size: 100% 200%;
-    animation: agent-rail-travel 2.8s linear infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .agent-glyph {
-      animation: none;
-      opacity: 0.9;
-    }
-    .agent-rail-live {
-      animation: none;
-      background: hsl(var(--primary) / 0.5);
-    }
-  }
-
   /* Soft float animation for the hero orb */
   @keyframes jarvis-float {
     0%,
