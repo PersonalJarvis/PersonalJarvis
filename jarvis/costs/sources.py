@@ -16,6 +16,7 @@ import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .model import (
     MISSION_SUBSCRIPTION_CLIS,
