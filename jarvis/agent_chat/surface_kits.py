@@ -1,10 +1,9 @@
 """What a chat surface brings to a turn: the runner, the ladder, the hands.
 
-A *surface* is one place a person types to Jarvis: the front page (``jarvis``),
-the Agentic IDE's chat mode (``agent``), and the Local models section's setup
-assistant (``local-models``). They share the session store, the WebSocket
-stream and the approval card; they differ in what answers and with which
-tools. Before this module those differences were ``if surface == "jarvis"``
+A *surface* is one place a person types to Jarvis: the front page (``jarvis``)
+and the Agentic IDE's chat mode (``agent``). They share the session store, the
+WebSocket stream and the approval card; they differ in what answers and with
+which tools. Before this module those differences were ``if surface == "jarvis"``
 branches in four files. Now each surface is one :class:`SurfaceKit` here and
 the four call sites do one lookup each — a new surface is a new kit, not four
 new branches.
@@ -18,6 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final
 
 from jarvis.core.protocols import Tool
@@ -25,15 +25,9 @@ from jarvis.core.protocols import Tool
 log = logging.getLogger(__name__)
 
 __all__ = [
-    "LOCAL_MODELS_SURFACE",
-    "LOCAL_MODELS_TOOL_ORIGIN",
     "SurfaceKit",
     "kit_for",
-    "local_models_search_fn",
 ]
-
-LOCAL_MODELS_SURFACE: Final[str] = "local-models"
-LOCAL_MODELS_TOOL_ORIGIN: Final[str] = "local-models-assistant"
 
 #: The ladder key of the Jarvis ladder (``permissions.JARVIS_LADDER``) —
 #: spelled here so the kit table does not import the permissions module.
@@ -64,15 +58,13 @@ class SurfaceKit:
     ``tool_origin`` / ``credential_scope`` / ``max_turns``
         What the tool context and the override carry; ``max_turns=None``
         keeps the runner's default.
+    ``workspace_dir``
+        Where a new session starts when nobody picked a folder; ``None`` =
+        the service's own fallback.
     """
 
     surface: str
     brain_runner: bool = False
-    #: Every provider is driven by the brain runner, CLI seats included. A
-    #: coding agent's own loop has none of this surface's tools, so a seat
-    #: whose provider also ships a brain plugin (antigravity, codex, claude)
-    #: must run through Jarvis' brain here rather than its vendor CLI.
-    brain_only: bool = False
     ladder: str | None = None
     uses_stance: bool = False
     tools: ToolsBuilder | None = None
@@ -84,85 +76,18 @@ class SurfaceKit:
     #: surface that only ever needs its own hands keeps the request small
     #: and free of foreign schemas a provider may refuse. ``None`` = all.
     tool_filter: Callable[[dict[str, Tool]], dict[str, Tool]] | None = None
+    #: The folder a new session of this surface starts in when the person
+    #: picked none. ``None`` = the service's fallback (the home directory),
+    #: which is what the IDE's chat wants: a coding agent is pointed at a
+    #: project, and its composer shows the folder chip so it can be moved.
+    workspace_dir: Callable[[], Path] | None = None
 
 
-# ── local-models builders ─────────────────────────────────────────────────
+def _chat_workspace() -> Path:
+    """The Jarvis chat's own working folder — imported lazily (AP-26)."""
+    from jarvis.core.paths import chat_workspace_dir
 
-
-def _config_of(cfg: Any, brain: Any) -> Any:
-    if cfg is not None:
-        return cfg
-    live = getattr(brain, "_config", None)
-    if live is not None:
-        return live
-    from jarvis.core.config import load_config
-
-    return load_config()
-
-
-def local_models_search_fn(brain: Any) -> Callable[[str], Awaitable[list[dict[str, Any]]]] | None:
-    """``search_web`` as a plain ``query -> [{title, url, snippet}]`` call.
-
-    Read off the brain's attached tool surface — the same key-free tool a
-    voice turn uses — so the benchmark refresh has no search backend of its
-    own. ``None`` when the brain has no such tool (the table is read-only then).
-    """
-    tools = getattr(brain, "_tools", None) or {}
-    tool = tools.get("search_web") if isinstance(tools, dict) else None
-    if tool is None or not callable(getattr(tool, "execute", None)):
-        return None
-
-    async def _search(query: str) -> list[dict[str, Any]]:
-        import uuid
-
-        from jarvis.core.protocols import ExecutionContext
-
-        ctx = ExecutionContext(
-            trace_id=uuid.uuid4(), user_utterance=query, config={}, memory_read=None
-        )
-        result = await tool.execute({"query": query, "max_results": 8}, ctx)
-        output = getattr(result, "output", None)
-        rows = output.get("results") if isinstance(output, dict) else None
-        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
-
-    return _search
-
-
-def _local_models_tools(cfg: Any, brain: Any) -> dict[str, Tool]:
-    from jarvis.brain.ollama_pull import server_root
-    from jarvis.local_models.assistant_tools import build_tools
-
-    return build_tools(
-        _config_of(cfg, brain), root=server_root(), search_fn=local_models_search_fn(brain)
-    )
-
-
-async def _local_models_extra(cfg: Any, brain: Any) -> str:
-    from jarvis.brain.ollama_pull import server_root
-    from jarvis.local_models.assistant_prompt import build_system_extra
-
-    try:
-        return await build_system_extra(_config_of(cfg, brain), root=server_root())
-    except Exception as exc:  # noqa: BLE001 — a turn without the briefing beats no turn
-        log.warning("local-models assistant: briefing not built: %s", exc, exc_info=True)
-        return (
-            "LOCAL MODELS SETUP ASSISTANT\nThe machine briefing could not be built "
-            f"({type(exc).__name__}); read everything with the lm_* tools first."
-        )
-
-
-def _local_models_filter(tools: dict[str, Tool]) -> dict[str, Tool]:
-    """Only the assistant's own hands and web search.
-
-    The router's full surface is 100+ declarations, some with schema shapes
-    (``oneOf``) the Gemini SDK rejects outright — one such tool failed every
-    turn of this surface on 2026-08-25. The assistant never needs them.
-    """
-    return {
-        name: tool
-        for name, tool in tools.items()
-        if name.startswith("lm_") or name in ("search_web", "search-web")
-    }
+    return chat_workspace_dir()
 
 
 # ── the table ─────────────────────────────────────────────────────────────
@@ -174,20 +99,12 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         brain_runner=True,
         ladder=_JARVIS_LADDER,
         uses_stance=True,
-    ),
-    LOCAL_MODELS_SURFACE: SurfaceKit(
-        surface=LOCAL_MODELS_SURFACE,
-        brain_runner=True,
-        brain_only=True,
-        ladder=_JARVIS_LADDER,
-        uses_stance=True,
-        tools=_local_models_tools,
-        system_extra=_local_models_extra,
-        tool_origin=LOCAL_MODELS_TOOL_ORIGIN,
-        tool_filter=_local_models_filter,
-        # A guided run pulls, sets five roles, tunes and tests: more tool
-        # rounds than a chat answer needs.
-        max_turns=40,
+        # Not the home directory: this surface hands out the folder tools, and
+        # the read-only four are tier ``safe`` — they run without a card. The
+        # composer hides the chip here (a person talks to Jarvis, they do not
+        # point it at a checkout), so the default is also the only folder most
+        # of these chats ever see. It has to be a small one.
+        workspace_dir=_chat_workspace,
     ),
 }
 

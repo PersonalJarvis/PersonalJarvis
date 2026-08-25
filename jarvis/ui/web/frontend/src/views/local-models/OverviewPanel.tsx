@@ -3,28 +3,17 @@
  * so it reads like a plan rather than a dashboard.
  *
  * Top to bottom: one status sentence ("Ollama 0.32 running · 16 GB graphics
- * memory · Ollama is not your active brain (OpenRouter answers)"), a row of
- * three primary actions (Browse models / Help me set up / Something is not
- * working), the headline tiles (downloads on disk, graphics memory, loaded
- * now), and the roles as a checklist. Nothing here writes; the roles part is
- * `RolesPanel`, mounted underneath so the integration wires one component.
- *
- * The setup assistant is NOT rendered here: "Help me set up" and "Something is
- * not working" switch the section to the helper's own area, so the overview
- * never becomes a page thousands of pixels tall with the roles at the bottom.
+ * memory · Ollama is not your active brain (OpenRouter answers)"), the
+ * primary action (Browse models), the headline tiles (downloads on disk,
+ * graphics memory, loaded now), and the roles as a checklist. Nothing here
+ * writes; the roles part is `RolesPanel`, mounted underneath so the
+ * integration wires one component.
  *
  * Props take `providerId` — the id of the card that declares
  * `supports_model_pull` — never a provider name.
  */
 import { useEffect, useRef, type ReactNode } from "react";
-import {
-  AlertCircle,
-  Cpu,
-  HardDrive,
-  Layers,
-  Search,
-  Sparkles,
-} from "lucide-react";
+import { Cpu, HardDrive, Layers, Search } from "lucide-react";
 
 import {
   SoftButton,
@@ -46,10 +35,6 @@ import { RolesPanel, type RolesPanelProps } from "./RolesPanel";
 export interface OverviewPanelProps extends RolesPanelProps {
   /** Opens the catalogue ("Browse models"); the button hides without it. */
   onBrowse?: () => void;
-  /** Opens the setup assistant — its own area, not a block inside this one. */
-  onOpenAssistant?: () => void;
-  /** "Something is not working" — opens the assistant in diagnose mode. */
-  onReportProblem?: () => void;
   /**
    * Detail level. The switch beside the rail must change what is on screen
    * HERE too, or it reads as a dead control: Simple keeps the roles a
@@ -71,8 +56,6 @@ export function OverviewPanel({
   onTune,
   onOpenApiKeys,
   onBrowse,
-  onOpenAssistant,
-  onReportProblem,
   advanced = false,
 }: OverviewPanelProps) {
   const t = useT();
@@ -258,39 +241,20 @@ export function OverviewPanel({
         )}
       </p>
 
-      {(onBrowse || onOpenAssistant || onReportProblem) && (
+      {onBrowse && (
         <div
           className="flex flex-wrap gap-2"
           role="group"
           aria-label={t("local_models.overview.actions_label")}
           data-testid="overview-actions"
         >
-          {onBrowse && (
-            <ActionButton
-              primary
-              icon={<Search className="h-4 w-4" />}
-              label={t("local_models.overview.action_browse")}
-              hint={t("local_models.overview.action_browse_hint")}
-              onClick={onBrowse}
-            />
-          )}
-          {onOpenAssistant && (
-            <ActionButton
-              icon={<Sparkles className="h-4 w-4" />}
-              label={t("local_models.overview.action_setup")}
-              hint={t("local_models.overview.action_setup_hint")}
-              onClick={onOpenAssistant}
-            />
-          )}
-          {onReportProblem && (
-            <ActionButton
-              quiet
-              icon={<AlertCircle className="h-4 w-4" />}
-              label={t("local_models.overview.action_broken")}
-              hint={t("local_models.overview.action_broken_hint")}
-              onClick={onReportProblem}
-            />
-          )}
+          <ActionButton
+            primary
+            icon={<Search className="h-4 w-4" />}
+            label={t("local_models.overview.action_browse")}
+            hint={t("local_models.overview.action_browse_hint")}
+            onClick={onBrowse}
+          />
         </div>
       )}
 
@@ -338,24 +302,19 @@ function ActionButton({
   hint,
   onClick,
   primary,
-  quiet,
 }: {
   icon: ReactNode;
   label: string;
   hint: string;
   onClick: () => void;
   primary?: boolean;
-  quiet?: boolean;
 }) {
   return (
     <SoftButton
       primary={primary}
       onClick={onClick}
       ariaLabel={label}
-      className={cn(
-        "h-11 px-3.5 text-left",
-        quiet && "bg-transparent text-muted-foreground hover:text-foreground",
-      )}
+      className="h-11 px-3.5 text-left"
     >
       <span className="shrink-0">{icon}</span>
       <span className="flex min-w-0 flex-col leading-tight">

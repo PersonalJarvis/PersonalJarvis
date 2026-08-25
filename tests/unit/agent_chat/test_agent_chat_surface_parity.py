@@ -1,8 +1,7 @@
 """The session's ``surface`` — one enum in three languages, and the migration.
 
 ``"jarvis"`` is the front page's chat (Jarvis with a keyboard), ``"agent"`` a
-plain coding-agent session (the Agentic IDE's chat mode), ``"local-models"``
-the Local models section's setup assistant. The value crosses
+plain coding-agent session (the Agentic IDE's chat mode). The value crosses
 Python -> SQLite -> Pydantic -> TypeScript, so the four spellings are pinned
 against each other here (AP-4) instead of trusted to stay in step by hand.
 """
@@ -39,13 +38,6 @@ def test_typescript_spells_the_surface_the_same():
     match = re.search(r"export type AgentChatSurface\s*=\s*([^;]+);", text)
     assert match, "agentChatApi.ts must export `AgentChatSurface`"
     members = set(re.findall(r'"([a-z-]+)"', match.group(1)))
-    if "local-models" in SURFACES and "local-models" not in members:
-        import pytest
-
-        pytest.xfail(
-            "frontend has not added 'local-models' to AgentChatSurface yet "
-            "(owned by the assistant-ui chunk, D8)"
-        )
     assert members == set(SURFACES)
 
 

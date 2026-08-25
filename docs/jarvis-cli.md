@@ -138,10 +138,6 @@ jarvis local-models hf search "llama 3.1 gguf"
 jarvis local-models hf files bartowski Llama-3.1-8B-Instruct-GGUF
 jarvis local-models hf pull bartowski Llama-3.1-8B-Instruct-GGUF --quant Q4_K_M
 jarvis local-models server status
-jarvis local-models assistant setup                # the setup assistant proposes one complete setup
-jarvis local-models assistant diagnose             # names what is broken and the smallest fix
-jarvis local-models assistant test                 # end-to-end test: one line per role, ok / error
-jarvis local-models assistant health               # the last self-check (status, reason, since)
 jarvis local-models server test http://127.0.0.1:11434
 jarvis local-models server log --lines 80
 jarvis local-models server env-guide --os linux

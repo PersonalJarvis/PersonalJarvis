@@ -403,30 +403,16 @@ describe("OverviewPanel", () => {
     );
   });
 
-  it("offers three actions: browse, help me set up, something is not working", async () => {
+  it("offers one action: browse the catalogue", async () => {
     installFetchMock();
     const onBrowse = vi.fn();
-    const onOpenAssistant = vi.fn();
-    const onReportProblem = vi.fn();
-    renderPanel({
-      onBrowse,
-      onOpenAssistant,
-      onReportProblem,
-    });
+    renderPanel({ onBrowse });
 
     await screen.findByTestId("overview-actions");
     fireEvent.click(
       screen.getByRole("button", { name: "local_models.overview.action_browse" }),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "local_models.overview.action_setup" }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "local_models.overview.action_broken" }),
-    );
     expect(onBrowse).toHaveBeenCalledTimes(1);
-    expect(onOpenAssistant).toHaveBeenCalledTimes(1);
-    expect(onReportProblem).toHaveBeenCalledTimes(1);
   });
 
   it("the detail level changes the roles on this very screen", async () => {

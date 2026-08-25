@@ -36,17 +36,11 @@ vi.mock("@/views/local-models/OverviewPanel", () => ({
     onTune,
     onOpenApiKeys,
     onBrowse,
-    onOpenAssistant,
-    onReportProblem,
-    assistantSlot,
   }: {
     providerId: string;
     onTune?: (model: string) => void;
     onOpenApiKeys?: () => void;
     onBrowse?: () => void;
-    onOpenAssistant?: () => void;
-    onReportProblem?: () => void;
-    assistantSlot?: React.ReactNode;
   }) => (
     <div data-testid="overview-panel" data-provider={providerId}>
       <button type="button" onClick={() => onTune?.("qwen3.5:4b")}>
@@ -58,13 +52,6 @@ vi.mock("@/views/local-models/OverviewPanel", () => ({
       <button type="button" onClick={() => onBrowse?.()}>
         browse
       </button>
-      <button type="button" onClick={() => onOpenAssistant?.()}>
-        assistant
-      </button>
-      <button type="button" onClick={() => onReportProblem?.()}>
-        broken
-      </button>
-      {assistantSlot}
     </div>
   ),
 }));
@@ -78,12 +65,7 @@ vi.mock("@/views/local-models/HuggingFacePanel", () => ({
   HuggingFacePanel: () => <div data-testid="huggingface-panel" />,
 }));
 vi.mock("@/views/local-models/ServerPanel", () => ({
-  ServerPanel: ({ initialLogOpen }: { initialLogOpen?: boolean }) => (
-    <div
-      data-testid="server-panel"
-      data-log-open={initialLogOpen ? "yes" : "no"}
-    />
-  ),
+  ServerPanel: () => <div data-testid="server-panel" />,
 }));
 vi.mock("@/views/local-models/TuneSheet", () => ({
   TuneSheet: ({
@@ -96,25 +78,6 @@ vi.mock("@/views/local-models/TuneSheet", () => ({
     <div data-testid="tune-sheet" data-model={model.name}>
       <button type="button" onClick={onClose}>
         close
-      </button>
-    </div>
-  ),
-}));
-vi.mock("@/components/local-models/AssistantPanel", () => ({
-  AssistantPanel: ({
-    request,
-    onOpenServerLog,
-  }: {
-    request: { mode: string; token: number } | null;
-    onOpenServerLog?: () => void;
-  }) => (
-    <div
-      data-testid="local-models-assistant"
-      data-mode={request?.mode ?? ""}
-      data-token={request?.token ?? 0}
-    >
-      <button type="button" onClick={onOpenServerLog}>
-        server log
       </button>
     </div>
   ),
@@ -277,72 +240,10 @@ describe("LocalModelsView", () => {
     expect(screen.getByText("local_models.no_provider")).toBeDefined();
   });
 
-  it("the helper is an area of its own, and the rail stays reachable from it", () => {
+  it("'Browse models' on the overview opens the catalogue tab", () => {
     render(<LocalModelsView />);
-
-    // "Help me set up" switches to the helper's area with a setup run.
-    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
-    const panel = screen.getByTestId("local-models-assistant");
-    expect(panel.getAttribute("data-mode")).toBe("setup");
-    expect(panel.getAttribute("data-token")).toBe("1");
-    // The overview is no longer underneath it — this is a separate screen.
-    expect(screen.queryByTestId("overview-panel")).toBeNull();
-
-    // The user's complaint: from the helper, the catalogue is ONE click away.
-    fireEvent.click(
-      screen.getByRole("tab", { name: "local_models.tab_catalogue" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "browse" }));
     expect(screen.getByTestId("catalogue-panel")).toBeDefined();
-    expect(screen.queryByTestId("local-models-assistant")).toBeNull();
-
-    // "Something is not working" opens the same area in diagnose mode.
-    fireEvent.click(
-      screen.getByRole("tab", { name: "local_models.tab_overview" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "broken" }));
-    const diagnose = screen.getByTestId("local-models-assistant");
-    expect(diagnose.getAttribute("data-mode")).toBe("diagnose");
-    expect(diagnose.getAttribute("data-token")).toBe("2");
-    expect(screen.queryByTestId("server-panel")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "server log" }));
-    expect(
-      screen.getByTestId("server-panel").getAttribute("data-log-open"),
-    ).toBe("yes");
-  });
-
-  it("hands the helper the leftover height and folds the page header away", () => {
-    render(<LocalModelsView />);
-    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
-
-    // Title, subtitle and the detail level describe the panels, not the
-    // conversation — a chat that starts a fifth of the way down the window
-    // reads as a widget rather than a screen.
-    expect(screen.queryByText("local_models.title")).toBeNull();
-    expect(
-      screen.queryByRole("tab", { name: "local_models.mode_simple" }),
-    ).toBeNull();
-    // What still steers something stays: the way out, and the rail.
-    expect(
-      screen.getByRole("button", { name: "local_models.back" }),
-    ).toBeDefined();
-    expect(
-      screen.getByRole("tab", { name: "local_models.tab_overview" }),
-    ).toBeDefined();
-
-    // The helper's area is a flex child that fills what is left, so the panel
-    // never has to guess the chrome height above it.
-    const area = screen.getByTestId("local-models-assistant-tab");
-    expect(area.className).toContain("flex-1");
-    expect(area.className).toContain("min-h-0");
-
-    // Back on a panel tab the full header returns.
-    fireEvent.click(
-      screen.getByRole("tab", { name: "local_models.tab_overview" }),
-    );
-    expect(screen.getByText("local_models.title")).toBeDefined();
-    expect(
-      screen.getByRole("tab", { name: "local_models.mode_simple" }),
-    ).toBeDefined();
+    expect(screen.queryByTestId("overview-panel")).toBeNull();
   });
 });

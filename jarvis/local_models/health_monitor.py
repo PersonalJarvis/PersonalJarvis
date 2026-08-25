@@ -4,9 +4,8 @@ Started from the web server's lifespan next to the marketplace refresh
 scheduler: first run ten minutes after boot, then every
 ``[brain.providers.ollama].health_check_hours`` (default 6). Nothing here
 runs on the boot path (AP-26) and nothing toasts: the result is one record
-in ``DATA_DIR/state/local_models_health.json`` (the same file the setup test
-writes), which the sidebar badge and ``GET /api/providers/section-health``
-read.
+in ``DATA_DIR/state/local_models_health.json``, which the sidebar badge and
+``GET /api/providers/section-health`` read.
 
 One check: skip entirely when the server is down AND no role is configured
 (nothing to watch yet); otherwise ``probe_host`` plus one real 1-token chat
@@ -19,8 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import json
 import logging
+import os
+import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -29,9 +33,12 @@ __all__ = [
     "DEFAULT_INTERVAL_HOURS",
     "FIRST_RUN_DELAY_S",
     "GENERATION_CAP_S",
+    "HEALTH_FILE_NAME",
     "HealthMonitor",
     "check_once",
+    "health_path",
     "interval_hours",
+    "load_last_report",
     "read_health_record",
     "write_health_record",
 ]
@@ -42,8 +49,19 @@ GENERATION_CAP_S = 30.0
 #: Never spin faster than this, whatever the config says.
 MIN_INTERVAL_S = 60.0
 
+HEALTH_FILE_NAME = "local_models_health.json"
+
 ProbeFn = Callable[[str], Awaitable[dict[str, Any]]]
 GenerateFn = Callable[[Any, str], Awaitable[Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class _OllamaSpec:
+    """The three fields :func:`run_provider_test` reads from a provider spec."""
+
+    id: str = "ollama"
+    tier: str = "brain"
+    auth_mode: str = "none"
 
 
 # ── config + record ───────────────────────────────────────────────────────
@@ -60,10 +78,45 @@ def interval_hours(cfg: Any) -> float:
     return hours if hours > 0 else DEFAULT_INTERVAL_HOURS
 
 
+def health_path() -> Path:
+    """``DATA_DIR/state/local_models_health.json`` — resolved at call time."""
+    from jarvis.core import config as cfg_mod  # lazy: DATA_DIR is monkeypatched by tests
+
+    return Path(cfg_mod.DATA_DIR) / "state" / HEALTH_FILE_NAME
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> bool:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(temporary, path)
+        return True
+    except OSError:
+        log.warning("local-models: health file %s not written", path, exc_info=True)
+        return False
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            log.debug("local-models: temporary health file cleanup failed", exc_info=True)
+
+
+def load_last_report() -> dict[str, Any] | None:
+    """The persisted payload of the last check, or ``None`` when none / unreadable."""
+    path = health_path()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        log.info("local-models: health file %s unreadable", path, exc_info=True)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def read_health_record() -> dict[str, Any]:
     """The badge record: ``{status, reason, since, last_ok, checked_at}`` (file only)."""
-    from jarvis.local_models.assistant_test import load_last_report
-
     payload = load_last_report() or {}
     return {
         "status": str(payload.get("status") or "unknown"),
@@ -75,13 +128,7 @@ def read_health_record() -> dict[str, Any]:
 
 
 def write_health_record(status: str, reason: str, *, checked_at: str | None = None) -> bool:
-    """Merge the badge keys into the health file, keeping the last test's table."""
-    from jarvis.local_models.assistant_test import (
-        _atomic_write_json,
-        health_path,
-        load_last_report,
-    )
-
+    """Merge the badge keys into the health file; ``since`` holds while the status does."""
     stamp = checked_at or _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
     previous = load_last_report() or {}
     payload = dict(previous)
@@ -99,6 +146,19 @@ def write_health_record(status: str, reason: str, *, checked_at: str | None = No
 
 
 # ── one check ─────────────────────────────────────────────────────────────
+
+
+def _server_root(cfg: Any) -> str:
+    providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
+    ollama = providers.get("ollama") if isinstance(providers, dict) else None
+    override = str(getattr(ollama, "base_url", "") or "")
+    if override:
+        from jarvis.plugins.brain.ollama import normalize_server_root
+
+        return normalize_server_root(override)
+    from jarvis.brain.ollama_pull import server_root
+
+    return server_root()
 
 
 def _configured_roles(cfg: Any) -> dict[str, str]:
@@ -124,7 +184,6 @@ async def _default_probe(root: str) -> dict[str, Any]:
 
 async def _default_generate(cfg: Any, model: str) -> Any:
     from jarvis.brain import provider_test
-    from jarvis.local_models.assistant_test import _OllamaSpec
 
     return await provider_test.run_provider_test(
         _OllamaSpec(), cfg, model=model, timeout_s=GENERATION_CAP_S
@@ -140,8 +199,6 @@ async def check_once(
     persist: bool = True,
 ) -> dict[str, Any] | None:
     """One self-check; returns the record written, or ``None`` when skipped."""
-    from jarvis.local_models.assistant_test import _server_root
-
     root = root or _server_root(cfg)
     roles = _configured_roles(cfg)
     server = await (probe or _default_probe)(root)

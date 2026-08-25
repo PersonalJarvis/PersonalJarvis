@@ -9,6 +9,17 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The Local models setup helper.** The "Setup helper" tab — a chat that
+  proposed a setup, ran it through its own `lm_*` tools and tested the
+  result — is gone, along with its "Help me set up" and "Something is not
+  working" buttons on the overview, the `local-models` chat surface, the
+  `/api/providers/{id}/local-models/assistant/*` routes and the
+  `jarvis local-models assistant ...` commands. The section keeps everything
+  else: the overview, the catalogue, the server tab, the Tune sheet, and the
+  quiet six-hourly self-check behind the sidebar badge.
+
 ---
 
 ## [1.6.0] — 2026-08-25
