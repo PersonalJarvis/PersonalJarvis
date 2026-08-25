@@ -244,8 +244,8 @@ class RunShellTool:
             success=success,
             output={
                 "exit_code": proc.returncode,
-                "stdout": stdout[:4000],
-                "stderr": stderr[:2000],
+                "stdout": stdout[:40_000],
+                "stderr": stderr[:20_000],
             },
             error=None if success else f"exit {proc.returncode}",
         )

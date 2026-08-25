@@ -20,7 +20,7 @@ from .frontmatter import append_to_section, parse_frontmatter, write_frontmatter
 
 log = logging.getLogger(__name__)
 
-MAX_PROMPT_CHARS = 1000
+MAX_PROMPT_CHARS = 8_000
 
 
 @dataclass

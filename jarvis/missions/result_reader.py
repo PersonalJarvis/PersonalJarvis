@@ -11,9 +11,9 @@ from jarvis.missions.kontrollierer.deliverable_paths import (
 
 _MISSION_ID_RE = re.compile(r"^[0-9a-f-]{6,64}$", re.IGNORECASE)
 _MAX_FILES: Final[int] = 16
-_MAX_FILE_CHARS: Final[int] = 12_000
-_MAX_TOTAL_CHARS: Final[int] = 24_000
-_MAX_READ_BYTES: Final[int] = 96_000
+_MAX_FILE_CHARS: Final[int] = 120_000
+_MAX_TOTAL_CHARS: Final[int] = 240_000
+_MAX_READ_BYTES: Final[int] = 960_000
 _TEXT_SUFFIXES: Final[frozenset[str]] = frozenset(
     {
         ".adoc",

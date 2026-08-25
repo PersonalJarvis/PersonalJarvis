@@ -39,7 +39,7 @@ CLUSTERS = ("identity", "communication", "work_style", "values", "relationship")
 SECTIONS = ("context", "projects", "observations")
 
 # Maximum size of the prompt block — cache-friendly
-MAX_PROMPT_CHARS = 2000
+MAX_PROMPT_CHARS = 16_000
 
 
 @dataclass

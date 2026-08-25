@@ -168,8 +168,8 @@ _SKILL_TURN_STATE: ContextVar[_SkillTurnState | None] = ContextVar(
 #: Computer-Use") carries no task of its own, so the goal must inherit the
 #: recent turns that defined it. Kept small: the CU step prompt repeats the
 #: goal on every screenshot cycle.
-_CU_CONTEXT_MAX_MESSAGES = 8
-_CU_CONTEXT_MAX_MESSAGE_CHARS = 240
+_CU_CONTEXT_MAX_MESSAGES = 40
+_CU_CONTEXT_MAX_MESSAGE_CHARS = 2_000
 
 # Plugin-paired skill capture (2026-08-18): whether a catalog plugin holds a
 # usable credential is a keyring read, remembered per plugin for this long so
@@ -3999,7 +3999,7 @@ class BrainManager:
         _contacts = getattr(self, "_contacts", None)
         if _contacts is not None:
             try:
-                contacts_block = _contacts.render_for_prompt(max_chars=800)
+                contacts_block = _contacts.render_for_prompt(max_chars=8_000)
                 if contacts_block:
                     parts.append(contacts_block)
             except Exception:  # noqa: BLE001
@@ -4035,7 +4035,7 @@ class BrainManager:
             # even 5-10 facts get cut off mid-block and the LLM claims it knows
             # nothing. 2500 corresponds to ~600 tokens, stays prompt-cache-friendly.
             if len(cm) > 2500:
-                cm = cm[:2500] + "…"
+                cm = cm[:20_000] + "…"
             parts.append(cm)
 
         # Phase A1: awareness snapshot as fallback when the LLM does not
@@ -4046,7 +4046,7 @@ class BrainManager:
         # prefix stays byte-stable across turns. Legacy mode keeps it here.
         if self._awareness_manager is not None and not self._cache_optimized():
             try:
-                snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
+                snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=4_000)
                 if snap:
                     parts.append(
                         "CURRENT CONTEXT (background, for orientation only, do "
@@ -4305,7 +4305,7 @@ class BrainManager:
         ]
         if self._awareness_manager is not None:
             try:
-                snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
+                snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=4_000)
                 if snap:
                     parts.append(
                         "CURRENT CONTEXT (background, for orientation only, do "
@@ -5929,7 +5929,7 @@ class BrainManager:
 
     #: Cap on the conditionally-injected instruction text for a NARROW match.
     #: Bounded so one pathological skill body cannot flood a voice turn.
-    _NARROW_INJECTION_CHAR_CAP = 6_000
+    _NARROW_INJECTION_CHAR_CAP = 60_000
 
     def _render_skill_candidate_hint(self, user_text: str = "") -> str | None:
         """Narrow the skill choice for a turn the matcher did NOT capture.
@@ -9738,8 +9738,8 @@ class BrainManager:
     def _build_history_hints(
         self,
         *,
-        max_turns: int = 3,
-        max_chars_per_msg: int = 240,
+        max_turns: int = 20,
+        max_chars_per_msg: int = 4_000,
     ) -> list[str]:
         """Formats the last N turn pairs as compact ``context_hints``.
 
@@ -12392,7 +12392,8 @@ class BrainManager:
     _SEEDABLE_ROLES: frozenset[str] = frozenset({"user", "assistant", "system"})
     # Same window the auto-append paths enforce (see the ``self._history =
     # self._history[-40:]`` trims throughout generate()/force-spawn).
-    _HISTORY_MAX: int = 40
+    # Maintainer mandate 2026-08-24: full call memory, not a cost window.
+    _HISTORY_MAX: int = 400
 
     def seed_history(self, turns: Iterable[Any]) -> None:
         """Preseed the conversation buffer with prior turns.

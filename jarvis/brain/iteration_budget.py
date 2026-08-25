@@ -26,8 +26,9 @@ from dataclasses import dataclass
 @dataclass
 class IterationBudget:
     """Tracks turns and generated tokens for a conversation loop."""
-    max_turns: int = 15
-    max_tokens_total: int = 50_000
+    # Maintainer mandate 2026-08-24: no cost backstop — these are loop guards.
+    max_turns: int = 100
+    max_tokens_total: int = 2_000_000
     #: Cost backstop over the CUMULATIVE re-sent prompt. Distinct from the
     #: 2026-06-01 trap above: input never counts against the small OUTPUT
     #: ceiling — this is its own bound, sized so no legitimate flow reaches
@@ -36,7 +37,7 @@ class IterationBudget:
     #: configured tool model. Tripping this behaves exactly like the other
     #: two bounds: the loop's budget directive forces one final grounded
     #: synthesis round — an honest answer, never a silent drop.
-    max_input_tokens_total: int = 400_000
+    max_input_tokens_total: int = 50_000_000
     turns_used: int = 0
     tokens_used: int = 0           # OUTPUT tokens accumulated (runaway-generation signal)
     input_tokens_seen: int = 0     # cumulative re-sent prompt (cost backstop + telemetry)

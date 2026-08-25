@@ -42,7 +42,11 @@ def test_cumulative_input_backstop_trips_only_on_runaway_loops():
     # input backstop bounds that tail without touching legitimate flows —
     # and unlike the 2026-06-01 trap, a single large-context turn stays
     # far below it.
-    b = IterationBudget(max_turns=100, max_tokens_total=50_000)
+    # The shipped default is far higher (maintainer mandate 2026-08-24: no
+    # cost backstop); the guard itself still works when an operator sets one.
+    b = IterationBudget(
+        max_turns=100, max_tokens_total=50_000, max_input_tokens_total=400_000
+    )
     b.record_turn(tokens_in=60_000, tokens_out=40)
     assert not b.exceeded(), "one large-context turn must not trip the backstop"
     for _ in range(6):

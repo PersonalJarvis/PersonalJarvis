@@ -49,14 +49,17 @@ from jarvis.voice.tool_confirmation import format_tool_confirmation
 _VALID_WIRE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _MAX_DESCRIPTION_CHARS = 4_000
 _MAX_ARGUMENT_CHARS = 32_000
-_MAX_RESULT_CHARS = 8_000
+# Maintainer mandate 2026-08-24: context caps are not a cost lever. The old
+# 8 000-char cut hid tool data the model had to speak one turn later. The
+# remaining bound only keeps a single result inside the 128k live window.
+_MAX_RESULT_CHARS = 100_000
 # ADR-0035 §4 compact rendering for the live model: router-brain tool
 # descriptions run to 500-2 900 characters of usage prose written for a
 # text model with a 12-round loop; the live model needs the purpose and the
 # parameters, and the ToolExecutor enforces the risk rules regardless. A
 # sentence boundary is preferred when cutting.
-COMPACT_DESCRIPTION_CHARS = 450
-COMPACT_PARAMETER_DESCRIPTION_CHARS = 120
+COMPACT_DESCRIPTION_CHARS = 4_000
+COMPACT_PARAMETER_DESCRIPTION_CHARS = 4_000
 #: Rough token estimate for the declaration budget (characters per token).
 CHARS_PER_TOKEN = 4
 # Drop order when a declaration set exceeds its budget (ADR-0035 §4): the

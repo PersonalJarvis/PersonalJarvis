@@ -105,7 +105,7 @@ class BrainRequest:
     tools: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     system: str | None = None
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int = 32_768
     stream: bool = True
     # Hint for providers whose models spend internal reasoning ("thinking")
     # tokens before answering. "none" asks the provider to disable/minimize

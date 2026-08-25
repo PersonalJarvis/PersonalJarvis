@@ -36,7 +36,7 @@ _NEEDS_RECONNECT = (
 # context slowed a voice turn to ~20 s and added no answer value (live bug
 # 2026-07-01 "Was steht alles in meinen E-Mails drin?"). We project a read down
 # to the fields that actually answer a mail question and cap the plain-text body.
-_GMAIL_BODY_CHAR_CAP = 2000
+_GMAIL_BODY_CHAR_CAP = 20_000
 
 
 def _decode_b64url(data: str) -> str:
@@ -156,7 +156,7 @@ class GmailRestTool:
                 "default": "list_messages",
             },
             "query": {"type": "string", "description": "Gmail search query (list_messages)"},
-            "max_results": {"type": "integer", "default": 10},
+            "max_results": {"type": "integer", "default": 50},
             "message_id": {
                 "type": "string",
                 "description": "message id (get/modify/trash/delete_message)",
@@ -265,7 +265,7 @@ class GmailRestTool:
 
     # -- public actions (also directly unit-testable) -----------------------
 
-    async def list_messages(self, *, query: str = "", max_results: int = 10) -> dict[str, Any]:
+    async def list_messages(self, *, query: str = "", max_results: int = 50) -> dict[str, Any]:
         return await self._with_auth_retry(
             lambda headers: self._get(
                 "/messages", {"q": query, "maxResults": max_results}, headers
@@ -340,7 +340,7 @@ class GmailRestTool:
             if action == "list_messages":
                 out = await self.list_messages(
                     query=args.get("query", ""),
-                    max_results=int(args.get("max_results", 10)),
+                    max_results=int(args.get("max_results", 50)),
                 )
             elif action == "get_message":
                 mid = args.get("message_id")

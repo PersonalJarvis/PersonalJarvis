@@ -6,7 +6,7 @@ import base64
 import httpx
 import pytest
 
-from jarvis.plugins.tool.gmail_rest import GmailRestTool
+from jarvis.plugins.tool.gmail_rest import _GMAIL_BODY_CHAR_CAP, GmailRestTool
 
 
 @pytest.mark.asyncio
@@ -281,7 +281,7 @@ async def test_get_message_returns_slim_projection_not_raw_mime():
 
 @pytest.mark.asyncio
 async def test_get_message_caps_a_long_body():
-    long_body = "wort " * 2000  # ~10k chars decoded
+    long_body = "wort " * 6000  # ~30k chars decoded, above the body cap
     raw_body_b64 = base64.urlsafe_b64encode(long_body.encode("utf-8")).decode("ascii")
     fat = {
         "id": "m2",
@@ -305,5 +305,5 @@ async def test_get_message_caps_a_long_body():
     result = await tool.execute({"action": "get_message", "message_id": "m2"}, ctx=None)
     assert result.success is True
     body = result.output["body"]
-    assert len(body) <= 2100  # cap (2000) + short truncation marker
+    assert len(body) <= _GMAIL_BODY_CHAR_CAP + 100  # cap + short truncation marker
     assert "truncated" in body

@@ -1319,7 +1319,7 @@ class BrainConfig(BaseModel):
     # voice path sets no continuation). Raised 4096 -> 8192 on 2026-06-01 after
     # a live cut-off report; kept configurable so an operator can trade speech
     # length against latency/cost. ~8192 tokens ≈ several minutes of speech.
-    max_tokens: int = Field(default=8192, ge=256, le=32_768)
+    max_tokens: int = Field(default=32_768, ge=256, le=32_768)
     # Phase 5 tiered routing — Wave-4 migration: the ``sub_jarvis`` tier was
     # replaced by the Jarvis-Agent bridge (see docs/jarvis-agents-bridge.md §11).
     # Only ``router`` remains as a tier; the heavy worker runs as an external
@@ -1404,7 +1404,7 @@ class WikiCuratorConfig(BaseModel):
 
     provider: str = ""                  # "" = fall back to brain.primary
     model: str = ""                     # "" = provider default model
-    max_input_tokens: int = 8000
+    max_input_tokens: int = 64_000
     # Headroom for a complete proposal; the streaming truncation guard
     # rejects any residual length-capped generation. The Stage-2 judge
     # returns FULL page bodies per add/update, so a batched response
@@ -1562,7 +1562,7 @@ class ExtractorConfig(BaseModel):
     enabled: bool = True
     # Turns shorter than this never reach the LLM (smalltalk floor).
     min_user_chars: int = 12
-    max_output_tokens: int = 800
+    max_output_tokens: int = 4_000
     timeout_s: float = 30.0
     # Personal-salience floor (1-5): candidates the model scores below this
     # are dropped in Stage 1. 3 keeps peripheral personal facts and drops
@@ -2300,7 +2300,7 @@ class ScreenContextConfig(BaseModel):
 
     #: Character budget for on-screen text handed to the model. Text beyond it
     #: is cut and the cut is reported, never silently dropped.
-    max_text_chars: int = 4000
+    max_text_chars: int = 32_000
 
     #: Seconds an unconsumed capture stays in memory before it is discarded.
     #: A capture is also discarded on first use, whichever comes first.
@@ -2799,7 +2799,7 @@ class WikiContextConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     enabled: bool = True
-    max_chars: int = 1500
+    max_chars: int = 12_000
     # 150 (was 80): the vault search opens its SQLite connection lazily
     # inside this budget, so the first qualifying turn of a process regularly
     # timed out. The factory warms the connection at boot; the wider budget
@@ -2834,7 +2834,7 @@ class WikiContextConfig(BaseModel):
     # rides in the CACHED system-prompt prefix. ``false`` removes the block
     # entirely; the cap is an upper bound only (never raises the hard 600).
     identity_card: bool = True
-    identity_card_max_chars: int = 600
+    identity_card_max_chars: int = 4_000
 
 
 class VoiceConfig(BaseModel):
@@ -2886,7 +2886,7 @@ class VoiceConfig(BaseModel):
     # jarvis_action. A provider may declare a LOWER budget for its own wire
     # (``tool_declaration_budget_tokens`` capability, AP-21); the smaller of
     # the two applies. 0 disables the bound.
-    realtime_tool_declaration_budget_tokens: int = 20_000
+    realtime_tool_declaration_budget_tokens: int = 0
     # ADR-0034 (2026-08-18). When the user opens a NEW turn while an earlier
     # order's provider function call (jarvis_action) is still unanswered on
     # the wire, the session answers that call at once with a closed "still

@@ -46,7 +46,7 @@ _NEEDS_RECONNECT = (
 # Reading a file's content into the model context is bounded like Gmail's body:
 # a large document would blow the context and slow the voice turn for no answer
 # value. We cap the extracted text and mark the truncation.
-_DRIVE_CONTENT_CHAR_CAP = 4000
+_DRIVE_CONTENT_CHAR_CAP = 40_000
 
 # Field projection for list/get — only what actually answers a file question,
 # incl. the webViewLink (the "Drive URL" the usage card asks us to report back).

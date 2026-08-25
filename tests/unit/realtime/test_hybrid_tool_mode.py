@@ -357,7 +357,8 @@ def test_router_catalog_renders_for_every_realtime_wire() -> None:
         assert _VALID_WIRE_NAME.fullmatch(declaration["name"]), declaration["name"]
         assert isinstance(declaration["parameters"], dict)
         assert len(declaration["description"]) <= COMPACT_DESCRIPTION_CHARS + 1
-    assert bridge.declaration_chars <= budget_chars
+    if budget_chars > 0:
+        assert bridge.declaration_chars <= budget_chars
     sanitized = _sanitize_declarations(tuple(declarations))
     assert len(sanitized) == len(declarations)
     for entry in sanitized:

@@ -60,7 +60,7 @@ class _HugeOutputTool:
 
 class _ExecHuge:
     async def execute(self, tool: Any, args: dict[str, Any], **_: Any) -> ToolResult:
-        return ToolResult(success=True, output="X" * 50_000)
+        return ToolResult(success=True, output="X" * (_MAX_TOOL_RESULT_CHARS + 50_000))
 
 
 class _ToolThenAnswerBrain:
@@ -81,7 +81,7 @@ class _ToolThenAnswerBrain:
 async def test_tool_result_is_capped_before_reaching_brain() -> None:
     """Systemic backstop (2026-07-01): no tool may flood the model context with
     an unbounded raw payload (a raw Gmail ``format=full`` message is ~23k chars).
-    A ~50k-char tool output must be truncated — with a marker — before it is
+    A tool output far beyond the cap must be truncated — with a marker — before it is
     serialized into the tool-role message the brain sees on the next turn."""
     brain = _ToolThenAnswerBrain()
     loop = ToolUseLoop(

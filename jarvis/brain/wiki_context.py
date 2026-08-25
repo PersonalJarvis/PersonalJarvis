@@ -209,7 +209,7 @@ class WikiContextInjector:
         self,
         *,
         search: VaultSearch | None,
-        max_chars: int = 1500,
+        max_chars: int = 12_000,
         latency_budget_ms: int = 150,
         min_keyword_length: int = 4,
         relevance_gate: bool = True,

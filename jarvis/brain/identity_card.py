@@ -86,7 +86,7 @@ __all__ = [
 #: Chosen so the always-present block stays in the same order of magnitude as
 #: one retrieved wiki snippet: standing knowledge must never out-cost the
 #: knowledge that was actually asked for.
-MAX_IDENTITY_CARD_CHARS = 600
+MAX_IDENTITY_CARD_CHARS = 4_000
 
 #: Disk cache, under the data directory. Holds the rendered card plus the hash
 #: of the sources it was built from — nothing that is not already in the

@@ -188,7 +188,7 @@ class TestDelegateResultCap:
         assert "[result shortened]" not in prompt
 
     def test_runaway_result_is_capped(self) -> None:
-        text = "A sentence about something. " * 1000
+        text = "A sentence about something. " * 5000
         prompt = _delegate_result_prompt(text, language="en", success=True)
         assert "[result shortened]" in prompt
         # Framing adds ~1.2k chars; the injected payload stays bounded.

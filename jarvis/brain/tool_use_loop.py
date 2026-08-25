@@ -46,7 +46,9 @@ from .tool_call_recovery import extract_leaked_tool_calls
 # so one verbose provider can never flood the context, slow the turn and crowd
 # out the answer (live bug 2026-07-01). The event-bus/DB preview cap
 # (``safe_preview``) is a separate path and never touched what the model saw.
-_MAX_TOOL_RESULT_CHARS = 8000
+# Maintainer mandate 2026-08-24: context caps are not a cost lever; the bound
+# exists only so one runaway result cannot exceed a provider window outright.
+_MAX_TOOL_RESULT_CHARS = 100_000
 
 # Directive appended for the deadline-forced final round (see ``deadline_s``).
 # English on purpose: it is model-facing prompt text, never spoken to the user.
@@ -578,7 +580,7 @@ class ToolUseLoop:
         *,
         system_prompt: str | None = None,
         budget: IterationBudget | None = None,
-        max_tokens: int = 8192,
+        max_tokens: int = 32_768,
         deadline_s: float | None = None,
         reasoning_effort: Literal["none"] | None = None,
         tool_context: dict[str, Any] | None = None,

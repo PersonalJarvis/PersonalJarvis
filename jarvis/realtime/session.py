@@ -277,8 +277,8 @@ _FAILURE_REASON_MAX_CHARS = 160
 # (``_lookup_facts``). Three search variants return up to fifteen rows between
 # them; the answer to a spoken question lives in the first few, and everything
 # past that is prompt weight paid on the turn-critical path for nothing.
-_LOOKUP_FACT_MAX_ITEMS = 5
-_LOOKUP_FACT_MAX_CHARS = 320
+_LOOKUP_FACT_MAX_ITEMS = 50
+_LOOKUP_FACT_MAX_CHARS = 4_000
 # A delegated turn fails for a handful of KNOWN internal reasons, and the raw
 # internal strings are engineering vocabulary ("No configured Tool Model
 # completed the delegated turn.") that must never be spoken. Each cause maps to
@@ -666,8 +666,10 @@ _NATIVE_TOOL_DEADLINE_S = VOICE_TOOL_BUDGET_S
 # the original task was trimmed out exactly when the recovery turn needed it
 # (live forensic 2026-07-15 08:00: the final mission posted a placeholder
 # announcement because the announce request had just left the window).
-_DELEGATE_HISTORY_MAX_MESSAGES = 20
-_DELEGATE_HISTORY_MAX_CHARS = 1_200
+# Maintainer mandate 2026-08-24: the call transcript is kept whole; the caps
+# below are overflow guards, not cost windows.
+_DELEGATE_HISTORY_MAX_MESSAGES = 400
+_DELEGATE_HISTORY_MAX_CHARS = 100_000
 # Per-result room in a re-grounded retry prompt
 # (:meth:`RealtimeVoiceSession._tool_grounding_block`). Generous on purpose:
 # the cost of trimming is the model losing the very fact it must speak, and
@@ -1235,7 +1237,7 @@ def _toolless_ambiguous_action(text: str) -> bool:
 # characters is roughly three spoken minutes — far beyond any real voice
 # answer, small enough to stop a runaway tool result from riding along in
 # every later turn of the call.
-_DELEGATE_RESULT_MAX_CHARS = 4_000
+_DELEGATE_RESULT_MAX_CHARS = 100_000
 
 
 # The one opener the transports' developer-message silence rule names as its
@@ -2123,7 +2125,7 @@ _COMPLETE_THE_REQUEST_DIRECTIVE = (
 # instructions. The block is re-sent with every per-turn session update, so a
 # pathologically large file must never bloat that hot path; typical files are
 # a few hundred characters and pass through untouched.
-_PREFERENCES_MAX_CHARS = 4000
+_PREFERENCES_MAX_CHARS = 64_000
 
 #: Cap on a skill body injected straight into the live session. Tighter than the
 #: preferences cap above by precedent, not by guess: that block is the user's own
@@ -2134,7 +2136,7 @@ _PREFERENCES_MAX_CHARS = 4000
 #: Over the cap the turn falls back to the delegate. It is NEVER truncated — a
 #: half-injected instruction list produces a half-executed skill, which is
 #: strictly worse than a slow correct answer.
-_REALTIME_SKILL_MAX_CHARS = 1500
+_REALTIME_SKILL_MAX_CHARS = 32_000
 
 #: A body mentioning tools cannot be honoured by a model that only has
 #: `jarvis_action` and `end_call`. An author declaring `requires_tools: []` while

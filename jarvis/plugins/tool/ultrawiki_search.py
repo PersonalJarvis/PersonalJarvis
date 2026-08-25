@@ -45,8 +45,8 @@ from jarvis.core.protocols import ToolResult
 
 log = logging.getLogger(__name__)
 
-_MAX_SNIPPET_CHARS = 220
-_MAX_OUTPUT_CHARS = 4000
+_MAX_SNIPPET_CHARS = 2_000
+_MAX_OUTPUT_CHARS = 40_000
 
 
 def build_ultrawiki_service_resolver() -> Callable[[], Any]:

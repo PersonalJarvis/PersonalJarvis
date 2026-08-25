@@ -190,7 +190,7 @@ def test_identity_card_respects_its_cap_on_a_huge_profile(tmp_path: Path) -> Non
         recheck_interval_s=0.0,
     )
     card = cache.card()
-    assert 0 < len(card.text) <= ic.MAX_IDENTITY_CARD_CHARS == 600
+    assert 0 < len(card.text) <= ic.MAX_IDENTITY_CARD_CHARS == 4_000
 
 
 def test_the_configured_cap_can_only_lower_the_budget(tmp_path: Path) -> None:

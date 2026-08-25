@@ -201,8 +201,8 @@ def _shares_content_word(a: str, b: str) -> bool:
     return bool(wa & wb)
 
 
-_MAX_CONTEXT_HINTS = 8
-_MAX_CONTEXT_HINT_CHARS = 320
+_MAX_CONTEXT_HINTS = 40
+_MAX_CONTEXT_HINT_CHARS = 4_000
 
 
 def _bounded_context_hints(context_hints: list[str] | None) -> list[str]:

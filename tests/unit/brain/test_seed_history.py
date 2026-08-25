@@ -70,12 +70,12 @@ def test_seed_history_drops_unknown_roles_and_empty_text() -> None:
 
 def test_seed_history_caps_to_last_turns() -> None:
     m = _bare_manager()
-    turns = [("user" if i % 2 == 0 else "assistant", f"m{i}") for i in range(120)]
+    turns = [("user" if i % 2 == 0 else "assistant", f"m{i}") for i in range(1000)]
     m.seed_history(turns)
-    # Capped to the same 40-message window the auto-append paths enforce.
-    assert len(m._history) == 40
-    assert m._history[-1].content == "m119"
-    assert m._history[0].content == "m80"
+    # Capped to the same 400-message window the auto-append paths enforce.
+    assert len(m._history) == 400
+    assert m._history[-1].content == "m999"
+    assert m._history[0].content == "m600"
 
 
 def test_seed_history_empty_clears() -> None:

@@ -42,9 +42,10 @@ class _Executor:
         return ToolResult(success=True, output="ok")
 
 
-def test_brain_config_default_response_cap_is_8192() -> None:
-    """The agreed safety ceiling per response is 8192 tokens (raised from 4096)."""
-    assert BrainConfig().max_tokens == 8192
+def test_brain_config_default_response_cap_is_the_schema_maximum() -> None:
+    """Maintainer mandate 2026-08-24: the per-response ceiling is not a cost
+    lever — the default sits at the schema maximum (32 768)."""
+    assert BrainConfig().max_tokens == 32_768
 
 
 @pytest.mark.asyncio
@@ -59,13 +60,13 @@ async def test_tool_use_loop_threads_response_max_tokens() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_use_loop_default_cap_is_8192() -> None:
+async def test_tool_use_loop_default_cap_is_the_schema_maximum() -> None:
     brain = _RecordingBrain()
     loop = ToolUseLoop(brain, {}, _Executor())  # type: ignore[arg-type]
 
     await loop.run([BrainMessage(role="user", content="Hallo")])
 
-    assert brain.requests[0].max_tokens == 8192
+    assert brain.requests[0].max_tokens == 32_768
 
 
 @pytest.mark.asyncio

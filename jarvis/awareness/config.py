@@ -74,8 +74,8 @@ class AwarenessVerdichterConfig(BaseModel):
     Defaults (Plan §6 D-A4):
         provider          = "claude-api"
         model             = "claude-haiku-4-5-20251001"
-        max_input_tokens  = 800       # hard cap on input per episode
-        max_output_tokens = 200       # hard cap on output per episode
+        max_input_tokens  = 8000      # bound on input per episode
+        max_output_tokens = 2000      # bound on output per episode
         timeout_s         = 5.0       # asyncio.wait_for timeout
     """
     model_config = ConfigDict(extra="allow")
@@ -83,8 +83,8 @@ class AwarenessVerdichterConfig(BaseModel):
     enabled: bool = True
     provider: str = "claude-api"
     model: str = "claude-haiku-4-5-20251001"
-    max_input_tokens: int = 800
-    max_output_tokens: int = 200
+    max_input_tokens: int = 8_000
+    max_output_tokens: int = 2_000
     timeout_s: float = 5.0
 
 

@@ -178,7 +178,7 @@ def _resolve_worker_model(provider: str, explicit: str) -> str:
 
 _WORKER_TIMEOUT_S: float = 1200.0  # 20 min hard cap, mirrors the other workers
 _MAX_TURNS: int = 25
-_MAX_TOKENS: int = 8192
+_MAX_TOKENS: int = 32_768
 
 _SYSTEM_PROMPT = (
     "You are an autonomous software worker running inside an isolated git "

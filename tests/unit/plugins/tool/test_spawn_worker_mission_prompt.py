@@ -82,7 +82,7 @@ def test_no_action_falls_back_to_raw_utterance() -> None:
 
 def test_no_action_keeps_bounded_recent_context_for_references() -> None:
     """A forced follow-up must not reach a stateless worker without its topic."""
-    long_hint = "bounded-marker " + ("x" * 1_000)
+    long_hint = "bounded-marker " + ("x" * 10_000)
     prompt = _build_mission_prompt(
         utterance="Where is it? I also installed it as a plugin.",
         action="",
