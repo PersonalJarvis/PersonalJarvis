@@ -1185,11 +1185,16 @@ def _recover_from_already_running(
                         )
                         return None
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("launcher: focusing the booting instance failed: {}", exc)
-                    break
+                    logger.warning(
+                        "launcher: focusing the booting instance failed: {}", exc
+                    )
+                    # keep waiting; a transient focus miss is not "stuck"
             try:
                 focused = bool(focus())
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "launcher: final focus of booting holder failed: {}", exc
+                )
                 focused = False
             if focused:
                 return None

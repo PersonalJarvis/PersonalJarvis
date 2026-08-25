@@ -277,6 +277,37 @@ def test_apply_branded_launch_env_sets_the_loop_guard_only_for_the_branded_exe(
     assert branded_env["JARVIS_BRANDED_LAUNCH"] == "1"
 
 
+def test_main_spawns_branded_exe_with_the_loop_guard(monkeypatch, tmp_path):
+    """The live Windows restart must be one branded process, not a python hop."""
+    from jarvis.core.instance import current_instance
+
+    branded = tmp_path / current_instance().windows_branded_launcher_file_name
+    branded.write_bytes(b"MZ")
+    monkeypatch.setattr(relauncher.sys, "platform", "win32")
+    monkeypatch.setattr(relauncher.sys, "executable", str(tmp_path / "python.exe"))
+    monkeypatch.setattr(relauncher.sys, "_base_executable", "", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    spawned: list[dict] = []
+
+    def fake_spawn(cmd, **kwargs):
+        spawned.append({"cmd": cmd, "kwargs": kwargs})
+        return SimpleNamespace(pid=999)
+
+    rc = relauncher.main(
+        ["4242", str(tmp_path)],
+        _wait=lambda pid, **_kw: True,
+        _spawn=fake_spawn,
+        _sleep=lambda _s: None,
+        _alive=lambda _p: True,
+        _serving=lambda: False,
+        _finalize_update=lambda _cwd: True,
+    )
+    assert rc == 0
+    assert len(spawned) == 1
+    assert spawned[0]["cmd"][0] == str(branded)
+    assert spawned[0]["kwargs"]["env"]["JARVIS_BRANDED_LAUNCH"] == "1"
+
+
 def test_restart_quit_sequence_marks_quit_destroys_then_hard_exits():
     order: list[object] = []
 

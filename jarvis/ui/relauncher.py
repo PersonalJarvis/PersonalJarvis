@@ -272,7 +272,7 @@ def _existing_branded_launcher() -> Path | None:
             if cand.is_file() and cand.stat().st_size > 0:
                 return cand
         except OSError:
-            continue
+            continue  # unreadable candidate; try the next home
     return None
 
 
@@ -318,7 +318,7 @@ def _restart_admin_port(cwd: str | Path | None = None) -> int:
             if isinstance(port, int) and 1 <= port <= 65535:
                 base = port
         except (OSError, UnicodeDecodeError, ValueError, TypeError, AttributeError):
-            pass
+            pass  # unreadable jarvis.toml → packaged default port
     return current_instance().port(base)
 
 
@@ -344,7 +344,7 @@ def _desktop_is_serving(
         with connect((host, port), timeout=timeout):
             return True
     except OSError:
-        return False
+        return False  # nothing accepted; that is the probe result
 
 
 def pid_alive(pid: int) -> bool:
@@ -792,7 +792,6 @@ def main(
 
     cmd = build_launch_command(sys.executable)
     env = _apply_branded_launch_env(fresh_user_env(), cmd)
-    kwargs = detached_popen_kwargs(cwd=cwd, env=env)
 
     update_finalized = False
     for attempt in range(attempts):
@@ -813,15 +812,7 @@ def main(
             _finalize_update(cwd)
             update_finalized = True
 
-        try:
-            proc = _spawn(cmd, **kwargs)
-        except PermissionError:
-            flags = int(kwargs.get("creationflags", 0) or 0)
-            if sys.platform != "win32" or not (flags & _CREATE_BREAKAWAY_FROM_JOB):
-                raise
-            kwargs = dict(kwargs)
-            kwargs["creationflags"] = flags & ~_CREATE_BREAKAWAY_FROM_JOB
-            proc = _spawn(cmd, **kwargs)
+        proc = spawn_detached(cmd, cwd=cwd, env=env, _popen=_spawn)
         new_pid = getattr(proc, "pid", None)
         logging.getLogger(__name__).info(
             "relauncher: spawn attempt %s pid=%s cmd=%s",

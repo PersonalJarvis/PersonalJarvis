@@ -105,7 +105,9 @@ def test_a_young_holder_is_waited_for_not_killed():
 
         def focus(self):
             self.focus_n += 1
-            return self.focus_n >= 3
+            if self.focus_n == 2:
+                raise RuntimeError("transient focus miss")
+            return self.focus_n >= 4
 
     calls = _Booting()
     clock = {"t": 0.0}
@@ -124,7 +126,7 @@ def test_a_young_holder_is_waited_for_not_killed():
     assert result is None
     assert calls.asked == []
     assert calls.terminated == []
-    assert calls.focus_n >= 3
+    assert calls.focus_n >= 4
 
 
 def test_a_young_holder_that_never_grows_a_window_is_still_asked():
