@@ -1,4 +1,12 @@
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -35,9 +43,9 @@ import { cn } from "@/lib/utils";
  * right, each assistant turn flush-left under a byline that says who
  * answered (the provider's mark, the model, the effort).
  *
- * Under the byline, in the order they happened: ONE row for everything the
- * model thought (folded to "Thought for Ns"; a vendor that redacts its
- * thinking still gets the row, because the time is the fact), the tool calls
+ * Under the byline, in the order they happened: the model's thinking as a
+ * readable scratchpad wherever it thought (a vendor that redacts its
+ * thinking still gets a row, because the time is the fact), the tool calls
  * under the names the agent's own log uses, approval cards where the runner
  * asked, and the answer as Markdown.
  *
@@ -51,10 +59,17 @@ import { cn } from "@/lib/utils";
  *    The turn itself is held together by its byline and the spacing; an
  *    earlier version hung it off a glowing hairline rail, which read as a
  *    stray stripe running down the transcript.
- * 2. The turn says it is thinking exactly ONCE. Every stretch of thought
- *    used to get its own row, stacked above a live line saying the same
- *    thing again; the finished thoughts now fold into a single row and the
- *    running one is left to the live line alone.
+ * 2. The thinking is READ, not counted (maintainer, 2026-08-25: the
+ *    intermediate steps had stopped showing). A stretch of thought that has
+ *    words is a scratchpad in the place it happened: its text streams while
+ *    the model writes it, stays open while the turn still works, and folds
+ *    to a two-line preview once the turn is done. Only a thought with no
+ *    words to show — a vendor that redacts (Claude Code) — is reduced to its
+ *    time, and a running one of those draws nothing, because the live line
+ *    already says the turn is thinking and two lines saying it at once is
+ *    the duplication the maintainer objected to. A streaming scratchpad
+ *    carries the live line in its own header for the same reason: the turn
+ *    says it is working exactly ONCE.
  * 3. The turn ALWAYS says which state it is in. While it runs: the live
  *    core, a word that changes as the minutes pass, the elapsed time and
  *    the tokens spent — the Claude CLI's "Composing… (2m 35s · ↓ 3.7k
@@ -169,7 +184,10 @@ const Turn = memo(function Turn({
   const t = useT();
   const live = turn.status === "running";
   const elapsed = useElapsedMs(live ? turn.startedMs : null);
-  const blocks = useMemo(() => foldThinking(turn.blocks), [turn.blocks]);
+  const blocks = useMemo(() => arrangeThinking(turn.blocks), [turn.blocks]);
+  // A scratchpad still receiving words carries the turn's live line in its
+  // own header; the line below would only say "thinking" a second time.
+  const thinkingAloud = blocks.some((b) => b.kind === "reasoning" && b.live);
 
   return (
     <div
@@ -199,11 +217,15 @@ const Turn = memo(function Turn({
       <div className="flex flex-col gap-1.5 px-1">
         {blocks.map((block) => {
           if (block.kind === "text") return <Prose key={block.id} block={block} />;
-          if (block.kind === "reasoning") return <Reasoning key={block.id} block={block} />;
+          if (block.kind === "reasoning") {
+            return (
+              <Thought key={block.id} block={block} turnLive={live} usage={turn.liveUsage} />
+            );
+          }
           return <ToolRow key={block.callId} block={block} onDecide={onDecide} />;
         })}
 
-        {live && <LiveStatus elapsed={elapsed} usage={turn.liveUsage} />}
+        {live && !thinkingAloud && <LiveStatus elapsed={elapsed} usage={turn.liveUsage} />}
 
         {turn.status === "error" && turn.error && (
           <div
@@ -223,47 +245,50 @@ const Turn = memo(function Turn({
 });
 
 /**
- * All of a turn's thinking, folded into one row.
+ * Where each stretch of a turn's thinking goes.
  *
- * A turn thinks, calls a tool, thinks again — and every stretch used to draw
- * its own "Thought for Ns" row, so an ordinary turn stacked two or three of
- * them above a live line that said the same thing once more (maintainer,
- * 2026-08-25: the thinking is shown twice). The finished
- * thoughts now merge into one row where the first of them happened, their
- * segments in order inside it and their seconds added up.
+ * A thought WITH words is a scratchpad and stays exactly where it happened —
+ * ahead of the tool call it explains, between two of them, before the
+ * answer. Reading the reasoning in the order it was written is the whole
+ * point of showing it; the earlier design merged every stretch into one row
+ * at the top of the turn, which hid the streaming text altogether and put
+ * the finished thoughts behind a single click (maintainer, 2026-08-25: the
+ * intermediate steps are no longer shown properly).
  *
- * A thought that is still running gets NO row at all: the live line below
- * already says the turn is thinking, and saying it twice in a row IS the
- * duplication. It joins the folded row the moment it closes.
+ * A thought WITHOUT words is only a duration: a vendor that redacts its
+ * thinking (Claude Code), or a runner that announced the thought before any
+ * text arrived. Those stay quiet. The finished ones fold into ONE "Thought
+ * for Ns" row where the first of them happened, seconds added up — a stack
+ * of timing rows said nothing a sum does not. A running one draws nothing at
+ * all: the live line below already says the turn is thinking, and saying it
+ * twice in a row is the duplication the maintainer objected to.
  */
-export function foldThinking(blocks: TurnBlock[]): TurnBlock[] {
-  const thoughts = blocks.filter(
-    (b): b is ReasoningBlock => b.kind === "reasoning" && !b.live,
+export function arrangeThinking(blocks: TurnBlock[]): TurnBlock[] {
+  const silent = blocks.filter(
+    (b): b is ReasoningBlock => b.kind === "reasoning" && !b.live && !b.text.trim(),
   );
-  const merged: ReasoningBlock | null =
-    thoughts.length === 0
+  const folded: ReasoningBlock | null =
+    silent.length === 0
       ? null
       : {
           kind: "reasoning",
-          id: thoughts[0].id,
-          text: thoughts
-            .map((th) => th.text.trim())
-            .filter(Boolean)
-            .join("\n\n···\n\n"),
-          durationMs: thoughts.reduce((sum, th) => sum + (th.durationMs ?? 0), 0),
+          id: silent[0].id,
+          text: "",
+          durationMs: silent.reduce((sum, th) => sum + (th.durationMs ?? 0), 0),
           live: false,
-          startedMs: thoughts[0].startedMs,
+          startedMs: silent[0].startedMs,
         };
 
   const out: TurnBlock[] = [];
   let placed = false;
   for (const block of blocks) {
-    if (block.kind !== "reasoning") {
+    if (block.kind !== "reasoning" || block.text.trim()) {
       out.push(block);
       continue;
     }
-    if (merged && !placed) {
-      out.push(merged);
+    if (block.live) continue;
+    if (folded && !placed) {
+      out.push(folded);
       placed = true;
     }
   }
@@ -412,23 +437,217 @@ function Prose({ block }: { block: TextBlock }) {
   );
 }
 
+/** One stretch of thinking: a scratchpad when it has words, a timing row when it has none. */
+function Thought({
+  block,
+  turnLive,
+  usage,
+}: {
+  block: ReasoningBlock;
+  turnLive: boolean;
+  usage: Record<string, number> | null;
+}) {
+  if (!block.text.trim()) return <SilentThought block={block} />;
+  return <Scratchpad block={block} turnLive={turnLive} usage={usage} />;
+}
+
 /**
- * Everything the turn thought, in one collapsed row.
+ * Past this many characters (or at the first blank line) a finished thought
+ * is more than a preview can hold and earns a fold.
+ */
+const PREVIEW_CHARS = 200;
+
+/** Does a thought need a fold, or does its preview already show all of it? */
+export function thoughtNeedsFold(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length > PREVIEW_CHARS || /\n\s*\n/.test(trimmed);
+}
+
+/**
+ * A thought as one flat line for the folded preview — no Markdown marks, no
+ * code blocks, no line breaks — so two lines of it read as a sentence.
+ */
+export function thoughtGist(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[`*_#>~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The model's thinking, readable — the scratchpad.
  *
- * Always a FINISHED thought — `foldThinking` keeps the running one off the
- * screen so this row never competes with the live line. "Thought for 8s"
- * opens to the text when there IS text; when the vendor redacted it (Claude
- * Code does) the row still states the time, because the time is the fact,
- * and stays shut rather than opening onto emptiness.
+ * WHILE THE WORDS ARRIVE it is open. Its header is the turn's live line for
+ * as long as the thought runs — the core, "Thinking for 8s", the tokens so
+ * far, the interrupt hint — and under a hairline sits the text itself,
+ * anchored to its newest lines so the reader watches the thought unfold
+ * instead of scrolling after it (the earlier lines fade out at the top once
+ * there are more than fit).
+ *
+ * WHEN THE THOUGHT CLOSES it keeps its place. It stays open while the turn
+ * still works, because watching the work is the point of a running turn,
+ * and folds to "Thought for 8s" over a two-line preview the moment the turn
+ * is done, so the answer is what a finished conversation reads as. A click
+ * opens it again; a thought short enough to fit its own preview never needs
+ * one and shows whole.
  *
  * The thought reads as prose, not as a log dump: models write their
  * reasoning in Markdown, and a raw `**like this**` on screen is the same
  * defect the local-models panel was fixed for.
  */
-function Reasoning({ block }: { block: ReasoningBlock }) {
+function Scratchpad({
+  block,
+  turnLive,
+  usage,
+}: {
+  block: ReasoningBlock;
+  turnLive: boolean;
+  usage: Record<string, number> | null;
+}) {
   const t = useT();
-  const [open, setOpen] = useState(false);
-  const hasText = Boolean(block.text.trim());
+  // `null` until the person decides; until then the turn's state decides.
+  const [manual, setManual] = useState<boolean | null>(null);
+  const live = block.live;
+  const thinking = useElapsedMs(live ? block.startedMs : null);
+  const text = block.text.trim();
+  const foldable = thoughtNeedsFold(text);
+  const open = live || (foldable && (manual ?? turnLive));
+  const duration = block.durationMs ?? 0;
+  const out = outputTokens(usage);
+  const header =
+    duration > 0
+      ? fill(t("agent_chat.thought_for"), { duration: formatThoughtDuration(duration) })
+      : t("agent_chat.thought");
+
+  return (
+    <div
+      data-testid="agent-reasoning"
+      data-state={live ? "live" : open ? "open" : foldable ? "folded" : "whole"}
+    >
+      {live ? (
+        <div
+          className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-xs"
+          data-testid="agent-turn-live"
+          role="status"
+          aria-live="polite"
+        >
+          <LiveCore />
+          <span className="thinking-shimmer font-medium">
+            {fill(t("agent_chat.thinking_for"), { duration: formatThoughtDuration(thinking) })}
+          </span>
+          {out !== null && out > 0 && (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/80">
+              <span aria-hidden>·</span>
+              <OutTokens n={out} />
+            </span>
+          )}
+          <span className="text-muted-foreground/60">{t("agent_chat.interrupt_hint")}</span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setManual(!open)}
+          aria-expanded={open}
+          disabled={!foldable}
+          className={cn(
+            "-ml-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors",
+            foldable ? "hover:bg-secondary/50 hover:text-foreground" : "cursor-default",
+          )}
+        >
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 transition-transform",
+              open && "rotate-90",
+              !foldable && "opacity-30",
+            )}
+            aria-hidden
+          />
+          <span>{header}</span>
+        </button>
+      )}
+
+      {live ? (
+        <Trace>
+          <ThoughtTail text={text} />
+        </Trace>
+      ) : open ? (
+        <Trace>
+          <ThoughtProse text={text} />
+        </Trace>
+      ) : (
+        <div
+          className={cn(
+            "ml-[1.25rem] text-[13px] leading-relaxed text-muted-foreground/80 [overflow-wrap:anywhere]",
+            foldable && "line-clamp-2",
+          )}
+          data-testid="agent-reasoning-preview"
+        >
+          {thoughtGist(text)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The streaming thought, anchored to its newest lines.
+ *
+ * The window is a fixed height with the text pinned to its bottom edge, so
+ * new words push the old ones up and out of view — the reader always sees
+ * what the model is writing NOW. Once more has been written than fits, the
+ * top fades out to say so; a thought that fits is shown whole, unfaded.
+ */
+function ThoughtTail({ text }: { text: string }) {
+  const outer = useRef<HTMLDivElement>(null);
+  const inner = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const box = outer.current;
+    const body = inner.current;
+    if (!box || !body) return;
+    setClipped(body.offsetHeight > box.clientHeight + 1);
+  }, [text]);
+  return (
+    <div
+      ref={outer}
+      className={cn(
+        "flex max-h-44 flex-col justify-end overflow-hidden",
+        clipped && "[mask-image:linear-gradient(to_bottom,transparent,black_2.75rem)]",
+      )}
+      data-testid="agent-reasoning-tail"
+      data-clipped={clipped ? "true" : undefined}
+    >
+      <div ref={inner}>
+        <ThoughtProse text={text} />
+      </div>
+    </div>
+  );
+}
+
+function ThoughtProse({ text }: { text: string }) {
+  return (
+    <div
+      className={cn(
+        "prose prose-neutral max-w-none text-[13px] leading-relaxed text-muted-foreground dark:prose-invert [overflow-wrap:anywhere]",
+        "prose-p:my-1.5 prose-headings:my-1.5 prose-headings:text-[13px] prose-headings:font-semibold prose-headings:text-foreground/80",
+        "prose-strong:text-foreground/80 prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5",
+        "prose-code:font-mono prose-code:text-[0.9em] prose-code:before:hidden prose-code:after:hidden",
+        "prose-pre:my-1.5 prose-pre:bg-transparent prose-pre:p-0 prose-pre:text-[11px]",
+      )}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
+/**
+ * Thinking with no words to show — the vendor redacted it (Claude Code
+ * does). The row still states the time, because the time is the fact, and
+ * stays shut rather than opening onto emptiness.
+ */
+function SilentThought({ block }: { block: ReasoningBlock }) {
+  const t = useT();
   const duration = block.durationMs ?? 0;
   const header =
     duration > 0
@@ -436,42 +655,16 @@ function Reasoning({ block }: { block: ReasoningBlock }) {
       : t("agent_chat.thought");
 
   return (
-    <div data-testid="agent-reasoning">
+    <div data-testid="agent-reasoning" data-state="silent">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        disabled={!hasText}
-        className={cn(
-          "-ml-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors",
-          hasText ? "hover:bg-secondary/50 hover:text-foreground" : "cursor-default",
-        )}
+        aria-expanded={false}
+        disabled
+        className="-ml-1 inline-flex cursor-default items-center gap-1.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground"
       >
-        <ChevronRight
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 transition-transform",
-            open && "rotate-90",
-            !hasText && "opacity-30",
-          )}
-          aria-hidden
-        />
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-30" aria-hidden />
         <span>{header}</span>
       </button>
-      {open && hasText && (
-        <Trace>
-          <div
-            className={cn(
-              "prose prose-neutral max-w-none text-xs leading-relaxed text-muted-foreground dark:prose-invert [overflow-wrap:anywhere]",
-              "prose-p:my-1.5 prose-headings:my-1.5 prose-headings:text-xs prose-headings:font-semibold",
-              "prose-strong:text-foreground/80 prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5",
-              "prose-code:font-mono prose-code:text-[0.9em] prose-code:before:hidden prose-code:after:hidden",
-              "prose-pre:my-1.5 prose-pre:bg-transparent prose-pre:p-0 prose-pre:text-[11px]",
-            )}
-          >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
-          </div>
-        </Trace>
-      )}
     </div>
   );
 }
