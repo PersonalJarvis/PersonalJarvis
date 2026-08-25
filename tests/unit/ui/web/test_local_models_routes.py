@@ -31,6 +31,7 @@ BASE = "/api/providers/ollama/local-models"
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeOllamaServer:
+    ollama_inventory._reset_for_tests()
     server = FakeOllamaServer()
     server.add("qwen3.5:4b", size=3_400_000_000, capabilities=("completion", "tools", "vision"))
     server.add("gemma4:12b-it-qat", size=7_200_000_000, capabilities=("completion", "tools"))
@@ -654,3 +655,19 @@ async def test_server_and_inventory_overlap_instead_of_queueing(server, fake, mo
         elapsed = time.perf_counter() - started
     assert first.status_code == 200 and second.status_code == 200
     assert elapsed < 0.7, f"the two requests queued: {elapsed:.2f}s"
+
+
+def test_one_paint_costs_one_sweep(server, fake, shortlist, monkeypatch) -> None:
+    """Inventory, roles and server in sequence: ONE ``/api/tags`` and ONE
+    ``/api/show`` per download — the panels share the snapshot."""
+    monkeypatch.setattr(ollama_runtime, "runtime_status", lambda: _status(True))
+    with TestClient(server.app) as client:
+        inventory_ = client.get(f"{BASE}/inventory").json()
+        roles = client.get(f"{BASE}/roles").json()
+        status = client.get(f"{BASE}/server").json()
+    paths = [c[1] for c in fake.calls]
+    assert paths.count("/api/tags") == 1
+    assert paths.count("/api/show") == 3, "one per visible download, the alias is skipped"
+    assert paths.count("/api/ps") == 1
+    assert inventory_["disk_bytes"] == status["disk_bytes"] > 0
+    assert roles["error"] is None

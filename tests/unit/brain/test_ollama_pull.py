@@ -18,7 +18,11 @@ import pytest
 
 import jarvis.brain.ollama_pull as pull
 import jarvis.core.config as cfg
+from jarvis.brain import ollama_inventory
 from jarvis.core.config import JarvisConfig
+
+#: Captured before any fixture swaps ``httpx.AsyncClient`` for the fake.
+_RealAsyncClient = httpx.AsyncClient
 
 
 @pytest.fixture(autouse=True)
@@ -27,8 +31,10 @@ def _clean_runs(monkeypatch):
     monkeypatch.setattr(cfg, "load_config", lambda: JarvisConfig())
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
     pull._runs.clear()
+    ollama_inventory._reset_for_tests()
     yield
     pull._runs.clear()
+    ollama_inventory._reset_for_tests()
 
 
 # ── Fit verdict ──────────────────────────────────────────────────────────
@@ -524,3 +530,29 @@ async def test_an_offline_registry_is_not_asked_again_within_the_memo(fake_tags)
     assert first == len(pull.RECOMMENDED_MODELS)
     await pull.recommendations()
     assert fake_tags.registry_calls == first
+
+
+async def test_installed_models_reads_the_shared_snapshot_when_fresh(
+    fake_tags, monkeypatch
+) -> None:
+    """A paint that already swept the server does not ask ``/api/tags`` again
+    for the shortlist's "installed" marks; the pull polling still may."""
+    from tests.fakes.fake_ollama_server import FakeOllamaServer
+
+    fake = FakeOllamaServer()
+    fake.add("qwen3.5:latest")
+    fake.add("qwen3.5-latest-jarvis-ab12cd34:latest")
+    # ``fake_tags`` swapped httpx.AsyncClient; the inventory sweep needs the
+    # real one over the fake server's transport.
+    monkeypatch.setattr(
+        ollama_inventory,
+        "_make_client",
+        lambda transport=None: _RealAsyncClient(transport=fake.transport()),
+    )
+    await ollama_inventory.cached_snapshot(pull.server_root())
+    fake_tags.fail = True  # the pull module's own client would fail now
+    installed, error = await pull.installed_models()
+    assert error is None
+    # Aliases count as "on the server" for the bookkeeping, even though the
+    # ledger hides them.
+    assert installed == {"qwen3.5:latest", "qwen3.5-latest-jarvis-ab12cd34:latest"}

@@ -348,6 +348,13 @@ async def installed_models() -> tuple[set[str], str | None]:
     nothing installed".
     """
     root = server_root()
+    # The section's shared sweep, when it is fresh, already holds the answer;
+    # a pull's own progress polling keeps its independent /api/tags below.
+    from jarvis.brain import ollama_inventory  # noqa: PLC0415 — sibling, lazy
+
+    snapshot = ollama_inventory.peek_snapshot(root)
+    if snapshot is not None:
+        return set(snapshot.all_names), None
     try:
         async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
             resp = await client.get(f"{root}/api/tags")
@@ -639,7 +646,11 @@ async def _run_pull(model: str) -> None:
 
     # Trust the server's inventory over the stream's last line: a pull can end
     # cleanly and still leave nothing usable, and a card that says "ready" over
-    # a missing model is the failure this whole area exists to prevent.
+    # a missing model is the failure this whole area exists to prevent. The
+    # shared snapshot is dropped first so every panel sees the new download.
+    from jarvis.brain import ollama_inventory  # noqa: PLC0415 — sibling, lazy
+
+    ollama_inventory.invalidate_snapshot(root)
     installed, error = await installed_models()
     if error or not _is_installed(model, installed):
         run.state = "error"

@@ -18,6 +18,7 @@ ROOT = "http://localhost:11434"
 
 @pytest.fixture
 def fake() -> FakeOllamaServer:
+    inv._reset_for_tests()
     server = FakeOllamaServer()
     server.add(
         "qwen3.5:4b",
@@ -120,9 +121,12 @@ async def test_get_model_is_latest_tolerant_and_404s_honestly(fake: FakeOllamaSe
 
 
 def test_native_context_length_reads_the_architecture_key() -> None:
-    assert inv.native_context_length(
-        {"general.architecture": "gemma4", "gemma4.context_length": 131072}
-    ) == 131072
+    assert (
+        inv.native_context_length(
+            {"general.architecture": "gemma4", "gemma4.context_length": 131072}
+        )
+        == 131072
+    )
     # No architecture hint: any ``*.context_length`` key still counts.
     assert inv.native_context_length({"llama.context_length": 8192}) == 8192
     assert inv.native_context_length({"general.architecture": "x"}) is None
@@ -165,6 +169,57 @@ async def test_delete_removes_the_download_and_404s_afterwards(fake: FakeOllamaS
 async def test_disk_usage_counts_each_weight_once(fake: FakeOllamaServer) -> None:
     """An alias shares its weights with the base — counting it would double the total."""
     fake.add("qwen3.5-4b-jarvis-ab12cd34:latest", size=3_400_000_000)
-    assert await inv.disk_usage(ROOT, transport=fake.transport()) == (
-        3_400_000_000 + 2_500_000_000
+    assert await inv.disk_usage(ROOT, transport=fake.transport()) == (3_400_000_000 + 2_500_000_000)
+
+
+# ── Shared snapshot ──────────────────────────────────────────────────────
+async def test_concurrent_readers_share_one_sweep(fake) -> None:
+    """Four panels opening at once used to mean four ``/api/tags`` and four
+    full ``/api/show`` sweeps; they now join the sweep in flight."""
+    import asyncio
+
+    first, second, third = await asyncio.gather(
+        inv.cached_snapshot(ROOT, transport=fake.transport()),
+        inv.cached_snapshot(ROOT, transport=fake.transport()),
+        inv.cached_snapshot(ROOT, transport=fake.transport()),
     )
+    assert first is second is third
+    assert [c[1] for c in fake.calls].count("/api/tags") == 1
+    assert [c[1] for c in fake.calls].count("/api/show") == len(fake.models)
+    assert [c[1] for c in fake.calls].count("/api/ps") == 1
+    assert {m.name for m in first.models} == set(fake.models)
+    assert first.fetched_at > 0
+
+
+async def test_unload_and_delete_drop_the_snapshot(fake) -> None:
+    fake.load("qwen3.5:4b")
+    before = await inv.cached_snapshot(ROOT, transport=fake.transport())
+    assert [r.name for r in before.running] == ["qwen3.5:4b"]
+    await inv.unload_model(ROOT, "qwen3.5:4b", transport=fake.transport())
+    after = await inv.cached_snapshot(ROOT, transport=fake.transport())
+    assert after is not before and after.running == ()
+    await inv.delete_model(ROOT, "qwen3-embedding:4b", transport=fake.transport())
+    gone = await inv.cached_snapshot(ROOT, transport=fake.transport())
+    assert [m.name for m in gone.models] == ["qwen3.5:4b"]
+
+
+async def test_an_offline_server_is_asked_once_per_window(fake) -> None:
+    """Every panel shows the same sentence after ONE refused connection."""
+    fake.offline = True
+    with pytest.raises(inv.OllamaServerError):
+        await inv.cached_snapshot(ROOT, transport=fake.transport())
+    fake.offline = False
+    # Still within the window: the remembered failure answers, no request.
+    with pytest.raises(inv.OllamaServerError):
+        await inv.cached_snapshot(ROOT, transport=fake.transport())
+    assert fake.calls == []
+    inv.invalidate_snapshot(ROOT)
+    snapshot = await inv.cached_snapshot(ROOT, transport=fake.transport())
+    assert len(snapshot.models) == 2
+
+
+async def test_the_snapshot_expires(fake) -> None:
+    first = await inv.cached_snapshot(ROOT, transport=fake.transport())
+    second = await inv.cached_snapshot(ROOT, max_age_s=0.0, transport=fake.transport())
+    assert second is not first
+    assert inv.peek_snapshot(ROOT) is second

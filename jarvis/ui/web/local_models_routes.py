@@ -176,13 +176,15 @@ def _row(
 
 
 async def _running_by_name(root: str) -> dict[str, OllamaRunningModel]:
-    """``/api/ps`` as a map; an unanswered probe is an empty map (logged), so a
-    server that lists downloads but stalls on ``/api/ps`` still renders."""
+    """``/api/ps`` as a map from the shared snapshot; an unanswered probe is an
+    empty map (logged), so a server that lists downloads but stalls on
+    ``/api/ps`` still renders."""
     try:
-        return {r.name: r for r in await inventory.running_models(root)}
+        snapshot = await inventory.cached_snapshot(root)
     except OllamaServerError as exc:
-        log.info("local-models: /api/ps unavailable at %s: %s", root, exc)
+        log.info("local-models: inventory unavailable at %s: %s", root, exc)
         return {}
+    return {r.name: r for r in snapshot.running}
 
 
 def _http_error(exc: OllamaServerError) -> HTTPException:
@@ -206,7 +208,7 @@ async def get_inventory(provider_id: str, request: Request) -> InventoryResponse
     root = _server_root()
     cfg = _resolve_cfg(request)
     try:
-        models = await inventory.list_models(root)
+        snapshot = await inventory.cached_snapshot(root)
     except OllamaServerError as exc:
         return InventoryResponse(
             provider=provider_id,
@@ -217,7 +219,8 @@ async def get_inventory(provider_id: str, request: Request) -> InventoryResponse
             loaded_vram_bytes=0,
             error=str(exc),
         )
-    running = await _running_by_name(root)
+    models = snapshot.models
+    running = {r.name: r for r in snapshot.running}
     rows = [LocalModelRow(**_row(m, running, _roles_using(cfg, m.name))) for m in models]
     return InventoryResponse(
         provider=provider_id,
