@@ -113,6 +113,12 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## local-models
 
+- `jarvis local-models assistant benchmarks --refresh --provider` — The benchmark table behind the proven / new labels (cached seven days).
+- `jarvis local-models assistant diagnose --provider` — Ask the assistant what is broken and how to fix it.
+- `jarvis local-models assistant health --provider` — The last self-check: status, reason, since when, last ok.
+- `jarvis local-models assistant session --provider` — The assistant's session and whether the Agents tier can run it.
+- `jarvis local-models assistant setup --provider` — Start a guided setup turn; answers with the session and turn ids.
+- `jarvis local-models assistant test --role --provider` — Run the end-to-end setup test and print the per-role table.
 - `jarvis local-models catalog recommended --provider` — The curated shortlist ranked for this machine, with its review date.
 - `jarvis local-models catalog search <query> --sort --capability --limit --provider` — Browse the library; offline is reported as a sentence, not a failure.
 - `jarvis local-models catalog tags <name> --provider` — Every tag of one library model with size, quantization, context and fit.
@@ -135,7 +141,6 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis local-models server status --provider` — Runtime picture plus what is loaded and how much disk the downloads take.
 - `jarvis local-models server stop --provider --yes --dry-run` — Stop the server Jarvis itself started (never one started elsewhere).
 - `jarvis local-models server test <base_url> --provider` — Probe a host before saving it: version and latency, or why it failed.
-
 
 ## marketplace
 

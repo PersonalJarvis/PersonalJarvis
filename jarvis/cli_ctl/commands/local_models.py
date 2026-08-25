@@ -402,3 +402,69 @@ def server_env_guide(
     """Copyable per-OS commands for the server's environment variables."""
     params = {"os": os_name.strip()} if os_name.strip() else None
     invoke.run("GET", f"{_base(provider)}/server/env-guide", params=params)
+
+
+# ----------------------------------------------------------------------
+# assistant
+# ----------------------------------------------------------------------
+
+assistant_app = typer.Typer(
+    no_args_is_help=True,
+    help="The setup assistant: guided setup, diagnosis, the end-to-end test, benchmarks, health.",
+)
+app.add_typer(assistant_app, name="assistant")
+
+
+_ROLE_FILTER = typer.Option(
+    [],
+    "--role",
+    help="Restrict to a role (repeatable): chat, voice, tools_screen, deep, embedding.",
+)
+
+
+def _assistant(provider: str) -> str:
+    return f"{_base(provider)}/assistant"
+
+
+@assistant_app.command("setup")
+def assistant_setup(provider: str = _PROVIDER) -> None:
+    """Start a guided setup turn; answers with the session and turn ids."""
+    invoke.run("POST", f"{_assistant(provider)}/run", body={"mode": "setup"}, dangerous=False)
+
+
+@assistant_app.command("diagnose")
+def assistant_diagnose(provider: str = _PROVIDER) -> None:
+    """Ask the assistant what is broken and how to fix it."""
+    invoke.run("POST", f"{_assistant(provider)}/run", body={"mode": "diagnose"}, dangerous=False)
+
+
+@assistant_app.command("test")
+def assistant_test(
+    roles: list[str] = _ROLE_FILTER,
+    provider: str = _PROVIDER,
+) -> None:
+    """Run the end-to-end setup test and print the per-role table."""
+    body = {"roles": list(roles)} if roles else None
+    invoke.run("POST", f"{_assistant(provider)}/test", body=body, dangerous=False)
+
+
+@assistant_app.command("benchmarks")
+def assistant_benchmarks(
+    refresh: bool = typer.Option(False, "--refresh", help="Rebuild the table from the web."),
+    provider: str = _PROVIDER,
+) -> None:
+    """The benchmark table behind the proven / new labels (cached seven days)."""
+    params = {"refresh": "1"} if refresh else None
+    invoke.run("GET", f"{_assistant(provider)}/benchmarks", params=params)
+
+
+@assistant_app.command("health")
+def assistant_health(provider: str = _PROVIDER) -> None:
+    """The last self-check: status, reason, since when, last ok."""
+    invoke.run("GET", f"{_assistant(provider)}/health")
+
+
+@assistant_app.command("session")
+def assistant_session(provider: str = _PROVIDER) -> None:
+    """The assistant's session and whether the Agents tier can run it."""
+    invoke.run("GET", f"{_assistant(provider)}/session")

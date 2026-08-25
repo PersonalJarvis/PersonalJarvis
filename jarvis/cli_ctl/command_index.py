@@ -155,6 +155,12 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "server test <url>",
         "server log [--lines]",
         "server env-guide [--os]",
+        "assistant setup",
+        "assistant diagnose",
+        "assistant test [--role]",
+        "assistant benchmarks [--refresh]",
+        "assistant health",
+        "assistant session",
     ),
     "marketplace": (
         "install <id>",
