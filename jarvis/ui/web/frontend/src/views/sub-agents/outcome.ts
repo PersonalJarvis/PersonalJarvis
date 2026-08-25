@@ -514,3 +514,65 @@ export function buildStory(events: EventEnvelope[]): StoryEntry[] {
   }
   return story;
 }
+
+/** A run of consecutive tool calls, folded into one timeline block. */
+export interface ActionsBlock {
+  kind: "actions";
+  id: string;
+  ts_ms: number;
+  end_ms: number;
+  entries: StoryEntry[];
+  /** Tool name → how often it ran, insertion-ordered by first use. */
+  counts: Array<{ tool: string; n: number }>;
+}
+
+export type StoryBlock = { kind: "entry"; entry: StoryEntry } | ActionsBlock;
+
+/**
+ * Fold the story for reading: a worker that ran sixty tools in a row becomes
+ * ONE "ran 60 actions" block (expandable), while every narration, verdict,
+ * kill and terminal event keeps its own line. Also drops a kill's or terminal
+ * event's detail text when it merely repeats the note just before it — the
+ * same upstream error arrives three times in a real quota failure.
+ */
+export function groupStory(story: StoryEntry[]): StoryBlock[] {
+  const blocks: StoryBlock[] = [];
+  let run: StoryEntry[] = [];
+  let lastText = "";
+
+  const flush = () => {
+    if (run.length === 0) return;
+    const counts: Array<{ tool: string; n: number }> = [];
+    for (const e of run) {
+      const tool = e.tool ?? "tool";
+      const hit = counts.find((c) => c.tool === tool);
+      if (hit) hit.n += 1;
+      else counts.push({ tool, n: 1 });
+    }
+    blocks.push({
+      kind: "actions",
+      id: `actions-${run[0].id}`,
+      ts_ms: run[0].ts_ms,
+      end_ms: run[run.length - 1].ts_ms,
+      entries: run,
+      counts,
+    });
+    run = [];
+  };
+
+  for (const entry of story) {
+    if (entry.kind === "tool") {
+      run.push(entry);
+      continue;
+    }
+    flush();
+    let text = entry.text;
+    if ((entry.kind === "killed" || entry.kind === "failed") && text && text === lastText) {
+      text = "";
+    }
+    if (entry.text) lastText = entry.text;
+    blocks.push({ kind: "entry", entry: text === entry.text ? entry : { ...entry, text } });
+  }
+  flush();
+  return blocks;
+}

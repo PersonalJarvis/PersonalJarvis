@@ -5,6 +5,7 @@ import {
   buildStory,
   classifyNote,
   deriveOutcome,
+  groupStory,
   missionIdFromTraceId,
   splitReason,
 } from "./outcome";
@@ -173,6 +174,45 @@ describe("buildStory", () => {
     ]);
     expect(story[0].text).toBe("jarvis/ui/web/frontend/src");
     expect(story[0].iteration).toBe(0);
+  });
+});
+
+describe("groupStory", () => {
+  it("folds a run of tool calls into one block and drops repeated kill text", () => {
+    const wid = "m::t::iter0";
+    const note = (text: string) =>
+      env(
+        { event_type: "WorkerProgress", worker_id: wid, pct: null, note: text, stalled: false, tokens_so_far: 0, cost_so_far: 0 },
+        { worker_id: wid, source_actor: "worker" },
+      );
+    const blocks = groupStory(
+      buildStory([
+        note("Grep: a"),
+        note("Read: b"),
+        note("Grep: c"),
+        note("Limit reached."),
+        env({ event_type: "WorkerKilled", worker_id: wid, reason: "budget", error_detail: "Limit reached." }, { worker_id: wid }),
+        env({ event_type: "MissionFailed", reason: "task_error", error_class: null, last_state: "RUNNING", partial_artifacts: [], error_detail: "Limit reached." }),
+      ]),
+    );
+    expect(blocks.map((b) => (b.kind === "actions" ? `actions:${b.entries.length}` : b.entry.kind))).toEqual([
+      "actions:3",
+      "narration",
+      "killed",
+      "failed",
+    ]);
+    const actions = blocks[0];
+    if (actions.kind !== "actions") throw new Error("expected an actions block");
+    expect(actions.counts).toEqual([
+      { tool: "Grep", n: 2 },
+      { tool: "Read", n: 1 },
+    ]);
+    // The kill and the terminal event repeat the note verbatim — the fold
+    // blanks their text so the same sentence is not printed three times.
+    const killed = blocks[2];
+    const failed = blocks[3];
+    expect(killed.kind === "entry" && killed.entry.text).toBe("");
+    expect(failed.kind === "entry" && failed.entry.text).toBe("");
   });
 });
 

@@ -4,8 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SubAgentNode } from "@/store/jarvisAgents";
-import { AgentInsight, outcomeLines, reasonLabel, requestTitle } from "./AgentInsight";
-import { deriveOutcome } from "./outcome";
+import { AgentInsight, requestTitle } from "./AgentInsight";
 
 const MISSION_ID = "019fecaa-5a92-7360-a784-829281639cf6";
 const WID = "019fecaa-5a92::019fecaa-5aa5::iter0";
@@ -23,6 +22,13 @@ function envelope(payload: Record<string, unknown>, n: number, workerId: string 
     payload,
   };
 }
+
+const note = (n: number, text: string) =>
+  envelope(
+    { event_type: "WorkerProgress", worker_id: WID, pct: null, note: text, stalled: false, tokens_so_far: 0, cost_so_far: 0 },
+    n,
+    WID,
+  );
 
 const DETAIL = {
   mission: {
@@ -43,14 +49,14 @@ const DETAIL = {
       3,
       WID,
     ),
-    envelope(
-      { event_type: "WorkerProgress", worker_id: WID, pct: null, note: "Grep: jarvis/ui", stalled: false, tokens_so_far: 0, cost_so_far: 0 },
-      4,
-      WID,
-    ),
+    note(4, "I will look at the workspace first."),
+    note(5, "Grep: jarvis/ui"),
+    note(6, "Read: C:/x.py"),
+    note(7, "Grep: jarvis/core"),
+    note(8, "You've reached your limit."),
     envelope(
       { event_type: "WorkerKilled", worker_id: WID, reason: "budget", error_class: "provider_quota", error_detail: "You've reached your limit." },
-      5,
+      9,
       WID,
     ),
     envelope(
@@ -63,7 +69,7 @@ const DETAIL = {
         error_detail: "You've reached your limit.",
         failed_provider: "claude",
       },
-      6,
+      10,
     ),
   ],
   verdicts: [],
@@ -136,8 +142,6 @@ function renderWithQuery(ui: ReactElement) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-const identity = (key: string) => key;
-
 describe("AgentInsight", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -158,24 +162,33 @@ describe("AgentInsight", () => {
     vi.unstubAllGlobals();
   });
 
-  it("explains a quota failure in plain words, with the provider's own text", async () => {
+  it("explains a quota failure in one plain sentence and quotes the provider once", async () => {
     renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
 
-    // "Did not deliver" shows from the row's own status before the record
-    // arrives; the reason line is the first thing that needs the fetch.
     expect(await screen.findByText("Did not deliver")).toBeTruthy();
-    expect(await screen.findByText("The worker's task failed")).toBeTruthy();
-    // The classified cause and the raw upstream message.
-    expect(screen.getByText(/Provider quota exhausted/)).toBeTruthy();
-    // Quoted in the verdict AND in the story's kill entry — both on purpose.
-    expect(screen.getAllByText("You've reached your limit.").length).toBeGreaterThanOrEqual(2);
-    // The kill and where in the pipeline it broke.
-    // Rounds are 1-based for people; the worker id says iter0.
-    expect(screen.getByText("Worker (round 1) stopped")).toBeTruthy();
-    expect(screen.getByText("budget or provider quota")).toBeTruthy();
-    // The story timeline lands on the failure by default for a failed run.
-    expect(await screen.findByText("Worker started · claude · round 1")).toBeTruthy();
-    expect(screen.getByText("Grep")).toBeTruthy();
+    expect(
+      await screen.findByText(/stopped because the provider \(claude\) ran out of quota/i),
+    ).toBeTruthy();
+    // Quoted in the verdict card; the timeline's kill and failure rows do
+    // NOT repeat it (the note before them already said it).
+    expect(screen.getByText("Provider said")).toBeTruthy();
+    expect(screen.getAllByText("You've reached your limit.")).toHaveLength(2);
+    // No jargon table: the raw tokens live behind "Details".
+    expect(screen.queryByText("Broke during")).toBeNull();
+    expect(screen.getByText(/task_error · provider_quota · CRITIQUING/)).toBeTruthy();
+  });
+
+  it("folds consecutive tool calls into one timeline block", async () => {
+    renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
+    await screen.findByText("Did not deliver");
+
+    const fold = await screen.findByRole("button", { name: /Ran 3 actions/ });
+    expect(screen.getByText("×2")).toBeTruthy(); // Grep ran twice
+    expect(screen.queryByText("jarvis/core")).toBeNull();
+    fireEvent.click(fold);
+    expect(screen.getByText("jarvis/core")).toBeTruthy();
+    // The worker's own words stand alone as a quote.
+    expect(screen.getByText("I will look at the workspace first.")).toBeTruthy();
   });
 
   it("hands the archived output slug to the Artifacts section", async () => {
@@ -188,15 +201,14 @@ describe("AgentInsight", () => {
     expect(opened).toEqual(["mission_019fecaa-5a92"]);
   });
 
-  it("shows the reconstructed transcript with reasoning and a failed tool step", async () => {
+  it("keeps the worker transcript folded away under the timeline", async () => {
     renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
     await screen.findByText("Did not deliver");
 
-    fireEvent.click(await screen.findByRole("tab", { name: /transcript/i }));
-    expect(await screen.findByText("I will look at the workspace first.")).toBeTruthy();
+    const fold = await screen.findByRole("button", { name: /transcript · 2 steps/i });
+    expect(screen.queryByText("quota")).toBeNull();
+    fireEvent.click(fold);
     expect(screen.getByText("quota")).toBeTruthy();
-    // The header's status dot says "Failed" too; the step adds a second one.
-    expect(screen.getAllByText("Failed", { selector: "span" }).length).toBeGreaterThanOrEqual(2);
   });
 
   it("goes back to the board", async () => {
@@ -207,33 +219,10 @@ describe("AgentInsight", () => {
   });
 });
 
-describe("outcomeLines", () => {
-  it("lists nothing beyond progress for a run still working", () => {
-    const outcome = deriveOutcome(DETAIL.events.slice(0, 4) as never, "en");
-    const lines = outcomeLines(agentNode({ status: "running" }), outcome, identity);
-    expect(lines.map((l) => l.id)).toEqual(["notes"]);
-  });
-
-  it("orders a failure as reason → cause → provider text → kills → state", () => {
-    const outcome = deriveOutcome(DETAIL.events as never, "en");
-    const lines = outcomeLines(agentNode(), outcome, identity);
-    expect(lines.map((l) => l.id)).toEqual(["reason", "class", "detail", "provider", `kill-${WID}`, "state"]);
-    expect(lines.find((l) => l.id === "detail")?.mono).toBe(true);
-  });
-});
-
-describe("requestTitle / reasonLabel", () => {
+describe("requestTitle", () => {
   it("takes the first paragraph and clamps it", () => {
     expect(requestTitle("Do this\n\nSupporting context: …", "none")).toBe("Do this");
     expect(requestTitle("   ", "none")).toBe("none");
     expect(requestTitle("x".repeat(300), "none")).toHaveLength(178);
-  });
-
-  it("falls back to the raw token for an unknown reason and keeps the tail", () => {
-    expect(reasonLabel("decompose_failed: no brain", identity)).toBe(
-      "subagents_view.reason.decompose_failed (no brain)",
-    );
-    expect(reasonLabel("something_new", identity)).toBe("something_new");
-    expect(reasonLabel(null, identity)).toBeNull();
   });
 });

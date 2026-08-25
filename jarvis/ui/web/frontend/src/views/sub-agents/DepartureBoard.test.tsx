@@ -76,31 +76,25 @@ describe("DepartureBoard cancellation status", () => {
 });
 
 describe("DepartureBoard row click", () => {
-  it("opens the run's insight page from the row and keeps the chevron for the inline peek", () => {
+  it("opens the run's insight page from EVERY row, with or without tool calls", () => {
     const opened: string[] = [];
-    // A finished run with tool calls: it has a drilldown but is not
-    // auto-expanded (only running rows are), so the chevron's effect is visible.
-    const agent = node({
-      trace_id: "m-live",
+    const withTools = node({
+      trace_id: "m-tools",
       status: "completed",
-      utterance: "Live mission",
-      tool_calls: [
-        { tool_name: "Read", args_preview: "x.py", started_ns: 1, status: "completed" },
-      ],
+      utterance: "Tools mission",
+      tool_calls: [{ tool_name: "Read", args_preview: "x.py", started_ns: 2, status: "completed" }],
     });
-    render(<DepartureBoard agents={[agent]} onOpen={(a) => opened.push(a.trace_id)} />);
+    const bare = node({ trace_id: "m-bare", status: "completed", utterance: "Bare mission", started_ns: 1 });
+    render(<DepartureBoard agents={[withTools, bare]} onOpen={(a) => opened.push(a.trace_id)} />);
 
-    const row = screen.getByRole("row", { name: "Live mission" });
-    expect(screen.queryByText("x.py")).toBeNull();
-    fireEvent.click(row);
-    expect(opened).toEqual(["m-live"]);
-    expect(screen.queryByText("x.py")).toBeNull();
+    fireEvent.click(screen.getByRole("row", { name: "Tools mission" }));
+    fireEvent.click(screen.getByRole("row", { name: "Bare mission" }));
+    expect(opened).toEqual(["m-tools", "m-bare"]);
 
-    // The chevron is its own control: it expands the row in place and does
-    // NOT navigate — clicking it must not add a second "opened" entry.
-    fireEvent.click(within(row).getByRole("button", { name: /expand row/i }));
-    expect(opened).toEqual(["m-live"]);
-    expect(screen.getByText("x.py")).toBeTruthy();
+    // Nothing expands in place any more — the inline peek that only SOME
+    // rows had is gone, so no tool-call detail leaks into the board.
+    expect(screen.queryByText("x.py")).toBeNull();
+    expect(screen.queryByRole("button", { name: /expand row/i })).toBeNull();
   });
 
   it("shows the archived terminal reason in the result column of a failed row", () => {
@@ -131,8 +125,8 @@ describe("DepartureBoard empty state", () => {
   });
 });
 
-describe("DepartureBoard drilldown", () => {
-  it("opens a running agent's tool calls and details inline", () => {
+describe("DepartureBoard without a page to open", () => {
+  it("keeps every row plain and unclickable, running ones included", () => {
     render(
       <DepartureBoard
         agents={[
@@ -142,52 +136,19 @@ describe("DepartureBoard drilldown", () => {
             utterance: "Audit the release notes",
             duration_ms: null,
             error: null,
-            context_hints: ["docs/CHANGELOG.md"],
             tool_calls: [
-              {
-                tool_name: "Grep",
-                args_preview: "pattern=BUG-",
-                started_ns: 1,
-                output_preview: "",
-                status: "completed",
-                duration_ms: 1200,
-              },
+              { tool_name: "Grep", args_preview: "pattern=BUG-", started_ns: 1, status: "completed", duration_ms: 1200 },
             ],
           }),
         ]}
       />,
     );
 
-    // A running agent with tool calls opens itself — the operator should not
-    // have to click to see what is happening right now.
-    expect(screen.getByText("Grep")).toBeTruthy();
-    expect(screen.getByText("pattern=BUG-")).toBeTruthy();
-    expect(screen.getByText("docs/CHANGELOG.md")).toBeTruthy();
-    expect(screen.getByText(/trace m-running/)).toBeTruthy();
-
-    // The drilldown is a table row, so the grid it sits in stays valid.
-    const rows = screen.getAllByRole("row");
-    expect(rows.length).toBeGreaterThan(2);
-  });
-
-  it("leaves an agent with nothing to show collapsed and unclickable", () => {
-    render(
-      <DepartureBoard
-        agents={[
-          node({
-            trace_id: "m-bare",
-            status: "completed",
-            utterance: "Nothing to drill into",
-            error: null,
-            prompts: [],
-            tool_calls: [],
-          }),
-        ]}
-      />,
-    );
-
-    const row = screen.getByRole("row", { name: /nothing to drill into/i });
+    // The board no longer expands anything in place: a running agent's tool
+    // calls live on its insight page, and without `onOpen` there is no page.
+    const row = screen.getByRole("row", { name: /audit the release notes/i });
     expect(row.getAttribute("tabindex")).toBeNull();
-    expect(screen.queryByText(/trace m-bare/)).toBeNull();
+    expect(screen.queryByText("pattern=BUG-")).toBeNull();
+    expect(screen.getAllByRole("row")).toHaveLength(2); // header + the one agent
   });
 });

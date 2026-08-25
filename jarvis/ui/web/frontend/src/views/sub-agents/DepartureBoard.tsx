@@ -10,29 +10,19 @@
  * still wearing a look no other section wears. A finished agent said "arrived",
  * the way a train does; it now says "done", the way a task does.
  *
- * The content is unchanged: the same five numbers, the same seven columns, the
- * same inline drilldown per row. What changed is that they are rendered by the
- * shared primitives and that every visible string goes through i18n — the old
- * board hard-coded its English, so a German or Spanish UI still read "Tool
- * calls / In progress / No agents are running right now."
+ * Every row opens the run's own page (`AgentInsight`) — the same way for every
+ * row. The board used to expand SOME rows in place (only those the registry
+ * still held tool calls for, or that carried a summary), which read as "why
+ * does this one have an arrow and that one not?"; the inline drilldown is gone
+ * and the chevron now means one thing everywhere: there is a page behind this.
  *
  * The brand comes from `agentBrand`, so the board follows whatever wake word is
  * configured rather than a product name (see lib/agentBrand.ts).
  */
-import { Fragment, useEffect, useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  Bot,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleAlert,
-  Radio,
-  TerminalSquare,
-  Wrench,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronRight, CircleAlert, Radio, Wrench } from "lucide-react";
 
-import type { SubAgentNode, ToolCallEntry } from "@/store/jarvisAgents";
+import type { SubAgentNode } from "@/store/jarvisAgents";
 import type { SectionHealth } from "@/hooks/useProviders";
 import { ExplicitSpawnHint } from "@/components/ExplicitSpawnHint";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -66,14 +56,6 @@ const STATUS_TONE: Record<SubAgentNode["status"], "busy" | "ok" | "error" | "war
   cancelled: "warn",
 };
 
-const TOOL_STATUS_TONE: Record<ToolCallEntry["status"], "busy" | "ok" | "error"> = {
-  running: "busy",
-  completed: "ok",
-  failed: "error",
-};
-
-const formatRelative = formatDuration;
-
 function startedMs(node: SubAgentNode): number {
   return node.started_ns > 1_000_000_000_000_000
     ? Math.floor(node.started_ns / 1_000_000)
@@ -81,8 +63,8 @@ function startedMs(node: SubAgentNode): number {
 }
 
 function runtimeLabel(node: SubAgentNode, nowMs: number): string {
-  if (node.duration_ms != null) return formatRelative(node.duration_ms);
-  if (node.status === "running") return formatRelative(nowMs - startedMs(node));
+  if (node.duration_ms != null) return formatDuration(node.duration_ms);
+  if (node.status === "running") return formatDuration(nowMs - startedMs(node));
   return "—";
 }
 
@@ -149,26 +131,11 @@ export function DepartureBoard({
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
-
-  useEffect(() => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      let changed = false;
-      for (const agent of agents) {
-        if (agent.status === "running" && agent.tool_calls.length > 0 && !next.has(agent.trace_id)) {
-          next.add(agent.trace_id);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [agents]);
 
   const sortedAgents = useMemo(
     () => [...agents].sort((a, b) => b.started_ns - a.started_ns),
@@ -184,22 +151,14 @@ export function DepartureBoard({
     0,
   );
 
-  const toggle = (traceId: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(traceId)) next.delete(traceId);
-      else next.add(traceId);
-      return next;
-    });
-
   const columns: Column[] = [
-    { id: "expand", label: t("subagents_view.col_expand"), width: "22px", srOnly: true },
     { id: "agent", label: t("subagents_view.col_agent"), width: "minmax(0, 1.1fr)" },
     { id: "task", label: t("subagents_view.col_task"), width: "minmax(0, 2.4fr)" },
     { id: "status", label: t("subagents_view.col_status"), width: "124px" },
     { id: "tools", label: t("subagents_view.col_tools"), width: "62px", align: "right" },
     { id: "runtime", label: t("subagents_view.col_runtime"), width: "76px", align: "right" },
     { id: "result", label: t("subagents_view.col_result"), width: "minmax(0, 1.4fr)" },
+    { id: "open", label: t("subagents_view.col_open"), width: "28px", srOnly: true },
   ];
 
   return (
@@ -291,7 +250,7 @@ export function DepartureBoard({
             <div className="px-4 pt-4">
               <PanelHeader
                 title={t("subagents_view.board_title")}
-                subtitle={t("subagents_view.board_subtitle")}
+                subtitle={t(onOpen ? "subagents_view.board_subtitle_open" : "subagents_view.board_subtitle")}
                 actions={
                   <StatusDot
                     tone={activeCount > 0 ? "busy" : "off"}
@@ -336,8 +295,6 @@ export function DepartureBoard({
                         agent={agent}
                         columns={columns}
                         nowMs={nowMs}
-                        expanded={expanded.has(agent.trace_id)}
-                        onToggle={() => toggle(agent.trace_id)}
                         onOpen={onOpen ? () => onOpen(agent) : undefined}
                         t={t}
                       />
@@ -382,195 +339,64 @@ function Notice({
 }
 
 // ---------------------------------------------------------------------------
-// One agent, plus its drilldown
+// One agent — a row that opens its page
 // ---------------------------------------------------------------------------
 
 function AgentRow({
   agent,
   columns,
   nowMs,
-  expanded,
-  onToggle,
   onOpen,
   t,
 }: {
   agent: SubAgentNode;
   columns: Column[];
   nowMs: number;
-  expanded: boolean;
-  onToggle: () => void;
   onOpen?: () => void;
   t: (key: string) => string;
 }) {
   const assistantName = useEventStore((s) => s.assistantName);
-  const hasDrilldown = agent.tool_calls.length > 0 || !!agent.error || agent.prompts.length > 0;
   const task = taskLabel(agent, t);
   const result = resultLabel(agent, t);
 
-  // The row itself opens the run's insight page; the chevron keeps the quick
-  // inline peek at live tool calls for a run that is still working. Without an
-  // `onOpen` (the board rendered on its own) the row falls back to the peek.
-  const rowClick = onOpen ?? (hasDrilldown ? onToggle : undefined);
-
   return (
-    <Fragment>
-      <TableRow
-        columns={columns}
-        onClick={rowClick}
-        selected={expanded}
-        ariaLabel={task}
-      >
-        <Cell className="text-muted-foreground" stop={hasDrilldown && !!onOpen}>
-          {hasDrilldown ? (
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-expanded={expanded}
-              aria-label={t("subagents_view.col_expand")}
-              className="grid h-6 w-6 place-items-center rounded-md hover:bg-accent hover:text-foreground"
-            >
-              {expanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-            </button>
-          ) : onOpen ? (
-            <ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-60" />
-          ) : null}
-        </Cell>
-        <Cell>
-          <div className="truncate text-[15px] font-medium text-foreground">
-            {displayAgentName(agent, assistantName, t)}
-          </div>
-          <div className="truncate text-xs text-muted-foreground">
-            {agent.kind === "harness"
-              ? t("subagents_view.role_worker_hint")
-              : t("subagents_view.role_agent_hint")}
-          </div>
-        </Cell>
-        <Cell muted>
-          <span className="block truncate" title={task}>
-            {task}
-          </span>
-        </Cell>
-        <Cell>
-          <StatusDot
-            tone={STATUS_TONE[agent.status]}
-            pulse={agent.status === "running"}
-            label={t(`subagents_view.status.${agent.status}`)}
-          />
-        </Cell>
-        <Cell align="right" muted>
-          <span className="tabular-nums">{agent.tool_calls.length}</span>
-        </Cell>
-        <Cell align="right" muted>
-          <span className="tabular-nums">{runtimeLabel(agent, nowMs)}</span>
-        </Cell>
-        <Cell muted>
-          <span className="block truncate" title={result}>
-            {result}
-          </span>
-        </Cell>
-      </TableRow>
-
-      {expanded && hasDrilldown && <Drilldown agent={agent} task={task} t={t} />}
-    </Fragment>
-  );
-}
-
-/**
- * The expanded half of a row.
- *
- * `role="row"` with a single `role="cell"` rather than a bare `<div>`: the
- * parent is `role="table"`, which accepts only rows as children, and a div
- * table has no colspan to widen a cell with.
- */
-function Drilldown({
-  agent,
-  task,
-  t,
-}: {
-  agent: SubAgentNode;
-  task: string;
-  t: (key: string) => string;
-}) {
-  const assistantName = useEventStore((s) => s.assistantName);
-  const failure = failureLabel(agent, t);
-
-  return (
-    <div role="row" className="border-b border-border/70 bg-sheen/[0.04] last:border-b-0">
-      <div role="cell" className="px-3 py-3.5">
-        <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
-          <Panel className="bg-card/60">
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
-              <TerminalSquare className="h-3.5 w-3.5 text-primary" />
-              {t("subagents_view.drill_tools")}
-            </div>
-            {agent.tool_calls.length > 0 ? (
-              <div className="divide-y divide-border/70">
-                {agent.tool_calls.map((call, idx) => (
-                  <ToolCallRow key={`${agent.trace_id}-${idx}`} call={call} t={t} />
-                ))}
-              </div>
-            ) : (
-              <div className="px-3 py-3 text-sm text-muted-foreground">
-                {t("subagents_view.drill_tools_empty")}
-              </div>
-            )}
-          </Panel>
-
-          <Panel className="bg-card/60">
-            <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
-              {fill(t("subagents_view.drill_details"), { agent: agentBrand(assistantName) })}
-            </div>
-            <div className="space-y-2.5 px-3 py-3 text-sm text-muted-foreground">
-              <p className="line-clamp-4 text-foreground/85">{task}</p>
-              {agent.context_hints.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {agent.context_hints.slice(0, 5).map((hint) => (
-                    <span
-                      key={hint}
-                      className="inline-flex h-6 items-center rounded-md border border-border bg-card/60 px-2 text-[11px] text-foreground/80"
-                    >
-                      {hint}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {failure && <p className="text-destructive">{failure}</p>}
-              <p className="font-mono text-[11px] text-muted-foreground/70">
-                {fill(t("subagents_view.drill_trace"), { trace: agent.trace_id.slice(0, 10) })}
-              </p>
-            </div>
-          </Panel>
+    <TableRow columns={columns} onClick={onOpen} ariaLabel={task}>
+      <Cell>
+        <div className="truncate text-[15px] font-medium text-foreground">
+          {displayAgentName(agent, assistantName, t)}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function ToolCallRow({ call, t }: { call: ToolCallEntry; t: (key: string) => string }) {
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_64px_96px] items-center gap-3 px-3 py-2.5 text-sm">
-      <div className="min-w-0">
-        <div className="truncate font-medium text-foreground">
-          {call.tool_name || t("subagents_view.tool_unnamed")}
+        <div className="truncate text-xs text-muted-foreground">
+          {agent.kind === "harness"
+            ? t("subagents_view.role_worker_hint")
+            : t("subagents_view.role_agent_hint")}
         </div>
-        <div className="truncate text-xs text-muted-foreground" title={call.args_preview}>
-          {call.args_preview || call.output_preview || "—"}
-        </div>
-      </div>
-      <div className="text-right text-xs tabular-nums text-muted-foreground">
-        {call.duration_ms != null ? formatRelative(call.duration_ms) : "—"}
-      </div>
-      <div className="flex justify-end">
+      </Cell>
+      <Cell muted>
+        <span className="block truncate" title={task}>
+          {task}
+        </span>
+      </Cell>
+      <Cell>
         <StatusDot
-          tone={TOOL_STATUS_TONE[call.status]}
-          pulse={call.status === "running"}
-          label={t(`subagents_view.tool_status.${call.status}`)}
+          tone={STATUS_TONE[agent.status]}
+          pulse={agent.status === "running"}
+          label={t(`subagents_view.status.${agent.status}`)}
         />
-      </div>
-    </div>
+      </Cell>
+      <Cell align="right" muted>
+        <span className="tabular-nums">{agent.tool_calls.length}</span>
+      </Cell>
+      <Cell align="right" muted>
+        <span className="tabular-nums">{runtimeLabel(agent, nowMs)}</span>
+      </Cell>
+      <Cell muted>
+        <span className="block truncate" title={result}>
+          {result}
+        </span>
+      </Cell>
+      <Cell align="right" className="text-muted-foreground/50 group-hover:text-foreground">
+        {onOpen ? <ChevronRight className="h-4 w-4" aria-hidden /> : null}
+      </Cell>
+    </TableRow>
   );
 }
