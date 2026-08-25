@@ -130,17 +130,24 @@ else
   )
 fi
 
+# The windowed target is named PersonalJarvis in jarvis.spec, because `Jarvis`
+# and `jarvis` are the SAME path on Windows and on a default macOS volume and
+# the second executable would overwrite the first. Linux has no such problem,
+# but the freeze is shared, so accept either name rather than pinning one.
+GUI_EXE_CANDIDATES=("PersonalJarvis" "Jarvis")
+GUI_EXE_NAME=""
 if building; then
-  [ -x "${FREEZE_DIR}/Jarvis" ] \
-    || die "PyInstaller did not produce '${FREEZE_DIR}/Jarvis' (the GUI launcher target in jarvis.spec)"
-  if [ ! -e "${FREEZE_DIR}/jarvis" ]; then
-    # The contract asks for two executables sharing one COLLECT. On Linux they
-    # are the same program (PyInstaller's console flag has no meaning here), so
-    # a link keeps the AppImage correct while the spec catches up - but say so
-    # loudly, because on Windows and macOS the missing target is a real gap.
-    log "WARNING: '${FREEZE_DIR}/jarvis' is missing - jarvis.spec has no second, console CLI EXE target. Linking it to the GUI executable so the CLI entry exists."
-    run ln -s Jarvis "${FREEZE_DIR}/jarvis"
-  fi
+  for candidate in "${GUI_EXE_CANDIDATES[@]}"; do
+    if [ -x "${FREEZE_DIR}/${candidate}" ]; then
+      GUI_EXE_NAME="${candidate}"
+      break
+    fi
+  done
+  [ -n "${GUI_EXE_NAME}" ] \
+    || die "PyInstaller produced none of ${GUI_EXE_CANDIDATES[*]} in '${FREEZE_DIR}' - jarvis.spec has no windowed EXE target"
+  log "windowed executable: ${GUI_EXE_NAME}"
+else
+  GUI_EXE_NAME="PersonalJarvis"
 fi
 
 # --- 3. AppDir --------------------------------------------------------------
@@ -157,8 +164,24 @@ if building; then
   # the executable" layout keeps working without a wrapper. cp -a preserves the
   # executable bits and the symlinks inside the freeze.
   cp -a "${FREEZE_DIR}/." "${APPDIR}/usr/bin/"
+
+  # AppRun and the .desktop entry address the launcher as usr/bin/Jarvis, which
+  # is the name the release contract uses. A symlink keeps that stable whatever
+  # jarvis.spec calls the binary; PyInstaller resolves its _internal directory
+  # through /proc/self/exe, which follows the link into the same directory.
+  if [ ! -e "${APPDIR}/usr/bin/Jarvis" ]; then
+    ln -s "${GUI_EXE_NAME}" "${APPDIR}/usr/bin/Jarvis"
+  fi
+  if [ ! -e "${APPDIR}/usr/bin/jarvis" ]; then
+    # On Linux both targets are the same program - PyInstaller's console flag
+    # has no meaning here - so a link keeps the CLI entry the contract asks for
+    # even when the spec ships only one executable. Say it loudly: on Windows
+    # and macOS a missing console target is a real gap, not a cosmetic one.
+    log "WARNING: the freeze has no 'jarvis' executable - jarvis.spec has no console CLI EXE target. Linking it to ${GUI_EXE_NAME} so the CLI entry exists."
+    ln -s "${GUI_EXE_NAME}" "${APPDIR}/usr/bin/jarvis"
+  fi
 else
-  log "[dry-run] would copy ${FREEZE_DIR}/. into ${APPDIR}/usr/bin/"
+  log "[dry-run] would copy ${FREEZE_DIR}/. into ${APPDIR}/usr/bin/ and link Jarvis/jarvis to ${GUI_EXE_NAME}"
 fi
 
 run "${PYTHON}" "${SCRIPT_DIR}/make_desktop_entry.py" \

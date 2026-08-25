@@ -138,6 +138,17 @@ if building; then
   [ -d "${APP_BUNDLE}" ] || die "PyInstaller did not produce '${APP_BUNDLE}'. jarvis.spec must contain a darwin BUNDLE(...) block that names the app '${APP_NAME}'."
   [ -x "${APP_BUNDLE}/Contents/MacOS/jarvis" ] \
     || die "'${APP_BUNDLE}/Contents/MacOS/jarvis' is missing. The bundle must ship the console CLI entry so 'jarvis serve' works from a native install."
+  # CFBundleExecutable must exist or the app cannot launch at all, and Finder
+  # reports it as damaged rather than naming the missing file.
+  BUNDLE_EXECUTABLE="$(
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+      "${APP_BUNDLE}/Contents/Info.plist" 2>/dev/null || true
+  )"
+  [ -n "${BUNDLE_EXECUTABLE}" ] \
+    || die "'${APP_BUNDLE}/Contents/Info.plist' has no CFBundleExecutable"
+  [ -x "${APP_BUNDLE}/Contents/MacOS/${BUNDLE_EXECUTABLE}" ] \
+    || die "Info.plist names '${BUNDLE_EXECUTABLE}' as CFBundleExecutable, but Contents/MacOS/${BUNDLE_EXECUTABLE} does not exist"
+  log "bundle executable: ${BUNDLE_EXECUTABLE}"
 fi
 log "app bundle: ${APP_BUNDLE}"
 
