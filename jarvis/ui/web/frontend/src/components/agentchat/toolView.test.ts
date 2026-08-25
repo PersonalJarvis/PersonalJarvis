@@ -4,7 +4,6 @@ import {
   agentToolView,
   formatTokens,
   inputSummary,
-  inputTokens,
   outputTokens,
 } from "@/components/agentchat/toolView";
 
@@ -76,23 +75,7 @@ describe("token formatting", () => {
   it("reads either usage shape", () => {
     expect(outputTokens({ output_tokens: 5 })).toBe(5);
     expect(outputTokens({ output: 7 })).toBe(7);
-    expect(inputTokens({ prompt_tokens: 9 })).toBe(9);
     expect(outputTokens(null)).toBeNull();
     expect(outputTokens({})).toBeNull();
-  });
-
-  it("counts the cache into the input side, and never twice", () => {
-    // Anthropic keeps the cached part beside input_tokens; both are paid for.
-    expect(
-      inputTokens({
-        input_tokens: 2,
-        cache_creation_input_tokens: 30420,
-        cache_read_input_tokens: 21355,
-      }),
-    ).toBe(51777);
-    // The OpenAI shape counts cached tokens INSIDE prompt_tokens already.
-    expect(inputTokens({ prompt_tokens: 900, cached_input_tokens: 800 })).toBe(900);
-    expect(inputTokens({ cache_read_input_tokens: 40 })).toBe(40);
-    expect(inputTokens({})).toBeNull();
   });
 });

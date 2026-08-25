@@ -751,6 +751,13 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
             mid = st.current_message_id or uuid.uuid4().hex
             st.current_message_id = mid
             if delta.get("type") == "text_delta" and delta.get("text"):
+                # Streamed text counts as text the timeline already has. Without
+                # this, a turn whose closing ``assistant`` message never arrives
+                # (a kill, a crash, a truncated stream) fell through to the
+                # ``result`` fallback below and emitted the SAME answer a second
+                # time under a new message id — the duplicated output the
+                # maintainer saw on 2026-08-25. The Codex shape already does it.
+                st.emitted_text = True
                 out.append(
                     make_event(
                         "text_delta",

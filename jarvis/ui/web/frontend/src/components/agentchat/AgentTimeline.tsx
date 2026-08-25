@@ -1,30 +1,28 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowDown,
-  ArrowUp,
+  Ban,
   Check,
   ChevronRight,
   CircleAlert,
-  Clock,
+  FileText,
+  ImageIcon,
   ShieldQuestion,
   X,
 } from "lucide-react";
 
+import { LiveCore } from "@/components/LiveCore";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { formatThoughtDuration } from "@/components/home/TurnSteps";
-import {
-  agentToolView,
-  formatTokens,
-  inputTokens,
-  outputTokens,
-} from "@/components/agentchat/toolView";
+import { agentToolView, formatTokens, outputTokens } from "@/components/agentchat/toolView";
 import type {
   ReasoningBlock,
   TextBlock,
   TimelineItem,
   ToolBlock,
+  TurnBlock,
   TurnItem,
 } from "@/components/agentchat/reduce";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
@@ -37,19 +35,38 @@ import { cn } from "@/lib/utils";
  * right, each assistant turn flush-left under a byline that says who
  * answered (the provider's mark, the model, the effort).
  *
- * A turn hangs off a hairline rail that GLOWS while the turn runs, so the
- * whole block reads as one live unit instead of a list of disconnected
- * rows. On the rail, in the order they happened: what the model thought
- * (folded to "Thought for Ns"; a vendor that redacts its thinking still
- * gets the row, because the time is the fact), the tool calls under the
- * names the agent's own log uses, approval cards where the runner asked,
- * and the answer as Markdown.
+ * Under the byline, in the order they happened: ONE row for everything the
+ * model thought (folded to "Thought for Ns"; a vendor that redacts its
+ * thinking still gets the row, because the time is the fact), the tool calls
+ * under the names the agent's own log uses, approval cards where the runner
+ * asked, and the answer as Markdown.
  *
- * While it works there is ALWAYS a line saying so (maintainer, 2026-08-23:
- * "man sieht nicht, dass es nachdenkt"): a turning glyph, a word that
- * changes as the minutes pass, the elapsed time and the tokens counted so
- * far — the Claude CLI's "✳ Vibing… (1m 57s · ↓ 4.8k tokens)", in the
- * product's own colours.
+ * Three rules decide how all of that is drawn (maintainer, 2026-08-25:
+ * it looks sloppy, odd boxes everywhere, and a strange stripe down the side):
+ *
+ * 1. ONE container per turn. Nothing inside draws a box of its own — a
+ *    tool call is a row, an opened detail is a hairline and some text.
+ *    Boxes inside boxes inside boxes is what made the column look busy,
+ *    and a nested frame carries no information the indent does not.
+ *    The turn itself is held together by its byline and the spacing; an
+ *    earlier version hung it off a glowing hairline rail, which read as a
+ *    stray stripe running down the transcript.
+ * 2. The turn says it is thinking exactly ONCE. Every stretch of thought
+ *    used to get its own row, stacked above a live line saying the same
+ *    thing again; the finished thoughts now fold into a single row and the
+ *    running one is left to the live line alone.
+ * 3. The turn ALWAYS says which state it is in. While it runs: the live
+ *    core, a word that changes as the minutes pass, the elapsed time and
+ *    the tokens spent — the Claude CLI's "Composing… (2m 35s · ↓ 3.7k
+ *    tokens)", in the product's own mark and colours. The moment it stops
+ *    there is a line saying so — Done, Stopped, Failed, or "finished
+ *    without an answer" when a turn ends on a dead tool call. A live line
+ *    that simply disappears leaves the person guessing.
+ *
+ * Only OUTPUT tokens are ever shown (maintainer, 2026-08-25). The input
+ * side of a coding CLI re-counts the whole conversation on every step, so
+ * it reads as an absurd number for one question (BUG-173); what the turn
+ * produced is the honest, monotonic figure.
  */
 export function AgentTimeline({
   items,
@@ -62,6 +79,7 @@ export function AgentTimeline({
   providerLabel: (providerId: string) => string;
   onDecide: (approvalId: string, decision: ApprovalDecision) => void;
 }) {
+  const t = useT();
   return (
     <>
       {items.map((item) => {
@@ -74,7 +92,39 @@ export function AgentTimeline({
               data-message-id={item.id}
             >
               <div className="max-w-[78%] rounded-2xl rounded-br-md border border-border bg-secondary px-4 py-2.5 text-[15px] leading-relaxed text-foreground">
-                <div className="whitespace-pre-wrap">{item.text}</div>
+                {item.text && <div className="whitespace-pre-wrap">{item.text}</div>}
+                {item.attachments.length > 0 && (
+                  <div
+                    data-testid="agent-message-attachments"
+                    className={cn(
+                      "flex flex-wrap gap-1.5",
+                      item.text && "mt-2 border-t border-border/60 pt-2",
+                    )}
+                  >
+                    {item.attachments.map((file) => (
+                      <span
+                        key={file.name}
+                        // The receipt says whether the model could actually
+                        // READ it. "sent" and "could not be read" are the two
+                        // outcomes, and the second happens for real wherever no
+                        // provider can see an image.
+                        title={
+                          file.describedBy === "none"
+                            ? t("agent_chat.attach_not_described")
+                            : file.name
+                        }
+                        className="flex items-center gap-1.5 rounded-md border border-border/70 bg-background/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                      >
+                        {file.kind === "image" ? (
+                          <ImageIcon className="h-3 w-3 shrink-0" aria-hidden />
+                        ) : (
+                          <FileText className="h-3 w-3 shrink-0" aria-hidden />
+                        )}
+                        <span className="max-w-[12rem] truncate font-mono">{file.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -119,6 +169,7 @@ const Turn = memo(function Turn({
   const t = useT();
   const live = turn.status === "running";
   const elapsed = useElapsedMs(live ? turn.startedMs : null);
+  const blocks = useMemo(() => foldThinking(turn.blocks), [turn.blocks]);
 
   return (
     <div
@@ -143,24 +194,16 @@ const Turn = memo(function Turn({
         </span>
       </div>
 
-      {/* The rail: everything the turn produced hangs off one line. */}
-      <div className="relative flex flex-col gap-1.5 pl-4">
-        <span
-          aria-hidden
-          data-testid="agent-turn-rail"
-          className={cn(
-            "absolute bottom-1 left-[3px] top-1 w-px rounded-full",
-            live ? "agent-rail-live" : "bg-border",
-          )}
-        />
-
-        {turn.blocks.map((block) => {
+      {/* No rail, no frame: the byline above and the spacing are what group
+          the turn, and the closing line below says how it ended. */}
+      <div className="flex flex-col gap-1.5 px-1">
+        {blocks.map((block) => {
           if (block.kind === "text") return <Prose key={block.id} block={block} />;
           if (block.kind === "reasoning") return <Reasoning key={block.id} block={block} />;
           return <ToolRow key={block.callId} block={block} onDecide={onDecide} />;
         })}
 
-        {live && <LiveStatus turn={turn} elapsed={elapsed} />}
+        {live && <LiveStatus elapsed={elapsed} usage={turn.liveUsage} />}
 
         {turn.status === "error" && turn.error && (
           <div
@@ -172,32 +215,82 @@ const Turn = memo(function Turn({
             <span className="whitespace-pre-wrap break-words">{turn.error}</span>
           </div>
         )}
-        {turn.status === "cancelled" && (
-          <div className="text-xs italic text-muted-foreground">
-            {t("agent_chat.turn_cancelled")}
-          </div>
-        )}
 
-        {!live && <TurnFooter turn={turn} />}
+        {!live && <TurnOutcome turn={turn} />}
       </div>
     </div>
   );
 });
 
 /**
+ * All of a turn's thinking, folded into one row.
+ *
+ * A turn thinks, calls a tool, thinks again — and every stretch used to draw
+ * its own "Thought for Ns" row, so an ordinary turn stacked two or three of
+ * them above a live line that said the same thing once more (maintainer,
+ * 2026-08-25: the thinking is shown twice). The finished
+ * thoughts now merge into one row where the first of them happened, their
+ * segments in order inside it and their seconds added up.
+ *
+ * A thought that is still running gets NO row at all: the live line below
+ * already says the turn is thinking, and saying it twice in a row IS the
+ * duplication. It joins the folded row the moment it closes.
+ */
+export function foldThinking(blocks: TurnBlock[]): TurnBlock[] {
+  const thoughts = blocks.filter(
+    (b): b is ReasoningBlock => b.kind === "reasoning" && !b.live,
+  );
+  const merged: ReasoningBlock | null =
+    thoughts.length === 0
+      ? null
+      : {
+          kind: "reasoning",
+          id: thoughts[0].id,
+          text: thoughts
+            .map((th) => th.text.trim())
+            .filter(Boolean)
+            .join("\n\n···\n\n"),
+          durationMs: thoughts.reduce((sum, th) => sum + (th.durationMs ?? 0), 0),
+          live: false,
+          startedMs: thoughts[0].startedMs,
+        };
+
+  const out: TurnBlock[] = [];
+  let placed = false;
+  for (const block of blocks) {
+    if (block.kind !== "reasoning") {
+      out.push(block);
+      continue;
+    }
+    if (merged && !placed) {
+      out.push(merged);
+      placed = true;
+    }
+  }
+  return out;
+}
+
+/**
  * The line that says the turn is alive.
  *
- * A turning glyph, a word, the elapsed time and the tokens so far. The word
- * changes every few seconds (locale-supplied, comma-separated) so a long
- * turn never looks frozen — the same trick the Claude CLI plays, and the
- * cheapest possible proof that something is still happening.
+ * The live core, a word, the elapsed time and what the turn has produced so
+ * far. The word changes every few seconds (locale-supplied,
+ * comma-separated) so a long turn never looks frozen — the same trick the
+ * Claude CLI plays, and the cheapest possible proof that something is still
+ * happening. This is the ONLY line in a running turn that claims to be
+ * working; the thought rows deliberately stay quiet until they close.
  */
-function LiveStatus({ turn, elapsed }: { turn: TurnItem; elapsed: number }) {
+function LiveStatus({
+  elapsed,
+  usage,
+}: {
+  elapsed: number;
+  usage: Record<string, number> | null;
+}) {
   const t = useT();
   const words = useMemo(() => statusWords(t("agent_chat.status_words")), [t]);
   const word = words[Math.floor(elapsed / STATUS_WORD_MS) % words.length];
-  const out = outputTokens(turn.liveUsage);
-  const inp = inputTokens(turn.liveUsage);
+  const out = outputTokens(usage);
 
   return (
     <div
@@ -206,20 +299,17 @@ function LiveStatus({ turn, elapsed }: { turn: TurnItem; elapsed: number }) {
       role="status"
       aria-live="polite"
     >
-      <PulseGlyph />
+      <LiveCore />
       <span className="thinking-shimmer font-medium">{word}</span>
-      <span className="font-mono text-[11px] tabular-nums text-muted-foreground/80">
-        ({formatThoughtDuration(elapsed)}
-        {((inp ?? 0) > 0 || (out ?? 0) > 0) && (
+      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/80">
+        <span>({formatThoughtDuration(elapsed)}</span>
+        {out !== null && out > 0 && (
           <>
-            {" · "}
-            <ArrowUp className="inline h-3 w-3 -translate-y-px" aria-hidden />
-            {formatTokens(inp ?? 0)}
-            <ArrowDown className="ml-1 inline h-3 w-3 -translate-y-px" aria-hidden />
-            {formatTokens(out ?? 0)} {t("agent_chat.tokens")}
+            <span aria-hidden>·</span>
+            <OutTokens n={out} />
           </>
         )}
-        )
+        <span>)</span>
       </span>
       <span className="text-muted-foreground/60">{t("agent_chat.interrupt_hint")}</span>
     </div>
@@ -238,53 +328,66 @@ export function statusWords(raw: string): string[] {
   return words.length > 0 ? words : ["Working…"];
 }
 
-/** The turning asterisk: one small SVG, animated by CSS (index.css). */
-function PulseGlyph() {
+/**
+ * What the turn produced, in tokens.
+ *
+ * The OUTPUT side only, everywhere it appears — live and on the receipt.
+ * The arrow is the CLI's own shorthand, so the two read the same.
+ */
+function OutTokens({ n }: { n: number }) {
+  const t = useT();
   return (
-    <svg
-      viewBox="0 0 12 12"
-      className="agent-glyph h-3.5 w-3.5 shrink-0 text-primary"
-      aria-hidden
-      data-testid="agent-glyph"
-    >
-      <g stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-        <line x1="6" y1="1.2" x2="6" y2="10.8" />
-        <line x1="1.85" y1="3.6" x2="10.15" y2="8.4" />
-        <line x1="1.85" y1="8.4" x2="10.15" y2="3.6" />
-      </g>
-    </svg>
+    <span className="inline-flex items-center gap-1" title={t("agent_chat.tokens_out")}>
+      <ArrowDown className="h-3 w-3" aria-hidden />
+      {formatTokens(n)}
+      <span>{t("agent_chat.tokens")}</span>
+    </span>
   );
 }
 
-/** What the finished turn cost: time, tokens, money — the receipt. */
-function TurnFooter({ turn }: { turn: TurnItem }) {
+/**
+ * The closing line: the turn is over, and this is how it ended.
+ *
+ * It is drawn for EVERY finished turn, even one that produced nothing at
+ * all — the whole point is that the person never has to guess whether the
+ * agent is still working (maintainer, 2026-08-25). A turn that ends on a
+ * failed tool call with no answer says exactly that instead of trailing
+ * off into white space.
+ */
+function TurnOutcome({ turn }: { turn: TurnItem }) {
   const t = useT();
   const usage = turn.usage ?? turn.liveUsage;
-  const inp = inputTokens(usage);
   const out = outputTokens(usage);
-  const hasTokens = (inp ?? 0) > 0 || (out ?? 0) > 0;
-  if (!turn.durationMs && !hasTokens && !turn.costUsd) return null;
+  const answered = turn.blocks.some((b) => b.kind === "text" && b.text.trim().length > 0);
+
+  const { Icon, label, tone } =
+    turn.status === "error"
+      ? { Icon: CircleAlert, label: t("agent_chat.turn_failed"), tone: "text-destructive/80" }
+      : turn.status === "cancelled"
+        ? { Icon: Ban, label: t("agent_chat.turn_cancelled"), tone: "text-muted-foreground" }
+        : answered
+          ? { Icon: Check, label: t("agent_chat.turn_done"), tone: "text-muted-foreground/70" }
+          : {
+              Icon: CircleAlert,
+              label: t("agent_chat.turn_no_answer"),
+              tone: "text-muted-foreground",
+            };
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 font-mono text-[10px] tabular-nums text-muted-foreground/70"
-      data-testid="agent-turn-footer"
-    >
-      {turn.durationMs ? (
-        <span className="inline-flex items-center gap-1">
-          <Clock className="h-3 w-3" aria-hidden />
-          {formatThoughtDuration(turn.durationMs)}
-        </span>
-      ) : null}
-      {hasTokens && (
-        <span className="inline-flex items-center gap-1" title={t("agent_chat.tokens")}>
-          <ArrowUp className="h-3 w-3" aria-hidden />
-          {formatTokens(inp ?? 0)}
-          <ArrowDown className="ml-1 h-3 w-3" aria-hidden />
-          {formatTokens(out ?? 0)}
-          <span className="ml-0.5">{t("agent_chat.tokens")}</span>
-        </span>
+      className={cn(
+        "flex flex-wrap items-center gap-x-2.5 gap-y-0.5 pt-0.5 font-mono text-[10px] tabular-nums",
+        tone,
       )}
+      data-testid="agent-turn-footer"
+      data-outcome={turn.status === "done" && !answered ? "no-answer" : turn.status}
+    >
+      <span className="inline-flex items-center gap-1 font-sans text-[11px] font-medium normal-case">
+        <Icon className="h-3.5 w-3.5" aria-hidden />
+        {label}
+      </span>
+      {turn.durationMs ? <span>{formatThoughtDuration(turn.durationMs)}</span> : null}
+      {out !== null && out > 0 && <OutTokens n={out} />}
       {turn.costUsd !== null && turn.costUsd > 0 && <span>${turn.costUsd.toFixed(4)}</span>}
     </div>
   );
@@ -310,58 +413,64 @@ function Prose({ block }: { block: TextBlock }) {
 }
 
 /**
- * What the model thought.
+ * Everything the turn thought, in one collapsed row.
  *
- * Live: a shimmering "Thinking…" with the seconds ticking — shown even when
- * the vendor never streams the thought itself (Claude Code redacts it), so
- * eight silent seconds are visibly eight seconds of thinking. Finished:
- * "Thought for 8s", opening to the text when there IS text; when there is
- * none the row says so instead of opening onto emptiness.
+ * Always a FINISHED thought — `foldThinking` keeps the running one off the
+ * screen so this row never competes with the live line. "Thought for 8s"
+ * opens to the text when there IS text; when the vendor redacted it (Claude
+ * Code does) the row still states the time, because the time is the fact,
+ * and stays shut rather than opening onto emptiness.
+ *
+ * The thought reads as prose, not as a log dump: models write their
+ * reasoning in Markdown, and a raw `**like this**` on screen is the same
+ * defect the local-models panel was fixed for.
  */
 function Reasoning({ block }: { block: ReasoningBlock }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const elapsed = useElapsedMs(block.live ? block.startedMs : null);
   const hasText = Boolean(block.text.trim());
-  const duration = block.live ? elapsed : (block.durationMs ?? 0);
-  const header = block.live
-    ? duration > 900
-      ? fill(t("agent_chat.thinking_for"), { duration: formatThoughtDuration(duration) })
-      : t("agent_chat.thinking")
-    : duration > 0
+  const duration = block.durationMs ?? 0;
+  const header =
+    duration > 0
       ? fill(t("agent_chat.thought_for"), { duration: formatThoughtDuration(duration) })
       : t("agent_chat.thought");
 
   return (
-    <div data-testid="agent-reasoning" data-live={block.live || undefined}>
+    <div data-testid="agent-reasoning">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         disabled={!hasText}
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-md py-0.5 pr-2 text-xs text-muted-foreground transition-colors",
-          hasText ? "hover:text-foreground" : "cursor-default",
+          "-ml-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors",
+          hasText ? "hover:bg-secondary/50 hover:text-foreground" : "cursor-default",
         )}
       >
-        {block.live ? (
-          <PulseGlyph />
-        ) : (
-          <ChevronRight
-            className={cn(
-              "h-3.5 w-3.5 shrink-0 transition-transform",
-              open && "rotate-90",
-              !hasText && "opacity-30",
-            )}
-            aria-hidden
-          />
-        )}
-        <span className={cn(block.live && "thinking-shimmer font-medium")}>{header}</span>
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 transition-transform",
+            open && "rotate-90",
+            !hasText && "opacity-30",
+          )}
+          aria-hidden
+        />
+        <span>{header}</span>
       </button>
       {open && hasText && (
-        <div className="ml-2 mt-1 whitespace-pre-wrap border-l border-border pl-3 text-xs italic leading-relaxed text-muted-foreground">
-          {block.text}
-        </div>
+        <Trace>
+          <div
+            className={cn(
+              "prose prose-neutral max-w-none text-xs leading-relaxed text-muted-foreground dark:prose-invert [overflow-wrap:anywhere]",
+              "prose-p:my-1.5 prose-headings:my-1.5 prose-headings:text-xs prose-headings:font-semibold",
+              "prose-strong:text-foreground/80 prose-li:my-0.5 prose-ul:my-1.5 prose-ol:my-1.5",
+              "prose-code:font-mono prose-code:text-[0.9em] prose-code:before:hidden prose-code:after:hidden",
+              "prose-pre:my-1.5 prose-pre:bg-transparent prose-pre:p-0 prose-pre:text-[11px]",
+            )}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+          </div>
+        </Trace>
       )}
     </div>
   );
@@ -377,13 +486,47 @@ function pretty(value: unknown): string {
 }
 
 /**
- * One tool call.
+ * Is the raw input worth printing under a row that already shows it?
+ *
+ * A shell call whose whole payload is `{"command": "ls -la"}` is fully told
+ * by the row's own summary; repeating it as JSON below is the same string
+ * twice, which is what made an opened tool call read as duplicated output
+ * (maintainer, 2026-08-25). Anything with a second field, or a value the
+ * summary had to truncate, still earns its lines.
+ */
+export function inputAddsNothing(input: unknown, summary: string): boolean {
+  if (input === undefined || input === null) return true;
+  if (!summary) return false;
+  if (typeof input === "string") return input.trim() === summary.trim();
+  if (typeof input !== "object" || Array.isArray(input)) return false;
+  const entries = Object.entries(input as Record<string, unknown>).filter(
+    ([, v]) => v !== undefined && v !== null && v !== "",
+  );
+  if (entries.length !== 1) return false;
+  const [, only] = entries[0];
+  return typeof only === "string" && only.trim() === summary.trim();
+}
+
+/** The first line of a tool error, short enough to sit on the row. */
+function errorGist(text: string): string {
+  const line = text.split("\n").find((l) => l.trim()) ?? "";
+  const trimmed = line.trim();
+  return trimmed.length > 160 ? `${trimmed.slice(0, 159)}…` : trimmed;
+}
+
+/**
+ * One tool call — a ROW, not a card.
  *
  * The name is the agent's own — "PowerShell", "ToolSearch", "Grep" — never a
  * prettied-up rename, because the row is read next to the agent's log
  * (maintainer, 2026-08-23). The mark left of it comes from the tool family,
- * or the vendor's SVG for an MCP server. Click to read what went in and
- * what came back.
+ * or the vendor's SVG for an MCP server. On the right sits the one thing
+ * the person is actually asking of a running agent: whether this step is
+ * still going. A finished call shows what it took; a running one counts up.
+ *
+ * A call that failed says why on the row itself, in one line — the point of
+ * a failure is that you read it without hunting for it. Click to see the
+ * whole of it, and the input when the summary did not already carry it.
  */
 function ToolRow({
   block,
@@ -399,9 +542,12 @@ function ToolRow({
   const denied = block.approval?.decision === "deny" || block.approval?.decision === "cancel";
   const running = block.output === null && !pending && !denied;
   const done = block.output !== null;
+  const elapsed = useElapsedMs(running ? block.startedMs : null);
   const view = agentToolView(block.name, block.input);
   const summary = view.summary;
   const showLogo = Boolean(view.logoUrl) && !logoFailed;
+  const gist = block.isError && block.output ? errorGist(block.output) : "";
+  const showInput = !inputAddsNothing(block.input, summary);
 
   return (
     <div
@@ -409,31 +555,34 @@ function ToolRow({
       data-tool={block.name}
       data-family={view.family}
       data-state={
-        pending ? "pending" : denied ? "denied" : done ? (block.isError ? "error" : "done") : "running"
+        pending
+          ? "pending"
+          : denied
+            ? "denied"
+            : done
+              ? block.isError
+                ? "error"
+                : "done"
+              : "running"
       }
       className={cn(
-        "overflow-hidden rounded-lg border text-xs transition-colors",
-        pending
-          ? "border-primary/40 bg-primary/5"
-          : block.isError
-            ? "border-destructive/30 bg-destructive/5"
-            : running
-              ? "border-primary/25 bg-secondary/40"
-              : "border-border/60 bg-secondary/25 hover:border-border",
+        "text-xs",
+        // Only a call that WANTS something gets a frame of its own: an
+        // approval is a question to the person, not a log line.
+        pending && "rounded-lg border border-primary/40 bg-primary/5",
       )}
     >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
+        className={cn(
+          "-ml-1 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1 text-left transition-colors",
+          pending ? "ml-0 px-2 pt-1.5" : "hover:bg-secondary/50",
+        )}
       >
-        <span className="grid h-5 w-5 shrink-0 place-items-center">
-          {running ? (
-            <Spinner />
-          ) : block.isError ? (
-            <CircleAlert className="h-3.5 w-3.5 text-destructive" aria-hidden />
-          ) : pending ? (
+        <span className="grid h-4 w-4 shrink-0 place-items-center">
+          {pending ? (
             <ShieldQuestion className="h-3.5 w-3.5 text-primary" aria-hidden />
           ) : showLogo ? (
             <img
@@ -444,7 +593,13 @@ function ToolRow({
               onError={() => setLogoFailed(true)}
             />
           ) : (
-            <view.Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <view.Icon
+              className={cn(
+                "h-3.5 w-3.5",
+                block.isError ? "text-destructive/80" : "text-muted-foreground",
+              )}
+              aria-hidden
+            />
           )}
         </span>
         <span
@@ -456,31 +611,42 @@ function ToolRow({
           {view.label}
         </span>
         {summary ? (
-          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/80">
             {summary}
           </span>
         ) : (
           <span className="flex-1" />
         )}
-        {block.durationMs !== null && block.durationMs > 0 && (
-          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
+        {running ? (
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] text-primary/90">
+            <Spinner />
+            <span className="font-mono tabular-nums">{formatStepDuration(elapsed)}</span>
+          </span>
+        ) : block.durationMs !== null && block.durationMs > 0 ? (
+          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
             {formatStepDuration(block.durationMs)}
           </span>
-        )}
+        ) : null}
         <ChevronRight
           className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground/70 transition-transform",
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground/50 transition-transform",
             open && "rotate-90",
           )}
           aria-hidden
         />
       </button>
 
-      {pending && block.approval && (
+      {gist && !open && (
         <div
-          className="flex flex-col gap-2 border-t border-primary/20 px-2.5 py-2"
-          data-testid="agent-approval"
+          className="ml-[1.375rem] truncate font-mono text-[11px] text-destructive/80"
+          data-testid="agent-tool-gist"
         >
+          {gist}
+        </div>
+      )}
+
+      {pending && block.approval && (
+        <div className="flex flex-col gap-2 px-2 pb-2" data-testid="agent-approval">
           <div className="text-foreground">
             <span className="font-medium">{t("agent_chat.approval_title")}</span>{" "}
             <span className="text-muted-foreground">{block.approval.summary || summary}</span>
@@ -517,10 +683,8 @@ function ToolRow({
       )}
 
       {open && (
-        <div className="flex flex-col gap-2 border-t border-border/60 px-2.5 py-2">
-          {block.input !== undefined && block.input !== null && (
-            <Detail label={t("agent_chat.tool_input")} text={pretty(block.input)} />
-          )}
+        <Trace tone={block.isError ? "error" : "plain"}>
+          {showInput && <Detail label={t("agent_chat.tool_input")} text={pretty(block.input)} />}
           {denied && <div className="text-muted-foreground">{t("agent_chat.approval_denied")}</div>}
           {block.output !== null ? (
             <Detail
@@ -531,22 +695,48 @@ function ToolRow({
           ) : (
             running && <div className="text-muted-foreground">{t("agent_chat.tool_running")}</div>
           )}
-        </div>
+        </Trace>
       )}
+    </div>
+  );
+}
+
+/**
+ * The one shape an opened detail wears: an indent and a hairline.
+ *
+ * Every unfolded thing in the column — a thought, a tool's input, its
+ * output — is drawn this way, so the turn reads as one document with
+ * margins rather than a stack of framed cards.
+ */
+function Trace({
+  children,
+  tone = "plain",
+}: {
+  children: ReactNode;
+  tone?: "plain" | "error";
+}) {
+  return (
+    <div
+      className={cn(
+        "ml-[0.375rem] mt-1 flex flex-col gap-2 border-l pl-3",
+        tone === "error" ? "border-destructive/40" : "border-border",
+      )}
+    >
+      {children}
     </div>
   );
 }
 
 function Detail({ label, text, error }: { label: string; text: string; error?: boolean }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/70">
+    <div className="flex flex-col gap-0.5">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
         {label}
       </span>
       <pre
         className={cn(
-          "scrollbar-jarvis max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/60 p-2 font-mono text-[11.5px] leading-relaxed",
-          error ? "text-destructive" : "text-foreground",
+          "scrollbar-jarvis max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed",
+          error ? "text-destructive/90" : "text-muted-foreground",
         )}
       >
         {text}
@@ -565,7 +755,7 @@ function Spinner() {
     <span
       aria-hidden
       data-testid="agent-spinner"
-      className="inline-block h-3.5 w-3.5 rounded-full border-2 border-primary/25 border-t-primary motion-safe:animate-spin"
+      className="inline-block h-3 w-3 rounded-full border-2 border-primary/25 border-t-primary motion-safe:animate-spin"
     />
   );
 }

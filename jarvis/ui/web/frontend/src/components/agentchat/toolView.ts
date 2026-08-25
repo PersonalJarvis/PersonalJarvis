@@ -193,31 +193,17 @@ function trimZero(s: string): string {
   return s.endsWith(".0") ? s.slice(0, -2) : s;
 }
 
-/** Output tokens so far, from whichever usage shape the runner reported. */
+/**
+ * Output tokens so far, from whichever usage shape the runner reported.
+ *
+ * The only token figure the chat column shows (maintainer, 2026-08-25). The
+ * input side of a coding CLI re-counts the whole conversation on every step,
+ * so it grows into a number that says nothing about the question that was
+ * asked — "283.2k" for one line of chat (BUG-173). What the turn produced is
+ * a real, monotonic count, honest live and honest on the receipt.
+ */
 export function outputTokens(usage: Record<string, unknown> | null | undefined): number | null {
   if (!usage) return null;
   const v = usage.output_tokens ?? usage.output ?? usage.completion_tokens;
   return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function finite(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-/**
- * Everything the turn put IN, cache included.
- *
- * Anthropic reports the cached part separately from ``input_tokens`` and the
- * two never overlap, so a warm session that read 21k cached tokens and paid
- * for 2 new ones must read as 21k — not as 2 (BUG-173). The OpenAI shape
- * (``cached_input_tokens``) is a SUBSET of ``prompt_tokens`` and is therefore
- * deliberately not added here.
- */
-export function inputTokens(usage: Record<string, unknown> | null | undefined): number | null {
-  if (!usage) return null;
-  const base = finite(usage.input_tokens ?? usage.input ?? usage.prompt_tokens);
-  const cached = finite(usage.cache_read_input_tokens);
-  const created = finite(usage.cache_creation_input_tokens);
-  if (base === null && cached === null && created === null) return null;
-  return (base ?? 0) + (cached ?? 0) + (created ?? 0);
 }

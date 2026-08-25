@@ -287,6 +287,33 @@ def test_claude_stream_translation_streams_then_finalizes():
     assert st.cost_usd == 0.01 and st.usage == {"output_tokens": 5} and st.status == "done"
 
 
+def test_streamed_text_counts_as_an_answer_so_the_result_line_never_repeats_it():
+    """A turn cut short must not print its answer a second time.
+
+    The closing ``result`` line carries the whole answer again, and the runner
+    falls back to it for a turn that produced no text at all. Streamed deltas
+    therefore have to mark the turn as answered: without that, a stream that
+    ends before its closing ``assistant`` message — Stop, a crash, a killed
+    CLI — replayed the same text under a fresh message id, and the chat showed
+    it twice (maintainer, 2026-08-25).
+    """
+    st = _ClaudeState(turn_id="t")
+    lines = [
+        {"type": "stream_event", "event": {"type": "message_start", "message": {"id": "m1"}}},
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "half an answer"},
+            },
+        },
+    ]
+    for obj in lines:
+        translate_claude_line(obj, st)
+    assert st.emitted_text is True
+
+
 def test_codex_stream_translation_maps_items_to_tools():
     st = _CodexState(turn_id="t")
     lines = [
