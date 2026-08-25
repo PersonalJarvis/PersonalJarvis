@@ -35,10 +35,18 @@ vi.mock("@/views/local-models/OverviewPanel", () => ({
     providerId,
     onTune,
     onOpenApiKeys,
+    onBrowse,
+    onOpenAssistant,
+    onReportProblem,
+    assistantSlot,
   }: {
     providerId: string;
     onTune?: (model: string) => void;
     onOpenApiKeys?: () => void;
+    onBrowse?: () => void;
+    onOpenAssistant?: () => void;
+    onReportProblem?: () => void;
+    assistantSlot?: React.ReactNode;
   }) => (
     <div data-testid="overview-panel" data-provider={providerId}>
       <button type="button" onClick={() => onTune?.("qwen3.5:4b")}>
@@ -47,6 +55,16 @@ vi.mock("@/views/local-models/OverviewPanel", () => ({
       <button type="button" onClick={() => onOpenApiKeys?.()}>
         keys
       </button>
+      <button type="button" onClick={() => onBrowse?.()}>
+        browse
+      </button>
+      <button type="button" onClick={() => onOpenAssistant?.()}>
+        assistant
+      </button>
+      <button type="button" onClick={() => onReportProblem?.()}>
+        broken
+      </button>
+      {assistantSlot}
     </div>
   ),
 }));
@@ -60,7 +78,12 @@ vi.mock("@/views/local-models/HuggingFacePanel", () => ({
   HuggingFacePanel: () => <div data-testid="huggingface-panel" />,
 }));
 vi.mock("@/views/local-models/ServerPanel", () => ({
-  ServerPanel: () => <div data-testid="server-panel" />,
+  ServerPanel: ({ initialLogOpen }: { initialLogOpen?: boolean }) => (
+    <div
+      data-testid="server-panel"
+      data-log-open={initialLogOpen ? "yes" : "no"}
+    />
+  ),
 }));
 vi.mock("@/views/local-models/TuneSheet", () => ({
   TuneSheet: ({
@@ -88,6 +111,7 @@ import {
   LOCAL_MODELS_MODE_KEY,
   LocalModelsView,
 } from "@/views/LocalModelsView";
+import { LOCAL_MODELS_SEED_KEY } from "@/lib/localModelsSeed";
 
 const OLLAMA = {
   id: "ollama",
@@ -98,6 +122,7 @@ const OLLAMA = {
 
 beforeEach(() => {
   window.localStorage.removeItem(LOCAL_MODELS_MODE_KEY);
+  window.localStorage.removeItem(LOCAL_MODELS_SEED_KEY);
   mockState.setActiveSection = vi.fn();
   mockProviders.providers = [OLLAMA];
   mockProviders.loading = false;
@@ -207,5 +232,49 @@ describe("LocalModelsView", () => {
     expect(screen.getByText("local_models.no_provider")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "local_models.back" }));
     expect(mockState.setActiveSection).toHaveBeenCalledWith("apikeys");
+  });
+
+  it("mounts the overview from the seed before the provider list resolves", () => {
+    window.localStorage.setItem(LOCAL_MODELS_SEED_KEY, "ollama");
+    mockProviders.providers = [];
+    mockProviders.loading = true;
+    render(<LocalModelsView />);
+
+    expect(screen.getByTestId("local-models-overview")).toBeDefined();
+    expect(
+      screen.getByTestId("overview-panel").getAttribute("data-provider"),
+    ).toBe("ollama");
+    expect(screen.queryByText("local_models.loading")).toBeNull();
+  });
+
+  it("writes the seed once providers resolve, and clears it when no card can pull", () => {
+    render(<LocalModelsView />);
+    expect(window.localStorage.getItem(LOCAL_MODELS_SEED_KEY)).toBe("ollama");
+    cleanup();
+
+    mockProviders.providers = [{ id: "openai", label: "OpenAI" }];
+    render(<LocalModelsView />);
+    expect(window.localStorage.getItem(LOCAL_MODELS_SEED_KEY)).toBeNull();
+    expect(screen.getByText("local_models.no_provider")).toBeDefined();
+  });
+
+  it("wires the overview actions: browse, assistant placeholder, server log", () => {
+    render(<LocalModelsView />);
+
+    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
+    expect(screen.getByTestId("local-models-assistant")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
+    expect(screen.queryByTestId("local-models-assistant")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "browse" }));
+    expect(screen.getByTestId("catalogue-panel")).toBeDefined();
+
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.tab_overview" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "broken" }));
+    expect(
+      screen.getByTestId("server-panel").getAttribute("data-log-open"),
+    ).toBe("yes");
   });
 });

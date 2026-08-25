@@ -12,6 +12,9 @@
  *
  * Everything is gated on the capability `supports_model_pull`, never on a
  * provider name — a second pull-capable server later gets the same section.
+ * The id of that card is seeded from `localStorage` (`localModelsSeed.ts`), so
+ * from the second open on the panels mount synchronously instead of waiting
+ * for `/api/providers`; the list still resolves and corrects the seed.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,6 +26,11 @@ import {
 } from "@/components/extensions/primitives";
 import { useInventory } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
+import {
+  clearLocalModelsSeed,
+  readLocalModelsSeed,
+  writeLocalModelsSeed,
+} from "@/lib/localModelsSeed";
 import { CataloguePanel } from "@/views/local-models/CataloguePanel";
 import { HuggingFacePanel } from "@/views/local-models/HuggingFacePanel";
 import { InventoryPanel } from "@/views/local-models/InventoryPanel";
@@ -109,11 +117,35 @@ export function LocalModelsView() {
     () => providers.find((p) => Boolean(p.supports_model_pull)) ?? null,
     [providers],
   );
+  // Last known pull-capable id: paints the panels before the list resolves.
+  const [seed, setSeed] = useState<string | null>(readLocalModelsSeed);
+  useEffect(() => {
+    if (loading) return;
+    if (descriptor) {
+      writeLocalModelsSeed(descriptor.id);
+      setSeed(descriptor.id);
+    } else {
+      clearLocalModelsSeed();
+      setSeed(null);
+    }
+  }, [loading, descriptor]);
+  const providerId: string | null = descriptor?.id ?? (loading ? seed : null);
 
   const [mode, setMode] = useState<LocalModelsMode>(readStoredMode);
   const [tab, setTab] = useState<LocalModelsTab>("overview");
   // The model whose Tune sheet is open under the overview ("" = none).
   const [tuneModel, setTuneModel] = useState<string>("");
+  // The setup assistant panel under the action row (Part D plugs the real
+  // panel into `assistantSlot`; until then a one-sentence placeholder).
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  // "Something is not working" lands on the Server tab with the log open.
+  const [serverLogOpen, setServerLogOpen] = useState(false);
+  const openBrowse = useCallback(() => setTab("catalogue"), []);
+  const openAssistant = useCallback(() => setAssistantOpen((v) => !v), []);
+  const reportProblem = useCallback(() => {
+    setServerLogOpen(true);
+    setTab("server");
+  }, []);
   const openApiKeys = useCallback(
     () => setActiveSection("apikeys"),
     [setActiveSection],
@@ -174,13 +206,13 @@ export function LocalModelsView() {
           options={tabs}
         />
 
-        {loading && !descriptor && (
+        {loading && !providerId && (
           <p className="text-sm text-muted-foreground">
             {t("local_models.loading")}
           </p>
         )}
 
-        {!loading && !descriptor && (
+        {!loading && !providerId && (
           <Panel className="p-4">
             <p className="text-sm text-muted-foreground">
               {t("local_models.no_provider")}
@@ -188,16 +220,31 @@ export function LocalModelsView() {
           </Panel>
         )}
 
-        {descriptor && tab === "overview" && (
+        {providerId && tab === "overview" && (
           <div className="space-y-4" data-testid="local-models-overview">
             <OverviewPanel
-              providerId={descriptor.id}
+              providerId={providerId}
               onTune={setTuneModel}
               onOpenApiKeys={openApiKeys}
+              onBrowse={openBrowse}
+              onOpenAssistant={openAssistant}
+              onReportProblem={reportProblem}
+              assistantSlot={
+                assistantOpen ? (
+                  <Panel className="p-4">
+                    <p
+                      className="text-sm text-muted-foreground"
+                      data-testid="local-models-assistant"
+                    >
+                      {t("local_models.overview.assistant_placeholder")}
+                    </p>
+                  </Panel>
+                ) : null
+              }
             />
             {tuneModel && (
               <RoleTuneDrawer
-                providerId={descriptor.id}
+                providerId={providerId}
                 model={tuneModel}
                 onClose={closeTune}
               />
@@ -205,36 +252,39 @@ export function LocalModelsView() {
           </div>
         )}
 
-        {descriptor && tab === "models" && (
+        {providerId && tab === "models" && (
           <div data-testid="local-models-models">
-            <InventoryPanel providerId={descriptor.id} />
+            <InventoryPanel providerId={providerId} />
           </div>
         )}
 
-        {descriptor && tab === "catalogue" && (
+        {providerId && tab === "catalogue" && (
           <Panel className="p-4">
             <div className="space-y-3" data-testid="local-models-catalogue">
               <PanelHeader
                 title={t("local_models.catalogue_title")}
                 subtitle={t("local_models.catalogue_subtitle")}
               />
-              <CataloguePanel providerId={descriptor.id} />
+              <CataloguePanel providerId={providerId} />
             </div>
           </Panel>
         )}
 
-        {descriptor && tab === "huggingface" && (
+        {providerId && tab === "huggingface" && (
           <Panel className="p-4">
             <div className="space-y-3" data-testid="local-models-huggingface">
               <PanelHeader title={t("local_models.huggingface_title")} />
-              <HuggingFacePanel providerId={descriptor.id} />
+              <HuggingFacePanel providerId={providerId} />
             </div>
           </Panel>
         )}
 
-        {descriptor && tab === "server" && (
+        {providerId && tab === "server" && (
           <div data-testid="local-models-server">
-            <ServerPanel providerId={descriptor.id} />
+            <ServerPanel
+              providerId={providerId}
+              initialLogOpen={serverLogOpen}
+            />
           </div>
         )}
       </div>

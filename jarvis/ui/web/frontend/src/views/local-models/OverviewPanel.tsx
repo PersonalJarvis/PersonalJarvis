@@ -1,23 +1,54 @@
 /**
- * Overview — the Simple-mode front page of the Local models section.
+ * Overview — the Simple-mode front page of the Local models section, written
+ * so it reads like a plan rather than a dashboard.
  *
- * Four headline tiles (server state, graphics memory, disk used by models,
- * what is loaded right now) over the Roles ledger. The tiles read `GET server`
- * and the shortlist's accelerator facts; nothing here writes. The roles part
- * is `RolesPanel`, mounted underneath so the integration wires one component.
+ * Top to bottom: one status sentence ("Ollama 0.32 running · 16 GB graphics
+ * memory · Ollama is not your active brain (OpenRouter answers)"), a row of
+ * three primary actions (Browse models / Help me set up / Something is not
+ * working), the headline tiles (downloads on disk, graphics memory, loaded
+ * now), and the roles as a checklist. Nothing here writes; the roles part is
+ * `RolesPanel`, mounted underneath so the integration wires one component.
+ *
+ * The setup assistant plugs in through `assistantSlot` + `onOpenAssistant`:
+ * the caller owns the open state and the panel it renders, so the assistant
+ * can land without touching this file again.
  *
  * Props take `providerId` — the id of the card that declares
  * `supports_model_pull` — never a provider name.
  */
-import { Cpu, HardDrive, Layers, Server } from "lucide-react";
+import type { ReactNode } from "react";
+import {
+  AlertCircle,
+  Cpu,
+  HardDrive,
+  Layers,
+  Search,
+  Sparkles,
+} from "lucide-react";
 
-import { StatTile } from "@/components/extensions/primitives";
-import { useCatalogRecommended, useServer } from "@/hooks/useLocalModels";
+import { SoftButton, StatTile } from "@/components/extensions/primitives";
+import {
+  useCatalogRecommended,
+  useInventory,
+  useServer,
+} from "@/hooks/useLocalModels";
+import { useProviders } from "@/hooks/useProviders";
 import { fill, useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
+import { formatExpiry } from "./localModelsFormat";
 import { RolesPanel, type RolesPanelProps } from "./RolesPanel";
 
-export type OverviewPanelProps = RolesPanelProps;
+export interface OverviewPanelProps extends RolesPanelProps {
+  /** Opens the catalogue ("Browse models"); the button hides without it. */
+  onBrowse?: () => void;
+  /** Opens the setup assistant; the caller renders it into `assistantSlot`. */
+  onOpenAssistant?: () => void;
+  /** Rendered right under the action row while the assistant is open. */
+  assistantSlot?: ReactNode;
+  /** "Something is not working" — the Server tab with the log open. */
+  onReportProblem?: () => void;
+}
 
 /** Bytes to a short gigabyte figure ("12.4 GB"); "0 GB" below a megabyte. */
 export function formatGigabytes(bytes: number): string {
@@ -31,80 +62,220 @@ export function OverviewPanel({
   providerId,
   onTune,
   onOpenApiKeys,
+  onBrowse,
+  onOpenAssistant,
+  assistantSlot,
+  onReportProblem,
 }: OverviewPanelProps) {
   const t = useT();
   const server = useServer(providerId);
   const shortlist = useCatalogRecommended(providerId);
+  const inventory = useInventory(providerId);
+  const { providers } = useProviders();
 
   const s = server.data;
   const remote = s?.host_kind === "remote";
-  let serverValue = t("local_models.overview.server_unknown");
-  let serverHint: string = s?.detail ?? "";
-  let serverTone: "ok" | "warn" | "danger" | "primary" | "success" = "primary";
+  const serverLabel =
+    providers.find((p) => p.id === providerId)?.label ||
+    t("local_models.overview.status_generic_server");
+
+  // --- status sentence --------------------------------------------------
+  let serverClause = t("local_models.overview.status_checking");
+  let serverTone: "ok" | "warn" | "error" | "busy" = "busy";
   if (s) {
     if (s.running) {
-      serverValue = remote
-        ? t("local_models.overview.server_remote")
-        : t("local_models.overview.server_running");
-      serverHint = [
-        s.version
-          ? fill(t("local_models.overview.server_version"), {
-              version: s.version,
-            })
-          : "",
-        s.base_url,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      serverTone = "success";
+      serverClause = s.version
+        ? fill(t("local_models.overview.status_running"), {
+            server: serverLabel,
+            version: s.version,
+          })
+        : fill(t("local_models.overview.status_running_noversion"), {
+            server: serverLabel,
+          });
+      if (remote)
+        serverClause = fill(t("local_models.overview.status_remote"), {
+          server: serverLabel,
+          url: s.base_url,
+        });
+      serverTone = "ok";
     } else if (remote) {
-      serverValue = t("local_models.overview.server_unreachable");
-      serverHint = s.error ?? s.detail ?? s.base_url;
+      serverClause = fill(t("local_models.overview.status_unreachable"), {
+        server: serverLabel,
+      });
       serverTone = "warn";
     } else if (!s.installed) {
-      serverValue = t("local_models.overview.server_not_installed");
+      serverClause = fill(t("local_models.overview.status_not_installed"), {
+        server: serverLabel,
+      });
       serverTone = "warn";
     } else {
-      serverValue = t("local_models.overview.server_stopped");
+      serverClause = fill(t("local_models.overview.status_stopped"), {
+        server: serverLabel,
+      });
       serverTone = "warn";
     }
   } else if (server.isError) {
-    serverValue = t("local_models.overview.server_unreachable");
-    serverHint =
-      server.error instanceof Error
-        ? server.error.message
-        : String(server.error);
-    serverTone = "danger";
+    serverClause = fill(t("local_models.overview.status_unreachable"), {
+      server: serverLabel,
+    });
+    serverTone = "error";
   }
 
   const acceleratorGb = shortlist.data?.accelerator_gb ?? 0;
   const acceleratorSource = shortlist.data?.accelerator_source ?? "";
+  const gpuClause =
+    acceleratorGb > 0
+      ? fill(t("local_models.overview.status_gpu"), {
+          gb: acceleratorGb.toFixed(1),
+        })
+      : shortlist.data
+        ? t("local_models.overview.status_gpu_unknown")
+        : "";
+
+  // The third clause only renders once the provider list is here — no gate.
+  const activeBrain =
+    providers.find((p) => p.tier === "brain" && p.active) ?? null;
+  const brainClause = activeBrain
+    ? activeBrain.id === providerId
+      ? fill(t("local_models.overview.status_brain_active"), {
+          server: serverLabel,
+        })
+      : fill(t("local_models.overview.status_brain_other"), {
+          server: serverLabel,
+          brain: activeBrain.label,
+        })
+    : "";
+
+  // --- tiles ------------------------------------------------------------
   const gpuValue =
     acceleratorGb > 0
       ? `${acceleratorGb.toFixed(1)} GB`
       : t("local_models.overview.gpu_unknown");
+  const loadedVram = s?.loaded_vram_bytes ?? 0;
   const gpuHint =
-    acceleratorGb > 0 && acceleratorSource
-      ? fill(t("local_models.overview.gpu_source"), {
-          source: acceleratorSource,
-        })
-      : t("local_models.overview.gpu_unknown_hint");
+    acceleratorGb > 0
+      ? loadedVram > 0
+        ? fill(t("local_models.overview.gpu_in_use"), {
+            gb: formatGigabytes(loadedVram),
+          })
+        : t("local_models.overview.gpu_in_use_none")
+      : acceleratorSource
+        ? fill(t("local_models.overview.gpu_source"), {
+            source: acceleratorSource,
+          })
+        : t("local_models.overview.gpu_unknown_hint");
+
+  const modelCount = inventory.data?.models.length ?? null;
+  const diskHint = [
+    modelCount === null
+      ? ""
+      : modelCount === 1
+        ? t("local_models.overview.disk_model_one")
+        : fill(t("local_models.overview.disk_models"), { count: modelCount }),
+    s?.models_dir ?? "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const loaded = s?.running_models ?? [];
+  const firstExpiry = loaded.length > 0 ? formatExpiry(loaded[0].expires_at) : "";
   const loadedHint =
     loaded.length > 0
-      ? loaded.map((m) => m.name).join(", ")
+      ? [
+          loaded.map((m) => m.name).join(", "),
+          firstExpiry
+            ? fill(t("local_models.overview.loaded_expires"), {
+                when: firstExpiry,
+              })
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")
       : t("local_models.overview.loaded_none");
+
+  const dotClass = {
+    ok: "bg-emerald-500",
+    warn: "bg-amber-500",
+    error: "bg-destructive",
+    busy: "bg-primary animate-pulse",
+  }[serverTone];
 
   return (
     <div className="space-y-4" data-testid="local-models-overview-panel">
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <p
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-foreground"
+        data-testid="overview-status"
+      >
+        <span className={cn("h-2 w-2 shrink-0 rounded-full", dotClass)} />
+        <span>{serverClause}</span>
+        {gpuClause && (
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">{gpuClause}</span>
+          </>
+        )}
+        {brainClause && (
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span
+              className={cn(
+                activeBrain?.id === providerId
+                  ? "text-muted-foreground"
+                  : "text-amber-700 dark:text-amber-400",
+              )}
+              data-testid="overview-brain-clause"
+            >
+              {brainClause}
+            </span>
+          </>
+        )}
+      </p>
+
+      {(onBrowse || onOpenAssistant || onReportProblem) && (
+        <div
+          className="flex flex-wrap gap-2"
+          role="group"
+          aria-label={t("local_models.overview.actions_label")}
+          data-testid="overview-actions"
+        >
+          {onBrowse && (
+            <ActionButton
+              primary
+              icon={<Search className="h-4 w-4" />}
+              label={t("local_models.overview.action_browse")}
+              hint={t("local_models.overview.action_browse_hint")}
+              onClick={onBrowse}
+            />
+          )}
+          {onOpenAssistant && (
+            <ActionButton
+              icon={<Sparkles className="h-4 w-4" />}
+              label={t("local_models.overview.action_setup")}
+              hint={t("local_models.overview.action_setup_hint")}
+              onClick={onOpenAssistant}
+            />
+          )}
+          {onReportProblem && (
+            <ActionButton
+              quiet
+              icon={<AlertCircle className="h-4 w-4" />}
+              label={t("local_models.overview.action_broken")}
+              hint={t("local_models.overview.action_broken_hint")}
+              onClick={onReportProblem}
+            />
+          )}
+        </div>
+      )}
+
+      {assistantSlot}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatTile
-          icon={<Server className="h-3.5 w-3.5" />}
-          label={t("local_models.overview.server")}
-          value={serverValue}
-          hint={serverHint}
-          tone={serverTone}
+          icon={<HardDrive className="h-3.5 w-3.5" />}
+          label={t("local_models.overview.disk")}
+          value={formatGigabytes(s?.disk_bytes ?? 0)}
+          hint={diskHint}
+          tone="primary"
           loading={server.isLoading}
         />
         <StatTile
@@ -116,22 +287,10 @@ export function OverviewPanel({
           loading={shortlist.isLoading}
         />
         <StatTile
-          icon={<HardDrive className="h-3.5 w-3.5" />}
-          label={t("local_models.overview.disk")}
-          value={formatGigabytes(s?.disk_bytes ?? 0)}
-          hint={s?.models_dir ?? ""}
-          tone="primary"
-          loading={server.isLoading}
-        />
-        <StatTile
           icon={<Layers className="h-3.5 w-3.5" />}
           label={t("local_models.overview.loaded")}
           value={String(loaded.length)}
-          hint={
-            loaded.length > 0
-              ? `${loadedHint} · ${formatGigabytes(s?.loaded_vram_bytes ?? 0)}`
-              : loadedHint
-          }
+          hint={loadedHint}
           tone="primary"
           loading={server.isLoading}
         />
@@ -141,7 +300,50 @@ export function OverviewPanel({
         providerId={providerId}
         onTune={onTune}
         onOpenApiKeys={onOpenApiKeys}
+        variant="checklist"
       />
     </div>
+  );
+}
+
+/** A 44 px SoftButton with icon, label and a one-line hint underneath. */
+function ActionButton({
+  icon,
+  label,
+  hint,
+  onClick,
+  primary,
+  quiet,
+}: {
+  icon: ReactNode;
+  label: string;
+  hint: string;
+  onClick: () => void;
+  primary?: boolean;
+  quiet?: boolean;
+}) {
+  return (
+    <SoftButton
+      primary={primary}
+      onClick={onClick}
+      ariaLabel={label}
+      className={cn(
+        "h-11 px-3.5 text-left",
+        quiet && "bg-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      <span className="shrink-0">{icon}</span>
+      <span className="flex min-w-0 flex-col leading-tight">
+        <span className="text-xs font-medium">{label}</span>
+        <span
+          className={cn(
+            "truncate text-[11px] font-normal",
+            primary ? "text-primary-foreground/80" : "text-muted-foreground",
+          )}
+        >
+          {hint}
+        </span>
+      </span>
+    </SoftButton>
   );
 }

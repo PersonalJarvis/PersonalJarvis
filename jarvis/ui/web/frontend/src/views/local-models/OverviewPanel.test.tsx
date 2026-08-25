@@ -251,13 +251,92 @@ describe("formatGigabytes", () => {
 });
 
 describe("OverviewPanel", () => {
-  it("shows the four tiles from the server and the shortlist", async () => {
+  it("opens with one status sentence: server, graphics memory, active brain", async () => {
     installFetchMock();
     renderPanel();
 
-    await screen.findByText("local_models.overview.server_running");
-    expect(screen.getByText("16.0 GB")).toBeDefined();
-    expect(screen.getByText("12 GB")).toBeDefined();
+    const status = await screen.findByTestId("overview-status");
+    await waitFor(() =>
+      expect(status.textContent).toContain(
+        "local_models.overview.status_runningOllama|0.32.15",
+      ),
+    );
+    expect(status.textContent).toContain(
+      "local_models.overview.status_gpu16.0",
+    );
+    expect(status.textContent).toContain(
+      "local_models.overview.status_brain_activeOllama",
+    );
+  });
+
+  it("names the other brain in the status sentence when Ollama is not active", async () => {
+    installFetchMock();
+    mockProviders.providers = [
+      { id: "ollama", label: "Ollama", tier: "brain", active: false },
+      { id: "openrouter", label: "OpenRouter", tier: "brain", active: true },
+    ];
+    renderPanel();
+
+    const clause = await screen.findByTestId("overview-brain-clause");
+    expect(clause.textContent).toBe(
+      "local_models.overview.status_brain_otherOllama|OpenRouter",
+    );
+  });
+
+  it("offers three actions: browse, help me set up, something is not working", async () => {
+    installFetchMock();
+    const onBrowse = vi.fn();
+    const onOpenAssistant = vi.fn();
+    const onReportProblem = vi.fn();
+    renderPanel({
+      onBrowse,
+      onOpenAssistant,
+      onReportProblem,
+      assistantSlot: <div data-testid="assistant-slot" />,
+    });
+
+    await screen.findByTestId("overview-actions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "local_models.overview.action_browse" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "local_models.overview.action_setup" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "local_models.overview.action_broken" }),
+    );
+    expect(onBrowse).toHaveBeenCalledTimes(1);
+    expect(onOpenAssistant).toHaveBeenCalledTimes(1);
+    expect(onReportProblem).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("assistant-slot")).toBeDefined();
+  });
+
+  it("hides the action row when no handler is wired", async () => {
+    installFetchMock();
+    renderPanel();
+    await screen.findByTestId("overview-status");
+    expect(screen.queryByTestId("overview-actions")).toBeNull();
+  });
+
+  it("shows the three tiles: downloads on disk, graphics memory in use, loaded now", async () => {
+    installFetchMock();
+    renderPanel();
+
+    const disk = await screen.findByRole("group", {
+      name: "local_models.overview.disk",
+    });
+    await waitFor(() => expect(disk.textContent).toContain("12 GB"));
+    await waitFor(() =>
+      expect(disk.textContent).toContain("local_models.overview.disk_model_one"),
+    );
+    expect(disk.textContent).toContain("/home/x/.ollama/models");
+
+    const gpu = screen.getByRole("group", {
+      name: "local_models.overview.gpu",
+    });
+    expect(gpu.textContent).toContain("16.0 GB");
+    expect(gpu.textContent).toContain("local_models.overview.gpu_in_use2.8 GB");
+
     const loaded = screen.getByRole("group", {
       name: "local_models.overview.loaded",
     });
@@ -272,32 +351,62 @@ describe("OverviewPanel", () => {
     });
     renderPanel();
 
-    await screen.findByText("local_models.overview.server_stopped");
+    const status = await screen.findByTestId("overview-status");
+    await waitFor(() =>
+      expect(status.textContent).toContain(
+        "local_models.overview.status_stoppedOllama",
+      ),
+    );
     expect(screen.getByText("local_models.overview.gpu_unknown")).toBeDefined();
   });
 
-  it("renders the four writable rows, badges, and hides the read-only ones under More roles", async () => {
+  it("renders the roles as a checklist, expands one row to the full ledger row and folds it back", async () => {
     installFetchMock();
     renderPanel({ onTune: vi.fn() });
 
-    await screen.findByTestId("role-row-chat");
+    const chat = await screen.findByTestId("role-row-chat");
+    expect(chat.getAttribute("data-variant")).toBe("checklist");
     expect(screen.getByTestId("role-row-tools_screen")).toBeDefined();
     expect(screen.getByTestId("role-row-deep")).toBeDefined();
     expect(screen.getByTestId("role-row-embedding")).toBeDefined();
     expect(screen.queryByText("local_models.role_voice")).toBeNull();
+    // Compact rows: the model, "not set", no badges, no picker, no Tune.
     expect(screen.getByText("qwen3.5:4b", { selector: "span" })).toBeDefined();
+    expect(
+      screen.getAllByText("local_models.roles.checklist_not_set").length,
+    ).toBe(3);
+    expect(screen.queryByText("tools")).toBeNull();
+    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
+    // Embedding has no recommendation applied yet -> "Download ..."; the
+    // trailing action is exactly one per row.
+    expect(
+      screen.getByText("local_models.roles.download_recommendedqwen3-embedding:4b"),
+    ).toBeDefined();
+
+    // Expand chat via its line -> the full row with badges, picker, Tune, Done.
+    fireEvent.click(
+      screen.getByRole("button", { name: /local_models.role_chat/ }),
+    );
     expect(screen.getAllByText("tools").length).toBeGreaterThan(0);
     expect(screen.getByText("local_models.roles.tune")).toBeDefined();
+    expect(
+      screen.getByLabelText("local_models.roles.pick_labellocal_models.role_chat"),
+    ).toBeDefined();
+    fireEvent.click(screen.getByText("local_models.roles.checklist_done"));
+    expect(screen.queryByText("local_models.roles.tune")).toBeNull();
 
     fireEvent.click(screen.getByText("local_models.roles.more_roles"));
     expect(screen.getByText("local_models.role_voice")).toBeDefined();
   });
 
-  it("writes the pick through PUT roles/{role}", async () => {
+  it("writes the pick through PUT roles/{role} from the expanded row", async () => {
     const fetchMock = installFetchMock();
     renderPanel();
 
     await screen.findByTestId("role-row-deep");
+    fireEvent.click(
+      screen.getByRole("button", { name: /local_models.role_deep/ }),
+    );
     const select = screen.getByLabelText(
       "local_models.roles.pick_labellocal_models.role_deep",
     );

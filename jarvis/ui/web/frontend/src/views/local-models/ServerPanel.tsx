@@ -161,7 +161,14 @@ function IdleReleaseControl({ providerId }: { providerId: string }) {
   );
 }
 
-export function ServerPanel({ providerId }: { providerId: string }) {
+export function ServerPanel({
+  providerId,
+  initialLogOpen = false,
+}: {
+  providerId: string;
+  /** Start with the log unfolded ("Something is not working" lands here). */
+  initialLogOpen?: boolean;
+}) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const { providers, refetch: refetchProviders } = useProviders();
@@ -257,7 +264,7 @@ export function ServerPanel({ providerId }: { providerId: string }) {
   };
 
   // --- log --------------------------------------------------------------------
-  const [logOpen, setLogOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(initialLogOpen);
   const log = useServerLog(providerId, LOG_LINES, logOpen && !remote);
 
   const runningRows = data?.running_models ?? [];
