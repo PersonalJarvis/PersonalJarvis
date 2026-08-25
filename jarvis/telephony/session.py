@@ -143,6 +143,11 @@ class TelephonyCallSession:
 
         self._in_resampler = Resampler(TWILIO_SAMPLE_RATE, STT_SAMPLE_RATE)
         self._out_resampler = Resampler(TTS_SAMPLE_RATE, TWILIO_SAMPLE_RATE)
+        # Master-volume limiter for this call, built on first use so importing
+        # telephony still costs no numpy. Like the resampler it is stateful
+        # across frames, so an utterance sent as many 20 ms frames is limited as
+        # one continuous signal instead of restarting at every frame boundary.
+        self._out_limiter: Any | None = None
         self._endpointer = EnergyEndpointer(sample_rate=STT_SAMPLE_RATE)
 
         self._started_at = time.time()
@@ -448,9 +453,11 @@ class TelephonyCallSession:
         # the setting works on a call too, not just at the desk. Read once per
         # turn so a live change lands on the next utterance. numpy import is lazy
         # to keep the telephony module's cold-import light.
-        from jarvis.audio.gain import apply_output_gain_pcm16
+        from jarvis.audio.gain import PeakLimiter, apply_output_gain_pcm16
 
         vol = getattr(getattr(self._config, "tts", None), "volume", 1.0)
+        if self._out_limiter is None:
+            self._out_limiter = PeakLimiter()
 
         self._speaking = True
         sent = 0
@@ -468,7 +475,12 @@ class TelephonyCallSession:
                     pcm8 = resample_pcm16(pcm, rate, TWILIO_SAMPLE_RATE)
                 else:
                     pcm8 = self._out_resampler.process(pcm)
-                pcm8 = apply_output_gain_pcm16(pcm8, vol)
+                pcm8 = apply_output_gain_pcm16(
+                    pcm8,
+                    vol,
+                    sample_rate=TWILIO_SAMPLE_RATE,
+                    limiter=self._out_limiter,
+                )
                 ulaw = pcm16_to_ulaw(pcm8)
                 for frame in frame_ulaw(ulaw):
                     await self._send_media(frame)
@@ -524,6 +536,10 @@ class TelephonyCallSession:
         if self._tts_task is not None and not self._tts_task.done():
             self._tts_task.cancel()
         self._out_resampler.reset()
+        if self._out_limiter is not None:
+            # Same reason as the resampler: the discarded audio's gain state
+            # must not carry into the next utterance.
+            self._out_limiter.reset()
         self._speaking = False
 
     # -- outbound primitives ----------------------------------------------

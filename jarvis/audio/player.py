@@ -30,7 +30,7 @@ else:
 
 from jarvis.audio import echo_reference, level_tap, topology
 from jarvis.audio.device_select import is_legacy_primary_mapper
-from jarvis.audio.gain import apply_output_gain, clamp_volume
+from jarvis.audio.gain import PeakLimiter, apply_output_gain, clamp_volume
 from jarvis.core.events import AudioOutFirst
 from jarvis.core.protocols import AudioChunk
 
@@ -1159,15 +1159,29 @@ class AudioPlayer:
         # bounded, benign contention, deliberately not per sub-block.
         level_delay_s = self.output_latency_s if feed_level else 0.0
         # Master output volume: scale the whole buffer once via the shared gain
-        # helper (makeup boost + soft limiter above unity, plain attenuation
-        # below), then write it in sub-blocks. ``arr_out is arr_f`` when the knob
-        # sits exactly at unity, so full playback stays byte-identical. The
-        # visualizer is fed the PRE-gain RMS (arr_f), so the orb/equalizer keeps
-        # tracking the speech itself — full bars even when the volume is low, and
-        # not artificially pumped when it is boosted. ``getattr`` default keeps
-        # ``__new__``-built test/hot-reload instances (which skip ``__init__``)
-        # at unity instead of crashing.
-        arr_out = apply_output_gain(arr_f, getattr(self, "_volume", 1.0))
+        # helper (makeup boost + look-ahead peak limiter above unity, plain
+        # attenuation below), then write it in sub-blocks. ``arr_out is arr_f``
+        # when the knob sits exactly at unity, so full playback stays
+        # byte-identical. The visualizer is fed the PRE-gain RMS (arr_f), so the
+        # orb/equalizer keeps tracking the speech itself — full bars even when
+        # the volume is low, and not artificially pumped when it is boosted.
+        # ``getattr`` defaults keep ``__new__``-built test/hot-reload instances
+        # (which skip ``__init__``) at unity instead of crashing.
+        #
+        # The limiter is per-player and lives across writes: a sentence reaches
+        # here as a train of ~120 ms buffers, and limiting each one in isolation
+        # would restart its gain ramp at every seam. It re-arms itself after a
+        # silent gap, so an utterance never opens mid-duck.
+        limiter = getattr(self, "_output_limiter", None)
+        if limiter is None:
+            limiter = PeakLimiter()
+            self._output_limiter = limiter
+        arr_out = apply_output_gain(
+            arr_f,
+            getattr(self, "_volume", 1.0),
+            sample_rate=device_rate,
+            limiter=limiter,
+        )
         block = max(1, int(device_rate * 0.06))
         for start in range(0, arr_out.shape[0], block):
             out = arr_out[start:start + block]
@@ -1570,6 +1584,12 @@ class AudioPlayer:
         (PortAudio abort behaves identically on Windows/macOS/Linux).
         """
         level_tap.reset_playing()
+        # The waveform this limiter was riding is discarded, so its gain state
+        # is stale. Without this, an answer starting inside the limiter's own
+        # release window would open quiet and audibly swell.
+        limiter = getattr(self, "_output_limiter", None)
+        if limiter is not None:
+            limiter.reset()
         with self._get_stream_state_lock():
             self._playback_generation = (
                 getattr(self, "_playback_generation", 0) + 1
@@ -1607,6 +1627,12 @@ class AudioPlayer:
         # Barge-in discards the buffered tail, so the UI must stop showing the
         # speaking equalizer for audio that will never play.
         level_tap.reset_playing()
+        # The waveform this limiter was riding is discarded, so its gain state
+        # is stale. Without this, an answer starting inside the limiter's own
+        # release window would open quiet and audibly swell.
+        limiter = getattr(self, "_output_limiter", None)
+        if limiter is not None:
+            limiter.reset()
         with self._get_stream_state_lock():
             self._playback_generation = (
                 getattr(self, "_playback_generation", 0) + 1

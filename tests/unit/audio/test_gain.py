@@ -1,10 +1,16 @@
 """Shared master-output-volume gain (jarvis.audio.gain).
 
 Covers the loudness maths every TTS sink relies on: the 0.0-1.0 knob maps to a
-makeup boost so 100% is genuinely louder than the raw signal, a soft-knee
-limiter keeps the boost from clipping, the unity point is byte-identical, and
-attenuation below unity is a plain linear multiply. The int16 wrapper (browser +
-telephony) must match the float path and never overflow.
+makeup boost so 100% is genuinely louder than the raw signal, a look-ahead peak
+limiter keeps the boost under full scale WITHOUT distorting it, the unity point
+is byte-identical, and attenuation below unity is a plain linear multiply. The
+int16 wrapper (browser + telephony) must match the float path and never
+overflow.
+
+The distortion tests are the reason this module was rewritten on 2026-08-25: the
+previous static ``tanh`` curve measured ~22% THD on a 0.5 peak at 100% volume,
+heard as a rasp on loud syllables. A limiter rides the gain instead of bending
+the wave, so the same loudness must now arrive essentially harmonic-free.
 """
 from __future__ import annotations
 
@@ -57,15 +63,86 @@ def test_attenuation_below_unity_is_linear():
     assert np.allclose(out, 0.2, atol=1e-4)
 
 
-def test_soft_limit_transparent_below_knee_and_bounded_above():
-    below = np.full(100, gain._LIMIT_KNEE * 0.5, np.float32)
-    assert np.allclose(gain.soft_limit(below), below)  # transparent
-    # A moderate over-knee value is compressed but stays strictly below 1.0.
-    mod = np.full(100, 1.5, np.float32)
-    assert float(np.max(np.abs(gain.soft_limit(mod)))) < 1.0
-    # An extreme value asymptotes to (but never exceeds) full scale.
-    huge = np.full(100, 50.0, np.float32)
-    assert float(np.max(np.abs(gain.soft_limit(huge)))) <= 1.0
+def _thd_percent(signal, sample_rate: int, freq: float) -> float:
+    """Total harmonic distortion of a limited tone, in percent."""
+    spectrum = np.abs(np.fft.rfft(np.asarray(signal, dtype=np.float64) * np.hanning(len(signal))))
+
+    def _bin_energy(harmonic: int) -> float:
+        index = int(round(harmonic * freq * len(signal) / sample_rate))
+        return float(spectrum[index - 2:index + 3].sum()) if index + 3 < len(spectrum) else 0.0
+
+    fundamental = _bin_energy(1)
+    harmonics = sum(_bin_energy(n) ** 2 for n in range(2, 12))
+    return float(np.sqrt(harmonics) / fundamental * 100.0) if fundamental else 0.0
+
+
+def _tone(peak: float, sample_rate: int = 24_000, freq: float = 220.0, seconds: float = 1.0):
+    t = np.arange(int(sample_rate * seconds)) / sample_rate
+    return (np.sin(2 * np.pi * freq * t) * peak).astype(np.float32)
+
+
+def test_boost_adds_no_audible_distortion():
+    """The whole point of the rewrite: loud input stays harmonic-free.
+
+    The retired tanh curve produced 8% THD here at peak 0.3 and 22% at 0.5.
+    """
+    for peak in (0.3, 0.5, 0.9):
+        out = gain.apply_output_gain(
+            _tone(peak), 1.0, sample_rate=24_000, limiter=gain.PeakLimiter()
+        )
+        assert _thd_percent(out, 24_000, 220.0) < 1.0, f"distortion at peak {peak}"
+
+
+def test_limiter_holds_the_ceiling_from_the_first_sample():
+    for peak in (0.3, 0.5, 0.9, 4.0):
+        out = gain.apply_output_gain(
+            _tone(peak), 1.0, sample_rate=24_000, limiter=gain.PeakLimiter()
+        )
+        assert float(np.max(np.abs(out))) <= 1.0
+        if peak * gain._MAKEUP_GAIN > 1.0:
+            # Loud enough to be limited: it should sit ON the ceiling, not under
+            # it — a limiter that overshoots its target is just an attenuator.
+            assert float(np.max(np.abs(out))) >= gain._LIMIT_CEILING - 1e-3
+
+
+def test_streamed_buffers_limit_exactly_like_one_pass():
+    """A stateful limiter must make buffer seams invisible.
+
+    Feeding the same signal as many buffers has to yield the identical waveform,
+    or the seams themselves would be audible as level steps.
+    """
+    signal = _tone(0.6)
+    streaming = gain.PeakLimiter()
+    chunk = int(24_000 * 0.12)
+    streamed = np.concatenate([
+        gain.apply_output_gain(
+            signal[i:i + chunk], 1.0, sample_rate=24_000, limiter=streaming
+        )
+        for i in range(0, len(signal), chunk)
+    ])
+    one_pass = gain.apply_output_gain(
+        signal, 1.0, sample_rate=24_000, limiter=gain.PeakLimiter()
+    )
+    assert np.array_equal(streamed, one_pass)
+
+
+def test_limiter_reset_reopens_at_unity():
+    limiter = gain.PeakLimiter()
+    limiter.process(_tone(0.9, seconds=0.2) * 4.0, 24_000)
+    assert limiter._gain < 1.0  # ducked by the loud pass
+    limiter.reset()
+    quiet = _tone(0.1, seconds=0.05)
+    assert np.allclose(limiter.process(quiet, 24_000), quiet)  # untouched again
+
+
+def test_limiter_accepts_stereo_and_links_the_channels():
+    mono = _tone(0.5, seconds=0.2) * 4.0
+    stereo = np.column_stack((mono, mono * 0.25)).astype(np.float32)
+    out = gain.PeakLimiter().process(stereo, 24_000)
+    assert out.shape == stereo.shape
+    assert float(np.max(np.abs(out))) <= 1.0
+    # One shared gain curve: the quiet channel keeps its exact 1:4 ratio.
+    assert np.allclose(out[:, 1] * 4.0, out[:, 0], atol=1e-6)
 
 
 def test_pcm16_boost_matches_float_and_never_overflows():
