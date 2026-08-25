@@ -42,21 +42,10 @@ const launcherEnglish = vi.hoisted<Record<string, string>>(() => ({
 }));
 vi.mock("@/i18n", () => ({
   useT: () => (key: string) => launcherEnglish[key] ?? key,
-  // The chat surface's greeting fills a placeholder in its own string.
-  fill: (text: string, values: Record<string, string>) =>
-    Object.entries(values).reduce(
-      (out, [name, value]) => out.replaceAll(`{${name}}`, value),
-      text,
-    ),
 }));
 
 // The workspace grid follows the app theme for its terminal colours; this test
 // renders the view outside the provider, so the hook is stubbed.
-// The chat surface greets by name, and the name comes from a react-query
-// read of the profile. This view is rendered bare here, with no provider —
-// no name is a state the greeting already handles.
-vi.mock("@/hooks/useUserName", () => ({ useUserName: () => null }));
-
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({ theme: "dark", setTheme: vi.fn(), toggle: vi.fn() }),
   useThemeValue: () => "dark",
@@ -150,7 +139,6 @@ import { AgenticIdeView } from "./AgenticIdeView";
 import { workspaceLaunchShortcut } from "@/components/agentic/WorkspaceLauncher";
 import * as api from "@/lib/agenticIdeApi";
 import { GRID_HORIZONTAL_PADDING_PX } from "@/components/agentic/layout";
-import { useIdeChatStore } from "@/store/ideChat";
 
 const AGENTS: api.AgentsResponse = {
   terminal_available: true,
@@ -309,16 +297,10 @@ function sessionWith(names: string[], focus = false): api.SessionState {
 }
 
 beforeEach(() => {
-  // A workspace now opens with its prompt bar collapsed — the panes are what
-  // the user came for. The tests below that type an instruction want it open,
-  // and the remembered height is how a user who wants it open gets it.
-  window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
   // The wizard's view step preselects the remembered reading mode, and the
-  // open workspace reads the same answer — a value left behind by one test
-  // must not decide how the next one's workspace opens. The store is a module
-  // singleton, so the key alone is not enough: reset the live state too.
+  // grid reads the same key on mount — a value left behind by one test must
+  // not decide how the next one's workspace opens.
   window.localStorage.removeItem("jarvis.agenticIde.workspaceView");
-  useIdeChatStore.setState({ view: "grid", workspace: null, sidebarFace: "chats" });
   vi.mocked(api.fetchIdeAgents).mockResolvedValue(AGENTS);
   vi.mocked(api.fetchIdeState).mockResolvedValue(EMPTY_STATE);
   vi.mocked(api.fetchFolders).mockResolvedValue({
@@ -524,14 +506,15 @@ describe("Agentic IDE launcher", () => {
     expect(screen.getByTestId("review-view-mode").textContent).toBe("Chat");
     fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
 
-    // The workspace comes up on the CHAT surface — the agent chat in this
-    // folder — while every terminal stays mounted behind it.
-    expect(await screen.findByTestId("ide-chat-surface")).toBeTruthy();
+    // The grid reads the stored preference on mount, so the workspace comes up
+    // with the chat rail showing instead of the wall of terminals.
+    expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
     expect(
       window.localStorage.getItem("jarvis.agenticIde.workspaceView"),
     ).toBe("chat");
-    expect(screen.getByTestId("pane-Mika")).toBeTruthy();
-    expect(screen.getByTestId("agentic-grid-layer").className).toContain("opacity-0");
+    const rail = screen.getByTestId("agentic-chat-rail");
+    expect(rail.className).toContain("flex");
+    expect(rail.className).not.toContain("hidden");
   });
 
   it("keeps every reading-mode miniature visible on the dark workspace", async () => {
@@ -831,63 +814,6 @@ describe("Agentic IDE running workspace", () => {
     expect(screen.queryByTestId("workspace-launcher")).toBeNull();
   });
 
-  it("offers no surface switch while the wizard is the screen", async () => {
-    // Nothing is open, so neither surface has anything to show — and a
-    // control that changes nothing visible reads as broken.
-    render(<AgenticIdeView />);
-    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
-
-    expect(screen.queryByTestId("agentic-view-switch")).toBeNull();
-  });
-
-  it("switches between the chat and the grid from one control in the bar", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(
-      stateWith(sessionWith(["Mika"])),
-    );
-    render(<AgenticIdeView />);
-    await screen.findByTestId("pane-Mika");
-    expect(screen.queryByTestId("ide-chat-surface")).toBeNull();
-
-    fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
-    expect(await screen.findByTestId("ide-chat-surface")).toBeTruthy();
-    // The switch has to be reachable from the surface it switched TO, or
-    // pressing "Chat" would take the way back off screen with it.
-    fireEvent.click(screen.getByTestId("agentic-view-mode-grid"));
-    expect(screen.queryByTestId("ide-chat-surface")).toBeNull();
-  });
-
-  it("covers the panes for the chat instead of unmounting them", async () => {
-    // The one rule this pair of surfaces must not break: every pane is a live
-    // coding agent, and unmounting one kills it.
-    vi.mocked(api.fetchIdeState).mockResolvedValue(
-      stateWith(sessionWith(["Mika", "Nova"])),
-    );
-    render(<AgenticIdeView />);
-    const mika = await screen.findByTestId("pane-Mika");
-
-    fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
-    await screen.findByTestId("ide-chat-surface");
-    expect(screen.getByTestId("pane-Mika")).toBe(mika);
-    expect(screen.getByTestId("agentic-grid-layer").className).toContain("opacity-0");
-
-    fireEvent.click(screen.getByTestId("agentic-view-mode-grid"));
-    expect(screen.getByTestId("pane-Mika")).toBe(mika);
-    expect(screen.getByTestId("agentic-grid-layer").className).not.toContain("opacity-0");
-  });
-
-  it("runs the chat in the folder of the workspace that is open", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(
-      stateWith(sessionWith(["Mika"])),
-    );
-    render(<AgenticIdeView />);
-    await screen.findByTestId("pane-Mika");
-
-    fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
-
-    const surface = await screen.findByTestId("ide-chat-surface");
-    expect(surface.dataset.folder).toBe("/work/project");
-  });
-
   it("toggles focus mode through the API, not just locally", async () => {
     vi.mocked(api.fetchIdeState).mockResolvedValue(
       stateWith(sessionWith(["Mika"])),
@@ -980,58 +906,6 @@ describe("Agentic IDE running workspace", () => {
     );
   });
 
-  it("sends a prompt to the selected terminal through the same endpoint voice uses", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(
-      stateWith(sessionWith(["Mika", "Nova"])),
-    );
-    vi.mocked(api.promptTerminal).mockResolvedValue({
-      terminal: "Mika",
-      sent: "run the tests",
-      composed_by: "raw",
-      files: [],
-      submitted: true,
-    });
-    render(<AgenticIdeView />);
-
-    await screen.findByTestId("pane-Mika");
-    const box = screen.getByLabelText(/instruction for mika/i);
-    fireEvent.change(box, { target: { value: "run the tests" } });
-    fireEvent.click(screen.getByRole("button", { name: /send/i }));
-
-    await waitFor(() =>
-      // ``compose`` is what makes this the same endpoint the spoken
-      // "prompt Mika …" uses: the backend briefs the instruction and types
-      // THAT into the pane. The third argument also carries files dropped on
-      // the prompt bar — empty here, because nothing was attached.
-      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
-        compose: true,
-        attachments: [],
-      }),
-    );
-  });
-
-  it("reports a refused prompt instead of pretending it landed", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue(
-      stateWith(sessionWith(["Mika"])),
-    );
-    vi.mocked(api.promptTerminal).mockRejectedValue(
-      new Error("Mika is not running right now"),
-    );
-    render(<AgenticIdeView />);
-
-    await screen.findByTestId("pane-Mika");
-    fireEvent.change(screen.getByLabelText(/instruction for/i), {
-      target: { value: "hello" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /send/i }));
-
-    await waitFor(() =>
-      expect(pushToast).toHaveBeenCalledWith(
-        "error",
-        "Mika is not running right now",
-      ),
-    );
-  });
   it("shows panes that voice opened, without a reload", async () => {
     /*
      * The regression this guards: a spoken "spawn three more terminals" adds the
