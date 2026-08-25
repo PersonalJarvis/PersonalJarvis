@@ -304,7 +304,8 @@ class TestLauncherRefusesEarly:
         """
         import inspect
 
-        src = inspect.getsource(launcher.main)
+        # ``main`` is a thin crash-reporting wrapper; the boot body is ``_main``.
+        src = inspect.getsource(launcher._main)
         before_gate = src[: src.index("_missing_window_toolkit")]
         assert "if not args.headless:" in before_gate.split("args = _parse_args")[-1], (
             "the window-toolkit gate must sit behind `if not args.headless:` — "
@@ -315,7 +316,8 @@ class TestLauncherRefusesEarly:
         """Fail in a second, not after a minute of discarded work."""
         import inspect
 
-        src = inspect.getsource(launcher.main)
+        # ``main`` is a thin crash-reporting wrapper; the boot body is ``_main``.
+        src = inspect.getsource(launcher._main)
         gate_at = src.index("_missing_window_toolkit")
         server_at = src.index("_missing_backend_server")
         for later in ("load_config()", "ensure_control_key", "_run_desktop("):

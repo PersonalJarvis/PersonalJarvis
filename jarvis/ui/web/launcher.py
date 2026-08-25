@@ -49,6 +49,7 @@ ensure_standard_streams()
 # Windows.
 _ensure_dpi_awareness()
 
+
 # Taskbar-Icon-Fix (Windows): the unique AUMID must be set BEFORE pywebview
 # creates the window. Done in ``_run_desktop`` (the only path with a window) so
 # the module import — which the headless fast-boot path pays on the
@@ -149,9 +150,7 @@ def _select_instance_early(argv: list[str]) -> str | None:
     return None
 
 
-def _acquire_primary_lock_for_headless(
-    *, lock_path=None, meta_path=None
-):
+def _acquire_primary_lock_for_headless(*, lock_path=None, meta_path=None):
     """Claim primary-instance status for a headless run and set the env flag.
 
     Decides ``JARVIS_PRIMARY_INSTANCE`` the SAME way the desktop path does:
@@ -185,9 +184,7 @@ def _acquire_primary_lock_for_headless(
         )
 
         try:
-            lock = acquire_single_instance_lock(
-                lock_path=lock_path, meta_path=meta_path
-            )
+            lock = acquire_single_instance_lock(lock_path=lock_path, meta_path=meta_path)
         except SingleInstanceError:
             lock = None
     except Exception as exc:  # noqa: BLE001 — lock infra must never block boot
@@ -200,7 +197,8 @@ def _acquire_primary_lock_for_headless(
 
         _logging.getLogger(__name__).warning(
             "headless lock via desktop_app failed (%s) — trying a direct "
-            "FileLock fallback so a sole VPS instance still stays primary", exc,
+            "FileLock fallback so a sole VPS instance still stays primary",
+            exc,
         )
         lock = _direct_filelock_fallback(lock_path)
 
@@ -507,9 +505,7 @@ async def _run_headless(args) -> int:
     if args.dev:
         cfg = cfg.model_copy(update={"ui": cfg.ui.model_copy(update={"dev_mode": True})})
     if args.port is not None:
-        cfg = cfg.model_copy(
-            update={"ui": cfg.ui.model_copy(update={"admin_api_port": args.port})}
-        )
+        cfg = cfg.model_copy(update={"ui": cfg.ui.model_copy(update={"admin_api_port": args.port})})
     try:
         from jarvis.core import control_key
 
@@ -590,9 +586,7 @@ async def _run_headless(args) -> int:
 
     async def _build_brain_bg() -> None:
         try:
-            built = await asyncio.to_thread(
-                build_default_brain, bus=server.bus, tier="router"
-            )
+            built = await asyncio.to_thread(build_default_brain, bus=server.bus, tier="router")
             brain_holder["brain"] = built
             server.app.state.brain = built
             # Re-wire the late-built brain into the task runner: _init_task_stack
@@ -750,9 +744,7 @@ async def _run_headless(args) -> int:
         if reply:
             role = "system" if _is_brain_diagnostic(reply) else "assistant"
             trace = turn_traces.snapshot(turn_started_ms) if role == "assistant" else None
-            await chat_store.add_message(
-                thread_id=thread_id, role=role, text=reply, trace=trace
-            )
+            await chat_store.add_message(thread_id=thread_id, role=role, text=reply, trace=trace)
 
     server.bus.subscribe(MessageSent, _on_user_message)
 
@@ -888,71 +880,15 @@ async def _run_headless(args) -> int:
 
 
 def _show_error_dialog(title: str, message: str) -> None:
-    """Last-resort visible surface: a native modal box, on every desktop OS.
+    """Native modal box on every desktop OS — see ``jarvis.ui.native_dialog``.
 
-    Reached only when the message provably went nowhere else (see
-    ``_report_startup_failure``), because a GUI launch is mute on all three
-    platforms: Windows ``pythonw`` has no streams at all, a macOS ``.app`` and a
-    Linux ``.desktop`` with ``Terminal=false`` bury stderr in Console.app and
-    the journal. Same failure, same class of user, so all three get a dialog.
-
-    Windows uses Win32 directly; macOS uses ``osascript``, which every install
-    has; Linux tries the two desktop dialog helpers in turn and honestly gives
-    up if the distro ships neither — stderr and the log still carry the reason.
-
-    Separated from its caller so tests can assert the DECISION to show a box
+    Kept as a module-level seam so tests can assert the DECISION to show a box
     without a real one opening: an unattended modal blocks until someone clicks
     it, which in CI is a hung run.
     """
-    if sys.platform == "win32":
-        with contextlib.suppress(Exception):
-            import ctypes
+    from jarvis.ui.native_dialog import show_error_dialog
 
-            MB_ICONERROR = 0x10
-            ctypes.windll.user32.MessageBoxW(None, message, title, MB_ICONERROR)
-        return
-
-    import subprocess
-
-    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
-
-    def _run(cmd: list[str]) -> bool:
-        try:
-            subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input in argv[0]
-                cmd,
-                check=False,
-                encoding="utf-8",
-                errors="replace",
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-            )
-            return True
-        except (OSError, ValueError):
-            return False  # helper not installed → try the next one
-
-    if sys.platform == "darwin":
-        # AppleScript string literals: backslash first, then the quote.
-        def _as(text: str) -> str:
-            return text.replace("\\", "\\\\").replace('"', '\\"')
-
-        _run(
-            [
-                "osascript",
-                "-e",
-                f'display dialog "{_as(message)}" with title "{_as(title)}" '
-                'buttons {"OK"} default button "OK" with icon stop',
-            ]
-        )
-        return
-
-    # Linux: no shell, so the text is an argument and needs no escaping.
-    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        return  # no graphical session — a dialog has nowhere to appear
-    for cmd in (
-        ["zenity", "--error", f"--title={title}", f"--text={message}"],
-        ["kdialog", "--title", title, "--error", message],
-    ):
-        if _run(cmd):
-            return
+    show_error_dialog(title, message)
 
 
 def _report_startup_failure(message: str) -> None:
@@ -1039,6 +975,136 @@ def _missing_backend_server() -> str | None:
     return None
 
 
+def _install_boot_trace(raw_argv: list[str]) -> None:
+    """Start the desktop log file NOW, so every launch leaves a trace.
+
+    Until 2026-08-25 the file sink was installed by ``DesktopApp.__init__`` —
+    after the branded re-exec, the elevation check, config, the control key and
+    the single-instance lock. A launch that ended in any of those (an "already
+    running" bounce, a crash on an import, a lock held by a stuck earlier
+    instance) ran under ``pythonw`` with no console and left NOTHING behind: the
+    user clicked, nothing appeared, and the log could not say why (live incident
+    2026-08-25, an 11-minute hole between two launches). The sink is cheap
+    (loguru + stdlib) and idempotent, so the later ``DesktopApp`` call is a
+    no-op against it. Best-effort: a log that cannot be opened never blocks boot.
+    """
+    try:
+        from loguru import logger
+
+        from jarvis.ui.desktop_log import _install_desktop_log_sink, desktop_log_path
+
+        _install_desktop_log_sink(desktop_log_path())
+        logger.info(
+            "launcher: start pid={} argv={} cwd={}",
+            os.getpid(),
+            raw_argv,
+            os.getcwd(),
+        )
+    except Exception:  # noqa: BLE001, S110 — a mute launch is what we had before
+        pass
+
+
+def _recover_from_already_running(
+    error: Exception,
+    *,
+    focus=None,
+    read_meta=None,
+    ask=None,
+    terminate=None,
+    acquire=None,
+):
+    """The lock is held. Bring the holder forward — or, with consent, evict it.
+
+    Returns a freshly acquired lock when the user chose to stop a stuck holder
+    and the lock could then be taken, else ``None`` (the caller exits 3).
+
+    The honest case — a healthy instance with a window — is handled by focusing
+    it, exactly as before. The case that used to be a silent exit is a holder
+    that is alive but has NO window to bring forward (a previous instance whose
+    teardown wedged, or a lock the eviction logic could not reclaim): the user
+    clicked, nothing happened, and every further click did the same until the
+    stuck process died on its own. Now that turns into one native Yes/No box,
+    and Yes terminates the holder and takes the lock. No consent, no kill: the
+    default button is No and any failure to ask counts as No.
+    """
+    from loguru import logger
+
+    from jarvis.ui import desktop_app as _desktop_app
+
+    focus = focus or _desktop_app.focus_existing_instance_robust
+    read_meta = read_meta or _desktop_app._read_meta
+    terminate = terminate or _desktop_app._terminate_pid
+    acquire = acquire or _desktop_app.acquire_single_instance_lock
+    if ask is None:
+        from jarvis.ui.native_dialog import ask_yes_no
+
+        ask = ask_yes_no
+
+    focused = False
+    try:
+        focused = bool(focus())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("launcher: focusing the running instance failed: {}", exc)
+    logger.warning(
+        "launcher: {} — {}",
+        error,
+        "brought its window forward" if focused else "NO window found",
+    )
+    if focused:
+        return None
+
+    meta = None
+    with contextlib.suppress(Exception):
+        meta = read_meta()
+    pid = None
+    with contextlib.suppress(Exception):
+        pid = int(meta["pid"]) if meta and meta.get("pid") is not None else None
+    if pid is None or pid == os.getpid():
+        _report_startup_failure(
+            f"{APP_DISPLAY_NAME} reports that it is already running, but no window "
+            "could be found and the running process is unknown.\n\n"
+            f"Detail: {error}"
+        )
+        return None
+
+    consented = False
+    try:
+        consented = bool(
+            ask(
+                f"{APP_DISPLAY_NAME} is already running",
+                f"{APP_DISPLAY_NAME} is already running (process {pid}), but it has no "
+                "window that could be brought to the front. It is probably stuck.\n\n"
+                "Stop that process and start fresh?",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("launcher: could not ask about the stuck instance: {}", exc)
+    logger.info(
+        "launcher: stuck holder pid={} — user {}",
+        pid,
+        "consented" if consented else "declined",
+    )
+    if not consented:
+        return None
+
+    if not terminate(pid):
+        _report_startup_failure(
+            f"{APP_DISPLAY_NAME} could not stop the running process {pid}. "
+            "End it in the task manager, then start the app again."
+        )
+        return None
+    try:
+        lock = acquire()
+    except Exception as exc:  # noqa: BLE001 — SingleInstanceError or lock I/O
+        _report_startup_failure(
+            f"{APP_DISPLAY_NAME} stopped process {pid}, but the start lock is still "
+            f"held. Start the app again in a few seconds.\n\nDetail: {exc}"
+        )
+        return None
+    logger.info("launcher: evicted stuck holder pid={} and took the lock", pid)
+    return lock
+
+
 def _run_desktop(cfg, use_lock: bool) -> int:
     """Full desktop app with a pywebview window.
 
@@ -1058,10 +1124,11 @@ def _run_desktop(cfg, use_lock: bool) -> int:
     if use_lock:
         try:
             lock = acquire_single_instance_lock()
-        except SingleInstanceError:
-            print("Jarvis is already running.", file=sys.stderr)
-            focus_existing_instance_robust()
-            return 3
+        except SingleInstanceError as exc:
+            print(f"{APP_DISPLAY_NAME} is already running.", file=sys.stderr)
+            lock = _recover_from_already_running(exc, focus=focus_existing_instance_robust)
+            if lock is None:
+                return 3
 
     # Fix #2 (2026-05-29): tell the backend whether this is the PRIMARY
     # instance. Only the lock holder may run the mission crash_recovery sweep;
@@ -1276,10 +1343,16 @@ def _run_desktop_fast(args) -> int | None:
             _log.getLogger(__name__).error("fast-boot backend did not signal in 60s")
             return None
         if holder["already_running"]:
+            from loguru import logger
+
             from jarvis.ui.desktop_app import focus_existing_instance_robust
 
-            print("Jarvis is already running.", file=sys.stderr)
-            focus_existing_instance_robust()
+            print(f"{APP_DISPLAY_NAME} is already running.", file=sys.stderr)
+            focused = focus_existing_instance_robust()
+            logger.warning(
+                "launcher(fast): already running — {}",
+                "brought its window forward" if focused else "NO window found",
+            )
             return 3
         app = holder["app"]
         if app is None:
@@ -1304,6 +1377,31 @@ def _run_desktop_fast(args) -> int | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Boot the desktop app; a crash before the window is logged AND shown.
+
+    Everything happens in ``_main``. This wrapper exists for the failure that
+    used to be invisible: an exception on the way to the window, under a
+    ``pythonw`` that has no stderr, ended the process with no trace at all.
+    """
+    try:
+        return _main(argv)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:  # noqa: BLE001 — last line of defence, must report
+        with contextlib.suppress(Exception):
+            from loguru import logger
+
+            logger.opt(exception=exc).critical("launcher: crashed before the window")
+        _report_startup_failure(
+            f"{APP_DISPLAY_NAME} crashed while starting, before its window could "
+            f"open.\n\n{type(exc).__name__}: {exc}\n\nThe log file has the details."
+        )
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
     # Stamp the boot-profiling t0 as early as possible (only when opted in) so
     # BOOT_READY_MS reflects nearly the full in-process cold-start cost. The
     # harness's spawn→ready wall-clock remains the authoritative headline; this
@@ -1374,6 +1472,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     args = _parse_args(_raw_argv)
+
+    # From here on every desktop launch is written down — see the helper.
+    if not args.headless:
+        _install_boot_trace(_raw_argv)
 
     # Refuse a window we cannot build, BEFORE paying for the boot. Everything
     # below this line — config, control key, autostart, backend, voice — takes
@@ -1458,6 +1560,14 @@ def main(argv: list[str] | None = None) -> int:
 
             _reexec = maybe_reexec_through_branded_launcher(list(_raw_argv))
             if _reexec is not None:
+                with contextlib.suppress(Exception):
+                    from loguru import logger as _rlog
+
+                    _rlog.info(
+                        "launcher: handed this boot to the branded launcher exe "
+                        "(exit {}); the child logs from here on",
+                        _reexec,
+                    )
                 return _reexec
         except Exception:  # noqa: BLE001 — never let branding block boot
             pass
@@ -1531,13 +1641,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # CLI-Overrides
     if args.dev:
-        cfg = cfg.model_copy(
-            update={"ui": cfg.ui.model_copy(update={"dev_mode": True})}
-        )
+        cfg = cfg.model_copy(update={"ui": cfg.ui.model_copy(update={"dev_mode": True})})
     if args.port is not None:
-        cfg = cfg.model_copy(
-            update={"ui": cfg.ui.model_copy(update={"admin_api_port": args.port})}
-        )
+        cfg = cfg.model_copy(update={"ui": cfg.ui.model_copy(update={"admin_api_port": args.port})})
 
     # Per-user Jarvis Control API key — generate-once BEFORE the app serves so
     # it exists by the time a local agent (Codex CLI / Claude Code) hits

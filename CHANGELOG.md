@@ -30,6 +30,14 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **A launch that never reaches a window is no longer mute.** The desktop
+  log now starts from the launcher's first millisecond, so an "already
+  running" bounce, a crash on the way to the window or a lock held by a stuck
+  earlier instance is written down instead of vanishing. When the running
+  instance has no window to bring forward, the app asks — one native Yes/No
+  box on Windows, macOS and Linux — whether to stop the stuck process and
+  start fresh; a restart that fails says so the same way. (BUG-180)
+
 - **A dictated prompt reaches a Tauri/Electron coding-agent terminal.** On
   Windows the transcript is now offered with delayed clipboard rendering, so
   Jarvis sees who reads it: a proven paste restores the old clipboard at once,

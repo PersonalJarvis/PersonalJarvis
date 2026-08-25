@@ -12644,3 +12644,72 @@ window frame can change what the page is allowed to do, the page states its own
 policy as well, so the app does not depend on every shell agreeing with it.
 
 ---
+
+## BUG-180: the app "takes minutes to start" — every launch that never reached a window was mute, and a stuck earlier instance turned every click into a silent exit (HIGH, FIXED 2026-08-25)
+
+**Symptom.** Click the Start-Menu shortcut, wait, nothing. Click again,
+nothing. Five to eleven minutes later a window appears after yet another
+click, and the machine was idle the whole time. `data/jarvis_desktop.log`
+shows the previous instance shutting down at 09:58:24 and the next line at
+10:09:16 — a hole with no explanation. Measured from the log, the boot itself
+takes ~2.5 s to a painted window and ~8 s to a usable voice, so the wait was
+never the boot.
+
+**Root cause.** Three things stacked, all invisible by construction:
+
+1. The file log sink was installed by `DesktopApp.__init__`, i.e. AFTER the
+   branded re-exec, the elevation check, config, the control key and the
+   single-instance lock. A launch that ended anywhere in that stretch ran
+   under `pythonw.exe` — no console, no stderr — and left no trace. The one
+   footprint of the 10:02:41 attempt is the autostart shortcut it rewrote
+   (that write sits just before the lock); the log never heard of it.
+2. `_run_desktop` answered a held lock with `print("already running")` to a
+   stderr that does not exist, then `focus_existing_instance_robust()`, then
+   exit 3. When the holder had no window (a previous instance whose teardown
+   wedged after its accept socket died — the `_start_serving ... self._sockets
+   is not None` AssertionError in the log — or a lock the zombie eviction
+   could not reclaim), focusing found nothing and the launch simply ended.
+   Every further click did the same until the stuck process died on its own.
+3. A restart that failed (`jarvis.ui.relauncher.main` giving up after three
+   spawns) returned 1 from a windowless helper — also nowhere.
+
+**Fix.**
+* `jarvis/ui/desktop_log.py` (new) — the sink + writer thread moved out of
+  `desktop_app` so the launcher can install them from its first millisecond
+  without the ~400 ms config import; `desktop_log_path()` mirrors
+  `config.DATA_DIR` exactly (parity test). `launcher._install_boot_trace`
+  writes `launcher: start pid=… argv=…`, the branded-exe hand-off, and every
+  already-running decision into the same `jarvis_desktop.log`.
+* `launcher.main` is now a crash-reporting wrapper around `_main`: an
+  exception before the window is logged with its traceback and shown in a
+  native box (`_report_startup_failure`).
+* `launcher._recover_from_already_running` — a healthy holder is focused as
+  before; a holder WITHOUT a window becomes one native Yes/No question ("It is
+  probably stuck. Stop that process and start fresh?"). Only an explicit Yes
+  terminates it and takes the lock; No, no display, no helper and any error
+  all count as No. `jarvis/ui/native_dialog.py` (new) carries `ask_yes_no` and
+  `show_error_dialog` for Windows (Win32), macOS (osascript) and Linux
+  (zenity/kdialog, nothing without a display).
+* `desktop_app._terminate_pid` logs each step and, on Windows, falls back to
+  `taskkill /F /T` for the whole process tree when psutil's kill did not take —
+  a wedged instance's child (inference server, ConPTY host) is often what
+  keeps it alive.
+* `relauncher.main` reports a failed restart (`_report_restart_failure`):
+  stderr when readable, a native box when not.
+* Two things the live test of the fix surfaced, fixed alongside: the log
+  writer thread is now drained at interpreter exit (`atexit`), so the last
+  line of a process that ends right after writing it — the bounce itself — is
+  no longer lost; and `_default_lock_holder_health` treats a port that
+  CONNECTS but answers late as a busy holder (return True) rather than a
+  zombie — only a refused connection (nothing bound) still counts as dead.
+  Before, a second click during the heavy part of a boot waited 6 s on four
+  1-second probes and was one timeout away from terminating the very instance
+  it was supposed to bring forward.
+
+**Tests.** `tests/unit/ui/test_launcher_boot_trace.py`,
+`tests/unit/ui/test_native_dialog_and_eviction.py`.
+
+**Not changed, on purpose.** The boot path itself. The 0.5 s spent by the
+`pythonw` parent before it re-execs through the branded exe is the price of a
+branded taskbar button (`icon_utils.maybe_reexec_through_branded_launcher`);
+a shortcut that targets the in-venv branded exe directly skips it.

@@ -1,4 +1,4 @@
-﻿"""Desktop app wrapper: pywebview window + FastAPI backend lifecycle.
+"""Desktop app wrapper: pywebview window + FastAPI backend lifecycle.
 
 Coordinates:
   1. Single-instance lock (filelock + PID sidecar + stale detection).
@@ -200,10 +200,7 @@ def _supported_call_kwargs(
         # every kwarg through is the documented fallback of this helper.
         return dict(kwargs)
     parameters = tuple(signature.parameters.values())
-    if any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
-    ):
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
         return dict(kwargs)
     keyword_names = {
         parameter.name
@@ -231,273 +228,19 @@ class SingleInstanceError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-_DESKTOP_LOG_SINK_INSTALLED = False
-#: Rotate the desktop log at this size, keeping ``_LOG_RETENTION`` older files.
-_LOG_ROTATION_BYTES = 10 * 1024 * 1024
-_LOG_RETENTION = 3
-#: Bound on records waiting to reach disk. Deep enough to absorb a multi-second
-#: disk stall at the observed rate (a few hundred records per minute), shallow
-#: enough that a permanently wedged disk cannot grow the process without limit.
-_LOG_QUEUE_MAX = 20_000
-#: Records fused into one write+flush pair. Chatty subsystems (the wake
-#: heartbeat, Telegram polling) otherwise pay two syscalls per line.
-_LOG_BATCH_MAX = 256
-#: Sentinel telling the writer thread to drain and exit.
-_LOG_STOP = object()
-
-
-class _AsyncLogWriter:
-    """Write loguru records to the log file from a dedicated thread.
-
-    Why this exists instead of loguru's own file sink: a file sink runs
-    INLINE on whichever thread emitted the record, and the backend asyncio
-    loop emits constantly. One slow ``write()`` therefore blocks every
-    WebSocket, HTTP route and brain turn behind it. Observed live on
-    2026-08-03 under heavy machine load: a 24.4 s event-loop stall whose
-    stack ended in ``loguru/_file_sink.py:write``, immediately followed by
-    ``listening socket ... is dead`` and an unhandled proactor error — the
-    window lost its backend and never came back.
-
-    loguru's ``enqueue=True`` would decouple the same way, but it builds a
-    multiprocessing pipe that can fail with WinError 5 in restricted
-    desktop/sandbox contexts before the window exists. A plain threading
-    queue buys the decoupling without a pipe; rotation and retention, which
-    the file sink would otherwise provide, are carried here instead.
-
-    On overflow records are dropped rather than growing the queue without
-    bound, and the dropped count is reported into the log as soon as the disk
-    keeps up again — dropping silently would make the log lie about its own
-    completeness (AP-30).
-    """
-
-    def __init__(
-        self,
-        path: Path,
-        *,
-        rotation_bytes: int = _LOG_ROTATION_BYTES,
-        retention: int = _LOG_RETENTION,
-        max_queue: int = _LOG_QUEUE_MAX,
-    ) -> None:
-        self._path = Path(path)
-        self._rotation_bytes = rotation_bytes
-        self._retention = retention
-        self._queue: queue.Queue[Any] = queue.Queue(maxsize=max_queue)
-        self._drop_lock = threading.Lock()
-        self._dropped = 0
-        self._handle: Any = None
-        self._written = 0
-        self._thread = threading.Thread(
-            target=self._run,
-            name="jarvis-log-writer",
-            daemon=True,
-        )
-        self._thread.start()
-
-    # -- loguru sink -------------------------------------------------------
-    def __call__(self, message: Any) -> None:
-        """Hand one formatted record to the writer thread. Never blocks."""
-        try:
-            self._queue.put_nowait(str(message))
-        except queue.Full:
-            # Silence is the point: a log sink that blocks or raises would stall
-            # whichever thread emitted the record. The drop is not lost — the
-            # count surfaces as a WARNING line in the next emitted batch.
-            with self._drop_lock:
-                self._dropped += 1
-
-    def stop(self, timeout: float = 5.0) -> None:
-        """Drain and close. Used by tests; the daemon thread needs no stop."""
-        with suppress(queue.Full):
-            self._queue.put_nowait(_LOG_STOP)
-        self._thread.join(timeout=timeout)
-
-    # -- writer thread -----------------------------------------------------
-    def _run(self) -> None:
-        while True:
-            first = self._queue.get()
-            if first is _LOG_STOP:
-                break
-            batch = [first]
-            stopping = False
-            while len(batch) < _LOG_BATCH_MAX:
-                try:
-                    item = self._queue.get_nowait()
-                except queue.Empty:
-                    # Not a failure: an empty queue simply ends this batch and
-                    # the outer loop blocks on the next record.
-                    break
-                if item is _LOG_STOP:
-                    stopping = True
-                    break
-                batch.append(item)
-            self._emit(batch)
-            if stopping:
-                break
-        self._close()
-
-    def _emit(self, batch: list[str]) -> None:
-        with self._drop_lock:
-            dropped, self._dropped = self._dropped, 0
-        if dropped:
-            batch.insert(
-                0,
-                f"{time.strftime('%Y-%m-%d %H:%M:%S')} | WARNING  | "
-                f"{__name__}:_AsyncLogWriter:0 | log writer dropped "
-                f"{dropped} record(s) while the disk was not keeping up.\n",
-            )
-        try:
-            handle = self._ensure_handle()
-            handle.write("".join(batch))
-            handle.flush()
-            self._written = handle.tell()
-        except (OSError, ValueError) as exc:
-            # Cannot log this — we ARE the log. stderr is None under
-            # pythonw.exe, so on the windowed build the only remaining signal
-            # is the drop counter above, reported once writing recovers.
-            self._handle = None
-            stream = getattr(sys, "__stderr__", None)
-            if stream is not None:
-                with suppress(Exception):
-                    stream.write(f"jarvis log writer failed: {exc!r}\n")
-            return
-        if self._written >= self._rotation_bytes:
-            self._rotate()
-
-    def _ensure_handle(self) -> Any:
-        if self._handle is None:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            # newline="" keeps loguru's "\n" from becoming "\r\n" on Windows,
-            # matching what the previous file sink wrote.
-            self._handle = self._path.open("a", encoding="utf-8", errors="replace", newline="")
-            self._written = self._handle.tell()
-        return self._handle
-
-    def _close(self) -> None:
-        handle, self._handle = self._handle, None
-        if handle is not None:
-            with suppress(Exception):
-                handle.close()
-
-    def _rotate(self) -> None:
-        self._close()
-        # Microsecond suffix mirrors the naming the loguru file sink used, so
-        # older rotated logs and new ones sort together — and two rotations in
-        # the same second cannot collide on a name.
-        now = time.time()
-        stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(now))
-        target = self._path.with_name(
-            f"{self._path.stem}.{stamp}_{int(now % 1 * 1_000_000):06d}{self._path.suffix}"
-        )
-        try:
-            self._path.rename(target)
-        except OSError:
-            # Another process holds the file open (Windows) or the rename
-            # raced. Keep appending to the current file — an oversized log is
-            # strictly better than losing records.
-            self._written = 0
-            return
-        self._prune()
-
-    def _prune(self) -> None:
-        pattern = f"{self._path.stem}.*{self._path.suffix}"
-        try:
-            rotated = sorted(
-                self._path.parent.glob(pattern),
-                key=lambda item: item.stat().st_mtime,
-                reverse=True,
-            )
-        except OSError:
-            # Listing the log directory failed (removed, or locked mid-scan on
-            # Windows). Pruning is housekeeping — skipping one round keeps a
-            # few extra rotated files, which beats raising inside the writer.
-            return
-        for stale in rotated[self._retention :]:
-            with suppress(OSError):
-                stale.unlink()
-
-
-def _install_desktop_log_sink(log_path: Path) -> None:
-    """Installs a loguru file sink for the desktop app.
-
-    Why: ``pythonw.exe`` (windowed mode, via ``run.bat`` without args) has
-    no stderr. Loguru writes to stderr by default → any crash in the
-    backend thread stays invisible, and the process becomes a zombie (port
-    not bound, window not open, user sees nothing).
-
-    This sink writes every ``INFO+`` event to a rotating log file, and
-    stdlib ``logging`` is redirected via ``InterceptHandler`` so that
-    ``uvicorn`` / ``httpx`` / ``faster_whisper`` get captured too. Writing
-    happens on :class:`_AsyncLogWriter`'s thread so that a slow disk can
-    never stall the caller — see that class for the incident this prevents.
-
-    Idempotent — calling it more than once is a no-op (important in case
-    DesktopApp gets instantiated multiple times in tests).
-    """
-    global _DESKTOP_LOG_SINK_INSTALLED
-    if _DESKTOP_LOG_SINK_INSTALLED:
-        return
-    _DESKTOP_LOG_SINK_INSTALLED = True
-
-    from loguru import logger
-
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.add(
-        _AsyncLogWriter(log_path),
-        level="INFO",
-        # The writer thread IS the queue. loguru's own enqueue= would add a
-        # multiprocessing pipe on top (WinError 5 in restricted contexts).
-        enqueue=False,
-        backtrace=True,
-        diagnose=False,  # don't dump locals (secrets!)
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}",
-    )
-
-    # Redirect stdlib logging -> loguru so uvicorn / httpx / faster_whisper
-    # also end up in the file log. Don't remove prior handlers (the
-    # watchdog run has its own handlers via _setup_logging).
-    import logging as _logging
-
-    from jarvis.core.redact import safe_preview as _safe_preview
-
-    class _InterceptHandler(_logging.Handler):
-        def emit(self, record: _logging.LogRecord) -> None:
-            try:
-                level: str | int = logger.level(record.levelname).name
-            except ValueError:
-                # A custom stdlib level loguru does not know by name; the
-                # numeric level carries the same information.
-                level = record.levelno
-            frame, depth = _logging.currentframe(), 2
-            while frame and frame.f_code.co_filename == _logging.__file__:
-                frame = frame.f_back
-                depth += 1
-            message = _safe_preview(record.getMessage(), max_chars=16_384)
-            logger.opt(depth=depth, exception=record.exc_info).log(level, message)
-
-    root = _logging.getLogger()
-    # Only add it if there isn't already an InterceptHandler present.
-    if not any(isinstance(h, _InterceptHandler) for h in root.handlers):
-        root.addHandler(_InterceptHandler())
-    if root.level > _logging.INFO or root.level == 0:
-        root.setLevel(_logging.INFO)
-
-    logger.info("Desktop log sink active: {}", log_path)
-    # Which interpreter is running the app is the first question a boot failure
-    # raises, and the log never answered it. A machine carries several Python
-    # installations, and a shortcut, scheduled task or launcher that resolves to
-    # a different one than the app was installed into looks exactly like "it
-    # suddenly stopped starting" (forensic 2026-08-09: a Start-menu shortcut
-    # pointed at an interpreter without pywebview, so the window import died
-    # 8 ms into boot). One line, every platform, no imports.
-    logger.info("Interpreter: {} (Python {}.{}.{})", sys.executable, *sys.version_info[:3])
-
+# The file sink and its writer thread live in ``jarvis.ui.desktop_log`` so the
+# launcher can install them BEFORE this module (and the config graph it drags
+# in) is imported. Re-exported here: the names are part of this module's
+# surface for tests and for the crash hooks below.
+from jarvis.ui.desktop_log import (  # noqa: E402 — keep the section grouping
+    _AsyncLogWriter,  # noqa: F401 — re-exported for tests
+    _install_desktop_log_sink,
+)
 
 _CRASH_HOOKS_INSTALLED = False
 
 
-def _build_crash_hooks(
-    previous_thread_hook: Any, previous_main_hook: Any
-) -> tuple[Any, Any]:
+def _build_crash_hooks(previous_thread_hook: Any, previous_main_hook: Any) -> tuple[Any, Any]:
     """Build the ``(threading.excepthook, sys.excepthook)`` pair.
 
     Split out from the installer so the behaviour can be tested without
@@ -510,9 +253,7 @@ def _build_crash_hooks(
         # A thread torn down during interpreter shutdown reports SystemExit
         # with no traceback. That is an exit, not a crash.
         if args.exc_type is not SystemExit:
-            logger.opt(
-                exception=(args.exc_type, args.exc_value, args.exc_traceback)
-            ).critical(
+            logger.opt(exception=(args.exc_type, args.exc_value, args.exc_traceback)).critical(
                 "Thread '{}' died on an unhandled exception — whatever it was "
                 "serving is gone for the rest of this process.",
                 getattr(args.thread, "name", "<unnamed>"),
@@ -559,9 +300,7 @@ def _install_crash_hooks() -> None:
         return
     _CRASH_HOOKS_INSTALLED = True
 
-    threading.excepthook, sys.excepthook = _build_crash_hooks(
-        threading.excepthook, sys.excepthook
-    )
+    threading.excepthook, sys.excepthook = _build_crash_hooks(threading.excepthook, sys.excepthook)
 
 
 # ---------------------------------------------------------------------------
@@ -764,26 +503,20 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
 
     current_thread = kernel32.GetCurrentThreadId()
     foreground = user32.GetForegroundWindow()
-    foreground_thread = (
-        user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
-    )
+    foreground_thread = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
     target_thread = user32.GetWindowThreadProcessId(hwnd, None)
     attached_foreground = False
     attached_target = False
     try:
         if foreground_thread and foreground_thread != current_thread:
             attached_foreground = bool(
-                user32.AttachThreadInput(
-                    current_thread, foreground_thread, True
-                )
+                user32.AttachThreadInput(current_thread, foreground_thread, True)
             )
         if target_thread and target_thread not in (
             current_thread,
             foreground_thread,
         ):
-            attached_target = bool(
-                user32.AttachThreadInput(current_thread, target_thread, True)
-            )
+            attached_target = bool(user32.AttachThreadInput(current_thread, target_thread, True))
         user32.BringWindowToTop(hwnd)
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
@@ -1106,27 +839,82 @@ def _default_lock_holder_health(port: int) -> bool:
         return True  # cannot probe → never evict on uncertainty
     url = f"http://127.0.0.1:{int(port)}/api/health"
     for _ in range(4):
-        with suppress(Exception):
+        try:
             r = httpx.get(url, timeout=1.0)
             if r.status_code == 200:
                 return True
+        except httpx.ConnectError:
+            # Nothing accepts on the port: the lock-zombie signature (its
+            # accept socket died while the process lived on). Probe again
+            # briefly — a fast-boot instance binds within the second.
+            pass
+        except Exception:  # noqa: BLE001 — connected, but no answer in time
+            # The port IS bound and merely slow: an instance in its heavy
+            # initialisation (or under a GIL stall) can miss a 1 s deadline
+            # four times in a row. That is a busy holder, never a zombie —
+            # evicting it would kill a working app (live 2026-08-25: a second
+            # launch during boot waited 6 s here and would have been one probe
+            # away from terminating the instance it was meant to focus).
+            return True
         time.sleep(0.5)
     return False
 
 
-def _terminate_pid(pid: int) -> bool:
+def _kill_process_tree_win32(pid: int) -> bool:
+    """``taskkill /F /T`` — the OS-level fallback when psutil's kill did not take.
+
+    A wedged instance usually has children (a local inference server, a
+    terminal pane's ConPTY host, a browser helper) and it is often one of THOSE
+    holding the handle that keeps the parent from dying. ``taskkill /T`` ends
+    the whole tree at once. Windows only; elsewhere the caller's psutil path is
+    already the strongest tool available. Returns True when the command ran and
+    reported success — the caller still re-checks liveness.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import subprocess
+
+        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+        completed = subprocess.run(  # noqa: S603 — fixed argv, pid is an int
+            ["taskkill", "/F", "/T", "/PID", str(int(pid))],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=15.0,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        with suppress(Exception):
+            from loguru import logger
+
+            logger.warning("taskkill fallback for pid={} failed to run: {}", pid, exc)
+        return False
+    return completed.returncode == 0
+
+
+def _terminate_pid(pid: int, *, _tree_kill=_kill_process_tree_win32) -> bool:
     """Terminate a confirmed lock-zombie process. Returns True once it is gone.
 
-    Graceful ``terminate()`` first, then ``kill()`` if it lingers. Returns False
-    (→ the caller keeps the lock blocked, the SAFE outcome) when psutil is
-    missing or the kill did not take, so we never falsely report a still-living
-    process as evicted.
+    Graceful ``terminate()`` first, then ``kill()`` if it lingers, then — on
+    Windows — ``taskkill /F /T`` for the whole process tree (see
+    :func:`_kill_process_tree_win32`). Returns False (→ the caller keeps the
+    lock blocked, the SAFE outcome) when psutil is missing or nothing took, so
+    we never falsely report a still-living process as evicted. Every step is
+    logged: this runs before the window exists, and the log file is the only
+    place a user can later learn why a start took as long as it did.
     """
+    from loguru import logger
+
     try:
         import psutil  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001
         # Without psutil we cannot prove the zombie died, and the docstring's
         # contract is to keep the lock blocked rather than claim an eviction.
+        logger.warning("cannot evict lock holder pid={}: psutil is unavailable", pid)
         return False
     try:
         proc = psutil.Process(int(pid))
@@ -1135,14 +923,24 @@ def _terminate_pid(pid: int) -> bool:
     # terminate may race the process self-exiting; the final _pid_alive check is
     # the authority on whether it is really gone.
     with suppress(Exception):
+        logger.warning("evicting lock holder pid={}: terminate()", pid)
         proc.terminate()
         try:
             proc.wait(timeout=5.0)
         except Exception:  # noqa: BLE001 — graceful timed out → hard kill
+            logger.warning("lock holder pid={} survived terminate(); kill()", pid)
             with suppress(Exception):
                 proc.kill()
                 proc.wait(timeout=5.0)
-    return not _pid_alive(pid)
+    if _pid_alive(pid):
+        logger.warning("lock holder pid={} survived kill(); ending its process tree", pid)
+        if _tree_kill(pid):
+            deadline = time.monotonic() + 5.0
+            while _pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.2)
+    gone = not _pid_alive(pid)
+    logger.warning("lock holder pid={} {}", pid, "is gone" if gone else "is STILL alive")
+    return gone
 
 
 def acquire_single_instance_lock(
@@ -1200,9 +998,7 @@ def acquire_single_instance_lock(
         meta = None
 
     pid = int(meta["pid"]) if meta and "pid" in meta else None
-    port = (
-        int(meta["port"]) if meta and "port" in meta and meta["port"] else None
-    )
+    port = int(meta["port"]) if meta and "port" in meta and meta["port"] else None
     if pid is not None and _pid_alive(pid):
         # Holder is alive. Is it actually FUNCTIONAL (serving its port)? A
         # healthy instance, the own pid, or a holder with no recorded port is
@@ -1366,9 +1162,7 @@ def _make_conductor_announcer(
         except Exception as exc:  # noqa: BLE001 — news is never worth a crash
             from loguru import logger as _clog
 
-            _clog.opt(exception=exc).warning(
-                "Conductor announcement could not be published"
-            )
+            _clog.opt(exception=exc).warning("Conductor announcement could not be published")
 
     return _on_conductor_event
 
@@ -1376,7 +1170,6 @@ def _make_conductor_announcer(
 # ---------------------------------------------------------------------------
 # DesktopApp
 # ---------------------------------------------------------------------------
-
 
 
 class _HealthProbeLogFilter(logging.Filter):
@@ -1408,6 +1201,7 @@ def _silence_health_probe_log() -> None:
         return
     _health_probe_log_filter = _HealthProbeLogFilter()
     logging.getLogger("httpx").addFilter(_health_probe_log_filter)
+
 
 class DesktopApp:
     """Orchestrates the pywebview window + backend thread.
@@ -1640,9 +1434,7 @@ class DesktopApp:
                 vite_dev_url=(self.cfg.ui.vite_dev_url if self.cfg.ui.dev_mode else None),
             )
             try:
-                loop.run_until_complete(
-                    bootstrap.serve("127.0.0.1", self.cfg.ui.admin_api_port)
-                )
+                loop.run_until_complete(bootstrap.serve("127.0.0.1", self.cfg.ui.admin_api_port))
             except Exception as exc:
                 self._backend_boot_error = exc
                 raise
@@ -1653,6 +1445,7 @@ class DesktopApp:
             exc = context.get("exception")
             msg = context.get("message", "<no message>")
             from loguru import logger as _logger
+
             if exc is not None:
                 _logger.opt(exception=exc).error("Unhandled asyncio exception: {}", msg)
             else:
@@ -1676,9 +1469,7 @@ class DesktopApp:
             from loguru import logger as _boot_logger
 
             if shell_painted:
-                _boot_logger.info(
-                    "Desktop boot shell painted; heavy initialization released."
-                )
+                _boot_logger.info("Desktop boot shell painted; heavy initialization released.")
             else:
                 _boot_logger.warning(
                     "Desktop boot shell paint was not acknowledged within 12s; "
@@ -1771,17 +1562,18 @@ class DesktopApp:
             lat_cfg = getattr(self.cfg, "latency", None)
             if lat_cfg is not None and getattr(lat_cfg, "log_jsonl", False):
                 from jarvis.telemetry.latency_log import LatencyLogWriter
-                log_path = Path(
-                    getattr(lat_cfg, "log_path", "state/latency_log.jsonl")
-                )
+
+                log_path = Path(getattr(lat_cfg, "log_path", "state/latency_log.jsonl"))
                 if not log_path.is_absolute():
                     log_path = Path.cwd() / log_path
                 self._latency_log_writer = LatencyLogWriter(log_path)
                 self._latency_log_writer.attach(server.bus)
                 from loguru import logger as _llog
+
                 _llog.info("Latency log JSONL writer attached: {}", log_path)
         except Exception as exc:  # noqa: BLE001 — telemetry never breaks boot
             from loguru import logger as _llog
+
             _llog.opt(exception=exc).warning(
                 "Latency log writer init failed — continuing without JSONL log.",
             )
@@ -1806,6 +1598,7 @@ class DesktopApp:
                 apply_frontier_resolution(self.cfg, resolver, server.bus),
             )
             from loguru import logger as _flog
+
             if switches:
                 _flog.info(
                     "Frontier autoswitch: {} model(s) raised to frontier.",
@@ -1815,6 +1608,7 @@ class DesktopApp:
                 _flog.info("Frontier autoswitch: TOML already frontier-compliant.")
         except Exception as exc:  # noqa: BLE001 — a resolver failure must not stop boot.
             from loguru import logger as _flog
+
             _flog.opt(exception=exc).warning(
                 "Frontier autoswitch failed — keeping TOML defaults.",
             )
@@ -1826,8 +1620,8 @@ class DesktopApp:
         # _focus_handler fetches the value dynamically.
         server.app.state.shell = None
         server.app.state.desktop_app = self
-        server.app.state.realtime_transport_broker_token = (
-            getattr(self, "realtime_transport_broker_token", "")
+        server.app.state.realtime_transport_broker_token = getattr(
+            self, "realtime_transport_broker_token", ""
         )
         # Local desktop run: the user IS at this machine, so reveal/open-with-
         # default-app target their own desktop. Enable the native file actions.
@@ -1849,21 +1643,23 @@ class DesktopApp:
                         cancel_fn=mission_manager.jarvis_agent_cancel,
                     )
                     from loguru import logger as _bootlog
+
                     _bootlog.info(
                         "Wave-4 Y bootstrap: Brain.set_mission_command_handlers "
                         "wired up (status/cancel via MissionManager)."
                     )
             except AttributeError:
                 from loguru import logger as _bootlog
+
                 _bootlog.warning(
                     "MissionManager is missing jarvis_agent_status/-_cancel — status/"
                     "cancel voice patterns fall back to the normal spawn path."
                 )
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _bootlog
+
                 _bootlog.opt(exception=exc).warning(
-                    "Wave-4 Y bootstrap failed — "
-                    "status/cancel handlers stay unwired."
+                    "Wave-4 Y bootstrap failed — status/cancel handlers stay unwired."
                 )
 
             try:
@@ -1873,6 +1669,7 @@ class DesktopApp:
                     attach_brain(brain)
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _bootlog
+
                 _bootlog.opt(exception=exc).warning(
                     "WorkflowRunner.attach_brain failed after the deferred build."
                 )
@@ -1887,18 +1684,18 @@ class DesktopApp:
                     task_runner._brain = brain
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _bootlog
+
                 _bootlog.opt(exception=exc).warning(
                     "TaskRunner brain wiring failed after the deferred build."
                 )
 
         async def _build_brain_bg() -> None:
             try:
-                built = await asyncio.to_thread(
-                    build_default_brain, bus=server.bus, tier="router"
-                )
+                built = await asyncio.to_thread(build_default_brain, bus=server.bus, tier="router")
                 brain_holder["brain"] = built
                 server.app.state.brain = built
                 from loguru import logger
+
                 logger.info(
                     "Text-chat brain: {} active (shared with the voice pipeline).",
                     getattr(built, "active_provider", "unknown"),
@@ -1908,17 +1705,17 @@ class DesktopApp:
                 awareness_manager = getattr(built, "_awareness_manager", None)
                 if awareness_manager is not None:
                     from loguru import logger as _aw_logger
+
                     try:
                         await awareness_manager.start()
                         _aw_logger.info(
                             "AwarenessManager started — StoryTracker is now listening on bus."
                         )
                     except Exception as exc:  # noqa: BLE001
-                        _aw_logger.opt(exception=exc).warning(
-                            "AwarenessManager.start() failed."
-                        )
+                        _aw_logger.opt(exception=exc).warning("AwarenessManager.start() failed.")
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger
+
                 brain_holder["error"] = f"{type(exc).__name__}: {exc}"
                 logger.opt(exception=exc).error(
                     "BrainManager build failed — chat replies with a setup hint."
@@ -1948,9 +1745,7 @@ class DesktopApp:
             """
 
             def __init__(self) -> None:
-                self._pending_skill_notes: list[
-                    tuple[tuple[Any, ...], dict[str, Any]]
-                ] = []
+                self._pending_skill_notes: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
             @property
             def active_provider(self) -> str:
@@ -1962,9 +1757,7 @@ class DesktopApp:
                 brain = brain_holder["brain"]
                 if brain is not None:
                     return str(getattr(brain, "reply_language", "auto"))
-                return str(
-                    getattr(getattr(desktop_cfg, "brain", None), "reply_language", "auto")
-                )
+                return str(getattr(getattr(desktop_cfg, "brain", None), "reply_language", "auto"))
 
             @property
             def conversation_language(self) -> str:
@@ -2087,6 +1880,7 @@ class DesktopApp:
                 publish_event=False,
             )
             from loguru import logger
+
             brain = await _await_brain_ready()
 
             # ------------------------------------------------------------------
@@ -2103,9 +1897,7 @@ class DesktopApp:
                 skill_ctx = try_get_skill_context()
                 if skill_ctx is not None and brain is not None:
                     matcher = TriggerMatcher(skill_ctx.registry)
-                    match_result = matcher.match_voice_with_match(
-                        evt.text, lang="auto"
-                    )
+                    match_result = matcher.match_voice_with_match(evt.text, lang="auto")
                     if match_result is not None:
                         matched, regex_match = match_result
                         groups = regex_match.groups()
@@ -2119,8 +1911,8 @@ class DesktopApp:
                         if callable(note):
                             note(matched.name, content=content, source="chat")
                             logger.info(
-                                "Skill trigger matched (chat): '{}' — handed "
-                                "to the brain turn", matched.name,
+                                "Skill trigger matched (chat): '{}' — handed to the brain turn",
+                                matched.name,
                             )
             except Exception as exc:  # noqa: BLE001
                 # The pre-brain hook is defensive — a crash here must never
@@ -2225,9 +2017,7 @@ class DesktopApp:
                         loop,
                     )
                 else:
-                    reply = await _await_cancellable_chat_turn(
-                        brain(evt.text), loop
-                    )
+                    reply = await _await_cancellable_chat_turn(brain(evt.text), loop)
             except Exception as exc:  # noqa: BLE001
                 detail = f"{type(exc).__name__}: {exc}"
                 message = f"Brain error: {detail}"
@@ -2275,11 +2065,7 @@ class DesktopApp:
                 await supervisor.set_state("SPEAKING")
                 if reply:
                     role = "system" if _is_brain_diagnostic(reply) else "assistant"
-                    trace = (
-                        turn_traces.snapshot(turn_started_ms)
-                        if role == "assistant"
-                        else None
-                    )
+                    trace = turn_traces.snapshot(turn_started_ms) if role == "assistant" else None
                     await chat_store.add_message(
                         thread_id=thread_id, role=role, text=reply, trace=trace
                     )
@@ -2334,6 +2120,7 @@ class DesktopApp:
             set_drop_handler(_on_overlay_drop)
         except ModuleNotFoundError as exc:
             from loguru import logger as _dlog
+
             if exc.name == "overlay":
                 _dlog.debug(
                     "overlay drop handler wiring skipped: optional overlay package not installed"
@@ -2342,6 +2129,7 @@ class DesktopApp:
                 _dlog.opt(exception=exc).debug("overlay drop handler wiring skipped")
         except Exception as exc:  # noqa: BLE001 — drop wiring must never block boot.
             from loguru import logger as _dlog
+
             _dlog.opt(exception=exc).debug("overlay drop handler wiring skipped")
 
         # Overlay right-click (bar OR mascot) → raise the main desktop window.
@@ -2366,8 +2154,8 @@ class DesktopApp:
             workflow_runner = WorkflowRunner(
                 store=workflow_store,
                 bus=server.bus,
-                brain=None,               # set later via attach_brain
-                tool_registry=None,       # set later via attach_tools
+                brain=None,  # set later via attach_brain
+                tool_registry=None,  # set later via attach_tools
                 tool_executor=None,
             )
             # Harness + tools (audit 2026-08-17, AU-03): the runner shipped
@@ -2388,15 +2176,12 @@ class DesktopApp:
                 from jarvis.harness.manager import HarnessManager
                 from jarvis.workflows.runner import BrainToolSurface
 
-                workflow_runner.attach_harness_manager(
-                    HarnessManager(bus=server.bus)
-                )
-                tool_surface = BrainToolSurface(
-                    lambda: getattr(server.app.state, "brain", None)
-                )
+                workflow_runner.attach_harness_manager(HarnessManager(bus=server.bus))
+                tool_surface = BrainToolSurface(lambda: getattr(server.app.state, "brain", None))
                 workflow_runner.attach_tools(tool_surface, tool_surface)
             except Exception as exc:  # noqa: BLE001 — degrade, don't kill workflows.
                 from loguru import logger as _wf_logger
+
                 _wf_logger.opt(exception=exc).warning(
                     "Workflow runner has no harness/tools — harness_dispatch "
                     "and tool_call steps will fail; the rest still runs."
@@ -2413,6 +2198,7 @@ class DesktopApp:
             self._workflow_scheduler = workflow_scheduler
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
+
             logger.opt(exception=exc).warning(
                 "Workflow system could not start — the workflows view stays empty."
             )
@@ -2502,7 +2288,7 @@ class DesktopApp:
             from conductor import Runner as _CRunner
             from conductor import Scheduler as _CSched
 
-            conductor_store = _CStore()    # ~/.conductor/conductor.sqlite
+            conductor_store = _CStore()  # ~/.conductor/conductor.sqlite
             # The bus reaches Conductor through its ``on_event`` seam, not the
             # other way round (Conductor never imports ``jarvis``). Without
             # this, every scheduled job ran into its own SQLite and the user
@@ -2523,6 +2309,7 @@ class DesktopApp:
             self._conductor_scheduler = conductor_scheduler
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
+
             logger.opt(exception=exc).warning(
                 "Conductor setup failed — the Conductor view stays empty."
             )
@@ -2535,6 +2322,7 @@ class DesktopApp:
         async def _bootstrap_conductor() -> None:
             """Conductor store init + seed jobs + scheduler start."""
             from loguru import logger as _logger
+
             store = server.app.state.conductor_store
             scheduler = server.app.state.conductor_scheduler
             if store is None:
@@ -2543,15 +2331,14 @@ class DesktopApp:
                 await store.init()
                 await store.cleanup_interrupted_runs()
                 from conductor import ensure_seed_jobs
+
                 added = await ensure_seed_jobs(store)
                 _logger.info("Conductor store ready ({} new seed job(s)).", added)
                 if scheduler is not None:
                     scheduler.start()
                     _logger.info("Conductor scheduler started.")
             except Exception as exc:  # noqa: BLE001
-                _logger.opt(exception=exc).warning(
-                    "Conductor bootstrap failed"
-                )
+                _logger.opt(exception=exc).warning("Conductor bootstrap failed")
 
         async def _bootstrap_workflows() -> None:
             """Store init + seed workflows + scheduler start.
@@ -2571,9 +2358,9 @@ class DesktopApp:
                 await store.init()
                 await store.cleanup_interrupted_runs()
                 from jarvis.workflows import ensure_seed_workflows
+
                 added = await ensure_seed_workflows(store)
-                _logger.info("Workflow store ready ({} new seed workflow(s)).",
-                             added)
+                _logger.info("Workflow store ready ({} new seed workflow(s)).", added)
                 # Harness manager + tool surface are attached above, at runner
                 # construction — ``tool_call`` and ``harness_dispatch`` steps
                 # run through the brain's own risk-tier-aware ToolExecutor.
@@ -2605,9 +2392,8 @@ class DesktopApp:
                 exc = task.exception()
                 if exc is not None:
                     from loguru import logger as _slog
-                    _slog.opt(exception=exc).error(
-                        "Voice/orb startup task crashed."
-                    )
+
+                    _slog.opt(exception=exc).error("Voice/orb startup task crashed.")
 
             # Wake-model GIL-priority gate: set by ``_start_speech_and_orb`` once
             # the (light base/cpu) wake model has finished loading. The heavy
@@ -2670,11 +2456,10 @@ class DesktopApp:
                 # wiki) and background services land a few seconds later. Bounded
                 # so a stuck/absent wake load never blocks the backend forever.
                 try:
-                    await asyncio.wait_for(
-                        self._wake_model_loaded.wait(), timeout=12.0
-                    )
+                    await asyncio.wait_for(self._wake_model_loaded.wait(), timeout=12.0)
                 except TimeoutError:
                     from loguru import logger as _slog
+
                     _slog.info(
                         "Heavy backend: wake-model gate timed out (12 s) — "
                         "starting the backend anyway."
@@ -2695,8 +2480,7 @@ class DesktopApp:
                     # Honest end-to-end anchor: the UI's data requests are now
                     # answered — spawn -> app usable, same clock as BOOT_READY.
                     print(
-                        "APP_INTERACTIVE_MS="
-                        f"{(time.perf_counter() - _bp_t0) * 1000.0:.1f}",
+                        f"APP_INTERACTIVE_MS={(time.perf_counter() - _bp_t0) * 1000.0:.1f}",
                         flush=True,
                     )
                 # The bootstrap owns the bound port for the process lifetime;
@@ -2709,9 +2493,8 @@ class DesktopApp:
                     _db_mark("server_start")
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
-                    _slog.opt(exception=exc).error(
-                        "Heavy backend init (server.start) failed."
-                    )
+
+                    _slog.opt(exception=exc).error("Heavy backend init (server.start) failed.")
                 loop.create_task(_build_brain_bg(), name="brain-build")
                 # MCP autostart as a fire-and-forget task — doesn't block backend-ready.
                 loop.create_task(_start_enabled_mcps())
@@ -2759,6 +2542,7 @@ class DesktopApp:
                             if plan.engine == "vosk_kws":
                                 pipeline.set_wake_plan(plan)
                                 from loguru import logger as _wmf_ok
+
                                 _wmf_ok.info(
                                     "Wake model for '{}' provisioned off-boot; "
                                     "live-switched detector to vosk_kws.",
@@ -2766,9 +2550,8 @@ class DesktopApp:
                                 )
                     except Exception:  # noqa: BLE001 — a background probe never crashes boot
                         from loguru import logger as _wmf_log
-                        _wmf_log.opt(exception=True).debug(
-                            "Off-boot wake-model provision skipped."
-                        )
+
+                        _wmf_log.opt(exception=True).debug("Off-boot wake-model provision skipped.")
 
                 loop.create_task(_provision_wake_model(), name="wake-model-provision")
 
@@ -2882,9 +2665,7 @@ class DesktopApp:
         # Every read is a getattr: this runs on the way OUT, including out of a
         # backend that never finished coming up, and a half-built instance must
         # not turn a crash report into a second crash.
-        if getattr(self, "_shutdown_done", False) or getattr(
-            self, "_user_requested_quit", False
-        ):
+        if getattr(self, "_shutdown_done", False) or getattr(self, "_user_requested_quit", False):
             logger.debug("Backend loop ended as part of shutdown ({}).", reason)
             return
 
@@ -2957,13 +2738,12 @@ class DesktopApp:
         # Glide speed for ``glide_os_cursor`` (called by every click/move tool).
         try:
             from jarvis.control.cursor_motion import set_glide_ms
+
             if cu is not None:
                 set_glide_ms(int(getattr(cu, "cursor_glide_ms", 0)))
         except ModuleNotFoundError as exc:
             if exc.name == "overlay":
-                logger.debug(
-                    "set_glide_ms skipped: optional overlay package not installed"
-                )
+                logger.debug("set_glide_ms skipped: optional overlay package not installed")
             else:
                 logger.opt(exception=exc).debug("set_glide_ms failed")
         except Exception as exc:  # noqa: BLE001
@@ -2979,6 +2759,7 @@ class DesktopApp:
                 build_real_jarvis_cursor,
                 set_jarvis_system_cursor,
             )
+
             jcur = build_real_jarvis_cursor()
             if jcur is not None:
                 set_jarvis_system_cursor(jcur)
@@ -2986,9 +2767,7 @@ class DesktopApp:
                 logger.info("Jarvis system cursor armed (swap on Computer-Use mission).")
         except ModuleNotFoundError as exc:
             if exc.name == "overlay":
-                logger.debug(
-                    "Jarvis system cursor skipped: optional overlay package not installed"
-                )
+                logger.debug("Jarvis system cursor skipped: optional overlay package not installed")
             else:
                 logger.opt(exception=exc).warning("Jarvis system cursor not startable")
             self._jarvis_cursor = None
@@ -3001,6 +2780,7 @@ class DesktopApp:
             return
         try:
             from ui.orb.virtual_cursor_window import TkVirtualCursor
+
             cursor = TkVirtualCursor()
             if cursor.start():
                 self._virtual_cursor = cursor
@@ -3011,9 +2791,7 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(
-        self, style: str, *, gate_until_voice_ready: bool = False
-    ):
+    def _build_overlay_surface(self, style: str, *, gate_until_voice_ready: bool = False):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
@@ -3055,14 +2833,12 @@ class DesktopApp:
                     )
                     surface.start_in_thread()
                     logger.info(
-                        "JarvisBar hosted out-of-process on macOS "
-                        "(jarvis.ui.jarvisbar.host)."
+                        "JarvisBar hosted out-of-process on macOS (jarvis.ui.jarvisbar.host)."
                     )
                     return surface
                 except Exception:  # noqa: BLE001 — cosmetic; never block boot
                     logger.opt(exception=True).warning(
-                        "macOS JarvisBar host failed to start — falling back "
-                        "to the no-op surface."
+                        "macOS JarvisBar host failed to start — falling back to the no-op surface."
                     )
             elif style != "none":
                 try:
@@ -3083,8 +2859,7 @@ class DesktopApp:
                     return surface
                 except Exception:  # noqa: BLE001 — cosmetic; never block boot
                     logger.opt(exception=True).warning(
-                        "macOS orb host failed to start — falling back "
-                        "to the no-op surface."
+                        "macOS orb host failed to start — falling back to the no-op surface."
                     )
             from jarvis.ui.jarvisbar import NullOverlay
 
@@ -3103,9 +2878,7 @@ class DesktopApp:
                 accent=self.cfg.ui.bar_accent,
                 startup_gated=gate_until_voice_ready,
                 size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
-                follow_cursor_monitor=getattr(
-                    self.cfg.ui, "bar_follow_cursor_monitor", True
-                ),
+                follow_cursor_monitor=getattr(self.cfg.ui, "bar_follow_cursor_monitor", True),
             )
         else:  # an orb style ("mascot" / "voice_orb"), or any legacy value
             from ui.orb.overlay import OrbOverlay
@@ -3431,9 +3204,7 @@ class DesktopApp:
                 destroy_window=self._destroy_all_windows,
             )
 
-        threading.Thread(
-            target=_quit_soon, name="jarvis-restart-quit", daemon=True
-        ).start()
+        threading.Thread(target=_quit_soon, name="jarvis-restart-quit", daemon=True).start()
         logger.info(
             "Self-restart scheduled (relauncher spawned{}; quitting in ~0.2 s, "
             "independent hard-exit watchdog at ~0.9 s).",
@@ -3468,9 +3239,7 @@ class DesktopApp:
                 destroy_window=self._destroy_all_windows,
             )
 
-        threading.Thread(
-            target=_quit_soon, name="jarvis-decline-quit", daemon=True
-        ).start()
+        threading.Thread(target=_quit_soon, name="jarvis-decline-quit", daemon=True).start()
         logger.info("Quit scheduled (Terms declined; hard-exit fallback armed).")
         return True
 
@@ -3554,9 +3323,7 @@ class DesktopApp:
             )
 
         try:
-            await asyncio.wait_for(
-                voice_usable.wait(), timeout=_REALTIME_WARM_VOICE_GATE_S
-            )
+            await asyncio.wait_for(voice_usable.wait(), timeout=_REALTIME_WARM_VOICE_GATE_S)
         except TimeoutError:
             # No microphone, a failed warm-up, or a headless host: the browser
             # and bridge surfaces can still start a call, so warm anyway.
@@ -3592,8 +3359,7 @@ class DesktopApp:
                 raise
             except Exception:  # noqa: BLE001 — warming is advisory, never fatal
                 _warm_log_exc.warning(
-                    "Realtime transport warm failed; the next call pays the "
-                    "provider's cold start."
+                    "Realtime transport warm failed; the next call pays the provider's cold start."
                 )
             last_completed = time.monotonic()
 
@@ -3620,6 +3386,7 @@ class DesktopApp:
         """
         if os.environ.get("JARVIS_VOICE", "").strip().lower() in ("0", "off", "false"):
             from loguru import logger
+
             logger.info("Voice stack disabled via JARVIS_VOICE=0.")
             return
 
@@ -3668,7 +3435,8 @@ class DesktopApp:
                 logger.info(
                     "On-screen overlay stays with the default app — the {} instance "
                     "draws none (configured style={}).",
-                    current_instance().label, configured_style,
+                    current_instance().label,
+                    configured_style,
                 )
 
             if not overlay_ok:
@@ -3693,9 +3461,7 @@ class DesktopApp:
                     gate_until_voice_ready=(orb_style == "jarvis_bar"),
                 )
                 hide_on_idle = (
-                    (not self.cfg.ui.bar_persistent)
-                    if orb_style == "jarvis_bar"
-                    else True
+                    (not self.cfg.ui.bar_persistent) if orb_style == "jarvis_bar" else True
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
@@ -3706,10 +3472,13 @@ class DesktopApp:
                 self._surfaces = {orb_style: surface}
                 logger.info(
                     "On-screen overlay active: style={} (persistent={}, accent={}).",
-                    orb_style, self.cfg.ui.bar_persistent, self.cfg.ui.bar_accent,
+                    orb_style,
+                    self.cfg.ui.bar_persistent,
+                    self.cfg.ui.bar_accent,
                 )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
+
             logger.opt(exception=exc).warning("On-screen overlay failed to start")
             self._orb = None
             self._bridge = None
@@ -3724,6 +3493,7 @@ class DesktopApp:
             self._ducker.attach()
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
+
             logger.opt(exception=exc).warning("Audio ducking not started")
             self._ducker = None
 
@@ -3782,16 +3552,17 @@ class DesktopApp:
                 tool_registry=skill_tool_registry,
                 bus=bus,
             )
-            set_skill_context(
-                SkillContext(registry=skill_registry, runner=skill_runner)
-            )
+            set_skill_context(SkillContext(registry=skill_registry, runner=skill_runner))
             from loguru import logger
+
             logger.info(
                 "SkillContext active ({} skill(s) loaded from {}).",
-                len(skill_registry.list()), skills_root,
+                len(skill_registry.list()),
+                skills_root,
             )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
+
             logger.opt(exception=exc).warning(
                 "SkillContext setup failed — the pipeline runs without the skill hook."
             )
@@ -3808,9 +3579,7 @@ class DesktopApp:
             from jarvis.speech.pipeline import SpeechPipeline
 
             stt_language = (
-                self.cfg.stt.language
-                if self.cfg.stt.language not in ("", "auto")
-                else None
+                self.cfg.stt.language if self.cfg.stt.language not in ("", "auto") else None
             )
             # Resolve the user's custom wake word (jarvis.toml [trigger.wake_word])
             # into a concrete plan. Whether a local Whisper engine is importable
@@ -3836,6 +3605,7 @@ class DesktopApp:
                 language=_wake_language,
             )
             from loguru import logger as _wlog
+
             if not wake_plan.wake_available:
                 _wlog.info(
                     "Wake-word OFF: no local model for {!r} — the Call shortcut "
@@ -3884,6 +3654,7 @@ class DesktopApp:
                 # wake-model load first (no-op for headless / voice-off).
                 from jarvis.core import runtime_refs as _rr_wake
                 from jarvis.plugins.stt import build_wake_whisper
+
                 _rr_wake.signal_wake_model_expected()
 
                 # Seed the wake Whisper's prompt with the custom phrase ONLY on
@@ -3891,9 +3662,7 @@ class DesktopApp:
                 # heavy_local_whisper backstop for "Hey Jarvis" keeps its OWW
                 # model as the discriminator and passes no prompt, so the hot-
                 # path prompt-hallucination caveat never applies to it.
-                wake_phrase = (
-                    wake_plan.phrase if wake_plan.needs_local_whisper else None
-                )
+                wake_phrase = wake_plan.phrase if wake_plan.needs_local_whisper else None
                 # Build the local wake-Whisper OFF the event loop: it probes CUDA
                 # availability, whose first-call context init JIT-compiles for
                 # ~30-60 s on a Blackwell GPU (cold cache). Offloading keeps the
@@ -3932,6 +3701,7 @@ class DesktopApp:
                 from loguru import logger
 
                 from jarvis.brain.factory import build_default_brain as _bdb
+
                 logger.info(
                     "Shared brain is not directly callable — building a dedicated voice brain."
                 )
@@ -3950,6 +3720,7 @@ class DesktopApp:
             # [ack_brain].enabled = true in jarvis.toml, otherwise returns
             # None. Threaded into the pipeline below.
             from jarvis.brain.factory import build_ack_brain as _bab
+
             voice_ack_brain = _bab(self.cfg)
             _t_ack = time.perf_counter()
             # Join the wake-model build started above (it loaded in its worker
@@ -4049,14 +3820,10 @@ class DesktopApp:
                 enable_whisper_wake=(
                     self.cfg.trigger.wake_word_enabled
                     and wake_plan.wake_available
-                    and (
-                        wake_plan.engine == "stt_match"
-                        or self.cfg.trigger.heavy_local_whisper
-                    )
+                    and (wake_plan.engine == "stt_match" or self.cfg.trigger.heavy_local_whisper)
                 ),
                 enable_local_whisper=(
-                    self.cfg.trigger.heavy_local_whisper
-                    or wake_plan.needs_local_whisper
+                    self.cfg.trigger.heavy_local_whisper or wake_plan.needs_local_whisper
                 ),
                 # Strict "Hey"-prefix verification for OpenWakeWord hits. With
                 # this flag on (default in cfg.trigger.require_hey_prefix), an
@@ -4071,9 +3838,7 @@ class DesktopApp:
                 # Shipped default since 2026-07-18 is conversation mode
                 # (single_turn_mode = false); flipping the TOML entry opts
                 # back into one turn per wake (the retired 2026-05-18 mandate).
-                continue_listening_after_response=(
-                    not self.cfg.trigger.single_turn_mode
-                ),
+                continue_listening_after_response=(not self.cfg.trigger.single_turn_mode),
                 # Conversation-mode idle auto-hangup. ``session_idle_timeout_s``
                 # <= 0 keeps the session active until a manual hangup (user
                 # mandate). The constructor default (30 s) is the safe baseline.
@@ -4098,9 +3863,7 @@ class DesktopApp:
             # adding work to the normal boot path.
             latest_wake_plan = resolve_wake_plan(
                 self.cfg.trigger.wake_word,
-                local_whisper_available=(
-                    _ilu.find_spec("faster_whisper") is not None
-                ),
+                local_whisper_available=(_ilu.find_spec("faster_whisper") is not None),
                 language=resolve_wake_language(self.cfg),
             )
             plan_signature = (
@@ -4126,6 +3889,7 @@ class DesktopApp:
             # build step costs what (the wake-Whisper CUDA probe was the hidden
             # ~60 s "VOICE STARTING…" stall before the persisted probe cache).
             from loguru import logger as _vlog
+
             # Stamps now reflect the OVERLAPPED build: TTS + ack-brain run on the
             # loop thread while the wake model loads in its worker thread, so
             # ``wake_join`` is only the wake time NOT already hidden behind them
@@ -4157,9 +3921,7 @@ class DesktopApp:
                 runtime_refs.set_speech_pipeline(pipeline)
             except Exception:  # noqa: BLE001, S110 - best-effort, never block voice boot
                 pass
-            self._pipeline_task = loop.create_task(
-                pipeline.run(), name="speech-pipeline"
-            )
+            self._pipeline_task = loop.create_task(pipeline.run(), name="speech-pipeline")
             from loguru import logger
 
             def _on_pipeline_done(task: asyncio.Task) -> None:
@@ -4206,8 +3968,7 @@ class DesktopApp:
                     if evt.voice_usable and not _usable_printed[0]:
                         _usable_printed[0] = True
                         print(
-                            "VOICE_USABLE_MS="
-                            f"{(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
+                            f"VOICE_USABLE_MS={(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
                             flush=True,
                         )
 
@@ -4225,9 +3986,7 @@ class DesktopApp:
                 # those loads were still running and the heavy backend storm
                 # stretched a few-second load to 30+ s per model (live
                 # forensic 2026-07-17: en 34 s + de 24 s, voice ready at ~2 min).
-                detector_warm = getattr(
-                    getattr(pipeline, "_wake", None), "is_warm", None
-                )
+                detector_warm = getattr(getattr(pipeline, "_wake", None), "is_warm", None)
                 if detector_warm is not None:
                     return bool(detector_warm)
                 ww = getattr(pipeline, "_whisper_wake", None)
@@ -4244,10 +4003,12 @@ class DesktopApp:
                 return getattr(base_stt, "_model", None) is not None
 
             from jarvis.core import runtime_refs as _rr_ready
+
             if stt is None:
                 self._wake_model_loaded.set()
                 _rr_ready.signal_wake_model_ready()
             else:
+
                 async def _signal_wake_model_loaded() -> None:
                     for _ in range(40):  # ~20 s cap, then release the gate anyway
                         if _wake_model_is_loaded():
@@ -4257,9 +4018,7 @@ class DesktopApp:
                     # Release the boot-storm housekeeping gate too.
                     _rr_ready.signal_wake_model_ready()
 
-                loop.create_task(
-                    _signal_wake_model_loaded(), name="wake-model-ready-signal"
-                )
+                loop.create_task(_signal_wake_model_loaded(), name="wake-model-ready-signal")
 
             # Progressive wake model: the pipeline is now live on the LIGHT
             # base/cpu wake model (hear-ready fast, no CUDA JIT). Hot-swap the
@@ -4293,9 +4052,7 @@ class DesktopApp:
                         # measured 2026-06-27). Wake is already live on base while
                         # we wait, so this costs nothing user-visible.
                         try:
-                            await asyncio.wait_for(
-                                self._wake_model_loaded.wait(), timeout=120.0
-                            )
+                            await asyncio.wait_for(self._wake_model_loaded.wait(), timeout=120.0)
                         except TimeoutError:
                             # The gate is an optimisation, not a precondition:
                             # after two minutes the upgrade proceeds anyway
@@ -4322,9 +4079,7 @@ class DesktopApp:
                         # for any STT without the prime hook.
                         _turbo_prime = getattr(turbo, "warm_up", None)
                         await asyncio.to_thread(
-                            _turbo_prime
-                            if callable(_turbo_prime)
-                            else turbo._ensure_model
+                            _turbo_prime if callable(_turbo_prime) else turbo._ensure_model
                         )
                         if ww is not None:
                             # Runtime backstop: keep the proven base/cpu model
@@ -4353,6 +4108,7 @@ class DesktopApp:
                 )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
+
             # FAIL-LOUD (2026-05-28 "Hey Jarvis silently dead" incident): a
             # fatal speech-pipeline init crash used to degrade to a SILENT
             # warning, so voice went dead with no signal at all. Degrading is
@@ -4366,16 +4122,13 @@ class DesktopApp:
             )
             try:
                 from jarvis.audio.alerts import play_voice_offline_alert
+
                 loop.create_task(
-                    play_voice_offline_alert(
-                        self.cfg.audio.output_device or None
-                    ),
+                    play_voice_offline_alert(self.cfg.audio.output_device or None),
                     name="voice-offline-alert",
                 )
             except Exception:  # noqa: BLE001 — the alert must never crash boot
-                logger.debug(
-                    "could not schedule voice-offline alert", exc_info=True
-                )
+                logger.debug("could not schedule voice-offline alert", exc_info=True)
             # UI un-stick (permanent "Getting ready to listen" bug): the frontend's
             # startup banner + top-left "STARTING…" status clear ONLY when a
             # VoiceBootStatus(ready=True) is published. A crash in pipeline
@@ -4388,15 +4141,14 @@ class DesktopApp:
             # WebServer's voice-ready watchdog for the warm-up-hang case.)
             try:
                 from jarvis.core.events import VoiceBootStatus as _VBS
+
                 if bus is not None:
                     loop.create_task(
                         bus.publish(_VBS(ready=True, detail="voice_unavailable")),
                         name="voice-offline-ready-signal",
                     )
             except Exception:  # noqa: BLE001 — the un-stick must never crash boot
-                logger.debug(
-                    "could not publish voice-unavailable ready signal", exc_info=True
-                )
+                logger.debug("could not publish voice-unavailable ready signal", exc_info=True)
 
     def _install_focus_route(self, server: WebServer) -> None:
         """Replaces the placeholder ``/api/window/focus`` with a real call.
@@ -4410,9 +4162,7 @@ class DesktopApp:
         # FastAPI.routes is a property without a setter — filter in place
         # instead of reassigning. app.router.routes is the underlying list.
         app.router.routes[:] = [
-            r
-            for r in app.router.routes
-            if not (getattr(r, "path", None) == "/api/window/focus")
+            r for r in app.router.routes if not (getattr(r, "path", None) == "/api/window/focus")
         ]
 
         @app.post("/api/window/focus", include_in_schema=False)
@@ -4531,9 +4281,7 @@ class DesktopApp:
             # frontend falls back to a real browser tab.
             from loguru import logger
 
-            logger.opt(exception=exc).warning(
-                "Detached window for '{}' could not be created", view
-            )
+            logger.opt(exception=exc).warning("Detached window for '{}' could not be created", view)
             return {
                 "ok": False,
                 "reason": f"{type(exc).__name__}: {exc}",
@@ -4858,14 +4606,8 @@ class DesktopApp:
                 f"    {python} -m pip install -r requirements.txt"
             )
         if exc is not None:
-            return (
-                f"{WINDOW_TITLE} cannot start: {type(exc).__name__}: {exc}\n\n"
-                f"Python: {python}"
-            )
-        return (
-            f"{WINDOW_TITLE} cannot start: the backend did not become ready.\n\n"
-            f"Python: {python}"
-        )
+            return f"{WINDOW_TITLE} cannot start: {type(exc).__name__}: {exc}\n\nPython: {python}"
+        return f"{WINDOW_TITLE} cannot start: the backend did not become ready.\n\nPython: {python}"
 
     def _wait_for_backend(self, timeout_s: float = 45.0) -> bool:
         """Polls ``/api/health`` until it returns 200 or the timeout expires.
@@ -5086,7 +4828,7 @@ class DesktopApp:
                 remedy=(
                     "  - Or install the desktop dependencies into the "
                     "interpreter that is running the app:\n"
-                    f"      {sys.executable} -m pip install -e \".[desktop]\"\n"
+                    f'      {sys.executable} -m pip install -e ".[desktop]"\n'
                 ),
             )
 
@@ -5244,9 +4986,7 @@ class DesktopApp:
             os._exit(code)
         return code
 
-    def _degrade_to_browser_ui(
-        self, exc: BaseException, *, remedy: str | None = None
-    ) -> int:
+    def _degrade_to_browser_ui(self, exc: BaseException, *, remedy: str | None = None) -> int:
         """Fallback when no native desktop-window backend is available.
 
         Reached when pywebview cannot open a native window: a Linux host missing
@@ -5361,9 +5101,7 @@ class DesktopApp:
                 if ok:
                     if first_set_at is None:
                         first_set_at = time.monotonic()
-                        logger.debug(
-                            "Taskbar icon set; re-arming against WebView2 override."
-                        )
+                        logger.debug("Taskbar icon set; re-arming against WebView2 override.")
                         # Late shortcut self-heal: the import-time ensure runs
                         # before anything else — if the Start-Menu shortcut got
                         # deleted after that (an uninstall/reinstall race, a
@@ -5391,9 +5129,7 @@ class DesktopApp:
                     WINDOW_TITLE,
                 )
 
-        threading.Thread(
-            target=_poll, name="jarvis-icon-setter", daemon=True
-        ).start()
+        threading.Thread(target=_poll, name="jarvis-icon-setter", daemon=True).start()
 
     # ---- Tray -----------------------------------------------------------------
 
@@ -5414,7 +5150,6 @@ class DesktopApp:
         self._tray = tray
 
         def _bridge_loop() -> None:
-            import queue
 
             cmd_queue = tray._command_queue  # noqa: SLF001
             while not self._shutdown_done:
@@ -5446,9 +5181,7 @@ class DesktopApp:
                     self._destroy_all_windows()
                     return
 
-        threading.Thread(
-            target=_bridge_loop, name="jarvis-tray-bridge", daemon=True
-        ).start()
+        threading.Thread(target=_bridge_loop, name="jarvis-tray-bridge", daemon=True).start()
 
     def _publish_kill_requested_threadsafe(self) -> None:
         """Publish ``KillRequested(source="tray")`` from a non-async thread.
@@ -5470,9 +5203,7 @@ class DesktopApp:
         try:
             from jarvis.core.events import KillRequested  # noqa: PLC0415
 
-            asyncio.run_coroutine_threadsafe(
-                bus.publish(KillRequested(source="tray")), loop
-            )
+            asyncio.run_coroutine_threadsafe(bus.publish(KillRequested(source="tray")), loop)
             logger.info("Emergency stop: KillRequested(source=tray) published.")
         except Exception:  # noqa: BLE001 — the tray must survive a failed kill
             logger.opt(exception=True).warning("Emergency stop publish failed.")
@@ -5613,9 +5344,7 @@ class DesktopApp:
         except Exception:  # noqa: BLE001
             from loguru import logger
 
-            logger.debug(
-                "overlay suppress for hidden window failed", exc_info=True
-            )
+            logger.debug("overlay suppress for hidden window failed", exc_info=True)
 
     def _restore_overlay_for_visible_window(self) -> None:
         """Reverse of :meth:`_suppress_overlay_for_hidden_window`.
@@ -5645,9 +5374,7 @@ class DesktopApp:
         except Exception:  # noqa: BLE001
             from loguru import logger
 
-            logger.debug(
-                "overlay restore for visible window failed", exc_info=True
-            )
+            logger.debug("overlay restore for visible window failed", exc_info=True)
 
     # ---- Shutdown ----------------------------------------------------------
 
@@ -5669,9 +5396,7 @@ class DesktopApp:
             time.sleep(after_s)
             os._exit(0)
 
-        threading.Thread(
-            target=_kill, name="jarvis-force-exit", daemon=True
-        ).start()
+        threading.Thread(target=_kill, name="jarvis-force-exit", daemon=True).start()
 
     def shutdown(self) -> int:
         """Idempotent. Stops the server + backend loop, cleans the meta file."""
@@ -5738,6 +5463,7 @@ class DesktopApp:
                 self._virtual_cursor.shutdown()
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _logger
+
                 _logger.opt(exception=exc).warning(
                     "Virtual-cursor shutdown raised; overlay HWND may persist."
                 )
@@ -5752,11 +5478,13 @@ class DesktopApp:
                 self._jarvis_cursor.shutdown()
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger as _logger
+
                 _logger.opt(exception=exc).warning(
                     "Jarvis system-cursor shutdown raised; cursor may stay swapped."
                 )
             try:
                 from jarvis.overlay.system_cursor import set_jarvis_system_cursor
+
                 set_jarvis_system_cursor(None)
             except Exception:  # noqa: BLE001, S110
                 # The shutdown() above already logged if the cursor is stuck;
@@ -5814,6 +5542,7 @@ class DesktopApp:
             cd_scheduler = getattr(self, "_conductor_scheduler", None)
             cd_store = getattr(self, "_conductor_store", None)
             if any(x is not None for x in (wf_scheduler, wf_store, cd_scheduler, cd_store)):
+
                 async def _workflow_cleanup() -> None:
                     for sched in (wf_scheduler, cd_scheduler):
                         try:
@@ -5831,14 +5560,17 @@ class DesktopApp:
                             # Same: the process is exiting, so an unclosed
                             # store handle is released by the OS anyway.
                             pass
+
                 try:
                     asyncio.run_coroutine_threadsafe(
-                        _workflow_cleanup(), loop,
+                        _workflow_cleanup(),
+                        loop,
                     ).result(timeout=2.0)
                 except Exception:  # noqa: BLE001, S110
                     # Bounded by the 2 s timeout on purpose: a wedged cleanup
                     # must not hold the whole quit open.
                     pass
+
             # Cleanly close PTY sessions — otherwise zombies remain
             async def _pty_cleanup() -> None:
                 try:
@@ -5849,7 +5581,9 @@ class DesktopApp:
                             pty.close_all()
                 except Exception as exc:  # noqa: BLE001
                     from loguru import logger as _logger
+
                     _logger.warning("PTY-Cleanup failed: {}", exc)
+
             try:
                 asyncio.run_coroutine_threadsafe(_pty_cleanup(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001, S110
@@ -5859,9 +5593,9 @@ class DesktopApp:
             # Stop the serve-first bootstrap (it owns the listening socket).
             if self._bootstrap is not None:
                 try:
-                    asyncio.run_coroutine_threadsafe(
-                        self._bootstrap.stop(), loop
-                    ).result(timeout=3.0)
+                    asyncio.run_coroutine_threadsafe(self._bootstrap.stop(), loop).result(
+                        timeout=3.0
+                    )
                 except Exception:  # noqa: BLE001, S110
                     # Timed out or already down; the loop stop below is the
                     # backstop that frees the socket either way.

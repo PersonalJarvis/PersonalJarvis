@@ -17,6 +17,7 @@ Invoked as::
 It runs windowless + detached so it outlives its parent. Stdlib only — it must
 start fast and never pull the heavy ``jarvis`` runtime into a throwaway process.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ from pathlib import Path
 from jarvis.core.branding import (
     MACOS_APP_DIR_NAME,
     MANAGED_INSTALL_MARKER,
+    PRODUCT_NAME,
     WINDOWS_BRANDED_LAUNCH_ENV_VAR,
 )
 
@@ -136,11 +138,7 @@ def fresh_user_env(
     # marker would make that chain skip branding and fall back to pythonw.exe's
     # Python icon. Match case-insensitively because Windows environment names are
     # case-insensitive even though a supplied test/POSIX mapping may not be.
-    for transient in [
-        key
-        for key in env
-        if key.upper() == WINDOWS_BRANDED_LAUNCH_ENV_VAR.upper()
-    ]:
+    for transient in [key for key in env if key.upper() == WINDOWS_BRANDED_LAUNCH_ENV_VAR.upper()]:
         del env[transient]
     persisted = _read_persisted()
     if persisted is None:
@@ -148,9 +146,7 @@ def fresh_user_env(
     # Drop every inherited JARVIS__* key first (Windows env names are
     # case-insensitive, so spelling variants must not survive alongside the
     # refreshed names), then lay down the persisted set verbatim.
-    for stale in [
-        k for k in env if k.upper().startswith("JARVIS__") and k not in persisted
-    ]:
+    for stale in [k for k in env if k.upper().startswith("JARVIS__") and k not in persisted]:
         del env[stale]
     env.update(persisted)
     return env
@@ -306,9 +302,7 @@ def _read_pending_update(root: Path) -> dict[str, object] | None:
     """Read and strictly validate a relaunch-time update transaction."""
 
     try:
-        payload = json.loads(
-            (root / PENDING_UPDATE_FILENAME).read_text(encoding="utf-8")
-        )
+        payload = json.loads((root / PENDING_UPDATE_FILENAME).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
         return None
     if not isinstance(payload, dict) or payload.get("schema") != 1:
@@ -335,18 +329,12 @@ def _managed_python(root: Path) -> str:
     return str(candidate if candidate.is_file() else Path(sys.executable))
 
 
-def _run_update_command(
-    cmd: list[str], *, root: Path, timeout: float
-) -> int:
+def _run_update_command(cmd: list[str], *, root: Path, timeout: float) -> int:
     """Run a windowless update child and collapse every launch failure to -1."""
 
     kwargs: dict[str, object] = {
         "cwd": str(root),
-        "env": {
-            key: value
-            for key, value in os.environ.items()
-            if key != "JARVIS_INSTALL_NO_PIP"
-        },
+        "env": {key: value for key, value in os.environ.items() if key != "JARVIS_INSTALL_NO_PIP"},
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
@@ -400,11 +388,14 @@ def _ui_bundle_ready(root: Path) -> bool:
         required.add(f"jarvis/ui/web/dist/{ref}")
 
     for rel in required:
-        if _run_update_command(
-            ["git", "ls-files", "--error-unmatch", "--", rel],
-            root=root,
-            timeout=30.0,
-        ) != 0:
+        if (
+            _run_update_command(
+                ["git", "ls-files", "--error-unmatch", "--", rel],
+                root=root,
+                timeout=30.0,
+            )
+            != 0
+        ):
             return False
     return True
 
@@ -523,20 +514,13 @@ def finalize_pending_update(cwd: str | Path) -> bool:
     profile = str(payload["profile"])
 
     target_reset_ok = (
-        _run_update_command(
-            ["git", "reset", "--hard", target], root=root, timeout=120.0
-        )
-        == 0
+        _run_update_command(["git", "reset", "--hard", target], root=root, timeout=120.0) == 0
     )
     target_install_ok = False
     if target_reset_ok:
-        target_install_ok = (
-            _run_update_command(
-                _installer_command(root, profile), root=root, timeout=3600.0
-            )
-            == 0
-            and _ui_bundle_ready(root)
-        )
+        target_install_ok = _run_update_command(
+            _installer_command(root, profile), root=root, timeout=3600.0
+        ) == 0 and _ui_bundle_ready(root)
     if target_install_ok:
         pending_path.unlink(missing_ok=True)
         _write_update_result(
@@ -549,20 +533,13 @@ def finalize_pending_update(cwd: str | Path) -> bool:
         return True
 
     rollback_reset_ok = (
-        _run_update_command(
-            ["git", "reset", "--hard", previous], root=root, timeout=120.0
-        )
-        == 0
+        _run_update_command(["git", "reset", "--hard", previous], root=root, timeout=120.0) == 0
     )
     rollback_install_ok = False
     if rollback_reset_ok:
-        rollback_install_ok = (
-            _run_update_command(
-                _installer_command(root, profile), root=root, timeout=3600.0
-            )
-            == 0
-            and _ui_bundle_ready(root)
-        )
+        rollback_install_ok = _run_update_command(
+            _installer_command(root, profile), root=root, timeout=3600.0
+        ) == 0 and _ui_bundle_ready(root)
     pending_path.unlink(missing_ok=True)
     rolled_back = rollback_reset_ok and rollback_install_ok
     _write_update_result(
@@ -584,6 +561,7 @@ def main(
     _alive=pid_alive,
     _settled=_new_instance_settled,
     _finalize_update=finalize_pending_update,
+    _report=None,
     attempts: int = 3,
 ) -> int:
     """Wait for the old app to exit, then start a fresh launcher — verified.
@@ -604,6 +582,7 @@ def main(
     except ValueError:
         return 2
     cwd = argv[1]
+    _report = _report or _report_restart_failure
 
     kwargs: dict[str, object] = {"cwd": cwd, "close_fds": True}
     # Fresh JARVIS__* overrides for the new instance — never the dying
@@ -637,7 +616,41 @@ def main(
         new_pid = getattr(proc, "pid", None)
         if _settled(new_pid, _alive=_alive, _sleep=_sleep):
             return 0
+    _report(pid, still_alive=_alive(pid))
     return 1
+
+
+def _report_restart_failure(old_pid: int, *, still_alive: bool) -> None:
+    """Say out loud that the restart did not bring the app back.
+
+    The relauncher is a windowless helper: its return code goes nowhere and the
+    app it was replacing is gone, so a failed restart used to look exactly like
+    "the app closed and never came back" — until the user found the Start menu
+    (live incident 2026-08-25). One native box, best-effort, never raises.
+    """
+    if still_alive:
+        message = (
+            f"{PRODUCT_NAME} could not restart: the previous instance (process "
+            f"{old_pid}) has not exited. End it in the task manager, then start "
+            f"{PRODUCT_NAME} from the Start menu."
+        )
+    else:
+        message = (
+            f"{PRODUCT_NAME} could not restart: the new instance did not stay up. "
+            f"Start {PRODUCT_NAME} from the Start menu; the log file has the details."
+        )
+    logging.getLogger(__name__).error(message)
+    try:
+        from jarvis.core.process_utils import standard_error_is_visible
+
+        if standard_error_is_visible():
+            print(message, file=sys.stderr, flush=True)
+            return  # a readable stderr (terminal, pipe, test capture) is enough
+        from jarvis.ui.native_dialog import show_error_dialog
+
+        show_error_dialog(f"{PRODUCT_NAME} restart failed", message)
+    except Exception:  # noqa: BLE001, S110 — a helper that cannot show a box stays quiet
+        pass
 
 
 if __name__ == "__main__":  # pragma: no cover
