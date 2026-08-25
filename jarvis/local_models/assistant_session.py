@@ -174,18 +174,41 @@ async def probe_live(
         try:
             result = await run(spec, cfg, model=model or None, timeout_s=timeout_s)
             ok = result.status == provider_test.OK
-            reason = (
-                ""
-                if ok
-                else f"{provider} ({model or 'default model'}): {result.status.replace('_', ' ')}"
-                + (f" — {result.detail}" if result.detail else "")
-            )
+            reason = "" if ok else _plain_reason(provider, model, result)
         except Exception as exc:  # noqa: BLE001 — a probe crash is "not usable", logged
             log.warning("agents tier: live probe of %s/%s crashed: %s", provider, model, exc)
             ok, reason = False, f"{provider} ({model}): probe failed — {exc}"
         _LIVE_CACHE[(provider, model)] = (ok, reason, time.monotonic())
         out[(provider, model)] = (ok, reason)
     return out
+
+
+_PLAIN_BY_STATUS: Final[dict[str, str]] = {
+    "no_credits": "the account has no credit or quota left for this model",
+    "rate_limited": "the provider is rate-limiting this key right now",
+    "bad_key": "the key was refused",
+    "model_unavailable": "the provider no longer offers this model",
+    "unreachable": "the provider could not be reached",
+    "not_configured": "no key is stored for it",
+}
+
+
+def _plain_reason(provider: str, model: str, result: Any) -> str:
+    """One readable sentence, never a dumped error body.
+
+    The status vocabulary is the API-keys page's; the provider's own text is
+    kept only when it is short and free of JSON braces (a 404 body is not
+    something a person should have to read in a status line).
+    """
+    status = str(getattr(result, "status", "") or "error")
+    head = f"{provider} ({model or 'default model'}): "
+    plain = _PLAIN_BY_STATUS.get(status)
+    detail = str(getattr(result, "detail", "") or "").strip()
+    if plain:
+        return head + plain + "."
+    if detail and "{" not in detail and len(detail) <= 140:
+        return head + detail
+    return head + status.replace("_", " ") + "."
 
 
 def agents_tier(

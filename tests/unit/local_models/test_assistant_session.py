@@ -124,7 +124,7 @@ async def test_probe_live_classifies_with_the_provider_test_and_caches() -> None
     cfg = _cfg("gemini", "g-pro", fallback_provider="openai", fallback_model="o-1")
     pairs = policy.chain_candidates(cfg, usable=lambda _p: True, tool_capable=lambda _p: True)
     out = await policy.probe_live(cfg, pairs, tester=_tester)
-    assert out[("gemini", "g-pro")][0] is False and "no credits" in out[("gemini", "g-pro")][1]
+    assert out[("gemini", "g-pro")] == (False, "gemini (g-pro): the account has no credit or quota left for this model.")
     assert out[("openai", "o-1")] == (True, "")
     again = await policy.probe_live(cfg, pairs, tester=_tester)
     assert again == out and len(calls) == 2  # cached, no second real call
