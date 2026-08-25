@@ -243,35 +243,34 @@ export function AssistantSteps({
   });
 
   return (
-    <div
-      className="rounded-lg border border-border/60 bg-muted/[0.18]"
-      data-testid="assistant-steps"
-      data-open={open ? "yes" : "no"}
-    >
+    <div data-testid="assistant-steps" data-open={open ? "yes" : "no"}>
+      {/* Collapsed, this is one quiet line the eye can skip — the answer is
+          what the finished conversation is for. Open, the rail carries the
+          work so it reads as a sequence rather than a paragraph of nouns. */}
       <button
         type="button"
         onClick={() => !pinned && setOpen((v) => !v)}
         aria-expanded={open}
         disabled={pinned}
         className={cn(
-          "flex w-full items-center gap-2 px-3 py-2 text-left",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-lg",
-          !pinned && "hover:bg-muted/40",
+          "-mx-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5",
+          "text-[12.5px] text-muted-foreground",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          !pinned && "hover:text-foreground",
         )}
       >
         <ChevronRight
           className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            "h-3.5 w-3.5 shrink-0 transition-transform",
             open && "rotate-90",
-            pinned && "opacity-0",
+            pinned && "hidden",
           )}
         />
-        <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-          {live ? t("local_models.assistant.steps.working") : summary}
-        </span>
+        {live && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />}
+        <span>{live ? t("local_models.assistant.steps.working") : summary}</span>
       </button>
       {open && (
-        <ul className="flex flex-col gap-2 border-t border-border/50 px-3 py-2.5">
+        <ul className="mt-2 flex flex-col gap-2 border-l border-border/70 pl-3.5">
           {steps.map((block) =>
             block.kind === "tool" ? (
               <ToolStep key={block.callId} block={block} onDecide={onDecide} />

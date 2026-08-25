@@ -310,177 +310,195 @@ export function AssistantPanel({
 
   return (
     <div
-      className="flex flex-col gap-3 rounded-xl border border-border bg-card/60"
+      className={cn(
+        // A chat is a room, not a form: its own ground, a header and a
+        // composer pinned to the edges, and the conversation scrolling
+        // between them. The height is the screen's, minus what the section
+        // header and the rail already take.
+        "flex h-[calc(100vh-14.5rem)] min-h-[26rem] flex-col overflow-hidden rounded-xl border border-border",
+        "bg-[color-mix(in_srgb,var(--card)_92%,var(--foreground)_3%)]",
+      )}
       data-testid="local-models-assistant"
     >
-      {/* Header: what it is, what it is doing, and the three things it can start. */}
-      <div className="flex flex-col gap-3 border-b border-border/70 px-4 pt-4 pb-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      {/* ── header ─────────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-b border-border/70 bg-card/40 px-5 py-3">
+        <div className="mx-auto flex w-full max-w-[46rem] flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
-            <h3 className="text-[15px] font-semibold leading-tight">
+            <h3 className="text-[14px] font-semibold leading-tight tracking-[-0.01em]">
               {t("local_models.assistant.title")}
             </h3>
-            <p className="mt-0.5 text-sm text-muted-foreground" data-testid="assistant-status">
+            <p className="mt-0.5 text-[12.5px] text-muted-foreground" data-testid="assistant-status">
               {statusLine}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <SoftButton primary onClick={() => void run("setup")} disabled={busyNow}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ChipButton primary onClick={() => void run("setup")} disabled={busyNow}>
               <Sparkles className="h-3.5 w-3.5" />
               {t("local_models.assistant.action_setup")}
-            </SoftButton>
-            <SoftButton onClick={() => void run("test")} disabled={busyNow}>
+            </ChipButton>
+            <ChipButton onClick={() => void run("test")} disabled={busyNow}>
               <FlaskConical className="h-3.5 w-3.5" />
               {t("local_models.assistant.action_test")}
-            </SoftButton>
-            <SoftButton onClick={() => void run("diagnose")} disabled={busyNow}>
+            </ChipButton>
+            <ChipButton onClick={() => void run("diagnose")} disabled={busyNow}>
               <AlertTriangle className="h-3.5 w-3.5" />
               {t("local_models.assistant.action_diagnose")}
-            </SoftButton>
+            </ChipButton>
             {running && (
-              <SoftButton onClick={() => void cancel()} ariaLabel={t("local_models.assistant.cancel")}>
+              <ChipButton onClick={() => void cancel()}>
                 <Square className="h-3.5 w-3.5" />
                 {t("local_models.assistant.cancel")}
-              </SoftButton>
+              </ChipButton>
             )}
           </div>
         </div>
-
-        {health && checkedAt && (
-          <p className="flex flex-wrap items-center gap-3 text-[13px]" data-testid="assistant-health">
-            <StatusDot
-              tone={healthTone}
-              label={fill(t("local_models.assistant.last_check"), {
-                when: checkedAt.toLocaleString(),
-                what: health.reason || t(`local_models.assistant.health_${health.status}`),
-              })}
-            />
-            {needsFix && (
-              <button
-                type="button"
-                className="font-medium text-primary underline-offset-4 hover:underline"
-                onClick={() => void run("diagnose")}
-                data-testid="assistant-health-fix"
-              >
-                {t("local_models.assistant.fix")}
-              </button>
-            )}
-          </p>
-        )}
       </div>
 
-      <div className="flex flex-col gap-3 px-4 pb-4">
-        {blocked && (
-          <div
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
-            data-testid="assistant-blocked"
-          >
-            <span>{blocked}</span>
-            <SoftButton onClick={onOpenApiKeys}>{t("local_models.assistant.open_api_keys")}</SoftButton>
-          </div>
-        )}
-
-        {backendMissing && (
-          <p className="text-sm text-muted-foreground" data-testid="assistant-backend-missing">
-            {t("local_models.assistant.backend_missing")}
-          </p>
-        )}
-
-        {(runError || lastError) && (
-          <p className="text-sm text-destructive" data-testid="assistant-error">
-            {runError ?? lastError}
-          </p>
-        )}
-
-        {items.length === 0 && !blocked && !backendMissing && (
-          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border px-4 py-8 text-center">
-            <p className="max-w-[46ch] text-sm text-muted-foreground">
-              {t("local_models.assistant.empty")}
+      {/* ── conversation ───────────────────────────────────────────────── */}
+      <div ref={scroller} className="flex-1 overflow-y-auto" data-testid="assistant-timeline">
+        <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-8 px-5 py-6">
+          {health && checkedAt && (
+            <p
+              className="flex flex-wrap items-center gap-3 text-[12.5px]"
+              data-testid="assistant-health"
+            >
+              <StatusDot
+                tone={healthTone}
+                label={fill(t("local_models.assistant.last_check"), {
+                  when: checkedAt.toLocaleString(),
+                  what: health.reason || t(`local_models.assistant.health_${health.status}`),
+                })}
+              />
+              {needsFix && (
+                <button
+                  type="button"
+                  className="font-medium text-primary underline-offset-4 hover:underline"
+                  onClick={() => void run("diagnose")}
+                  data-testid="assistant-health-fix"
+                >
+                  {t("local_models.assistant.fix")}
+                </button>
+              )}
             </p>
-            <div className="flex flex-wrap justify-center gap-2">
-              {["ask_1", "ask_2", "ask_3"].map((key) => {
-                const text = t(`local_models.assistant.${key}`);
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    disabled={!activeSessionId || busyNow}
-                    onClick={() => void send(text)}
-                    className="rounded-full border border-border px-3 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    {text}
-                  </button>
-                );
-              })}
+          )}
+
+          {blocked && (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm"
+              data-testid="assistant-blocked"
+            >
+              <span>{blocked}</span>
+              <SoftButton onClick={onOpenApiKeys}>
+                {t("local_models.assistant.open_api_keys")}
+              </SoftButton>
             </div>
-          </div>
-        )}
+          )}
 
-        {items.length > 0 && (
-          <div
-            ref={scroller}
-            className="flex max-h-[52vh] min-h-[9rem] flex-col gap-5 overflow-y-auto pr-1"
-            data-testid="assistant-timeline"
-          >
-            {earlier.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowEarlier((v) => !v)}
-                className="mx-auto inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                data-testid="assistant-earlier"
-              >
-                <History className="h-3 w-3" />
-                {showEarlier
-                  ? t("local_models.assistant.earlier_hide")
-                  : fill(t("local_models.assistant.earlier_show"), { n: String(earlier.length) })}
-              </button>
-            )}
+          {backendMissing && (
+            <p className="text-sm text-muted-foreground" data-testid="assistant-backend-missing">
+              {t("local_models.assistant.backend_missing")}
+            </p>
+          )}
 
-            {shown.map((item) => {
-              if (item.type === "user") {
-                return (
-                  <div key={item.id} className="flex justify-end">
-                    <p
-                      className="max-w-[72%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[13.5px] leading-relaxed text-foreground"
-                      data-testid="assistant-you"
+          {(runError || lastError) && (
+            <p className="text-sm text-destructive" data-testid="assistant-error">
+              {runError ?? lastError}
+            </p>
+          )}
+
+          {items.length === 0 && !blocked && !backendMissing && (
+            <div className="flex flex-1 flex-col items-center justify-center gap-5 py-12 text-center">
+              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/12 text-primary">
+                <Sparkles className="h-5 w-5" />
+              </span>
+              <p className="max-w-[38ch] text-[15px] leading-relaxed text-muted-foreground">
+                {t("local_models.assistant.empty")}
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {["ask_1", "ask_2", "ask_3"].map((key) => {
+                  const text = t(`local_models.assistant.${key}`);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      disabled={!activeSessionId || busyNow}
+                      onClick={() => void send(text)}
+                      className={cn(
+                        "rounded-full border border-border bg-card px-3.5 py-2 text-[13px] text-muted-foreground",
+                        "transition-colors hover:border-primary/50 hover:text-foreground",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
+                        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                      )}
                     >
-                      {item.text}
-                    </p>
-                  </div>
-                );
-              }
-              if (item.type === "error") {
-                return (
-                  <p key={item.id} className="text-sm text-destructive">
+                      {text}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {earlier.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowEarlier((v) => !v)}
+              className={cn(
+                "mx-auto inline-flex items-center gap-1.5 rounded-full border border-border bg-card/60 px-3 py-1",
+                "text-[11.5px] text-muted-foreground hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              )}
+              data-testid="assistant-earlier"
+            >
+              <History className="h-3 w-3" />
+              {showEarlier
+                ? t("local_models.assistant.earlier_hide")
+                : fill(t("local_models.assistant.earlier_show"), { n: String(earlier.length) })}
+            </button>
+          )}
+
+          {shown.map((item) => {
+            if (item.type === "user") {
+              return (
+                <div key={item.id} className="flex justify-end">
+                  <p
+                    className="max-w-[85%] rounded-3xl rounded-br-lg bg-muted px-4 py-2.5 text-[14.5px] leading-relaxed text-foreground"
+                    data-testid="assistant-you"
+                  >
                     {item.text}
                   </p>
-                );
-              }
-              const answer = stripProposalBlocks(turnText(item));
-              const live = item.status === "running";
+                </div>
+              );
+            }
+            if (item.type === "error") {
               return (
-                <div key={item.id} className="flex flex-col gap-2.5">
-                  <div className="flex items-center gap-2">
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full",
-                        live ? "animate-pulse bg-primary" : "bg-muted-foreground/40",
-                      )}
-                    />
-                    <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                      {t("local_models.assistant.title")}
-                    </span>
-                    {item.model && (
-                      <span className="font-mono text-[10.5px] text-muted-foreground/70">
-                        {item.model}
-                      </span>
-                    )}
-                  </div>
+                <p key={item.id} className="text-sm text-destructive">
+                  {item.text}
+                </p>
+              );
+            }
+            const answer = stripProposalBlocks(turnText(item));
+            const live = item.status === "running";
+            return (
+              // The assistant wears no bubble: its words are the page, the way
+              // a reader expects an answer to be. Only the mark and the left
+              // gutter say who is speaking.
+              <div key={item.id} className="flex gap-3">
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
+                    live
+                      ? "animate-pulse bg-primary/15 text-primary"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col gap-3">
                   <AssistantSteps blocks={item.blocks} live={live} onDecide={onDecide} />
                   {answer && (
                     <div
-                      className="flex max-w-[38rem] flex-col gap-2.5 text-[14px] leading-[1.65] text-foreground"
+                      className="flex flex-col gap-3 text-[15px] leading-[1.7] text-foreground"
                       data-testid="assistant-answer"
                     >
                       {answer.split(/\n{2,}/).map((para, k) => (
@@ -511,70 +529,110 @@ export function AssistantPanel({
                     </>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
-        <form
-          className={cn(
-            "flex items-end gap-2 rounded-xl border border-border bg-background px-2 py-1.5",
-            "focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20",
-            !activeSessionId && "opacity-60",
-          )}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void submit();
-          }}
-        >
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void submit();
-              }
+      {/* ── composer ───────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-t border-border/70 bg-card/40 px-5 py-3">
+        <div className="mx-auto w-full max-w-[46rem]">
+          <form
+            className={cn(
+              "flex items-end gap-2 rounded-2xl border border-border bg-background px-2.5 py-2 shadow-sm",
+              "transition-colors focus-within:border-primary/60",
+              !activeSessionId && "opacity-60",
+            )}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit();
             }}
-            rows={1}
-            disabled={!activeSessionId}
-            placeholder={
-              activeSessionId
-                ? t("local_models.assistant.composer_placeholder")
-                : t("local_models.assistant.composer_locked")
-            }
-            aria-label={t("local_models.assistant.composer_placeholder")}
-            data-testid="assistant-composer"
-            className={cn(
-              "max-h-40 min-h-[2rem] flex-1 resize-none bg-transparent px-1.5 py-1.5 text-[13.5px] leading-relaxed text-foreground",
-              "placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed",
-            )}
-          />
-          <button
-            type="submit"
-            aria-label={t("local_models.assistant.send")}
-            disabled={!activeSessionId || !draft.trim() || busy || running}
-            className={cn(
-              "mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground",
-              "transition-opacity hover:opacity-90 disabled:opacity-40",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-            )}
           >
-            <Send className="h-3.5 w-3.5" />
-          </button>
-        </form>
-
-        {onOpenServerLog && (
-          <button
-            type="button"
-            onClick={onOpenServerLog}
-            className="self-start text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-            data-testid="assistant-open-server-log"
-          >
-            {t("local_models.assistant.open_server_log")}
-          </button>
-        )}
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void submit();
+                }
+              }}
+              rows={1}
+              disabled={!activeSessionId}
+              placeholder={
+                activeSessionId
+                  ? t("local_models.assistant.composer_placeholder")
+                  : t("local_models.assistant.composer_locked")
+              }
+              aria-label={t("local_models.assistant.composer_placeholder")}
+              data-testid="assistant-composer"
+              className={cn(
+                "max-h-40 min-h-[1.75rem] flex-1 resize-none bg-transparent px-1.5 py-1 text-[14.5px] leading-relaxed text-foreground",
+                "placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed",
+              )}
+            />
+            <button
+              type="submit"
+              aria-label={t("local_models.assistant.send")}
+              disabled={!activeSessionId || !draft.trim() || busy || running}
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground",
+                "transition-opacity hover:opacity-90 disabled:opacity-30",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              )}
+            >
+              <Send className="h-3.5 w-3.5" />
+            </button>
+          </form>
+          <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
+            <span className="text-[11px] text-muted-foreground/70">
+              {t("local_models.assistant.composer_hint")}
+            </span>
+            {onOpenServerLog && (
+              <button
+                type="button"
+                onClick={onOpenServerLog}
+                className="text-[11px] text-muted-foreground/70 underline-offset-4 hover:text-foreground hover:underline"
+                data-testid="assistant-open-server-log"
+              >
+                {t("local_models.assistant.open_server_log")}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
+  );
+}
+
+/** A small header action: the three runs and Stop, sized for a title bar. */
+function ChipButton({
+  children,
+  onClick,
+  disabled,
+  primary,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium",
+        "transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        primary
+          ? "bg-primary text-primary-foreground hover:opacity-90"
+          : "border border-border text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
