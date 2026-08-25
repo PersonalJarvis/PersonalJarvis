@@ -9,10 +9,11 @@ Prefix ``/api/agent-chat``:
     GET    /sessions/{id}                    session + its persisted events
     PATCH  /sessions/{id}                    title/provider/model/effort/cwd/permission_mode
     DELETE /sessions/{id}
-    POST   /sessions/{id}/messages           {text} -> starts a turn, returns turn_id
+    POST   /sessions/{id}/messages           {text, attachments} -> starts a turn
     POST   /sessions/{id}/cancel
     POST   /sessions/{id}/approvals/{aid}    {decision: allow | allow_always | deny}
     WS     /sessions/{id}/ws?after=<seq>     snapshot, then live events
+    POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
     GET    /check-folder?path=               does the folder exist / is it a directory
 
@@ -29,9 +30,20 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
+from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, PROVIDER_ROWS
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
@@ -55,7 +67,12 @@ log = logging.getLogger(__name__)
 
 #: The Pydantic twin of ``jarvis.agent_chat.store.SURFACES`` (AP-4; the parity
 #: test in tests/unit/agent_chat/test_agent_chat_surface_parity.py pins it).
-SurfaceName = Literal["jarvis", "agent", "local-models"]
+SurfaceName = Literal["jarvis", "agent"]
+
+#: The same names, as data — a multipart form field cannot be typed by a
+#: ``Literal`` without turning an unknown surface into a 422 on a file the
+#: person just dropped.
+SURFACE_NAMES: frozenset[str] = frozenset({"jarvis", "agent"})
 
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 
@@ -88,7 +105,13 @@ class PatchSessionBody(BaseModel):
 
 
 class MessageBody(BaseModel):
-    text: str = Field(min_length=1, max_length=200_000)
+    #: May be empty when files are attached — dropping a screenshot and
+    #: pressing Enter is a complete gesture. The service refuses a message
+    #: that carries neither.
+    text: str = Field(default="", max_length=200_000)
+    #: What ``POST /attachments`` returned for the files going in with this
+    #: message; the wire shape of ``drop_analysis.DropAnalysis``.
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ApprovalBody(BaseModel):
@@ -225,7 +248,7 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
         rows.append(d)
     return {
         "providers": rows,
-        "default_cwd": svc.default_cwd(),
+        "default_cwd": svc.default_cwd(surface),
         "shell": shell_label(),
     }
 
@@ -309,10 +332,10 @@ async def patch_session(
     if body.effort is not None:
         provider = fields.get("provider") or svc.store.get_session(session_id).provider  # type: ignore[union-attr]
         fields["effort"] = normalize_effort(provider, body.effort)
-    if body.cwd is not None:
-        fields["cwd"] = _validate_cwd(body.cwd) or svc.default_cwd()
     current = svc.store.get_session(session_id)
     assert current is not None
+    if body.cwd is not None:
+        fields["cwd"] = _validate_cwd(body.cwd) or svc.default_cwd(current.surface)
     runner = resolve_runner(fields.get("provider") or current.provider, surface=current.surface)
     ladder = ladder_key(current.surface, runner)
     if body.permission_mode is not None:
@@ -355,7 +378,7 @@ async def delete_session(session_id: str, request: Request) -> dict[str, Any]:
 async def post_message(session_id: str, body: MessageBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
     try:
-        turn_id = await svc.send(session_id, body.text)
+        turn_id = await svc.send(session_id, body.text, body.attachments)
     except NoSuchSession as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
     except SessionBusy as exc:
@@ -385,6 +408,77 @@ async def resolve_approval(
     if not ok:
         raise HTTPException(status_code=404, detail="no such pending approval")
     return {"ok": True, "approval_id": approval_id, "decision": body.decision}
+
+
+# ------------------------------------------------------------------ attachments
+
+
+@router.post("/attachments", summary="Drop, paste or pick files into a chat composer")
+async def attach_files(
+    request: Request,
+    files: list[UploadFile] | None = File(default=None),  # noqa: B008
+    paths: str | None = Form(default=None),  # noqa: B008
+    session_id: str | None = Form(default=None),  # noqa: B008
+    cwd: str | None = Form(default=None),  # noqa: B008
+    provider: str = Form(default=""),  # noqa: B008
+    surface: str = Form(default="agent"),  # noqa: B008
+) -> dict[str, Any]:
+    """Hold files for the message the person is still typing.
+
+    Two inputs, either or both:
+
+    * ``paths`` — newline-separated real locations. An Explorer or Finder drag
+      usually carries them, and inside the desktop shell the host resolves one
+      for every dropped file (``jarvis/ui/native_drop.py``). A path already
+      inside the chat's folder is referenced where it lies; anything else is
+      copied in.
+    * ``files`` — raw bytes, for everything with no path at all: a screenshot
+      pasted from the clipboard, an image dragged off a web page.
+
+    Nothing is sent. Each file is stored, then READ — an image described by a
+    vision-capable model, a document extracted — and the result comes back for
+    the composer to hold and post with the message. That reading is the whole
+    point: a chat can be answered by a coding CLI or a text-only model, so
+    without it the person drops a picture, types "what is wrong here", and the
+    model receives a filename.
+
+    Which folder the copies land in, in order: the open session's, the
+    composer's own ``cwd``, then the surface's default working directory. So an
+    attach works before the first message, when no session exists yet.
+    """
+    svc = _service(request)
+    folder = ""
+    if session_id:
+        session = svc.store.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        folder = session.cwd or ""
+    if not folder:
+        try:
+            folder = _validate_cwd(cwd) or ""
+        except HTTPException:
+            # A composer whose remembered folder has gone (a moved checkout, a
+            # detached drive) must still be able to take a file — the surface's
+            # own directory below always exists.
+            folder = ""
+    if not folder:
+        folder = svc.default_cwd(surface if surface in SURFACE_NAMES else "agent")
+
+    uploads: list[tuple[str, bytes]] = []
+    for upload in files or []:
+        uploads.append((upload.filename or "file", await upload.read()))
+
+    try:
+        found = await chat_attachments.ingest(
+            folder,
+            paths=(paths or "").splitlines(),
+            uploads=uploads,
+            provider=provider,
+        )
+    except chat_attachments.AttachmentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {"attachments": [item.to_dict() for item in found], "cwd": folder}
 
 
 # ------------------------------------------------------------------ folders

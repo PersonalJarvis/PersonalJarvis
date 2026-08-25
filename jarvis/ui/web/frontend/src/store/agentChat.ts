@@ -19,6 +19,7 @@ import {
   type AgentChatSurface,
   type AgentConnectionRow,
   type ApprovalDecision,
+  type ChatAttachment,
   type CuratedModel,
   type PatchSessionInput,
 } from "@/lib/agentChatApi";
@@ -117,7 +118,8 @@ export interface AgentChatStore {
   newChat: () => void;
   openSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => Promise<void>;
-  send: (text: string) => Promise<void>;
+  /** Send the sentence, with whatever files the composer is holding for it. */
+  send: (text: string, attachments?: ChatAttachment[]) => Promise<void>;
   cancel: () => Promise<void>;
   decide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   /** Tests and the socket: fold one event into the active timeline. */
@@ -497,9 +499,11 @@ export function createAgentChatStore(surface: AgentChatSurface) {
         void get().loadSessions();
       },
 
-      send: async (text) => {
+      send: async (text, attachments = []) => {
         const content = text.trim();
-        if (!content) return;
+        // A message may be files alone — dropping a screenshot and pressing
+        // Enter is a complete gesture — but never nothing at all.
+        if (!content && attachments.length === 0) return;
         const st = get();
         set({ busy: true, lastError: null });
         try {
@@ -523,7 +527,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
             });
             connect(sid, 0);
           }
-          await sendAgentChatMessage(sid, content);
+          await sendAgentChatMessage(sid, content, attachments);
           void get().loadSessions();
         } catch (err) {
           set({ lastError: errorText(err) });

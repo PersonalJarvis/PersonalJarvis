@@ -27,6 +27,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge
 from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.effort import normalize_effort
@@ -72,11 +73,6 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     kit = kit_for(surface)
     api_runner = "brain" if kit.brain_runner else "api"
     row = provider_row(provider)
-    if kit.brain_only:
-        # The surface's tools only exist inside the brain loop: a CLI seat
-        # (agy-cli, codex-cli, claude-cli) would run the vendor's coding agent
-        # without them, so any provider the brain knows is driven by the brain.
-        return "brain" if row is not None or supports_api_runner(provider) else "unknown"
     if row is None:
         return api_runner if supports_api_runner(provider) else "unknown"
     if row.id == "claude-api":
@@ -131,8 +127,29 @@ class AgentChatService:
 
     # ------------------------------------------------------------ sessions
 
-    def default_cwd(self) -> str:
-        return self._default_cwd()
+    def default_cwd(self, surface: str = DEFAULT_SURFACE) -> str:
+        """Where a new ``surface`` session starts when nobody picked a folder.
+
+        A surface that brings its own workspace (the Jarvis chat) gets that
+        directory, created on first use. One that cannot be created — a
+        read-only install, no writable app data — falls back to the service
+        default rather than handing a chat a folder it cannot work in.
+        """
+        workspace = kit_for(surface).workspace_dir
+        if workspace is None:
+            return self._default_cwd()
+        folder = workspace()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.warning(
+                "chat workspace %s could not be created (%s) — starting in the "
+                "fallback folder instead",
+                folder,
+                exc,
+            )
+            return self._default_cwd()
+        return str(folder)
 
     def _bridge_for(self, bus: Any | None) -> ChatApprovalBridge | None:
         """The approval bridge, built on the first Jarvis turn that has a bus."""
@@ -167,7 +184,7 @@ class AgentChatService:
             provider=provider,
             model=model or (row.default_model if row else ""),
             effort=eff,
-            cwd=cwd or self.default_cwd(),
+            cwd=cwd or self.default_cwd(surface),
             permission_mode=permission_mode,
             title=title,
             surface=surface,
@@ -208,16 +225,36 @@ class AgentChatService:
 
     # ---------------------------------------------------------------- turns
 
-    async def send(self, session_id: str, text: str) -> str:
-        """Persist the person's message and start the turn. Returns turn_id."""
+    async def send(
+        self,
+        session_id: str,
+        text: str,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Persist the person's message and start the turn. Returns turn_id.
+
+        ``attachments`` are what the composer already had read for this message
+        (``jarvis.agent_chat.attachments``): a described screenshot, an
+        extracted document. Their contents go INTO the message the turn
+        receives, because a chat may be answered by a coding CLI or a
+        text-only model that cannot open the file itself.
+
+        A message with attachments may carry no sentence at all — dropping a
+        picture and pressing Enter is a complete gesture — but an empty message
+        with nothing attached is still refused.
+        """
         session = self.store.get_session(session_id)
         if session is None:
             raise NoSuchSession(session_id)
         if self.is_running(session_id):
             raise SessionBusy(session_id)
         text = text.strip()
-        if not text:
+        attached = chat_attachments.to_analysis(attachments)
+        if not text and not attached:
             raise ValueError("empty message")
+        # What the turn receives; ``text`` stays what the person typed so the
+        # timeline shows their sentence rather than a page of extracted PDF.
+        prompt = chat_attachments.compose(text, attached)
 
         turn_id = uuid.uuid4().hex
         cancel = asyncio.Event()
@@ -225,7 +262,37 @@ class AgentChatService:
         self._running[session_id] = run
 
         history = self.store.list_events(session_id)
-        await self._emit(session_id, make_event("user_message", {"text": text}))
+        await self._emit(
+            session_id,
+            make_event(
+                "user_message",
+                {
+                    # The full prompt: this is what was actually sent, and the
+                    # API runner rebuilds the conversation from these events —
+                    # storing only the sentence would lose the picture on the
+                    # NEXT turn (runner_api.messages_from_events).
+                    "text": prompt,
+                    # What the person typed, when it differs from the prompt.
+                    # Absent on an ordinary message, so nothing changes there.
+                    **({"typed": text} if attached else {}),
+                    **(
+                        {
+                            "attachments": [
+                                {
+                                    "name": item.name,
+                                    "kind": item.kind,
+                                    "described_by": item.described_by,
+                                    "note": item.note,
+                                }
+                                for item in attached
+                            ]
+                        }
+                        if attached
+                        else {}
+                    ),
+                },
+            ),
+        )
         runner = resolve_runner(session.provider, surface=session.surface)
         await self._emit(
             session_id,
@@ -235,13 +302,12 @@ class AgentChatService:
                     "turn_id": turn_id,
                     "provider": session.provider,
                     "model": session.model,
-                    # The effort the turn RUNS with: a surface may ask for more
-                    # than the session's own pick (the setup helper does), and
-                    # the timeline must not report the stale one.
-                    "effort": normalize_effort(
-                        session.provider,
-                        kit_for(session.surface).effort or session.effort,
-                    ),
+                    # The effort the turn RUNS with. It is the session's own
+                    # pick: no surface overrides it any more (the kit's
+                    # `effort` went with the setup helper), so reading one off
+                    # the kit would only be a way to raise an AttributeError
+                    # on every turn.
+                    "effort": normalize_effort(session.provider, session.effort),
                     "runner": runner,
                     "surface": session.surface,
                 },

@@ -52,13 +52,12 @@ export interface AgentChatCatalog {
 
 /**
  * Where a session lives: the front page's typed chat (`jarvis` — the same
- * assistant as the microphone, on a keyboard), a coding session listed by
- * the Agentic IDE (`agent`), or the Local models section's setup assistant
- * (`local-models`). Each surface asks the backend for its own list and
- * catalog, so they never mix in a sidebar. Mirrors `SURFACES` in
+ * assistant as the microphone, on a keyboard) or a coding session listed by
+ * the Agentic IDE (`agent`). Each surface asks the backend for its own list
+ * and catalog, so they never mix in a sidebar. Mirrors `SURFACES` in
  * `jarvis/agent_chat/store.py` (a parity test reads this union).
  */
-export type AgentChatSurface = "jarvis" | "agent" | "local-models";
+export type AgentChatSurface = "jarvis" | "agent";
 
 export interface AgentChatSession {
   session_id: string;
@@ -229,15 +228,74 @@ export async function fetchAgentChatSession(
 export async function sendAgentChatMessage(
   sessionId: string,
   text: string,
+  attachments: ChatAttachment[] = [],
 ): Promise<{ turn_id: string }> {
   return json(
     await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, attachments }),
     }),
     "send-failed",
   );
+}
+
+/**
+ * One file going in with the next message, and what was READ from it.
+ *
+ * `detail` is the whole point: a description written by a model that could see
+ * the image, or a document's extracted text. A chat can be answered by a coding
+ * CLI or a text-only model, neither of which can open the file itself, so the
+ * contents have to travel with the sentence.
+ *
+ * Structurally the same row the Agentic IDE's terminals hand back
+ * (`DropAttachment` in agenticIdeApi) — same backend analysis, same wire shape.
+ */
+export interface ChatAttachment {
+  name: string;
+  /** How the agent should refer to the file — `@path` or a quoted path. */
+  reference: string;
+  kind: "image" | "text" | "pdf" | "other";
+  /** The description or extracted text. Empty when neither could be produced. */
+  detail: string;
+  /** Which layer produced `detail`. */
+  described_by: "vision" | "extraction" | "none";
+  /** Why `detail` is empty or shortened. Empty on the happy path. */
+  note: string;
+}
+
+/**
+ * Hand dropped, pasted or picked files to the backend and get them READ.
+ *
+ * Nothing is sent to the agent here — the composer holds the result while the
+ * person finishes the sentence, then posts both together.
+ *
+ * `paths` are real locations the browser managed to supply (an Explorer drag,
+ * or the desktop shell resolving the drop); `files` are the bytes for
+ * everything with no path at all. Sending both is normal and the backend
+ * de-duplicates, because a drag can carry the path AND the bytes.
+ */
+export async function attachChatFiles(payload: {
+  files?: File[];
+  paths?: string[];
+  sessionId?: string | null;
+  cwd?: string;
+  provider?: string;
+  surface?: AgentChatSurface;
+}): Promise<ChatAttachment[]> {
+  const form = new FormData();
+  for (const file of payload.files ?? []) form.append("files", file, file.name);
+  if (payload.paths?.length) form.append("paths", payload.paths.join("\n"));
+  if (payload.sessionId) form.append("session_id", payload.sessionId);
+  if (payload.cwd) form.append("cwd", payload.cwd);
+  if (payload.provider) form.append("provider", payload.provider);
+  if (payload.surface) form.append("surface", payload.surface);
+
+  const data = await json<{ attachments?: ChatAttachment[] }>(
+    await fetch("/api/agent-chat/attachments", { method: "POST", body: form }),
+    "attach-failed",
+  );
+  return Array.isArray(data.attachments) ? data.attachments : [];
 }
 
 export async function cancelAgentChatTurn(sessionId: string): Promise<void> {

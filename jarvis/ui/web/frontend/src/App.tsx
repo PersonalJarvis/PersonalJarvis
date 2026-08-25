@@ -7,6 +7,7 @@ import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { useVoiceStateResync } from "@/hooks/useVoiceStateResync";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { useCodingMode } from "@/hooks/useCodingMode";
+import { useFileDropGuard } from "@/hooks/useFileDropGuard";
 import { useSectionUrlMemory } from "@/hooks/useSectionUrlMemory";
 import {
   Sidebar,
@@ -156,6 +157,7 @@ export default function App() {
   useVoiceStateResync();
   useAssistantNameSeed();
   useCodingMode();
+  useFileDropGuard();
   /*
    * A reload puts the user back on the section they were on.
    *

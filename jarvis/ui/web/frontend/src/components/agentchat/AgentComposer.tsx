@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   ArrowUp,
   Bot,
@@ -9,6 +9,7 @@ import {
   Hammer,
   Mic,
   NotebookPen,
+  Paperclip,
   ShieldCheck,
   Square,
 } from "lucide-react";
@@ -23,6 +24,9 @@ import { pickAgentChatFolder } from "@/lib/agentChatApi";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
+import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { usePasteRescue } from "@/components/agentchat/usePasteRescue";
+import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +86,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const connections = useAgentChat((s) => s.connections);
   const liveModels = useAgentChat((s) => s.liveModels);
   const draft = useAgentChat((s) => s.draft);
+  const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const timeline = useAgentChat((s) => s.timeline);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
@@ -108,17 +113,49 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     setValue,
   );
 
+  // Files going in with this message. Held here rather than in the store: they
+  // belong to the sentence being typed, and a chat opened elsewhere must not
+  // inherit them.
+  const [attachError, setAttachError] = useState("");
+  const onAttachProblem = useCallback(
+    (message: string, severity: "warning" | "error") => {
+      setAttachError(severity === "warning" ? t("agent_chat.attach_nothing") : message);
+    },
+    [t],
+  );
+  const files = useChatAttachments(
+    {
+      sessionId: activeSessionId,
+      cwd: draft.cwd,
+      provider: draft.provider,
+      surface,
+    },
+    onAttachProblem,
+  );
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pasteRescue = usePasteRescue();
+
   const running = runningTurn(timeline) !== null;
 
   async function onSend() {
     const content = value.trim();
-    if (!content || running || busy) return;
+    // A message may be files alone: dropping a screenshot and pressing Enter
+    // is a complete gesture, and refusing it would be the composer insisting
+    // on a sentence the picture already is.
+    if ((!content && files.attachments.length === 0) || running || busy) return;
+    if (files.analyzing > 0) return; // a file still being read would be sent without its contents
     if (dictating) stopDictation();
     setValueState("");
-    await send(content);
+    setAttachError("");
+    const attached = files.attachments;
+    files.clear();
+    await send(content, attached);
   }
 
   function onKeyDown(ev: KeyboardEvent<HTMLTextAreaElement>) {
+    // Watches for a Ctrl+V the embedded browser may never answer; does nothing
+    // in a real browser, where the box pastes on its own.
+    pasteRescue.onKeyDown(ev);
     if (ev.key === "Enter" && !ev.shiftKey) {
       ev.preventDefault();
       void onSend();
@@ -278,7 +315,13 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const permissionDescription =
     (provider?.permission_modes ?? []).find((m) => m.id === draft.permissionMode)?.description ?? "";
 
-  const canSend = connected && Boolean(value.trim()) && !running && !busy && Boolean(provider?.connected);
+  const canSend =
+    connected &&
+    (Boolean(value.trim()) || files.attachments.length > 0) &&
+    files.analyzing === 0 &&
+    !running &&
+    !busy &&
+    Boolean(provider?.connected);
   const placeholder = connected
     ? t("agent_chat.placeholder")
     : wsWarming
@@ -288,11 +331,26 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   return (
     <div
       data-testid="agent-composer"
+      data-dragging={files.dragging ? "true" : undefined}
+      // The whole card is the drop target, not just the text box: someone
+      // dragging a screenshot aims at the composer, and a target smaller than
+      // the thing it looks like is a target people miss.
+      {...files.dragHandlers}
       className={cn(
-        "flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
+        "relative flex flex-col gap-2 rounded-2xl border border-border bg-card p-3 shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.05),0_8px_24px_rgb(var(--scrim-rgb)/0.06)] transition-[border-color,box-shadow]",
         "focus-within:border-primary/40",
+        files.dragging && "border-primary/60",
       )}
     >
+      {files.dragging && (
+        <div
+          data-testid="composer-drop-overlay"
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/70 bg-card/90 text-sm font-medium text-primary"
+        >
+          {t("agent_chat.attach_drop_hint")}
+        </div>
+      )}
       {dictating && (
         <div
           className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary"
@@ -306,12 +364,21 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           <span className="font-medium">{t("chats_view.dictation_listening")}</span>
         </div>
       )}
+      <ChatAttachmentStrip
+        attachments={files.attachments}
+        analyzing={files.analyzing}
+        onRemove={files.remove}
+      />
       <textarea
         data-jarvis-chat-input=""
         autoFocus={autoFocus}
         value={value}
         onChange={(e) => setValueState(e.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={(e) => {
+          pasteRescue.onPaste();
+          files.onPaste(e);
+        }}
         placeholder={placeholder}
         disabled={!connected}
         rows={2}
@@ -425,22 +492,59 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             {planOn ? t("agent_chat.mode_plan") : t("agent_chat.mode_build")}
           </button>
         )}
+        {/*
+          No folder chip on the Jarvis surface. Someone talking to Jarvis is
+          not pointing it at a checkout: the chip belongs to the IDE's chat,
+          and here it only ever showed the leaf of the default path — on
+          Windows the account name, which reads like a setting nobody chose.
+          The folder itself stays: a CLI seat needs a directory to start in,
+          and the surface brings its own (`surface_kits.py`) instead of the
+          home directory (maintainer, 2026-08-25).
+        */}
+        {surface !== "jarvis" && (
+          <button
+            type="button"
+            onClick={() => void onPickFolder()}
+            title={
+              draft.cwd ? `${t("agent_chat.surface_agent_hint")}: ${draft.cwd}` : t("agent_chat.folder")
+            }
+            aria-label={t("agent_chat.folder")}
+            data-testid="composer-folder"
+            className="inline-flex h-7 max-w-[160px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="hidden truncate font-mono text-[11px] 2xl:inline">{folderLeaf(draft.cwd)}</span>
+          </button>
+        )}
+        <span className="flex-1" />
+        {/*
+          Dropping and pasting are the primary paths; this is for the people
+          who do neither — and for a browser tab, where a drag out of Explorer
+          may carry nothing the page can read.
+        */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="sr-only"
+          tabIndex={-1}
+          onChange={(event) => {
+            const picked = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            if (picked.length > 0) files.attachFiles(picked);
+          }}
+        />
         <button
           type="button"
-          onClick={() => void onPickFolder()}
-          title={
-            draft.cwd
-              ? `${t(surface === "jarvis" ? "agent_chat.folder_hint" : "agent_chat.surface_agent_hint")}: ${draft.cwd}`
-              : t("agent_chat.folder")
-          }
-          aria-label={t("agent_chat.folder")}
-          data-testid="composer-folder"
-          className="inline-flex h-7 max-w-[160px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          data-testid="composer-attach"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!connected}
+          aria-label={t("agent_chat.attach")}
+          title={t("agent_chat.attach_hint")}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
         >
-          <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span className="hidden truncate font-mono text-[11px] 2xl:inline">{folderLeaf(draft.cwd)}</span>
+          <Paperclip className="h-4 w-4" />
         </button>
-        <span className="flex-1" />
         <button
           type="button"
           data-jarvis-dictation-trigger
@@ -523,6 +627,15 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           >
             {t("agent_chat.open_api_keys")}
           </button>
+        </div>
+      )}
+      {attachError && (
+        <div
+          className="px-1 text-xs text-destructive"
+          role="alert"
+          data-testid="composer-attach-error"
+        >
+          {attachError}
         </div>
       )}
       {lastError && (

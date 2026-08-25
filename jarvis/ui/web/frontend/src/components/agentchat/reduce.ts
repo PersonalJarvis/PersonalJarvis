@@ -61,8 +61,27 @@ export type TurnStatus = "running" | "done" | "cancelled" | "error";
 export interface UserItem {
   type: "user";
   id: string;
+  /**
+   * What the person WROTE.
+   *
+   * Not always what the turn received: a message with attached files carries
+   * their contents too (the backend composes it — jarvis/agent_chat/
+   * attachments.py), and showing a page of extracted PDF back to the person
+   * who typed one sentence would bury their own words. The full prompt stays
+   * in the event log, which is what the API runner rebuilds history from.
+   */
   text: string;
+  /** Files that went in with this message; empty on an ordinary one. */
+  attachments: UserAttachment[];
   tsMs: number;
+}
+
+/** One file's receipt in the timeline — enough to say what was sent, no more. */
+export interface UserAttachment {
+  name: string;
+  kind: string;
+  /** `vision` / `extraction` / `none` — whether the model could read it. */
+  describedBy: string;
 }
 
 export interface TurnItem {
@@ -116,6 +135,19 @@ export const EMPTY_TIMELINE: Timeline = {
   lastSeq: 0,
   sessionPatch: null,
 };
+
+/** The attachment receipts off one `user_message`, tolerant of any shape. */
+function userAttachments(raw: unknown): UserAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: UserAttachment[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const name = str(row.name);
+    if (name) out.push({ name, kind: str(row.kind), describedBy: str(row.described_by) });
+  }
+  return out;
+}
 
 function str(v: unknown, fallback = ""): string {
   return typeof v === "string" ? v : fallback;
@@ -194,7 +226,15 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         ...base,
         items: [
           ...base.items,
-          { type: "user", id: `u-${seq || ev.ts_ms}`, text: str(p.text), tsMs: ev.ts_ms },
+          {
+            type: "user",
+            id: `u-${seq || ev.ts_ms}`,
+            // `typed` is present only when the message carried files, and it
+            // is the person's own sentence; `text` is the composed prompt.
+            text: str(p.typed) || str(p.text),
+            attachments: userAttachments(p.attachments),
+            tsMs: ev.ts_ms,
+          },
         ],
       };
 
