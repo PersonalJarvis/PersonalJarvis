@@ -101,6 +101,21 @@ fi
 
 command -v "${PYTHON}" >/dev/null 2>&1 || die "interpreter not found: ${PYTHON}"
 
+# jarvis.spec bundles ./jarvis.toml unconditionally, and that file is
+# .gitignore'd - a fresh clone (every CI runner) does not have one and
+# PyInstaller aborts before it starts. Seed the shipped default so the build
+# works from a clean checkout. On a machine that already has a live config the
+# spec bundles THAT file as-is, which is a privacy question the build cannot
+# answer for the maintainer, so it says so instead of quietly shipping it.
+if [ ! -f "${REPO_ROOT}/jarvis.toml" ]; then
+  [ -f "${REPO_ROOT}/jarvis.toml.example" ] \
+    || die "neither jarvis.toml nor jarvis.toml.example exists; jarvis.spec cannot bundle a default configuration"
+  log "seeding jarvis.toml from jarvis.toml.example (clean checkout)"
+  run cp "${REPO_ROOT}/jarvis.toml.example" "${REPO_ROOT}/jarvis.toml"
+elif ! cmp -s "${REPO_ROOT}/jarvis.toml" "${REPO_ROOT}/jarvis.toml.example"; then
+  log "WARNING: jarvis.spec bundles this machine's jarvis.toml into the package, and it differs from jarvis.toml.example. Check it carries nothing personal before publishing the build."
+fi
+
 if [ "${SKIP_PYINSTALLER}" = "1" ]; then
   log "SKIP_PYINSTALLER=1 - reusing ${FREEZE_DIR}"
 else
