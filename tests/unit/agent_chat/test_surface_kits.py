@@ -128,3 +128,18 @@ def test_local_models_surface_drives_cli_seats_through_the_brain() -> None:
     assert resolve_runner("gemini", surface="local-models") == "brain"
     # The Jarvis surface keeps the vendor CLI for a subscription seat.
     assert resolve_runner("antigravity", surface="jarvis") != "brain"
+
+
+def test_local_models_surface_keeps_only_its_own_hands_and_web_search() -> None:
+    """The router's 100+ declarations (some with schemas Gemini refuses) never
+    reach this surface: only lm_* and web search survive the kit filter."""
+    from jarvis.agent_chat.surface_kits import kit_for
+
+    class _T:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    tools = {n: _T(n) for n in ("lm_hardware", "search_web", "patch", "spawn-worker", "lm_pull")}
+    kept = kit_for("local-models").tool_filter(tools)  # type: ignore[misc]
+    assert sorted(kept) == ["lm_hardware", "lm_pull", "search_web"]
+    assert kit_for("jarvis").tool_filter is None

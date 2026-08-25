@@ -158,7 +158,9 @@ def build_override(
         tools_extra=(
             dict(kit_tools) if kit_tools is not None else folder_tools(cwd, stance=stance)
         ),
-        tool_filter=plan_filter if stance == PLAN_STANCE else None,
+        tool_filter=_compose_filters(
+            kit.tool_filter, plan_filter if stance == PLAN_STANCE else None
+        ),
         credential_scope=kit.credential_scope,
         system_extra=system_extra,
         tool_context={
@@ -173,6 +175,22 @@ def build_override(
         },
         max_turns=kit.max_turns or MAX_TURNS,
     )
+
+
+def _compose_filters(
+    *filters: Callable[[dict[str, Tool]], dict[str, Tool]] | None,
+) -> Callable[[dict[str, Tool]], dict[str, Tool]] | None:
+    """The kit's filter first, then the stance's; ``None`` when neither applies."""
+    active = [f for f in filters if f is not None]
+    if not active:
+        return None
+
+    def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
+        for f in active:
+            tools = f(tools)
+        return tools
+
+    return _apply
 
 
 async def kit_payload(session: AgentChatSession, brain: Any) -> tuple[dict[str, Tool] | None, str]:

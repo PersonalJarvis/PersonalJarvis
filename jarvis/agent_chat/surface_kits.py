@@ -80,6 +80,10 @@ class SurfaceKit:
     tool_origin: str = "agent-chat"
     credential_scope: str = "agent"
     max_turns: int | None = None
+    #: Applied to the merged tool set (the brain's own plus ``tools``): a
+    #: surface that only ever needs its own hands keeps the request small
+    #: and free of foreign schemas a provider may refuse. ``None`` = all.
+    tool_filter: Callable[[dict[str, Tool]], dict[str, Tool]] | None = None
 
 
 # ── local-models builders ─────────────────────────────────────────────────
@@ -147,6 +151,20 @@ async def _local_models_extra(cfg: Any, brain: Any) -> str:
         )
 
 
+def _local_models_filter(tools: dict[str, Tool]) -> dict[str, Tool]:
+    """Only the assistant's own hands and web search.
+
+    The router's full surface is 100+ declarations, some with schema shapes
+    (``oneOf``) the Gemini SDK rejects outright — one such tool failed every
+    turn of this surface on 2026-08-25. The assistant never needs them.
+    """
+    return {
+        name: tool
+        for name, tool in tools.items()
+        if name.startswith("lm_") or name in ("search_web", "search-web")
+    }
+
+
 # ── the table ─────────────────────────────────────────────────────────────
 
 _KITS: Final[dict[str, SurfaceKit]] = {
@@ -166,6 +184,7 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         tools=_local_models_tools,
         system_extra=_local_models_extra,
         tool_origin=LOCAL_MODELS_TOOL_ORIGIN,
+        tool_filter=_local_models_filter,
         # A guided run pulls, sets five roles, tunes and tests: more tool
         # rounds than a chat answer needs.
         max_turns=40,
