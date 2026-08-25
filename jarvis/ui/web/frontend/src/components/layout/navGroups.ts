@@ -13,7 +13,6 @@ import {
   BookOpen,
   Boxes,
   Contact,
-  Cpu,
   Gauge,
   KeyRound,
   MessageSquare,
@@ -35,6 +34,7 @@ import {
   Image as ImageIcon,
   type LucideIcon,
 } from "lucide-react";
+import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import type { SectionId } from "@/store/events";
 import type { HomeSurface } from "@/lib/homeSurface";
 
@@ -169,7 +169,7 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "local-models",
       labelKey: "nav.local_models",
-      icon: Cpu,
+      icon: OllamaIcon,
       fallbackLabel: "Local models",
     },
     {
