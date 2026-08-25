@@ -262,7 +262,14 @@ class AgentChatService:
                             always_allowed=self.always_allowed(session_id),
                         )
                 elif supports_cli_runner(runner):
-                    vendor = await run_cli_turn(handle, text, runner)
+                    vendor = await run_cli_turn(
+                        handle,
+                        text,
+                        runner,
+                        identity=(session.surface == "jarvis"),
+                        bridge=self._bridge_for(bus) if session.surface == "jarvis" else None,
+                        always_allowed=self.always_allowed(session_id),
+                    )
                     if vendor and vendor != session.vendor_session:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "api" and supports_api_runner(session.provider):

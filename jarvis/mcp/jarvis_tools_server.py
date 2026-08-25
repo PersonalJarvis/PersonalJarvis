@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextvars import ContextVar
 from typing import Any, Final
 from uuid import uuid4
 
@@ -38,6 +39,33 @@ log = logging.getLogger(__name__)
 #: What ``SupervisorToolRequest.origin`` is stamped with. The risk evaluator and
 #: the audit log use it to tell a chat-driven action from a spoken one.
 CHAT_ORIGIN: Final[str] = "agent-chat"
+
+#: The agent-chat session a request belongs to, set per HTTP request by
+#: ``jarvis.ui.web.mcp_server_routes`` from the ``X-Jarvis-Chat-Session``
+#: header the chat put into the CLI's MCP config. Read when a tool is
+#: executed: with a session the executor is told the approval surface is the
+#: chat's card (``approval_surface: interactive`` + the session's
+#: ``approval_ref``), so an ask-tier tool the CLI reaches through here asks
+#: the person in the chat instead of failing fast as unattended. Without one
+#: the request runs exactly as before.
+CHAT_SESSION_REF: ContextVar[str | None] = ContextVar("jarvis.mcp.chat_session_ref", default=None)
+
+#: How long the chat's card may stay open for a gate reached over MCP.
+CHAT_APPROVAL_TIMEOUT_S: Final[float] = 600.0
+
+
+def approval_snapshot() -> dict[str, Any]:
+    """The executor's ``config_snapshot`` for the current request's session."""
+    session_id = CHAT_SESSION_REF.get()
+    if not session_id:
+        return {}
+    return {
+        "approval_surface": "interactive",
+        "approval_ref": f"agent-chat:{session_id}",
+        "approval_timeout_s": CHAT_APPROVAL_TIMEOUT_S,
+        "tool_origin": CHAT_ORIGIN,
+    }
+
 
 #: Tools never offered to a chat session, by name. A spawn vehicle would let the
 #: session start a background worker that starts another one — the recursion the
@@ -161,6 +189,7 @@ def build_server() -> Any:
             origin=CHAT_ORIGIN,
             user_utterance="",
             rationale="agent chat tool call",
+            config_snapshot=approval_snapshot(),
         )
         try:
             result = await gateway.execute(name, dict(arguments or {}), request)
@@ -174,4 +203,11 @@ def build_server() -> Any:
     return server
 
 
-__all__ = ["CHAT_ORIGIN", "build_server", "offered_tools"]
+__all__ = [
+    "CHAT_APPROVAL_TIMEOUT_S",
+    "CHAT_ORIGIN",
+    "CHAT_SESSION_REF",
+    "approval_snapshot",
+    "build_server",
+    "offered_tools",
+]

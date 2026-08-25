@@ -3531,6 +3531,34 @@ class BrainManager:
             kwargs["max_turns"] = override.max_turns
         return kwargs
 
+    async def render_surface_prompt(self, *, user_text: str) -> tuple[str, str]:
+        """(system prompt, turn context) for an external agent that should BE Jarvis.
+
+        A subscription CLI seat on the typed chat runs its own loop, but the
+        head it runs with is this one: the same layers ``_build_system_prompt``
+        stacks for a voice turn (name, soul, persona, the assistant file, the
+        user's profile, people, contacts, the identity card, core memory, the
+        skills section, the tool-routing rules), the wiki context this turn's
+        text pulls in, and the per-turn context (date, awareness). Read-only:
+        nothing is stored on the manager, so a voice turn running alongside
+        sees no trace of it.
+        """
+        base = self._build_system_prompt()
+        prompt = base
+        if self._wiki_injector is not None:
+            try:
+                prompt = await self._wiki_injector.maybe_inject(
+                    user_text=user_text, system_prompt=base
+                )
+            except Exception:  # noqa: BLE001 — the layers without the wiki are still Jarvis
+                log.debug("render_surface_prompt: wiki context skipped", exc_info=True)
+        try:
+            turn_context = self._build_turn_context()
+        except Exception:  # noqa: BLE001 — the context block is a nicety
+            log.debug("render_surface_prompt: turn context skipped", exc_info=True)
+            turn_context = ""
+        return prompt, turn_context
+
     def _build_tool_ack_emitter(
         self, user_text: str
     ) -> Callable[[str, dict[str, Any]], Awaitable[None]] | None:

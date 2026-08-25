@@ -41,6 +41,21 @@ def _bearer(scope: dict[str, Any]) -> str | None:
     return None
 
 
+#: The agent-chat session header, lower-cased as ASGI hands headers over.
+_SESSION_HEADER = b"x-jarvis-chat-session"
+
+
+def session_ref(scope: dict[str, Any]) -> str | None:
+    """The chat session id a request names, or ``None`` (any other client)."""
+    for raw_name, raw_value in scope.get("headers") or ():
+        if raw_name == _SESSION_HEADER:
+            value = raw_value.decode("latin-1").strip()
+            # A session id is a hex uuid; anything else is not ours to trust.
+            if value and len(value) <= 64 and value.replace("-", "").isalnum():
+                return value
+    return None
+
+
 async def _reject(send: Any, status: int, body: bytes) -> None:
     await send(
         {
@@ -109,9 +124,19 @@ def build_mcp_asgi_app() -> Any:
         if manager is None:
             await _reject(send, 503, b'{"error":"Jarvis MCP server is not available."}')
             return
-        await manager.handle_request(scope, receive, send)
+        # The session travels in a ContextVar: the stateless transport runs
+        # the tool call in a task started from this request, which inherits
+        # the context, and the tool server reads it when it builds the
+        # executor's approval surface (jarvis_tools_server.approval_snapshot).
+        from jarvis.mcp.jarvis_tools_server import CHAT_SESSION_REF
+
+        token = CHAT_SESSION_REF.set(session_ref(scope))
+        try:
+            await manager.handle_request(scope, receive, send)
+        finally:
+            CHAT_SESSION_REF.reset(token)
 
     return app
 
 
-__all__ = ["build_mcp_asgi_app"]
+__all__ = ["build_mcp_asgi_app", "session_ref"]

@@ -197,7 +197,14 @@ def claude_stream_input(prompt: str) -> str:
 
 
 def plan_claude(
-    *, prompt: str, cwd: Path, model: str, effort: str, permission_mode: str, resume: str | None
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
 ) -> CliPlan:
     mode = normalize_permission("claude-cli", permission_mode)
     argv = [
@@ -223,15 +230,16 @@ def plan_claude(
         argv += ["--effort", effort]
     # Jarvis' own tools, and the identity that says when to use them. Both are
     # skipped when the app cannot offer them (no control key, server not bound
-    # yet) — the session then behaves exactly as it did before.
-    mcp_config = jarvis_harness.mcp_config_json()
+    # yet) — the session then behaves exactly as it did before. On the Jarvis
+    # surface the identity is Jarvis' whole head, in a FILE: argv cannot carry
+    # it on Windows (32 767 characters for the whole command line).
+    mcp_config = jarvis_harness.mcp_config_json(identity.session_id if identity else None)
     if mcp_config:
-        argv += [
-            "--mcp-config",
-            mcp_config,
-            "--append-system-prompt",
-            jarvis_harness.SYSTEM_PREAMBLE,
-        ]
+        argv += ["--mcp-config", mcp_config]
+        if identity is not None and identity.path is not None:
+            argv += ["--append-system-prompt-file", str(identity.path)]
+        else:
+            argv += ["--append-system-prompt", jarvis_harness.SYSTEM_PREAMBLE]
     if resume:
         argv += ["--resume", resume]
         sid = resume
@@ -250,8 +258,18 @@ def plan_claude(
 
 
 def plan_grok(
-    *, prompt: str, cwd: Path, model: str, effort: str, permission_mode: str, resume: str | None
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
 ) -> CliPlan:
+    # Grok Build takes the prompt on argv, so the identity rides in front of
+    # it — the compact cut, and only on a fresh conversation.
+    prompt = _with_identity(prompt, identity, resume, compact=True)
     argv = [
         *grok_argv_prefix(),
         "--no-auto-update",
@@ -384,9 +402,19 @@ def _nearest_lower(effort: str, ladder: list[str]) -> str:
 
 
 def plan_agy(
-    *, prompt: str, cwd: Path, model: str, effort: str, permission_mode: str, resume: str | None
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
 ) -> CliPlan:
     mode = normalize_permission("agy-cli", permission_mode)
+    # agy has no system-prompt flag: the identity rides in front of the prompt
+    # on stdin, on a fresh conversation (a resumed one already knows).
+    prompt = _with_identity(prompt, identity, resume)
     argv = [
         *agy_argv_prefix(),
         "--output-format",
@@ -525,9 +553,21 @@ def read_agy_models(timeout_s: float = 8.0) -> list[dict[str, Any]]:
 
 
 def plan_codex(
-    *, prompt: str, cwd: Path, model: str, effort: str, permission_mode: str, resume: str | None
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
 ) -> CliPlan:
     mode = normalize_permission("codex-cli", permission_mode)
+    # Codex reads the prompt from stdin, which has no length limit: the
+    # identity rides in front of it on a fresh conversation. (Its
+    # ``model_instructions_file`` REPLACES the CLI's own instructions rather
+    # than adding to them, so it is not used here.)
+    prompt = _with_identity(prompt, identity, resume)
     base = codex_argv_prefix()
     if resume:
         argv = [*base, "exec", "resume", resume, "--json"]
@@ -536,7 +576,7 @@ def plan_codex(
     argv += ["--skip-git-repo-check"]
     # Jarvis' own tools over streamable-HTTP MCP, mounted for this run only —
     # the person's ~/.codex/config.toml is never touched.
-    argv += jarvis_harness.codex_config_args()
+    argv += jarvis_harness.codex_config_args(identity.session_id if identity else None)
     # The TUI's presets, spelled out for ``exec`` (codex 0.149): Read only /
     # Auto (workspace-write) / Full access (``--yolo``), plus "approve for
     # me" — Codex's own reviewer model decides what would have asked you,
@@ -575,6 +615,26 @@ def plan_codex(
     argv += ["-"]  # prompt on stdin
     text = _PLAN_PREAMBLE + prompt if mode == "plan" else prompt
     return CliPlan(argv, jarvis_harness.apply_env(_account_env("codex")), text, "codex", resume)
+
+
+def _with_identity(
+    prompt: str,
+    identity: jarvis_harness.Identity | None,
+    resume: str | None,
+    *,
+    compact: bool = False,
+) -> str:
+    """The prompt with the identity in front of it — on a fresh conversation.
+
+    A resumed conversation carries the identity from its first turn; repeating
+    fifty thousand characters of it every turn would cost the subscription's
+    context for nothing. The block is fenced so the model can tell the head
+    from the person's words.
+    """
+    if identity is None or resume:
+        return prompt
+    text = identity.compact if compact else identity.text
+    return f"<jarvis_identity>\n{text}\n</jarvis_identity>\n\n{prompt}"
 
 
 _PLANNERS: Final[dict[str, Any]] = {
@@ -1257,25 +1317,88 @@ def _resume_was_lost(error: str | None) -> bool:
     return any(m in low for m in _RESUME_LOST_MARKERS)
 
 
-async def run_cli_turn(handle: TurnHandle, user_text: str, runner: str) -> str | None:
+async def run_cli_turn(
+    handle: TurnHandle,
+    user_text: str,
+    runner: str,
+    *,
+    identity: bool = False,
+    bridge: Any | None = None,
+    always_allowed: set[str] | None = None,
+) -> str | None:
     """Run one CLI turn. Returns the vendor session id to persist (or None).
 
     A resume the CLI no longer knows is retried once as a fresh conversation
     (the person keeps typing; only the CLI-side memory is gone, the timeline
     here is intact).
+
+    ``identity`` (the Jarvis surface): the CLI runs AS Jarvis — Jarvis' real
+    prompt layers and the chat's transcript go in front of it, and the
+    approval ``bridge`` is armed with the chat's stance so a Jarvis tool the
+    CLI reaches over MCP asks the person on the chat's card (and a tool the
+    CLI already asked about on its own channel is not asked about twice).
     """
     t0 = time.perf_counter()
-    outcome = await _run_cli_once(handle, user_text, runner, handle.session.vendor_session)
-    # agy answers a lost conversation id with a NEW conversation and exit 0
-    # (only a stderr warning) — the id that came back is the truth.
-    if (
-        outcome.status == "error"
-        and handle.session.vendor_session
-        and _resume_was_lost(outcome.error)
-        and not handle.cancel.is_set()
-    ):
-        log.info("agent chat %s: resume lost (%s) — starting fresh", handle.turn_id, outcome.error)
-        outcome = await _run_cli_once(handle, user_text, runner, None)
+    session = handle.session
+    resume = session.vendor_session
+    ident: jarvis_harness.Identity | None = None
+    ref = f"agent-chat:{session.session_id}"
+    if identity:
+        ident = await jarvis_harness.build_identity(
+            session_id=session.session_id,
+            turn_id=handle.turn_id,
+            user_text=user_text,
+            history=handle.history,
+            resume=resume,
+            with_file=(runner == "claude-cli"),
+        )
+        if bridge is not None:
+            from jarvis.agent_chat.approval_bridge import ChatGrant
+
+            bridge.arm(
+                ref,
+                ChatGrant(
+                    session_id=session.session_id,
+                    turn_id=handle.turn_id,
+                    stance=handle.stance or "ask",
+                    always_allowed=always_allowed if always_allowed is not None else set(),
+                    ask=handle.request_approval,
+                ),
+            )
+    try:
+        outcome = await _run_cli_once(
+            handle, user_text, runner, resume, identity=ident, bridge=bridge
+        )
+        # agy answers a lost conversation id with a NEW conversation and exit 0
+        # (only a stderr warning) — the id that came back is the truth.
+        if (
+            outcome.status == "error"
+            and resume
+            and _resume_was_lost(outcome.error)
+            and not handle.cancel.is_set()
+        ):
+            log.info(
+                "agent chat %s: resume lost (%s) — starting fresh", handle.turn_id, outcome.error
+            )
+            if ident is not None:
+                # Fresh conversation: the transcript belongs in front now.
+                jarvis_harness.remove_identity_file(ident.path)
+                ident = await jarvis_harness.build_identity(
+                    session_id=session.session_id,
+                    turn_id=handle.turn_id,
+                    user_text=user_text,
+                    history=handle.history,
+                    resume=None,
+                    with_file=(runner == "claude-cli"),
+                )
+            outcome = await _run_cli_once(
+                handle, user_text, runner, None, identity=ident, bridge=bridge
+            )
+    finally:
+        if bridge is not None and identity:
+            bridge.disarm(ref)
+        if ident is not None:
+            jarvis_harness.remove_identity_file(ident.path)
     await handle.emit(
         make_event(
             "turn_finished",
@@ -1293,9 +1416,16 @@ async def run_cli_turn(handle: TurnHandle, user_text: str, runner: str) -> str |
 
 
 async def _run_cli_once(
-    handle: TurnHandle, user_text: str, runner: str, resume: str | None
+    handle: TurnHandle,
+    user_text: str,
+    runner: str,
+    resume: str | None,
+    *,
+    identity: jarvis_harness.Identity | None = None,
+    bridge: Any | None = None,
 ) -> _Outcome:
     session = handle.session
+    approval_ref = f"agent-chat:{session.session_id}"
     cwd = Path(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
     planner = _PLANNERS[runner]
@@ -1313,6 +1443,7 @@ async def _run_cli_once(
             effort=effort,
             permission_mode=session.permission_mode,
             resume=resume,
+            identity=identity,
         )
     except CliUnavailable as exc:
         return _Outcome("error", str(exc), {}, None, None)
@@ -1457,6 +1588,10 @@ async def _run_cli_once(
             )
         if decision in {"allow", "allow_always"}:
             body: dict[str, Any] = {"behavior": "allow", "updatedInput": req.get("input") or {}}
+            if bridge is not None and subtype == "can_use_tool":
+                # A Jarvis tool the CLI just asked about will hit the executor's
+                # own gate over MCP in a moment; the person has answered once.
+                bridge.note_cli_approval(approval_ref, tool_name)
         else:
             body = {"behavior": "deny", "message": message}
         frame = {
