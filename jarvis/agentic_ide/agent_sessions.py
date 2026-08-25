@@ -57,7 +57,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from uuid import uuid4
 
 from loguru import logger
@@ -1146,7 +1146,7 @@ def _agy_summaries_for_cwd(root: Path, cwd: str) -> list[tuple[float, str]]:
     import sqlite3
 
     try:
-        uri = f"file:{db.as_posix()}?mode=ro"
+        uri = f"file:{quote(db.as_posix(), safe='/:')}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=2.0)
     except Exception:  # noqa: BLE001 - summaries are a convenience
         return []

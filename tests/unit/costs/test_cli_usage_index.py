@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from jarvis.costs.cli_usage_index import (
@@ -605,17 +606,25 @@ def _pb_len(field: int, blob: bytes) -> bytes:
     return _pb_varint((field << 3) | 2) + _pb_varint(len(blob)) + blob
 
 
-def test_antigravity_conversation_db_is_indexed(tmp_path: Path) -> None:
-    """agy 1.1.20 stores usage in protobuf gen_metadata, not JSONL."""
+def _agy_usage_blob(*, tokens_in: int, tokens_out: int, cached: int, model: str) -> bytes:
     usage = (
-        _pb_var(2, 1000)
-        + _pb_var(3, 40)
-        + _pb_var(5, 200)
+        _pb_var(2, tokens_in)
+        + _pb_var(3, tokens_out)
+        + _pb_var(5, cached)
         + _pb_str(7, "bot-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     )
-    blob = _pb_len(1, _pb_len(4, usage)) + _pb_str(19, "gemini-3.7-flash-medium")
-    db = tmp_path / ".gemini" / "antigravity-cli" / "conversations" / "sess-agy.db"
-    db.parent.mkdir(parents=True)
+    return _pb_len(1, _pb_len(4, usage)) + _pb_str(19, model)
+
+
+def _agy_conversation_db(
+    home: Path,
+    session_id: str,
+    blobs: list[bytes],
+    *,
+    cwd_uri: bytes = b"file:///C:/work/personal-jarvis",
+) -> Path:
+    db = home / ".gemini" / "antigravity-cli" / "conversations" / f"{session_id}.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db)
     con.execute(
         "CREATE TABLE gen_metadata (idx integer, data blob, size integer NOT NULL DEFAULT 0, "
@@ -624,13 +633,26 @@ def test_antigravity_conversation_db_is_indexed(tmp_path: Path) -> None:
     con.execute(
         "CREATE TABLE trajectory_metadata_blob (id text, data blob, PRIMARY KEY (id))"
     )
-    con.execute("INSERT INTO gen_metadata (idx, data, size) VALUES (0, ?, ?)", (blob, len(blob)))
+    for idx, blob in enumerate(blobs):
+        con.execute(
+            "INSERT INTO gen_metadata (idx, data, size) VALUES (?, ?, ?)",
+            (idx, blob, len(blob)),
+        )
     con.execute(
         "INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)",
-        (b"file:///C:/work/personal-jarvis",),
+        (cwd_uri,),
     )
     con.commit()
     con.close()
+    return db
+
+
+def test_antigravity_conversation_db_is_indexed(tmp_path: Path) -> None:
+    """agy 1.1.20 stores usage in protobuf gen_metadata, not JSONL."""
+    blob = _agy_usage_blob(
+        tokens_in=1000, tokens_out=40, cached=200, model="gemini-3.7-flash-medium"
+    )
+    _agy_conversation_db(tmp_path, "sess-agy", [blob])
     data = tmp_path / "data"
 
     refresh(data_dir=data, home=tmp_path)
@@ -643,6 +665,84 @@ def test_antigravity_conversation_db_is_indexed(tmp_path: Path) -> None:
     assert turn.tokens_cached == 200
     assert turn.model == "gemini-3.7-flash"
     assert "personal-jarvis" in turn.cwd or turn.cwd.endswith("personal-jarvis")
+
+
+def test_antigravity_indexes_a_home_path_with_a_space(tmp_path: Path) -> None:
+    """Windows homes are often ``C:\\Users\\First Last``; an unquoted URI misses them."""
+    home = tmp_path / "First Last"
+    blob = _agy_usage_blob(tokens_in=10, tokens_out=2, cached=0, model="gemini-3.7-flash")
+    _agy_conversation_db(home, "sess-space", [blob])
+    data = tmp_path / "data"
+
+    refresh(data_dir=data, home=home)
+
+    (turn,) = _all(data)
+    assert turn.session_id == "sess-space"
+    assert turn.tokens_in == 10
+
+
+def test_antigravity_stamps_each_call_from_the_transcript(tmp_path: Path) -> None:
+    """File mtime would dump a month-old thread into 'today'."""
+    blobs = [
+        _agy_usage_blob(tokens_in=10, tokens_out=1, cached=0, model="gemini-3.7-flash"),
+        _agy_usage_blob(tokens_in=20, tokens_out=2, cached=0, model="gemini-3.7-flash"),
+    ]
+    _agy_conversation_db(tmp_path, "sess-aged", blobs)
+    transcript = (
+        tmp_path
+        / ".gemini"
+        / "antigravity-cli"
+        / "brain"
+        / "sess-aged"
+        / ".system_generated"
+        / "logs"
+        / "transcript.jsonl"
+    )
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "step_index": 0,
+                        "type": "USER_INPUT",
+                        "created_at": "2026-06-01T12:00:00Z",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "step_index": 1,
+                        "type": "PLANNER_RESPONSE",
+                        "created_at": "2026-06-01T12:00:05Z",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "step_index": 2,
+                        "type": "PLANNER_RESPONSE",
+                        "created_at": "2026-06-08T09:00:00Z",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    data = tmp_path / "data"
+
+    refresh(data_dir=data, home=tmp_path)
+
+    turns = sorted(_all(data), key=lambda t: t.ts_ms)
+    assert len(turns) == 2
+    assert turns[0].ts_ms != turns[1].ts_ms
+    assert turns[0].tokens_in == 10
+    assert turns[1].tokens_in == 20
+    assert turns[0].ts_ms == int(
+        datetime(2026, 6, 1, 12, 0, 5, tzinfo=UTC).timestamp() * 1000
+    )
+    assert turns[1].ts_ms == int(
+        datetime(2026, 6, 8, 9, 0, 0, tzinfo=UTC).timestamp() * 1000
+    )
 
 
 def test_agy_setup_only_transcript_yields_nothing(tmp_path: Path) -> None:

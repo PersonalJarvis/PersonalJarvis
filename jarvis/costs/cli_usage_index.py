@@ -652,6 +652,15 @@ def _roots_for(agent: str, home: Path | None) -> list[Path]:
     return _kimi_roots(home)
 
 
+def _sqlite_uri(path: Path) -> str:
+    """Read-only SQLite URI that survives spaces and ``#`` in the path.
+
+    An unquoted ``file:C:/Users/First Last/...`` makes SQLite open a
+    different, empty database (the same trap ``_open_ro`` documents).
+    """
+    return f"file:{quote(path.as_posix(), safe='/:')}?mode=ro"
+
+
 def _sqlite_stat(path: Path) -> tuple[int, int]:
     """``(size, mtime_ns)`` for a SQLite file, WAL included.
 
@@ -1226,11 +1235,58 @@ def _agy_cwd_from_blob(buf: bytes) -> str:
     return unquote(path)
 
 
+def _agy_iso_ms(value: str) -> int:
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return 0
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return int(stamp.timestamp() * 1000)
+
+
+def _agy_transcript_times(db_path: Path) -> list[int]:
+    """``created_at`` of the model steps in this conversation, oldest first.
+
+    The SQLite blobs do not carry a wall clock. The JSONL transcript next to
+    them does. User and system rows are skipped so a usage row lines up with
+    the model call that spent the tokens, not the prompt that triggered it.
+    """
+    transcript = (
+        db_path.parent.parent
+        / "brain"
+        / db_path.stem
+        / ".system_generated"
+        / "logs"
+        / "transcript.jsonl"
+    )
+    times: list[int] = []
+    try:
+        with transcript.open("rb") as handle:
+            for raw in handle:
+                if b'"created_at"' not in raw:
+                    continue
+                record = _decode(raw)
+                if record is None:
+                    continue
+                kind = str(record.get("type") or "")
+                if kind in {"USER_INPUT", "CHECKPOINT", "SYSTEM_MESSAGE"}:
+                    continue
+                ms = _agy_iso_ms(str(record.get("created_at") or ""))
+                if ms:
+                    times.append(ms)
+    except OSError:
+        return []
+    return times
+
+
 def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
     """Read one Antigravity conversation database.
 
     ``start`` is unused: a conversation DB is small and the WAL can rewrite
     earlier rows, so a change always re-reads. Dedup is ``session_id:idx``.
+    A connect failure must NOT record the file as fully consumed, or a path
+    with a space would stay at $0 forever.
     """
     del start
     rows: list[_Row] = []
@@ -1239,12 +1295,11 @@ def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
     model = ""
     failed = False
     try:
-        uri = f"file:{cand.path.as_posix()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=_DB_TIMEOUT_S)
+        conn = sqlite3.connect(_sqlite_uri(cand.path), uri=True, timeout=_DB_TIMEOUT_S)
     except sqlite3.Error as exc:
         log.warning("cli usage index: %s not readable (%s)", cand.path, exc)
         return _FileScan(
-            rows=[], offset=cand.size, cursor=_Cursor(), bytes_read=0, reason="error", failed=True
+            rows=[], offset=0, cursor=_Cursor(), bytes_read=0, reason="error", failed=True
         )
     try:
         conn.row_factory = sqlite3.Row
@@ -1261,8 +1316,10 @@ def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
         except sqlite3.Error as exc:
             log.debug("cli usage index: %s has no gen_metadata (%s)", cand.path, exc)
             meta_rows = []
-        ts_ms = cand.mtime_ns // 1_000_000
+        fallback_ms = cand.mtime_ns // 1_000_000
+        step_times = _agy_transcript_times(cand.path)
         label = _clip(Path(cwd).name if cwd else session_id)
+        call_n = 0
         for meta in meta_rows:
             blob = meta["data"]
             if not blob:
@@ -1273,6 +1330,13 @@ def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
             _agy_collect_usage(blob, found)
             idx = _int(meta["idx"])
             for call_i, (tokens_in, tokens_out, tokens_cached) in enumerate(found):
+                if call_n < len(step_times):
+                    ts_ms = step_times[call_n]
+                elif step_times:
+                    ts_ms = step_times[-1]
+                else:
+                    ts_ms = fallback_ms
+                call_n += 1
                 rows.append(
                     (
                         cand.agent,
@@ -1295,7 +1359,7 @@ def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
         conn.close()
     return _FileScan(
         rows=rows,
-        offset=cand.size,
+        offset=0 if failed else cand.size,
         cursor=_Cursor(
             session_id=session_id,
             model=model,
@@ -1303,7 +1367,7 @@ def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
             label=_clip(Path(cwd).name if cwd else session_id),
         ),
         bytes_read=cand.size,
-        reason="eof",
+        reason="error" if failed else "eof",
         failed=failed,
     )
 
