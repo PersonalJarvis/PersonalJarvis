@@ -451,8 +451,13 @@
         "unload": "Unloaded {model} from memory",
         "install_voice": "Installed the voice server",
         "apply_voice": "Set up and tested the voice stack",
-        "search_web": "Searched the web for {query}"
-      }
+        "search_web": "Searched the web for {query}",
+        "summary": "Checked {n} things · {s}",
+        "working": "Working…"
+      },
+      "ask_1": "Which model should answer my chats?",
+      "ask_2": "Can my graphics card run a 27B model?",
+      "ask_3": "Free up some disk space"
     },
     "tab_assistant": "Setup helper"
   }

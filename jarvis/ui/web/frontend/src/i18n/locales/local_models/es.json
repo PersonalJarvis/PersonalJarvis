@@ -451,8 +451,13 @@
         "unload": "Descargó {model} de la memoria",
         "install_voice": "Instaló el servidor de voz",
         "apply_voice": "Configuró y probó la pila de voz",
-        "search_web": "Buscó {query} en la web"
-      }
+        "search_web": "Buscó {query} en la web",
+        "summary": "{n} cosas comprobadas · {s}",
+        "working": "Trabajando…"
+      },
+      "ask_1": "¿Qué modelo debe responder mis chats?",
+      "ask_2": "¿Mi tarjeta gráfica puede con un modelo de 27B?",
+      "ask_3": "Liberar espacio en disco"
     },
     "tab_assistant": "Asistente de configuración"
   }

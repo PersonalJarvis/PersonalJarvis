@@ -392,15 +392,33 @@ export function AssistantPanel({
         )}
 
         {items.length === 0 && !blocked && !backendMissing && (
-          <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-            {t("local_models.assistant.empty")}
-          </p>
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border px-4 py-8 text-center">
+            <p className="max-w-[46ch] text-sm text-muted-foreground">
+              {t("local_models.assistant.empty")}
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {["ask_1", "ask_2", "ask_3"].map((key) => {
+                const text = t(`local_models.assistant.${key}`);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={!activeSessionId || busyNow}
+                    onClick={() => void send(text)}
+                    className="rounded-full border border-border px-3 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    {text}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         {items.length > 0 && (
           <div
             ref={scroller}
-            className="flex max-h-[46vh] min-h-[8rem] flex-col gap-4 overflow-y-auto pr-1"
+            className="flex max-h-[52vh] min-h-[9rem] flex-col gap-5 overflow-y-auto pr-1"
             data-testid="assistant-timeline"
           >
             {earlier.length > 0 && (
@@ -420,13 +438,14 @@ export function AssistantPanel({
             {shown.map((item) => {
               if (item.type === "user") {
                 return (
-                  <p
-                    key={item.id}
-                    className="self-end max-w-[85%] rounded-xl rounded-br-sm bg-primary/10 px-3 py-2 text-[13.5px] text-foreground"
-                    data-testid="assistant-you"
-                  >
-                    {item.text}
-                  </p>
+                  <div key={item.id} className="flex justify-end">
+                    <p
+                      className="max-w-[72%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[13.5px] leading-relaxed text-foreground"
+                      data-testid="assistant-you"
+                    >
+                      {item.text}
+                    </p>
+                  </div>
                 );
               }
               if (item.type === "error") {
@@ -437,15 +456,37 @@ export function AssistantPanel({
                 );
               }
               const answer = stripProposalBlocks(turnText(item));
+              const live = item.status === "running";
               return (
-                <div key={item.id} className="flex flex-col gap-3">
-                  <AssistantSteps blocks={item.blocks} onDecide={onDecide} />
+                <div key={item.id} className="flex flex-col gap-2.5">
+                  <div className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        live ? "animate-pulse bg-primary" : "bg-muted-foreground/40",
+                      )}
+                    />
+                    <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                      {t("local_models.assistant.title")}
+                    </span>
+                    {item.model && (
+                      <span className="font-mono text-[10.5px] text-muted-foreground/70">
+                        {item.model}
+                      </span>
+                    )}
+                  </div>
+                  <AssistantSteps blocks={item.blocks} live={live} onDecide={onDecide} />
                   {answer && (
                     <div
-                      className="whitespace-pre-wrap text-[14px] leading-relaxed text-foreground"
+                      className="flex max-w-[68ch] flex-col gap-2.5 text-[14px] leading-[1.65] text-foreground"
                       data-testid="assistant-answer"
                     >
-                      {answer}
+                      {answer.split(/\n{2,}/).map((para, k) => (
+                        <p key={k} className="whitespace-pre-wrap">
+                          {para}
+                        </p>
+                      ))}
                     </div>
                   )}
                   {item.status === "error" && item.error && (
@@ -475,7 +516,11 @@ export function AssistantPanel({
         )}
 
         <form
-          className="flex items-end gap-2"
+          className={cn(
+            "flex items-end gap-2 rounded-xl border border-border bg-background px-2 py-1.5",
+            "focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20",
+            !activeSessionId && "opacity-60",
+          )}
           onSubmit={(e) => {
             e.preventDefault();
             void submit();
@@ -500,19 +545,22 @@ export function AssistantPanel({
             aria-label={t("local_models.assistant.composer_placeholder")}
             data-testid="assistant-composer"
             className={cn(
-              "min-h-[2.5rem] flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground",
-              "placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40",
-              "disabled:cursor-not-allowed disabled:opacity-60",
+              "max-h-40 min-h-[2rem] flex-1 resize-none bg-transparent px-1.5 py-1.5 text-[13.5px] leading-relaxed text-foreground",
+              "placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed",
             )}
           />
-          <SoftButton
-            primary
-            ariaLabel={t("local_models.assistant.send")}
-            onClick={() => void submit()}
+          <button
+            type="submit"
+            aria-label={t("local_models.assistant.send")}
             disabled={!activeSessionId || !draft.trim() || busy || running}
+            className={cn(
+              "mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground",
+              "transition-opacity hover:opacity-90 disabled:opacity-40",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            )}
           >
             <Send className="h-3.5 w-3.5" />
-          </SoftButton>
+          </button>
         </form>
 
         {onOpenServerLog && (

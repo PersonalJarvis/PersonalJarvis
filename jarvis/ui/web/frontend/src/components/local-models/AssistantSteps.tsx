@@ -1,18 +1,22 @@
 /**
- * The assistant's work, readable.
+ * The assistant's work, readable — and out of the way once it is done.
  *
  * The shared `AgentTimeline` is built for a coding agent: it shows a tool call
  * as its raw name (`lm_inventory`) and a JSON body, which is the right answer
  * when the reader writes code and the wrong one here — this panel is opened by
  * someone who wants to know what the helper is doing to their machine.
  *
- * So every step gets one plain sentence ("Read the installed models"), a dot
- * that carries its state, and its duration; the raw call and result stay one
- * click away for the reader who does want them. Thinking is one quiet line.
- * A question the runner asks (an approval that is not covered by a confirmed
- * plan) is the one step that can act: it renders its two buttons inline.
+ * So every step gets one plain sentence ("Read the installed models"), a mark
+ * that carries its state, and its duration. While the turn runs the list is
+ * open, because watching it is the point; once the turn is finished it folds
+ * into one line ("Checked 5 things · 2.6s") so the answer, not the machinery,
+ * is what the finished conversation reads as. The raw call and result stay one
+ * click away for the reader who does want them.
+ *
+ * A question the runner asks that no confirmed plan covers is the one step
+ * that can act: it renders its two buttons inline and keeps the group open.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronRight, Loader2, X } from "lucide-react";
 
 import type { ReasoningBlock, ToolBlock, TurnBlock } from "@/components/agentchat/reduce";
@@ -48,6 +52,8 @@ const STEP_KEYS: Record<string, string> = {
   search_web: "search_web",
 };
 
+type Tone = "run" | "done" | "fail" | "ask";
+
 function argOf(input: unknown, key: string): string {
   if (!input || typeof input !== "object") return "";
   const value = (input as Record<string, unknown>)[key];
@@ -60,16 +66,30 @@ function seconds(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function StepShell({
+function toneOf(block: TurnBlock): Tone {
+  if (block.kind === "reasoning") return block.live ? "run" : "done";
+  if (block.kind !== "tool") return "done";
+  if (block.approval && !block.approval.decision) return "ask";
+  if (block.isError) return "fail";
+  return block.output === null ? "run" : "done";
+}
+
+function Mark({ tone }: { tone: Tone }) {
+  if (tone === "run") return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
+  if (tone === "fail") return <X className="h-3 w-3 text-destructive" />;
+  if (tone === "ask")
+    return <span className="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />;
+  return <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />;
+}
+
+function StepRow({
   tone,
-  icon,
   label,
   meta,
   detail,
   children,
 }: {
-  tone: "run" | "done" | "fail" | "ask";
-  icon: React.ReactNode;
+  tone: Tone;
   label: string;
   meta?: string;
   detail?: string;
@@ -79,42 +99,41 @@ function StepShell({
   const [open, setOpen] = useState(false);
   const hasDetail = Boolean(detail && detail.trim());
   return (
-    <li className="relative pl-6" data-testid="assistant-step" data-tone={tone}>
-      {/* The rail: one continuous line through every step of a turn. */}
-      <span
-        aria-hidden="true"
-        className="absolute left-[7px] top-5 bottom-[-6px] w-px bg-border last:hidden"
-      />
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute left-0 top-[3px] flex h-3.5 w-3.5 items-center justify-center rounded-full",
-          tone === "done" && "text-emerald-600 dark:text-emerald-400",
-          tone === "run" && "text-primary",
-          tone === "fail" && "text-destructive",
-          tone === "ask" && "text-amber-600 dark:text-amber-400",
-        )}
-      >
-        {icon}
-      </span>
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className={cn("text-[13.5px]", tone === "fail" ? "text-destructive" : "text-foreground")}>
+    <li className="group/step" data-testid="assistant-step" data-tone={tone}>
+      <div className="flex items-baseline gap-2">
+        <span className="flex h-4 w-4 shrink-0 translate-y-[2px] items-center justify-center">
+          <Mark tone={tone} />
+        </span>
+        <span
+          className={cn(
+            "text-[13px] leading-5",
+            tone === "fail" ? "text-destructive" : "text-foreground/90",
+          )}
+        >
           {label}
         </span>
-        {meta && <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{meta}</span>}
+        {meta && (
+          <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground/70">
+            {meta}
+          </span>
+        )}
         {hasDetail && (
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            className="inline-flex items-center gap-0.5 rounded text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className={cn(
+              "ml-auto shrink-0 rounded px-1 text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground/0",
+              "transition-colors group-hover/step:text-muted-foreground hover:!text-foreground",
+              "focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              open && "!text-muted-foreground",
+            )}
           >
-            <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
             {open ? t("local_models.assistant.steps.hide") : t("local_models.assistant.steps.show")}
           </button>
         )}
       </div>
       {open && hasDetail && (
-        <pre className="mt-1.5 max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+        <pre className="ml-6 mt-1.5 max-h-56 overflow-auto rounded-md border border-border/70 bg-muted/40 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
           {detail}
         </pre>
       )}
@@ -137,28 +156,12 @@ function ToolStep({
         model: argOf(block.input, "model") || argOf(block.input, "name"),
         role: argOf(block.input, "role"),
         query: argOf(block.input, "q") || argOf(block.input, "query"),
-      }).replace(/\s{2,}/g, " ").trim()
+      })
+        .replace(/\s{2,}/g, " ")
+        .trim()
     : block.name;
 
-  const waiting = Boolean(block.approval && !block.approval.decision);
-  const tone: "run" | "done" | "fail" | "ask" = waiting
-    ? "ask"
-    : block.isError
-      ? "fail"
-      : block.output === null
-        ? "run"
-        : "done";
-  const icon =
-    tone === "run" ? (
-      <Loader2 className="h-3 w-3 animate-spin" />
-    ) : tone === "fail" ? (
-      <X className="h-3 w-3" />
-    ) : tone === "ask" ? (
-      <span className="h-2 w-2 rounded-full bg-current" />
-    ) : (
-      <Check className="h-3 w-3" />
-    );
-
+  const tone = toneOf(block);
   const detail = [
     block.input && Object.keys(block.input as object).length
       ? JSON.stringify(block.input, null, 1)
@@ -169,15 +172,9 @@ function ToolStep({
     .join("\n\n");
 
   return (
-    <StepShell
-      tone={tone}
-      icon={icon}
-      label={label}
-      meta={seconds(block.durationMs)}
-      detail={detail}
-    >
-      {waiting && block.approval && onDecide && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2">
+    <StepRow tone={tone} label={label} meta={seconds(block.durationMs)} detail={detail}>
+      {tone === "ask" && block.approval && onDecide && (
+        <div className="ml-6 mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.07] px-3 py-2">
           <span className="text-[13px] text-foreground">{block.approval.summary}</span>
           <div className="ml-auto flex gap-1.5">
             <button
@@ -197,7 +194,7 @@ function ToolStep({
           </div>
         </div>
       )}
-    </StepShell>
+    </StepRow>
   );
 }
 
@@ -206,45 +203,84 @@ function ThinkingStep({ block }: { block: ReasoningBlock }) {
   const label = block.live
     ? t("local_models.assistant.steps.thinking_live")
     : fill(t("local_models.assistant.steps.thinking"), { s: seconds(block.durationMs) || "—" });
-  return (
-    <StepShell
-      tone={block.live ? "run" : "done"}
-      icon={
-        block.live ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <span className="h-1.5 w-1.5 rounded-full bg-current" />
-        )
-      }
-      label={label}
-      detail={block.text}
-    />
-  );
+  return <StepRow tone={block.live ? "run" : "done"} label={label} detail={block.text} />;
 }
 
 /**
- * The steps of one turn. Text blocks are NOT rendered here — the answer is the
- * panel's own paragraph, so the steps stay a list of work and the words stay
- * prose.
+ * The work of one turn: open while it happens, one summary line once it is
+ * done. Text blocks are NOT rendered here — the answer is the panel's own
+ * prose, so the steps stay a list of work and the words stay words.
  */
 export function AssistantSteps({
   blocks,
+  live,
   onDecide,
 }: {
   blocks: readonly TurnBlock[];
+  /** The turn is still running: the group stays open and cannot be folded. */
+  live?: boolean;
   onDecide?: (approvalId: string, decision: ApprovalDecision) => void;
 }) {
+  const t = useT();
   const steps = blocks.filter((b) => b.kind !== "text");
+  const asking = steps.some((b) => toneOf(b) === "ask");
+  const failed = steps.some((b) => toneOf(b) === "fail");
+  const [open, setOpen] = useState(true);
+
+  // Fold when the turn ends — unless something still wants the reader's eye.
+  useEffect(() => {
+    if (!live && !asking && !failed) setOpen(false);
+    if (live || asking || failed) setOpen(true);
+  }, [live, asking, failed]);
+
   if (steps.length === 0) return null;
+
+  const total = steps.reduce((ms, b) => ms + (b.durationMs ?? 0), 0);
+  const pinned = Boolean(live || asking || failed);
+  const summary = fill(t("local_models.assistant.steps.summary"), {
+    n: String(steps.length),
+    s: seconds(total) || "—",
+  });
+
   return (
-    <ul className="flex flex-col gap-2.5" data-testid="assistant-steps">
-      {steps.map((block) =>
-        block.kind === "tool" ? (
-          <ToolStep key={block.callId} block={block} onDecide={onDecide} />
-        ) : (
-          <ThinkingStep key={block.id} block={block as ReasoningBlock} />
-        ),
+    <div
+      className="rounded-lg border border-border/60 bg-muted/[0.18]"
+      data-testid="assistant-steps"
+      data-open={open ? "yes" : "no"}
+    >
+      <button
+        type="button"
+        onClick={() => !pinned && setOpen((v) => !v)}
+        aria-expanded={open}
+        disabled={pinned}
+        className={cn(
+          "flex w-full items-center gap-2 px-3 py-2 text-left",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-lg",
+          !pinned && "hover:bg-muted/40",
+        )}
+      >
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            open && "rotate-90",
+            pinned && "opacity-0",
+          )}
+        />
+        <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+          {live ? t("local_models.assistant.steps.working") : summary}
+        </span>
+      </button>
+      {open && (
+        <ul className="flex flex-col gap-2 border-t border-border/50 px-3 py-2.5">
+          {steps.map((block) =>
+            block.kind === "tool" ? (
+              <ToolStep key={block.callId} block={block} onDecide={onDecide} />
+            ) : (
+              <ThinkingStep key={block.id} block={block as ReasoningBlock} />
+            ),
+          )}
+        </ul>
       )}
-    </ul>
+    </div>
   );
 }

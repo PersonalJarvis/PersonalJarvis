@@ -451,8 +451,13 @@
         "unload": "Hat {model} aus dem Speicher entladen",
         "install_voice": "Hat den Sprachserver installiert",
         "apply_voice": "Hat den Sprach-Stack eingerichtet und getestet",
-        "search_web": "Hat im Web nach {query} gesucht"
-      }
+        "search_web": "Hat im Web nach {query} gesucht",
+        "summary": "{n} Dinge geprüft · {s}",
+        "working": "Arbeitet…"
+      },
+      "ask_1": "Welches Modell soll meine Chats beantworten?",
+      "ask_2": "Schafft meine Grafikkarte ein 27B-Modell?",
+      "ask_3": "Speicherplatz freimachen"
     },
     "tab_assistant": "Einrichtungshilfe"
   }
