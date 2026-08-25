@@ -17,7 +17,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID, uuid4
 
 from jarvis.brain.cu_gate import (
@@ -31,7 +31,14 @@ from jarvis.brain.spawn_gate import (
     names_spawn_vehicle,
     spawn_blocked_feedback,
 )
-from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
+from jarvis.core.protocols import (
+    Brain,
+    BrainMessage,
+    BrainRequest,
+    ImageBlock,
+    ReasoningEffort,
+    Tool,
+)
 from jarvis.core.turn_language import resolve_output_language, resolve_turn_language
 from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL, ToolExecutor
 
@@ -582,7 +589,7 @@ class ToolUseLoop:
         budget: IterationBudget | None = None,
         max_tokens: int = 32_768,
         deadline_s: float | None = None,
-        reasoning_effort: Literal["none"] | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
         tool_context: dict[str, Any] | None = None,
     ) -> None:
         self._brain = brain

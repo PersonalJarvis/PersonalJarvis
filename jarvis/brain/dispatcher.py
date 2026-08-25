@@ -9,13 +9,21 @@ and exposes two main methods:
 The dispatcher is intentionally simple and holds NO conversation state —
 that is the responsibility of `BrainManager` (so we can switch between providers).
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID, uuid4
 
-from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
+from jarvis.core.protocols import (
+    Brain,
+    BrainMessage,
+    BrainRequest,
+    ImageBlock,
+    ReasoningEffort,
+    Tool,
+)
 from jarvis.safety.tool_executor import ToolExecutor
 
 from .iteration_budget import IterationBudget
@@ -37,7 +45,7 @@ class BrainDispatcher:
         max_tokens_total: int = 2_000_000,
         max_tokens: int = 32_768,
         deadline_s: float | None = None,
-        reasoning_effort: Literal["none"] | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
         tool_context: dict[str, Any] | None = None,
     ) -> None:
         self._brain = brain
@@ -173,6 +181,7 @@ class BrainDispatcher:
             reasoning_effort=self._reasoning_effort,
         )
         if text_consumer is not None:
+
             def _delta_progress(_delta: object) -> None:
                 if on_progress is not None:
                     on_progress()
@@ -183,6 +192,7 @@ class BrainDispatcher:
                 delta_consumer=_delta_progress if on_progress is not None else None,
             )
         from .streaming import aggregate
+
         return await aggregate(self._brain.complete(req))
 
     async def stream_text(

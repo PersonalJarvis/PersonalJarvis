@@ -98,6 +98,12 @@ class BrainMessage:
     images: tuple[ImageBlock, ...] = ()
 
 
+#: The reasoning-effort ladder a request may ask for, ascending. Providers
+#: without a knob ignore it; one that lacks a level snaps to the nearest it
+#: has (see ``jarvis.agent_chat.effort``).
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
 @dataclass(frozen=True, slots=True)
 class BrainRequest:
     """Request to a brain provider."""
@@ -116,8 +122,11 @@ class BrainRequest:
     # files". The graded levels remain for callers whose OUTPUT is still
     # judgement work (the work splitter still passes "medium").
     # ``None`` keeps the provider default; providers without a reasoning knob
-    # ignore the field (capability hint, never a hard switch).
-    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
+    # ignore the field (capability hint, never a hard switch). The wider
+    # levels ("minimal", "xhigh", "max") exist for the agent chat, where the
+    # person picks the level by hand; a provider that does not know a level
+    # treats it like the nearest one it does (see jarvis.agent_chat.effort).
+    reasoning_effort: ReasoningEffort | None = None
 
 
 @dataclass(frozen=True, slots=True)
