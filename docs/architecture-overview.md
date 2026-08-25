@@ -120,6 +120,57 @@ Ack-Brain (`jarvis/brain/ack_brain/`) emits a sub-second butler-style preamble b
 
 **Persona / custom system prompt:** the live persona comes from `jarvis/brain/persona_loader.py`. `base_persona_prompt()` returns an editable override (`data/custom_system_prompt.md`, written atomically via the Settings UI / `settings_routes.py`) when present, else the packaged `JARVIS_PERSONA.md`. `load_effective_persona_prompt()` is what the brains call: the base **plus the active mode's character block**. Edits apply on the **next turn** (no restart); `invalidate_cache()` clears the in-process cache. Never hardcode the persona string elsewhere.
 
+### The typed chat: two surfaces, three runners (2026-08-25)
+
+`jarvis/agent_chat/` serves two chats that look the same and mean different
+things — every session carries a `surface` (`store.SURFACES`, mirrored in
+Pydantic and TypeScript, parity-tested):
+
+| Surface | What a typed turn is | Runner per seat | Permission ladder |
+|---|---|---|---|
+| `"jarvis"` — the front page's Chat section | **Jarvis with a keyboard**: the same assistant the microphone talks to (soul, persona, profile, identity card, memory, wiki, skills, ALL tools through the risk tiers) on the model the composer picked for THIS chat | API-key / local rows → `runner_brain` (`BrainManager.generate` + a `TurnOverride`); subscription CLIs → `runner_cli` with the Jarvis identity | ONE ladder in Claude Code's words — `ask` / `accept-edits` / `bypass` + `plan` — folded onto each CLI's own spelling |
+| `"agent"` — the Agentic IDE's chat mode | a plain coding-agent session in a folder | `runner_api` (tool loop) or a plain `runner_cli` | the vendor's own ladder |
+
+**The per-turn override contract (binding).** A chat's pick of provider /
+model / effort NEVER moves the live brain: `BrainManager.generate(turn_override=…)`
+carries it in a ContextVar (`jarvis/brain/turn_override.py`), read in exactly
+three places — the chain (exactly the pick, no cross-provider stand-in; the
+intelligent-router lead stays for a tool-incapable pick), the tool surface
+(`tools_extra` merged after every gate, `tool_filter` last) and the dispatcher
+(`reasoning_effort`, `tool_context`, `max_turns`) — and it writes nothing on the
+manager: not `_active_name`, not the provider config, not the dead-lists. The
+pick runs on its own cached instance (`_get_brain(scope=)`), so its credential
+(the Agents-tab key, a task-local `override_provider_secrets`) is never the
+voice's. `switch(persist=False)` / `apply_provider_model` per chat turn is the
+mistake that got the first version reverted (ce3fb9673).
+
+**Hands and approvals.** The folder chip is Jarvis' working folder for the
+chat: `folder_tools.py` wraps Read/Write/Edit/Ls/Glob/Grep/RunCommand as real
+`Tool`s (reads `safe`, writes and the shell `ask`) so they run through
+`ToolExecutor` like every other Jarvis tool — one safety path (AP-3), the
+blacklist matching `"RunCommand <cmd>"`. A gate the executor raises is answered
+by the chat's clickable card, not the voice's two-turn "yes": the turn's tool
+context declares `approval_surface: interactive` + an `approval_ref`
+(`"agent-chat:<session_id>"`) + `approval_timeout_s`, the executor echoes the
+ref on `ActionApprovalRequired`, and `approval_bridge.ChatApprovalBridge` (one
+persistent subscriber, grants keyed by ref, never awaiting the person inside a
+handler) turns the stance into a decision: `ask` cards everything consequential,
+`accept-edits` waves the folder's Write/Edit through, `bypass` answers every
+gate itself; `plan` offers reading hands only. The blacklist is never reached
+from here in any stance.
+
+**A CLI seat as Jarvis.** A subscription CLI keeps its own loop (that is what
+the subscription pays for; only the vendor's official binary spends it) but
+runs with Jarvis' head: `BrainManager.render_surface_prompt` renders the
+voice turn's prompt layers read-only, `jarvis_harness.build_identity` adds the
+chat's transcript on a fresh conversation and the surface addendum, and each
+CLI takes it the way it can (Claude Code: `--append-system-prompt-file`; Codex
+and agy: in front of the stdin prompt; Grok Build: a compact cut on argv). The
+CLI's MCP config names the session in an `X-Jarvis-Chat-Session` header;
+`mcp_server_routes` reads it into `jarvis_tools_server.CHAT_SESSION_REF`, and a
+Jarvis tool the CLI reaches over MCP asks on the chat's card instead of failing
+fast as unattended.
+
 ### Risk-Tier system
 
 Four levels: `safe` / `monitor` / `ask` / `block`. Priority is **blacklist > whitelist > tool default** (`jarvis/safety/risk_tier.py`). Whitelist downgrades a tier to `safe` with `approved_by="whitelist"` — this is the anti-confirmation-fatigue contract. **Direct calls to `Tool.execute()` are a bug**; only `ToolExecutor.execute()` is authorized.
