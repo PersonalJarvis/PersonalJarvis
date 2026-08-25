@@ -18,12 +18,9 @@ Every CLI resumes its own conversation natively (``claude --resume``,
 row keeps the vendor's id in ``vendor_session`` and a later turn continues
 the same conversation — the tools, skills, MCP servers and permissions are
 the CLI's own, exactly as in a terminal. The person's permission mode maps
-onto the closest stance each CLI offers. Claude Code really does ask: the
-control-protocol handshake below opens a channel on stdin, and its prompts
-arrive as ``can_use_tool`` for the chat's approval card to answer. The
-others cannot ask in print mode, so there ``ask`` means "edits yes, anything
-riskier is declined by the CLI and reported to the model", and ``auto``
-bypasses.
+onto the closest stance each CLI offers; a print-mode CLI cannot ask back,
+so ``ask`` means "edits yes, anything riskier is declined by the CLI and
+reported to the model", and ``auto`` bypasses.
 
 Spawning follows the mission workers: shell-free argv, the prompt on stdin
 where the binary accepts it, ``NO_WINDOW_CREATIONFLAGS``, UTF-8 decoding,
@@ -44,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
+from jarvis.agent_chat import jarvis_harness
 from jarvis.agent_chat.effort import normalize_effort, snap_to_ladder
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
@@ -223,6 +221,17 @@ def plan_claude(
         argv += ["--model", model]
     if effort:
         argv += ["--effort", effort]
+    # Jarvis' own tools, and the identity that says when to use them. Both are
+    # skipped when the app cannot offer them (no control key, server not bound
+    # yet) — the session then behaves exactly as it did before.
+    mcp_config = jarvis_harness.mcp_config_json()
+    if mcp_config:
+        argv += [
+            "--mcp-config",
+            mcp_config,
+            "--append-system-prompt",
+            jarvis_harness.SYSTEM_PREAMBLE,
+        ]
     if resume:
         argv += ["--resume", resume]
         sid = resume
@@ -231,7 +240,7 @@ def plan_claude(
         argv += ["--session-id", sid]
     return CliPlan(
         argv,
-        _account_env("claude"),
+        jarvis_harness.apply_env(_account_env("claude")),
         claude_stream_input(prompt),
         "claude",
         sid,
@@ -525,6 +534,9 @@ def plan_codex(
     else:
         argv = [*base, "exec", "--json", "--cd", str(cwd)]
     argv += ["--skip-git-repo-check"]
+    # Jarvis' own tools over streamable-HTTP MCP, mounted for this run only —
+    # the person's ~/.codex/config.toml is never touched.
+    argv += jarvis_harness.codex_config_args()
     # The TUI's presets, spelled out for ``exec`` (codex 0.149): Read only /
     # Auto (workspace-write) / Full access (``--yolo``), plus "approve for
     # me" — Codex's own reviewer model decides what would have asked you,
@@ -562,7 +574,7 @@ def plan_codex(
         argv += ["--model", model]
     argv += ["-"]  # prompt on stdin
     text = _PLAN_PREAMBLE + prompt if mode == "plan" else prompt
-    return CliPlan(argv, _account_env("codex"), text, "codex", resume)
+    return CliPlan(argv, jarvis_harness.apply_env(_account_env("codex")), text, "codex", resume)
 
 
 _PLANNERS: Final[dict[str, Any]] = {
