@@ -487,6 +487,11 @@ class ActionApprovalRequired(Event):
     expires_at_ns: int = 0
     mission_id: str | None = None
     worker_id: str | None = None
+    #: Correlation for a surface that answers its own approval cards — the
+    #: typed chat stamps ``"agent-chat:<session_id>"`` through its tool
+    #: context so its bridge recognises the calls of ITS turn and no other.
+    #: ``None`` on every other surface.
+    approval_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

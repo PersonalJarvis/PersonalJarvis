@@ -116,6 +116,22 @@ class ToolExecutor:
         # args live here OUT-OF-BAND — never in the serialized ToolResult.output.
         self._pending_voice: dict[UUID, tuple[Tool, dict[str, Any]]] = {}
 
+    #: The longest a surface may keep an approval open, whatever it asks for.
+    MAX_APPROVAL_TIMEOUT_S = 900.0
+
+    def _approval_timeout(self, config_snapshot: dict[str, Any] | None) -> float:
+        """The wait for this call: the surface's ``approval_timeout_s`` when it
+        declares one (never below the default, never above the cap), else the
+        default the executor was built with."""
+        raw = (config_snapshot or {}).get("approval_timeout_s")
+        if raw is None:
+            return self._default_timeout_s
+        try:
+            asked = float(raw)
+        except (TypeError, ValueError):
+            return self._default_timeout_s
+        return max(self._default_timeout_s, min(asked, self.MAX_APPROVAL_TIMEOUT_S))
+
     def set_plausibility_context_fn(
         self, fn: PlausibilityContextFn | None,
     ) -> None:
@@ -318,6 +334,11 @@ class ToolExecutor:
         # above is the untouched tier decision.
         surface = resolve_approval_surface(config_snapshot)
         voice_confirm = surface == CONVERSATIONAL
+        # How long a card may stay open — declared by the calling layer like
+        # the surface itself (a person reading a chat card must not lose the
+        # tool to a clock built for a spoken "ja"), clamped so no surface can
+        # park the executor forever.
+        approval_timeout_s = self._approval_timeout(config_snapshot)
         approval_ticket = None
         if needs_confirm and not voice_confirm:
             # An unattended call arms too: the pre-authorization bridges answer
@@ -352,7 +373,7 @@ class ToolExecutor:
             window_ns = (
                 0
                 if surface == UNATTENDED
-                else int(self._default_timeout_s * 1_000_000_000)
+                else int(approval_timeout_s * 1_000_000_000)
             )
             await self._bus.publish(
                 ActionApprovalRequired(
@@ -367,6 +388,9 @@ class ToolExecutor:
                     ),
                     worker_id=_optional_string(
                         (config_snapshot or {}).get("worker_id")
+                    ),
+                    approval_ref=_optional_string(
+                        (config_snapshot or {}).get("approval_ref")
                     ),
                 )
             )
@@ -432,7 +456,7 @@ class ToolExecutor:
             else:
                 try:
                     approved, who_or_reason = await self._approval.wait(
-                        tid, self._default_timeout_s
+                        tid, approval_timeout_s
                     )
                 finally:
                     if approval_ticket is not None:
@@ -449,7 +473,7 @@ class ToolExecutor:
                 if who_or_reason == TIMEOUT_REASON:
                     error = (
                         f"{APPROVAL_TIMEOUT_PREFIX} (nobody decided within "
-                        f"{self._default_timeout_s:.0f}s)"
+                        f"{approval_timeout_s:.0f}s)"
                     )
                 else:
                     error = f"{APPROVAL_DENIED_PREFIX} ({who_or_reason})"
