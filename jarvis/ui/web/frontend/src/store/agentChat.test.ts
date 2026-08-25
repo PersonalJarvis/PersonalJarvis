@@ -68,6 +68,65 @@ class FakeSocket {
 }
 
 describe("agent-chat store surfaces", () => {
+
+  it("snaps a stored mode the row's ladder does not know onto the row's default", async () => {
+    // The v1 draft was shared with the IDE and could carry a vendor word
+    // ("skip-permissions"); on the Jarvis ladder that must become "ask", not
+    // an unlabelled pill.
+    window.localStorage.setItem(
+      draftKey("jarvis"),
+      JSON.stringify({
+        provider: "antigravity",
+        model: "",
+        effort: "high",
+        permissionMode: "skip-permissions",
+        buildMode: "skip-permissions",
+        cwd: "C:\\ide",
+      }),
+    );
+    const modes = ["ask", "accept-edits", "plan", "bypass"].map((id) => ({ id, label: id, description: "" }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = String(input);
+        const reply = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+        if (url.startsWith("/api/agent-chat/catalog")) {
+          return reply({
+            providers: [
+              {
+                id: "antigravity",
+                label: "Antigravity",
+                family: "antigravity",
+                runner: "agy-cli",
+                models_source: "curated",
+                curated_models: [],
+                default_model: "",
+                keyless: false,
+                native_resume: true,
+                effort_levels: ["low", "medium", "high"],
+                default_effort: "medium",
+                cli_installed: true,
+                permission_modes: modes,
+                default_permission_mode: "ask",
+              },
+            ],
+            default_cwd: "C:\\home",
+            shell: "pwsh",
+          });
+        }
+        if (url.startsWith("/api/jarvis-agent/status")) return reply({ mapping: [] });
+        if (url.startsWith("/api/providers/")) return reply({ models: [] });
+        return new Response(null, { status: 404 });
+      }),
+    );
+    const store = createAgentChatStore("jarvis");
+    await store.getState().loadCatalog();
+    const draft = store.getState().draft;
+    expect(draft.provider).toBe("antigravity");
+    expect(draft.permissionMode).toBe("ask");
+    expect(draft.buildMode).toBe("ask");
+    expect(draft.effort).toBe("high");
+  });
   beforeEach(() => {
     window.localStorage.clear();
     vi.stubGlobal("WebSocket", FakeSocket);
@@ -77,7 +136,7 @@ describe("agent-chat store surfaces", () => {
   });
 
   it("names the front page's draft key as it always was, and gives the IDE its own", () => {
-    expect(draftKey("jarvis")).toBe("jarvis.agentChat.draft.v1");
+    expect(draftKey("jarvis")).toBe("jarvis.agentChat.draft.v2");
     expect(draftKey("agent")).toBe("jarvis.agentChat.draft.agent.v1");
   });
 

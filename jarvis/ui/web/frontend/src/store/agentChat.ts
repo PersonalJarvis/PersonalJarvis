@@ -55,7 +55,12 @@ import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/comp
  * IDE store gets its own so the two never overwrite each other's picks.
  */
 export function draftKey(surface: AgentChatSurface): string {
-  return surface === "jarvis" ? "jarvis.agentChat.draft.v1" : `jarvis.agentChat.draft.${surface}.v1`;
+  // v2 for the front page (2026-08-25): the v1 draft was written while the
+  // IDE's chat and the front page shared one store, so it carried the IDE's
+  // last folder and a vendor permission mode the Jarvis ladder does not know.
+  // A new key starts the Jarvis chat clean — the active brain, the home
+  // folder, the ladder's default — instead of on a coding session's picks.
+  return surface === "jarvis" ? "jarvis.agentChat.draft.v2" : `jarvis.agentChat.draft.${surface}.v1`;
 }
 const RECONNECT_MS = 1500;
 /** How many sessions the list holds — the "All chats" archive shows them all. */
@@ -177,6 +182,13 @@ function draftFromSession(session: AgentChatSession, prev: ComposerDraft): Compo
  * its own session list, so the front page's chat and an IDE's coding
  * sessions can be open at the same time without sharing a connection.
  */
+/** `value` when the ladder offers it (or the ladder is unknown), else `fallback`. */
+function onLadder(value: string, ladder: readonly string[], fallback: string): string {
+  if (!value) return fallback;
+  if (ladder.length === 0) return value;
+  return ladder.includes(value) ? value : fallback;
+}
+
 export function createAgentChatStore(surface: AgentChatSurface) {
   const DRAFT_KEY = draftKey(surface);
 
@@ -324,9 +336,21 @@ export function createAgentChatStore(surface: AgentChatSurface) {
           } else {
             draft = {
               ...draft,
-              effort: draft.effort || known.default_effort,
-              permissionMode: draft.permissionMode || known.default_permission_mode,
-              buildMode: draft.buildMode || known.default_permission_mode,
+              effort: onLadder(draft.effort, known.effort_levels, known.default_effort),
+              // A stored mode the row's ladder does not offer (a vendor word
+              // from before the unified ladder, a pick made on another
+              // surface) snaps to the row's default rather than showing a
+              // label the person cannot choose.
+              permissionMode: onLadder(
+                draft.permissionMode,
+                known.permission_modes.map((m) => m.id),
+                known.default_permission_mode,
+              ),
+              buildMode: onLadder(
+                draft.buildMode,
+                known.permission_modes.map((m) => m.id),
+                known.default_permission_mode,
+              ),
               cwd: draft.cwd || catalog.default_cwd,
             };
           }
