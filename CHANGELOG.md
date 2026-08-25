@@ -9,6 +9,26 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.6.0] — 2026-08-25
+
+The release that can be double-clicked. Personal Jarvis has always been a
+terminal line away; from this version it is also an installer for each of the
+three desktop systems, built on CI from the same scripts a maintainer runs by
+hand, published with the digests to check them against.
+
+### Added
+
+- **A native installer for every desktop system.** `PersonalJarvis-Setup-x64.exe`
+  (a per-user Windows wizard, no administrator prompt),
+  `PersonalJarvis-macOS-arm64.dmg` and `PersonalJarvis-macOS-x64.dmg`, and
+  `PersonalJarvis-Linux-x86_64.AppImage` with a `.deb` beside it. Each carries
+  the whole application — the windowed launcher and the `jarvis` command line —
+  and each release publishes `installers-SHA256SUMS.txt` so a download can be
+  checked before it is opened. The install scripts are unchanged and stay the
+  supported path for anyone who prefers them.
+
 ### Changed
 
 - **A voice call answers on the provider's own timing again.** The Thinking
@@ -29,6 +49,15 @@ versioning per [SemVer](https://semver.org/).
   X Premium+. The xAI API-key card stays a separate thing.
 
 ### Fixed
+
+- **Restart no longer shuts the window and stays down.** Clicking Restart
+  launched a helper that watched the first Python process. On Windows that
+  process hands over to the branded copy and exits, so the helper thought the
+  start had failed and launched two more copies. Those three then fought over
+  the lock, and sometimes none of them kept the window. The helper now waits
+  until the app is actually answering, starts the branded copy directly, and
+  a copy that is only seconds old is waited on instead of offered as stuck.
+  (BUG-181)
 
 - **A launch that never reaches a window is no longer mute.** The desktop
   log now starts from the launcher's first millisecond, so an "already
