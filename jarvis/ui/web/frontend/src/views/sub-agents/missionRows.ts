@@ -17,9 +17,17 @@
  *
  * A run present in both wins as its LIVE node, because only that one has the
  * tool calls and the running clock.
+ *
+ * A third, optional source is the outputs archive (`/api/outputs`): it knows
+ * the run's terminal reason, its one-line summary and — most usefully — the
+ * slug of the directory the deliverables live in. Where a row's mission is in
+ * that list, the row learns its reason, summary and output slug; where it is
+ * not (the directory was cleaned up), the row keeps what it had.
  */
 import type { MissionSummary } from "@/types/missions";
 import type { SubAgentNode } from "@/store/jarvisAgents";
+import type { OutputSummary } from "@/hooks/useOutputs";
+import { missionIdFromTraceId } from "./outcome";
 
 /** How many past runs the board carries. The table is a board, not an archive. */
 export const HISTORY_LIMIT = 50;
@@ -67,6 +75,7 @@ export function missionToNode(mission: MissionSummary): SubAgentNode {
 
   return {
     trace_id: normalizeTraceId(mission.id),
+    mission_id: mission.id,
     kind: "jarvis_agent",
     name: "",
     status,
@@ -96,6 +105,33 @@ export function missionToNode(mission: MissionSummary): SubAgentNode {
 }
 
 /**
+ * What the outputs archive knows about a row, keyed by the dash-stripped id.
+ * Only the fields the board and the insight page read are copied over.
+ */
+function outputsByTrace(outputs: OutputSummary[]): Map<string, OutputSummary> {
+  const map = new Map<string, OutputSummary>();
+  for (const o of outputs) {
+    if (o.mission_id) map.set(normalizeTraceId(o.mission_id), o);
+  }
+  return map;
+}
+
+function enrich(node: SubAgentNode, output: OutputSummary | undefined): SubAgentNode {
+  const next: SubAgentNode = {
+    ...node,
+    mission_id: node.mission_id ?? missionIdFromTraceId(node.trace_id),
+  };
+  if (!output) return next;
+  next.output_slug = output.slug;
+  next.outcome_reason = output.terminal_reason ?? output.error ?? null;
+  const hasSummary = node.prompts.some((p) => p.startsWith("[summary] "));
+  if (output.summary && !hasSummary) {
+    next.prompts = [...node.prompts, `[summary] ${output.summary}`];
+  }
+  return next;
+}
+
+/**
  * Live nodes first, then any past run the registry no longer holds.
  *
  * Sorted newest-first across both sources, so a run that just finished sits
@@ -105,6 +141,7 @@ export function mergeBoardRows(
   live: SubAgentNode[],
   missions: MissionSummary[],
   limit: number = HISTORY_LIMIT,
+  outputs: OutputSummary[] = [],
 ): SubAgentNode[] {
   const seen = new Set(live.map((n) => normalizeTraceId(n.trace_id)));
   const history: SubAgentNode[] = [];
@@ -116,5 +153,8 @@ export function mergeBoardRows(
     history.push(missionToNode(mission));
   }
 
-  return [...live, ...history].sort((a, b) => b.started_ns - a.started_ns);
+  const byTrace = outputsByTrace(outputs);
+  return [...live, ...history]
+    .map((n) => enrich(n, byTrace.get(normalizeTraceId(n.trace_id))))
+    .sort((a, b) => b.started_ns - a.started_ns);
 }

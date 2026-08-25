@@ -52,6 +52,8 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { fill, useT } from "@/i18n";
 import { failureLabel } from "./failureLabel";
+import { formatDuration } from "./format";
+import { REASON_LABEL_KEYS, splitReason } from "./outcome";
 
 // The four run states map onto the shared StatusDot tones: a running agent is
 // the app's own "busy" (brand primary), a finished one is the token set's
@@ -70,13 +72,7 @@ const TOOL_STATUS_TONE: Record<ToolCallEntry["status"], "busy" | "ok" | "error">
   failed: "error",
 };
 
-function formatRelative(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "—";
-  if (ms < 1000) return `${Math.floor(ms)}ms`;
-  if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
-  return `${Math.floor(ms / 3_600_000)}h`;
-}
+const formatRelative = formatDuration;
 
 function startedMs(node: SubAgentNode): number {
   return node.started_ns > 1_000_000_000_000_000
@@ -105,6 +101,15 @@ function taskLabel(node: SubAgentNode, t: (key: string) => string): string {
   return node.utterance || node.context_hints.at(0) || node.prompts.at(0) || t("subagents_view.task_none");
 }
 
+/** Plain-language label for a mission-level terminal reason, else the raw token. */
+function outcomeReasonLabel(node: SubAgentNode, t: (key: string) => string): string | null {
+  const { head, tail } = splitReason(node.outcome_reason);
+  if (!head) return null;
+  const key = REASON_LABEL_KEYS[head];
+  const label = key ? t(key) : head;
+  return tail ? `${label} (${tail})` : label;
+}
+
 function resultLabel(node: SubAgentNode, t: (key: string) => string): string {
   const failure = failureLabel(node, t);
   if (failure) return failure;
@@ -112,6 +117,10 @@ function resultLabel(node: SubAgentNode, t: (key: string) => string): string {
   if (summary) return summary.replace("[summary] ", "");
   if (node.status === "completed") return t("subagents_view.result_done");
   if (node.status === "running") return t("subagents_view.result_running");
+  // The outputs archive knows WHY a past run ended ("provider quota", "the
+  // reviewer ran out of time") where the mission list only knows THAT it did.
+  const reason = outcomeReasonLabel(node, t);
+  if (reason) return reason;
   // A row from the durable record carries no error text, so without these two
   // a failed or cancelled past run showed an em dash next to a red status —
   // as if the outcome were unknown rather than stated one column to the left.
@@ -126,6 +135,8 @@ interface Props {
   health?: SectionHealth | null;
   /** The durable half could not be loaded; the live half still renders. */
   historyError?: boolean;
+  /** A row was clicked: open that run's insight page. */
+  onOpen?: (agent: SubAgentNode) => void;
 }
 
 export function DepartureBoard({
@@ -133,6 +144,7 @@ export function DepartureBoard({
   snapshotError = null,
   health = null,
   historyError = false,
+  onOpen,
 }: Props) {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
@@ -326,6 +338,7 @@ export function DepartureBoard({
                         nowMs={nowMs}
                         expanded={expanded.has(agent.trace_id)}
                         onToggle={() => toggle(agent.trace_id)}
+                        onOpen={onOpen ? () => onOpen(agent) : undefined}
                         t={t}
                       />
                     ))
@@ -378,6 +391,7 @@ function AgentRow({
   nowMs,
   expanded,
   onToggle,
+  onOpen,
   t,
 }: {
   agent: SubAgentNode;
@@ -385,6 +399,7 @@ function AgentRow({
   nowMs: number;
   expanded: boolean;
   onToggle: () => void;
+  onOpen?: () => void;
   t: (key: string) => string;
 }) {
   const assistantName = useEventStore((s) => s.assistantName);
@@ -392,21 +407,36 @@ function AgentRow({
   const task = taskLabel(agent, t);
   const result = resultLabel(agent, t);
 
+  // The row itself opens the run's insight page; the chevron keeps the quick
+  // inline peek at live tool calls for a run that is still working. Without an
+  // `onOpen` (the board rendered on its own) the row falls back to the peek.
+  const rowClick = onOpen ?? (hasDrilldown ? onToggle : undefined);
+
   return (
     <Fragment>
       <TableRow
         columns={columns}
-        onClick={hasDrilldown ? onToggle : undefined}
+        onClick={rowClick}
         selected={expanded}
         ariaLabel={task}
       >
-        <Cell className="text-muted-foreground">
+        <Cell className="text-muted-foreground" stop={hasDrilldown && !!onOpen}>
           {hasDrilldown ? (
-            expanded ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={expanded}
+              aria-label={t("subagents_view.col_expand")}
+              className="grid h-6 w-6 place-items-center rounded-md hover:bg-accent hover:text-foreground"
+            >
+              {expanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </button>
+          ) : onOpen ? (
+            <ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-60" />
           ) : null}
         </Cell>
         <Cell>

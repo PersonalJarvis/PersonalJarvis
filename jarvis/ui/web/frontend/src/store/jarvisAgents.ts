@@ -48,6 +48,15 @@ export interface SubAgentNode {
   depth: number;
   ui_appeared_at: number;
   ui_fade_at?: number;
+  /**
+   * The dashed mission id the REST detail endpoints want. The registry keys
+   * its nodes by the dash-stripped form, so the board carries both.
+   */
+  mission_id?: string | null;
+  /** The archived output directory (its slug) while it still exists on disk. */
+  output_slug?: string | null;
+  /** The mission's terminal reason (`task_error`, `ui_cancel`, …), when known. */
+  outcome_reason?: string | null;
 }
 
 const FADE_OUT_MS = 60_000;

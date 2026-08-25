@@ -266,6 +266,33 @@ export interface MissionDetail {
   worker_snapshots: JarvisAgentWorkerSnapshot[];
 }
 
+/** One deliverable file as `GET /api/missions/{id}/result` lists it. */
+export interface MissionArtifact {
+  path: string;
+  deliverable_path: string;
+  size: number;
+  is_text: boolean;
+  /** Bounded text contents; null for binary files or past the total cap. */
+  content: string | null;
+  truncated: boolean;
+}
+
+/** Mirror of `get_mission_result` in jarvis/ui/web/missions_routes.py. */
+export interface MissionResult {
+  mission_id: string;
+  state: MissionState;
+  language: string;
+  /** The request with the worker quality directive stripped, bounded. */
+  prompt: string;
+  terminal_event: EventType | null;
+  summary: string | null;
+  result_uri: string | null;
+  reason: string | null;
+  artifacts: MissionArtifact[];
+  artifact_count: number;
+  truncated: boolean;
+}
+
 /** Secret-free projection of one paused supervisor tool call. */
 export interface PendingMissionToolApproval {
   trace_id: string;

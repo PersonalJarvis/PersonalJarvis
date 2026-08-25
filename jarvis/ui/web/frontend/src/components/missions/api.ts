@@ -7,6 +7,7 @@ import type {
   CriticVerdictReady,
   EventEnvelope,
   MissionDetail,
+  MissionResult,
   MissionSummary,
   MissionToolApprovalDecision,
   MissionToolApprovalsResponse,
@@ -44,6 +45,11 @@ export async function fetchMissionDetail(id: string): Promise<MissionDetail> {
   const worker_snapshots: JarvisAgentWorkerSnapshot[] =
     Array.isArray(data.worker_snapshots) ? data.worker_snapshots : [];
   return { mission: data.mission, events, verdicts, worker_snapshots };
+}
+
+/** The signed outcome plus the deliverables' bounded contents. */
+export async function fetchMissionResult(id: string): Promise<MissionResult> {
+  return requestJson(`${API_BASE}/${encodeURIComponent(id)}/result`);
 }
 
 export function missionToolApprovalsQueryKey(missionId: string | null) {

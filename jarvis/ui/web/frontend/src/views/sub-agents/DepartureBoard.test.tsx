@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DepartureBoard } from "./DepartureBoard";
@@ -72,6 +72,53 @@ describe("DepartureBoard cancellation status", () => {
     expect(within(tile("Failed")).getByText("1")).toBeTruthy();
     const row = screen.getByRole("row", { name: /broken mission/i });
     expect(within(row).getByText("Failed")).toBeTruthy();
+  });
+});
+
+describe("DepartureBoard row click", () => {
+  it("opens the run's insight page from the row and keeps the chevron for the inline peek", () => {
+    const opened: string[] = [];
+    // A finished run with tool calls: it has a drilldown but is not
+    // auto-expanded (only running rows are), so the chevron's effect is visible.
+    const agent = node({
+      trace_id: "m-live",
+      status: "completed",
+      utterance: "Live mission",
+      tool_calls: [
+        { tool_name: "Read", args_preview: "x.py", started_ns: 1, status: "completed" },
+      ],
+    });
+    render(<DepartureBoard agents={[agent]} onOpen={(a) => opened.push(a.trace_id)} />);
+
+    const row = screen.getByRole("row", { name: "Live mission" });
+    expect(screen.queryByText("x.py")).toBeNull();
+    fireEvent.click(row);
+    expect(opened).toEqual(["m-live"]);
+    expect(screen.queryByText("x.py")).toBeNull();
+
+    // The chevron is its own control: it expands the row in place and does
+    // NOT navigate — clicking it must not add a second "opened" entry.
+    fireEvent.click(within(row).getByRole("button", { name: /expand row/i }));
+    expect(opened).toEqual(["m-live"]);
+    expect(screen.getByText("x.py")).toBeTruthy();
+  });
+
+  it("shows the archived terminal reason in the result column of a failed row", () => {
+    render(
+      <DepartureBoard
+        agents={[
+          node({
+            trace_id: "m-quota",
+            status: "failed",
+            utterance: "Quota mission",
+            error: null,
+            outcome_reason: "review_time_budget_exhausted",
+          }),
+        ]}
+      />,
+    );
+    const row = screen.getByRole("row", { name: /quota mission/i });
+    expect(within(row).getByText("The review ran out of time")).toBeTruthy();
   });
 });
 
