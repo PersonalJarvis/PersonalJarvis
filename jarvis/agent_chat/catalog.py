@@ -22,11 +22,18 @@ Two kinds of runner sit behind the rows:
     Codex's ``models_cache.json``), else the curated fallback here — and
     ``""`` means "the CLI's default".
 
+``brain``
+    Jarvis' own harness — ``BrainManager.generate`` with a per-turn pick of
+    provider, model and effort (:mod:`jarvis.agent_chat.runner_brain`). Never
+    a row's static runner: the service chooses it for every ``api`` row on
+    the Jarvis surface (the front page's chat), where the typed turn is
+    Jarvis rather than a coding agent.
+
 ``claude-api`` is the one dual row: with a Claude subscription login the
 ``claude`` CLI runs the session (Claude Code proper — tools, skills, the
 Max plan's included usage); with only an Anthropic API key the API runner
-does. The route decides per request by probing; this module only carries the
-static shape.
+does (the brain runner on the Jarvis surface). The route decides per request
+by probing; this module only carries the static shape.
 
 Presentation data only — nothing here decides behaviour (AP-21); the rows
 exist so the picker can show a provider before a key is typed.
@@ -40,7 +47,7 @@ from typing import Any, Final, Literal
 from jarvis.agent_chat.effort import default_effort, effort_levels
 from jarvis.brain.model_catalog import CURATED_MODELS
 
-Runner = Literal["api", "claude-cli", "codex-cli", "agy-cli", "grok-cli"]
+Runner = Literal["api", "brain", "claude-cli", "codex-cli", "agy-cli", "grok-cli"]
 
 
 @dataclass(frozen=True, slots=True)

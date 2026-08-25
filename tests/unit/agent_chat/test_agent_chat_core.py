@@ -444,3 +444,24 @@ def test_codex_reasoning_start_is_announced():
     ]
     kinds = [ev["kind"] for obj in lines for ev in translate_codex_line(obj, st)]
     assert kinds == ["reasoning_started", "reasoning"]
+
+
+# ---------------------------------------------------------------- runners
+
+
+def test_resolve_runner_per_surface(monkeypatch):
+    """The Jarvis surface runs API-key and local rows on the brain; CLI seats stay CLIs."""
+    from jarvis.agent_chat import service as svc_mod
+
+    monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: False)
+    assert svc_mod.resolve_runner("openai") == "api"
+    assert svc_mod.resolve_runner("openai", surface="jarvis") == "brain"
+    assert svc_mod.resolve_runner("ollama", surface="jarvis") == "brain"
+    assert svc_mod.resolve_runner("openai-codex", surface="jarvis") == "codex-cli"
+    assert svc_mod.resolve_runner("antigravity", surface="jarvis") == "agy-cli"
+    assert svc_mod.resolve_runner("claude-api") == "api"
+    assert svc_mod.resolve_runner("claude-api", surface="jarvis") == "brain"
+    monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: True)
+    assert svc_mod.resolve_runner("claude-api") == "claude-cli"
+    assert svc_mod.resolve_runner("claude-api", surface="jarvis") == "claude-cli"
+    assert svc_mod.resolve_runner("no-such-provider", surface="jarvis") == "unknown"

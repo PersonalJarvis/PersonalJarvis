@@ -24,7 +24,7 @@ from jarvis.plugins.brain._anthropic_base import _is_reasoning_model, reasoning_
 
 
 def test_every_runner_has_a_ladder_with_its_default_on_it():
-    for runner in ("claude-cli", "codex-cli", "agy-cli", "grok-cli", "api"):
+    for runner in ("claude-cli", "codex-cli", "agy-cli", "grok-cli", "api", "jarvis"):
         ids = permissions.permission_ids(runner)
         assert ids, runner
         assert permissions.default_permission(runner) in ids, runner
@@ -47,10 +47,35 @@ def test_every_runner_has_a_ladder_with_its_default_on_it():
         ("api", "acceptEdits", "accept-edits"),
         ("api", "", "ask"),
         ("api", "read-only", "plan"),
+        # The Jarvis ladder's words, folded onto every seat's own spelling.
+        ("claude-cli", "bypass", "bypassPermissions"),
+        ("claude-cli", "accept-edits", "acceptEdits"),
+        ("claude-cli", "ask", "default"),
+        ("codex-cli", "ask", "approve-for-me"),
+        ("codex-cli", "accept-edits", "auto"),
+        ("codex-cli", "bypass", "full-access"),
+        ("agy-cli", "bypass", "skip-permissions"),
+        ("agy-cli", "ask", "accept-edits"),
+        ("grok-cli", "accept-edits", "acceptEdits"),
+        ("grok-cli", "bypass", "bypassPermissions"),
+        ("jarvis", "", "ask"),
+        ("jarvis", "acceptEdits", "accept-edits"),
+        ("jarvis", "bypassPermissions", "bypass"),
+        ("jarvis", "plan", "plan"),
     ],
 )
 def test_normalize_permission_folds_across_runners(runner, picked, expected):
     assert permissions.normalize_permission(runner, picked) == expected
+
+
+def test_the_jarvis_ladder_is_the_three_stances_and_plan():
+    assert permissions.permission_ids("jarvis") == ("ask", "accept-edits", "plan", "bypass")
+    assert permissions.ladder_key("jarvis", "claude-cli") == "jarvis"
+    assert permissions.ladder_key("jarvis", "brain") == "jarvis"
+    assert permissions.ladder_key("agent", "claude-cli") == "claude-cli"
+    stances = [permissions.stance_of(m) for m in ("plan", "ask", "accept-edits", "bypass")]
+    assert stances == [0, 1, 2, 3]
+    assert permissions.stance_of("nonsense") == 1
 
 
 # ------------------------------------------------------------ planners

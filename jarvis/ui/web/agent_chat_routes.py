@@ -2,9 +2,10 @@
 
 Prefix ``/api/agent-chat``:
 
-    GET    /catalog                          provider rows + effort + permission ladders
-    GET    /sessions                         newest first
-    POST   /sessions                         create (provider, model, effort, cwd, permission_mode)
+    GET    /catalog?surface=                 provider rows + effort + permission ladders
+    GET    /sessions?surface=                newest first; ``surface`` narrows to one chat
+    POST   /sessions                         create (provider, model, effort, cwd,
+                                             permission_mode, surface)
     GET    /sessions/{id}                    session + its persisted events
     PATCH  /sessions/{id}                    title/provider/model/effort/cwd/permission_mode
     DELETE /sessions/{id}
@@ -26,7 +27,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -37,6 +38,7 @@ from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import (
     default_permission,
     is_permission_mode,
+    ladder_key,
     normalize_permission,
     permission_modes,
 )
@@ -50,6 +52,10 @@ from jarvis.agent_chat.service import (
 from jarvis.agent_chat.tools import shell_label
 
 log = logging.getLogger(__name__)
+
+#: The Pydantic twin of ``jarvis.agent_chat.store.SURFACES`` (AP-4; the parity
+#: test in tests/unit/agent_chat/test_agent_chat_surface_parity.py pins it).
+SurfaceName = Literal["jarvis", "agent"]
 
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 
@@ -67,6 +73,9 @@ class CreateSessionBody(BaseModel):
     #: "" = the runner's default mode (jarvis/agent_chat/permissions.py).
     permission_mode: str = ""
     title: str = ""
+    #: Which chat the session belongs to — the front page ("jarvis") or the
+    #: Agentic IDE's chat mode ("agent"). Fixed for the session's life.
+    surface: SurfaceName = "agent"
 
 
 class PatchSessionBody(BaseModel):
@@ -176,23 +185,24 @@ def _validate_cwd(raw: str | None) -> str | None:
 
 
 @router.get("/catalog")
-async def get_catalog(request: Request) -> dict[str, Any]:
+async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[str, Any]:
     """Provider rows for the composer's picker.
 
     Static shape from ``jarvis.agent_chat.catalog`` plus two live facts per
-    row: which runner answers on this machine and whether that runner's
-    binary is installed. Credential state is NOT repeated here — the
-    picker reads it from ``/api/jarvis-agent/status`` like the Agents tab,
-    so the two never disagree.
+    row: which runner answers on this machine (for ``surface``) and whether
+    that runner's binary is installed. Credential state is NOT repeated here
+    — the picker reads it from ``/api/jarvis-agent/status`` like the Agents
+    tab, so the two never disagree. On the Jarvis surface every row shows the
+    one Jarvis ladder (``permissions.JARVIS_LADDER``).
     """
     svc = _service(request)
     rows: list[dict[str, Any]] = []
     live_models = await _live_cli_models()
     for row in PROVIDER_ROWS:
         d = row.to_dict()
-        runner = resolve_runner(row.id)
+        runner = resolve_runner(row.id, surface=surface)
         d["runner"] = runner
-        d["cli_installed"] = _cli_installed(runner) if runner != "api" else None
+        d["cli_installed"] = _cli_installed(runner) if runner not in ("api", "brain") else None
         # A CLI that publishes its own model list (agy, Codex) overrides the
         # curated fallback with what THIS account can actually pick.
         if d["cli_installed"] and runner in live_models and live_models[runner]:
@@ -207,9 +217,11 @@ async def get_catalog(request: Request) -> dict[str, Any]:
                 d["models_source"] = "live"
         # The permission ladder is the RUNNER's (Claude Code's modes when the
         # CLI answers, the API runner's when only a key is there), so the
-        # composer shows the words the thing that runs actually understands.
-        d["permission_modes"] = [m.to_dict() for m in permission_modes(runner)]
-        d["default_permission_mode"] = default_permission(runner)
+        # composer shows the words the thing that runs actually understands —
+        # except on the Jarvis surface, where one ladder serves every seat.
+        ladder = ladder_key(surface, runner)
+        d["permission_modes"] = [m.to_dict() for m in permission_modes(ladder)]
+        d["default_permission_mode"] = default_permission(ladder)
         rows.append(d)
     return {
         "providers": rows,
@@ -222,10 +234,14 @@ async def get_catalog(request: Request) -> dict[str, Any]:
 
 
 @router.get("/sessions")
-async def list_sessions(request: Request, limit: int = Query(200, ge=1, le=1000)) -> dict[str, Any]:
+async def list_sessions(
+    request: Request,
+    limit: int = Query(200, ge=1, le=1000),
+    surface: SurfaceName | None = None,
+) -> dict[str, Any]:
     svc = _service(request)
     out = []
-    for s in svc.store.list_sessions(limit=limit):
+    for s in svc.store.list_sessions(limit=limit, surface=surface):
         d = s.to_dict()
         d["running"] = svc.is_running(s.session_id)
         out.append(d)
@@ -235,13 +251,13 @@ async def list_sessions(request: Request, limit: int = Query(200, ge=1, le=1000)
 @router.post("/sessions", status_code=201)
 async def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
-    runner = resolve_runner(body.provider)
-    if body.permission_mode and not is_permission_mode(runner, body.permission_mode):
+    ladder = ladder_key(body.surface, resolve_runner(body.provider, surface=body.surface))
+    if body.permission_mode and not is_permission_mode(ladder, body.permission_mode):
         raise HTTPException(
             status_code=400,
             detail=(
                 "permission_mode must be one of "
-                + ", ".join(m.id for m in permission_modes(runner))
+                + ", ".join(m.id for m in permission_modes(ladder))
             ),
         )
     cwd = _validate_cwd(body.cwd)
@@ -251,8 +267,9 @@ async def create_session(body: CreateSessionBody, request: Request) -> dict[str,
             model=body.model,
             effort=body.effort,
             cwd=cwd,
-            permission_mode=normalize_permission(runner, body.permission_mode),
+            permission_mode=normalize_permission(ladder, body.permission_mode),
             title=body.title,
+            surface=body.surface,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -296,20 +313,22 @@ async def patch_session(
         fields["cwd"] = _validate_cwd(body.cwd) or svc.default_cwd()
     current = svc.store.get_session(session_id)
     assert current is not None
-    runner = resolve_runner(fields.get("provider") or current.provider)
+    runner = resolve_runner(fields.get("provider") or current.provider, surface=current.surface)
+    ladder = ladder_key(current.surface, runner)
     if body.permission_mode is not None:
-        if not is_permission_mode(runner, body.permission_mode):
+        if not is_permission_mode(ladder, body.permission_mode):
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "permission_mode must be one of "
-                    + ", ".join(m.id for m in permission_modes(runner))
+                    + ", ".join(m.id for m in permission_modes(ladder))
                 ),
             )
         fields["permission_mode"] = body.permission_mode
     elif "provider" in fields:
-        # A provider change folds the old mode onto the new runner's ladder.
-        fields["permission_mode"] = normalize_permission(runner, current.permission_mode)
+        # A provider change folds the old mode onto the new runner's ladder
+        # (a no-op on the Jarvis surface, whose ladder is the same for all).
+        fields["permission_mode"] = normalize_permission(ladder, current.permission_mode)
     session = svc.store.update_session(session_id, **fields)
     assert session is not None
     changed = {k: v for k, v in fields.items() if k != "vendor_session"}

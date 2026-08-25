@@ -8,11 +8,13 @@ approval card. Cancel sets the turn's event and awaits the task; a runner
 that is mid-tool or mid-stream ends at the next boundary (the API loop
 between deltas, the CLI by killing the child).
 
-The runner is picked per turn from the provider row: a CLI-backed provider
-uses :mod:`runner_cli`; ``claude-api`` uses the CLI when the ``claude``
-binary is on PATH and the API otherwise; everything else uses
-:mod:`runner_api`. The choice is recorded in ``turn_started`` so the
-timeline can say what answered.
+The runner is picked per turn from the provider row AND the session's
+surface. On the agent surface a CLI-backed provider uses :mod:`runner_cli`,
+``claude-api`` uses the CLI when the ``claude`` binary is on PATH and the API
+otherwise, and everything else uses :mod:`runner_api`. On the Jarvis surface
+(the front page's chat) every API-key or local row runs on Jarvis' own brain
+instead (``brain``), and a CLI seat runs as Jarvis. The choice is recorded in
+``turn_started`` so the timeline can say what answered.
 """
 
 from __future__ import annotations
@@ -28,10 +30,10 @@ from typing import Any
 from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
-from jarvis.agent_chat.permissions import normalize_permission
+from jarvis.agent_chat.permissions import ladder_key, normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
-from jarvis.agent_chat.store import AgentChatSession, AgentChatStore
+from jarvis.agent_chat.store import DEFAULT_SURFACE, AgentChatSession, AgentChatStore
 
 log = logging.getLogger(__name__)
 
@@ -47,21 +49,31 @@ class NoSuchSession(KeyError):
     pass
 
 
-def resolve_runner(provider: str) -> str:
+def _claude_cli_installed() -> bool:
+    return bool(shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"))
+
+
+def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     """Which runner answers for ``provider`` on this machine, right now.
 
     ``claude-api`` is dual: Claude Code (the CLI) when it is installed — that
     is the subscription path and the one with the CLI's own tools — else the
-    Anthropic API in the in-process loop. Every other provider row names its
-    runner outright.
+    Anthropic API. Every other provider row names its runner outright.
+
+    On the Jarvis surface the API path is Jarvis' own brain (``brain``): the
+    same set of providers, driven by ``BrainManager.generate`` instead of the
+    coding agent's tool loop. The CLI seats keep their CLI runner there — a
+    subscription only pays for the vendor's own loop — and run as Jarvis
+    (see :mod:`jarvis.agent_chat.jarvis_harness`).
     """
+    api_runner = "brain" if surface == "jarvis" else "api"
     row = provider_row(provider)
     if row is None:
-        return "api" if supports_api_runner(provider) else "unknown"
+        return api_runner if supports_api_runner(provider) else "unknown"
     if row.id == "claude-api":
-        if shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"):
-            return "claude-cli"
-        return "api"
+        return "claude-cli" if _claude_cli_installed() else api_runner
+    if row.runner == "api":
+        return api_runner
     return row.runner
 
 
@@ -89,6 +101,12 @@ class AgentChatService:
         self._subscribers: dict[str, set[Subscriber]] = {}
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
+        # "Always allow" on the Jarvis surface: the tools a person waved through
+        # for the rest of the session, per session. Claude Code's "don't ask
+        # again for this tool" rather than a mode flip — the unified ladder has
+        # no word for "auto" and flipping to bypass would silence every later
+        # card, a mail send included.
+        self._always_allowed: dict[str, set[str]] = {}
 
     # ------------------------------------------------------------ sessions
 
@@ -104,11 +122,13 @@ class AgentChatService:
         cwd: str | None = None,
         permission_mode: str = "",
         title: str = "",
+        surface: str = DEFAULT_SURFACE,
     ) -> AgentChatSession:
         row = provider_row(provider)
         if row is None and not supports_api_runner(provider):
             raise ValueError(f"Unknown agent-chat provider: {provider!r}")
-        permission_mode = normalize_permission(resolve_runner(provider), permission_mode)
+        ladder = ladder_key(surface, resolve_runner(provider, surface=surface))
+        permission_mode = normalize_permission(ladder, permission_mode)
         eff = normalize_effort(provider, effort) if effort is not None else ""
         if effort is None:
             from jarvis.agent_chat.effort import default_effort
@@ -121,6 +141,7 @@ class AgentChatService:
             cwd=cwd or self.default_cwd(),
             permission_mode=permission_mode,
             title=title,
+            surface=surface,
         )
 
     def is_running(self, session_id: str) -> bool:
@@ -176,7 +197,7 @@ class AgentChatService:
 
         history = self.store.list_events(session_id)
         await self._emit(session_id, make_event("user_message", {"text": text}))
-        runner = resolve_runner(session.provider)
+        runner = resolve_runner(session.provider, surface=session.surface)
         await self._emit(
             session_id,
             make_event(
@@ -187,6 +208,7 @@ class AgentChatService:
                     "model": session.model,
                     "effort": normalize_effort(session.provider, session.effort),
                     "runner": runner,
+                    "surface": session.surface,
                 },
             ),
         )
@@ -333,9 +355,19 @@ class AgentChatService:
             ),
         )
         if decision == "allow_always":
-            self.store.update_session(session_id, permission_mode="auto")
-            await self._emit(session_id, make_event("session_updated", {"permission_mode": "auto"}))
+            session = self.store.get_session(session_id)
+            if session is not None and session.surface == "jarvis":
+                self._always_allowed.setdefault(session_id, set()).add(name)
+            else:
+                self.store.update_session(session_id, permission_mode="auto")
+                await self._emit(
+                    session_id, make_event("session_updated", {"permission_mode": "auto"})
+                )
         return decision
+
+    def always_allowed(self, session_id: str) -> set[str]:
+        """The tools waved through with "always allow" in this session (Jarvis surface)."""
+        return self._always_allowed.setdefault(session_id, set())
 
     def resolve_approval(self, session_id: str, approval_id: str, decision: str) -> bool:
         if decision not in DECISIONS:

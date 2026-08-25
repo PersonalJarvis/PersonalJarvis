@@ -6,8 +6,9 @@ asyncio loop; the lock keeps a future worker-thread caller safe). Two tables:
 
 ``agent_chat_sessions``
     One row per session — title, the provider / model / effort the composer
-    last used in it, the working directory, the permission mode and, for the
-    CLI runners, the vendor's own session id so a later turn can resume it.
+    last used in it, the working directory, the permission mode, the SURFACE
+    it belongs to (see :data:`SURFACES`) and, for the CLI runners, the
+    vendor's own session id so a later turn can resume it.
 
 ``agent_chat_events``
     The append-only event log (see :mod:`jarvis.agent_chat.events`), ordered
@@ -25,7 +26,7 @@ import threading
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from jarvis.agent_chat.events import is_transient, now_ms
 
@@ -42,7 +43,8 @@ CREATE TABLE IF NOT EXISTS agent_chat_sessions (
     created_ms       INTEGER NOT NULL,
     updated_ms       INTEGER NOT NULL,
     message_count    INTEGER NOT NULL DEFAULT 0,
-    preview          TEXT NOT NULL DEFAULT ''
+    preview          TEXT NOT NULL DEFAULT '',
+    surface          TEXT NOT NULL DEFAULT 'agent'
 );
 CREATE TABLE IF NOT EXISTS agent_chat_events (
     session_id  TEXT NOT NULL,
@@ -61,6 +63,19 @@ _PREVIEW_MAX_CHARS = 120
 # The permission ladders live in jarvis/agent_chat/permissions.py (per
 # runner); the store keeps whatever id the route validated.
 
+#: Which chat a session belongs to. ``"jarvis"`` is the front page's chat —
+#: Jarvis with a keyboard: the same assistant the microphone talks to, on the
+#: model the composer picked for this chat. ``"agent"`` is a plain coding-agent
+#: session (a vendor CLI or the API tool loop in a folder), which is what the
+#: Agentic IDE's chat mode runs. Rows written before the column existed were
+#: coding sessions, so the column's default is ``"agent"``. The TypeScript twin
+#: is ``AgentChatSurface`` in ``src/lib/agentChatApi.ts`` and the Pydantic one
+#: ``CreateSessionBody.surface`` in ``jarvis/ui/web/agent_chat_routes.py`` —
+#: ``tests/unit/agent_chat/test_agent_chat_surface_parity.py`` keeps the three
+#: in step (AP-4).
+SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent")
+DEFAULT_SURFACE: Final[str] = "agent"
+
 
 @dataclass(slots=True)
 class AgentChatSession:
@@ -76,6 +91,7 @@ class AgentChatSession:
     updated_ms: int
     message_count: int
     preview: str
+    surface: str = DEFAULT_SURFACE
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -102,7 +118,25 @@ class AgentChatStore:
             if self._path != ":memory:":
                 self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns a database from an older build lacks (same idiom as
+        ``jarvis/state/chat_store.py``). ``CREATE TABLE IF NOT EXISTS`` never
+        touches an existing table, so a column added to ``_SCHEMA`` reaches an
+        old file only through here."""
+        have = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(agent_chat_sessions)").fetchall()
+        }
+        if "surface" not in have:
+            # Every row from before the column is a coding session: the chat
+            # surface was the agent chat back then (see SURFACES).
+            self._conn.execute(
+                "ALTER TABLE agent_chat_sessions ADD COLUMN surface TEXT NOT NULL "
+                f"DEFAULT '{DEFAULT_SURFACE}'"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -120,7 +154,10 @@ class AgentChatStore:
         permission_mode: str = "",
         title: str = "",
         session_id: str | None = None,
+        surface: str = DEFAULT_SURFACE,
     ) -> AgentChatSession:
+        if surface not in SURFACES:
+            raise ValueError(f"surface must be one of {SURFACES}, not {surface!r}")
         sid = session_id or uuid.uuid4().hex
         now = now_ms()
         # The route validated the mode against the runner's ladder; the store
@@ -130,8 +167,8 @@ class AgentChatStore:
             self._conn.execute(
                 "INSERT INTO agent_chat_sessions (session_id, title, provider, model, effort, "
                 "cwd, permission_mode, vendor_session, created_ms, updated_ms, message_count, "
-                "preview) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, '')",
-                (sid, title, provider, model, effort, cwd, mode, now, now),
+                "preview, surface) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, '', ?)",
+                (sid, title, provider, model, effort, cwd, mode, now, now, surface),
             )
             self._conn.commit()
         session = self.get_session(sid)
@@ -145,18 +182,29 @@ class AgentChatStore:
             ).fetchone()
         return self._row_to_session(row) if row else None
 
-    def list_sessions(self, limit: int = 200) -> list[AgentChatSession]:
+    def list_sessions(
+        self, limit: int = 200, *, surface: str | None = None
+    ) -> list[AgentChatSession]:
+        """Newest first; ``surface`` narrows the list to one chat's sessions."""
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM agent_chat_sessions ORDER BY updated_ms DESC LIMIT ?",
-                (int(limit),),
-            ).fetchall()
+            if surface is None:
+                rows = self._conn.execute(
+                    "SELECT * FROM agent_chat_sessions ORDER BY updated_ms DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM agent_chat_sessions WHERE surface = ? "
+                    "ORDER BY updated_ms DESC LIMIT ?",
+                    (surface, int(limit)),
+                ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
     def update_session(self, session_id: str, **fields: Any) -> AgentChatSession | None:
         """Set any of title / provider / model / effort / cwd / permission_mode /
         vendor_session. Unknown keys are ignored so a route can pass its body
-        through after validation."""
+        through after validation. ``surface`` is deliberately NOT settable: a
+        session is born on one chat and stays there."""
         allowed = {
             "title",
             "provider",
@@ -282,4 +330,5 @@ class AgentChatStore:
             updated_ms=int(row["updated_ms"]),
             message_count=int(row["message_count"]),
             preview=row["preview"],
+            surface=str(row["surface"] or DEFAULT_SURFACE),
         )

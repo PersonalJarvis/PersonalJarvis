@@ -18,6 +18,16 @@ change nothing" (Claude Code's plan mode; a read-only sandbox on Codex; the
 read-only tool set on the API runner). The composer draws it as the
 Build | Plan switch next to the permission pill.
 
+The **Jarvis surface** (the front page's chat — Jarvis with a keyboard, see
+``jarvis.agent_chat.store.SURFACES``) shows ONE ladder whatever answers:
+``ask`` / ``accept-edits`` / ``bypass`` plus ``plan``, the three stances
+Claude Code's own modes express, in Claude Code's words (maintainer,
+2026-08-25). A CLI seat folds them onto its vendor spelling through
+:func:`normalize_permission`; the brain runner reads them as stances (see
+``jarvis.agent_chat.approval_bridge``). ``bypass`` never overrides the
+blacklist — ``RiskTierEvaluator.evaluate`` raises for a blacklisted call
+before any approval logic runs, in every stance.
+
 Single source of truth: the frontend receives the ladders through
 ``GET /api/agent-chat/catalog`` and never mirrors them (AP-4).
 """
@@ -178,13 +188,43 @@ _API: Final[tuple[PermissionMode, ...]] = (
     ),
 )
 
-# runner -> (ladder, default)
+_JARVIS: Final[tuple[PermissionMode, ...]] = (
+    PermissionMode(
+        "ask",
+        "Ask before acting",
+        "Reads run freely; edits, shell commands and Jarvis' consequential actions "
+        "show an approval card here in the chat before they run.",
+    ),
+    PermissionMode(
+        "accept-edits",
+        "Auto-accept edits",
+        "File writes and edits in the working folder run without asking; shell "
+        "commands and consequential actions still ask.",
+    ),
+    PermissionMode(
+        "plan",
+        "Plan",
+        "Read and plan only — nothing is changed.",
+    ),
+    PermissionMode(
+        "bypass",
+        "Bypass permissions",
+        "Nothing asks. Blacklisted actions stay blocked.",
+    ),
+)
+
+#: The ladder key of the Jarvis surface — not a runner, but the one word the
+#: front page's composer shows whichever runner answers.
+JARVIS_LADDER: Final[str] = "jarvis"
+
+# runner (or JARVIS_LADDER) -> (ladder, default)
 _LADDERS: Final[dict[str, tuple[tuple[PermissionMode, ...], str]]] = {
     "claude-cli": (_CLAUDE, "acceptEdits"),
     "codex-cli": (_CODEX, "auto"),
     "agy-cli": (_AGY, "accept-edits"),
     "grok-cli": (_GROK, "acceptEdits"),
     "api": (_API, "ask"),
+    JARVIS_LADDER: (_JARVIS, "ask"),
 }
 
 # The universal stance ordering: every ladder is a sub-sequence of this once
@@ -205,6 +245,7 @@ _STANCE: Final[dict[str, int]] = {
     "full-access": 3,
     "bypassPermissions": 3,
     "skip-permissions": 3,
+    "bypass": 3,
 }
 
 
@@ -218,8 +259,20 @@ def _stance(runner: str, mode: str) -> int:
     return _STANCE.get(mode, 1)
 
 
+def ladder_key(surface: str, runner: str) -> str:
+    """Which ladder a session shows: the runner's own on the agent surface,
+    the one Jarvis ladder on the front page's chat."""
+    return JARVIS_LADDER if surface == "jarvis" else runner
+
+
+def stance_of(mode: str) -> int:
+    """The runner-independent stance of a mode: 0 reads only, 1 ask first,
+    2 edits yes / commands ask, 3 everything. Unknown words count as "ask"."""
+    return _STANCE.get((mode or "").strip(), 1)
+
+
 def permission_modes(runner: str) -> tuple[PermissionMode, ...]:
-    """The ladder the composer offers for ``runner``."""
+    """The ladder the composer offers for ``runner`` (or the Jarvis ladder)."""
     return _LADDERS.get(runner, _LADDERS["api"])[0]
 
 
@@ -267,10 +320,13 @@ def normalize_permission(runner: str, mode: str | None) -> str:
 
 
 __all__ = [
+    "JARVIS_LADDER",
     "PermissionMode",
     "default_permission",
     "is_permission_mode",
+    "ladder_key",
     "normalize_permission",
     "permission_ids",
     "permission_modes",
+    "stance_of",
 ]
