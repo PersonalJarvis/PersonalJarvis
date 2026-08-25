@@ -43,8 +43,7 @@ import {
   setRole,
   startModelPull,
   useInvalidateLocalModels,
-  useInventory,
-  useRoles,
+  useOverview,
   useSetRole,
   type LocalModelRole,
   type RoleRow,
@@ -120,8 +119,17 @@ export function RolesPanel({
   variant = "ledger",
 }: RolesPanelProps) {
   const t = useT();
-  const roles = useRoles(providerId);
-  const inventory = useInventory(providerId);
+  // Roles and inventory come from the one overview round-trip (painted
+  // first from the snapshot); the shapes below keep the rest of the panel
+  // reading as before.
+  const overview = useOverview(providerId);
+  const roles = {
+    data: overview.data?.roles,
+    isLoading: overview.isLoading,
+    isError: overview.isError,
+    error: overview.error,
+  };
+  const inventory = { data: overview.data?.inventory };
   const { providers } = useProviders();
   const setRoleMutation = useSetRole(providerId);
   const invalidate = useInvalidateLocalModels(providerId);

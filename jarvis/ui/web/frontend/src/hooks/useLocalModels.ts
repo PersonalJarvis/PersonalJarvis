@@ -9,8 +9,18 @@
  * The pull helpers (`startModelPull`, `modelPullStatus`) stay in
  * `useProviders.ts` and are re-exported here so a panel imports one module.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
 
+import {
+  readOverviewSnapshot,
+  writeOverviewSnapshot,
+} from "../lib/localModelsSnapshot";
 import type { OllamaModelOptions } from "../lib/ollamaModelOptions";
 import type {
   LibraryModel,
@@ -332,8 +342,38 @@ export interface EnvGuideResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Wire types — overview (one round-trip for the whole Simple page)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirror of `OverviewResponse` in `jarvis/ui/web/local_models_routes.py`
+ * (`GET …/local-models/overview`). A Python parity test reads these six
+ * field names — keep them verbatim.
+ */
+export interface OverviewResponse {
+  server: ServerResponse;
+  roles: RolesResponse;
+  inventory: InventoryResponse;
+  recommended: CatalogRecommendedResponse;
+  /** "live" = built for this request; "cache" = a stored snapshot, refresh underway. */
+  source: "live" | "cache";
+  /** Epoch seconds the payload was built. */
+  fetched_at: number;
+}
+
+// ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
+
+/** A non-2xx answer, with the status kept so callers can branch on it. */
+export class HttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
 
 /** Long enough for a cold /api/show sweep over a big inventory or a registry read. */
 const READ_TIMEOUT_MS = 20_000;
@@ -360,7 +400,8 @@ async function request<T>(
     const res = await fetch(url, { ...init, signal: controller.signal });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(
+      throw new HttpError(
+        res.status,
         (body as { detail?: string }).detail ?? `HTTP ${res.status}`,
       );
     }
@@ -636,12 +677,48 @@ export async function getEnvGuide(
   return request(`${base(providerId)}/server/env-guide${qs}`);
 }
 
+// overview
+
+/**
+ * The whole Simple page in one round-trip. A backend that predates the route
+ * (a CLI-only install that lags the UI bundle) answers 404: then the four
+ * legacy reads are composed here so the page still paints — that fallback is
+ * permanent, not a migration shim.
+ */
+export async function getOverview(
+  providerId: string,
+  fresh = false,
+): Promise<OverviewResponse> {
+  try {
+    return await request<OverviewResponse>(
+      `${base(providerId)}/overview${fresh ? "?fresh=1" : ""}`,
+    );
+  } catch (err) {
+    if (!(err instanceof HttpError) || err.status !== 404) throw err;
+  }
+  const [server, roles, inventory, recommended] = await Promise.all([
+    getServer(providerId),
+    getRoles(providerId),
+    getInventory(providerId),
+    getCatalogRecommended(providerId),
+  ]);
+  return {
+    server,
+    roles,
+    inventory,
+    recommended,
+    source: "live",
+    fetched_at: Math.floor(Date.now() / 1000),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------
 
 export const localModelsKeys = {
   all: ["local-models"] as const,
+  overview: (p: string) => ["local-models", p, "overview"] as const,
   inventory: (p: string) => ["local-models", p, "inventory"] as const,
   model: (p: string, name: string) =>
     ["local-models", p, "inventory", name] as const,
@@ -681,6 +758,72 @@ export const localModelsKeys = {
 // Query hooks
 // ---------------------------------------------------------------------------
 
+/**
+ * How long an unused section query stays in memory. A tab switch inside the
+ * section, or leaving and coming back within half an hour, must reopen warm
+ * instead of re-sweeping the server.
+ */
+export const SECTION_GC_MS = 30 * 60_000;
+
+/** Options for the overview query — shared by `useOverview` and the idle prefetch. */
+export function overviewQueryOptions(providerId: string) {
+  return {
+    queryKey: localModelsKeys.overview(providerId),
+    queryFn: () => getOverview(providerId),
+    staleTime: 5_000,
+    gcTime: SECTION_GC_MS,
+  };
+}
+
+/**
+ * The Simple page's data, painted first from the on-disk snapshot and
+ * refreshed at once. While the snapshot is on screen and the refresh runs,
+ * `data.source === "cache"` and `isFetching` is true — the panel shows
+ * "Checking…". Every fresh payload is written back to the snapshot and
+ * seeds the legacy per-section queries so Catalogue / Models / Tune open warm.
+ */
+export function useOverview(providerId: string | undefined, enabled = true) {
+  const qc = useQueryClient();
+  const id = providerId ?? "";
+  const snapshot = useMemo(
+    () => (providerId ? readOverviewSnapshot(providerId) : null),
+    [providerId],
+  );
+  const query = useQuery({
+    ...overviewQueryOptions(id),
+    enabled: enabled && !!providerId,
+    initialData: snapshot ?? undefined,
+    initialDataUpdatedAt: snapshot ? snapshot.fetched_at * 1000 : undefined,
+    placeholderData: keepPreviousData,
+    refetchInterval: 15_000,
+  });
+
+  const data = query.data;
+  useEffect(() => {
+    if (!providerId || !data) return;
+    const updatedAt = data.fetched_at * 1000;
+    qc.setQueryData(localModelsKeys.server(providerId), data.server, {
+      updatedAt,
+    });
+    qc.setQueryData(localModelsKeys.roles(providerId), data.roles, {
+      updatedAt,
+    });
+    qc.setQueryData(localModelsKeys.inventory(providerId), data.inventory, {
+      updatedAt,
+    });
+    qc.setQueryData(
+      localModelsKeys.recommended(providerId),
+      data.recommended,
+      { updatedAt },
+    );
+    // The snapshot we painted from is already on disk.
+    if (data !== snapshot && data.source === "live")
+      writeOverviewSnapshot(providerId, data);
+  }, [data, providerId, qc, snapshot]);
+
+  return query;
+}
+
 /** Every download with facts, loaded state and the roles using it. Polls slowly. */
 export function useInventory(providerId: string | undefined, enabled = true) {
   return useQuery({
@@ -689,6 +832,7 @@ export function useInventory(providerId: string | undefined, enabled = true) {
     enabled: enabled && !!providerId,
     refetchInterval: 15_000,
     staleTime: 5_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -701,6 +845,7 @@ export function useInventoryModel(
     queryFn: () => getInventoryModel(providerId as string, name as string),
     enabled: !!providerId && !!name,
     staleTime: 30_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -710,6 +855,7 @@ export function useRoles(providerId: string | undefined, enabled = true) {
     queryFn: () => getRoles(providerId as string),
     enabled: enabled && !!providerId,
     staleTime: 10_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -722,6 +868,7 @@ export function useModelOptions(
     queryFn: () => getModelOptions(providerId as string, name as string),
     enabled: !!providerId && !!name,
     staleTime: 30_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -734,6 +881,7 @@ export function useSuggestedOptions(
     queryFn: () => getSuggestedOptions(providerId as string, name as string),
     enabled: !!providerId && !!name,
     staleTime: 5 * 60_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -748,6 +896,7 @@ export function useCatalog(
     queryFn: () => searchCatalog(providerId as string, query),
     enabled: enabled && !!providerId,
     staleTime: 10 * 60_000,
+    gcTime: SECTION_GC_MS,
     placeholderData: (prev) => prev,
   });
 }
@@ -761,6 +910,7 @@ export function useCatalogTags(
     queryFn: () => getCatalogTags(providerId as string, name as string),
     enabled: !!providerId && !!name,
     staleTime: 10 * 60_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -773,6 +923,7 @@ export function useCatalogRecommended(
     queryFn: () => getCatalogRecommended(providerId as string),
     enabled: enabled && !!providerId,
     staleTime: 60_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -782,6 +933,7 @@ export function useHfEnabled(providerId: string | undefined) {
     queryFn: () => getHfEnabled(providerId as string),
     enabled: !!providerId,
     staleTime: 60_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -797,6 +949,7 @@ export function useHfSearch(
     queryFn: () => searchHf(providerId as string, q, sort),
     enabled: enabled && !!providerId && q.trim().length > 0,
     staleTime: 10 * 60_000,
+    gcTime: SECTION_GC_MS,
     placeholderData: (prev) => prev,
   });
 }
@@ -812,6 +965,7 @@ export function useHfFiles(
       getHfFiles(providerId as string, user as string, repo as string),
     enabled: !!providerId && !!user && !!repo,
     staleTime: 10 * 60_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -822,6 +976,7 @@ export function useServer(providerId: string | undefined, enabled = true) {
     enabled: enabled && !!providerId,
     refetchInterval: 15_000,
     staleTime: 5_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -835,6 +990,7 @@ export function useServerLog(
     queryFn: () => getServerLog(providerId as string, lines),
     enabled: enabled && !!providerId,
     refetchInterval: 10_000,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -844,6 +1000,7 @@ export function useEnvGuide(providerId: string | undefined, os?: EnvGuideOs) {
     queryFn: () => getEnvGuide(providerId as string, os),
     enabled: !!providerId,
     staleTime: Infinity,
+    gcTime: SECTION_GC_MS,
   });
 }
 
@@ -869,6 +1026,9 @@ export function useSetRole(providerId: string | undefined) {
       });
       void qc.invalidateQueries({
         queryKey: localModelsKeys.inventory(providerId ?? ""),
+      });
+      void qc.invalidateQueries({
+        queryKey: localModelsKeys.overview(providerId ?? ""),
       });
     },
   });
@@ -914,6 +1074,9 @@ export function useUnloadModel(providerId: string | undefined) {
       });
       void qc.invalidateQueries({
         queryKey: localModelsKeys.server(providerId ?? ""),
+      });
+      void qc.invalidateQueries({
+        queryKey: localModelsKeys.overview(providerId ?? ""),
       });
     },
   });
@@ -962,6 +1125,9 @@ export function useStopServer(providerId: string | undefined) {
       void qc.invalidateQueries({
         queryKey: localModelsKeys.inventory(providerId ?? ""),
       });
+      void qc.invalidateQueries({
+        queryKey: localModelsKeys.overview(providerId ?? ""),
+      });
     },
   });
 }
@@ -971,6 +1137,7 @@ export function useIdleRelease(providerId: string | undefined) {
     queryKey: localModelsKeys.idleRelease(providerId ?? ""),
     queryFn: () => getIdleRelease(providerId as string),
     enabled: !!providerId,
+    gcTime: SECTION_GC_MS,
   });
 }
 

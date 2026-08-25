@@ -35,6 +35,11 @@ import {
   OverviewPanel,
   formatGigabytes,
 } from "@/views/local-models/OverviewPanel";
+import type { OverviewResponse } from "@/hooks/useLocalModels";
+import {
+  snapshotKey,
+  writeOverviewSnapshot,
+} from "@/lib/localModelsSnapshot";
 
 const BASE = "/api/providers/ollama/local-models";
 
@@ -122,6 +127,9 @@ interface Fixture {
   models?: Array<{ name: string }>;
   server?: Record<string, unknown>;
   accelerator_gb?: number;
+  /** "404" = a backend without the route (the four legacy reads compose);
+   *  "live" = the route answers with the composed payload. */
+  overview?: "404" | "live";
 }
 
 function installFetchMock(fx: Fixture = {}) {
@@ -145,40 +153,57 @@ function installFetchMock(fx: Fixture = {}) {
   }));
   const ok = (body: unknown) =>
     ({ ok: true, status: 200, json: async () => body }) as Response;
+  const rolesBody = {
+    provider: "ollama",
+    server: "",
+    roles: fx.roles ?? ROLES,
+    error: null,
+  };
+  const inventoryBody = {
+    provider: "ollama",
+    server: "",
+    models,
+    running: [],
+    disk_bytes: 0,
+    loaded_vram_bytes: 0,
+    error: null,
+  };
+  const serverBody = fx.server ?? SERVER;
+  const recommendedBody = {
+    server: "",
+    server_reachable: true,
+    message: "",
+    memory_gb: 32,
+    accelerator_gb: fx.accelerator_gb ?? 16,
+    accelerator_source: "nvidia-smi",
+    models: [],
+    installed: [],
+    curated_reviewed_on: "2026-08-24",
+  };
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (url === `${BASE}/roles`)
+      if (url.startsWith(`${BASE}/overview`)) {
+        if ((fx.overview ?? "404") === "404")
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({ detail: "Not Found" }),
+          } as Response;
         return ok({
-          provider: "ollama",
-          server: "",
-          roles: fx.roles ?? ROLES,
-          error: null,
+          server: serverBody,
+          roles: rolesBody,
+          inventory: inventoryBody,
+          recommended: recommendedBody,
+          source: "live",
+          fetched_at: 1_700_000_000,
         });
-      if (url === `${BASE}/inventory`)
-        return ok({
-          provider: "ollama",
-          server: "",
-          models,
-          running: [],
-          disk_bytes: 0,
-          loaded_vram_bytes: 0,
-          error: null,
-        });
-      if (url === `${BASE}/server`) return ok(fx.server ?? SERVER);
-      if (url === `${BASE}/catalog/recommended`)
-        return ok({
-          server: "",
-          server_reachable: true,
-          message: "",
-          memory_gb: 32,
-          accelerator_gb: fx.accelerator_gb ?? 16,
-          accelerator_source: "nvidia-smi",
-          models: [],
-          installed: [],
-          curated_reviewed_on: "2026-08-24",
-        });
+      }
+      if (url === `${BASE}/roles`) return ok(rolesBody);
+      if (url === `${BASE}/inventory`) return ok(inventoryBody);
+      if (url === `${BASE}/server`) return ok(serverBody);
+      if (url === `${BASE}/catalog/recommended`) return ok(recommendedBody);
       if (url.startsWith(`${BASE}/roles/`) && method === "PUT")
         return ok({
           ok: true,
@@ -229,7 +254,37 @@ function renderPanel(props: Partial<Parameters<typeof OverviewPanel>[0]> = {}) {
   );
 }
 
+function snapshotPayload(): OverviewResponse {
+  return {
+    server: { ...SERVER, host_kind: "local", disk_bytes: 80 * 1024 ** 3 },
+    roles: { provider: "ollama", server: "", roles: ROLES, error: null },
+    inventory: {
+      provider: "ollama",
+      server: "",
+      models: [],
+      running: [],
+      disk_bytes: 0,
+      loaded_vram_bytes: 0,
+      error: null,
+    },
+    recommended: {
+      server: "",
+      server_reachable: true,
+      message: "",
+      memory_gb: 32,
+      accelerator_gb: 15.9,
+      accelerator_source: "nvidia-smi",
+      models: [],
+      installed: [],
+      curated_reviewed_on: "2026-08-24",
+    } as OverviewResponse["recommended"],
+    source: "live",
+    fetched_at: 1_700_000_000,
+  } as OverviewResponse;
+}
+
 beforeEach(() => {
+  window.localStorage.removeItem(snapshotKey("ollama"));
   mockProviders.providers = [
     { id: "ollama", label: "Ollama", tier: "brain", active: true },
   ];
@@ -247,6 +302,71 @@ describe("formatGigabytes", () => {
     expect(formatGigabytes(12 * 1024 ** 3)).toBe("12 GB");
     expect(formatGigabytes(3.45 * 1024 ** 3)).toBe("3.5 GB");
     expect(formatGigabytes(50 * 1024 ** 2)).toBe("50 MB");
+  });
+});
+
+describe("OverviewPanel paint-first", () => {
+  it("paints the tiles synchronously from the snapshot while the fetch never answers", () => {
+    writeOverviewSnapshot("ollama", snapshotPayload());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+    renderPanel();
+
+    // No await: the snapshot is on screen in the first render.
+    const disk = screen.getByRole("group", {
+      name: "local_models.overview.disk",
+    });
+    expect(disk.textContent).toContain("80 GB");
+    expect(screen.getByTestId("overview-status").textContent).toContain(
+      "local_models.overview.status_runningOllama|0.32.15",
+    );
+    expect(screen.getByTestId("role-row-chat")).toBeDefined();
+    // The refresh is underway, the snapshot is what is shown -> "Checking…".
+    expect(screen.getByTestId("overview-checking")).toBeDefined();
+  });
+
+  it("drops 'Checking…' and writes the snapshot once live data arrives", async () => {
+    writeOverviewSnapshot("ollama", snapshotPayload());
+    installFetchMock({ overview: "live" });
+    renderPanel();
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("overview-checking")).toBeNull(),
+    );
+    const disk = screen.getByRole("group", {
+      name: "local_models.overview.disk",
+    });
+    expect(disk.textContent).toContain("12 GB");
+    const stored = JSON.parse(
+      String(window.localStorage.getItem(snapshotKey("ollama"))),
+    );
+    expect(stored.data.server.disk_bytes).toBe(12 * 1024 ** 3);
+  });
+
+  it("reads the overview route when the backend has it", async () => {
+    const fetchMock = installFetchMock({ overview: "live" });
+    renderPanel();
+
+    await screen.findByTestId("role-row-chat");
+    const urls = fetchMock.mock.calls.map(([u]) => String(u));
+    expect(urls).toContain(`${BASE}/overview`);
+    expect(urls).not.toContain(`${BASE}/roles`);
+    expect(urls).not.toContain(`${BASE}/server`);
+  });
+
+  it("composes the four legacy reads when the route answers 404", async () => {
+    const fetchMock = installFetchMock({ overview: "404" });
+    renderPanel();
+
+    await screen.findByTestId("role-row-chat");
+    const urls = fetchMock.mock.calls.map(([u]) => String(u));
+    expect(urls).toContain(`${BASE}/overview`);
+    expect(urls).toContain(`${BASE}/roles`);
+    expect(urls).toContain(`${BASE}/inventory`);
+    expect(urls).toContain(`${BASE}/server`);
+    expect(urls).toContain(`${BASE}/catalog/recommended`);
   });
 });
 

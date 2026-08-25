@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   deleteModel,
   getModelOptions,
+  getOverview,
   hfPullName,
   localModelsKeys,
   searchCatalog,
@@ -21,6 +22,48 @@ function stubFetch(body: unknown, ok = true, status = 200) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("getOverview", () => {
+  it("returns the route's payload when the backend has it", async () => {
+    const body = {
+      server: {},
+      roles: {},
+      inventory: {},
+      recommended: {},
+      source: "cache",
+      fetched_at: 123,
+    };
+    const fetchMock = stubFetch(body);
+    const got = await getOverview("ollama", true);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "/api/providers/ollama/local-models/overview?fresh=1",
+    );
+    expect(got).toEqual(body);
+  });
+
+  it("composes the four legacy reads on 404 and rethrows anything else", async () => {
+    const legacy: Record<string, unknown> = {
+      "/api/providers/ollama/local-models/server": { running: true },
+      "/api/providers/ollama/local-models/roles": { roles: [] },
+      "/api/providers/ollama/local-models/inventory": { models: [] },
+      "/api/providers/ollama/local-models/catalog/recommended": { models: [] },
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/overview"))
+        return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => legacy[url] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const got = await getOverview("ollama");
+    expect(got.source).toBe("live");
+    expect(got.server).toEqual({ running: true });
+    expect(got.fetched_at).toBeGreaterThan(1_700_000_000);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    stubFetch({ detail: "boom" }, false, 500);
+    await expect(getOverview("ollama")).rejects.toThrow("boom");
+  });
 });
 
 describe("useLocalModels fetch helpers", () => {

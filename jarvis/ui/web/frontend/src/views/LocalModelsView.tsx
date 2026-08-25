@@ -27,6 +27,10 @@ import {
 import { useInventory } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
 import {
+  LOCAL_MODELS_MARK_MOUNT,
+  markLocalModels,
+} from "@/lib/localModelsPerf";
+import {
   clearLocalModelsSeed,
   readLocalModelsSeed,
   writeLocalModelsSeed,
@@ -111,6 +115,9 @@ export function LocalModelsView() {
   useLocaleChunk("local_models");
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const { providers, loading } = useProviders();
+  useEffect(() => {
+    markLocalModels(LOCAL_MODELS_MARK_MOUNT);
+  }, []);
 
   // The one server that can download models. Capability, not provider id.
   const descriptor = useMemo(

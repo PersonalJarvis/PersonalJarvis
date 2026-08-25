@@ -16,7 +16,7 @@
  * Props take `providerId` — the id of the card that declares
  * `supports_model_pull` — never a provider name.
  */
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   AlertCircle,
   Cpu,
@@ -26,14 +26,18 @@ import {
   Sparkles,
 } from "lucide-react";
 
-import { SoftButton, StatTile } from "@/components/extensions/primitives";
 import {
-  useCatalogRecommended,
-  useInventory,
-  useServer,
-} from "@/hooks/useLocalModels";
+  SoftButton,
+  StatTile,
+  StatusDot,
+} from "@/components/extensions/primitives";
+import { useOverview } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
 import { fill, useT } from "@/i18n";
+import {
+  LOCAL_MODELS_MARK_FIRST_DATA,
+  markLocalModels,
+} from "@/lib/localModelsPerf";
 import { cn } from "@/lib/utils";
 
 import { formatExpiry } from "./localModelsFormat";
@@ -68,12 +72,22 @@ export function OverviewPanel({
   onReportProblem,
 }: OverviewPanelProps) {
   const t = useT();
-  const server = useServer(providerId);
-  const shortlist = useCatalogRecommended(providerId);
-  const inventory = useInventory(providerId);
+  const overview = useOverview(providerId);
   const { providers } = useProviders();
 
-  const s = server.data;
+  // One round-trip (or the painted snapshot) feeds every tile.
+  const s = overview.data?.server;
+  const shortlist = { data: overview.data?.recommended };
+  const inventory = { data: overview.data?.inventory };
+  const server = { isLoading: overview.isLoading, isError: overview.isError };
+  const checking = overview.isFetching && overview.data?.source === "cache";
+
+  const marked = useRef(false);
+  useEffect(() => {
+    if (marked.current || !overview.data) return;
+    marked.current = true;
+    markLocalModels(LOCAL_MODELS_MARK_FIRST_DATA);
+  }, [overview.data]);
   const remote = s?.host_kind === "remote";
   const serverLabel =
     providers.find((p) => p.id === providerId)?.label ||
@@ -229,6 +243,15 @@ export function OverviewPanel({
             </span>
           </>
         )}
+        {checking && (
+          <span className="ml-1" data-testid="overview-checking">
+            <StatusDot
+              tone="busy"
+              pulse
+              label={t("local_models.overview.checking")}
+            />
+          </span>
+        )}
       </p>
 
       {(onBrowse || onOpenAssistant || onReportProblem) && (
@@ -284,7 +307,7 @@ export function OverviewPanel({
           value={gpuValue}
           hint={gpuHint}
           tone="primary"
-          loading={shortlist.isLoading}
+          loading={server.isLoading}
         />
         <StatTile
           icon={<Layers className="h-3.5 w-3.5" />}

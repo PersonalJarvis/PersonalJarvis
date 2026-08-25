@@ -1,12 +1,16 @@
 import {
   lazy,
   Suspense,
+  useContext,
   useEffect,
   useState,
   type ComponentType,
   type LazyExoticComponent,
 } from "react";
+import { QueryClientContext } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { overviewQueryOptions } from "@/hooks/useLocalModels";
+import { readLocalModelsSeed } from "@/lib/localModelsSeed";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -204,14 +208,29 @@ function scheduleIdle(task: () => void): () => void {
  * simply fetched again on navigation, where Suspense handles it.
  */
 function useIdleViewPrefetch(): void {
+  // Optional on purpose: the shell renders without a QueryClient in some
+  // tests, and the data warm-up is a bonus, never a requirement.
+  const queryClient = useContext(QueryClientContext);
   useEffect(() => {
     let cancelled = false;
     let cancelSlot: (() => void) | null = null;
     let index = 0;
+    const queue = [...prefetchQueue];
+    if (queryClient) {
+      // After the chunks: the Local models overview, when a previous open
+      // left a seed — so the section paints with server truth, not just the
+      // on-disk snapshot, the moment it is opened.
+      queue.push(() => {
+        const seed = readLocalModelsSeed();
+        return seed
+          ? queryClient.prefetchQuery(overviewQueryOptions(seed))
+          : Promise.resolve();
+      });
+    }
 
     const pump = () => {
-      if (cancelled || index >= prefetchQueue.length) return;
-      const loader = prefetchQueue[index++];
+      if (cancelled || index >= queue.length) return;
+      const loader = queue[index++];
       void loader()
         .catch(() => undefined)
         .then(() => {
@@ -225,7 +244,7 @@ function useIdleViewPrefetch(): void {
       cancelled = true;
       cancelSlot?.();
     };
-  }, []);
+  }, [queryClient]);
 }
 
 /** Quiet time before a loading section admits it is loading. */
