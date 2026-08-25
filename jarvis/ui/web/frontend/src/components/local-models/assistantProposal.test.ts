@@ -114,3 +114,14 @@ describe("matchesConfirmedStep", () => {
     expect(matchesConfirmedStep({ name: "lm_pull", input: { model: "nomic-embed-text" } }, withoutEmbed)).toBe(false);
   });
 });
+
+
+describe("stripProposalBlocks", () => {
+  it("removes the fenced plan and keeps the words around it", async () => {
+    const { stripProposalBlocks } = await import("./assistantProposal");
+    const text = 'Here is the plan:\n\n```jarvis-proposal\n{"version":1,"steps":[]}\n```\n\nGeorge';
+    expect(stripProposalBlocks(text)).toBe("Here is the plan:\n\nGeorge");
+    expect(stripProposalBlocks("no plan here")).toBe("no plan here");
+    expect(stripProposalBlocks('cut ```jarvis-proposal\n{"ver')).toBe("cut");
+  });
+});

@@ -266,3 +266,13 @@ export function matchesConfirmedStep(
       return false;
   }
 }
+
+/**
+ * `text` without its ```jarvis-proposal block(s): the plan is shown as the
+ * checklist card, so the raw JSON has no business in the chat bubble. A block
+ * with no closing fence (a cut-off stream) is stripped to the end of the text.
+ */
+export function stripProposalBlocks(text: string): string {
+  const re = /```jarvis-proposal[^\n]*\n[\s\S]*?(?:```|$)/g;
+  return text.replace(re, "").replace(/\n{3,}/g, "\n\n").trim();
+}

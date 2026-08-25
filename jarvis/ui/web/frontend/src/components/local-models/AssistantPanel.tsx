@@ -45,6 +45,7 @@ import {
   matchesConfirmedStep,
   proposalFromText,
   proposalHash,
+  stripProposalBlocks,
   type Proposal,
   type ProposalStep,
 } from "./assistantProposal";
@@ -66,7 +67,9 @@ function lastAssistantText(items: readonly { type: string }[]): { text: string; 
     const item = items[i];
     if (item.type !== "turn") continue;
     const turn = item as TurnItem;
-    if (turn.status !== "done") return null;
+    // A turn still streaming has no plan yet; the previous finished one keeps
+    // its card instead of the card blinking out for the length of a follow-up.
+    if (turn.status !== "done") continue;
     const text = turn.blocks
       .filter((b): b is TextBlock => b.kind === "text")
       .map((b) => b.text)
@@ -193,6 +196,26 @@ export function AssistantPanel({
   useEffect(() => {
     if (!running) void loadHealth();
   }, [running, loadHealth]);
+
+  // The chat shows the words, the card shows the plan: the raw JSON block is
+  // stripped from every finished turn's text before the timeline sees it.
+  const displayItems = useMemo(
+    () =>
+      items.map((item) => {
+        if (item.type !== "turn") return item;
+        const turn = item as TurnItem;
+        if (!turn.blocks.some((b) => b.kind === "text" && /```jarvis-proposal/.test((b as TextBlock).text))) {
+          return item;
+        }
+        return {
+          ...turn,
+          blocks: turn.blocks.map((b) =>
+            b.kind === "text" ? { ...b, text: stripProposalBlocks((b as TextBlock).text) } : b,
+          ),
+        };
+      }),
+    [items],
+  );
 
   // The plan in the last finished turn, if any.
   const proposal: { value: Proposal; turnId: string } | null = useMemo(() => {
@@ -336,7 +359,7 @@ export function AssistantPanel({
         {items.length > 0 && (
           <div className="flex max-h-[60vh] flex-col gap-5 overflow-y-auto pr-1" data-testid="assistant-timeline">
             <AgentTimeline
-              items={items}
+              items={displayItems}
               assistantName={assistantName}
               providerLabel={providerLabel}
               onDecide={onDecide}
