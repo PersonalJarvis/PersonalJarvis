@@ -259,6 +259,36 @@ experiences today.
 
 | P-37 | Low | Dev instance | A second desktop app from the same checkout (`--instance dev` / `JARVIS_INSTANCE=dev`, see `docs/dev-instance.md`) is built OS-neutral — own `data-dev/`, ports +100, own single-instance lock, window title, DEV-badged icon, no wake word / global hotkeys / chat channels / autostart / on-screen overlay (the dev app boots the NullOverlay at runtime and its overlay-style route answers 409, so a pick there can never rewrite the shared `jarvis.toml`) — but only the WINDOWS identity layer has been run live: AUMID `PersonalJarvis.PersonalJarvis.Dev`, Start-Menu shortcut `Personal Jarvis Dev.lnk`, branded `PersonalJarvisDev.exe`, tray tooltip. Linux gets its own `.desktop` entry + `StartupWMClass` through the same code path (unverified live). macOS has NO separate bundle for the dev instance: the dock shows the default app's bundle icon, and an in-app restart of the dev instance re-enters through the interpreter directly (`build_launch_command` skips the LaunchServices bundle for a non-default instance, because `open -a` would not carry `JARVIS_INSTANCE` and would bring it back as a second default app) — so the restarted dev app has no TCC attachment of its own | `jarvis/core/instance.py`, `jarvis/ui/icon_utils.py` (instance-bound constants), `jarvis/ui/relauncher.py::build_launch_command` | Windows: full parity, verified live. Linux desktop: expected parity (title, icon, tray, data, ports), entry unverified. macOS: functional (data, ports, title, ambient duties, in-app restart), dock icon degrades as described — the dev window is still told apart by its title and the DEV tag in the sidebar |
 
+## Native installers (added 2026-08-25)
+
+Personal Jarvis is downloadable as a native installer on all three systems,
+next to the one-line installer and pipx. Every artifact comes out of the same
+PyInstaller freeze of `jarvis.spec` and is published on the GitHub Release for
+the tag together with `installers-SHA256SUMS.txt`, which the in-app updater
+verifies against before it replaces anything.
+
+| OS | Artifact | Built by | Native window | Signing | Shell registration | Where it has actually run |
+|---|---|---|---|---|---|---|
+| Windows 10/11 x64 | `PersonalJarvis-Setup-x64.exe` (Inno Setup, per-user, no admin prompt, fixed AppId for in-place upgrades) | `packaging/windows/build.ps1` | Yes — WebView2, the shipping desktop window | Owned by the Windows packaging work; see `packaging/windows/` | The installer creates and removes the Start-Menu / Desktop entries | Owned by the Windows packaging work — not verified from here |
+| macOS 12+, arm64 and x64 | `PersonalJarvis-macOS-arm64.dmg`, `PersonalJarvis-macOS-x64.dmg` (`Personal Jarvis.app` + an `/Applications` symlink) | `packaging/macos/build.sh` | Yes — WKWebView through pywebview | Developer ID + Hardened Runtime + notarization when `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_APP_SPECIFIC_PASSWORD` are set; ad-hoc signing and a printed "right-click > Open" notice otherwise | The user drags the app to `/Applications`; the app registers nothing | **No real run yet.** `bash -n`, ShellCheck 0.11.0 `-S style` (zero findings) and a full `DRY_RUN=1` rehearsal of both the signed and unsigned paths. A macOS runner or a physical Mac is the outstanding gate |
+| Linux x86_64 | `PersonalJarvis-Linux-x86_64.AppImage`, `personal-jarvis_<version>_amd64.deb` | `packaging/linux/build.sh` | **No** — serves its interface over loopback HTTP and opens the default browser (P-38) | None. AppImage has no signing story in this project; the release's SHA-256 sums are the integrity check | `.deb` installs a `.desktop` entry, the hicolor icon, `/usr/bin/jarvis` and `/usr/bin/personal-jarvis`. The AppImage carries its `.desktop` inside itself for AppImageLauncher/`appimaged` | Full build proven in a `python:3.12-bookworm` container on 2026-08-25: `appimagetool` digest check, `desktop-file-validate`, `--version` through the packaged AppImage and through `AppRun`, `AppRun serve` answering `/api/health` in ~3 s, and the browser hand-off calling the opener with the right URL. Not run on a real desktop distribution or with FUSE |
+
+**Frozen builds register nothing themselves.** For a native install the
+installer owns every shell artifact, so `jarvis/setup/desktop_integration.py`
+and the writers in `jarvis/ui/icon_utils.py` (`ensure_start_menu_shortcut`,
+`ensure_desktop_shortcut`, `ensure_linux_desktop_entry`) return a logged no-op
+under `jarvis.core.frozen.is_frozen()`, on all three systems. Without that
+guard the app would rewrite the installer's working launcher with one shaped
+for a source install (`<interpreter> -m jarvis.ui.web.launcher`) — a command
+line a frozen executable cannot run at all, and inside an AppImage a path in a
+mount that disappears when the app exits — and the uninstall path would delete
+shortcuts it never created. Covered by
+`tests/unit/setup/test_desktop_integration.py`.
+
+| # | Impact | Area | Gap | Evidence | Behavior off-Windows |
+|---|---|---|---|---|---|
+| P-38 | Medium | Native installer / desktop window | The Linux AppImage and `.deb` have **no native desktop window**. Windows (WebView2) and macOS (WKWebView) get one from the frozen bundle; Linux does not, because pywebview's GTK backend needs PyGObject and a frozen interpreter can never import the distribution's `python3-gi` (it is compiled against the system CPython), while bundling GTK 3 + WebKit2GTK portably means shipping its helper processes, GIO modules, pixbuf loaders, GSettings schemas and typelibs. The Qt route is also closed today: the `[desktop]` extra installs `pyside6-essentials`, which has no QtWebEngine, and `jarvis.spec` excludes PySide6 outright. Adding `pyside6-addons` and dropping that exclusion is the realistic fix, at roughly +400 MB | `packaging/linux/README.md` ("The window question"), `jarvis/ui/desktop_app.py::_degrade_to_browser_ui`, `jarvis.spec` `excludes`, `pyproject.toml` `[desktop]` | Linux: honest degradation, verified against a real build — the app catches pywebview's `WebViewException`, keeps the backend serving, and `AppRun` waits for `/api/health` and opens the interface with `xdg-open`. Everything except the window frame works, including the whole CLI. A source/pipx install on a Linux desktop with `python3-gi` + `gir1.2-webkit2-4.1` still gets the native window; only the frozen build does not. Sub-gap: the app's fallback message advises installing those system packages, which does not help a frozen build |
+
 ## Maintenance
 
 - Fixing a gap: remove its row (git history keeps the record).
