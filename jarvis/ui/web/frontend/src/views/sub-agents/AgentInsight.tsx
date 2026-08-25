@@ -341,22 +341,15 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
                 </p>
               )}
             </div>
-            <dl className="grid grid-cols-2 border-t border-border/70 sm:grid-cols-3 lg:grid-cols-7">
-              {facts.map((f, i) => (
-                <div
-                  key={f.label}
-                  className={cn(
-                    "px-5 py-3 border-border/70",
-                    i > 0 && "sm:border-l",
-                    i > 0 && i % 2 === 1 && "border-l sm:border-l",
-                    i >= 2 && "border-t sm:border-t-0",
-                    i >= 3 && "sm:border-t lg:border-t-0",
-                  )}
-                >
+            {/* Hairlines in both directions come from the 1px gap over a
+                border-coloured ground; the cells size to their content. */}
+            <dl className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px border-t border-border/70 bg-border/70">
+              {facts.map((f) => (
+                <div key={f.label} className="bg-card px-5 py-3">
                   <dt className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     {f.label}
                   </dt>
-                  <dd className="mt-1 truncate font-display text-[15px] font-semibold tabular-nums text-foreground" title={f.hint ?? f.value}>
+                  <dd className="mt-1 font-display text-[15px] font-semibold tabular-nums text-foreground">
                     {f.value}
                     {f.hint && <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">{f.hint}</span>}
                   </dd>
