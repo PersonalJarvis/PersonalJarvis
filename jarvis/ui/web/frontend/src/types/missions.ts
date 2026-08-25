@@ -277,6 +277,33 @@ export interface MissionArtifact {
   truncated: boolean;
 }
 
+/** One file of the worker's archived diff — mirror of jarvis/missions/diff_summary.py. */
+export interface MissionChangedFile {
+  path: string;
+  previous_path: string | null;
+  status: "added" | "modified" | "deleted" | "renamed";
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/** Mirror of `get_mission_changes` in jarvis/ui/web/missions_routes.py. */
+export interface MissionChanges {
+  mission_id: string;
+  tasks: Array<{
+    task_id: string;
+    patch: string;
+    files: MissionChangedFile[];
+    additions: number;
+    deletions: number;
+    truncated: boolean;
+  }>;
+  files: MissionChangedFile[];
+  additions: number;
+  deletions: number;
+  truncated: boolean;
+}
+
 /** Mirror of `get_mission_result` in jarvis/ui/web/missions_routes.py. */
 export interface MissionResult {
   mission_id: string;

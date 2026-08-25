@@ -1,23 +1,30 @@
 /**
- * AgentInsight — one agent run, explained.
+ * AgentInsight — the dossier of one agent run.
  *
- * The board row answers "did it land?" in one word. This page answers what a
- * person asks next, in the order they ask it:
+ * Set like the Marketplace catalogue rather than like a dashboard: numbered
+ * registers with hairlines between rows, one display-face title, a status
+ * stamp, monospace only where a value is a value (timestamps, paths, counts).
+ * No icon-in-a-circle timelines, no tabs, no stat tiles — a run is a report,
+ * and a report is read top to bottom:
  *
- *   1. What happened?      — one paragraph in plain words, with the provider's
- *                             or the reviewer's own sentence when they left one.
- *   2. How did it go?      — a timeline: what the agent said, what it ran
- *                             (folded: "ran 14 actions"), what the reviewer
- *                             said, where it stopped.
- *   3. What came out?      — the answer and the files, with the way to them.
+ *   01  What happened     — one paragraph in plain words, the provider's or
+ *                           reviewer's own sentence quoted once, then a ledger
+ *                           of the facts (when, how long, which worker, …).
+ *   02  The agent's report — what the worker itself wrote at the end, as
+ *                           rendered Markdown. For most runs this is the most
+ *                           detailed account of the work that exists.
+ *   03  Timeline           — every recorded moment: what the agent said, what
+ *                           it ran (folded per burst), the reviewer's verdict
+ *                           with its evidence, where it stopped.
+ *   04  Files              — what the workers actually changed, per file with
+ *                           added/removed lines (from the archived diff), or
+ *                           what they delivered. Every row leads to Artifacts.
+ *   05  Details            — ids, raw reason tokens, the full request; folded.
  *
- * Everything else (ids, raw reason tokens, the full request) sits behind a
- * "Details" fold at the bottom. No tabs: a run's story is read top to bottom.
- *
- * Four sources, all of which already exist — nothing here is a second store:
- * `GET /api/missions/{id}` (events), `GET /api/missions/{id}/result` (summary
- * + files), `GET /api/outputs` + `/{slug}/plan` (the archived transcript, only
- * while the directory exists) and the live registry node the board holds.
+ * Sources, all pre-existing: `GET /api/missions/{id}` (events), `/result`
+ * (summary + deliverables), `/changes` (the diff ledger; an older backend
+ * answers 404 and the page falls back to the deliverable list), `/api/outputs`
+ * + `/{slug}/plan` (the archived transcript) and the live registry node.
  *
  * Every visible string goes through i18n; the brand is the wake-word-derived
  * assistant name (lib/agentBrand.ts), never a product name.
@@ -25,34 +32,29 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   ArrowUpRight,
-  Bot,
-  Brain,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   CircleAlert,
-  FileText,
-  Gavel,
-  ListChecks,
   Map as MapIcon,
-  Rocket,
-  StopCircle,
-  TerminalSquare,
-  Timer,
-  Wrench,
   XCircle,
 } from "lucide-react";
 
 import type { SubAgentNode, ToolCallEntry } from "@/store/jarvisAgents";
-import type { CriticAxisResult, CriticVerdictReady, MissionArtifact } from "@/types/missions";
-import { fetchMissionDetail, fetchMissionResult } from "@/components/missions/api";
+import type {
+  CriticAxisResult,
+  CriticVerdictReady,
+  MissionArtifact,
+  MissionChangedFile,
+} from "@/types/missions";
+import { fetchMissionChanges, fetchMissionDetail, fetchMissionResult } from "@/components/missions/api";
 import { useOutputsList, usePlanForOutput, type PlanStep } from "@/hooks/useOutputs";
 import { missionMapUrl } from "@/hooks/useVisualArtifacts";
+import { MarkdownProse } from "@/components/outputs/MarkdownProse";
 import { openExternalUrl } from "@/lib/openExternal";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BackLink, Panel, SoftButton, StatusDot } from "@/components/extensions/primitives";
+import { BackLink, SoftButton, StatusDot } from "@/components/extensions/primitives";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -73,12 +75,9 @@ import { formatBytes, formatClock, formatDuration, formatOffset, formatUsd } fro
 
 type T = (key: string) => string;
 
-const STATUS_TONE: Record<SubAgentNode["status"], "busy" | "ok" | "error" | "warn"> = {
-  running: "busy",
-  completed: "ok",
-  failed: "error",
-  cancelled: "warn",
-};
+// ---------------------------------------------------------------------------
+// Tone vocabulary — one place, so light and dark read the same everywhere
+// ---------------------------------------------------------------------------
 
 const TONE_TEXT: Record<StoryTone, string> = {
   neutral: "text-muted-foreground",
@@ -88,12 +87,12 @@ const TONE_TEXT: Record<StoryTone, string> = {
   error: "text-destructive",
 };
 
-const TONE_RING: Record<StoryTone, string> = {
-  neutral: "border-border bg-card",
-  busy: "border-primary/50 bg-primary/10",
-  ok: "border-emerald-500/50 bg-emerald-500/10",
-  warn: "border-amber-500/50 bg-amber-500/10",
-  error: "border-destructive/50 bg-destructive/10",
+const STAMP: Record<StoryTone, string> = {
+  neutral: "border-border text-muted-foreground",
+  busy: "border-primary/60 text-primary",
+  ok: "border-emerald-500/60 text-emerald-600 dark:text-emerald-400",
+  warn: "border-amber-500/60 text-amber-600 dark:text-amber-400",
+  error: "border-destructive/60 text-destructive",
 };
 
 const STATE_TONE: Record<Narrative["state"], StoryTone> = {
@@ -104,12 +103,35 @@ const STATE_TONE: Record<Narrative["state"], StoryTone> = {
   timed_out: "error",
 };
 
-const STATE_ICON: Record<Narrative["state"], typeof Bot> = {
-  running: Rocket,
-  approved: CheckCircle2,
-  failed: XCircle,
-  cancelled: StopCircle,
-  timed_out: Timer,
+const KIND_KEY: Record<StoryEntry["kind"], string> = {
+  dispatched: "start",
+  plan: "plan",
+  spawn: "worker",
+  narration: "said",
+  tool: "ran",
+  draft: "draft",
+  verdict: "review",
+  correction: "fix",
+  killed: "stop",
+  budget: "budget",
+  approved: "end",
+  failed: "end",
+  cancelled: "end",
+  timed_out: "end",
+};
+
+const AXIS_KEYS: Record<string, string> = {
+  correctness: "subagents_view.axis.correctness",
+  completeness: "subagents_view.axis.completeness",
+  side_effects: "subagents_view.axis.side_effects",
+  security: "subagents_view.axis.security",
+};
+
+const CHANGE_GLYPH: Record<MissionChangedFile["status"], { glyph: string; tone: StoryTone }> = {
+  added: { glyph: "A", tone: "ok" },
+  modified: { glyph: "M", tone: "warn" },
+  deleted: { glyph: "D", tone: "error" },
+  renamed: { glyph: "R", tone: "neutral" },
 };
 
 /** The first paragraph of the request — the part the user actually said. */
@@ -129,6 +151,10 @@ function axisPassed(axis: CriticAxisResult): boolean | null {
 function killLabel(reason: string, t: T): string {
   const key = KILL_REASON_LABEL_KEYS[reason];
   return key ? t(key) : reason;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
 }
 
 interface Props {
@@ -155,6 +181,15 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
     queryFn: () => fetchMissionResult(missionId),
     refetchInterval: running ? 10_000 : false,
   });
+  // An older backend has no /changes route: the query errors once and the
+  // file register falls back to the deliverable list. Never retried — a 404
+  // is an answer, not a hiccup.
+  const changes = useQuery({
+    queryKey: ["missions", "changes", missionId],
+    queryFn: () => fetchMissionChanges(missionId),
+    retry: false,
+    refetchInterval: running ? 10_000 : false,
+  });
   const outputs = useOutputsList();
   const slug = useMemo(() => {
     const match = outputs.data?.find((o) => o.mission_id === missionId);
@@ -168,6 +203,7 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
   const blocks = useMemo(() => groupStory(buildStory(events)), [events]);
   const steps: PlanStep[] = plan.data?.steps ?? [];
   const artifacts: MissionArtifact[] = result.data?.artifacts ?? [];
+  const changedFiles: MissionChangedFile[] = changes.data?.files ?? [];
   const finalAnswer = plan.data?.final_answer ?? null;
 
   const title = requestTitle(result.data?.prompt ?? agent.utterance, t("subagents_view.task_none"));
@@ -183,6 +219,7 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
     steps.filter((s) => s.kind !== "reasoning").length,
     outcome.workers.reduce((sum, w) => sum + w.tool_notes, 0),
   );
+  const fileCount = changedFiles.length || artifacts.length;
 
   const narrative = useMemo(
     () =>
@@ -194,6 +231,7 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
       ),
     [agent, outcome, agentName, runtime, result.data?.artifact_count, artifacts.length, notes, t],
   );
+  const tone = STATE_TONE[narrative.state];
 
   const worker = outcome.workers.at(0) ?? null;
   const rounds = Math.max(outcome.revisions, outcome.verdicts.at(-1)?.iteration ?? 0) + 1;
@@ -208,53 +246,64 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
       ? [{ label: t("subagents_view.fact_rounds"), value: String(rounds) }]
       : []),
     ...(actions > 0 ? [{ label: t("subagents_view.fact_actions"), value: String(actions) }] : []),
+    ...(fileCount > 0
+      ? [
+          {
+            label: t("subagents_view.fact_files"),
+            value: String(fileCount),
+            hint:
+              changes.data && (changes.data.additions || changes.data.deletions)
+                ? `+${changes.data.additions} −${changes.data.deletions}`
+                : undefined,
+          },
+        ]
+      : []),
     ...(cost > 0 ? [{ label: t("subagents_view.stat_cost_label"), value: formatUsd(cost) }] : []),
   ];
 
-  const hasOutput = !!finalAnswer || artifacts.length > 0;
+  let register = 0;
+  const next = () => pad2(++register);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="flex-1">
-        <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-6 py-6">
+        <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-5 px-6 py-6">
           <BackLink label={agentsBrand(assistantName)} onClick={onBack} />
 
-          {/* Header ---------------------------------------------------- */}
-          <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          {/* Masthead ------------------------------------------------- */}
+          <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4 pb-1">
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 {agentName}
-              </div>
-              <h1 className="mt-1 line-clamp-2 font-display text-[22px] font-semibold leading-snug tracking-tight text-foreground">
+                <span className="mx-2 text-muted-foreground/50">·</span>
+                <span className="font-mono normal-case tracking-normal">{missionId.slice(0, 13)}</span>
+                <span className="mx-2 text-muted-foreground/50">·</span>
+                {formatClock(startedMs, locale)}
+              </p>
+              <h1 className="mt-2 line-clamp-3 font-display text-[26px] font-semibold leading-[1.15] tracking-tight text-foreground">
                 {title}
               </h1>
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                <StatusDot
-                  tone={STATUS_TONE[agent.status]}
-                  pulse={running}
-                  label={t(`subagents_view.status.${agent.status}`)}
-                />
-                <span aria-hidden>·</span>
-                <span>{formatClock(startedMs, locale)}</span>
-                <span aria-hidden>·</span>
-                <span>{runtime}</span>
-              </div>
             </div>
-            {slug && (
-              <div className="flex shrink-0 items-center gap-2">
-                <SoftButton
-                  onClick={() => void openExternalUrl(`${window.location.origin}${missionMapUrl(slug)}`)}
-                >
-                  <MapIcon className="h-3.5 w-3.5" />
-                  {t("subagents_view.action_map")}
-                </SoftButton>
-                <SoftButton primary onClick={() => onOpenOutput(slug)}>
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                  {t("subagents_view.action_open_output")}
-                </SoftButton>
-              </div>
-            )}
-          </div>
+            <div className="flex shrink-0 flex-col items-end gap-3">
+              <Stamp tone={tone} pulse={narrative.state === "running"}>
+                {narrative.headline}
+              </Stamp>
+              {slug && (
+                <div className="flex items-center gap-2">
+                  <SoftButton
+                    onClick={() => void openExternalUrl(`${window.location.origin}${missionMapUrl(slug)}`)}
+                  >
+                    <MapIcon className="h-3.5 w-3.5" />
+                    {t("subagents_view.action_map")}
+                  </SoftButton>
+                  <SoftButton primary onClick={() => onOpenOutput(slug)}>
+                    {t("subagents_view.action_open_artifacts")}
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                  </SoftButton>
+                </div>
+              )}
+            </div>
+          </header>
 
           {detail.isError && (
             <Notice>
@@ -264,25 +313,81 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
             </Notice>
           )}
 
-          {/* 1. What happened ----------------------------------------- */}
-          <VerdictCard narrative={narrative} loading={detail.isPending} facts={facts} t={t} />
+          {/* 01 What happened ------------------------------------------ */}
+          <Register number={next()} title={t("subagents_view.register_verdict")}>
+            <div className="px-5 pb-5 pt-4">
+              <p className={cn("max-w-[68ch] text-[16px] leading-relaxed text-foreground", detail.isPending && "text-muted-foreground")}>
+                {detail.isPending ? t("subagents_view.insight_loading") : narrative.paragraph}
+              </p>
+              {narrative.quote && (
+                <blockquote className="mt-4 max-w-[68ch] border-l-2 border-primary/60 pl-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    {narrative.quote.label}
+                  </p>
+                  <p
+                    className={cn(
+                      "mt-1 whitespace-pre-wrap break-words text-foreground/90",
+                      narrative.quote.mono ? "font-mono text-[12.5px] leading-relaxed" : "text-[14.5px] leading-relaxed",
+                    )}
+                  >
+                    {narrative.quote.text}
+                  </p>
+                </blockquote>
+              )}
+              {narrative.note && (
+                <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                  <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+                  {narrative.note}
+                </p>
+              )}
+            </div>
+            <dl className="grid grid-cols-2 border-t border-border/70 sm:grid-cols-3 lg:grid-cols-7">
+              {facts.map((f, i) => (
+                <div
+                  key={f.label}
+                  className={cn(
+                    "px-5 py-3 border-border/70",
+                    i > 0 && "sm:border-l",
+                    i > 0 && i % 2 === 1 && "border-l sm:border-l",
+                    i >= 2 && "border-t sm:border-t-0",
+                    i >= 3 && "sm:border-t lg:border-t-0",
+                  )}
+                >
+                  <dt className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    {f.label}
+                  </dt>
+                  <dd className="mt-1 truncate font-display text-[15px] font-semibold tabular-nums text-foreground" title={f.hint ?? f.value}>
+                    {f.value}
+                    {f.hint && <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">{f.hint}</span>}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </Register>
 
-          {/* Live tool calls, while the registry still holds them ------ */}
+          {/* 02 The agent's report -------------------------------------- */}
+          {finalAnswer && (
+            <Register number={next()} title={fill(t("subagents_view.register_report"), { agent: agentName })}>
+              <Report text={finalAnswer} slug={slug ?? ""} t={t} />
+            </Register>
+          )}
+
+          {/* Live tool calls, while the registry still holds them --------- */}
           {agent.tool_calls.length > 0 && (
-            <Section icon={TerminalSquare} title={t("subagents_view.live_title")} subtitle={t("subagents_view.live_subtitle")}>
-              <div className="divide-y divide-border/60">
+            <Register number={next()} title={t("subagents_view.live_title")} meta={t("subagents_view.live_subtitle")}>
+              <div className="divide-y divide-border/70">
                 {agent.tool_calls.map((call, idx) => (
                   <LiveToolCall key={`${agent.trace_id}-${idx}`} call={call} t={t} />
                 ))}
               </div>
-            </Section>
+            </Register>
           )}
 
-          {/* 2. How it went ------------------------------------------- */}
-          <Section
-            icon={ListChecks}
-            title={t("subagents_view.timeline_title")}
-            subtitle={fill(t("subagents_view.timeline_subtitle"), { agent: agentName })}
+          {/* 03 Timeline ------------------------------------------------ */}
+          <Register
+            number={next()}
+            title={t("subagents_view.register_timeline")}
+            meta={blocks.length > 0 ? fill(t("subagents_view.timeline_meta"), { n: events.length }) : undefined}
           >
             <Timeline
               blocks={blocks}
@@ -301,60 +406,51 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
               dropped={plan.data?.dropped_steps ?? 0}
               t={t}
             />
-          </Section>
+          </Register>
 
-          {/* 3. What came out ----------------------------------------- */}
-          {hasOutput && (
-            <Section
-              icon={FileText}
-              title={t("subagents_view.output_title")}
-              subtitle={
-                artifacts.length > 0
-                  ? fill(t("subagents_view.deliverables"), { n: artifacts.length })
-                  : t("subagents_view.final_answer")
+          {/* 04 Files --------------------------------------------------- */}
+          {(changedFiles.length > 0 || artifacts.length > 0) && (
+            <Register
+              number={next()}
+              title={t("subagents_view.register_files")}
+              meta={
+                changes.data && (changes.data.additions || changes.data.deletions)
+                  ? fill(t("subagents_view.files_meta"), {
+                      n: changedFiles.length,
+                      add: changes.data.additions,
+                      del: changes.data.deletions,
+                    })
+                  : fill(t("subagents_view.deliverables"), { n: artifacts.length })
               }
               actions={
                 slug ? (
                   <SoftButton primary onClick={() => onOpenOutput(slug)}>
+                    {t("subagents_view.action_open_artifacts")}
                     <ArrowUpRight className="h-3.5 w-3.5" />
-                    {t("subagents_view.action_open_output")}
                   </SoftButton>
                 ) : null
               }
             >
-              {finalAnswer && (
-                <div className="px-5 py-4">
-                  <ClampedBlock text={finalAnswer} t={t} lines={8} className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground/90" />
-                </div>
-              )}
-              {artifacts.length > 0 && (
-                <ul className={cn("divide-y divide-border/60", finalAnswer && "border-t border-border/60")}>
-                  {artifacts.map((a) => (
-                    <li key={a.path} className="px-5 py-3">
-                      <div className="flex items-center gap-2.5 text-sm">
-                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate font-medium" title={a.deliverable_path}>
-                          {a.deliverable_path}
-                        </span>
-                        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatBytes(a.size)}</span>
-                      </div>
-                    </li>
-                  ))}
-                  {result.data?.truncated && (
-                    <li className="px-5 py-2 text-xs text-muted-foreground">{t("subagents_view.deliverables_truncated")}</li>
-                  )}
-                </ul>
-              )}
-            </Section>
+              <FilesLedger
+                changed={changedFiles}
+                artifacts={artifacts}
+                truncated={!!changes.data?.truncated || !!result.data?.truncated}
+                onOpen={slug ? () => onOpenOutput(slug) : undefined}
+                t={t}
+              />
+            </Register>
           )}
 
-          {/* Details, for the curious ---------------------------------- */}
-          <details className="group rounded-xl border border-border/70 bg-card/30 px-5 py-3 text-sm">
-            <summary className="flex cursor-pointer select-none items-center gap-2 text-muted-foreground hover:text-foreground">
-              <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />
-              {t("subagents_view.details_title")}
+          {/* 05 Details ------------------------------------------------- */}
+          <details className="group overflow-hidden rounded-xl border border-border bg-card/60 backdrop-blur-sm">
+            <summary className="flex cursor-pointer select-none items-baseline gap-3 px-5 py-3 hover:bg-secondary/40">
+              <span className="font-mono text-[11px] text-primary">{next()}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                {t("subagents_view.details_title")}
+              </span>
+              <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90" />
             </summary>
-            <dl className="mt-3 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
+            <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-8 gap-y-2.5 border-t border-border/70 px-5 py-4 text-sm">
               <dt className="text-muted-foreground">{t("subagents_view.fact_request")}</dt>
               <dd className="whitespace-pre-wrap break-words text-foreground/85">{result.data?.prompt ?? agent.utterance ?? "—"}</dd>
               <dt className="text-muted-foreground">{t("subagents_view.fact_mission_id")}</dt>
@@ -372,7 +468,7 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
               {worker && (
                 <>
                   <dt className="text-muted-foreground">{t("subagents_view.fact_worker")}</dt>
-                  <dd className="font-mono text-xs">
+                  <dd className="whitespace-pre-wrap font-mono text-xs">
                     {outcome.workers.map((w) => `${w.cli}${w.model ? ` (${w.model})` : ""} · ${w.worker_id}`).join("\n")}
                   </dd>
                 </>
@@ -383,17 +479,10 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
                   <dd className="break-all font-mono text-xs">{outcome.result_uri}</dd>
                 </>
               )}
-              {slug ? (
-                <>
-                  <dt className="text-muted-foreground">{t("subagents_view.fact_output_dir")}</dt>
-                  <dd className="font-mono text-xs">{slug}</dd>
-                </>
-              ) : (
-                <>
-                  <dt className="text-muted-foreground">{t("subagents_view.fact_output_dir")}</dt>
-                  <dd className="text-muted-foreground">{t("subagents_view.no_output_dir")}</dd>
-                </>
-              )}
+              <dt className="text-muted-foreground">{t("subagents_view.fact_output_dir")}</dt>
+              <dd className={cn("text-xs", slug ? "font-mono" : "text-muted-foreground")}>
+                {slug ?? t("subagents_view.no_output_dir")}
+              </dd>
             </dl>
           </details>
         </div>
@@ -403,96 +492,93 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. The verdict card
+// The register — a numbered section with a hairline header
 // ---------------------------------------------------------------------------
 
-function VerdictCard({
-  narrative,
-  loading,
-  facts,
-  t,
+function Register({
+  number,
+  title,
+  meta,
+  actions,
+  children,
 }: {
-  narrative: Narrative;
-  loading: boolean;
-  facts: Array<{ label: string; value: string; hint?: string }>;
-  t: T;
+  number: string;
+  title: string;
+  meta?: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
 }) {
-  const tone = STATE_TONE[narrative.state];
-  const Icon = STATE_ICON[narrative.state];
   return (
-    <Panel>
-      <div className="flex items-start gap-4 px-5 pb-4 pt-5">
-        <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-full border", TONE_RING[tone], TONE_TEXT[tone])}>
-          <Icon className="h-5 w-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="font-display text-lg font-semibold leading-tight text-foreground">{narrative.headline}</h2>
-          <p className="mt-1.5 text-[15px] leading-relaxed text-foreground/90">
-            {loading ? t("subagents_view.insight_loading") : narrative.paragraph}
-          </p>
-          {narrative.quote && (
-            <blockquote className="mt-3 border-l-2 border-border pl-3">
-              <div className="text-xs font-medium text-muted-foreground">{narrative.quote.label}</div>
-              <div
-                className={cn(
-                  "mt-0.5 whitespace-pre-wrap break-words text-foreground/85",
-                  narrative.quote.mono ? "font-mono text-[12.5px] leading-relaxed" : "text-[14px] leading-relaxed",
-                )}
-              >
-                {narrative.quote.text}
-              </div>
-            </blockquote>
-          )}
-          {narrative.note && (
-            <p className="mt-3 flex items-center gap-1.5 text-sm text-muted-foreground">
-              <CircleAlert className="h-3.5 w-3.5 shrink-0" />
-              {narrative.note}
-            </p>
-          )}
-        </div>
-      </div>
-      <dl className="grid grid-cols-2 gap-px border-t border-border bg-border/60 sm:grid-cols-3 lg:grid-cols-6">
-        {facts.map((f) => (
-          <div key={f.label} className="bg-card/80 px-4 py-2.5">
-            <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">{f.label}</dt>
-            <dd className="mt-0.5 truncate text-sm font-medium text-foreground" title={f.hint ?? f.value}>
-              {f.value}
-              {f.hint && <span className="ml-1.5 font-normal text-muted-foreground">{f.hint}</span>}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </Panel>
+    <section className="overflow-hidden rounded-xl border border-border bg-card/60 backdrop-blur-sm">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/70 px-5 py-3">
+        <span className="font-mono text-[11px] text-primary">{number}</span>
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{title}</h2>
+        {meta && <span className="text-[11px] text-muted-foreground/70">{meta}</span>}
+        {actions && <div className="ml-auto">{actions}</div>}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function Stamp({ tone, pulse, children }: { tone: StoryTone; pulse?: boolean; children: React.ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-2 rounded-md border-2 px-3.5 py-1.5 font-display text-[13px] font-bold uppercase tracking-[0.16em]",
+        STAMP[tone],
+      )}
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full bg-current", pulse && "animate-pulse")} />
+      {children}
+    </span>
   );
 }
 
 // ---------------------------------------------------------------------------
-// 2. The timeline
+// 02 The agent's report — Markdown, folded past a screenful
 // ---------------------------------------------------------------------------
 
-const ENTRY_ICON: Record<StoryEntry["kind"], typeof Bot> = {
-  dispatched: Rocket,
-  plan: ListChecks,
-  spawn: Bot,
-  narration: Brain,
-  tool: Wrench,
-  draft: FileText,
-  verdict: Gavel,
-  correction: AlertTriangle,
-  killed: StopCircle,
-  budget: AlertTriangle,
-  approved: CheckCircle2,
-  failed: XCircle,
-  cancelled: StopCircle,
-  timed_out: Timer,
-};
+function Report({ text, slug, t }: { text: string; slug: string; t: T }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 1_400 || text.split("\n").length > 18;
+  return (
+    <div className="relative">
+      <div className={cn("px-6 py-5", !open && long && "max-h-[380px] overflow-hidden")}>
+        <MarkdownProse
+          slug={slug}
+          path="report.md"
+          files={[]}
+          text={text}
+          className="prose-sm max-w-[72ch] prose-headings:font-display prose-h3:text-[15px]"
+          testId="agent-report"
+        />
+      </div>
+      {long && (
+        <>
+          {!open && (
+            <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-11 h-24 bg-gradient-to-t from-card to-transparent" />
+          )}
+          <div className="border-t border-border/70 px-5 py-2.5">
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+            >
+              {open ? t("subagents_view.report_collapse") : t("subagents_view.report_expand")}
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
-const AXIS_KEYS: Record<string, string> = {
-  correctness: "subagents_view.axis.correctness",
-  completeness: "subagents_view.axis.completeness",
-  side_effects: "subagents_view.axis.side_effects",
-  security: "subagents_view.axis.security",
-};
+// ---------------------------------------------------------------------------
+// 03 Timeline — a ledger of moments, not a chain of badges
+// ---------------------------------------------------------------------------
 
 function entryTitle(entry: StoryEntry, agentName: string, t: T): string {
   const m = entry.meta;
@@ -545,7 +631,7 @@ function Timeline({
   startedMs: number;
   loading: boolean;
   agentName: string;
-  /** The sentence the verdict card already quotes — not repeated down here. */
+  /** The sentence register 01 already quotes — not repeated down here. */
   quoteText: string | null;
   t: T;
 }) {
@@ -553,9 +639,7 @@ function Timeline({
     return <EmptyNote>{loading ? t("subagents_view.insight_loading") : t("subagents_view.story_empty")}</EmptyNote>;
   }
   return (
-    <ol className="relative py-2">
-      {/* The rail the nodes sit on. */}
-      <span aria-hidden className="absolute bottom-6 left-[83px] top-6 w-px bg-border" />
+    <ol className="divide-y divide-border/70">
       {blocks.map((block) =>
         block.kind === "actions" ? (
           <ActionsRow key={block.id} block={block} startedMs={startedMs} t={t} />
@@ -574,24 +658,23 @@ function Timeline({
   );
 }
 
-function RowFrame({
+/** One ledger line: offset · KIND · content. */
+function Line({
   offset,
-  icon: Icon,
+  kind,
   tone,
   children,
 }: {
   offset: string;
-  icon: typeof Bot;
+  kind: string;
   tone: StoryTone;
   children: React.ReactNode;
 }) {
   return (
-    <li className="relative grid grid-cols-[56px_28px_minmax(0,1fr)] items-start gap-x-3 px-5 py-2.5">
-      <span className="pt-1 text-right font-mono text-[11px] tabular-nums text-muted-foreground/70">{offset}</span>
-      <span className={cn("relative z-[1] grid h-7 w-7 place-items-center rounded-full border", TONE_RING[tone], TONE_TEXT[tone])}>
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <div className="min-w-0 pt-0.5">{children}</div>
+    <li className="grid grid-cols-[60px_76px_minmax(0,1fr)] items-baseline gap-x-4 px-5 py-3">
+      <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">{offset}</span>
+      <span className={cn("text-[10.5px] font-semibold uppercase tracking-[0.16em]", TONE_TEXT[tone])}>{kind}</span>
+      <div className="min-w-0">{children}</div>
     </li>
   );
 }
@@ -609,64 +692,74 @@ function EntryRow({
   hideText: boolean;
   t: T;
 }) {
-  const title = entryTitle(entry, agentName, t);
-  const strong = ["approved", "failed", "cancelled", "timed_out", "killed", "verdict", "spawn"].includes(entry.kind);
+  const kind = t(`subagents_view.kind.${KIND_KEY[entry.kind]}`);
+  const offset = formatOffset(entry.ts_ms - startedMs);
   const text = hideText ? "" : entry.text;
 
-  return (
-    <RowFrame offset={formatOffset(entry.ts_ms - startedMs)} icon={ENTRY_ICON[entry.kind]} tone={entry.tone}>
-      {entry.kind === "narration" ? (
-        <div className="border-l-2 border-primary/40 pl-3">
-          <div className="text-xs font-medium text-muted-foreground">{title}</div>
-          <ClampedBlock text={text} t={t} lines={3} className="mt-0.5 text-[14.5px] leading-relaxed text-foreground/90" />
+  if (entry.kind === "narration") {
+    return (
+      <Line offset={offset} kind={kind} tone="neutral">
+        <div className="border-l-2 border-primary/50 pl-3">
+          <span className="text-[11px] font-medium text-muted-foreground">{agentName}</span>
+          <ClampedBlock text={text} t={t} lines={3} className="mt-0.5 max-w-[72ch] text-[14.5px] leading-relaxed text-foreground/90" />
         </div>
-      ) : entry.kind === "verdict" && entry.verdict ? (
-        <VerdictRow verdict={entry.verdict} t={t} />
-      ) : (
-        <>
-          <div className={cn("text-sm", strong ? "font-semibold text-foreground" : "font-medium text-foreground/85")}>{title}</div>
-          {text && (
-            <ClampedBlock
-              text={text}
-              t={t}
-              lines={3}
-              className={cn("mt-0.5 text-sm leading-relaxed", entry.tone === "error" ? "text-destructive/90" : "text-muted-foreground")}
-            />
-          )}
-        </>
+      </Line>
+    );
+  }
+  if (entry.kind === "verdict" && entry.verdict) {
+    return (
+      <Line offset={offset} kind={kind} tone={entry.tone}>
+        <VerdictBody verdict={entry.verdict} t={t} />
+      </Line>
+    );
+  }
+  const terminal = ["approved", "failed", "cancelled", "timed_out", "killed"].includes(entry.kind);
+  return (
+    <Line offset={offset} kind={kind} tone={entry.tone}>
+      <div className={cn("text-[14px]", terminal ? "font-semibold text-foreground" : "font-medium text-foreground/90")}>
+        {entryTitle(entry, agentName, t)}
+      </div>
+      {text && (
+        <ClampedBlock
+          text={text}
+          t={t}
+          lines={3}
+          className={cn("mt-1 max-w-[72ch] text-sm leading-relaxed", entry.tone === "error" ? "text-destructive/90" : "text-muted-foreground")}
+        />
       )}
-    </RowFrame>
+    </Line>
   );
 }
 
-function VerdictRow({ verdict, t }: { verdict: CriticVerdictReady; t: T }) {
+function VerdictBody({ verdict, t }: { verdict: CriticVerdictReady; t: T }) {
   const tone: StoryTone = verdict.verdict === "approve" ? "ok" : verdict.verdict === "revise" ? "warn" : "error";
   const axes = Object.entries(verdict.axes ?? {});
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-foreground">{t("subagents_view.story.verdict")}</span>
-        <span className={cn("rounded-md border px-1.5 py-0.5 text-[11px] font-medium", TONE_RING[tone], TONE_TEXT[tone])}>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className={cn("rounded border px-1.5 py-0.5 font-display text-[11px] font-bold uppercase tracking-[0.14em]", STAMP[tone])}>
           {t(`subagents_view.verdict.${verdict.verdict}`)}
         </span>
-        <span className="text-xs text-muted-foreground">{Math.round(verdict.confidence * 100)}%</span>
+        <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+          {fill(t("subagents_view.confidence"), { pct: Math.round(verdict.confidence * 100) })}
+        </span>
       </div>
-      <p className="mt-1 text-sm leading-relaxed text-foreground/85">{verdict.summary}</p>
+      <p className="mt-1.5 max-w-[72ch] text-[14px] leading-relaxed text-foreground/90">{verdict.summary}</p>
       {axes.length > 0 && (
-        <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+        <ul className="mt-2.5 divide-y divide-border/50 rounded-lg border border-border/70">
           {axes.map(([name, axis]) => {
             const passed = axisPassed(axis);
             const label = AXIS_KEYS[name] ? t(AXIS_KEYS[name]) : name;
+            const evidence = (axis.evidence ?? []).filter((e): e is string => typeof e === "string");
             return (
-              <li
-                key={name}
-                className={cn(
-                  "inline-flex items-center gap-1 text-xs",
-                  passed === true ? TONE_TEXT.ok : passed === false ? TONE_TEXT.error : "text-muted-foreground",
-                )}
-              >
-                {passed === true ? <CheckCircle2 className="h-3.5 w-3.5" /> : passed === false ? <XCircle className="h-3.5 w-3.5" /> : <CircleAlert className="h-3.5 w-3.5" />}
-                {label}
+              <li key={name} className="grid grid-cols-[20px_140px_minmax(0,1fr)] items-start gap-x-3 px-3 py-2">
+                <span className={cn("pt-0.5", passed === true ? TONE_TEXT.ok : passed === false ? TONE_TEXT.error : "text-muted-foreground")}>
+                  {passed === true ? <CheckCircle2 className="h-3.5 w-3.5" /> : passed === false ? <XCircle className="h-3.5 w-3.5" /> : <CircleAlert className="h-3.5 w-3.5" />}
+                </span>
+                <span className="text-[13px] font-medium text-foreground">{label}</span>
+                <span className="min-w-0 break-words font-mono text-[11.5px] leading-relaxed text-muted-foreground">
+                  {evidence.length > 0 ? evidence.join("  ·  ") : axis.notes ? String(axis.notes) : "—"}
+                </span>
               </li>
             );
           })}
@@ -680,43 +773,41 @@ function ActionsRow({ block, startedMs, t }: { block: ActionsBlock; startedMs: n
   const [open, setOpen] = useState(false);
   const span = block.end_ms - block.ts_ms;
   return (
-    <RowFrame offset={formatOffset(block.ts_ms - startedMs)} icon={Wrench} tone="neutral">
+    <Line offset={formatOffset(block.ts_ms - startedMs)} kind={t("subagents_view.kind.ran")} tone="neutral">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 text-left"
+        className="group/actions flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 text-left"
       >
-        <span className="text-sm font-medium text-foreground/85">
+        <span className="text-[14px] font-medium text-foreground/90">
           {fill(t(block.entries.length === 1 ? "subagents_view.actions_one" : "subagents_view.actions_many"), {
             n: block.entries.length,
             span: formatDuration(span),
           })}
         </span>
+        <span className="flex flex-wrap gap-1.5">
+          {block.counts.map((c) => (
+            <span key={c.tool} className="inline-flex h-5 items-center gap-1 rounded border border-border/70 px-1.5 font-mono text-[11px] text-foreground/80">
+              {c.tool}
+              {c.n > 1 && <span className="text-muted-foreground">×{c.n}</span>}
+            </span>
+          ))}
+        </span>
         <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-180")} />
       </button>
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {block.counts.map((c) => (
-          <span key={c.tool} className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-sheen/[0.04] px-2 font-mono text-[11.5px] text-foreground/80">
-            {c.tool}
-            {c.n > 1 && <span className="text-muted-foreground">×{c.n}</span>}
-          </span>
-        ))}
-      </div>
       {open && (
-        <ol className="mt-2 divide-y divide-border/50 rounded-lg border border-border/70 bg-sheen/[0.03]">
+        <ol className="mt-2.5 divide-y divide-border/50 rounded-lg border border-border/70">
           {block.entries.map((e) => (
-            <li key={e.id} className="grid grid-cols-[52px_minmax(0,1fr)] gap-x-3 px-3 py-1.5 font-mono text-[12px]">
-              <span className="text-muted-foreground/60">{formatOffset(e.ts_ms - startedMs)}</span>
-              <span className="min-w-0 break-all text-foreground/85">
-                <span className="mr-2 text-muted-foreground">{e.tool}</span>
-                {e.text}
-              </span>
+            <li key={e.id} className="grid grid-cols-[52px_72px_minmax(0,1fr)] gap-x-3 px-3 py-1.5 font-mono text-[11.5px]">
+              <span className="tabular-nums text-muted-foreground/60">{formatOffset(e.ts_ms - startedMs)}</span>
+              <span className="truncate text-muted-foreground">{e.tool}</span>
+              <span className="min-w-0 break-all text-foreground/85">{e.text}</span>
             </li>
           ))}
         </ol>
       )}
-    </RowFrame>
+    </Line>
   );
 }
 
@@ -752,13 +843,13 @@ function TranscriptFold({
   const [open, setOpen] = useState(false);
   if (!hasSlug) {
     return hadWorkers ? (
-      <div className="border-t border-border/60 px-5 py-2.5 text-xs text-muted-foreground">{t("subagents_view.transcript_no_dir")}</div>
+      <div className="border-t border-border/70 px-5 py-2.5 text-xs text-muted-foreground">{t("subagents_view.transcript_no_dir")}</div>
     ) : null;
   }
   if (loading || steps.length === 0) return null;
 
   return (
-    <div className="border-t border-border/60">
+    <div className="border-t border-border/70">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -769,7 +860,7 @@ function TranscriptFold({
         {fill(t("subagents_view.transcript_fold"), { n: steps.length })}
       </button>
       {open && (
-        <div className="border-t border-border/60">
+        <div className="border-t border-border/70">
           {(truncated || dropped > 0) && (
             <div className="px-5 py-2 text-xs text-amber-600 dark:text-amber-400">
               {dropped > 0 ? fill(t("subagents_view.transcript_dropped"), { n: dropped }) : t("subagents_view.transcript_truncated")}
@@ -778,17 +869,16 @@ function TranscriptFold({
           <ol className="divide-y divide-border/50">
             {steps.map((step, idx) => {
               const kind = step.kind ?? "tool";
-              const Icon = kind === "reasoning" ? Brain : kind === "spawn" ? Bot : Wrench;
               const body = step.error ?? step.output ?? null;
               return (
-                <li key={step.step_id} className="grid grid-cols-[36px_28px_minmax(0,1fr)_100px] items-start gap-x-3 px-5 py-2.5">
-                  <span className="pt-0.5 text-right font-mono text-[11px] tabular-nums text-muted-foreground/60">{idx + 1}</span>
-                  <span className={cn("grid h-6 w-6 place-items-center rounded-full border border-border bg-card", kind === "reasoning" ? "text-primary" : "text-muted-foreground")}>
-                    <Icon className="h-3.5 w-3.5" />
+                <li key={step.step_id} className="grid grid-cols-[60px_76px_minmax(0,1fr)_100px] items-baseline gap-x-4 px-5 py-2.5">
+                  <span className="font-mono text-[11px] tabular-nums text-muted-foreground/60">{pad2(idx + 1)}</span>
+                  <span className={cn("text-[10.5px] font-semibold uppercase tracking-[0.16em]", kind === "reasoning" ? "text-primary" : "text-muted-foreground")}>
+                    {t(`subagents_view.kind.${kind === "reasoning" ? "thought" : kind === "spawn" ? "worker" : "ran"}`)}
                   </span>
                   <div className="min-w-0">
                     {kind === "reasoning" ? (
-                      <ClampedBlock text={step.output ?? step.name} t={t} lines={3} className="text-sm leading-relaxed text-foreground/85" />
+                      <ClampedBlock text={step.output ?? step.name} t={t} lines={3} className="max-w-[72ch] text-sm leading-relaxed text-foreground/85" />
                     ) : (
                       <>
                         <div className="font-mono text-[12.5px] text-foreground">
@@ -822,50 +912,118 @@ function TranscriptFold({
 }
 
 // ---------------------------------------------------------------------------
-// Small shared pieces
+// 04 Files — the diff ledger, every row a door into Artifacts
 // ---------------------------------------------------------------------------
 
-function Section({
-  icon: Icon,
-  title,
-  subtitle,
-  actions,
-  children,
+function FilesLedger({
+  changed,
+  artifacts,
+  truncated,
+  onOpen,
+  t,
 }: {
-  icon: typeof Bot;
-  title: string;
-  subtitle?: string;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
+  changed: MissionChangedFile[];
+  artifacts: MissionArtifact[];
+  truncated: boolean;
+  onOpen?: () => void;
+  t: T;
 }) {
+  const sizes = useMemo(() => new Map(artifacts.map((a) => [a.deliverable_path, a.size])), [artifacts]);
+  const rows: Array<{ key: string; glyph: string; tone: StoryTone; path: string; from: string | null; add: number | null; del: number | null; size: number | null; binary: boolean; title: string }> =
+    changed.length > 0
+      ? changed.map((f) => ({
+          key: `${f.status}:${f.path}`,
+          glyph: CHANGE_GLYPH[f.status].glyph,
+          tone: CHANGE_GLYPH[f.status].tone,
+          path: f.path,
+          from: f.previous_path,
+          add: f.additions,
+          del: f.deletions,
+          size: sizes.get(f.path) ?? null,
+          binary: f.binary,
+          title: t(`subagents_view.change.${f.status}`),
+        }))
+      : artifacts.map((a) => ({
+          key: a.path,
+          glyph: "·",
+          tone: "neutral" as StoryTone,
+          path: a.deliverable_path,
+          from: null,
+          add: null,
+          del: null,
+          size: a.size,
+          binary: !a.is_text,
+          title: t("subagents_view.change.delivered"),
+        }));
+
+  const Row = onOpen ? "button" : "div";
   return (
-    <Panel>
-      <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-3.5">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <div className="min-w-0">
-            <h2 className="font-display text-[15px] font-semibold text-foreground">{title}</h2>
-            {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}
-          </div>
-        </div>
-        {actions ? <div className="shrink-0">{actions}</div> : null}
-      </div>
-      {children}
-    </Panel>
+    <div>
+      <ol className="divide-y divide-border/70">
+        {rows.map((r) => (
+          <li key={r.key}>
+            <Row
+              {...(onOpen ? { type: "button", onClick: onOpen } : {})}
+              className={cn(
+                "grid w-full grid-cols-[28px_minmax(0,1fr)_auto_auto_16px] items-center gap-x-3 px-5 py-2.5 text-left",
+                onOpen && "transition-colors hover:bg-secondary/50 focus-visible:bg-secondary/50 focus-visible:outline-none",
+              )}
+            >
+              <span
+                title={r.title}
+                className={cn("grid h-5 w-5 place-items-center rounded border font-mono text-[10.5px] font-bold", STAMP[r.tone])}
+              >
+                {r.glyph}
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate font-mono text-[12.5px] text-foreground" title={r.path}>
+                  {r.path}
+                </span>
+                {r.from && (
+                  <span className="block truncate font-mono text-[11px] text-muted-foreground">← {r.from}</span>
+                )}
+              </span>
+              <span className="font-mono text-[11.5px] tabular-nums">
+                {r.binary ? (
+                  <span className="text-muted-foreground">{t("subagents_view.change.binary")}</span>
+                ) : r.add != null && r.del != null ? (
+                  <>
+                    <span className={TONE_TEXT.ok}>+{r.add}</span>
+                    <span className="mx-1 text-muted-foreground/50">/</span>
+                    <span className={TONE_TEXT.error}>−{r.del}</span>
+                  </>
+                ) : null}
+              </span>
+              <span className="w-14 text-right font-mono text-[11.5px] tabular-nums text-muted-foreground">
+                {r.size != null ? formatBytes(r.size) : ""}
+              </span>
+              {onOpen ? <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/50" /> : <span />}
+            </Row>
+          </li>
+        ))}
+      </ol>
+      {truncated && (
+        <div className="border-t border-border/70 px-5 py-2 text-xs text-muted-foreground">{t("subagents_view.deliverables_truncated")}</div>
+      )}
+    </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Small shared pieces
+// ---------------------------------------------------------------------------
 
 function LiveToolCall({ call, t }: { call: ToolCallEntry; t: T }) {
   const tone: Record<ToolCallEntry["status"], "busy" | "ok" | "error"> = { running: "busy", completed: "ok", failed: "error" };
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_64px_96px] items-center gap-3 px-5 py-2.5 text-sm">
       <div className="min-w-0">
-        <div className="truncate font-medium text-foreground">{call.tool_name || t("subagents_view.tool_unnamed")}</div>
+        <div className="truncate font-mono text-[12.5px] text-foreground">{call.tool_name || t("subagents_view.tool_unnamed")}</div>
         <div className="truncate text-xs text-muted-foreground" title={call.args_preview}>
           {call.error || call.args_preview || call.output_preview || "—"}
         </div>
       </div>
-      <div className="text-right text-xs tabular-nums text-muted-foreground">
+      <div className="text-right font-mono text-[11px] tabular-nums text-muted-foreground">
         {call.duration_ms != null ? formatDuration(call.duration_ms) : "—"}
       </div>
       <div className="flex justify-end">
@@ -878,11 +1036,10 @@ function LiveToolCall({ call, t }: { call: ToolCallEntry; t: T }) {
 const CLAMP_CLASS: Record<number, string> = {
   2: "line-clamp-2",
   3: "line-clamp-3",
-  8: "line-clamp-[8]",
 };
 
 /** Text that clamps to `lines` and expands on a click — the page's own "more". */
-function ClampedBlock({ text, t, lines, className }: { text: string; t: T; lines: 2 | 3 | 8; className?: string }) {
+function ClampedBlock({ text, t, lines, className }: { text: string; t: T; lines: 2 | 3; className?: string }) {
   const [open, setOpen] = useState(false);
   // Judged by length and line breaks rather than layout, so the list never
   // re-flows on mount.
@@ -891,7 +1048,7 @@ function ClampedBlock({ text, t, lines, className }: { text: string; t: T; lines
     <div className={cn("min-w-0", className)}>
       <div className={cn("break-words", !open && long && CLAMP_CLASS[lines])}>{text}</div>
       {long && (
-        <button type="button" onClick={() => setOpen((v) => !v)} className="mt-0.5 text-xs text-primary hover:underline">
+        <button type="button" onClick={() => setOpen((v) => !v)} className="mt-0.5 text-xs font-medium text-primary hover:underline">
           {open ? t("subagents_view.see_less") : t("subagents_view.see_more")}
         </button>
       )}

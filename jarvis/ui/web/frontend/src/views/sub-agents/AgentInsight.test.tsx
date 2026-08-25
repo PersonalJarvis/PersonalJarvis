@@ -85,8 +85,22 @@ const RESULT = {
   summary: null,
   result_uri: null,
   reason: "task_error",
-  artifacts: [],
-  artifact_count: 0,
+  artifacts: [
+    { path: "tasks/t/artifacts/files/index.html", deliverable_path: "index.html", size: 2048, is_text: true, content: "<html>", truncated: false },
+  ],
+  artifact_count: 1,
+  truncated: false,
+};
+
+const CHANGES = {
+  mission_id: MISSION_ID,
+  tasks: [],
+  files: [
+    { path: "index.html", previous_path: null, status: "added", additions: 120, deletions: 0, binary: false },
+    { path: "README.md", previous_path: null, status: "modified", additions: 4, deletions: 2, binary: false },
+  ],
+  additions: 124,
+  deletions: 2,
   truncated: false,
 };
 
@@ -100,13 +114,13 @@ const PLAN = {
     { step_id: "t:0", name: "I will look at the workspace first.", kind: "reasoning", status: "done", output: "I will look at the workspace first.", task_key: "t" },
     { step_id: "t:1", name: "jarvis/ui", tool_name: "Grep", kind: "tool", status: "failed", error: "quota", task_key: "t" },
   ],
-  final_answer: null,
+  final_answer: "## Done\n\nI built the **page** and wrote it to `index.html`.",
   truncated: false,
   dropped_steps: 0,
 };
 
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
 function agentNode(over: Partial<SubAgentNode> = {}): SubAgentNode {
@@ -142,21 +156,25 @@ function renderWithQuery(ui: ReactElement) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-describe("AgentInsight", () => {
-  beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.endsWith(`/api/missions/${MISSION_ID}/result`)) return jsonResponse(RESULT);
-        if (url.endsWith(`/api/missions/${MISSION_ID}`)) return jsonResponse(DETAIL);
-        if (url.endsWith("/api/outputs")) return jsonResponse(OUTPUTS);
-        if (url.endsWith("/api/outputs/mission_019fecaa-5a92/plan")) return jsonResponse(PLAN);
-        return new Response("not found", { status: 404 });
-      }),
-    );
-  });
+function stubFetch(opts: { changes: "ok" | "missing" } = { changes: "ok" }) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/api/missions/${MISSION_ID}/result`)) return jsonResponse(RESULT);
+      if (url.endsWith(`/api/missions/${MISSION_ID}/changes`)) {
+        return opts.changes === "ok" ? jsonResponse(CHANGES) : jsonResponse({ detail: "Not Found" }, 404);
+      }
+      if (url.endsWith(`/api/missions/${MISSION_ID}`)) return jsonResponse(DETAIL);
+      if (url.endsWith("/api/outputs")) return jsonResponse(OUTPUTS);
+      if (url.endsWith("/api/outputs/mission_019fecaa-5a92/plan")) return jsonResponse(PLAN);
+      return new Response("not found", { status: 404 });
+    }),
+  );
+}
 
+describe("AgentInsight", () => {
+  beforeEach(() => stubFetch());
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -166,49 +184,85 @@ describe("AgentInsight", () => {
     renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
 
     expect(await screen.findByText("Did not deliver")).toBeTruthy();
-    expect(
-      await screen.findByText(/stopped because the provider \(claude\) ran out of quota/i),
-    ).toBeTruthy();
-    // Quoted in the verdict card; the timeline's kill and failure rows do
-    // NOT repeat it (the note before them already said it).
+    expect(await screen.findByText(/stopped because the provider \(claude\) ran out of quota/i)).toBeTruthy();
+    // Quoted in register 01; the timeline's kill and failure rows do NOT
+    // repeat it (the note before them already said it).
     expect(screen.getByText("Provider said")).toBeTruthy();
     expect(screen.getAllByText("You've reached your limit.")).toHaveLength(2);
-    // No jargon table: the raw tokens live behind "Details".
-    expect(screen.queryByText("Broke during")).toBeNull();
+    // Raw tokens live behind "Details", not in the verdict.
     expect(screen.getByText(/task_error · provider_quota · CRITIQUING/)).toBeTruthy();
   });
 
-  it("folds consecutive tool calls into one timeline block", async () => {
+  it("numbers the registers in order and folds the report past a screenful", async () => {
     renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
-    await screen.findByText("Did not deliver");
+    await screen.findByText(/ran out of quota/i);
+
+    expect(screen.getByRole("heading", { name: "What happened" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: /'s report$/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Timeline" })).toBeTruthy();
+    // "Files" is also a fact label in register 01 — the heading is the register.
+    expect(await screen.findByRole("heading", { name: "Files" })).toBeTruthy();
+    // The report is rendered Markdown, not raw text.
+    expect(screen.getByRole("heading", { name: "Done" })).toBeTruthy();
+    expect(screen.getByText("page", { selector: "strong" })).toBeTruthy();
+  });
+
+  it("folds consecutive tool calls into one ledger line", async () => {
+    renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
+    await screen.findByText(/ran out of quota/i);
 
     const fold = await screen.findByRole("button", { name: /Ran 3 actions/ });
     expect(screen.getByText("×2")).toBeTruthy(); // Grep ran twice
     expect(screen.queryByText("jarvis/core")).toBeNull();
     fireEvent.click(fold);
     expect(screen.getByText("jarvis/core")).toBeTruthy();
-    // The worker's own words stand alone as a quote.
+    // The worker's own words stand alone, labelled by who said them.
     expect(screen.getByText("I will look at the workspace first.")).toBeTruthy();
+    expect(screen.getAllByText("Said").length).toBeGreaterThan(0);
   });
 
-  it("hands the archived output slug to the Artifacts section", async () => {
+  it("lists the changed files with their line counts and opens Artifacts from a row", async () => {
     const opened: string[] = [];
     renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={(s) => opened.push(s)} />);
 
-    const button = await screen.findByRole("button", { name: /open output/i });
-    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(button);
+    expect(await screen.findByText("README.md")).toBeTruthy();
+    expect(screen.getByText("+120")).toBeTruthy();
+    expect(screen.getByText("−2")).toBeTruthy();
+    expect(screen.getByText("2 files · +124 −2 lines")).toBeTruthy();
+    fireEvent.click(screen.getByText("README.md"));
+    expect(opened).toEqual(["mission_019fecaa-5a92"]);
+  });
+
+  it("falls back to the deliverable list when the backend has no /changes route", async () => {
+    vi.unstubAllGlobals();
+    stubFetch({ changes: "missing" });
+    renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
+
+    expect(await screen.findByText("index.html")).toBeTruthy();
+    expect(screen.getByText("2.0 KB")).toBeTruthy();
+    expect(screen.queryByText("README.md")).toBeNull();
+    expect(screen.getByText("1 deliverable file(s)")).toBeTruthy();
+  });
+
+  it("hands the archived output slug to the Artifacts section from the masthead", async () => {
+    const opened: string[] = [];
+    renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={(s) => opened.push(s)} />);
+
+    const buttons = await screen.findAllByRole("button", { name: /open in artifacts/i });
+    await waitFor(() => expect((buttons[0] as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(buttons[0]);
     expect(opened).toEqual(["mission_019fecaa-5a92"]);
   });
 
   it("keeps the worker transcript folded away under the timeline", async () => {
     renderWithQuery(<AgentInsight agent={agentNode()} onBack={() => {}} onOpenOutput={() => {}} />);
-    await screen.findByText("Did not deliver");
+    await screen.findByText(/ran out of quota/i);
 
     const fold = await screen.findByRole("button", { name: /transcript · 2 steps/i });
     expect(screen.queryByText("quota")).toBeNull();
     fireEvent.click(fold);
     expect(screen.getByText("quota")).toBeTruthy();
+    expect(screen.getByText("Thought")).toBeTruthy();
   });
 
   it("goes back to the board", async () => {

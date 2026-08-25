@@ -17,6 +17,7 @@ Pattern like ``tasks_routes.py``:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +26,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
+from jarvis.missions.diff_summary import read_mission_changes
 from jarvis.missions.events import (
     EventEnvelope,
     MissionApproved,
@@ -307,6 +309,28 @@ async def get_mission_result(
         "artifact_count": len(artifacts),
         "truncated": truncated,
     }
+
+
+@router.get("/{mission_id}/changes")
+async def get_mission_changes(
+    mission_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Return the per-file ledger of what the mission's workers changed.
+
+    Read from the archived ``tasks/*/artifacts/diff.patch`` (see
+    :mod:`jarvis.missions.diff_summary`) — the ``WorkerDraftReady`` event only
+    carries the first 8 000 characters of that diff. A mission whose output
+    directory is gone answers with an empty ledger, not a 404: the run
+    existed, it just left no readable diff behind.
+    """
+    mgr = _require_manager(request)
+    view = await mgr.store.get_mission_view(mission_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    root = _mission_outputs_root(request)
+    changes = await asyncio.to_thread(read_mission_changes, root, mission_id)
+    return {"mission_id": mission_id, **changes}
 
 
 @router.get("/{mission_id}/tool-approvals")

@@ -6,6 +6,7 @@
 import type {
   CriticVerdictReady,
   EventEnvelope,
+  MissionChanges,
   MissionDetail,
   MissionResult,
   MissionSummary,
@@ -50,6 +51,11 @@ export async function fetchMissionDetail(id: string): Promise<MissionDetail> {
 /** The signed outcome plus the deliverables' bounded contents. */
 export async function fetchMissionResult(id: string): Promise<MissionResult> {
   return requestJson(`${API_BASE}/${encodeURIComponent(id)}/result`);
+}
+
+/** The per-file ledger of what the workers changed (from the archived diff). */
+export async function fetchMissionChanges(id: string): Promise<MissionChanges> {
+  return requestJson(`${API_BASE}/${encodeURIComponent(id)}/changes`);
 }
 
 export function missionToolApprovalsQueryKey(missionId: string | null) {
