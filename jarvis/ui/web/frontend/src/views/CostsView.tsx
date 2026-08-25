@@ -423,6 +423,25 @@ export function CostsView() {
           </div>
         </Panel>
 
+        {/* Speech models — the speech area only ------------------------- */}
+        {area?.id === "jarvis-voice" ? (
+          <Panel>
+            <div className="px-4 pt-4">
+              <PanelHeader
+                title={t("costs_view.speech_models_title")}
+                subtitle={t("costs_view.speech_models_subtitle")}
+              />
+            </div>
+            <div className="mt-3">
+              <SpeechModelsTable
+                rows={data?.by_model ?? []}
+                money={money}
+                loading={summary.isLoading}
+              />
+            </div>
+          </Panel>
+        ) : null}
+
         {/* Where it went ----------------------------------------------- */}
         <Panel>
           <div className="px-4 pt-4">
@@ -867,6 +886,98 @@ const ROLE_KEYS: Record<string, true> = {
   agent: true,
   worker: true,
 };
+
+// ---------------------------------------------------------------------------
+// Speech models — what each ear and mouth consumed, at API list price
+// ---------------------------------------------------------------------------
+
+/** Audio duration in the unit a person would say it in. */
+function formatAudio(ms: number): string {
+  if (ms <= 0) return "—";
+  const s = ms / 1000;
+  if (s < 90) return `${s.toFixed(s < 10 ? 1 : 0)} s`;
+  const min = s / 60;
+  if (min < 90) return `${min.toFixed(1)} min`;
+  return `${(min / 60).toFixed(1)} h`;
+}
+
+/**
+ * One row per speech model in the area: how much it heard or spoke, how many
+ * turns that was, and what the same work costs at the vendor's on-demand API
+ * rate — total and per call. Only the speech area shows this: a brain model
+ * has tokens and the breakdown above already says everything about it, while
+ * a speech model has none, so without this table its row reads "0 tokens" and
+ * the number that matters (characters, seconds) is nowhere.
+ */
+function SpeechModelsTable({
+  rows,
+  money,
+  loading,
+}: {
+  rows: CostBucket[];
+  money: (usd: number) => string;
+  loading?: boolean;
+}) {
+  const t = useT();
+  const columns: Column[] = [
+    { id: "model", label: t("costs_view.dim_model") },
+    { id: "calls", label: t("costs_view.col_calls"), width: "84px", align: "right" },
+    { id: "heard", label: t("costs_view.col_heard"), width: "100px", align: "right" },
+    { id: "spoken", label: t("costs_view.col_spoken"), width: "110px", align: "right" },
+    { id: "cost", label: t("costs_view.col_api_cost"), width: "110px", align: "right" },
+    { id: "per_call", label: t("costs_view.col_per_call"), width: "110px", align: "right" },
+  ];
+
+  if (!loading && rows.length === 0) {
+    return (
+      <div className="px-4 pb-4">
+        <EmptyRow>{t("costs_view.speech_models_empty")}</EmptyRow>
+      </div>
+    );
+  }
+
+  return (
+    <Table label={t("costs_view.speech_models_title")}>
+      <TableHead columns={columns} />
+      {rows.map((row) => {
+        const provider = row.members[0] ?? "";
+        const perCall = row.entries > 0 ? row.cost_usd / row.entries : 0;
+        return (
+          <TableRow key={row.key} columns={columns} ariaLabel={row.key}>
+            <Cell>
+              <div className="flex min-w-0 items-center gap-2">
+                {provider ? <ProviderLogo providerId={provider} label={provider} size="sm" /> : null}
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">{row.key}</div>
+                  {provider ? (
+                    <div className="truncate text-xs text-muted-foreground">{provider}</div>
+                  ) : null}
+                </div>
+              </div>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums">{formatExact(row.entries)}</span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums">{formatAudio(row.audio_ms)}</span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums" title={formatExact(row.chars)}>
+                {row.chars > 0 ? formatTokensOrNone(row.chars) : "—"}
+              </span>
+            </Cell>
+            <Cell align="right">
+              <span className="font-medium tabular-nums text-foreground">{money(row.cost_usd)}</span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums">{money(perCall)}</span>
+            </Cell>
+          </TableRow>
+        );
+      })}
+    </Table>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Where it went — the most expensive conversations, missions and agent runs

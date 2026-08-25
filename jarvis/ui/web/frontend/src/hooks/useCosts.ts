@@ -53,6 +53,9 @@ export interface CostBucket {
   gap_tokens: number;
   /** Of `cost_usd`, the part a monthly seat already paid for. */
   subscription_usd: number;
+  /** Speech only: characters spoken and audio heard. Zero on token rows. */
+  chars: number;
+  audio_ms: number;
   last_ts_ms: number;
   cost_share: number;
   token_share: number;

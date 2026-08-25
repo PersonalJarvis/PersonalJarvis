@@ -289,6 +289,21 @@ def test_speech_rows_with_nothing_consumed_are_dropped(tmp_path: Path) -> None:
     assert len(list(collect_entries(_speech_sources(tmp_path)))) == 2
 
 
+def test_speech_rows_carry_their_quantities_and_the_buckets_sum_them(tmp_path: Path) -> None:
+    """The speech-models table needs the billed quantity as a NUMBER, per
+    model: characters spoken and audio heard ride on the entry and add up in
+    every bucket, while the token columns stay at zero."""
+    rows = {e.role: e for e in collect_entries(_speech_sources(tmp_path))}
+    assert rows["tts"].chars == 412
+    assert rows["stt"].audio_ms == 4_200 and rows["stt"].chars == 0
+
+    report = build_report(list(rows.values()), since_ms=0, until_ms=2**62)
+    by_role = {b["key"]: b for b in report.by_role}
+    assert by_role["tts"]["chars"] == 412
+    assert by_role["stt"]["audio_ms"] == 4_200
+    assert all(b["tokens_total"] == 0 for b in report.by_model)
+
+
 def test_speech_keeps_the_price_the_meter_settled(tmp_path: Path) -> None:
     """The meter priced it in the vendor's unit; re-deriving it here from a
     token rate would be nonsense, so its verdict must survive the read."""

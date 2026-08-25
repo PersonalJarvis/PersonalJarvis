@@ -54,6 +54,10 @@ class Bucket:
     #: Of ``cost_usd``, how much a monthly seat covered rather than an invoice.
     subscription_usd: float = 0.0
     last_ts_ms: int = 0
+    #: Speech quantities — characters spoken and audio heard — so a speech
+    #: model's row can say what it consumed when it has no tokens to show.
+    chars: int = 0
+    audio_ms: int = 0
     #: Secondary dimension — which providers/models/roles fed this bucket.
     members: dict[str, float] = field(default_factory=lambda: defaultdict(float))
 
@@ -62,6 +66,8 @@ class Bucket:
         self.tokens_in += entry.tokens_in
         self.tokens_out += entry.tokens_out
         self.tokens_cached += entry.tokens_cached
+        self.chars += entry.chars
+        self.audio_ms += entry.audio_ms
         self.entries += 1
         if entry.is_gap:
             self.gap_tokens += entry.tokens_total
@@ -84,6 +90,8 @@ class Bucket:
             "entries": self.entries,
             "gap_tokens": self.gap_tokens,
             "subscription_usd": round(self.subscription_usd, 6),
+            "chars": self.chars,
+            "audio_ms": self.audio_ms,
             "last_ts_ms": self.last_ts_ms,
             "cost_share": round(self.cost_usd / total_cost, 6) if total_cost > 0 else 0.0,
             "token_share": round(tokens / total_tokens, 6) if total_tokens > 0 else 0.0,

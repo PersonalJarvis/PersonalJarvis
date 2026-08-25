@@ -59,6 +59,9 @@ class Bucket(BaseModel):
     entries: int
     gap_tokens: int
     subscription_usd: float = 0.0
+    chars: int = 0
+    """Characters synthesised — only speech rows carry these two."""
+    audio_ms: int = 0
     last_ts_ms: int
     cost_share: float
     token_share: float

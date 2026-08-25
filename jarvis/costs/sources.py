@@ -539,6 +539,8 @@ def _speech_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator
                 price_source=source,  # type: ignore[arg-type]
                 ref_id=str(row["session_id"] or ""),
                 label=_speech_label(stage, chars, audio_ms),
+                chars=chars,
+                audio_ms=int(audio_ms),
             )
     except sqlite3.Error as exc:
         log.warning("cost read model: speech source failed (%s)", exc)

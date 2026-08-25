@@ -147,6 +147,11 @@ class CostEntry:
     """Session / mission id — the thing a user can go look at."""
     label: str
     """Short human-readable handle for ``ref_id`` (session title, prompt head)."""
+    #: What a speech row actually bought, in the unit it was billed in. Zero on
+    #: every token-billed row. Kept beside the tokens rather than folded into
+    #: them because a character and a token are different units (BUG-177).
+    chars: int = 0
+    audio_ms: int = 0
 
     @property
     def tokens_total(self) -> int:
@@ -176,6 +181,8 @@ class CostEntry:
             "price_source": self.price_source,
             "ref_id": self.ref_id,
             "label": self.label,
+            "chars": self.chars,
+            "audio_ms": self.audio_ms,
         }
 
 
