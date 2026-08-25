@@ -6,7 +6,7 @@ import pytest
 
 from jarvis.agent_chat.service import AgentChatService
 from jarvis.agent_chat.store import AgentChatStore
-from jarvis.core.config import BrainTierConfig, JarvisConfig
+from jarvis.core.config import BrainProviderConfig, BrainTierConfig, JarvisConfig
 from jarvis.local_models import assistant_session as policy
 
 
@@ -74,7 +74,7 @@ def test_ensure_session_creates_once_and_recreates_when_the_tier_moves() -> None
 
 def test_ensure_session_refuses_without_the_tier() -> None:
     svc = _svc()
-    with pytest.raises(PermissionError, match="Connect the Jarvis Agents tier first"):
+    with pytest.raises(PermissionError, match="Pick a Tool Model with an API key first"):
         policy.ensure_session(svc, _cfg(), usable=lambda _p: False)
     assert svc.store.list_sessions(surface="local-models") == []
 
@@ -124,7 +124,26 @@ async def test_probe_live_classifies_with_the_provider_test_and_caches() -> None
     cfg = _cfg("gemini", "g-pro", fallback_provider="openai", fallback_model="o-1")
     pairs = policy.chain_candidates(cfg, usable=lambda _p: True, tool_capable=lambda _p: True)
     out = await policy.probe_live(cfg, pairs, tester=_tester)
-    assert out[("gemini", "g-pro")] == (False, "gemini (g-pro): the account has no credit or quota left for this model.")
+    assert out[("gemini", "g-pro")] == (
+        False,
+        "gemini (g-pro): the account has no credit or quota left for this model.",
+    )
     assert out[("openai", "o-1")] == (True, "")
     again = await policy.probe_live(cfg, pairs, tester=_tester)
     assert again == out and len(calls) == 2  # cached, no second real call
+
+
+def test_the_tool_model_comes_first_and_the_agents_chain_is_the_fallback() -> None:
+    """The user answers "which model does my own work" once, in the Tool
+    Model tab; the assistant honours that pick and bills through its key."""
+    cfg = _cfg("openai", "gpt-x")
+    cfg.brain.tool_model = BrainTierConfig(provider="vertex")
+    cfg.brain.providers["vertex"] = BrainProviderConfig(tool_model="gemini-3.6-flash")
+    assert policy._chain(cfg)[0] == ("vertex", "gemini-3.6-flash")
+    tier = policy.agents_tier(cfg, usable=lambda _p: True, tool_capable=lambda _p: True)
+    assert (tier.provider, tier.model) == ("vertex", "gemini-3.6-flash")
+    # An unusable Tool Model falls back to the Agents chain, honestly.
+    tier = policy.agents_tier(cfg, usable=lambda p: p != "vertex", tool_capable=lambda _p: True)
+    assert (tier.provider, tier.model) == ("openai", "gpt-x")
+    cfg.brain.tool_model = BrainTierConfig(provider="auto")
+    assert policy._chain(cfg)[0] == ("openai", "gpt-x")

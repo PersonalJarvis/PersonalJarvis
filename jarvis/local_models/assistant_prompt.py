@@ -204,7 +204,7 @@ def _render_machine(machine: dict[str, Any], server: dict[str, Any], root: str) 
         ),
         f"- Active brain provider: {machine['active_brain'] or 'unset'} "
         "(only the person may change it)",
-        f"- You run on the Agents tier: {machine['assistant_tier'] or 'unknown'}",
+        f"- You run on the Tool Model (billed through its key): {machine['assistant_tier'] or 'unknown'}",
     ]
     return "\n".join(lines)
 

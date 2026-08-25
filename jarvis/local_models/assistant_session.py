@@ -30,14 +30,17 @@ __all__ = [
 ]
 
 SURFACE: Final[str] = "local-models"
-NOT_READY: Final[str] = "Connect the Jarvis Agents tier first — the setup assistant runs on it."
+NOT_READY: Final[str] = (
+    "Pick a Tool Model with an API key first (API Keys → Tool Model) — the setup "
+    "assistant runs on it, billed through that key."
+)
 #: The tier is connected but every provider in its chain drives a vendor CLI
 #: on a flat prompt (Antigravity, for one) and cannot call the assistant's
 #: tools; a fallback with an API key fixes it.
 NO_TOOLS: Final[str] = (
-    "The Jarvis Agents tier cannot call tools here (a CLI-only provider such as "
-    "Antigravity). Set a tool-capable fallback with an API key — Gemini, OpenAI "
-    "or OpenRouter — on the Agents tier and try again."
+    "The picked Tool Model cannot call tools here (a CLI-only provider such as "
+    "Antigravity). Pick an API provider — Gemini, OpenAI, Vertex or OpenRouter — "
+    "under API Keys → Tool Model and try again."
 )
 
 
@@ -85,30 +88,64 @@ def _tool_capable(provider: str) -> bool:
 
 
 def _default_usable(provider: str) -> bool:
+    """A credential exists: the provider's own key (the Tool Model bills
+    through it) or the Agents-tier secret for the fallback chain."""
     from jarvis.core.config import get_jarvis_agent_secret
 
     try:
-        return bool(get_jarvis_agent_secret(provider))
+        if get_jarvis_agent_secret(provider):
+            return True
     except Exception:  # noqa: BLE001 — no credential readable counts as none
         log.debug("agents tier: credential lookup for %s failed", provider, exc_info=True)
+    try:
+        from jarvis.brain.app_control import is_credential_present
+        from jarvis.ui.web.provider_spec import get_spec
+
+        spec = get_spec(provider)
+        return spec is not None and bool(is_credential_present(spec))
+    except Exception:  # noqa: BLE001 — same: unreadable is "none"
+        log.debug("agents tier: main credential lookup for %s failed", provider, exc_info=True)
         return False
 
 
+def _tool_model_pair(cfg: Any) -> tuple[str, str] | None:
+    """The user's Tool Model pick, ``None`` when it is ``auto``.
+
+    The same reader the Tool Model tab and the IDE's prompt writer use
+    (``resolver._tool_model_selection``), so the assistant runs on exactly the
+    model the user pointed that tab at — and is billed through that key.
+    """
+    from jarvis.brain.resolver import _tool_model_selection
+
+    try:
+        provider, model = _tool_model_selection(cfg)
+    except Exception:  # noqa: BLE001 — a malformed section reads as unset, logged
+        log.debug("agents tier: tool-model selection unreadable", exc_info=True)
+        return None
+    if not provider or provider == "auto":
+        return None
+    return provider, str(model or "").strip()
+
+
 def _chain(cfg: Any) -> list[tuple[str, str]]:
+    """The Tool Model first; the Agents-tier chain only as a fallback."""
+    out: list[tuple[str, str]] = []
+    pinned = _tool_model_pair(cfg)
+    if pinned is not None:
+        out.append(pinned)
     brain = getattr(cfg, "brain", None)
     worker = getattr(brain, "worker", None)
     if worker is None:
-        return []
+        return out
     pairs = [
         ("provider", "model"),
         ("fallback_provider", "fallback_model"),
         ("fallback_provider_2", "fallback_model_2"),
     ]
-    out: list[tuple[str, str]] = []
     for p_key, m_key in pairs:
         provider = str(getattr(worker, p_key, "") or "").strip()
         model = str(getattr(worker, m_key, "") or "").strip()
-        if provider:
+        if provider and (provider, model) not in out:
             out.append((provider, model))
     return out
 

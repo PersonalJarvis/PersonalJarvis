@@ -16,7 +16,7 @@
  * asks (AP-3) — the panel only answers what was already confirmed; anything
  * else keeps its ordinary card.
  *
- * Honest states, never toasts: a 409 from `/run` means the Jarvis Agents tier
+ * Honest states, never toasts: a 409 from `/run` means the Tool Model (or its Agents-tier fallback)
  * is not usable and the sentence links to API Keys; a 404 means the backend
  * predates the assistant. The header carries the monitor's last check with a
  * "Fix" that opens diagnose mode.
@@ -114,7 +114,7 @@ export function AssistantPanel({
 
   const [health, setHealth] = useState<AssistantHealth | null>(null);
   const [starting, setStarting] = useState<AssistantMode | null>(null);
-  /** The 409 sentence: the Agents tier is not usable. */
+  /** The 409 sentence: no usable Tool Model or Agents-tier fallback. */
   const [blocked, setBlocked] = useState<string | null>(null);
   /** 404 from the assistant routes: the running backend predates this panel. */
   const [backendMissing, setBackendMissing] = useState(false);
