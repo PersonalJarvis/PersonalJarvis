@@ -17,6 +17,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Check,
   ChevronDown,
@@ -63,11 +65,6 @@ import {
 } from "@/hooks/useOutputs";
 import { CodeBlock } from "@/components/docs/CodeBlock";
 import { OpenWithDialog } from "@/components/OpenWithDialog";
-import { MarkdownProse, resolveSiblingPath } from "@/components/outputs/MarkdownProse";
-
-// Re-exported: the resolver moved to MarkdownProse when the output page
-// started sharing the renderer; callers and tests keep importing it here.
-export { resolveSiblingPath };
 
 /** Above this many characters the source view skips Shiki — highlighting a
  *  megabyte of text would freeze the UI thread for seconds. */
@@ -88,12 +85,10 @@ export interface ArtifactViewerProps {
   slug: string;
   files: ArtifactSummary[];
   nativeActions: boolean;
-  /** The file to open on first — how "Open in Files" on the output page lands on it. */
-  initialPath?: string | null;
 }
 
-export function ArtifactViewer({ slug, files, nativeActions, initialPath }: ArtifactViewerProps) {
-  const [selectedPath, setSelectedPath] = useState<string | null>(initialPath ?? null);
+export function ArtifactViewer({ slug, files, nativeActions }: ArtifactViewerProps) {
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
 
   // The selection follows the list: first file by default, and a path that
@@ -645,8 +640,7 @@ function HtmlPage({ slug, path }: { slug: string; path: string }) {
   );
 }
 
-/** Highlighted source for code, plain `<pre>` for text or anything huge. */
-export function SourceView({ path, text }: { path: string; text: string }) {
+function SourceView({ path, text }: { path: string; text: string }) {
   const language = artifactLanguage(path);
   if (text.length > HIGHLIGHT_MAX_CHARS || language === "txt") {
     return (
@@ -662,8 +656,7 @@ export function SourceView({ path, text }: { path: string; text: string }) {
   );
 }
 
-/** A CSV/TSV as a table, capped at `CSV_MAX_ROWS` rows. */
-export function CsvTable({ text, tab }: { text: string; tab: boolean }) {
+function CsvTable({ text, tab }: { text: string; tab: boolean }) {
   const t = useT();
   const rows = useMemo(() => parseCsv(text, tab ? "\t" : ","), [text, tab]);
   if (rows.length === 0) {
@@ -711,11 +704,25 @@ export function CsvTable({ text, tab }: { text: string; tab: boolean }) {
 
 // --- Markdown document -----------------------------------------------------
 
-/**
- * The reader's document: the shared renderer in a serif reading face with a
- * measure — a report reads as a report, while everything else in the app
- * stays in the UI sans.
- */
+/** Resolve `href` relative to the directory of `fromPath` inside the archive. */
+export function resolveSiblingPath(fromPath: string, href: string): string | null {
+  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("#") || href.startsWith("/")) {
+    return null;
+  }
+  const clean = href.split(/[?#]/)[0];
+  const base = fromPath.split("/").slice(0, -1);
+  for (const seg of clean.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (base.length === 0) return null;
+      base.pop();
+    } else {
+      base.push(seg);
+    }
+  }
+  return base.join("/");
+}
+
 function MarkdownDocument({
   slug,
   path,
@@ -729,18 +736,110 @@ function MarkdownDocument({
   text: string;
   onSelectSibling: (path: string) => void;
 }) {
+  const known = useMemo(() => new Set(files.map((f) => f.path)), [files]);
+  const components = useMemo<Components>(
+    () => ({
+      // Fenced blocks render their own complete container; unwrapping the
+      // Markdown ``pre`` avoids invalid ``pre > div`` nesting around CodeBlock.
+      pre({ children }) {
+        return <>{children}</>;
+      },
+      code({ className, children, ...rest }) {
+        const match = /language-(\w+)/.exec(className || "");
+        if (!match) {
+          return (
+            <code className={className} {...rest}>
+              {children}
+            </code>
+          );
+        }
+        return (
+          <CodeBlock language={match[1]} code={String(children).replace(/\n$/, "")} />
+        );
+      },
+      a({ href, children, ...rest }) {
+        const sibling = href ? resolveSiblingPath(path, href) : null;
+        if (sibling && known.has(sibling)) {
+          return (
+            <a
+              href={`#${sibling}`}
+              onClick={(e) => {
+                e.preventDefault();
+                onSelectSibling(sibling);
+              }}
+              {...rest}
+            >
+              {children}
+            </a>
+          );
+        }
+        if (href && /^https?:\/\//i.test(href)) {
+          return (
+            <a
+              href={href}
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                void openExternalUrl(href);
+              }}
+              {...rest}
+            >
+              {children}
+            </a>
+          );
+        }
+        return (
+          <a href={href} {...rest}>
+            {children}
+          </a>
+        );
+      },
+      img({ src, alt, ...rest }) {
+        const sibling = typeof src === "string" ? resolveSiblingPath(path, src) : null;
+        const resolved =
+          sibling && known.has(sibling) ? artifactInlineUrl(slug, sibling) : src;
+        return <img src={resolved} alt={alt ?? ""} loading="lazy" {...rest} />;
+      },
+      table({ children }) {
+        return (
+          <div className="not-prose my-5 overflow-x-auto rounded-md border border-border">
+            <table className="w-full text-sm [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_thead]:bg-muted/40 [&_tr]:border-t [&_tr]:border-border/60 [&_thead_tr]:border-t-0">
+              {children}
+            </table>
+          </div>
+        );
+      },
+      blockquote({ children }) {
+        return (
+          <blockquote className="border-l-2 border-primary/50 pl-4 not-italic text-muted-foreground">
+            {children}
+          </blockquote>
+        );
+      },
+    }),
+    [known, onSelectSibling, path, slug],
+  );
+
   return (
-    <MarkdownProse
-      slug={slug}
-      path={path}
-      files={files}
-      text={text}
-      onSelectSibling={onSelectSibling}
+    <article
+      data-testid="artifact-markdown"
       className={cn(
-        "mx-auto max-w-3xl px-8 py-8 lg:px-12",
-        "font-serif text-[15.5px] leading-7 prose-headings:font-serif",
+        "prose prose-neutral dark:prose-invert mx-auto max-w-3xl px-8 py-8 [overflow-wrap:anywhere] lg:px-12",
+        // A document reads as a document: a serif text face, generous leading,
+        // headings that are clearly headings. Everything else in the app stays
+        // in the UI sans.
+        "font-serif text-[15.5px] leading-7",
+        "prose-headings:font-serif prose-headings:font-semibold prose-headings:tracking-tight prose-headings:text-pretty",
         "prose-h1:text-3xl prose-h1:leading-tight prose-h2:mt-10 prose-h2:text-2xl prose-h3:text-xl",
+        "prose-p:text-pretty prose-li:my-1",
+        "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+        "prose-code:rounded prose-code:bg-muted/60 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
+        "prose-hr:border-border prose-img:rounded-md",
       )}
-    />
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {text}
+      </ReactMarkdown>
+    </article>
   );
 }

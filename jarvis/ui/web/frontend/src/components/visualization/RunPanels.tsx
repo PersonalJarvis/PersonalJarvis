@@ -353,14 +353,7 @@ export function deliverableFiles(files: ArtifactSummary[]): ArtifactSummary[] {
  * (summary, why it ended) sit above the files: for a run that produced no
  * page — a research answer, a failed build — they ARE the result.
  */
-export function RunFiles({
-  run,
-  initialPath,
-}: {
-  run: OutputSummary;
-  /** The file the reader opens on — set when the user came from the output page. */
-  initialPath?: string | null;
-}) {
+export function RunFiles({ run }: { run: OutputSummary }) {
   const t = useT();
   const q = useArtifactsForOutput(run.slug);
   const caps = useOutputsCapabilities();
@@ -396,11 +389,10 @@ export function RunFiles({
           <div className="text-xs text-muted-foreground">{t("outputs_view.no_files")}</div>
         ) : (
           <ArtifactViewer
-            key={`${run.slug}:${initialPath ?? ""}`}
+            key={run.slug}
             slug={run.slug}
             files={files}
             nativeActions={nativeActions}
-            initialPath={initialPath}
           />
         )}
       </section>

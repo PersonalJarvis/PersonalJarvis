@@ -86,7 +86,6 @@ import {
   useCostSummary,
   type CostBucket,
   type CostDayRow,
-  type CostBilling,
   type CostFilters,
   type CostRole,
   type CostSurface,
@@ -262,16 +261,6 @@ export function CostsView() {
         --------------------------------------------------------------- */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
           <AreaSwitch value={area?.id ?? null} onChange={pickArea} />
-          <SegmentedFilter<CostBilling>
-            label={t("costs_view.billing_label")}
-            value={filters.billing}
-            onChange={(billing) => setFilters((f) => ({ ...f, billing }))}
-            options={[
-              { id: "all", label: t("costs_view.billing.all") },
-              { id: "billed", label: t("costs_view.billing.billed") },
-              { id: "subscription", label: t("costs_view.billing.subscription") },
-            ]}
-          />
           <RoleFilters
             roles={(area ?? SURFACE_GROUPS[0]).roles}
             available={data?.facets.roles ?? []}
@@ -517,17 +506,7 @@ export function CostsView() {
           <div className="px-4 pt-4">
             <PanelHeader
               title={t("costs_view.top_refs_title")}
-              subtitle={
-                data && data.refs_total > 0
-                  ? fill(t("costs_view.top_refs_subtitle_counted"), {
-                      shown: String(data.top_refs.length),
-                      total: formatExact(data.refs_total),
-                      share: formatShare(
-                        data.top_refs.reduce((sum, r) => sum + r.cost_share, 0),
-                      ),
-                    })
-                  : t("costs_view.top_refs_subtitle")
-              }
+              subtitle={t("costs_view.top_refs_subtitle")}
             />
           </div>
           <div className="mt-3">

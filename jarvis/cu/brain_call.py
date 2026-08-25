@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from jarvis.core.protocols import BrainMessage, BrainRequest, ImageBlock
-from jarvis.costs.ledger import usage_context
 
 logger = logging.getLogger(__name__)
 
@@ -348,9 +347,7 @@ async def call_vision_brain(
                 # step died "unterminated JSON", thoughts=304 of 320).
                 reasoning_effort="none",
             )
-            with usage_context("computer-use"):
-                _stream = brain.complete(req)
-            return await agg(_stream)
+            return await agg(brain.complete(req))
 
         start_tokens = _starting_tokens(
             provider, model, max_tokens, early_stop_json=early_stop_json,

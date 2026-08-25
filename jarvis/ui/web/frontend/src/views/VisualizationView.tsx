@@ -18,32 +18,26 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { OutputPreview } from "@/components/visualization/OutputPreview";
 import { RunGraphPanel } from "@/components/visualization/RunGraphPanel";
 import {
   RunActions,
   RunFiles,
   RunStatusBadge,
-  deliverableFiles,
 } from "@/components/visualization/RunPanels";
 import { ViewHeader } from "@/views/ChatsView";
 import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
-import { artifactKind, isTextKind } from "@/lib/artifactKind";
-import { cleanRequest, requestHeadline } from "@/lib/runRequest";
 import { useEventStore } from "@/store/events";
 import { openExternalUrl } from "@/lib/openExternal";
 import { endMissionDrag, startMissionDrag } from "@/lib/missionDnd";
 import {
   artifactDownloadUrl,
-  artifactOpenUrl,
   revealArtifact,
   useArtifactFile,
   useArtifactsForOutput,
   useOutputsCapabilities,
   useOutputsList,
-  type ArtifactSummary,
   type OutputStatus,
   type OutputSummary,
 } from "@/hooks/useOutputs";
@@ -76,14 +70,6 @@ import {
  * ended, its files, and the controls it always had (hold-to-abort, Continue,
  * Restart, the GitHub link). One place for what Jarvis and its agents made,
  * not two.
- *
- * Since 2026-08-25 the artifact treatment IS the standard for every run:
- * the stage always offers Preview / Code / Files / Run, and a run without a
- * page gets its Preview composed from what it left behind (`OutputPreview`
- * — the answer and every file rendered in place, in the artifact design
- * standard) instead of a bare file list. The rail can be narrowed to
- * artifacts (pages and pictures a worker drew) or outputs (every other
- * run); "all" is the default.
  *
  * It owns no data: runs come from `/api/outputs`, files from the artifact
  * listing (`useVisualArtifacts`, `useArtifactsForOutput`), a page's source
@@ -152,43 +138,7 @@ export function parseArtifactUtterance(
 
 /** What a run is called when it has no page title of its own. */
 function runTitle(run: OutputSummary): string {
-  return (
-    parseArtifactUtterance(run.utterance)?.title || requestHeadline(run.utterance ?? "") || run.slug
-  );
-}
-
-/** The rail's narrowing: everything, the pages and pictures, or the rest. */
-export type RailFilter = "all" | "artifacts" | "outputs";
-
-const RAIL_FILTER_KEY = "jarvis.artifacts.rail-filter";
-
-function readRailFilter(): RailFilter {
-  try {
-    const stored = window.localStorage.getItem(RAIL_FILTER_KEY);
-    if (stored === "artifacts" || stored === "outputs") return stored;
-  } catch {
-    // Storage can be unavailable (private window, blocked site data) — "all" then.
-  }
-  return "all";
-}
-
-function storeRailFilter(filter: RailFilter): void {
-  try {
-    window.localStorage.setItem(RAIL_FILTER_KEY, filter);
-  } catch {
-    // A remembered filter is a convenience, never a requirement.
-  }
-}
-
-/** An artifact row is a page or picture (or one being built); the rest are outputs. */
-function isArtifactRow(row: RailRow): boolean {
-  return row.kind === "visual" || row.kind === "build";
-}
-
-/** The rows the filter lets through. */
-export function filterRailRows(rows: RailRow[], filter: RailFilter): RailRow[] {
-  if (filter === "all") return rows;
-  return rows.filter((row) => (filter === "artifacts" ? isArtifactRow(row) : !isArtifactRow(row)));
+  return parseArtifactUtterance(run.utterance)?.title || run.utterance?.trim() || run.slug;
 }
 
 /** The rail row's timestamp — what tells two same-named artifacts apart. */
@@ -269,21 +219,7 @@ export function VisualizationView() {
     [runs],
   );
 
-  const allRows = useMemo(() => buildRailRows(runs, visuals, building), [runs, visuals, building]);
-  const [filter, setFilterState] = useState<RailFilter>(readRailFilter);
-  const setFilter = useCallback((next: RailFilter) => {
-    setFilterState(next);
-    storeRailFilter(next);
-  }, []);
-  const rows = useMemo(() => filterRailRows(allRows, filter), [allRows, filter]);
-  const counts = useMemo(
-    () => ({
-      all: allRows.length,
-      artifacts: allRows.filter(isArtifactRow).length,
-      outputs: allRows.filter((row) => !isArtifactRow(row)).length,
-    }),
-    [allRows],
-  );
+  const rows = useMemo(() => buildRailRows(runs, visuals, building), [runs, visuals, building]);
 
   /* A `?run=<slug>` in the URL pre-selects that run's newest artifact — what
    * makes a detached window or a pasted link open on the page it talks about.
@@ -356,20 +292,6 @@ export function VisualizationView() {
     gallery.refetch();
   }, [outputs, gallery]);
 
-  /* Narrowing the rail to a group the picked row is not in would leave the
-   * stage on something the rail no longer lists; the pick is dropped and the
-   * first visible row takes the stage. Nothing happens while the rail is
-   * still filling (a pick may simply not have loaded yet). */
-  useEffect(() => {
-    if (selection === null || filter === "all" || allRows.length === 0) return;
-    const visible = rows.some(
-      (row) =>
-        (row.kind === "visual" && row.visual.slug === selection.slug) ||
-        (row.kind !== "visual" && row.run.slug === selection.slug),
-    );
-    if (!visible) setSelection(null);
-  }, [filter, rows, allRows.length, selection]);
-
   const loading = outputs.isLoading || gallery.isLoading;
   const activeKey =
     target.building && target.run
@@ -407,17 +329,14 @@ export function VisualizationView() {
       <div className="flex min-h-0 flex-1">
         {/* Rail — builds in progress first, then every artifact and run, newest first. */}
         <aside className="flex w-72 shrink-0 flex-col border-r border-border">
-          <div className="flex flex-col gap-2 border-b border-border px-3 py-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {t("visualization.rail")}
-              {rows.length > 0 && (
-                <span className="ml-1.5 normal-case tracking-normal text-muted-foreground/70">
-                  · {rows.length}
-                </span>
-              )}
-            </p>
-            <RailFilterControl filter={filter} counts={counts} onChange={setFilter} />
-          </div>
+          <p className="border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {t("visualization.rail")}
+            {rows.length > 0 && (
+              <span className="ml-1.5 normal-case tracking-normal text-muted-foreground/70">
+                · {rows.length}
+              </span>
+            )}
+          </p>
           <ScrollArea className="min-h-0 flex-1">
             <ul className="space-y-1 p-2" data-testid="visualization-artifacts">
               {rows.map((row) => (
@@ -462,55 +381,6 @@ export function VisualizationView() {
 }
 
 /* ------------------------------------------------------------------------- */
-
-/**
- * All · Artifacts · Outputs — one segmented control, the count beside each
- * word so an empty group reads as "none" rather than "broken".
- */
-function RailFilterControl({
-  filter,
-  counts,
-  onChange,
-}: {
-  filter: RailFilter;
-  counts: Record<RailFilter, number>;
-  onChange: (next: RailFilter) => void;
-}) {
-  const t = useT();
-  const options: Array<{ id: RailFilter; label: string }> = [
-    { id: "all", label: t("visualization.filter_all") },
-    { id: "artifacts", label: t("visualization.filter_artifacts") },
-    { id: "outputs", label: t("visualization.filter_outputs") },
-  ];
-  return (
-    <div
-      role="radiogroup"
-      aria-label={t("visualization.rail_filter")}
-      className="flex items-center rounded-md border border-border bg-secondary/40 p-0.5"
-      data-testid="visualization-filter"
-    >
-      {options.map(({ id, label }) => (
-        <button
-          key={id}
-          type="button"
-          role="radio"
-          aria-checked={filter === id}
-          onClick={() => onChange(id)}
-          data-testid={`visualization-filter-${id}`}
-          className={cn(
-            "inline-flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium transition-colors",
-            filter === id
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {label}
-          <span className="tabular-nums text-muted-foreground/70">{counts[id]}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function RailRowButton({
   row,
@@ -590,7 +460,7 @@ function RailRowButton({
           <span className="block truncate">
             {[
               formatWhen(visual.mtime),
-              parsed?.request || cleanRequest(visual.utterance) || visual.name,
+              parsed?.request || visual.utterance?.trim() || visual.name,
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -641,10 +511,9 @@ function RailRowButton({
 /* ------------------------------------------------------------------------- */
 
 /**
- * The stage for one run: its artifact under Preview / Code when it drew one,
- * the composed output page under Preview and the primary file's source under
- * Code when it did not; every file under Files, the graph under Run. Keyed
- * by run in the caller, so a new run opens on Preview.
+ * The stage for one run: its artifact (when it has one) under Preview / Code,
+ * every file under Files, the graph under Run. Keyed by run in the caller, so
+ * a new run opens on its own default tab.
  *
  * A run outside the rail's scan window arrives without artifacts in hand; its
  * listing is read here (same cache entry the rail's scan fills) and the newest
@@ -661,7 +530,7 @@ function Stage({
   onJumpToRun: (slug: string) => void;
 }) {
   const slug = run?.slug ?? pickedVisual?.slug ?? null;
-  const listing = useArtifactsForOutput(run !== null ? slug : null);
+  const listing = useArtifactsForOutput(run !== null && pickedVisual === null ? slug : null);
   const visual: VisualArtifact | null = useMemo(() => {
     if (pickedVisual) return pickedVisual;
     if (run === null) return null;
@@ -669,78 +538,43 @@ function Stage({
     found.sort((a, b) => b.mtime - a.mtime);
     return found[0] ?? null;
   }, [pickedVisual, run, listing.data]);
-  // The output's primary file — what Code shows and the toolbar's file
-  // actions act on when the run drew no page: the first text deliverable.
-  const primary: ArtifactSummary | null = useMemo(() => {
-    if (visual !== null) return null;
-    return primaryTextFile(listing.data?.files ?? []);
-  }, [visual, listing.data]);
 
-  const [mode, setMode] = useState<StageMode>("preview");
-  // "Open in Files" on the output page lands the reader on that file.
-  const [filesPath, setFilesPath] = useState<string | null>(null);
+  const [mode, setMode] = useState<StageMode>(visual ? "preview" : "files");
   const currentId = visual ? visualId(visual) : null;
   // A new artifact opens on its page, whatever tab the previous one was on; a
   // run that turns out to have one (its listing just arrived) moves to it too.
   useEffect(() => {
-    setMode("preview");
+    setMode(currentId ? "preview" : "files");
   }, [currentId]);
-  const openFile = useCallback((path: string) => {
-    setFilesPath(path);
-    setMode("files");
-  }, []);
 
   return (
     <>
       <ArtifactToolbar
         run={run}
         visual={visual}
-        primary={primary}
         mode={mode}
         onMode={setMode}
         onJumpToRun={onJumpToRun}
       />
       <div className="min-h-0 flex-1" data-testid="visualization-stage">
         {mode === "preview" && visual && <ArtifactStage visual={visual} />}
-        {mode === "preview" && !visual && run && (
-          <OutputPreview key={run.slug} run={run} onOpenFile={openFile} />
-        )}
         {mode === "code" && visual && <ArtifactSource slug={visual.slug} path={visual.path} />}
-        {mode === "code" && !visual && run && primary && (
-          <ArtifactSource slug={run.slug} path={primary.path} />
-        )}
-        {mode === "files" && run && <RunFiles run={run} initialPath={filesPath} />}
+        {mode === "files" && run && <RunFiles run={run} />}
         {mode === "run" && run && <RunGraphPanel key={run.slug} run={run} />}
       </div>
     </>
   );
 }
 
-/** The `/view` page follows the app's theme like an artifact page does. */
-function withTheme(url: string | null, theme: string): string | null {
-  if (url === null) return null;
-  return url.includes("?") ? url : `${url}?theme=${theme}`;
-}
-
-/** The first deliverable whose bytes are text — the output's "source". */
-function primaryTextFile(files: ArtifactSummary[]): ArtifactSummary | null {
-  return (
-    deliverableFiles(files).find((f) => isTextKind(artifactKind(f.path, f.is_text))) ?? null
-  );
-}
-
 function ArtifactToolbar({
   run,
   visual,
-  primary,
   mode,
   onMode,
   onJumpToRun,
 }: {
   run: OutputSummary | null;
   visual: VisualArtifact | null;
-  /** The output's primary text file when the run drew no page. */
-  primary: ArtifactSummary | null;
   mode: StageMode;
   onMode: (mode: StageMode) => void;
   onJumpToRun: (slug: string) => void;
@@ -750,57 +584,40 @@ function ArtifactToolbar({
   const capabilities = useOutputsCapabilities();
   const parsed = parseArtifactUtterance(visual?.utterance ?? run?.utterance);
   const slug = visual?.slug ?? run?.slug ?? "";
-  // The file the toolbar's Download / Reveal / Open act on: the artifact, or
-  // the output's primary file.
-  const file: { slug: string; path: string } | null = visual
-    ? { slug: visual.slug, path: visual.path }
-    : run && primary
-      ? { slug: run.slug, path: primary.path }
-      : null;
 
   const onReveal = useCallback(async () => {
-    if (!file) return;
+    if (!visual) return;
     try {
-      await revealArtifact(file.slug, file.path);
+      await revealArtifact(visual.slug, visual.path);
     } catch {
       pushToast("error", t("visualization.reveal_failed"));
     }
-  }, [file, pushToast, t]);
+  }, [visual, pushToast, t]);
 
   const theme = useThemeValue();
   const externalUrl = visual
     ? visual.kind === "page"
       ? `${artifactPageUrl(visual.slug, visual.path)}?theme=${theme}`
       : visual.url
-    : file
-      ? withTheme(artifactOpenUrl(file.slug, file.path), theme)
-      : null;
+    : null;
 
   const title = visual?.title ?? (run ? runTitle(run) : "");
   const caption = [
     visual ? formatWhen(visual.mtime) : run ? formatWhen(runWhen(run)) : "",
     visual ? formatSize(visual.size) : "",
     run && typeof run.duration_s === "number" ? `${run.duration_s.toFixed(1)} s` : "",
-    parsed?.request ||
-      (visual ? cleanRequest(visual.utterance) || visual.name : run ? cleanRequest(run.utterance) : ""),
+    parsed?.request || (visual ? visual.utterance?.trim() || visual.name : ""),
   ]
     .filter(Boolean)
     .join(" · ");
 
-  // Every run gets the same four tabs; Code is absent only when there is no
-  // source to show (a picture, a run that left no text file).
   const tabs: Array<{ id: StageMode; label: string; Icon: typeof Eye; show: boolean }> = [
-    {
-      id: "preview",
-      label: t("visualization.tab_preview"),
-      Icon: Eye,
-      show: visual !== null || run !== null,
-    },
+    { id: "preview", label: t("visualization.tab_preview"), Icon: Eye, show: visual !== null },
     {
       id: "code",
       label: t("visualization.tab_code"),
       Icon: Code2,
-      show: visual !== null ? visual.kind === "page" || visual.kind === "vector" : primary !== null,
+      show: visual !== null && (visual.kind === "page" || visual.kind === "vector"),
     },
     { id: "files", label: t("visualization.tab_files"), Icon: Files, show: run !== null },
     { id: "run", label: t("visualization.tab_run"), Icon: Workflow, show: run !== null },
@@ -860,7 +677,7 @@ function ArtifactToolbar({
             {t("visualization.open_map_page")}
           </Button>
         )}
-        {externalUrl && (
+        {visual && externalUrl && (
           <Button
             variant="ghost"
             size="sm"
@@ -872,10 +689,10 @@ function ArtifactToolbar({
             {t("visualization.open_external")}
           </Button>
         )}
-        {file && (
+        {visual && (
           <Button variant="ghost" size="sm" asChild>
             <a
-              href={artifactDownloadUrl(file.slug, file.path)}
+              href={artifactDownloadUrl(visual.slug, visual.path)}
               download
               title={t("visualization.download")}
               aria-label={t("visualization.download")}
@@ -886,7 +703,7 @@ function ArtifactToolbar({
         )}
         {/* Desktop only: a headless host has no file manager to open, so the
             button is absent rather than dead. */}
-        {file && capabilities.data?.native_file_actions && (
+        {visual && capabilities.data?.native_file_actions && (
           <Button
             variant="ghost"
             size="sm"

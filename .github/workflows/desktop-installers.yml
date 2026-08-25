@@ -1,0 +1,342 @@
+# Native desktop installers for Personal Jarvis.
+#
+# What this produces, and why those exact names: the website's download button
+# and the in-app updater both resolve
+# https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/<name>,
+# so the asset names below are a contract, not a convention.
+#
+#   PersonalJarvis-Setup-x64.exe          Windows 10/11 x64, per-user Inno wizard
+#   PersonalJarvis-macOS-arm64.dmg        Apple Silicon
+#   PersonalJarvis-macOS-x64.dmg          Intel Mac
+#   PersonalJarvis-Linux-x86_64.AppImage  Linux x86_64
+#   installers-SHA256SUMS.txt             what the updater verifies against
+#
+# Each OS job runs the SAME script a maintainer runs locally
+# (packaging/<os>/build.*), so a green run here means the documented command
+# works - not that CI has its own private build path.
+#
+# Signing is optional and secret-gated. GitHub forbids secrets in a job-level
+# `if:`, so the credentials are exported as job-level `env` and the steps test
+# the environment variable instead. Without the secrets the build still
+# produces a working, unsigned installer and says so.
+#
+# Action SHAs are pinned to 40-char commits (CVE-2025-30066 hardening), matching
+# the rest of this repo's workflows.
+
+name: Desktop installers
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-installers-${{ github.ref }}
+  # Never cancel a release build half-way: a partially uploaded set of assets is
+  # worse than a duplicate run.
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  # ------------------------------------------------------------------ Windows
+  windows:
+    name: Windows installer (x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Exported here (not per step) so the `if:` guards below can read them.
+      # An empty value means "this fork has no signing secrets" - not an error.
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+      AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
+      AZURE_CERTIFICATE_PROFILE: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Personal Jarvis (desktop + dev)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[desktop,dev]"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          # windows-latest ships Inno Setup 6 preinstalled, but that is not a
+          # guarantee - install it when the compiler is absent.
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+          )
+          $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($found) {
+            Write-Host "Inno Setup already present: $found"
+          } else {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build the installer
+        shell: pwsh
+        run: pwsh packaging/windows/build.ps1
+
+      # Signs the SETUP executable. Windows attaches Mark-of-the-Web to the
+      # downloaded installer, so this signature is the one SmartScreen weighs;
+      # files the installer then writes inherit no MOTW.
+      - name: Sign the installer (Azure Trusted Signing)
+        if: env.AZURE_CLIENT_ID != ''
+        # pin: azure/trusted-signing-action@v2.0.0 - pinned by commit SHA.
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}/dist/installers
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Report the signing state honestly
+        if: env.AZURE_CLIENT_ID == ''
+        shell: bash
+        run: |
+          echo "::notice::AZURE_* signing secrets are not configured - the installer is UNSIGNED."
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: installer-windows-x64
+          path: dist/installers/PersonalJarvis-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  # -------------------------------------------------------------------- macOS
+  macos:
+    name: macOS installer (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Personal Jarvis (desktop + dev)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[desktop,dev]"
+
+      # The script decides what to do with these: with them it codesigns with
+      # the Developer ID identity and notarizes; without them it ad-hoc signs,
+      # skips notarization and prints a one-line notice.
+      - name: Build the DMG
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          chmod +x packaging/macos/build.sh
+          ./packaging/macos/build.sh
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: installer-macos-${{ matrix.arch }}
+          path: dist/installers/PersonalJarvis-macOS-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  # -------------------------------------------------------------------- Linux
+  linux:
+    name: Linux installer (x86_64)
+    # 22.04, not latest: an AppImage inherits the glibc of the machine that
+    # built it, so building on the OLDEST supported runner is what makes it run
+    # on more than the newest distributions.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Personal Jarvis (desktop + dev)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[desktop,dev]"
+
+      - name: Build the AppImage
+        shell: bash
+        run: |
+          chmod +x packaging/linux/build.sh
+          ./packaging/linux/build.sh
+
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: installer-linux-x86_64
+          path: |
+            dist/installers/PersonalJarvis-Linux-x86_64.AppImage
+            dist/installers/personal-jarvis_*_amd64.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------- Checksums + Release
+  release:
+    name: Checksums and GitHub Release
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The ONLY job that may write to the repository, and only to attach the
+      # assets it just verified.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # A tag that disagrees with the shipped version would publish installers
+      # nobody can trace back to a commit - and the in-app updater compares the
+      # release version against jarvis.__version__, so a mismatch would offer an
+      # update that installs the same build forever.
+      - name: Verify the tag matches jarvis.__version__
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(python -c 'import re,pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("jarvis/__init__.py").read_text()).group(1))')"
+          echo "tag=${tag_version} package=${package_version}"
+          if [ "${tag_version}" != "${package_version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match jarvis.__version__ (${package_version})."
+            exit 1
+          fi
+
+      - name: Download every installer
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          pattern: installer-*
+          path: installers
+          merge-multiple: true
+
+      - name: Write installers-SHA256SUMS.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd installers
+          ls -la
+          # Every asset the download page and the updater promise must be here.
+          # A silently missing DMG would ship a release that only half works.
+          required=(
+            PersonalJarvis-Setup-x64.exe
+            PersonalJarvis-macOS-arm64.dmg
+            PersonalJarvis-macOS-x64.dmg
+            PersonalJarvis-Linux-x86_64.AppImage
+          )
+          for asset in "${required[@]}"; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::required release asset $asset is missing"
+              exit 1
+            fi
+          done
+          # Flat names only: the updater looks each asset up by its file name.
+          rm -f installers-SHA256SUMS.txt
+          sha256sum "${required[@]}" > installers-SHA256SUMS.txt
+          for optional in personal-jarvis_*_amd64.deb; do
+            [ -e "$optional" ] || continue
+            sha256sum "$optional" >> installers-SHA256SUMS.txt
+          done
+          cat installers-SHA256SUMS.txt
+          sha256sum -c installers-SHA256SUMS.txt
+
+      - name: Upload the checksum manifest
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: installers-checksums
+          path: installers/installers-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach the installers to the GitHub Release
+        if: github.ref_type == 'tag'
+        # pin: softprops/action-gh-release@v3.0.2 - same pin as sign-installer.yml.
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          # The release may already exist (sign-installer.yml runs on the same
+          # tag); this adds assets to it instead of replacing it.
+          fail_on_unmatched_files: true
+          files: |
+            installers/PersonalJarvis-Setup-x64.exe
+            installers/PersonalJarvis-macOS-arm64.dmg
+            installers/PersonalJarvis-macOS-x64.dmg
+            installers/PersonalJarvis-Linux-x86_64.AppImage
+            installers/installers-SHA256SUMS.txt

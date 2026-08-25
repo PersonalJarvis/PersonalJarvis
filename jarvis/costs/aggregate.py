@@ -158,9 +158,6 @@ class CostReport:
     series: list[dict[str, Any]]
     top_refs: list[dict[str, Any]]
     models: list[dict[str, Any]]
-    #: How many conversations/missions/sessions the window holds in all — the
-    #: top list is a slice of these, and must say so.
-    refs_total: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -175,7 +172,6 @@ class CostReport:
             "series": self.series,
             "top_refs": self.top_refs,
             "models": self.models,
-            "refs_total": self.refs_total,
         }
 
 
@@ -188,13 +184,8 @@ def filter_entries(
     surfaces: set[str] | None = None,
     refs: set[str] | None = None,
     search: str = "",
-    billing: str = "all",
 ) -> list[CostEntry]:
-    """Narrow the line items. An empty filter set means "everything".
-
-    ``billing``: ``all``, ``billed`` (an API key paid — everything but seat
-    quotes) or ``subscription`` (seat quotes only).
-    """
+    """Narrow the line items. An empty filter set means "everything"."""
     needle = search.strip().casefold()
 
     def keep(e: CostEntry) -> bool:
@@ -207,10 +198,6 @@ def filter_entries(
         if surfaces and e.surface not in surfaces:
             return False
         if refs and e.ref_id not in refs:
-            return False
-        if billing == "billed" and e.price_source == "subscription":
-            return False
-        if billing == "subscription" and e.price_source != "subscription":
             return False
         if needle and needle not in f"{e.model} {e.provider} {e.label}".casefold():
             return False
@@ -320,7 +307,6 @@ def build_report(
             }
             for row in _ranked(refs, total_cost, total_tokens, top_n)
         ],
-        refs_total=len(refs),
         models=sorted(
             (
                 {

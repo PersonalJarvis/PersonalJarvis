@@ -1,5 +1,4 @@
 """Unit tests for server-side artifact HTML rendering (markdown + escape + CSP)."""
-
 from __future__ import annotations
 
 import builtins
@@ -44,19 +43,3 @@ def test_markdown_missing_lib_falls_back_to_pre(monkeypatch):
 def test_csp_blocks_scripts():
     assert "default-src 'none'" in VIEW_CSP
     assert "script-src" not in VIEW_CSP
-
-
-def test_page_wears_the_artifact_tokens_and_no_script():
-    out = render_artifact_html("report.md", "# Title")
-    # The design guide's token block, both palettes, is the page's stylesheet.
-    assert "--accent:#FFD60A" in out
-    assert ':root[data-theme="light"]' in out
-    assert "<script" not in out
-
-
-def test_theme_query_is_stamped_on_html_and_junk_is_ignored():
-    assert "<html lang='en' data-theme='light'>" in render_artifact_html("r.md", "x", theme="light")
-    assert "<html lang='en' data-theme='dark'>" in render_artifact_html("r.txt", "x", theme="dark")
-    # (the stylesheet mentions data-theme selectors; the attribute is what matters)
-    assert "data-theme='" not in render_artifact_html("r.md", "x", theme="<b>x</b>")
-    assert "data-theme='" not in render_artifact_html("r.md", "x")

@@ -41,10 +41,6 @@ SURFACE_MISSION = "mission"
 SURFACE_JARVIS_VOICE = "jarvis-voice"
 #: Coding agents driven by a vendor CLI, indexed from their session logs.
 SURFACE_AGENTIC_IDE = "agentic-ide"
-#: Every model call no surface above claims: dictation polish, the wiki
-#: curator, awareness digests, the mission critic, computer-use planning,
-#: skill authoring … — read from the usage ledger (:mod:`jarvis.costs.ledger`).
-SURFACE_BACKGROUND = "background"
 
 ROLE_REALTIME = "realtime"
 """Speech-to-speech model — audio tokens, billed per Live/Realtime API rates."""
@@ -59,11 +55,9 @@ ROLE_AGENT = "agent"
 """A coding-agent turn (Claude Code, Codex, …) run from the chat surface."""
 
 ROLE_WORKER = "worker"
-"""An autonomous mission worker."""
 ROLE_STT = "stt"
 ROLE_TTS = "tts"
-ROLE_BACKGROUND = "background"
-"""A model call made by a background job; the entry's label names the job."""
+"""An autonomous mission worker."""
 
 # Every role and surface the read model can emit, in the order a report
 # should offer them. A value missing here is invisible in the facets, which
@@ -77,7 +71,6 @@ ROLES: tuple[str, ...] = (
     ROLE_WORKER,
     ROLE_STT,
     ROLE_TTS,
-    ROLE_BACKGROUND,
 )
 SURFACES: tuple[str, ...] = (
     SURFACE_VOICE,
@@ -85,7 +78,6 @@ SURFACES: tuple[str, ...] = (
     SURFACE_MISSION,
     SURFACE_AGENTIC_IDE,
     SURFACE_JARVIS_VOICE,
-    SURFACE_BACKGROUND,
 )
 
 # Runners whose usage object follows the OpenAI convention: ``input_tokens``
@@ -138,8 +130,7 @@ SUBSCRIPTION_RUNNERS: frozenset[str] = frozenset(
         "codex-cli",
         "agy-cli",
         "kimi-cli",
-        # NOT grok-cli: Grok Build runs on the user's xAI key and records what
-        # it billed per turn (costUsdTicks) — money that moved, not a seat.
+        "grok-cli",
     }
 )
 

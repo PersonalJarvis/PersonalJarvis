@@ -815,7 +815,6 @@ class OpenAIChatPolishClient:
             "reasoning_effort": "low",
         }
         data = await self._post(payload, timeout_s=timeout_s)
-        _record_openai_usage(self._family.id, self._model, data.get("usage"))
         choices = data.get("choices") or []
         if not choices:
             return None
@@ -979,51 +978,8 @@ class GeminiPolishClient:
             raise PolishProviderError(
                 f"{self._family.label} polish request failed: {exc}"
             ) from exc
-        _record_gemini_usage(
-            self._family.id, self._model, getattr(response, "usage_metadata", None)
-        )
         text = str(getattr(response, "text", "") or "").strip()
         return text or None
-
-
-def _record_openai_usage(provider: str, model: str, usage: Any) -> None:
-    """OpenAI-shaped usage: ``prompt_tokens`` INCLUDES the cached share."""
-    if not isinstance(usage, dict):
-        return
-    from jarvis.costs.ledger import record_usage
-
-    details = usage.get("prompt_tokens_details")
-    cached = int((details or {}).get("cached_tokens") or 0) if isinstance(details, dict) else 0
-    prompt = int(usage.get("prompt_tokens") or 0)
-    record_usage(
-        provider=provider,
-        model=model,
-        tokens_in=max(0, prompt - cached),
-        tokens_out=int(usage.get("completion_tokens") or 0),
-        tokens_cached=cached,
-        caller="dictation",
-    )
-
-
-def _record_gemini_usage(provider: str, model: str, meta: Any) -> None:
-    """google-genai ``usage_metadata``: prompt count includes cached content."""
-    if meta is None:
-        return
-    from jarvis.costs.ledger import record_usage
-
-    prompt = int(getattr(meta, "prompt_token_count", 0) or 0)
-    cached = int(getattr(meta, "cached_content_token_count", 0) or 0)
-    out = int(getattr(meta, "candidates_token_count", 0) or 0) + int(
-        getattr(meta, "thoughts_token_count", 0) or 0
-    )
-    record_usage(
-        provider=provider,
-        model=model,
-        tokens_in=max(0, prompt - cached),
-        tokens_out=out,
-        tokens_cached=cached,
-        caller="dictation",
-    )
 
 
 def build_polish_client(family: PolishFamily, *, model: str) -> PolishClient | None:
