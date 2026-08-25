@@ -9,11 +9,16 @@ import { transcriptFromMessages } from "@/lib/homeTranscript";
 /**
  * The one chat history the app has, and the one way to open a row of it.
  *
- * Two backends feed it — the voice sessions (`/api/chats`) and the agent
- * chats (`/api/agent-chat/sessions`) — merged into one list sorted by when
- * each was last touched. The sidebar block and the "All chats" dialog both
+ * Two backends feed it — the voice sessions (`/api/chats`) and the typed
+ * Jarvis chats (`/api/agent-chat/sessions?surface=jarvis`, read through the
+ * front page's agent-chat store) — merged into one list sorted by when each
+ * was last touched. Both kinds are the same assistant, reached by voice or
+ * by keyboard; the Agentic IDE's coding sessions are on another surface and
+ * never enter this list. The sidebar block and the "All chats" dialog both
  * read THIS, so the two can never disagree about what exists or about what
- * a click does.
+ * a click does. A typed row's kind is still called `"agent"` — that is the
+ * internal name of the agent-chat backend that carries it, not a claim
+ * about who answers.
  *
  * The rule a click follows (the bug this file was extracted to fix): the
  * front page shows exactly ONE conversation, so opening a row must also

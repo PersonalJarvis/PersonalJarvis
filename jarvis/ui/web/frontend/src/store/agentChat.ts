@@ -25,7 +25,14 @@ import {
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/components/agentchat/reduce";
 
 /**
- * The agent chat's own store — the typed half of the front page.
+ * The agent chat's store — one per SURFACE (`createAgentChatStore`).
+ *
+ * The front page's store (`useAgentChatStore`, surface `jarvis`) is Jarvis
+ * with a keyboard: what is typed there goes to the same assistant the
+ * microphone reaches, and its sessions are the front page's chats. An
+ * Agentic IDE store (surface `agent`) holds coding sessions instead. Each
+ * store asks the backend for its own list and catalog, stamps its surface on
+ * the sessions it creates, and keeps its own socket and draft.
  *
  * One active session at a time: its timeline is fed by one WebSocket
  * (snapshot, then live events, reconnect from the last seq). The composer's

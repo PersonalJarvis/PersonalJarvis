@@ -24,7 +24,10 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * The agent composer — the typed front page's one control.
+ * The composer — the front page's one control for talking to Jarvis by
+ * keyboard. What is typed here goes to the same assistant the microphone
+ * reaches; the picks under the text box decide what Jarvis runs on for this
+ * chat.
  *
  * One card (maintainer sketch, 2026-08-23): the text box on top and, under
  * it, the four picks that decide who answers and how —
@@ -32,14 +35,16 @@ import { cn } from "@/lib/utils";
  *   Provider · Model · Reasoning effort │ Permission mode · Build | Plan
  *
  * — then dictation and Send on the right. The picks are the backend's
- * catalog, never a list typed here: the provider column is every sub-agent
- * the Agents tab knows (connected ones pickable, the rest greyed with a
- * "connect" hint), the model column is the provider's own list (live from
- * its catalog route, or the curated list for a CLI), the effort ladder and
- * the permission ladder are whatever that provider's runner accepts
- * (jarvis/agent_chat/effort.py, permissions.py). Build | Plan is the
- * permission ladder's `plan` entry drawn as a switch, shown only when the
- * runner has one.
+ * catalog for this surface, never a list typed here: the provider column is
+ * every sub-agent the Agents tab knows (connected ones pickable, the rest
+ * greyed with a "connect" hint), the model column is the provider's own list
+ * (live from its catalog route, or the curated list for a CLI), the effort
+ * ladder and the permission ladder are whatever the catalog delivers for
+ * that row (jarvis/agent_chat/effort.py, permissions.py) — on the front
+ * page one unified ladder for every provider (ask / accept-edits / plan /
+ * bypass), each step wearing its stance's glyph (permissionIcons.ts).
+ * Build | Plan is the permission ladder's `plan` entry drawn as a switch,
+ * shown only when the ladder has one.
  *
  * The provider list is grouped the way the Agents tab groups its cards — by
  * what stands behind a row, never by whether it is connected: a coding CLI

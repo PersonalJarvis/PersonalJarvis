@@ -30,9 +30,12 @@ export const RECENT_CHATS_UNFOLDED = 15;
  * An agent chat goes to the chat surface, where the session is read and
  * continued by typing — on the provider and model it was using.
  *
- * The classic brain's text threads are no longer listed: since the chat
- * surface became the agent chat there is nowhere to open them; the data
- * stays on disk.
+ * The typed rows are the front page's Jarvis chats (agent-chat sessions on
+ * the `jarvis` surface) — the same assistant as the voice rows, reached by
+ * keyboard. The Agentic IDE's coding sessions live on their own surface and
+ * are listed there, never here. The classic brain's text threads are no
+ * longer listed either: since the chat surface became the agent chat there
+ * is nowhere to open them; the data stays on disk.
  */
 export function RecentChats() {
   const t = useT();

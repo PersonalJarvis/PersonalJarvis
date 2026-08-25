@@ -11,14 +11,15 @@ import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { useT } from "@/i18n";
 
 /**
- * The chat stage — the typed half of the front page.
+ * The chat stage — the typed half of the front page: Jarvis with a keyboard.
  *
- * Since 2026-08-23 this is the AGENT chat (jarvis/agent_chat): a coding-agent
- * session on whichever sub-agent — Claude Code, Codex, Antigravity, Grok
- * Build, or an API-key provider — the composer picks, with the model, the
- * reasoning effort and the permission mode dialled in the composer itself.
- * The voice stage next door still talks to the voice brain; this stage does
- * not (AP-9: nothing here touches the voice path).
+ * What is typed here goes to the same assistant the microphone reaches —
+ * the same memory, the same tools, the same voice in the answers — carried
+ * by an agent-chat session on the `jarvis` surface (jarvis/agent_chat). The
+ * composer's picks — provider, model, reasoning effort, permission mode —
+ * decide what Jarvis runs on for THIS chat; they never reach the voice
+ * path (AP-9: nothing here touches it). The Agentic IDE lists its coding
+ * sessions on its own surface (`agent`), so none of them appear here.
  *
  * One centred column, like a document: the greeting and the composer sit
  * in the middle of an empty page; once there are messages the column
