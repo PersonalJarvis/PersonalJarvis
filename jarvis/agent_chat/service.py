@@ -27,11 +27,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from jarvis.agent_chat.approval_bridge import ChatApprovalBridge
 from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import ladder_key, normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
+from jarvis.agent_chat.runner_brain import run_brain_turn
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
 from jarvis.agent_chat.store import DEFAULT_SURFACE, AgentChatSession, AgentChatStore
 
@@ -93,10 +95,22 @@ class AgentChatService:
         *,
         assistant_name: Callable[[], str] | None = None,
         default_cwd: Callable[[], str] | None = None,
+        bus: Callable[[], Any | None] | None = None,
     ) -> None:
         self.store = store
         self._assistant_name = assistant_name or (lambda: "Jarvis")
         self._default_cwd = default_cwd or (lambda: str(Path.home()))
+        # The app bus, resolved late (the server builds this service before
+        # the brain is up). The brain runner reads its tool events off it and
+        # the approval bridge answers the executor on it; without a bus the
+        # Jarvis surface still answers, just without tool rows and cards.
+        self._bus = bus or (lambda: None)
+        self._bridge: ChatApprovalBridge | None = None
+        # Brain-runner turns run one at a time across sessions: the manager
+        # keeps some per-turn state on itself (the realtime delegate lives
+        # with that too), and one person types one chat at a time. The voice
+        # is NOT held by this lock.
+        self._brain_lock = asyncio.Lock()
         self._running: dict[str, _Running] = {}
         self._subscribers: dict[str, set[Subscriber]] = {}
         self._approvals: dict[str, asyncio.Future[str]] = {}
@@ -112,6 +126,14 @@ class AgentChatService:
 
     def default_cwd(self) -> str:
         return self._default_cwd()
+
+    def _bridge_for(self, bus: Any | None) -> ChatApprovalBridge | None:
+        """The approval bridge, built on the first Jarvis turn that has a bus."""
+        if bus is None:
+            return None
+        if self._bridge is None:
+            self._bridge = ChatApprovalBridge(bus)
+        return self._bridge
 
     def create_session(
         self,
@@ -213,6 +235,7 @@ class AgentChatService:
             ),
         )
 
+        bus = self._bus()
         handle = TurnHandle(
             session=session,
             turn_id=turn_id,
@@ -223,11 +246,22 @@ class AgentChatService:
             cancel=cancel,
             history=history,
             assistant_name=self._assistant_name(),
+            bus=bus,
+            surface=session.surface,
+            stance=session.permission_mode if session.surface == "jarvis" else "",
         )
 
         async def _body() -> None:
             try:
-                if supports_cli_runner(runner):
+                if runner == "brain":
+                    async with self._brain_lock:
+                        await run_brain_turn(
+                            handle,
+                            text,
+                            bridge=self._bridge_for(bus),
+                            always_allowed=self.always_allowed(session_id),
+                        )
+                elif supports_cli_runner(runner):
                     vendor = await run_cli_turn(handle, text, runner)
                     if vendor and vendor != session.vendor_session:
                         self.store.update_session(session_id, vendor_session=vendor)

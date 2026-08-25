@@ -130,7 +130,14 @@ def system_prompt(*, cwd: Path, assistant_name: str, plan: bool = False) -> str:
 
 @dataclass(slots=True)
 class TurnHandle:
-    """What the service hands a runner: where to emit, how to ask, when to stop."""
+    """What the service hands a runner: where to emit, how to ask, when to stop.
+
+    ``trace_id`` is the turn's correlation id on the app bus (the brain runner
+    passes it to ``generate`` and reads its own tool events back by it);
+    ``bus`` is the app bus, ``None`` when the service runs without one;
+    ``surface`` and ``stance`` are the session's chat and, on the Jarvis
+    surface, its permission stance (``jarvis.agent_chat.permissions``).
+    """
 
     session: AgentChatSession
     turn_id: str
@@ -139,6 +146,10 @@ class TurnHandle:
     cancel: asyncio.Event
     history: list[dict[str, Any]] = field(default_factory=list)
     assistant_name: str = "Jarvis"
+    trace_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    bus: Any | None = None
+    surface: str = "agent"
+    stance: str = ""
 
 
 # ------------------------------------------------------------ history

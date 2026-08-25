@@ -3491,7 +3491,7 @@ class WebServer:
             except Exception:  # noqa: BLE001 — the name is cosmetic
                 return "Jarvis"
 
-        return AgentChatService(store, assistant_name=_name)
+        return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
         self._mic_level_sessions.clear()
