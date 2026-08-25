@@ -11906,10 +11906,15 @@ class BrainManager:
                         "Fallback-Hit: %s(%s) — %d provider übersprungen",
                         prov_name, model, idx,
                     )
-                    await self._bus.publish(BrainProviderSwitched(
-                        from_provider=self._active_name,
-                        to_provider=prov_name,
-                    ))
+                    # Under an override the pick answering after its router
+                    # lead is the plan, not a fallback: the sidebar and its
+                    # "Brain -> X" toast follow this event, and the live brain
+                    # did not move (review 2026-08-25).
+                    if turn_override is None:
+                        await self._bus.publish(BrainProviderSwitched(
+                            from_provider=self._active_name,
+                            to_provider=prov_name,
+                        ))
                 break
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc

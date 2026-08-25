@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from jarvis.agent_chat import jarvis_harness
+from jarvis.agent_chat.approval_bridge import approval_ref
 from jarvis.agent_chat.effort import normalize_effort, snap_to_ladder
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
@@ -1342,7 +1343,7 @@ async def run_cli_turn(
     session = handle.session
     resume = session.vendor_session
     ident: jarvis_harness.Identity | None = None
-    ref = f"agent-chat:{session.session_id}"
+    ref = approval_ref(session.session_id)
     if identity:
         ident = await jarvis_harness.build_identity(
             session_id=session.session_id,
@@ -1425,7 +1426,7 @@ async def _run_cli_once(
     bridge: Any | None = None,
 ) -> _Outcome:
     session = handle.session
-    approval_ref = f"agent-chat:{session.session_id}"
+    chat_ref = approval_ref(session.session_id)
     cwd = Path(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
     planner = _PLANNERS[runner]
@@ -1591,7 +1592,7 @@ async def _run_cli_once(
             if bridge is not None and subtype == "can_use_tool":
                 # A Jarvis tool the CLI just asked about will hit the executor's
                 # own gate over MCP in a moment; the person has answered once.
-                bridge.note_cli_approval(approval_ref, tool_name)
+                bridge.note_cli_approval(chat_ref, tool_name)
         else:
             body = {"behavior": "deny", "message": message}
         frame = {

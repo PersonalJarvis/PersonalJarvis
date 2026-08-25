@@ -161,6 +161,42 @@ async def test_a_failing_override_turn_does_not_dead_list_the_provider_for_the_v
     assert (PICK, PICK_MODEL) not in mgr._dead_provider_models
 
 
+@pytest.mark.asyncio
+async def test_a_fall_through_to_the_pick_never_announces_a_brain_switch() -> None:
+    """Review 2026-08-25: the router lead falls through to the pick at chain index 1,
+    and that used to publish BrainProviderSwitched — the sidebar then showed
+    "Brain -> <chat model>" although the live brain had not moved."""
+    from jarvis.core.events import BrainProviderSwitched
+
+    mgr = _manager()
+    scoped, unscoped = _seed(mgr, scoped_text="PICK_ANSWER")
+    unscoped.supports_tools = False  # the pick cannot call tools -> a lead runs first
+    lead = FakeBrain(text_response="LEAD_TALKED")  # picks no tool -> falls through
+    # The lead runs under the chat's scope too (every instance of an overridden turn does).
+    mgr._brain_cache[("gemini@agent", "gemini-flash")] = lead
+    mgr._brain_cache[("gemini", "gemini-flash")] = FakeBrain(text_response="UNSCOPED_LEAD")
+    mgr._first_tool_capable_provider = (  # type: ignore[assignment]
+        lambda level, *, exclude=None: ("gemini", "gemini-flash")
+    )
+    switches: list[BrainProviderSwitched] = []
+
+    async def _capture(event: BrainProviderSwitched) -> None:
+        switches.append(event)
+
+    mgr._bus.subscribe(BrainProviderSwitched, _capture)
+
+    reply = await mgr.generate(
+        "Erzähl mir bitte etwas über die Geschichte von Rom",  # i18n-allow: a substantive turn
+        use_history=False,
+        turn_override=TurnOverride(provider=PICK, model=PICK_MODEL),
+    )
+
+    assert "PICK_ANSWER" in reply and "LEAD_TALKED" not in reply
+    assert lead.calls and scoped.calls, "the lead ran first, the pick answered"
+    assert switches == [], "a pick answering after its lead is the plan, not a switch"
+    assert mgr._active_name == TALKER
+
+
 # ------------------------------------------------------- tools and kwargs
 
 
