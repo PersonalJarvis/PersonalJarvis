@@ -94,8 +94,22 @@ function isRunning(items: readonly TimelineItem[]): boolean {
   return Boolean(last && last.type === "turn" && last.status === "running");
 }
 
-/** Where the current run begins: the last user message, or the whole history. */
-function defaultRunStart(items: readonly TimelineItem[]): number {
+/**
+ * Where the current run begins.
+ *
+ * Anchored on the turn id `/run` answered with, never on a count: the socket
+ * snapshot of an existing conversation can land AFTER the click, and an index
+ * captured before it would put the whole history inside "the current run" —
+ * which is exactly how five identical setups ended up stacked on one screen.
+ * The user message that started the turn belongs to the run, hence the step
+ * back. Without an id (the panel just opened), the last user message starts it.
+ */
+function runStartIndex(items: readonly TimelineItem[], turnId: string | null): number {
+  if (turnId) {
+    const at = items.findIndex((it) => it.type === "turn" && it.id === turnId);
+    if (at > 0 && items[at - 1].type === "user") return at - 1;
+    if (at >= 0) return at;
+  }
   for (let i = items.length - 1; i >= 0; i--) {
     if (items[i].type === "user") return i;
   }
@@ -139,14 +153,14 @@ export function AssistantPanel({
   const [runError, setRunError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [confirmed, setConfirmed] = useState<{ hash: string; steps: ProposalStep[] } | null>(null);
-  /** Index in `items` where the current run starts; null = derive it. */
-  const [runStart, setRunStart] = useState<number | null>(null);
+  /** The turn `/run` started; everything before it is "earlier". */
+  const [runTurnId, setRunTurnId] = useState<string | null>(null);
   const [showEarlier, setShowEarlier] = useState(false);
   const answered = useRef<Set<string>>(new Set());
   const scroller = useRef<HTMLDivElement | null>(null);
 
   const running = isRunning(items);
-  const start = runStart ?? defaultRunStart(items);
+  const start = runStartIndex(items, runTurnId);
   const current = items.slice(Math.min(start, items.length));
   const earlier = items.slice(0, Math.min(start, items.length));
   const shown = showEarlier ? items : current;
@@ -201,11 +215,11 @@ export function AssistantPanel({
       setBlocked(null);
       setRunError(null);
       setShowEarlier(false);
-      // Everything already on screen becomes "earlier": a second setup run is
-      // a fresh start, not a fifth copy stacked under the fourth.
-      setRunStart(useLocalModelsAssistantStore.getState().timeline.items.length);
       try {
         const res = await runAssistant(providerId, mode);
+        // Everything before this turn becomes "earlier": a second setup run is
+        // a fresh start, not a fifth copy stacked under the fourth.
+        setRunTurnId(res.turn_id);
         if (res.session_id !== activeSessionId) openSession(res.session_id);
       } catch (err) {
         if (err instanceof AssistantApiError && err.status === 409) setBlocked(err.message);
