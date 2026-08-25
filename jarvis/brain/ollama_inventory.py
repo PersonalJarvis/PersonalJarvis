@@ -15,6 +15,10 @@ Ollama surface behind the "Local models" section:
 * :func:`unload_model` — a ``keep_alive: 0`` ping, Ollama's own "unload now".
 * :func:`delete_model` — ``DELETE /api/delete``.
 * :func:`disk_usage` — the sum of the user-visible downloads.
+* :func:`cached_snapshot` — ONE sweep (``/api/tags`` + ``/api/show`` per
+  download + ``/api/ps``) shared by every panel of the section for a few
+  seconds, so an open of the section costs one sweep instead of five;
+  :func:`invalidate_snapshot` drops it after an unload, a delete or a pull.
 
 Two families of download are Jarvis's own bookkeeping, not the user's
 choice, and are hidden from every user-facing list by :func:`is_hidden_alias`:
@@ -34,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -60,6 +65,10 @@ __all__ = [
     "unload_model",
     "delete_model",
     "disk_usage",
+    "InventorySnapshot",
+    "cached_snapshot",
+    "peek_snapshot",
+    "invalidate_snapshot",
 ]
 
 #: Per-model option profiles are derived models named ``<base>-jarvis-<hash>``
@@ -126,6 +135,23 @@ class OllamaRunningModel:
     expires_at: str
     context_length: int | None
     digest: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class InventorySnapshot:
+    """One sweep of the server, shared by every reader for a few seconds.
+
+    ``models`` are the user-visible downloads with their ``/api/show`` facts;
+    ``running`` is ``/api/ps`` (empty when that probe failed — logged, the
+    downloads still render); ``all_names`` also lists Jarvis's own aliases,
+    for the pull bookkeeping that asks "is this tag on the server at all".
+    ``fetched_at`` is ``time.time()`` when the sweep finished.
+    """
+
+    models: tuple[OllamaModelInfo, ...]
+    running: tuple[OllamaRunningModel, ...]
+    fetched_at: float
+    all_names: frozenset[str] = frozenset()
 
 
 # ── Names ────────────────────────────────────────────────────────────────
@@ -291,23 +317,34 @@ async def list_models(
     """
     root = normalize_server_root(root)
     async with _make_client(transport) as client:
-        payload = await _get_json(client, root, "/api/tags")
-        rows = payload.get("models") if isinstance(payload, dict) else None
-        if not isinstance(rows, list):
-            raise OllamaServerError(f"Ollama at {root} answered /api/tags in an unexpected shape.")
-        base: list[OllamaModelInfo] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            info = _from_tags_row(row)
-            if not info.name or info.name.endswith(":cloud") or row.get("remote"):
-                continue
-            if not include_hidden and is_hidden_alias(info.name):
-                continue
-            base.append(info)
-        semaphore = asyncio.Semaphore(_SHOW_CONCURRENCY)
-        probed = await asyncio.gather(*(_show(client, root, m, semaphore) for m in base))
-    return sorted(probed, key=lambda m: m.modified_at, reverse=True)
+        probed, _names = await _sweep(client, root, include_hidden=include_hidden)
+    return probed
+
+
+async def _sweep(
+    client: httpx.AsyncClient, root: str, *, include_hidden: bool
+) -> tuple[list[OllamaModelInfo], frozenset[str]]:
+    """``/api/tags`` + ``/api/show`` per kept download: ``(models newest first,
+    every local name incl. hidden aliases)``."""
+    payload = await _get_json(client, root, "/api/tags")
+    rows = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise OllamaServerError(f"Ollama at {root} answered /api/tags in an unexpected shape.")
+    base: list[OllamaModelInfo] = []
+    names: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        info = _from_tags_row(row)
+        if not info.name or info.name.endswith(":cloud") or row.get("remote"):
+            continue
+        names.add(info.name)
+        if not include_hidden and is_hidden_alias(info.name):
+            continue
+        base.append(info)
+    semaphore = asyncio.Semaphore(_SHOW_CONCURRENCY)
+    probed = await asyncio.gather(*(_show(client, root, m, semaphore) for m in base))
+    return sorted(probed, key=lambda m: m.modified_at, reverse=True), frozenset(names)
 
 
 async def get_model(
@@ -371,6 +408,7 @@ async def unload_model(
             resp = await client.post(f"{root}/api/generate", json={"model": name, "keep_alive": 0})
         except httpx.HTTPError as exc:
             raise _unreachable(root, exc) from exc
+    invalidate_snapshot(root)
     if resp.status_code == 404:
         raise OllamaModelNotFound(f"No download named {name!r} on the Ollama server at {root}.")
     if resp.status_code >= 400:
@@ -397,6 +435,7 @@ async def delete_model(
             resp = await client.request("DELETE", f"{root}/api/delete", json={"model": name})
         except httpx.HTTPError as exc:
             raise _unreachable(root, exc) from exc
+    invalidate_snapshot(root)
     if resp.status_code == 404:
         raise OllamaModelNotFound(f"No download named {name!r} on the Ollama server at {root}.")
     if resp.status_code >= 400:
@@ -406,13 +445,115 @@ async def delete_model(
 
 
 async def disk_usage(root: str, *, transport: httpx.AsyncBaseTransport | None = None) -> int:
-    """Bytes held by the user-visible downloads.
+    """Bytes held by the user-visible downloads (from the shared snapshot).
 
     Aliases are excluded on purpose: they share their weights with the base
     model, and counting both would report a 4 GB model as 8 GB.
     """
-    models = await list_models(root, include_hidden=False, transport=transport)
-    return sum(m.size_bytes for m in models)
+    snapshot = await cached_snapshot(root, transport=transport)
+    return sum(m.size_bytes for m in snapshot.models)
+
+
+# ── Shared snapshot ──────────────────────────────────────────────────────
+
+#: How long one sweep serves every reader. Five seconds covers one paint of
+#: the section (inventory, roles, server and shortlist ask within the same
+#: second) without hiding a model that a voice turn just loaded for long.
+DEFAULT_SNAPSHOT_MAX_AGE_S = 5.0
+
+#: Per-root memo: the last good snapshot, or the last failure (so an offline
+#: server is not asked five times per paint either — the sentence is the same).
+_snapshots: dict[str, InventorySnapshot] = {}
+_failures: dict[str, tuple[float, OllamaServerError]] = {}
+#: Per-root sweep lock, bound to the loop that created it: concurrent callers
+#: join the in-flight sweep instead of starting their own.
+_locks: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+
+
+def _lock_for(root: str) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    hit = _locks.get(root)
+    if hit is None or hit[0] is not loop:
+        hit = (loop, asyncio.Lock())
+        _locks[root] = hit
+    return hit[1]
+
+
+def _fresh(root: str, max_age_s: float) -> InventorySnapshot | None:
+    snapshot = _snapshots.get(root)
+    if snapshot is not None and time.time() - snapshot.fetched_at < max_age_s:
+        return snapshot
+    return None
+
+
+def peek_snapshot(
+    root: str, *, max_age_s: float = DEFAULT_SNAPSHOT_MAX_AGE_S
+) -> InventorySnapshot | None:
+    """The fresh snapshot for ``root`` if one exists, without fetching."""
+    return _fresh(normalize_server_root(root), max_age_s)
+
+
+def invalidate_snapshot(root: str) -> None:
+    """Forget what is known about ``root``; the next reader sweeps again.
+
+    Called after an unload, a delete and a finished pull — the three moments
+    the inventory changes because of something Jarvis did.
+    """
+    root = normalize_server_root(root)
+    _snapshots.pop(root, None)
+    _failures.pop(root, None)
+
+
+def _reset_for_tests() -> None:
+    """Drop every memoised snapshot, failure and lock (tests only)."""
+    _snapshots.clear()
+    _failures.clear()
+    _locks.clear()
+
+
+async def cached_snapshot(
+    root: str,
+    *,
+    max_age_s: float = DEFAULT_SNAPSHOT_MAX_AGE_S,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> InventorySnapshot:
+    """The server's downloads and loaded models, one sweep per ``max_age_s``.
+
+    Concurrent callers wait for the sweep in flight and share its result.
+    Raises :class:`OllamaServerError` when ``/api/tags`` did not answer; that
+    failure is remembered for the same window, so the panels of one paint
+    all show the same sentence after ONE refused connection. A failing
+    ``/api/ps`` is not an error: ``running`` is empty and the downloads render.
+    """
+    root = normalize_server_root(root)
+    if (hit := _fresh(root, max_age_s)) is not None:
+        return hit
+    async with _lock_for(root):
+        if (hit := _fresh(root, max_age_s)) is not None:
+            return hit
+        failed = _failures.get(root)
+        if failed is not None and time.time() - failed[0] < max_age_s:
+            raise failed[1]
+        try:
+            async with _make_client(transport) as client:
+                models, names = await _sweep(client, root, include_hidden=False)
+                try:
+                    running = await running_models(root, transport=transport)
+                except OllamaServerError as exc:
+                    log.info("ollama-inventory: /api/ps unavailable at %s: %s", root, exc)
+                    running = []
+        except OllamaServerError as exc:
+            _failures[root] = (time.time(), exc)
+            raise
+        snapshot = InventorySnapshot(
+            models=tuple(models),
+            running=tuple(running),
+            fetched_at=time.time(),
+            all_names=names,
+        )
+        _snapshots[root] = snapshot
+        _failures.pop(root, None)
+        return snapshot
 
 
 def _error_text(resp: httpx.Response) -> str:
@@ -423,3 +564,33 @@ def _error_text(resp: httpx.Response) -> str:
     if isinstance(payload, dict) and payload.get("error"):
         return str(payload["error"])
     return resp.text.strip()[:200]
+
+
+async def embed_probe(
+    root: str, model: str, *, transport: httpx.AsyncBaseTransport | None = None
+) -> int:
+    """One real embedding of a short input via ``/api/embed``; returns the vector length.
+
+    The setup assistant's proof that an embedding role actually embeds: a
+    listed model with the ``embedding`` capability can still fail to load.
+    ``0`` when the server answered without a vector; raises
+    :class:`OllamaServerError` when the server refused or is unreachable.
+    """
+    root = normalize_server_root(root)
+    async with _make_client(transport) as client:
+        try:
+            resp = await client.post(f"{root}/api/embed", json={"model": model, "input": "ping"})
+        except httpx.HTTPError as exc:
+            raise _unreachable(root, exc) from exc
+        if resp.status_code == 404:
+            raise OllamaModelNotFound(f"Ollama at {root} does not list {model!r}.")
+        if resp.status_code >= 400:
+            raise OllamaServerError(f"/api/embed for {model!r} failed: {_error_text(resp)}")
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise OllamaServerError(f"/api/embed for {model!r} answered non-JSON.") from exc
+    vectors = payload.get("embeddings") if isinstance(payload, dict) else None
+    if isinstance(vectors, list) and vectors and isinstance(vectors[0], list):
+        return len(vectors[0])
+    return 0

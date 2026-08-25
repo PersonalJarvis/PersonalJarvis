@@ -1,7 +1,7 @@
 """An in-process Ollama server for tests: the native API over ``httpx.MockTransport``.
 
 Models the surface :mod:`jarvis.brain.ollama_inventory` talks to — ``/api/tags``,
-``/api/show``, ``/api/ps``, ``/api/generate`` (unload ping), ``/api/delete`` —
+``/api/show``, ``/api/ps``, ``/api/generate`` (unload ping), ``/api/embed``, ``/api/delete`` —
 with real state: deleting a model removes it from the next ``/api/tags``, an
 unload ping removes it from ``/api/ps``, and every call is recorded so a test
 can assert on what was sent. Nothing here touches the network.
@@ -42,6 +42,8 @@ class FakeOllamaModel:
     show_fails: bool = False
     #: Present in ``/api/ps`` when set.
     loaded: bool = False
+    #: Vector length ``/api/embed`` answers with (0 = the server returns no vector).
+    embed_dim: int = 768
     size_vram: int = 0
     expires_at: str = "2026-08-24T12:05:00Z"
     running_context: int = 8192
@@ -54,6 +56,8 @@ class FakeOllamaServer:
     calls: list[tuple[str, str, Any]] = field(default_factory=list)
     #: When True every request raises ``httpx.ConnectError``.
     offline: bool = False
+    #: What ``GET /api/version`` answers.
+    version: str = "0.32.15"
 
     # -- building state ----------------------------------------------------
 
@@ -95,6 +99,8 @@ class FakeOllamaServer:
         body = self._body(request)
         self.calls.append((request.method, path, body))
 
+        if request.method == "GET" and path == "/api/version":
+            return httpx.Response(200, json={"version": self.version})
         if request.method == "GET" and path == "/api/tags":
             rows = [self._tags_row(m) for m in self.models.values()]
             return httpx.Response(200, json={"models": rows})
@@ -120,6 +126,16 @@ class FakeOllamaServer:
                 )
             model.loaded = True
             return httpx.Response(200, json={"model": model.name, "done": True, "response": ""})
+        if request.method == "POST" and path == "/api/embed":
+            model = self._find((body or {}).get("model") or "")
+            if model is None:
+                return httpx.Response(404, json={"error": "model not found"})
+            if "embedding" not in model.capabilities:
+                return httpx.Response(
+                    400, json={"error": f"{model.name} does not support embeddings"}
+                )
+            vectors = [[0.1] * model.embed_dim] if model.embed_dim > 0 else []
+            return httpx.Response(200, json={"model": model.name, "embeddings": vectors})
         if request.method == "DELETE" and path == "/api/delete":
             model = self._find((body or {}).get("model") or "")
             if model is None:
