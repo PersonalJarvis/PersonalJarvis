@@ -8,7 +8,9 @@ import { AgentTimeline } from "@/components/agentchat/AgentTimeline";
 import { Greeting } from "@/components/home/Greeting";
 import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { folderLeaf } from "@/lib/folderPath";
+import { FolderCode } from "lucide-react";
 
 /**
  * The chat stage — the typed half of the front page: Jarvis with a keyboard.
@@ -45,6 +47,7 @@ export function ChatStage() {
   const assistantName = useEventStore((s) => s.assistantName);
   const surface = useAgentChat((s) => s.surface);
   const items = useAgentChat((s) => s.timeline.items);
+  const cwd = useAgentChat((s) => s.draft.cwd);
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const catalog = useAgentChat((s) => s.catalog);
   const decide = useAgentChat((s) => s.decide);
@@ -133,7 +136,14 @@ export function ChatStage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasContent]);
 
-  const subtitle = useMemo(() => t("agent_chat.empty_subtitle"), [t]);
+  // The two surfaces open with different words because they are different
+  // things to be doing: here Jarvis reads with your memory and tools, there a
+  // coding agent reads the folder. Same layout, so nothing moves.
+  const isJarvis = surface === "jarvis";
+  const subtitle = useMemo(
+    () => t(isJarvis ? "agent_chat.empty_subtitle" : "agent_chat.empty_subtitle_agent"),
+    [t, isJarvis],
+  );
 
   // A spoken thread was opened from the history: read it here, in the column
   // the composer would otherwise own. An agent chat opening clears this.
@@ -145,7 +155,11 @@ export function ChatStage() {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
         <div className="flex w-full max-w-[760px] flex-1 flex-col justify-center gap-8 px-6 pb-20">
-          <Greeting subtitle={subtitle} />
+          {isJarvis ? (
+            <Greeting subtitle={subtitle} />
+          ) : (
+            <FolderHeadline folder={cwd} subtitle={subtitle} />
+          )}
           <AgentComposer autoFocus />
         </div>
       </div>
@@ -161,7 +175,7 @@ export function ChatStage() {
         >
           <AgentTimeline
             items={items}
-            assistantName={assistantName}
+            assistantName={isJarvis ? assistantName : t("agent_chat.surface_agent")}
             providerLabel={providerLabel}
             onDecide={onDecide}
           />
@@ -171,6 +185,27 @@ export function ChatStage() {
       <div className="w-full max-w-[760px] px-6 pb-5 pt-2">
         <AgentComposer />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The IDE chat's opening line: which folder the coding agent works in.
+ *
+ * Not a greeting — nobody is being greeted by a coding agent, and the front
+ * page's "Good afternoon" would say the wrong thing about who is answering.
+ * Same typography and the same place on the page, so the two surfaces stay
+ * one design.
+ */
+function FolderHeadline({ folder, subtitle }: { folder: string; subtitle: string }) {
+  const t = useT();
+  return (
+    <div className="flex flex-col items-center text-center" data-testid="chat-folder-headline">
+      <h1 className="flex items-center gap-3 font-display text-3xl font-semibold tracking-tight text-foreground [text-wrap:balance]">
+        <FolderCode className="h-[30px] w-[30px] shrink-0 text-muted-foreground" aria-hidden />
+        <span>{fill(t("agent_chat.empty_title_agent"), { folder: folderLeaf(folder) })}</span>
+      </h1>
+      <p className="mt-2 max-w-md text-sm text-muted-foreground">{subtitle}</p>
     </div>
   );
 }

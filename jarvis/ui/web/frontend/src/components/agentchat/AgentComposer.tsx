@@ -3,6 +3,7 @@ import {
   ArrowUp,
   Bot,
   Brain,
+  FolderCode,
   FolderOpen,
   Gauge,
   Hammer,
@@ -17,6 +18,7 @@ import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
 import type { ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
+import { folderLeaf } from "@/lib/folderPath";
 import { pickAgentChatFolder } from "@/lib/agentChatApi";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
@@ -67,11 +69,13 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   );
   const connected = useEventStore((s) => s.connected);
   const wsWarming = useEventStore((s) => s.wsWarming);
+  const assistantName = useEventStore((s) => s.assistantName);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const pushToast = useEventStore((s) => s.pushToast);
   const [restarting, setRestarting] = useState(false);
 
   const store = useAgentChatApi();
+  const surface = useAgentChat((s) => s.surface);
   const catalog = useAgentChat((s) => s.catalog);
   const catalogError = useAgentChat((s) => s.catalogError);
   const backendOutdated = useAgentChat((s) => s.backendOutdated);
@@ -314,6 +318,40 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         className="max-h-48 w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
       />
       <div className="flex flex-wrap items-center gap-1">
+        {/*
+          Who you are talking to, before what they run on. The two chats wear
+          the same face, so without this the front page and the IDE's chat are
+          indistinguishable at a glance — and they are not the same thing: here
+          it is Jarvis with a keyboard, there it is a coding agent in a folder
+          (maintainer, 2026-08-25). Not a control: what a chat IS cannot be
+          switched from inside the chat.
+        */}
+        <span
+          data-testid="composer-surface"
+          data-surface={surface}
+          title={
+            surface === "jarvis"
+              ? t("agent_chat.surface_jarvis_hint")
+              : `${t("agent_chat.surface_agent_hint")}: ${draft.cwd || folderLeaf("")}`
+          }
+          className="inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-lg bg-secondary/60 px-2 text-xs font-medium text-foreground"
+        >
+          {surface === "jarvis" ? (
+            <img
+              src="/jarvis-logo.png"
+              width={14}
+              height={14}
+              alt=""
+              aria-hidden
+              className="h-3.5 w-3.5 shrink-0"
+            />
+          ) : (
+            <FolderCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          )}
+          <span className="truncate">
+            {surface === "jarvis" ? assistantName : t("agent_chat.surface_agent")}
+          </span>
+        </span>
         <Pick
           testId="composer-provider"
           ariaLabel={t("agent_chat.pick_provider")}
@@ -390,7 +428,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         <button
           type="button"
           onClick={() => void onPickFolder()}
-          title={draft.cwd ? `${t("agent_chat.folder_hint")}: ${draft.cwd}` : t("agent_chat.folder")}
+          title={
+            draft.cwd
+              ? `${t(surface === "jarvis" ? "agent_chat.folder_hint" : "agent_chat.surface_agent_hint")}: ${draft.cwd}`
+              : t("agent_chat.folder")
+          }
           aria-label={t("agent_chat.folder")}
           data-testid="composer-folder"
           className="inline-flex h-7 max-w-[160px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
@@ -586,11 +628,4 @@ export function effortLabel(level: string, t: (key: string) => string): string {
     default:
       return level;
   }
-}
-
-function folderLeaf(path: string): string {
-  if (!path) return "~";
-  const trimmed = path.replace(/[\\/]+$/, "");
-  const parts = trimmed.split(/[\\/]/);
-  return parts[parts.length - 1] || trimmed;
 }

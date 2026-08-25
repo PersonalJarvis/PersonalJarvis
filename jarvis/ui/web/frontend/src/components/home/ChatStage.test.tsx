@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatStage } from "@/components/home/ChatStage";
 import { EMPTY_TIMELINE, reduceEvents } from "@/components/agentchat/reduce";
 import type { AgentChatCatalog, AgentChatEvent } from "@/lib/agentChatApi";
-import { useAgentChatStore } from "@/store/agentChat";
+import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
+import { useAgentChatStore, useAgentSessionStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 
 const CATALOG: AgentChatCatalog = {
@@ -68,6 +69,43 @@ function render(ui: React.ReactElement) {
   return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
+/**
+ * The state both stores are seeded with — the front page's and the IDE's.
+ *
+ * Fresh per call: the two stores must never share one draft object, which is
+ * the whole point of the split (jarvis surface vs agent surface).
+ */
+function seedState() {
+  return {
+    catalog: CATALOG,
+    connections: [
+      { jarvis: "claude-api", key_set: true, is_active_brain: true },
+      { jarvis: "openai-codex", key_set: true, is_active_brain: false },
+    ],
+    catalogError: null,
+    backendOutdated: false,
+    liveModels: {},
+    sessions: [],
+    activeSessionId: null,
+    activeSession: null,
+    timeline: EMPTY_TIMELINE,
+    draft: {
+      provider: "claude-api",
+      model: "",
+      effort: "high",
+      permissionMode: "acceptEdits",
+      buildMode: "acceptEdits",
+      cwd: "C:\\work",
+    },
+    busy: false,
+    lastError: null,
+    // The stage's mount effects fetch; keep them inert here.
+    loadCatalog: async () => {},
+    loadSessions: async () => {},
+    loadModels: async () => {},
+  };
+}
+
 let seq = 0;
 function ev(kind: string, payload: Record<string, unknown>): AgentChatEvent {
   seq += 1;
@@ -92,34 +130,7 @@ describe("ChatStage (agent chat)", () => {
     });
     window.localStorage.clear();
     useEventStore.setState({ connected: true, wsWarming: false, assistantName: "Jarvis" });
-    useAgentChatStore.setState({
-      catalog: CATALOG,
-      connections: [
-        { jarvis: "claude-api", key_set: true, is_active_brain: true },
-        { jarvis: "openai-codex", key_set: true, is_active_brain: false },
-      ],
-      catalogError: null,
-      backendOutdated: false,
-      liveModels: {},
-      sessions: [],
-      activeSessionId: null,
-      activeSession: null,
-      timeline: EMPTY_TIMELINE,
-      draft: {
-        provider: "claude-api",
-        model: "",
-        effort: "high",
-        permissionMode: "acceptEdits",
-        buildMode: "acceptEdits",
-        cwd: "C:\\work",
-      },
-      busy: false,
-      lastError: null,
-      // The stage's mount effects fetch; keep them inert here.
-      loadCatalog: async () => {},
-      loadSessions: async () => {},
-      loadModels: async () => {},
-    });
+    useAgentChatStore.setState(seedState());
   });
   afterEach(() => {
     cleanup();
@@ -135,6 +146,57 @@ describe("ChatStage (agent chat)", () => {
     expect(within(composer).getByTestId("composer-permission").getAttribute("data-value")).toBe("acceptEdits");
     // Claude Code has a plan entry, so the Build | Plan switch is drawn.
     expect(within(composer).getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("says who is answering: the front page names the assistant, the IDE names a coding agent", () => {
+    // The maintainer's complaint, twice over: the two chats wear the same face,
+    // so nothing on screen said which of them you were in (2026-08-25). They
+    // are different harnesses — Jarvis with a keyboard vs a coding agent in a
+    // folder — and the composer now says so before a word is typed.
+    const { unmount } = render(<ChatStage />);
+    const front = screen.getByTestId("composer-surface");
+    expect(front.getAttribute("data-surface")).toBe("jarvis");
+    expect(front.textContent).toContain("Jarvis");
+    // The front page's subtitle says it is the assistant the microphone reaches.
+    expect(screen.getByTestId("home-greeting").textContent).toContain("microphone");
+    unmount();
+
+    useAgentSessionStore.setState(seedState());
+    render(
+      <AgentChatStoreProvider store={useAgentSessionStore}>
+        <ChatStage />
+      </AgentChatStoreProvider>,
+    );
+    const ide = screen.getByTestId("composer-surface");
+    expect(ide.getAttribute("data-surface")).toBe("agent");
+    expect(ide.textContent).toContain("Coding agent");
+    expect(ide.textContent).not.toContain("Jarvis");
+    // No "Good afternoon" from a coding agent — the folder it works in instead.
+    expect(screen.queryByTestId("home-greeting")).toBeNull();
+    expect(screen.getByTestId("chat-folder-headline").textContent).toContain("work");
+  });
+
+  it("bylines a turn with the assistant on the front page and with the coding agent in the IDE", () => {
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "list the files" }),
+      ev("turn_started", { turn_id: "t1", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "brain" }),
+      ev("assistant_text", { turn_id: "t1", message_id: "m1", text: "Two files." }),
+      ev("turn_finished", { turn_id: "t1", status: "done", duration_ms: 900, usage: {} }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: "s1", timeline });
+    const { unmount } = render(<ChatStage />);
+    expect(screen.getByTestId("agent-turn").textContent).toContain("Jarvis");
+    unmount();
+
+    useAgentSessionStore.setState({ ...seedState(), activeSessionId: "ide-1", timeline });
+    render(
+      <AgentChatStoreProvider store={useAgentSessionStore}>
+        <ChatStage />
+      </AgentChatStoreProvider>,
+    );
+    const turn = screen.getByTestId("agent-turn");
+    expect(turn.textContent).toContain("Coding agent");
+    expect(turn.textContent).not.toContain("Jarvis");
   });
 
   it("hides the Build | Plan switch for a provider whose ladder has no plan entry", () => {
