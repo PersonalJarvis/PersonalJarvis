@@ -106,12 +106,20 @@ BRAIN_REWARM_INTERVAL_S = 45 * 60.0
 # Ollama's OpenAI-compatible endpoints cannot accept a per-request context
 # size.  Current long-context models can therefore reserve their full native
 # window (qwen3.5:4b used 262,144 tokens and spilled 5+ GiB into shared GPU
-# memory on a 16 GiB card).  The managed voice stack needs only a compact turn
-# history, so it runs through a deterministic Ollama profile with an explicit
-# bounded context.  This leaves room for local TTS and prevents system-wide
-# WDDM paging while preserving the user's chosen base model.
-VOICE_BRAIN_CONTEXT_TOKENS = 8192
-_VOICE_MODEL_SUFFIX = "-voice-8k"
+# memory on a 16 GiB card).  The managed voice stack therefore runs through a
+# deterministic Ollama profile with an explicit ``num_ctx`` — sized from THIS
+# machine's memory (maintainer mandate 2026-08-24: the context is not a cost
+# lever; it is as large as the hardware allows).  The brain shares the card
+# with local STT and TTS, so a fixed reserve stays free for them; the rest
+# goes to weights + KV cache on the shared context ladder
+# (``jarvis.brain.ollama_profiles.largest_context_for``).
+#: Context used when the machine's memory or the model's size cannot be read.
+VOICE_BRAIN_CONTEXT_TOKENS_FLOOR = 8192
+#: Accelerator memory kept free for the local STT + TTS models beside the brain.
+VOICE_STACK_RESERVE_GB = 4.0
+#: Historical name of the floor; readers that only need "some bound" keep it.
+VOICE_BRAIN_CONTEXT_TOKENS = VOICE_BRAIN_CONTEXT_TOKENS_FLOOR
+_VOICE_MODEL_SUFFIX_RE = re.compile(r"-voice-(\d+)k$")
 _VOICE_MODEL_PREPARE_LOCK = threading.Lock()
 _prepared_voice_models: set[tuple[str, str, str]] = set()
 
@@ -2123,15 +2131,18 @@ def prepare_voice_brain_command(launch_command: str, *, timeout: float = 30.0) -
     if not root.startswith(("http://", "https://")):
         return launch_command
 
-    source_model, voice_model = _voice_context_models(model)
+    source_model, _ = _voice_context_models(model)
+    context_tokens, why = voice_brain_context_tokens(root, source_model, timeout=timeout)
+    _, voice_model = _voice_context_models(source_model, context_tokens)
     cache_key = (root, source_model, voice_model)
     with _VOICE_MODEL_PREPARE_LOCK:
         if cache_key not in _prepared_voice_models:
+            log.info("local-realtime supervisor: voice brain context %s — %s", context_tokens, why)
             payload = json.dumps(
                 {
                     "model": voice_model,
                     "from": source_model,
-                    "parameters": {"num_ctx": VOICE_BRAIN_CONTEXT_TOKENS},
+                    "parameters": {"num_ctx": context_tokens},
                     "stream": False,
                 }
             ).encode("utf-8")
@@ -2147,7 +2158,7 @@ def prepare_voice_brain_command(launch_command: str, *, timeout: float = 30.0) -
                     pass
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 raise RuntimeError(
-                    f"could not create the {VOICE_BRAIN_CONTEXT_TOKENS}-token "
+                    f"could not create the {context_tokens}-token "
                     f"Ollama voice profile for {source_model}: {exc}"
                 ) from exc
             _prepared_voice_models.add(cache_key)
@@ -2155,21 +2166,116 @@ def prepare_voice_brain_command(launch_command: str, *, timeout: float = 30.0) -
                 "local-realtime supervisor: prepared bounded Ollama model %s from %s (num_ctx=%s)",
                 voice_model,
                 source_model,
-                VOICE_BRAIN_CONTEXT_TOKENS,
+                context_tokens,
             )
     return _replace_brain_model(launch_command, voice_model)
 
 
-def _voice_context_models(model: str) -> tuple[str, str]:
-    """Return ``(base, bounded_alias)`` for an Ollama model tag."""
+def _ollama_model_facts(
+    root: str, model: str, *, timeout: float
+) -> tuple[float | None, int | None]:
+    """``(size_gb, native_context)`` of an installed Ollama model, or ``None``s.
+
+    Two cheap local round-trips (``/api/tags`` for the on-disk size,
+    ``/api/show`` for the architecture's context window). Any failure is a
+    ``None`` — the caller then falls back to the floor and says so.
+    """
+    import urllib.error
+    import urllib.request
+
+    size_gb: float | None = None
+    native: int | None = None
+    try:
+        with urllib.request.urlopen(f"{root}/api/tags", timeout=timeout) as resp:  # noqa: S310
+            rows = json.loads(resp.read().decode("utf-8")).get("models") or []
+        from jarvis.brain.ollama_inventory import same_model
+
+        for row in rows:
+            name = str(row.get("name") or row.get("model") or "")
+            if same_model(name, model):
+                size = int(row.get("size") or 0)
+                size_gb = size / (1024**3) if size > 0 else None
+                break
+    except (urllib.error.URLError, OSError, ValueError, TypeError):
+        log.debug("supervisor: /api/tags lookup failed for %s", model, exc_info=True)
+    try:
+        request = urllib.request.Request(  # noqa: S310 - scheme checked by the caller
+            f"{root}/api/show",
+            data=json.dumps({"model": model}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
+            show = json.loads(resp.read().decode("utf-8"))
+        from jarvis.brain.ollama_inventory import native_context_length
+
+        native = native_context_length(show.get("model_info"))
+    except (urllib.error.URLError, OSError, ValueError, TypeError):
+        log.debug("supervisor: /api/show lookup failed for %s", model, exc_info=True)
+    return size_gb, native
+
+
+def voice_brain_context_tokens(root: str, model: str, *, timeout: float = 10.0) -> tuple[int, str]:
+    """``(num_ctx, reason)`` for the managed voice brain on THIS machine.
+
+    Budget = usable accelerator memory (dedicated VRAM, or unified memory on
+    Apple Silicon) minus :data:`VOICE_STACK_RESERVE_GB` for the local STT and
+    TTS models; without a readable accelerator the RAM rule from
+    ``ollama_profiles`` applies. The largest rung of the shared context ladder
+    whose weights + KV cache fit that budget wins, capped at the model's own
+    window. Unknown size or unknown memory -> the floor, stated honestly.
+    """
+    from jarvis.brain.ollama_profiles import _RAM_SHARE, largest_context_for
+    from jarvis.hardware.detection import system_ram_gb, usable_accelerator_gb
+
+    floor = VOICE_BRAIN_CONTEXT_TOKENS_FLOOR
+    size_gb, native = _ollama_model_facts(root, model, timeout=timeout)
+    if size_gb is None:
+        return floor, f"{model}: size unreadable from Ollama, using the {floor}-token floor"
+    accelerator_gb, source = usable_accelerator_gb()
+    if accelerator_gb > 0:
+        budget = accelerator_gb - VOICE_STACK_RESERVE_GB
+        where = "unified memory" if source == "apple-unified" else "accelerator memory"
+        budget_sentence = (
+            f"{accelerator_gb:.1f} GB {where} minus {VOICE_STACK_RESERVE_GB:.0f} GB "
+            "reserved for local STT/TTS"
+        )
+    else:
+        ram_gb = system_ram_gb()
+        if ram_gb is None:
+            return floor, f"{model}: no readable accelerator or RAM, using the {floor}-token floor"
+        budget = ram_gb * _RAM_SHARE - VOICE_STACK_RESERVE_GB
+        budget_sentence = (
+            f"no accelerator this probe can vouch for, so {_RAM_SHARE:.0%} of "
+            f"{ram_gb:g} GB RAM minus {VOICE_STACK_RESERVE_GB:.0f} GB for local STT/TTS"
+        )
+    chosen = largest_context_for(size_gb=size_gb, native_context=native, budget_gb=max(budget, 0.0))
+    chosen = max(chosen, min(floor, native or floor))
+    native_note = f", native window {native:,}" if native else ""
+    return (
+        chosen,
+        f"{model} ({size_gb:.1f} GB{native_note}): {budget_sentence} -> num_ctx {chosen:,}",
+    )
+
+
+def _voice_context_models(
+    model: str, context_tokens: int = VOICE_BRAIN_CONTEXT_TOKENS_FLOOR
+) -> tuple[str, str]:
+    """Return ``(base, bounded_alias)`` for an Ollama model tag.
+
+    The alias encodes its context (``<base>-voice-<N>k``), so a machine whose
+    memory changed gets a fresh alias instead of a stale one; an alias passed
+    in is folded back to its base first.
+    """
     cleaned = model.strip()
     if ":" in cleaned:
         name, tag = cleaned.rsplit(":", 1)
     else:
         name, tag = cleaned, "latest"
-    if tag.endswith(_VOICE_MODEL_SUFFIX):
-        return f"{name}:{tag[: -len(_VOICE_MODEL_SUFFIX)]}", cleaned
-    return cleaned, f"{name}:{tag}{_VOICE_MODEL_SUFFIX}"
+    match = _VOICE_MODEL_SUFFIX_RE.search(tag)
+    if match:
+        tag = tag[: match.start()]
+    base = f"{name}:{tag}"
+    return base, f"{base}-voice-{max(int(context_tokens), 1024) // 1024}k"
 
 
 _MODEL_NAME_FLAG = re.compile(

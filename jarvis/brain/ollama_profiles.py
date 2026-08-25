@@ -272,6 +272,29 @@ def to_v1_kwargs(opts: OllamaModelOptions | None) -> dict[str, Any]:
     return kwargs
 
 
+def largest_context_for(
+    *, size_gb: float, native_context: int | None, budget_gb: float | None
+) -> int:
+    """The largest ladder rung whose weights + KV cache fit ``budget_gb``.
+
+    ``native_context`` caps the ladder at the model's own window; ``None``
+    budget (memory unreadable) returns the smallest rung. Shared by the
+    per-model profile suggester and the managed voice brain so one machine
+    never gets two different answers to "how much context fits here?".
+    """
+    kv_per_1k = max(size_gb, 0.5) * _KV_GB_PER_1K_PER_MODEL_GB
+    ladder = [
+        rung for rung in _CONTEXT_LADDER if native_context is None or rung <= native_context
+    ] or [_CONTEXT_LADDER[0]]
+    chosen = ladder[0]
+    if budget_gb is not None:
+        for rung in ladder:
+            needed = size_gb + _OVERHEAD_GB + kv_per_1k * (rung / 1000)
+            if needed <= budget_gb:
+                chosen = rung
+    return chosen
+
+
 def suggest_options(
     *,
     size_gb: float,
@@ -316,15 +339,8 @@ def suggest_options(
 
     # Context: the largest rung whose weights + KV cache fit the budget.
     kv_per_1k = max(size_gb, 0.5) * _KV_GB_PER_1K_PER_MODEL_GB
-    ladder = [
-        rung for rung in _CONTEXT_LADDER if native_context is None or rung <= native_context
-    ] or [_CONTEXT_LADDER[0]]
-    chosen = ladder[0]
+    chosen = largest_context_for(size_gb=size_gb, native_context=native_context, budget_gb=budget)
     if budget is not None:
-        for rung in ladder:
-            needed = size_gb + _OVERHEAD_GB + kv_per_1k * (rung / 1000)
-            if needed <= budget:
-                chosen = rung
         estimate = size_gb + _OVERHEAD_GB + kv_per_1k * (chosen / 1000)
         reasons.append(
             f"num_ctx {chosen:,}: weights plus a {chosen // 1024}k context need "

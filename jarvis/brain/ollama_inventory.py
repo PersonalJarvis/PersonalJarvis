@@ -20,7 +20,7 @@ Two families of download are Jarvis's own bookkeeping, not the user's
 choice, and are hidden from every user-facing list by :func:`is_hidden_alias`:
 the per-model option profiles (``<base>-jarvis-<8 hex>``, created via
 ``/api/create`` so ``num_ctx`` & co. can ride the OpenAI-compatible ``/v1``
-path) and the voice brain's ``-voice-8k`` alias. Aliases share their weights
+path) and the voice brain's ``-voice-<N>k`` alias. Aliases share their weights
 with the base model, so hiding them also keeps :func:`disk_usage` honest.
 
 Every function takes the server ``root`` explicitly (see
@@ -50,6 +50,7 @@ __all__ = [
     "OllamaModelNotFound",
     "PROFILE_ALIAS_SUFFIX_RE",
     "VOICE_ALIAS_SUFFIX",
+    "VOICE_ALIAS_RE",
     "is_hidden_alias",
     "native_context_length",
     "same_model",
@@ -66,8 +67,11 @@ __all__ = [
 #: of the baked option dict.
 PROFILE_ALIAS_SUFFIX_RE = re.compile(r"-jarvis-[0-9a-f]{8}$")
 
-#: The managed voice brain's fixed-context alias (``supervisor.py``).
+#: The managed voice brain's bounded-context alias (``supervisor.py``):
+#: ``<base>-voice-<N>k`` where ``N`` is the ``num_ctx`` this machine's memory
+#: allowed. ``VOICE_ALIAS_SUFFIX`` is the historical fixed-size spelling.
 VOICE_ALIAS_SUFFIX = "-voice-8k"
+VOICE_ALIAS_RE = re.compile(r"-voice-\d+k$")
 
 #: ``/api/show`` is one round-trip per download; eight in flight keeps a
 #: 40-model host under a second on localhost without hammering a LAN box.
@@ -150,7 +154,7 @@ def is_hidden_alias(name: str) -> bool:
         return False
     if PROFILE_ALIAS_SUFFIX_RE.search(bare):
         return True
-    return bare.endswith(VOICE_ALIAS_SUFFIX)
+    return VOICE_ALIAS_RE.search(bare) is not None
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────

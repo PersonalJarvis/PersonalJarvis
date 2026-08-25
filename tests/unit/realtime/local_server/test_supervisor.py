@@ -1630,8 +1630,14 @@ def test_brain_endpoint_is_parsed_from_the_command() -> None:
     assert base == "http://127.0.0.1:11434/v1"
 
 
-def test_voice_brain_command_creates_an_8k_ollama_profile(monkeypatch) -> None:
+def test_voice_brain_command_creates_a_bounded_ollama_profile(monkeypatch) -> None:
     import urllib.request
+
+    # The size itself follows the machine (test_voice_brain_context.py); here
+    # the create round-trip is under test, so the choice is pinned.
+    monkeypatch.setattr(
+        supervisor, "voice_brain_context_tokens", lambda *a, **k: (8192, "pinned")
+    )
 
     requests: list[tuple[str, dict[str, Any]]] = []
 
@@ -1666,6 +1672,10 @@ def test_voice_brain_command_creates_an_8k_ollama_profile(monkeypatch) -> None:
 
 def test_voice_brain_profile_is_idempotent_across_restarts(monkeypatch) -> None:
     import urllib.request
+
+    monkeypatch.setattr(
+        supervisor, "voice_brain_context_tokens", lambda *a, **k: (8192, "pinned")
+    )
 
     payloads: list[dict[str, Any]] = []
 
