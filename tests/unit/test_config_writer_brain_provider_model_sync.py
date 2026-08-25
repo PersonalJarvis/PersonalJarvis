@@ -273,3 +273,63 @@ def test_voice_does_not_disturb_sibling_model_key(
     soll = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
     assert soll["brain.providers.gemini"]["voice"] == "Puck"  # i18n-allow
     assert soll["brain.providers.gemini"]["model"] == "gemini-2.5-flash"  # i18n-allow
+
+
+# -- WriteReceipt: the writer says when the baseline did not follow --------
+
+
+def test_receipt_reports_ok_when_the_baseline_followed(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch  # i18n-allow
+) -> None:
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
+    receipt = config_writer.set_brain_provider_model(
+        "gemini", model="gemini-3.5-flash", path=sample_toml
+    )
+    assert isinstance(receipt, config_writer.WriteReceipt)
+    assert receipt.toml_ok is True
+    assert receipt.baseline_ok is True
+    assert receipt.baseline_path == str(sample_soll)  # i18n-allow
+    # An empty pick ("Let Jarvis pick") is a real value and must verify too.
+    receipt = config_writer.set_brain_provider_model("gemini", model="", path=sample_toml)
+    assert receipt.baseline_ok is True
+    data = json.loads(sample_soll.read_text(encoding="utf-8"))  # i18n-allow
+    assert data["brain.providers.gemini"]["model"] == ""
+
+
+def test_receipt_flags_a_baseline_that_could_not_be_written(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch, caplog  # i18n-allow
+) -> None:
+    """A read-only baseline: the TOML lands, the receipt says baseline_ok=False,
+    and the key is named in an ERROR log line."""
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)  # i18n-allow
+    before = sample_soll.read_text(encoding="utf-8")  # i18n-allow
+
+    def _refuse(path: Path, content: str) -> None:
+        # Stands in for the read-only / locked file on every OS: on Linux a
+        # read-only file in a writable directory can still be replaced, so the
+        # refusal is simulated deterministically instead of via chmod.
+        raise PermissionError(f"{path} is read-only")
+
+    monkeypatch.setattr(config_writer, "_atomic_write_text", _refuse)
+    with caplog.at_level("ERROR", logger="jarvis.core.config_writer"):
+        receipt = config_writer.set_brain_provider_model(
+            "gemini", model="gemini-3.5-flash", path=sample_toml
+        )
+    assert receipt.toml_ok is True
+    assert receipt.baseline_ok is False
+    assert "gemini-3.5-flash" in sample_toml.read_text(encoding="utf-8")
+    assert sample_soll.read_text(encoding="utf-8") == before  # i18n-allow
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any("brain.providers.gemini.model" in m for m in errors), errors
+
+
+def test_receipt_is_ok_without_a_baseline_file(
+    sample_toml: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Headless VPS: no config-soll.json means nothing can revert the pick."""  # i18n-allow
+    missing = tmp_path / "nope" / "config-soll.json"  # i18n-allow
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: missing)  # i18n-allow
+    receipt = config_writer.set_brain_provider_model(
+        "gemini", deep_model="gemini-3.1-pro", path=sample_toml
+    )
+    assert receipt.baseline_ok is True and receipt.toml_ok is True

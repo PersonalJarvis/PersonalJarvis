@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from jarvis.brain import ollama_pull, ollama_roles
+from jarvis.brain import ollama_inventory, ollama_pull, ollama_roles
 from jarvis.core import config_writer
 from jarvis.core.config import BrainProviderConfig, JarvisConfig
 from tests.fakes.fake_ollama_server import FakeOllamaServer
@@ -33,6 +33,7 @@ def _cfg() -> JarvisConfig:
 
 @pytest.fixture
 def fake() -> FakeOllamaServer:
+    ollama_inventory._reset_for_tests()
     server = FakeOllamaServer()
     server.add("qwen3.5:4b", capabilities=("completion", "tools", "vision"))
     server.add("gemma4:12b-it-qat", capabilities=("completion", "tools", "thinking"))
@@ -203,6 +204,7 @@ def test_set_role_writes_through_the_provider_card_writers(writes) -> None:
         "role": "chat",
         "model": "gemma4:12b-it-qat",
         "config_key": "brain.providers.ollama.model",
+        "drift_guarded": True,
     }
     assert writes == [
         ("brain", "ollama", {"model": "gemma4:12b-it-qat"}),
@@ -214,6 +216,31 @@ def test_set_role_writes_through_the_provider_card_writers(writes) -> None:
     assert provider.tool_model == "qwen3.5:4b"
     assert provider.cu_model == "qwen3.5:4b"
     assert provider.deep_model == ""
+
+
+def test_set_role_reports_when_the_drift_baseline_did_not_follow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The writer's receipt decides the flag: baseline_ok=False -> drift_guarded=False."""
+    receipts: list[config_writer.WriteReceipt] = []
+
+    def _writer(provider: str, **kw) -> config_writer.WriteReceipt:
+        receipt = config_writer.WriteReceipt(
+            toml_ok=True,
+            baseline_ok=(kw.get("model") != "gemma4:12b-it-qat"),
+            baseline_path="baseline",
+        )
+        receipts.append(receipt)
+        return receipt
+
+    monkeypatch.setattr(config_writer, "set_brain_provider_model", _writer)
+    cfg = _cfg()
+    assert ollama_roles.set_role("chat", "gemma4:12b-it-qat", cfg=cfg)["drift_guarded"] is False
+    assert ollama_roles.set_role("chat", "qwen3.5:4b", cfg=cfg)["drift_guarded"] is True
+    assert ollama_roles.set_role("deep", "", cfg=cfg)["drift_guarded"] is True
+    assert len(receipts) == 3
+    # The in-memory config still takes the pick: the TOML write itself landed.
+    assert cfg.brain.providers["ollama"].model == "qwen3.5:4b"
 
 
 def test_set_role_embedding_switches_the_wiki_to_ollama_when_needed(writes) -> None:

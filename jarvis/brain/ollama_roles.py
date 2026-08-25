@@ -286,26 +286,39 @@ def _recommended_for(spec: RoleSpec, rows: list[dict[str, Any]]) -> str:
 
 
 async def list_roles(
-    root: str, cfg: Any, *, transport: Any = None
+    root: str,
+    cfg: Any,
+    *,
+    transport: Any = None,
+    models: list[OllamaModelInfo] | None = None,
+    shortlist: list[dict[str, Any]] | None = None,
 ) -> tuple[list[RoleState], str | None]:
     """Every role with its pick, what qualifies, and the recommendation.
 
     Returns ``(states, error)``; ``error`` is the server's English sentence
     when ``/api/tags`` did not answer — the states are still complete (with
     empty ``qualifying`` and ``installed=False``) so the rows render.
+
+    ``models`` and ``shortlist`` let a caller that already holds the shared
+    inventory snapshot and the recommendations pass them in; either one left
+    ``None`` is fetched here (the snapshot is shared, so this costs no extra
+    sweep within its window).
     """
     error: str | None = None
-    try:
-        models = await inventory.list_models(root, transport=transport)
-    except OllamaServerError as exc:
-        log.info("ollama-roles: inventory unavailable at %s: %s", root, exc)
-        models = []
-        error = str(exc)
-    try:
-        shortlist = (await ollama_pull.recommendations()).get("models") or []
-    except Exception as exc:  # noqa: BLE001 — the shortlist is advisory, the rows are not
-        log.warning("ollama-roles: shortlist unavailable: %s", exc)
-        shortlist = []
+    if models is None:
+        try:
+            snapshot = await inventory.cached_snapshot(root, transport=transport)
+            models = list(snapshot.models)
+        except OllamaServerError as exc:
+            log.info("ollama-roles: inventory unavailable at %s: %s", root, exc)
+            models = []
+            error = str(exc)
+    if shortlist is None:
+        try:
+            shortlist = (await ollama_pull.recommendations()).get("models") or []
+        except Exception as exc:  # noqa: BLE001 — the shortlist is advisory, the rows are not
+            log.warning("ollama-roles: shortlist unavailable: %s", exc)
+            shortlist = []
 
     states: list[RoleState] = []
     for spec in ROLES:
@@ -360,13 +373,16 @@ async def voice_context(cfg: Any, model: str) -> tuple[int | None, str]:
 # ── Writing ──────────────────────────────────────────────────────────────
 
 
-def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, str]:
+def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, Any]:
     """Persist ``model`` as the pick of ``role_id``; ``""`` = discovery.
 
     Dispatches to the writer the provider card already uses for that key, so
     the TOML and the drift baseline agree; ``cfg`` (the live config object) is
     updated in place when given, so the next read answers the new value
-    without a restart. Returns ``{"role", "model", "config_key"}``.
+    without a restart. Returns ``{"role", "model", "config_key",
+    "drift_guarded"}`` — ``drift_guarded`` is ``False`` when the writer could
+    not confirm the drift baseline (config-soll.json) followed the pick, in  # i18n-allow
+    which case the drift guard may revert it and the caller should say so.
 
     Raises ``ValueError`` for an unknown or read-only role, and for an empty
     embedding model (the wiki needs a name; there is no discovery there).
@@ -380,8 +396,11 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, str]:
     from jarvis.core import config_writer  # lazy: tomlkit + file locks off the read path
 
     provider = _ollama_provider(cfg)
+    # A writer that returns no receipt (older fakes, other writers) counts as
+    # guarded: only an explicit ``baseline_ok=False`` turns the flag off.
+    receipt: Any = None
     if spec.id == "chat":
-        config_writer.set_brain_provider_model("ollama", model=tag)
+        receipt = config_writer.set_brain_provider_model("ollama", model=tag)
         if provider is not None:
             provider.model = tag
     elif spec.id == "voice":
@@ -405,12 +424,12 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, str]:
             voice.launch_command = _replace_brain_model(command, tag)
     elif spec.id == "tools_screen":
         # Same pair the cu-model setter writes: canonical + legacy key.
-        config_writer.set_brain_provider_model("ollama", tool_model=tag, cu_model=tag)
+        receipt = config_writer.set_brain_provider_model("ollama", tool_model=tag, cu_model=tag)
         if provider is not None:
             provider.tool_model = tag
             provider.cu_model = tag
     elif spec.id == "deep":
-        config_writer.set_brain_provider_model("ollama", deep_model=tag)
+        receipt = config_writer.set_brain_provider_model("ollama", deep_model=tag)
         if provider is not None:
             provider.deep_model = tag
     elif spec.id == "embedding":
@@ -424,7 +443,12 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, str]:
         config_writer.set_ultrawiki_slot("embedding_model", tag)
         if wiki is not None:
             wiki.embedding_model = tag
-    return {"role": spec.id, "model": tag, "config_key": spec.config_key}
+    return {
+        "role": spec.id,
+        "model": tag,
+        "config_key": spec.config_key,
+        "drift_guarded": bool(getattr(receipt, "baseline_ok", True)),
+    }
 
 
 def roles_using(cfg: Any, name: str) -> list[str]:

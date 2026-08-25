@@ -44,6 +44,17 @@ _MODEL_KEYS = (
     ("brain.providers.claude-api", "deep_model"),
 )
 
+# The local-model role picks (2026-08-25): a role write goes through
+# ``set_brain_provider_model``, which syncs the soll; if the two files disagree  # i18n-allow
+# here the drift guard reverts the user's pick within five minutes and the
+# Local models section looks broken. "" is a real value ("Let Jarvis pick").
+_OLLAMA_ROLE_KEYS = (
+    ("brain.providers.ollama", "model"),
+    ("brain.providers.ollama", "tool_model"),
+    ("brain.providers.ollama", "cu_model"),
+    ("brain.providers.ollama", "deep_model"),
+)
+
 
 def _load_soll() -> dict:  # i18n-allow
     return json.loads(_CONFIG_SOLL.read_text(encoding="utf-8-sig"))  # i18n-allow
@@ -127,7 +138,7 @@ def test_jarvis_toml_model_pins_match_soll() -> None:  # i18n-allow
     soll = _load_soll()  # i18n-allow
     toml = _load_toml()
     mismatches: list[str] = []
-    for dotted, key in _MODEL_KEYS:
+    for dotted, key in _MODEL_KEYS + _OLLAMA_ROLE_KEYS:
         toml_val = _toml_value(toml, dotted, key)
         soll_val = _soll_value(soll, dotted, key)  # i18n-allow
         # A missing pin on either side must FAIL — otherwise a renamed/typo'd key

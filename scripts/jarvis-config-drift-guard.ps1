@@ -15,8 +15,13 @@
       3. Compares desired scalar keys with the TOML values.
       4. Repairs mismatches while preserving the read-only attribute.
       5. Repairs scalar JARVIS__* overrides in the selected environment scope.
+         Only top-level sections take part: a dotted section such as
+         brain.providers.ollama has no environment codec (Python splits the
+         override name on "__" only, so JARVIS__BRAIN.PROVIDERS.OLLAMA__MODEL
+         is inert junk). An absent variable equals a desired empty string.
       6. Removes obsolete structured overrides that cannot be represented by
-         the scalar environment codec.
+         the scalar environment codec, and every dotted JARVIS__*.*__* variable
+         left behind by earlier runs.
       7. Writes a structured log to logs/config-drift-guard.log.
 
 .PARAMETER RepoRoot
@@ -211,6 +216,12 @@ $missingEnv = @()
 $obsoleteStructuredEnv = @()
 foreach ($section in $desired.PSObject.Properties) {
     if ($section.Name.StartsWith("_")) { continue }
+    # A dotted section (brain.providers.ollama, tts.cartesia, ...) has no
+    # environment codec: Python nests JARVIS__ overrides on "__" only, so a
+    # JARVIS__BRAIN.PROVIDERS.OLLAMA__MODEL variable never reaches the config
+    # and only produced a repair every run. Such sections are guarded through
+    # the TOML comparison above and never through the environment.
+    if ($section.Name.Contains(".")) { continue }
     foreach ($keyProperty in $section.Value.PSObject.Properties) {
         $envName = "JARVIS__" + $section.Name.ToUpper() + "__" + $keyProperty.Name.ToUpper()
         $envValue = [Environment]::GetEnvironmentVariable($envName, $EnvironmentTarget)
@@ -221,16 +232,26 @@ foreach ($section in $desired.PSObject.Properties) {
             continue
         }
         $desiredLiteral = Format-EnvLiteral $keyProperty.Value
-        if (
-            $null -eq $envValue -or
-            $envValue.Trim().ToLower() -ne $desiredLiteral.Trim().ToLower()
-        ) {
+        # Setting a User-scope variable to "" deletes it, so an absent variable
+        # IS the desired empty string; re-setting it would repair forever.
+        if ($null -eq $envValue) { $envValue = "" }
+        if ($envValue.Trim().ToLower() -ne $desiredLiteral.Trim().ToLower()) {
             $missingEnv += [PSCustomObject]@{
                 EnvName = $envName
                 Desired = $desiredLiteral
                 Actual = $envValue
             }
         }
+    }
+}
+
+# Dotted variables written by earlier versions of this guard (or by hand) are
+# inert for Python and only feed the repair loop. Remove every one of them,
+# whether or not the desired-state file still lists that section.
+$scopeVariables = [Environment]::GetEnvironmentVariables($EnvironmentTarget)
+foreach ($name in @($scopeVariables.Keys)) {
+    if ($name -match '^JARVIS__.*\..*__' -and $obsoleteStructuredEnv -notcontains $name) {
+        $obsoleteStructuredEnv += $name
     }
 }
 
@@ -327,6 +348,9 @@ if ($missingEnv.Count -gt 0) {
 
 if ($obsoleteStructuredEnv.Count -gt 0) {
     Write-Log "DRIFT" "Removing $($obsoleteStructuredEnv.Count) unsupported structured environment override(s)"
+    foreach ($envName in $obsoleteStructuredEnv) {
+        Write-Log "DRIFT" "  $envName (no scalar codec; inert for Python)"
+    }
     if (-not $DryRun) {
         foreach ($envName in $obsoleteStructuredEnv) {
             [Environment]::SetEnvironmentVariable($envName, $null, $EnvironmentTarget)

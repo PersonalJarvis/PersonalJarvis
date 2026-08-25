@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import tomlkit
@@ -38,6 +39,24 @@ from .config import (
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class WriteReceipt:
+    """What a three-layer model write actually landed.
+
+    ``toml_ok`` is the jarvis.toml write (it raises on failure, so it is
+    ``True`` whenever a receipt is returned at all). ``baseline_ok`` says whether
+    the drift baseline (``scripts/config-soll.json``) verifiably holds the  # i18n-allow
+    same value after the best-effort sync — ``False`` means the drift guard may
+    revert the pick within its next run, and the caller should say so instead
+    of staying silent. ``baseline_path`` names the baseline file for the log.
+    """
+
+    toml_ok: bool
+    baseline_ok: bool
+    baseline_path: str
+
 
 _WRITE_LOCK = threading.Lock()
 _ATOMIC_REPLACE_RETRY_DELAYS_S = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4)
@@ -2059,7 +2078,7 @@ def set_brain_provider_model(
     cu_model: str | None = None,
     voice: str | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
-) -> None:
+) -> WriteReceipt:
     """Patch model selections under ``[brain.providers.<provider>]``.
 
     Used by the per-provider model picker (``PUT /api/providers/{id}/model``),
@@ -2081,8 +2100,15 @@ def set_brain_provider_model(
 
     Idempotent: if the block is absent it is created; ``None`` values change
     nothing.
+
+    Returns a :class:`WriteReceipt`. After the baseline sync the file is
+    re-read and compared key by key; a mismatch (read-only file, a foreign
+    writer racing, a broken JSON) is logged at ERROR with the key and comes
+    back as ``baseline_ok=False`` so the caller can warn that the drift guard may
+    revert the pick. Existing callers may ignore the return value.
     """
     path = _ensure_writable_config_path(path)
+    baseline_path = _config_soll_path()  # i18n-allow
     if (
         model is None
         and deep_model is None
@@ -2090,7 +2116,7 @@ def set_brain_provider_model(
         and cu_model is None
         and voice is None
     ):
-        return
+        return WriteReceipt(toml_ok=True, baseline_ok=True, baseline_path=str(baseline_path))
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -2138,6 +2164,17 @@ def set_brain_provider_model(
     # Layer 2 — best-effort drift-soll sync (never raises, never blocks the  # i18n-allow
     # TOML write). Only the keys actually written are synced so the guard sees
     # zero drift across the block.
+    written: dict[str, object] = {}
+    if model is not None:
+        written["model"] = model
+    if deep_model is not None:
+        written["deep_model"] = deep_model
+    if tool_model is not None:
+        written["tool_model"] = tool_model
+    if cu_model is not None:
+        written["cu_model"] = cu_model
+    if voice is not None:
+        written["voice"] = voice
     _sync_brain_provider_model_drift_soll(  # i18n-allow
         provider,
         model=model,
@@ -2146,6 +2183,51 @@ def set_brain_provider_model(
         cu_model=cu_model,
         voice=voice,
     )
+    baseline_ok = _verify_brain_provider_model_drift_soll(provider, written)  # i18n-allow
+    return WriteReceipt(toml_ok=True, baseline_ok=baseline_ok, baseline_path=str(baseline_path))
+
+
+def _verify_brain_provider_model_drift_soll(  # i18n-allow
+    provider: str, written: dict[str, object]
+) -> bool:
+    """Re-read config-soll.json and confirm every written key landed there.  # i18n-allow
+
+    An absent baseline file (headless VPS, fresh checkout) has nothing to
+    revert, so it counts as in sync. Every other divergence — an unreadable or
+    unparsable file, a key that never arrived, a value that differs — is logged
+    at ERROR with the key and answers ``False``. Never raises: the TOML write
+    is already done and the caller only needs the verdict.
+    """
+    soll_path = _config_soll_path()  # i18n-allow
+    if not soll_path.exists():  # i18n-allow
+        return True
+    try:
+        data = json.loads(soll_path.read_text(encoding="utf-8"))  # i18n-allow
+    except Exception as exc:  # noqa: BLE001 — verdict only, never propagate
+        log.error(
+            "Drift baseline %s could not be re-read after writing brain.providers.%s: %s",
+            soll_path,  # i18n-allow: internal config-soll identifier
+            provider,
+            exc,
+        )
+        return False
+    section = data.get(f"brain.providers.{provider}")
+    if not isinstance(section, dict):
+        section = {}
+    ok = True
+    for key, value in written.items():
+        if section.get(key) != value:
+            ok = False
+            log.error(
+                "Drift baseline did not follow: brain.providers.%s.%s is %r there, "
+                "%r in jarvis.toml (%s) — the drift guard may revert this pick",
+                provider,
+                key,
+                section.get(key),
+                value,
+                soll_path,  # i18n-allow: internal config-soll identifier
+            )
+    return ok
 
 
 def set_provider_base_url(
