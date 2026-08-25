@@ -62,9 +62,7 @@ def build(target: Path = TARGET) -> Path:
     try:
         from PIL import Image
     except ModuleNotFoundError as exc:  # pragma: no cover - environment problem
-        raise SystemExit(
-            "Pillow is required to build the macOS icon: pip install Pillow"
-        ) from exc
+        raise SystemExit("Pillow is required to build the macOS icon: pip install Pillow") from exc
 
     source_path = _pick_source()
     with Image.open(source_path) as source:
@@ -77,10 +75,7 @@ def build(target: Path = TARGET) -> Path:
         # Rendered here rather than left to Pillow: its writer resizes with the
         # default filter, Lanczos keeps the mascot's thin outline readable at
         # 32 px and its glow clean when upscaled.
-        members = [
-            master.resize((size, size), Image.Resampling.LANCZOS)
-            for size in ICNS_SIZES
-        ]
+        members = [master.resize((size, size), Image.Resampling.LANCZOS) for size in ICNS_SIZES]
         largest = members[-1]
         target.parent.mkdir(parents=True, exist_ok=True)
         largest.save(target, format="ICNS", append_images=members)
@@ -107,9 +102,7 @@ def verify(target: Path = TARGET) -> list[int]:
         sizes = sorted({int(w) * int(scale) for w, _h, scale in icns.info["sizes"]})
     missing = [size for size in ICNS_SIZES if size not in sizes]
     if missing:
-        raise SystemExit(
-            f"{target} is missing icon sizes: {', '.join(str(s) for s in missing)}"
-        )
+        raise SystemExit(f"{target} is missing icon sizes: {', '.join(str(s) for s in missing)}")
     return sizes
 
 
