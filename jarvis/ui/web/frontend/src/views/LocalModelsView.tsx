@@ -47,6 +47,7 @@ import { ServerPanel } from "@/views/local-models/ServerPanel";
 import { TuneSheet } from "@/views/local-models/TuneSheet";
 import { useEventStore } from "@/store/events";
 import { useLocaleChunk, useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 export type LocalModelsMode = "simple" | "advanced";
 export type LocalModelsTab =
@@ -180,6 +181,20 @@ export function LocalModelsView() {
     storeMode(next);
   }, []);
 
+  /**
+   * Display name for a BRAIN provider id — the cloud model the helper runs
+   * on, not the local server. The list is already here for the capability
+   * lookup, so naming "gemini" as "Gemini" costs no request of its own.
+   */
+  const brainLabel = useCallback(
+    (id: string) => providers.find((p) => p.id === id)?.label ?? id,
+    [providers],
+  );
+
+  // The helper is a conversation, and a conversation is a screen: it gets the
+  // window's leftover height instead of a slot inside the page scroller.
+  const chatMode = tab === "assistant";
+
   // Leaving Advanced while on an Advanced-only tab must not strand the user on
   // a tab the rail no longer shows.
   useEffect(() => {
@@ -201,126 +216,171 @@ export function LocalModelsView() {
   }, [mode, t]);
 
   return (
-    <ScrollArea className="h-full">
-      <div className="flex w-full flex-col gap-4 px-8 py-6">
-        <BackLink
-          label={t("local_models.back")}
-          onClick={() => setActiveSection("apikeys")}
-        />
-        <PanelHeader
-          title={t("local_models.title")}
-          subtitle={t("local_models.subtitle")}
-        />
+    <div className="flex h-full min-h-0 w-full flex-col">
+      {/* The section header. On the helper's own area it collapses to the one
+          row that still steers something — the rail. The title, the subtitle
+          and the Simple/Advanced switch describe (and change) the panels, not
+          the conversation, and a chat that starts a fifth of the way down the
+          window reads as a widget rather than a screen. */}
+      <div
+        className={cn(
+          "flex w-full shrink-0 flex-col gap-4 px-8",
+          chatMode ? "pb-3 pt-4" : "py-6",
+        )}
+      >
+        {!chatMode && (
+          <>
+            <BackLink
+              label={t("local_models.back")}
+              onClick={() => setActiveSection("apikeys")}
+            />
+            <PanelHeader
+              title={t("local_models.title")}
+              subtitle={t("local_models.subtitle")}
+            />
+          </>
+        )}
 
         {/* The rail and the detail level belong together: the switch adds two
             areas to this very row (and detail to the rows below), so it sits
             beside what it changes instead of alone in the header. */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SegmentedFilter<LocalModelsTab>
-            label={t("local_models.tabs_label")}
-            value={tab}
-            onChange={setTab}
-            options={tabs}
-          />
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-              {t("local_models.mode_label")}
-            </span>
-            <SegmentedFilter<LocalModelsMode>
-              label={t("local_models.mode_label")}
-              value={mode}
-              onChange={changeMode}
-              options={[
-                { id: "simple", label: t("local_models.mode_simple") },
-                { id: "advanced", label: t("local_models.mode_advanced") },
-              ]}
-            />
-          </div>
-        </div>
-
-        {loading && !providerId && (
-          <p className="text-sm text-muted-foreground">
-            {t("local_models.loading")}
-          </p>
-        )}
-
-        {!loading && !providerId && (
-          <Panel className="p-4">
-            <p className="text-sm text-muted-foreground">
-              {t("local_models.no_provider")}
-            </p>
-          </Panel>
-        )}
-
-        {providerId && tab === "overview" && (
-          <div className="space-y-4" data-testid="local-models-overview">
-            <OverviewPanel
-              providerId={providerId}
-              onTune={setTuneModel}
-              onOpenApiKeys={openApiKeys}
-              onBrowse={openBrowse}
-              onOpenAssistant={openAssistant}
-              onReportProblem={reportProblem}
-              advanced={mode === "advanced"}
-            />
-            {tuneModel && (
-              <RoleTuneDrawer
-                providerId={providerId}
-                model={tuneModel}
-                onClose={closeTune}
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            {chatMode && (
+              <BackLink
+                label={t("local_models.back")}
+                onClick={() => setActiveSection("apikeys")}
               />
             )}
+            <SegmentedFilter<LocalModelsTab>
+              label={t("local_models.tabs_label")}
+              value={tab}
+              onChange={setTab}
+              options={tabs}
+            />
           </div>
-        )}
+          {!chatMode && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                {t("local_models.mode_label")}
+              </span>
+              <SegmentedFilter<LocalModelsMode>
+                label={t("local_models.mode_label")}
+                value={mode}
+                onChange={changeMode}
+                options={[
+                  { id: "simple", label: t("local_models.mode_simple") },
+                  { id: "advanced", label: t("local_models.mode_advanced") },
+                ]}
+              />
+            </div>
+          )}
+        </div>
+      </div>
 
-        {providerId && tab === "assistant" && (
-          <div data-testid="local-models-assistant-tab">
+      {/* The helper is a screen of its own: it is handed the leftover height
+          and measures nothing itself. Every other tab is a document and keeps
+          the page scroller. */}
+      {chatMode ? (
+        <div
+          className="min-h-0 flex-1 px-8 pb-6"
+          data-testid="local-models-assistant-tab"
+        >
+          {providerId ? (
             <AssistantPanel
               providerId={providerId}
               serverLabel={descriptor?.label ?? "Ollama"}
               request={assistantRequest}
               onOpenApiKeys={openApiKeys}
               onOpenServerLog={openServerLog}
+              providerLabel={brainLabel}
             />
+          ) : (
+            <Panel className="p-4">
+              <p className="text-sm text-muted-foreground">
+                {loading
+                  ? t("local_models.loading")
+                  : t("local_models.no_provider")}
+              </p>
+            </Panel>
+          )}
+        </div>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex w-full flex-col gap-4 px-8 pb-6">
+            {loading && !providerId && (
+              <p className="text-sm text-muted-foreground">
+                {t("local_models.loading")}
+              </p>
+            )}
+
+            {!loading && !providerId && (
+              <Panel className="p-4">
+                <p className="text-sm text-muted-foreground">
+                  {t("local_models.no_provider")}
+                </p>
+              </Panel>
+            )}
+
+            {providerId && tab === "overview" && (
+              <div className="space-y-4" data-testid="local-models-overview">
+                <OverviewPanel
+                  providerId={providerId}
+                  onTune={setTuneModel}
+                  onOpenApiKeys={openApiKeys}
+                  onBrowse={openBrowse}
+                  onOpenAssistant={openAssistant}
+                  onReportProblem={reportProblem}
+                  advanced={mode === "advanced"}
+                />
+                {tuneModel && (
+                  <RoleTuneDrawer
+                    providerId={providerId}
+                    model={tuneModel}
+                    onClose={closeTune}
+                  />
+                )}
+              </div>
+            )}
+
+            {providerId && tab === "models" && (
+              <div data-testid="local-models-models">
+                <InventoryPanel providerId={providerId} />
+              </div>
+            )}
+
+            {providerId && tab === "catalogue" && (
+              <Panel className="p-4">
+                <div className="space-y-3" data-testid="local-models-catalogue">
+                  <PanelHeader
+                    title={t("local_models.catalogue_title")}
+                    subtitle={t("local_models.catalogue_subtitle")}
+                  />
+                  <CataloguePanel providerId={providerId} />
+                </div>
+              </Panel>
+            )}
+
+            {providerId && tab === "huggingface" && (
+              <Panel className="p-4">
+                <div className="space-y-3" data-testid="local-models-huggingface">
+                  <PanelHeader title={t("local_models.huggingface_title")} />
+                  <HuggingFacePanel providerId={providerId} />
+                </div>
+              </Panel>
+            )}
+
+            {providerId && tab === "server" && (
+              <div data-testid="local-models-server">
+                <ServerPanel
+                  providerId={providerId}
+                  initialLogOpen={serverLogOpen}
+                />
+              </div>
+            )}
           </div>
-        )}
-
-        {providerId && tab === "models" && (
-          <div data-testid="local-models-models">
-            <InventoryPanel providerId={providerId} />
-          </div>
-        )}
-
-        {providerId && tab === "catalogue" && (
-          <Panel className="p-4">
-            <div className="space-y-3" data-testid="local-models-catalogue">
-              <PanelHeader
-                title={t("local_models.catalogue_title")}
-                subtitle={t("local_models.catalogue_subtitle")}
-              />
-              <CataloguePanel providerId={providerId} />
-            </div>
-          </Panel>
-        )}
-
-        {providerId && tab === "huggingface" && (
-          <Panel className="p-4">
-            <div className="space-y-3" data-testid="local-models-huggingface">
-              <PanelHeader title={t("local_models.huggingface_title")} />
-              <HuggingFacePanel providerId={providerId} />
-            </div>
-          </Panel>
-        )}
-
-        {providerId && tab === "server" && (
-          <div data-testid="local-models-server">
-            <ServerPanel
-              providerId={providerId}
-              initialLogOpen={serverLogOpen}
-            />
-          </div>
-        )}
-      </div>
-    </ScrollArea>
+        </ScrollArea>
+      )}
+    </div>
   );
 }

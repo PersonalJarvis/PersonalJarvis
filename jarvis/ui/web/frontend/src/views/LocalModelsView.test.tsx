@@ -311,4 +311,38 @@ describe("LocalModelsView", () => {
     ).toBe("yes");
   });
 
+  it("hands the helper the leftover height and folds the page header away", () => {
+    render(<LocalModelsView />);
+    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
+
+    // Title, subtitle and the detail level describe the panels, not the
+    // conversation — a chat that starts a fifth of the way down the window
+    // reads as a widget rather than a screen.
+    expect(screen.queryByText("local_models.title")).toBeNull();
+    expect(
+      screen.queryByRole("tab", { name: "local_models.mode_simple" }),
+    ).toBeNull();
+    // What still steers something stays: the way out, and the rail.
+    expect(
+      screen.getByRole("button", { name: "local_models.back" }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "local_models.tab_overview" }),
+    ).toBeDefined();
+
+    // The helper's area is a flex child that fills what is left, so the panel
+    // never has to guess the chrome height above it.
+    const area = screen.getByTestId("local-models-assistant-tab");
+    expect(area.className).toContain("flex-1");
+    expect(area.className).toContain("min-h-0");
+
+    // Back on a panel tab the full header returns.
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.tab_overview" }),
+    );
+    expect(screen.getByText("local_models.title")).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "local_models.mode_simple" }),
+    ).toBeDefined();
+  });
 });

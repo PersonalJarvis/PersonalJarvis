@@ -458,7 +458,18 @@
       "ask_1": "Which model should answer my chats?",
       "ask_2": "Can my graphics card run a 27B model?",
       "ask_3": "Free up some disk space",
-      "composer_hint": "Enter sends · Shift+Enter for a new line"
+      "composer_hint": "Enter sends · Shift+Enter for a new line",
+      "origin_title": "Answering now",
+      "origin_cloud": "The helper itself runs on your Tool Model in the cloud, billed through that key. The models below run on your machine.",
+      "origin_change": "Change in API Keys",
+      "origin_default_model": "the provider’s default model",
+      "origin_unset": "No Tool Model is picked yet.",
+      "machine_title": "On this machine",
+      "machine_unset": "not set",
+      "machine_missing": "not installed",
+      "machine_server_running": "{server} is running",
+      "machine_server_stopped": "{server} is not running",
+      "machine_loading": "Reading the roles…"
     },
     "tab_assistant": "Setup helper"
   }

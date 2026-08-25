@@ -458,7 +458,18 @@
       "ask_1": "Welches Modell soll meine Chats beantworten?",
       "ask_2": "Schafft meine Grafikkarte ein 27B-Modell?",
       "ask_3": "Speicherplatz freimachen",
-      "composer_hint": "Enter sendet · Umschalt+Enter für eine neue Zeile"
+      "composer_hint": "Enter sendet · Umschalt+Enter für eine neue Zeile",
+      "origin_title": "Antwortet gerade",
+      "origin_cloud": "Die Hilfe selbst läuft auf deinem Tool Model in der Cloud und wird über dessen Schlüssel abgerechnet. Die Modelle darunter laufen auf deinem Rechner.",
+      "origin_change": "In den API-Keys ändern",
+      "origin_default_model": "Standardmodell des Anbieters",
+      "origin_unset": "Es ist noch kein Tool Model gewählt.",
+      "machine_title": "Auf diesem Rechner",
+      "machine_unset": "nicht gesetzt",
+      "machine_missing": "nicht installiert",
+      "machine_server_running": "{server} läuft",
+      "machine_server_stopped": "{server} läuft nicht",
+      "machine_loading": "Rollen werden gelesen…"
     },
     "tab_assistant": "Einrichtungshilfe"
   }

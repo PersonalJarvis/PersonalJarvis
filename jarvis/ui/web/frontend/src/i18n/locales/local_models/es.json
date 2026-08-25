@@ -458,7 +458,18 @@
       "ask_1": "¿Qué modelo debe responder mis chats?",
       "ask_2": "¿Mi tarjeta gráfica puede con un modelo de 27B?",
       "ask_3": "Liberar espacio en disco",
-      "composer_hint": "Enter envía · Mayús+Enter para una línea nueva"
+      "composer_hint": "Enter envía · Mayús+Enter para una línea nueva",
+      "origin_title": "Responde ahora",
+      "origin_cloud": "El asistente funciona con tu Tool Model en la nube y se factura con esa clave. Los modelos de abajo se ejecutan en tu equipo.",
+      "origin_change": "Cambiar en API Keys",
+      "origin_default_model": "modelo predeterminado del proveedor",
+      "origin_unset": "Todavía no hay un Tool Model elegido.",
+      "machine_title": "En este equipo",
+      "machine_unset": "sin definir",
+      "machine_missing": "no instalado",
+      "machine_server_running": "{server} está en marcha",
+      "machine_server_stopped": "{server} no está en marcha",
+      "machine_loading": "Leyendo los roles…"
     },
     "tab_assistant": "Asistente de configuración"
   }

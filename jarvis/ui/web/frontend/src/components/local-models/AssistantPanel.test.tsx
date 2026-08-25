@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -74,7 +75,7 @@ function finishedTurnWithProposal() {
     ...EMPTY_TIMELINE,
     lastSeq: 3,
     items: [
-      { type: "user" as const, id: "u-1", text: "Help me set up", tsMs: 1 },
+      { type: "user" as const, id: "u-1", text: "Help me set up", attachments: [], tsMs: 1 },
       {
         type: "turn" as const,
         id: "t1",
@@ -93,6 +94,24 @@ function finishedTurnWithProposal() {
       },
     ],
   };
+}
+
+/** The rail reads the roles and the server through React Query. */
+function renderPanel(props: Record<string, unknown> = {}) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <AssistantPanel
+        providerId="ollama"
+        serverLabel="Ollama"
+        request={null}
+        onOpenApiKeys={() => {}}
+        {...props}
+      />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -122,14 +141,7 @@ describe("AssistantPanel", () => {
       [`POST ${BASE}/run`]: () => reply({ detail: sentence }, 409),
     });
     const onOpenApiKeys = vi.fn();
-    render(
-      <AssistantPanel
-        providerId="ollama"
-        serverLabel="Ollama"
-        request={{ mode: "setup", token: 1 }}
-        onOpenApiKeys={onOpenApiKeys}
-      />,
-    );
+    renderPanel({ request: { mode: "setup", token: 1 }, onOpenApiKeys });
 
     await waitFor(() => expect(screen.getByTestId("assistant-blocked")).toBeDefined());
     expect(screen.getByTestId("assistant-blocked").textContent).toContain(sentence);
@@ -146,7 +158,7 @@ describe("AssistantPanel", () => {
         reply({ status: "error", reason: "chat role: model not installed", since: 1_700_000_000, last_ok: null, checked_at: 1_700_000_000 }),
       [`POST ${BASE}/run`]: () => reply({ session_id: "s-1", turn_id: "t-1", surface: "local-models" }),
     });
-    render(<AssistantPanel providerId="ollama" serverLabel="Ollama" request={null} onOpenApiKeys={() => {}} />);
+    renderPanel();
 
     await waitFor(() => expect(screen.getByTestId("assistant-health")).toBeDefined());
     expect(screen.getByTestId("assistant-health").textContent).toContain("chat role: model not installed");
@@ -160,7 +172,7 @@ describe("AssistantPanel", () => {
 
   it("says so when the backend predates the assistant", async () => {
     stubFetch({});
-    render(<AssistantPanel providerId="ollama" serverLabel="Ollama" request={null} onOpenApiKeys={() => {}} />);
+    renderPanel();
     await waitFor(() => expect(screen.getByTestId("assistant-backend-missing")).toBeDefined());
   });
 
@@ -176,9 +188,11 @@ describe("AssistantPanel", () => {
       "GET /api/agent-chat/sessions?limit=500&surface=local-models": () => reply({ sessions: [] }),
     });
     useLocalModelsAssistantStore.setState({ activeSessionId: "s-1", timeline: finishedTurnWithProposal() });
-    render(<AssistantPanel providerId="ollama" serverLabel="Ollama" request={null} onOpenApiKeys={() => {}} />);
+    renderPanel();
 
     await waitFor(() => expect(screen.getByTestId("setup-proposal")).toBeDefined());
+    // The turn names who wrote it — read from the turn, not from config.
+    expect(screen.getByTestId("assistant-turn-origin").textContent).toContain("\u00b7 m");
     fireEvent.click(screen.getByTestId("proposal-confirm"));
     await waitFor(() =>
       expect(calls.some((c) => c.url.endsWith("/messages") && String(c.body?.text).startsWith("Execute steps: s1, s2 ("))).toBe(true),
@@ -211,5 +225,46 @@ describe("AssistantPanel", () => {
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(calls.some((c) => c.url.endsWith("/approvals/a-2"))).toBe(false);
+  });
+  it("names the brain that answers and marks it as the cloud one", async () => {
+    stubFetch({
+      [`GET ${BASE}/session`]: () =>
+        reply({ session_id: null, provider: "gemini", model: "gemini-3-pro", ready: true, reason: "" }),
+      [`GET ${BASE}/health`]: () => reply({}, 404),
+    });
+    renderPanel();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("assistant-origin-model").textContent).toBe("gemini-3-pro"),
+    );
+    expect(screen.getByTestId("assistant-origin").textContent).toContain("Gemini");
+    // Ready: the explaining sentence, not a warning.
+    expect(screen.queryByTestId("assistant-origin-blocked")).toBeNull();
+    expect(screen.getByTestId("assistant-origin").textContent).toContain(
+      "local_models.assistant.origin_cloud",
+    );
+    // The same answer travels to a narrow window as one chip.
+    expect(screen.getByTestId("assistant-origin-chip").textContent).toContain("gemini-3-pro");
+  });
+
+  it("says BEFORE the first click when no Tool Model can run the helper", async () => {
+    const why = "Pick a Tool Model with an API key first — the helper runs on it.";
+    stubFetch({
+      [`GET ${BASE}/session`]: () =>
+        reply({ session_id: null, provider: "gemini", model: "", ready: false, reason: why }),
+      [`GET ${BASE}/health`]: () => reply({}, 404),
+    });
+    const onOpenApiKeys = vi.fn();
+    renderPanel({ onOpenApiKeys });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("assistant-origin-blocked").textContent).toBe(why),
+    );
+    // No model of its own: the pair falls back to the provider's default.
+    expect(screen.getByTestId("assistant-origin-model").textContent).toBe(
+      "local_models.assistant.origin_default_model",
+    );
+    fireEvent.click(screen.getByTestId("assistant-origin-change"));
+    expect(onOpenApiKeys).toHaveBeenCalledTimes(1);
   });
 });

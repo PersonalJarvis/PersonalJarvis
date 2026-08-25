@@ -10,14 +10,22 @@
  *
  * Three deliberate departures from the coding-agent chat:
  *
- * 1. **The conversation scrolls inside itself.** The panel is one screen with
- *    the composer at the bottom, so opening the helper never turns the section
- *    into a page thousands of pixels tall that buries the roles below it.
+ * 1. **The conversation scrolls inside itself.** The panel fills the height it
+ *    is given (`h-full`, never a `100vh` sum guessed from the chrome above it)
+ *    with the composer pinned to its floor, so opening the helper never turns
+ *    the section into a page thousands of pixels tall — and never stacks a
+ *    page scrollbar on top of the conversation's own.
  * 2. **Only the current run is shown.** Every click on a mode button starts a
  *    new run; the ones before collapse behind one "earlier messages" line
  *    instead of stacking five identical setups on top of each other.
  * 3. **Steps read as sentences** (`AssistantSteps`), not as tool names — this
  *    reader wants to follow what is being done to their machine.
+ *
+ * The conversation keeps a reading measure; the width left over on a wide
+ * window goes to `AssistantContext`, which answers the question the prose
+ * cannot: the helper runs on a CLOUD Tool Model while every model it installs
+ * runs locally. Below `xl` the rail is gone and the header's origin chip says
+ * the same thing in one line.
  *
  * When a turn ends with a ```jarvis-proposal block, the plan is shown as a
  * checklist (`SetupProposalCard`). ONE Confirm sends the "Execute steps: …"
@@ -35,6 +43,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { TextBlock, TimelineItem, TurnItem } from "@/components/agentchat/reduce";
 import { SoftButton, StatusDot } from "@/components/extensions/primitives";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { fill, useT } from "@/i18n";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
@@ -47,7 +56,14 @@ import {
   runAssistant,
   type AssistantHealth,
   type AssistantMode,
+  type AssistantSessionResponse,
 } from "./assistantApi";
+import {
+  AssistantContext,
+  AssistantOriginChip,
+  healthTone,
+  providerDisplayName,
+} from "./AssistantContext";
 import { AssistantSteps } from "./AssistantSteps";
 import {
   matchesConfirmedStep,
@@ -123,6 +139,8 @@ export function AssistantPanel({
   request,
   onOpenApiKeys,
   onOpenServerLog,
+  providerLabel,
+  className,
 }: {
   providerId: string;
   /** What the section calls the local server ("Ollama"). */
@@ -132,6 +150,13 @@ export function AssistantPanel({
   onOpenApiKeys: () => void;
   /** The Server tab with the log open — one link for the reader who wants it raw. */
   onOpenServerLog?: () => void;
+  /**
+   * Brain provider id -> display label, from the section's provider list. The
+   * panel does not fetch a catalog of its own for one word; without it the id
+   * is title-cased, which is honest if less pretty.
+   */
+  providerLabel?: (id: string) => string;
+  className?: string;
 }) {
   const t = useT();
   const items = useLocalModelsAssistantStore((s) => s.timeline.items);
@@ -146,6 +171,8 @@ export function AssistantPanel({
   const disconnect = useLocalModelsAssistantStore((s) => s.disconnect);
 
   const [health, setHealth] = useState<AssistantHealth | null>(null);
+  /** The whole `/session` answer: the pair the helper runs on, and readiness. */
+  const [session, setSession] = useState<AssistantSessionResponse | null>(null);
   const [starting, setStarting] = useState<AssistantMode | null>(null);
   /** The 409 sentence: no usable Tool Model or Agents-tier fallback. */
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -159,6 +186,8 @@ export function AssistantPanel({
   const [showEarlier, setShowEarlier] = useState(false);
   const answered = useRef<Set<string>>(new Set());
   const scroller = useRef<HTMLDivElement | null>(null);
+  /** Whether the reader is parked at the end — the only time we may scroll. */
+  const atBottom = useRef(true);
 
   const running = isRunning(items);
   const start = runStartIndex(items, runTurnId);
@@ -166,23 +195,35 @@ export function AssistantPanel({
   const earlier = items.slice(0, Math.min(start, items.length));
   const shown = showEarlier ? items : current;
 
+  /**
+   * The `/session` record: the pair the helper runs on and whether it can run.
+   * Reading it is not optional bookkeeping — it is the only place the UI can
+   * learn WHICH brain answers, and it says so before the first click instead
+   * of leaving the reader to discover it as a 409.
+   */
+  const loadSession = useCallback(async (): Promise<AssistantSessionResponse | null> => {
+    try {
+      const s = await getAssistantSession(providerId);
+      setSession(s);
+      return s;
+    } catch (err) {
+      if (err instanceof AssistantApiError && err.status === 404) setBackendMissing(true);
+      return null;
+    }
+  }, [providerId]);
+
   // The one session per install: open it (and its socket) when the panel mounts.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const s = await getAssistantSession(providerId);
-        if (cancelled) return;
-        if (s.session_id) openSession(s.session_id);
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof AssistantApiError && err.status === 404) setBackendMissing(true);
-      }
+      const s = await loadSession();
+      if (cancelled || !s?.session_id) return;
+      openSession(s.session_id);
     })();
     return () => {
       cancelled = true;
     };
-  }, [providerId, openSession]);
+  }, [loadSession, openSession]);
 
   useEffect(() => () => disconnect(), [disconnect]);
 
@@ -204,11 +245,21 @@ export function AssistantPanel({
     answered.current = new Set();
   }, [activeSessionId]);
 
-  // Follow the conversation while it writes, the way a chat does.
+  // Follow the conversation while it writes, the way a chat does — but only
+  // for a reader who is actually at the end. Scrolling unconditionally yanks
+  // someone who scrolled up to re-read a step back down on the next token.
   useEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [items, shown.length]);
+
+  const onScroll = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    // A small slack: a sub-pixel layout or a half-scrolled wheel tick must
+    // still count as "at the end", or following stops for no visible reason.
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
 
   const run = useCallback(
     async (mode: AssistantMode) => {
@@ -216,6 +267,8 @@ export function AssistantPanel({
       setBlocked(null);
       setRunError(null);
       setShowEarlier(false);
+      // A run the reader asked for is a run they want to watch start.
+      atBottom.current = true;
       try {
         const res = await runAssistant(providerId, mode);
         // Everything before this turn becomes "earlier": a second setup run is
@@ -223,14 +276,20 @@ export function AssistantPanel({
         setRunTurnId(res.turn_id);
         if (res.session_id !== activeSessionId) openSession(res.session_id);
       } catch (err) {
-        if (err instanceof AssistantApiError && err.status === 409) setBlocked(err.message);
-        else if (err instanceof AssistantApiError && err.status === 404) setBackendMissing(true);
-        else setRunError(err instanceof Error ? err.message : String(err));
+        if (err instanceof AssistantApiError && err.status === 409) {
+          setBlocked(err.message);
+          // The refusal and the rail must agree on why; re-read the record.
+          void loadSession();
+        } else if (err instanceof AssistantApiError && err.status === 404) {
+          setBackendMissing(true);
+        } else {
+          setRunError(err instanceof Error ? err.message : String(err));
+        }
       } finally {
         setStarting(null);
       }
     },
-    [providerId, activeSessionId, openSession],
+    [providerId, activeSessionId, openSession, loadSession],
   );
 
   // The section's button click is the request; run it once per token.
@@ -244,6 +303,15 @@ export function AssistantPanel({
   useEffect(() => {
     if (!running) void loadHealth();
   }, [running, loadHealth]);
+
+  // A finished run can have changed the tier (a fallback took over, a key was
+  // fixed mid-conversation). Re-read it then — and only then, so the mount's
+  // own read is not doubled.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running) void loadSession();
+    wasRunning.current = running;
+  }, [running, loadSession]);
 
   // The plan in the last finished turn of the current run, if any.
   const proposal: { value: Proposal; turnId: string } | null = useMemo(() => {
@@ -291,9 +359,11 @@ export function AssistantPanel({
   }, [draft, activeSessionId, busy, running, send]);
 
   const checkedAt = assistantTimestamp(health?.checked_at);
-  const healthTone =
-    health?.status === "ok" ? "ok" : health?.status === "unknown" || !health ? "off" : "warn";
   const needsFix = health?.status === "error" || health?.status === "needs_setup";
+  const brandName = useCallback(
+    (id: string) => providerDisplayName(id, providerLabel),
+    [providerLabel],
+  );
 
   // One line that says what the helper is doing right now.
   const statusLine = running
@@ -313,27 +383,47 @@ export function AssistantPanel({
       className={cn(
         // A chat is a room, not a form: its own ground, a header and a
         // composer pinned to the edges, and the conversation scrolling
-        // between them. The height is the screen's, minus what the section
-        // header and the rail already take.
-        "flex h-[calc(100vh-14.5rem)] min-h-[26rem] flex-col overflow-hidden rounded-xl border border-border",
+        // between them. The height is whatever the section hands down
+        // (`h-full`) — never a `100vh` minus a hand-measured chrome height,
+        // which stops being true the moment that chrome wraps and leaves two
+        // scrollbars stacked on each other.
+        "flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border",
         // Token colours only: `--card` and friends are HSL triplets, not
         // colours, so a color-mix() on them is invalid CSS and the room would
         // render with no ground at all. The conversation sits a shade off the
         // page, the two bars a shade above it.
         "bg-card/40",
+        className,
       )}
       data-testid="local-models-assistant"
     >
       {/* ── header ─────────────────────────────────────────────────────── */}
+      {/* Full width, unlike the conversation: a title band constrained to the
+          reading measure leaves its buttons floating in mid-screen with empty
+          bar on both sides, which reads as a broken layout rather than a calm
+          one. Only prose wants a measure. */}
       <div className="shrink-0 border-b border-border/70 bg-card px-5 py-3">
-        <div className="mx-auto flex w-full max-w-[46rem] flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold leading-tight tracking-[-0.01em]">
-              {t("local_models.assistant.title")}
-            </h3>
-            <p className="mt-0.5 text-[12.5px] text-muted-foreground" data-testid="assistant-status">
-              {statusLine}
-            </p>
+        <div className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="min-w-0">
+              <h3 className="text-[14px] font-semibold leading-tight tracking-[-0.01em]">
+                {t("local_models.assistant.title")}
+              </h3>
+              <p
+                className="mt-0.5 text-[12.5px] text-muted-foreground"
+                data-testid="assistant-status"
+              >
+                {statusLine}
+              </p>
+            </div>
+            {/* Below xl there is no rail, so the answer moves here. */}
+            <div className="xl:hidden">
+              <AssistantOriginChip
+                session={session}
+                providerLabel={providerLabel}
+                onOpenApiKeys={onOpenApiKeys}
+              />
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <ChipButton primary onClick={() => void run("setup")} disabled={busyNow}>
@@ -358,16 +448,34 @@ export function AssistantPanel({
         </div>
       </div>
 
-      {/* ── conversation ───────────────────────────────────────────────── */}
-      <div ref={scroller} className="flex-1 overflow-y-auto" data-testid="assistant-timeline">
-        <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-8 px-5 py-6">
+      {/* ── conversation + context ─────────────────────────────────────── */}
+      <div className="flex min-h-0 flex-1">
+        <div
+          ref={scroller}
+          onScroll={onScroll}
+          className="min-w-0 flex-1 overflow-y-auto"
+          data-testid="assistant-timeline"
+        >
+          <div className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-5 py-6">
+            <div
+              className={cn(
+                // A short conversation rests on the composer instead of
+                // hanging from the ceiling with a screen of void beneath it.
+                // `mt-auto`, not `justify-end`: an auto margin collapses to
+                // zero once the content outgrows the box, so a long run can
+                // still be scrolled back to its own first line.
+                "flex flex-col gap-8",
+                items.length === 0 ? "my-auto" : "mt-auto",
+              )}
+            >
+          {/* The rail carries this above xl; here it would be a second copy. */}
           {health && checkedAt && (
             <p
-              className="flex flex-wrap items-center gap-3 text-[12.5px]"
+              className="flex flex-wrap items-center gap-3 text-[12.5px] xl:hidden"
               data-testid="assistant-health"
             >
               <StatusDot
-                tone={healthTone}
+                tone={healthTone(health)}
                 label={fill(t("local_models.assistant.last_check"), {
                   when: checkedAt.toLocaleString(),
                   what: health.reason || t(`local_models.assistant.health_${health.status}`),
@@ -499,6 +607,25 @@ export function AssistantPanel({
                   <Sparkles className="h-3.5 w-3.5" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-3">
+                  {/* Who wrote this turn — read from the turn itself, not from
+                      the configuration, so a fallback that took over is named
+                      instead of the pick that failed. */}
+                  {item.provider && (
+                    <span
+                      className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70"
+                      data-testid="assistant-turn-origin"
+                    >
+                      <ProviderLogo
+                        providerId={item.provider}
+                        label={brandName(item.provider)}
+                        size="sm"
+                      />
+                      <span className="truncate">
+                        {brandName(item.provider)}
+                        {item.model ? ` · ${item.model}` : ""}
+                      </span>
+                    </span>
+                  )}
                   <AssistantSteps blocks={item.blocks} live={live} onDecide={onDecide} />
                   {answer && (
                     <div
@@ -536,12 +663,24 @@ export function AssistantPanel({
               </div>
             );
           })}
+            </div>
+          </div>
         </div>
+
+        <AssistantContext
+          providerId={providerId}
+          serverLabel={serverLabel}
+          session={session}
+          health={health}
+          onOpenApiKeys={onOpenApiKeys}
+          onDiagnose={() => void run("diagnose")}
+          providerLabel={providerLabel}
+        />
       </div>
 
       {/* ── composer ───────────────────────────────────────────────────── */}
       <div className="shrink-0 border-t border-border/70 bg-card px-5 py-3">
-        <div className="mx-auto w-full max-w-[46rem]">
+        <div className="mx-auto w-full max-w-[48rem]">
           <form
             className={cn(
               "flex items-end gap-2 rounded-2xl border border-border bg-background px-2.5 py-2 shadow-sm",
