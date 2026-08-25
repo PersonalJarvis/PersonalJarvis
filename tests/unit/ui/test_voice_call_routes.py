@@ -19,11 +19,19 @@ from jarvis.ui.web.voice_call_routes import router
 class _Pipeline:
     """The two public arming methods, and the state the GET reads."""
 
-    def __init__(self, armed: bool = True, stopped: bool = True) -> None:
+    def __init__(
+        self,
+        armed: bool = True,
+        stopped: bool = True,
+        *,
+        state: str = "IDLE",
+        supervisor_state: str = "IDLE",
+    ) -> None:
         self._armed = armed
         self._stopped = stopped
         self.calls: list[str] = []
-        self._state = SimpleNamespace(name="IDLE")
+        self._state = SimpleNamespace(name=state)
+        self._supervisor = SimpleNamespace(state=supervisor_state)
 
     def request_voice_session(self) -> bool:
         self.calls.append("call")
@@ -73,7 +81,11 @@ def test_headless_answers_honestly_instead_of_500(monkeypatch):
     assert client.post("/api/voice/hangup").status_code == 503
     answer = client.get("/api/voice/state")
     assert answer.status_code == 200
-    assert answer.json() == {"available": False, "state": "unavailable"}
+    assert answer.json() == {
+        "available": False,
+        "state": "unavailable",
+        "voice_state": "idle",
+    }
 
 
 def test_state_names_the_pipeline_state(monkeypatch):
@@ -81,4 +93,42 @@ def test_state_names_the_pipeline_state(monkeypatch):
     assert client.get("/api/voice/state").json() == {
         "available": True,
         "state": "idle",
+        "voice_state": "idle",
+    }
+
+
+def test_state_mirrors_the_supervisor_while_a_session_runs(monkeypatch):
+    # The fine-grained state every voice surface renders: the REST mirror of
+    # the one-shot SystemStateChanged event, so a window that missed one can
+    # reconcile instead of showing the last thing it heard forever.
+    client = _client(
+        monkeypatch,
+        _Pipeline(state="ACTIVE", supervisor_state="LISTENING"),
+    )
+    assert client.get("/api/voice/state").json() == {
+        "available": True,
+        "state": "active",
+        "voice_state": "listening",
+    }
+
+
+def test_state_says_unknown_when_a_running_session_has_no_supervisor(monkeypatch):
+    # Never a guess: the client leaves a live call alone on anything but idle.
+    pipeline = _Pipeline(state="ACTIVE")
+    del pipeline._supervisor
+    client = _client(monkeypatch, pipeline)
+    assert client.get("/api/voice/state").json()["voice_state"] == "unknown"
+
+
+def test_state_clamps_a_left_over_supervisor_state_to_idle(monkeypatch):
+    # No session runs, so LISTENING is unearned detail whatever the supervisor
+    # still holds — and it is precisely the value that used to freeze the bar.
+    client = _client(
+        monkeypatch,
+        _Pipeline(state="IDLE", supervisor_state="LISTENING"),
+    )
+    assert client.get("/api/voice/state").json() == {
+        "available": True,
+        "state": "idle",
+        "voice_state": "idle",
     }

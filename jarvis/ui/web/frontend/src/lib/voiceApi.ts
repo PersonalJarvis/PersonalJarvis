@@ -96,3 +96,51 @@ export async function setTtsVolume(
     throw new Error(detail || `Voice volume change failed (${res.status}).`);
   }
 }
+
+export interface VoiceRuntimeState {
+  /** Is a speech pipeline running on this host at all? */
+  available: boolean;
+  /** The fine-grained state every voice surface renders, straight from the
+   *  supervisor. `"idle"` whenever no session is running. */
+  voiceState: string;
+}
+
+/**
+ * The backend's own word on what voice is doing RIGHT NOW.
+ *
+ * `SystemStateChanged` is a one-shot event, so a window that missed one — a
+ * dropped socket, a backend restart, a fresh mount — keeps whatever it heard
+ * last with nothing to correct it. This is the REST mirror the surfaces
+ * reconcile against (hooks/useVoiceStateResync).
+ *
+ * `null` means "could not be asked" and is NOT "idle": an unknown answer must
+ * never overwrite a live state the events are keeping correct.
+ */
+export async function fetchVoiceRuntimeState(): Promise<VoiceRuntimeState | null> {
+  try {
+    const res = await fetch("/api/voice/state", { cache: "no-store" });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      available?: unknown;
+      state?: unknown;
+      voice_state?: unknown;
+    };
+    const available = body.available === true;
+    if (typeof body.voice_state === "string") {
+      return { available, voiceState: body.voice_state };
+    }
+    // A backend from before the field existed still answers the coarse
+    // question honestly: an idle pipeline IS "no session runs", which is the
+    // whole correction this is read for. Anything else stays "unknown" so a
+    // live call is never touched on a guess.
+    if (typeof body.state === "string") {
+      return { available, voiceState: body.state === "idle" ? "idle" : "unknown" };
+    }
+    return null;
+  } catch (error) {
+    // Offline / headless / the route missing on an older backend: the caller
+    // treats null as "no answer" and leaves the store exactly as it is.
+    console.info("Voice runtime state could not be read.", error);
+    return null;
+  }
+}

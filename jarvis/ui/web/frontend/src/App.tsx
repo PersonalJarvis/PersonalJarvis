@@ -4,6 +4,7 @@ import { isSectionId, useEventStore } from "@/store/events";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
+import { useVoiceStateResync } from "@/hooks/useVoiceStateResync";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { useCodingMode } from "@/hooks/useCodingMode";
 import { useSectionUrlMemory } from "@/hooks/useSectionUrlMemory";
@@ -152,6 +153,7 @@ export default function App() {
   useWebSocket();
   useBrainStatus();
   useVoiceStatus();
+  useVoiceStateResync();
   useAssistantNameSeed();
   useCodingMode();
   /*
