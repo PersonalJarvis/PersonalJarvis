@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened Runtime entitlements for the notarized "Personal Jarvis.app".
+
+  Notarization requires the Hardened Runtime (codesign --options runtime), and
+  the Hardened Runtime denies by default exactly the things this app needs.
+  Every entry below is here because leaving it out breaks a shipped feature or
+  stops the app from launching at all — nothing is requested "just in case",
+  because each one weakens a real platform protection.
+
+  The matching user-facing NSxxxUsageDescription strings live in the bundle's
+  Info.plist (built by jarvis.spec). Entitlements grant the app the RIGHT to
+  ask; the usage strings are what the person reads in the prompt. Both halves
+  are required: a hardened app missing the entitlement is refused before the
+  prompt appears, and one missing the usage string is killed by the system the
+  moment it asks.
+-->
+<plist version="1.0">
+<dict>
+  <!--
+    Microphone. The whole voice pipeline (wake word, dictation, calls) reads
+    the default input device through PortAudio. Without this a hardened build
+    fails every capture attempt instead of showing the microphone prompt.
+  -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!--
+    Camera. Only the vision/screen-share features touch it, and they degrade
+    honestly when the user declines - but a hardened app without the
+    entitlement cannot even ask, so the decline would not be the user's.
+  -->
+  <key>com.apple.security.device.camera</key>
+  <true/>
+
+  <!--
+    Apple events. Jarvis drives other applications through AppleScript for the
+    media-session and window-control paths (jarvis/platform/media_session.py,
+    music_player.py). Sending an Apple event to another process from a hardened
+    app requires this entitlement plus the NSAppleEventsUsageDescription string.
+  -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+
+  <!--
+    Unsigned executable memory. Not optional for a CPython application:
+    ctypes/libffi build closure trampolines in memory it marks executable
+    (sounddevice's PortAudio binding, vosk's libvosk binding, and several
+    numeric wheels all go through ctypes). The Hardened Runtime kills the
+    process on the first such allocation without this. Justified rather than
+    inherited: it is the narrowest of the three "allow ... memory" entitlements
+    - allow-jit and allow-unsigned-executable-memory's unrestricted sibling are
+    deliberately NOT requested.
+  -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!--
+    Library validation. A PyInstaller bundle dlopen()s dozens of third-party
+    .so/.dylib files out of Contents/Frameworks and Contents/Resources at
+    runtime (onnxruntime, PortAudio, libvosk, PyAV's FFmpeg libraries). Library
+    validation demands every loaded library be signed by the SAME team ID as
+    the main binary; the re-sign pass in packaging/macos/build.sh does re-sign
+    them, but any library loaded from a path the pass did not walk - or a
+    plugin the user installs later into the same process - is then refused and
+    the feature dies with an opaque "code signature invalid". This is the one
+    entitlement here that could be dropped later: it needs a build where every
+    loadable object is provably signed by us, which the plugin system's
+    "install a wheel at runtime" design currently rules out.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
