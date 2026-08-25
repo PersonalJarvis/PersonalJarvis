@@ -105,6 +105,11 @@ class BrowserVoiceSession:
 
         self._started_at = time.time()
         self._turns = 0
+        # Master-volume limiter for this socket, built on first use so importing
+        # browser_voice still costs no numpy. Stateful across chunks, so an
+        # utterance streamed as many frames is limited as one continuous signal
+        # instead of restarting its gain ramp at every frame boundary.
+        self._out_limiter: Any | None = None
         self._speaking = False
         self._processing = False
         self._tts_task: asyncio.Task[None] | None = None
@@ -254,8 +259,9 @@ class BrowserVoiceSession:
         the number of binary frames sent. Cancellable: a barge-in cancels the
         underlying task mid-stream.
         """
-        from jarvis.audio.gain import (
-            apply_output_gain_pcm16,  # noqa: PLC0415 — lazy: keep cold-import light
+        from jarvis.audio.gain import (  # noqa: PLC0415 — lazy: keep cold-import light
+            PeakLimiter,
+            apply_output_gain_pcm16,
         )
         from jarvis.browser_voice.audio import resample_pcm16  # noqa: PLC0415 — off-rate fallback
 
@@ -263,6 +269,8 @@ class BrowserVoiceSession:
         # so the setting works over the browser too — the only voice path on a
         # headless server. Read once per turn; a live change lands next utterance.
         vol = getattr(getattr(self._config, "tts", None), "volume", 1.0)
+        if self._out_limiter is None:
+            self._out_limiter = PeakLimiter()
 
         self._speaking = True
         sent = 0
@@ -303,7 +311,12 @@ class BrowserVoiceSession:
                     )
                 if rate != TTS_SAMPLE_RATE:
                     pcm = resample_pcm16(pcm, rate, TTS_SAMPLE_RATE)
-                pcm = apply_output_gain_pcm16(pcm, vol)
+                pcm = apply_output_gain_pcm16(
+                    pcm,
+                    vol,
+                    sample_rate=TTS_SAMPLE_RATE,
+                    limiter=self._out_limiter,
+                )
                 await self._send_binary(pcm)
                 sent += 1
 
@@ -362,6 +375,10 @@ class BrowserVoiceSession:
             self._tts_task.cancel()
         if self._browser_tts_done is not None:
             self._browser_tts_done.set()
+        if self._out_limiter is not None:
+            # The cancelled audio's gain state must not carry into the reply
+            # that follows, or it would open quiet and audibly swell.
+            self._out_limiter.reset()
         self._speaking = False
         try:
             await self._send_json({"type": "tts_cancel"})
