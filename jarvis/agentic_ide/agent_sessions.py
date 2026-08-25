@@ -2,9 +2,9 @@
 
 A pane of the Agentic IDE is not the conversation it shows. The conversation
 lives inside the agent's own CLI — every coding CLI here (Claude Code, Codex,
-OpenCode, Kimi Code, Grok Build, and the launch profiles over them) keeps its
-own history on disk — and all this module does is hold the one string needed
-to point back at it: a *resume handle*.
+OpenCode, Kimi Code, Grok Build, Antigravity, and the launch profiles over
+them) keeps its own history on disk — and all this module does is hold the
+one string needed to point back at it: a *resume handle*.
 
 That indirection is what makes a workspace survivable. Closing the browser kills
 every agent process (deliberately: an unwatched agent burns tokens invisibly),
@@ -23,9 +23,10 @@ shapes cover all of them — ASSIGNED at launch, or DISCOVERED afterwards:
   Codex panes in one repository would all resume the SAME conversation and two
   users' work would silently vanish. Every pane must carry its own id.
 * **Grok Build** is the Claude Code shape (``--session-id`` at launch,
-  ``--resume`` later); **OpenCode** and **Kimi Code** are the Codex shape
-  (the id is theirs to choose — a database row, a session directory — and
-  ours to find by folder and time). Each adapter below says which.
+  ``--resume`` later); **OpenCode**, **Kimi Code** and **Antigravity** are
+  the Codex shape (the id is theirs to choose — a database row, a session
+  directory, a conversation UUID — and ours to find by folder and time).
+  Each adapter below says which.
 
 Callers never branch on an agent name (AP-21). They ask this module whether a
 handle can be minted, spent, or found, and an agent that answers "no" degrades
@@ -56,6 +57,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 from loguru import logger
@@ -204,6 +206,16 @@ _ADAPTERS: dict[str, _Adapter] = {
         resume=lambda session_id: ("--resume", session_id),
         discover=None,
         exists=lambda handle, home: _grok_conversation_exists(handle, home),
+    ),
+    "antigravity": _Adapter(
+        kind="agy_session",
+        launch=_discovered_launch,
+        # ``agy --conversation <id>`` is the long form; there is no short flag.
+        resume=lambda session_id: ("--conversation", session_id),
+        discover=lambda cwd, started, taken, home: _discover_antigravity(
+            cwd, started, taken, home
+        ),
+        exists=lambda handle, home: _agy_conversation_exists(handle, home),
     ),
 }
 
@@ -1012,6 +1024,7 @@ def _grok_conversation_exists(handle: ResumeHandle, home: Path | None = None) ->
 # Every other record in `updates.jsonl` (hook runs, agent chunks, turn ends) can
 # appear without a conversation ever having happened.
 _GROK_USER_TURN_MARKER = b'"user_message_chunk"'
+_AGY_USER_TURN_MARKER = b'"USER_INPUT"'
 
 
 def _grok_log_has_user_turn(log: Path) -> bool:
@@ -1026,6 +1039,205 @@ def _grok_log_has_user_turn(log: Path) -> bool:
             return any(_GROK_USER_TURN_MARKER in line for line in handle)
     except OSError:
         return False
+
+
+# -------------------------------------------------------------- Antigravity
+def _agy_cli_root(override: Path | None = None) -> Path:
+    """The Antigravity CLI data root: ``<gemini-home>/antigravity-cli``.
+
+    ``GEMINI_HOME`` (when set) IS the ``.gemini`` directory, not its parent —
+    the same convention ``jarvis.google_cli.isolated_home`` uses. A test
+    passes an explicit home and files live at ``<home>/.gemini/antigravity-cli``.
+    """
+    if override is not None:
+        return Path(override).expanduser() / ".gemini" / "antigravity-cli"
+    raw = os.environ.get("GEMINI_HOME", "").strip()
+    base = Path(raw).expanduser() if raw else Path.home() / ".gemini"
+    return base / "antigravity-cli"
+
+
+def _agy_conversation_db(root: Path, session_id: str) -> Path | None:
+    if not session_id or "/" in session_id or "\\" in session_id:
+        return None
+    path = root / "conversations" / f"{session_id}.db"
+    return path if path.is_file() else None
+
+
+def _agy_transcript(root: Path, session_id: str) -> Path:
+    return (
+        root
+        / "brain"
+        / session_id
+        / ".system_generated"
+        / "logs"
+        / "transcript.jsonl"
+    )
+
+
+def _agy_log_has_user_turn(log: Path) -> bool:
+    """Does this transcript record at least one user turn?
+
+    Opening a pane already writes the conversation database; resuming one
+    without a user turn reopens an empty TUI. The marker is the JSONL
+    ``type`` Antigravity writes for an explicit user message (measured on
+    agy 1.1.20).
+    """
+    try:
+        with log.open("rb") as handle:
+            return any(_AGY_USER_TURN_MARKER in line for line in handle)
+    except OSError:
+        return False
+
+
+def _agy_conversation_exists(handle: ResumeHandle, home: Path | None = None) -> bool:
+    """True when Antigravity has a conversation with at least one user turn."""
+    session_id = handle.id
+    root = _agy_cli_root(home)
+    if _agy_conversation_db(root, session_id) is None:
+        return False
+    return _agy_log_has_user_turn(_agy_transcript(root, session_id))
+
+
+def _agy_file_uri_path(uri: str) -> str:
+    """``file:///C:/Users/...`` → a filesystem path, or empty when it is not one."""
+    raw = (uri or "").strip()
+    if not raw.lower().startswith("file:"):
+        return ""
+    parsed = urlparse(raw)
+    path = unquote(parsed.path or "")
+    if os.name == "nt" and path.startswith("/") and len(path) >= 3 and path[2] == ":":
+        path = path[1:]
+    return path
+
+
+def _agy_cwd_matches(recorded: str, cwd: str) -> bool:
+    if not recorded or not cwd:
+        return False
+    try:
+        return os.path.normcase(os.path.normpath(recorded)) == os.path.normcase(
+            os.path.normpath(cwd)
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _agy_last_conversations(root: Path) -> dict[str, str]:
+    path = root / "cache" / "last_conversations.json"
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in parsed.items():
+        cwd = str(key or "").strip()
+        session_id = str(value or "").strip()
+        if cwd and session_id:
+            out[cwd] = session_id
+    return out
+
+
+def _agy_summaries_for_cwd(root: Path, cwd: str) -> list[tuple[float, str]]:
+    """``(mtime, session_id)`` of conversations whose workspace is ``cwd``."""
+    db = root / "conversation_summaries.db"
+    if not db.is_file():
+        return []
+    import sqlite3
+
+    try:
+        uri = f"file:{db.as_posix()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+    except Exception:  # noqa: BLE001 - summaries are a convenience
+        return []
+    found: list[tuple[float, str]] = []
+    try:
+        for row in conn.execute(
+            "SELECT conversation_id, workspace_uris, last_modified_time, "
+            "last_user_input_step_index FROM conversation_summaries"
+        ):
+            session_id = str(row[0] or "").strip()
+            if not session_id:
+                continue
+            try:
+                uris = json.loads(row[1] or "[]")
+            except (TypeError, ValueError):
+                uris = []
+            if not isinstance(uris, list):
+                continue
+            if not any(
+                _agy_cwd_matches(_agy_file_uri_path(str(uri)), cwd) for uri in uris
+            ):
+                continue
+            try:
+                stamp = datetime.fromisoformat(str(row[2] or "").replace("Z", "+00:00"))
+                mtime = stamp.timestamp()
+            except (TypeError, ValueError):
+                mtime = 0.0
+            found.append((mtime, session_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Agentic IDE: antigravity summaries unreadable: {}", exc)
+    finally:
+        conn.close()
+    return found
+
+
+def _discover_antigravity(
+    cwd: str,
+    started_at: float,
+    taken: Collection[str],
+    home: Path | None,
+) -> ResumeHandle | None:
+    """Find the conversation a pane started at ``started_at`` in ``cwd`` created.
+
+    Antigravity assigns the id; we cannot mint one. ``last_conversations.json``
+    maps a folder to its newest conversation, and the summaries database
+    records every conversation's workspace URI. Both are searched, newest
+    first, and an id another pane already holds is skipped.
+    """
+    root = _agy_cli_root(home)
+    taken_ids = {str(item) for item in taken}
+    floor = started_at - _SKEW_S
+    candidates: list[tuple[float, str]] = []
+
+    for recorded_cwd, session_id in _agy_last_conversations(root).items():
+        if session_id in taken_ids or not _agy_cwd_matches(recorded_cwd, cwd):
+            continue
+        db = _agy_conversation_db(root, session_id)
+        if db is None:
+            continue
+        try:
+            mtime = db.stat().st_mtime
+        except OSError:
+            continue
+        if mtime < floor:
+            continue
+        candidates.append((mtime, session_id))
+
+    for mtime, session_id in _agy_summaries_for_cwd(root, cwd):
+        if session_id in taken_ids or mtime < floor:
+            continue
+        if _agy_conversation_db(root, session_id) is None:
+            continue
+        candidates.append((mtime, session_id))
+
+    seen: set[str] = set()
+    ordered: list[tuple[float, str]] = []
+    for stamp, session_id in sorted(candidates, key=lambda item: item[0]):
+        if session_id in seen or session_id in taken_ids:
+            continue
+        seen.add(session_id)
+        if not _agy_log_has_user_turn(_agy_transcript(root, session_id)):
+            continue
+        ordered.append((stamp, session_id))
+        if len(ordered) >= _MAX_CANDIDATES:
+            break
+    if not ordered:
+        return None
+    # The earliest unclaimed conversation after the pane started is this
+    # pane's — later ones belong to panes opened in the same batch.
+    _stamp, session_id = ordered[0]
+    return ResumeHandle(kind="agy_session", id=session_id, captured_at=_stamp)
 
 
 __all__ = [

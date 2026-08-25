@@ -154,6 +154,10 @@ def _agent_history_in_tmp(
     # This CLI follows the XDG data convention on every OS, so one variable
     # moves its whole session database.
     monkeypatch.setenv("XDG_DATA_HOME", str(home / "xdg"))
+    # Antigravity has no AccountSpec (GEMINI_HOME is a shared variable, not a
+    # dedicated seat override), so the only way a test can keep its history
+    # out of the developer's real ``~/.gemini`` is this.
+    monkeypatch.setenv("GEMINI_HOME", str(home / ".gemini"))
     # And this one derives its root from the home directory with no variable at
     # all, so the seam is the only place to intercept it.
     kimi_root = home / "kimi"

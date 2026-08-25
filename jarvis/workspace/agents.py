@@ -97,6 +97,11 @@ class TrustSpec:
     # Take a one-time copy before the first mutation. Worth it for a file the
     # user's own CLI configuration shares; pointless for one we created.
     backup: bool = False
+    # True when the per-project value is a SCALAR (a string or bool sitting
+    # directly on the path key) rather than an object with ``key`` inside.
+    # Antigravity's ``trustedFolders.json`` is ``{ "<path>": "TRUST_FOLDER" }``;
+    # writing an object there would be a file the CLI no longer recognises.
+    scalar: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,6 +421,21 @@ GROK_TRUST = TrustSpec(
     backup=True,
 )
 
+#: Antigravity (``agy``) shares ``~/.gemini/trustedFolders.json`` with the
+#: Gemini CLI: a flat map of path → ``"TRUST_FOLDER"``. ``GEMINI_HOME`` moves
+#: the whole directory. Backed up because the file is not ours alone.
+ANTIGRAVITY_TRUST = TrustSpec(
+    filename="trustedFolders.json",
+    fmt="json",
+    section=(),
+    value="TRUST_FOLDER",
+    home_env="GEMINI_HOME",
+    subdir=".gemini",
+    both_path_forms=True,
+    backup=True,
+    scalar=True,
+)
+
 
 def _grok_build_install() -> InstallMethods:
     """Official Grok Build installer for the OS that will run it.
@@ -427,6 +447,21 @@ def _grok_build_install() -> InstallMethods:
     """
     url = (
         "https://x.ai/cli/install.ps1" if sys.platform == "win32" else "https://x.ai/cli/install.sh"
+    )
+    return InstallMethods(script_url=url, recommended="script")
+
+
+def _antigravity_install() -> InstallMethods:
+    """Official Antigravity (``agy``) installer for the OS that will run it.
+
+    Same split as Grok Build: PowerShell on Windows, a shell script everywhere
+    else. The URLs are the ones the API-Keys card already prints
+    (``jarvis.google_cli.auth_service.antigravity_install_command``).
+    """
+    url = (
+        "https://antigravity.google/cli/install.ps1"
+        if sys.platform == "win32"
+        else "https://antigravity.google/cli/install.sh"
     )
     return InstallMethods(script_url=url, recommended="script")
 
@@ -736,6 +771,30 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # the short spelling and leaves "build" as an unmatched word, which
         # drops the whole spawn group.
         spoken_aliases=("grok", "groc", "grock", "grok build"),
+    ),
+    "antigravity": make_cli_agent(
+        "antigravity",
+        "Antigravity",
+        binary="agy",
+        homepage="https://antigravity.google",
+        description="Google's terminal coding agent — billed against the Google subscription.",
+        install=_antigravity_install(),
+        trust=ANTIGRAVITY_TRUST,
+        # DELIBERATELY no AccountSpec. ``GEMINI_HOME`` would move the login,
+        # but it is a SHARED variable (the Gemini CLI, workers, and this
+        # pane would all follow it), and ``agy`` has no ``login`` subcommand
+        # to point at an account directory — sign-in lives on the API-Keys
+        # page. A seat switcher that silently spends one Google login is
+        # worse than none. Tracked in docs/os-parity.md.
+        extra_path_dirs=("~/.local/bin",),
+        file_reference="at",
+        instruction_filename="GEMINI.md",
+        spoken_aliases=(
+            "antigravity",
+            "anti gravity",
+            "anti-gravity",
+            "agy",
+        ),
     ),
     "deepseek-harness": make_cli_agent(
         "deepseek-harness",
@@ -1478,6 +1537,7 @@ def pty_available() -> bool:
 
 __all__ = [
     "AGENT_NAMES",
+    "ANTIGRAVITY_TRUST",
     "CLAUDE_TRUST",
     "CODEX_TRUST",
     "GROK_TRUST",

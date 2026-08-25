@@ -36,12 +36,20 @@ describe("AgentMark", () => {
     expect(mark("claude").querySelector("img")).toBeNull();
     unmount();
 
-    render(<AgentMark agent="grok-build" label="Grok Build" />);
+    const grok = render(<AgentMark agent="grok-build" label="Grok Build" />);
     expect(mark("grok-build").getAttribute("data-ground")).toBe("ink");
     expect(mark("grok-build").getAttribute("data-logo")).toBe(
       "/provider-logos/grok.svg",
     );
     expect(mark("grok-build").querySelector("img")).toBeNull();
+    grok.unmount();
+
+    render(<AgentMark agent="antigravity" label="Antigravity" />);
+    expect(mark("antigravity").getAttribute("data-ground")).toBe("ink");
+    expect(mark("antigravity").getAttribute("data-logo")).toBe(
+      "/provider-logos/antigravity.svg",
+    );
+    expect(mark("antigravity").querySelector("img")).toBeNull();
   });
 
   it("knows the harness whose own interface is not the terminal", () => {

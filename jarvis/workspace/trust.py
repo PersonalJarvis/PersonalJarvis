@@ -20,6 +20,10 @@ module at all. Only two *shapes* exist, and they are the two file formats:
 - a **TOML** table — Codex's ``$CODEX_HOME/config.toml``,
   ``[projects.'<path>'] trust_level = "trusted"``.
 
+A third JSON shape exists: a **flat scalar map** (Antigravity's
+``trustedFolders.json`` is ``{ "<path>": "TRUST_FOLDER" }``). ``TrustSpec.scalar``
+selects it; writing an object there would be a file the CLI no longer reads.
+
 Both writes are atomic (temp file + ``os.replace``) and idempotent, and never
 clobber unrelated keys. A spec may ask for a one-time backup before the first
 mutation — worth it for a file the user's own CLI configuration shares, and
@@ -204,6 +208,11 @@ def _trust_json(
 
         changed = False
         for key in _project_keys(repo_root, spec):
+            if spec.scalar:
+                if projects.get(key) != spec.value:
+                    projects[key] = spec.value
+                    changed = True
+                continue
             entry = projects.get(key)
             if not isinstance(entry, dict):
                 entry = {}

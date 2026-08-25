@@ -68,6 +68,8 @@ _KNOWN_PRODUCTS: frozenset[str] = frozenset(
         "grok",
         "deepseek",
         "dsh",
+        "antigravity",
+        "agy",
     }
 )
 

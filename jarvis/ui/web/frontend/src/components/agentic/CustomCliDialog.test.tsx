@@ -38,14 +38,14 @@ function text(testId: string): string {
 }
 
 const STORED: api.CustomCli = {
-  id: "antigravity",
-  display_name: "Antigravity",
-  command: "agy",
-  description: "Google's terminal coding CLI.",
+  id: "helix",
+  display_name: "Helix",
+  command: "helix",
+  description: "A user-added terminal CLI.",
   file_reference: "quoted",
   logo_url: "",
   runs_through_shell: false,
-  binary: "agy",
+  binary: "helix",
 };
 
 const AGENTS: AgentStatus[] = [
@@ -57,20 +57,20 @@ const AGENTS: AgentStatus[] = [
     install_command: null,
   },
   {
-    name: "antigravity",
-    display_name: "Antigravity",
+    name: "helix",
+    display_name: "Helix",
     installed: true,
     version: null,
     install_command: null,
     custom: true,
-    description: "Google's terminal coding CLI.",
+    description: "A user-added terminal CLI.",
   },
 ];
 
 function Harness({ count = 4 }: { count?: number }) {
   const [planned, setPlanned] = useState<PlannedTerminal[]>(
     Array.from({ length: count }, (_, index) => ({
-      agent: index === 0 ? "antigravity" : "",
+      agent: index === 0 ? "helix" : "",
       name: `T${index + 1}`,
     })),
   );
@@ -204,7 +204,7 @@ describe("CustomCliDialog", () => {
     vi.mocked(api.createCustomCli).mockResolvedValue(STORED);
     vi.mocked(api.uploadCustomCliLogo).mockResolvedValue({
       ...STORED,
-      logo_url: "/api/workspace-clis/antigravity/logo",
+      logo_url: "/api/workspace-clis/helix/logo",
     });
     render(
       <CustomCliDialog open onOpenChange={() => {}} onSaved={() => {}} />,
@@ -223,7 +223,7 @@ describe("CustomCliDialog", () => {
     fireEvent.click(screen.getByTestId("custom-cli-save"));
 
     await waitFor(() => expect(api.uploadCustomCliLogo).toHaveBeenCalled());
-    expect(api.uploadCustomCliLogo).toHaveBeenCalledWith("antigravity", file);
+    expect(api.uploadCustomCliLogo).toHaveBeenCalledWith("helix", file);
   });
 
   it("fills its fields from the entry being edited", () => {
@@ -235,8 +235,8 @@ describe("CustomCliDialog", () => {
         onSaved={() => {}}
       />,
     );
-    expect(field("custom-cli-name").value).toBe("Antigravity");
-    expect(field("custom-cli-command").value).toBe("agy");
+    expect(field("custom-cli-name").value).toBe("Helix");
+    expect(field("custom-cli-command").value).toBe("helix");
     expect(field("custom-cli-at-reference").checked).toBe(true);
   });
 });
@@ -244,7 +244,7 @@ describe("CustomCliDialog", () => {
 describe("AgentAllocation with a CLI of your own", () => {
   it("offers editing only on the rows that have something to edit", () => {
     render(<Harness />);
-    expect(screen.getByTestId("custom-cli-edit-antigravity")).toBeTruthy();
+    expect(screen.getByTestId("custom-cli-edit-helix")).toBeTruthy();
     expect(screen.queryByTestId("custom-cli-edit-claude")).toBeNull();
   });
 
@@ -258,10 +258,10 @@ describe("AgentAllocation with a CLI of your own", () => {
       logo_extensions: [".svg"],
     });
     render(<Harness />);
-    fireEvent.click(screen.getByTestId("custom-cli-edit-antigravity"));
+    fireEvent.click(screen.getByTestId("custom-cli-edit-helix"));
 
     await waitFor(() =>
-      expect(field("custom-cli-command").value).toBe("agy"),
+      expect(field("custom-cli-command").value).toBe("helix"),
     );
   });
 
@@ -269,10 +269,10 @@ describe("AgentAllocation with a CLI of your own", () => {
     vi.mocked(api.deleteCustomCli).mockResolvedValue({ ok: true });
     render(<Harness />);
     expect(JSON.parse(screen.getByTestId("plan").textContent ?? "[]")[0]).toEqual(
-      { agent: "antigravity", name: "T1" },
+      { agent: "helix", name: "T1" },
     );
 
-    fireEvent.click(screen.getByTestId("custom-cli-remove-antigravity"));
+    fireEvent.click(screen.getByTestId("custom-cli-remove-helix"));
 
     await waitFor(() =>
       expect(
@@ -286,13 +286,13 @@ describe("AgentAllocation with a CLI of your own", () => {
   it("reports a failed removal instead of pretending it worked", async () => {
     vi.mocked(api.deleteCustomCli).mockRejectedValue(new Error("store is busy"));
     render(<Harness />);
-    fireEvent.click(screen.getByTestId("custom-cli-remove-antigravity"));
+    fireEvent.click(screen.getByTestId("custom-cli-remove-helix"));
 
     await waitFor(() =>
       expect(text("custom-cli-list-error")).toContain("store is busy"),
     );
     expect(JSON.parse(screen.getByTestId("plan").textContent ?? "[]")[0]).toEqual(
-      { agent: "antigravity", name: "T1" },
+      { agent: "helix", name: "T1" },
     );
   });
 });

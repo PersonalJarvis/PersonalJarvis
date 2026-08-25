@@ -129,6 +129,7 @@ SUBSCRIPTION_RUNNERS: frozenset[str] = frozenset(
         "claude-cli",
         "codex-cli",
         "agy-cli",
+        "kimi-cli",
         "grok-cli",
     }
 )

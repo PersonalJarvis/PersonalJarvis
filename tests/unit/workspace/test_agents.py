@@ -35,7 +35,9 @@ from jarvis.workspace.agents import (
 # later addition into a test edit, which is the opposite of what an open
 # registry is for. What must not break is that a shipped provider silently
 # disappears.
-REQUIRED_CODING_AGENTS = frozenset({"claude", "codex", "opencode", "kimi", "glm", "grok-build"})
+REQUIRED_CODING_AGENTS = frozenset(
+    {"claude", "codex", "opencode", "kimi", "glm", "grok-build", "antigravity"}
+)
 
 
 def test_every_promised_coding_agent_is_registered() -> None:
@@ -111,6 +113,12 @@ def test_install_commands_are_runnable_or_honestly_absent() -> None:
         assert "install.ps1" in grok_install
     else:
         assert "install.sh" in grok_install
+    agy_install = install_command("antigravity")
+    assert agy_install is not None
+    if sys.platform == "win32":
+        assert "install.ps1" in agy_install
+    else:
+        assert "install.sh" in agy_install
     assert install_command("nope") is None
 
 
@@ -131,6 +139,13 @@ def test_launch_command_is_bare_binary() -> None:
     assert grok.file_reference == "at"
     assert grok.account is not None
     assert grok.account.env[0][0] == "GROK_HOME"
+    agy = get_agent("antigravity")
+    assert agy is not None
+    assert agy.executable == "agy"
+    assert agy.launch_command == "agy"
+    assert agy.file_reference == "at"
+    assert agy.account is None
+    assert agy.trust is not None and agy.trust.scalar is True
 
 
 def test_build_agent_argv_wraps_command_in_a_shell() -> None:

@@ -23,6 +23,7 @@ its own test:
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from jarvis.costs.cli_usage_index import (
     AGENT_AGY,
     AGENT_CLAUDE,
     AGENT_CODEX,
+    AGENT_KIMI,
     entries,
     index_db_path,
     index_state,
@@ -550,7 +552,7 @@ def test_agy_legacy_wire_log_is_indexed(tmp_path: Path) -> None:
 
     turns = _all(data)
     assert len(turns) == 2
-    assert {t.agent for t in turns} == {AGENT_AGY}
+    assert {t.agent for t in turns} == {AGENT_KIMI}
     assert turns[0].tokens_in == 1384
     assert turns[0].tokens_out == 184
     assert turns[0].tokens_cached == 4864
@@ -576,6 +578,71 @@ def test_agy_current_layout_takes_its_folder_from_state_json(tmp_path: Path) -> 
     assert turn.session_id == "session_abc"
     assert turn.cwd == "/work/personal-jarvis"
     assert turn.label == "personal-jarvis"
+
+
+def _pb_varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _pb_str(field: int, text: str) -> bytes:
+    raw = text.encode("utf-8")
+    return _pb_varint((field << 3) | 2) + _pb_varint(len(raw)) + raw
+
+
+def _pb_var(field: int, n: int) -> bytes:
+    return _pb_varint((field << 3) | 0) + _pb_varint(n)
+
+
+def _pb_len(field: int, blob: bytes) -> bytes:
+    return _pb_varint((field << 3) | 2) + _pb_varint(len(blob)) + blob
+
+
+def test_antigravity_conversation_db_is_indexed(tmp_path: Path) -> None:
+    """agy 1.1.20 stores usage in protobuf gen_metadata, not JSONL."""
+    usage = (
+        _pb_var(2, 1000)
+        + _pb_var(3, 40)
+        + _pb_var(5, 200)
+        + _pb_str(7, "bot-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    )
+    blob = _pb_len(1, _pb_len(4, usage)) + _pb_str(19, "gemini-3.7-flash-medium")
+    db = tmp_path / ".gemini" / "antigravity-cli" / "conversations" / "sess-agy.db"
+    db.parent.mkdir(parents=True)
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE gen_metadata (idx integer, data blob, size integer NOT NULL DEFAULT 0, "
+        "PRIMARY KEY (idx))"
+    )
+    con.execute(
+        "CREATE TABLE trajectory_metadata_blob (id text, data blob, PRIMARY KEY (id))"
+    )
+    con.execute("INSERT INTO gen_metadata (idx, data, size) VALUES (0, ?, ?)", (blob, len(blob)))
+    con.execute(
+        "INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)",
+        (b"file:///C:/work/personal-jarvis",),
+    )
+    con.commit()
+    con.close()
+    data = tmp_path / "data"
+
+    refresh(data_dir=data, home=tmp_path)
+
+    (turn,) = _all(data)
+    assert turn.agent == AGENT_AGY
+    assert turn.session_id == "sess-agy"
+    assert turn.tokens_in == 1000
+    assert turn.tokens_out == 40
+    assert turn.tokens_cached == 200
+    assert turn.model == "gemini-3.7-flash"
+    assert "personal-jarvis" in turn.cwd or turn.cwd.endswith("personal-jarvis")
 
 
 def test_agy_setup_only_transcript_yields_nothing(tmp_path: Path) -> None:
@@ -726,7 +793,7 @@ def test_all_three_agents_share_one_index(tmp_path: Path) -> None:
 
     assert result.files_seen == 3
     assert result.turns_added == 3
-    assert {t.agent for t in _all(data)} == {AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY}
+    assert {t.agent for t in _all(data)} == {AGENT_CLAUDE, AGENT_CODEX, AGENT_KIMI}
 
 
 # ---------------------------------------------------------------------------

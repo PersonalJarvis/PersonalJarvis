@@ -1927,7 +1927,6 @@ _UNSUPPORTED_CLI_SPELLINGS: dict[str, str] = {
     "gimini": "Gemini",
     "giming": "Gemini",
     "jemini": "Gemini",
-    "antigravity": "Antigravity",
     "aider": "Aider",
     "windsurf": "Windsurf",
     "copilot": "Copilot",

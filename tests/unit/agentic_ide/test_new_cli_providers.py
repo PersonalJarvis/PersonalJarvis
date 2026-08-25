@@ -38,7 +38,7 @@ from jarvis.workspace import agents as workspace_agents
 
 def test_every_new_provider_is_launchable_and_installable() -> None:
     """A registered entry must answer the three questions a pane asks of it."""
-    for name in ("opencode", "kimi", "glm", "grok-build", "deepseek-harness"):
+    for name in ("opencode", "kimi", "glm", "grok-build", "antigravity", "deepseek-harness"):
         entry = workspace_agents.get_agent(name)
         assert entry is not None, f"{name} is not registered"
         assert entry.is_coding_agent
@@ -62,7 +62,7 @@ def test_a_two_part_version_string_is_not_read_as_no_version() -> None:
 def test_a_product_name_can_never_become_a_pane_call_sign() -> None:
     """Saying "Kimi" must address the CLI, not a pane that happens to be called that."""
     reserved = workspace_agents.reserved_call_signs()
-    for spoken in ("kimi", "opencode", "glm", "claude", "codex", "grok"):
+    for spoken in ("kimi", "opencode", "glm", "claude", "codex", "grok", "agy", "antigravity"):
         assert spoken in reserved
     from jarvis.agentic_ide import names
 
@@ -868,6 +868,71 @@ def test_declining_prompts_is_opt_out_so_a_later_cli_keeps_its_channel() -> None
         if entry.name == "deepseek-harness":
             continue
         assert entry.accepts_typed_prompts, f"{entry.name} lost its prompt channel"
+
+
+def test_antigravity_resumes_by_discovering_the_conversation() -> None:
+    """agy assigns the id; we cannot mint one, so resume is discover-then-flag."""
+    entry = workspace_agents.get_agent("antigravity")
+    assert entry is not None
+    assert entry.executable == "agy"
+    assert entry.adapter_key == "antigravity"
+    argv, handle = agent_sessions.launch_extra("antigravity")
+    assert argv == ()
+    assert handle is None
+    later = agent_sessions.ResumeHandle("agy_session", "abc-id", time.time())
+    assert agent_sessions.resume_argv("antigravity", later) == ("--conversation", "abc-id")
+    foreign = agent_sessions.ResumeHandle("claude_session", "abc-id", time.time())
+    assert agent_sessions.resume_argv("antigravity", foreign) is None
+
+
+def test_antigravity_treats_a_conversation_without_a_user_turn_as_fresh(
+    _agent_history_in_tmp: Path,
+) -> None:
+    """An opened-but-never-prompted pane must not be resumed into a dead TUI."""
+    handle = agent_sessions.ResumeHandle(
+        kind="agy_session", id="11111111-1111-1111-1111-111111111111", captured_at=time.time()
+    )
+    assert agent_sessions.has_conversation("antigravity", handle) is False
+    root = _agent_history_in_tmp / ".gemini" / "antigravity-cli"
+    conversations = root / "conversations"
+    conversations.mkdir(parents=True)
+    (conversations / f"{handle.id}.db").write_bytes(b"sqlite")
+    assert agent_sessions.has_conversation("antigravity", handle) is False
+    transcript = (
+        root / "brain" / handle.id / ".system_generated" / "logs" / "transcript.jsonl"
+    )
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(
+        '{"step_index":0,"type":"CHECKPOINT","content":"setup"}\n', encoding="utf-8"
+    )
+    assert agent_sessions.has_conversation("antigravity", handle) is False
+    transcript.write_text(
+        '{"step_index":0,"type":"USER_INPUT","content":"hello"}\n', encoding="utf-8"
+    )
+    assert agent_sessions.has_conversation("antigravity", handle) is True
+
+
+def test_antigravity_never_follows_a_session_id_out_of_its_home(
+    _agent_history_in_tmp: Path,
+) -> None:
+    handle = agent_sessions.ResumeHandle(
+        kind="agy_session", id="../outside", captured_at=time.time()
+    )
+    assert agent_sessions.has_conversation("antigravity", handle) is False
+
+
+def test_antigravity_is_spawnable_by_voice_in_both_languages() -> None:
+    from jarvis.agentic_ide import intent
+
+    for utterance in (
+        "open an antigravity",
+        "open an agy",
+        "öffne ein Antigravity",  # i18n-allow: spoken-input vocabulary under test
+        "starte ein Anti Gravity",  # i18n-allow: spoken-input vocabulary under test
+    ):
+        request = intent.detect_spawn(utterance)
+        assert request is not None, utterance
+        assert request.agent == "antigravity", utterance
 
 
 def test_the_harness_is_spawnable_by_voice_in_both_languages() -> None:

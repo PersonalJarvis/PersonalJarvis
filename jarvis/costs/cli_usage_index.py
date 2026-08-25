@@ -118,8 +118,17 @@ AGENT_CLAUDE = "claude-cli"
 AGENT_CODEX = "codex-cli"
 """The Codex CLI."""
 
+AGENT_KIMI = "kimi-cli"
+"""Kimi Code. Both generations keep wire logs under ``~/.kimi`` /
+``~/.kimi-code``. Historically stored under the ``agy-cli`` name; renamed
+when Antigravity (the Google ``agy`` binary) gained its own reader so the
+two no longer share a Spend row."""
+
 AGENT_AGY = "agy-cli"
-"""The agy CLI (both generations of its data root)."""
+"""Antigravity (``agy``). Conversations live as SQLite files under
+``~/.gemini/antigravity-cli/conversations/<uuid>.db``. Token counts are
+inside the protobuf ``gen_metadata`` blobs (measured on agy 1.1.20); the
+model id is a string field on the same blob (``gemini-3.7-flash``, …)."""
 
 AGENT_GROK = "grok-cli"
 """Grok Build (``~/.grok``). ``sessions/<url-encoded cwd>/<uuid>/updates.jsonl``
@@ -139,7 +148,14 @@ user brings their own key — the ``cost`` OpenCode itself computed. Read
 with a timestamp cursor instead of a byte offset; the message id is the
 identity. Not a subscription: the recorded cost is the bill."""
 
-AGENTS: tuple[str, ...] = (AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY, AGENT_GROK, AGENT_OPENCODE)
+AGENTS: tuple[str, ...] = (
+    AGENT_CLAUDE,
+    AGENT_CODEX,
+    AGENT_KIMI,
+    AGENT_AGY,
+    AGENT_GROK,
+    AGENT_OPENCODE,
+)
 
 #: Every coding harness the workspace registry can open, mapped to the
 #: index reader that counts its spend. A harness whose transcripts cannot be
@@ -150,7 +166,8 @@ AGENTS: tuple[str, ...] = (AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY, AGENT_GROK, AGE
 COST_READER_FOR_HARNESS: dict[str, str] = {
     "claude": AGENT_CLAUDE,
     "codex": AGENT_CODEX,
-    "kimi": AGENT_AGY,
+    "kimi": AGENT_KIMI,
+    "antigravity": AGENT_AGY,
     "grok-build": AGENT_GROK,
     "opencode": AGENT_OPENCODE,
     # GLM runs the Claude Code binary against z.ai with the same config
@@ -227,9 +244,12 @@ _ROLLOUT_ID = re.compile(r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}
 #   2 — Codex: cached input subtracted from input; lineage-based dedup.
 #   3 — cost_usd column (OpenCode records its own price). Additive: migrated
 #       in place, no rebuild.
-_SCHEMA_VERSION = 3
+#   4 — kimi wire logs were stored as ``agy-cli``; Antigravity (the Google
+#       ``agy`` binary) has its own conversation DBs. Rebuild so the two no
+#       longer share a Spend row.
+_SCHEMA_VERSION = 4
 #: Versions whose rows are still right and only need columns added.
-_MIGRATE_IN_PLACE_FROM = 2
+_MIGRATE_IN_PLACE_FROM = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indexed_files (
@@ -295,9 +315,9 @@ _UPSERT_FILE = (
 class CliTurn:
     """One model call a coding CLI made, as its own transcript recorded it.
 
-    ``model`` is empty where the CLI does not write one down (agy), and
-    ``cwd`` is empty where its layout does not preserve it (agy's legacy
-    per-folder buckets are an MD5 of the directory, not the directory).
+    ``model`` is empty where the CLI does not write one down (Kimi's wire
+    log), and ``cwd`` is empty where its layout does not preserve it
+    (Kimi's legacy per-folder buckets are an MD5 of the directory).
     """
 
     agent: str
@@ -553,10 +573,22 @@ def _codex_roots(home: Path | None) -> list[Path]:
     return _dedup_paths(roots)
 
 
-def _agy_roots(home: Path | None) -> list[Path]:
-    """Both generations. A machine can carry both histories at once."""
+def _kimi_roots(home: Path | None) -> list[Path]:
+    """Both Kimi generations. A machine can carry both histories at once."""
     base = home if home is not None else Path.home()
     return [base / ".kimi", base / ".kimi-code"]
+
+
+def _antigravity_roots(home: Path | None) -> list[Path]:
+    """``GEMINI_HOME`` when set (that directory IS ``.gemini``), else ``~/.gemini``."""
+    if home is not None:
+        return [home / ".gemini"]
+    roots: list[Path] = []
+    override = os.environ.get("GEMINI_HOME", "").strip()
+    if override:
+        roots.append(Path(override).expanduser())
+    roots.append(Path.home() / ".gemini")
+    return _dedup_paths(roots)
 
 
 def _opencode_roots(home: Path | None) -> list[Path]:
@@ -593,10 +625,12 @@ _LAYOUTS: tuple[tuple[str, str], ...] = (
     (AGENT_CODEX, "sessions/*/*/*/rollout-*.jsonl"),
     # Older Codex builds filed rollouts flat.
     (AGENT_CODEX, "sessions/rollout-*.jsonl"),
-    # agy, legacy layout (``sessions/<md5>/<session>/wire.jsonl``).
-    (AGENT_AGY, "sessions/*/*/wire.jsonl"),
-    # agy, current layout (``sessions/<wd_...>/<session>/agents/<name>/wire.jsonl``).
-    (AGENT_AGY, "sessions/*/*/agents/*/wire.jsonl"),
+    # Kimi, legacy layout (``sessions/<md5>/<session>/wire.jsonl``).
+    (AGENT_KIMI, "sessions/*/*/wire.jsonl"),
+    # Kimi, current layout (``sessions/<wd_...>/<session>/agents/<name>/wire.jsonl``).
+    (AGENT_KIMI, "sessions/*/*/agents/*/wire.jsonl"),
+    # Antigravity: one SQLite conversation per UUID.
+    (AGENT_AGY, "antigravity-cli/conversations/*.db"),
     # Grok Build: one folder per session under a url-encoded cwd.
     (AGENT_GROK, "sessions/*/*/updates.jsonl"),
     # OpenCode: the one SQLite store.
@@ -613,7 +647,29 @@ def _roots_for(agent: str, home: Path | None) -> list[Path]:
         return _grok_roots(home)
     if agent == AGENT_OPENCODE:
         return _opencode_roots(home)
-    return _agy_roots(home)
+    if agent == AGENT_AGY:
+        return _antigravity_roots(home)
+    return _kimi_roots(home)
+
+
+def _sqlite_stat(path: Path) -> tuple[int, int]:
+    """``(size, mtime_ns)`` for a SQLite file, WAL included.
+
+    Antigravity (and any SQLite store) writes new turns into the WAL while
+    the ``.db`` file stays the same size. Counting only the main file would
+    skip a live conversation until the next checkpoint.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return 0, 0
+    size = stat.st_size
+    mtime_ns = stat.st_mtime_ns
+    try:
+        wal = path.with_name(path.name + "-wal").stat()
+    except OSError:
+        return size, mtime_ns
+    return size + wal.st_size, max(mtime_ns, wal.st_mtime_ns)
 
 
 def _discover(home: Path | None) -> list[_Candidate]:
@@ -637,7 +693,11 @@ def _discover(home: Path | None) -> list[_Candidate]:
                 if key in found:
                     continue
                 try:
-                    stat = path.stat()
+                    if path.suffix == ".db":
+                        size, mtime_ns = _sqlite_stat(path)
+                    else:
+                        stat = path.stat()
+                        size, mtime_ns = stat.st_size, stat.st_mtime_ns
                 except OSError as exc:
                     log.debug("cli usage index: %s not stat-able (%s)", path, exc)
                     continue
@@ -645,8 +705,8 @@ def _discover(home: Path | None) -> list[_Candidate]:
                     path=path,
                     key=key,
                     agent=agent,
-                    size=stat.st_size,
-                    mtime_ns=stat.st_mtime_ns,
+                    size=size,
+                    mtime_ns=mtime_ns,
                 )
     return list(found.values())
 
@@ -1004,6 +1064,250 @@ class _FileScan:
     failed: bool = False
 
 
+_AGY_MODEL_RE = re.compile(
+    r"^(gemini-[\w.-]+|claude-[\w.-]+|gpt-oss-[\w.-]+)$", re.IGNORECASE
+)
+_AGY_EFFORT_SUFFIXES = ("-low", "-medium", "-high")
+
+
+def _agy_model_id(raw: str) -> str:
+    """Strip the effort suffix agy appends to Gemini ids (``-medium``)."""
+    model = raw.strip()
+    for suffix in _AGY_EFFORT_SUFFIXES:
+        if model.lower().endswith(suffix):
+            return model[: -len(suffix)]
+    return model
+
+
+def _pb_varint(buf: bytes, i: int) -> tuple[int, int] | None:
+    n = 0
+    shift = 0
+    while i < len(buf):
+        byte = buf[i]
+        i += 1
+        n |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return n, i
+        shift += 7
+        if shift > 70:
+            return None
+    return None
+
+
+def _pb_fields(buf: bytes) -> list[tuple[int, int, bytes | int]]:
+    """``(field, wire_type, value)`` for one protobuf message. Never raises."""
+    out: list[tuple[int, int, bytes | int]] = []
+    i = 0
+    n = len(buf)
+    while i < n:
+        parsed = _pb_varint(buf, i)
+        if parsed is None:
+            break
+        key, i = parsed
+        field, wtype = key >> 3, key & 7
+        if wtype == 0:
+            parsed = _pb_varint(buf, i)
+            if parsed is None:
+                break
+            val, i = parsed
+            out.append((field, wtype, val))
+        elif wtype == 1:
+            if i + 8 > n:
+                break
+            out.append((field, wtype, int.from_bytes(buf[i : i + 8], "little")))
+            i += 8
+        elif wtype == 2:
+            parsed = _pb_varint(buf, i)
+            if parsed is None:
+                break
+            length, i = parsed
+            if i + length > n:
+                break
+            out.append((field, wtype, buf[i : i + length]))
+            i += length
+        elif wtype == 5:
+            if i + 4 > n:
+                break
+            out.append((field, wtype, int.from_bytes(buf[i : i + 4], "little")))
+            i += 4
+        else:
+            break
+    return out
+
+
+def _agy_decode_str(value: bytes | int) -> str:
+    if not isinstance(value, (bytes, bytearray)):
+        return ""
+    try:
+        text = bytes(value).decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+    return text if text.isprintable() or "\n" in text else ""
+
+
+def _agy_usage_from_fields(
+    fields: list[tuple[int, int, bytes | int]],
+) -> tuple[int, int, int] | None:
+    """A nested message is usage when it names a bot and carries token counts.
+
+    Shape measured on agy 1.1.20 ``gen_metadata`` blobs: field 2 = uncached
+    input, field 3 = output, field 5 = cache read, field 7 = ``bot-<uuid>``.
+    """
+    by_field: dict[int, list[bytes | int]] = {}
+    for field, _wtype, value in fields:
+        by_field.setdefault(field, []).append(value)
+    bot = next((_agy_decode_str(v) for v in by_field.get(7, [])), "")
+    if not bot.startswith("bot-"):
+        return None
+    tokens_in = next((int(v) for v in by_field.get(2, []) if isinstance(v, int)), 0)
+    tokens_out = next((int(v) for v in by_field.get(3, []) if isinstance(v, int)), 0)
+    tokens_cached = next((int(v) for v in by_field.get(5, []) if isinstance(v, int)), 0)
+    if tokens_in + tokens_out + tokens_cached <= 0:
+        return None
+    return tokens_in, tokens_out, tokens_cached
+
+
+def _agy_collect_usage(
+    buf: bytes, found: list[tuple[int, int, int]], depth: int = 0
+) -> None:
+    if depth > 8 or not buf:
+        return
+    fields = _pb_fields(buf)
+    usage = _agy_usage_from_fields(fields)
+    if usage is not None:
+        found.append(usage)
+        return
+    for _field, wtype, value in fields:
+        if wtype == 2 and isinstance(value, (bytes, bytearray)):
+            _agy_collect_usage(bytes(value), found, depth + 1)
+
+
+def _agy_model_from_blob(buf: bytes, depth: int = 0) -> str:
+    if depth > 6 or not buf:
+        return ""
+    for _field, wtype, value in _pb_fields(buf):
+        if wtype != 2:
+            continue
+        text = _agy_decode_str(value if isinstance(value, (bytes, bytearray)) else b"")
+        if text and _AGY_MODEL_RE.match(text):
+            return _agy_model_id(text)
+    for _field, wtype, value in _pb_fields(buf):
+        if wtype == 2 and isinstance(value, (bytes, bytearray)):
+            nested = _agy_model_from_blob(bytes(value), depth + 1)
+            if nested:
+                return nested
+    return ""
+
+
+def _agy_cwd_from_blob(buf: bytes) -> str:
+    """Best-effort working directory from a ``file:///`` URI in the blob.
+
+    The URI sits inside a protobuf length-delimited string, so the bytes
+    after it are the next field, not path characters. Stop at the first
+    character a file URI cannot contain.
+    """
+    try:
+        text = buf.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return ""
+    marker = "file:///"
+    start = text.lower().find(marker)
+    if start < 0:
+        return ""
+    end = start + len(marker)
+    while end < len(text) and (text[end].isalnum() or text[end] in ":/%._-"):
+        end += 1
+    uri = text[start:end]
+    path = uri[len("file://") :]  # keep the slash that starts a POSIX path
+    if path.startswith("/") and len(path) >= 3 and path[2] == ":":
+        path = path[1:]
+    from urllib.parse import unquote
+
+    return unquote(path)
+
+
+def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
+    """Read one Antigravity conversation database.
+
+    ``start`` is unused: a conversation DB is small and the WAL can rewrite
+    earlier rows, so a change always re-reads. Dedup is ``session_id:idx``.
+    """
+    del start
+    rows: list[_Row] = []
+    session_id = cand.path.stem
+    cwd = ""
+    model = ""
+    failed = False
+    try:
+        uri = f"file:{cand.path.as_posix()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=_DB_TIMEOUT_S)
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: %s not readable (%s)", cand.path, exc)
+        return _FileScan(
+            rows=[], offset=cand.size, cursor=_Cursor(), bytes_read=0, reason="error", failed=True
+        )
+    try:
+        conn.row_factory = sqlite3.Row
+        try:
+            blob_row = conn.execute(
+                "SELECT data FROM trajectory_metadata_blob LIMIT 1"
+            ).fetchone()
+        except sqlite3.Error:
+            blob_row = None
+        if blob_row is not None and blob_row["data"]:
+            cwd = _agy_cwd_from_blob(blob_row["data"])
+        try:
+            meta_rows = list(conn.execute("SELECT idx, data FROM gen_metadata ORDER BY idx"))
+        except sqlite3.Error as exc:
+            log.debug("cli usage index: %s has no gen_metadata (%s)", cand.path, exc)
+            meta_rows = []
+        ts_ms = cand.mtime_ns // 1_000_000
+        label = _clip(Path(cwd).name if cwd else session_id)
+        for meta in meta_rows:
+            blob = meta["data"]
+            if not blob:
+                continue
+            if not model:
+                model = _agy_model_from_blob(blob)
+            found: list[tuple[int, int, int]] = []
+            _agy_collect_usage(blob, found)
+            idx = _int(meta["idx"])
+            for call_i, (tokens_in, tokens_out, tokens_cached) in enumerate(found):
+                rows.append(
+                    (
+                        cand.agent,
+                        f"{session_id}:{idx}:{call_i}",
+                        cand.key,
+                        session_id,
+                        ts_ms,
+                        model,
+                        tokens_in,
+                        tokens_out,
+                        tokens_cached,
+                        cwd,
+                        label,
+                    )
+                )
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: %s query failed (%s)", cand.path, exc)
+        failed = True
+    finally:
+        conn.close()
+    return _FileScan(
+        rows=rows,
+        offset=cand.size,
+        cursor=_Cursor(
+            session_id=session_id,
+            model=model,
+            cwd=cwd,
+            label=_clip(Path(cwd).name if cwd else session_id),
+        ),
+        bytes_read=cand.size,
+        reason="eof",
+        failed=failed,
+    )
+
+
 def _scan_opencode(cand: _Candidate, start: int) -> _FileScan:
     """Read OpenCode's store. ``start`` is the newest ``time_created`` already
     indexed (the "offset" column holds a timestamp for this agent), so a run
@@ -1086,9 +1390,11 @@ def _scan(cand: _Candidate, start: int, cursor: _Cursor, deadline: float) -> _Fi
     """Read one transcript from ``start`` and return the turns it added."""
     if cand.agent == AGENT_OPENCODE:
         return _scan_opencode(cand, start)
+    if cand.agent == AGENT_AGY:
+        return _scan_antigravity(cand, start)
     rows: list[_Row] = []
     reader = _LineReader(None, start)
-    if cand.agent == AGENT_AGY and not cursor.session_id:
+    if cand.agent == AGENT_KIMI and not cursor.session_id:
         cursor.session_id, cursor.cwd, cursor.label = _agy_context(cand.path)
     if cand.agent == AGENT_GROK and not cursor.session_id:
         cursor.session_id, cursor.cwd, cursor.label, model = _grok_context(cand.path)
@@ -1133,7 +1439,9 @@ def _wanted(agent: str, raw: bytes) -> bool:
         return any(mark in raw for mark in _CODEX_MARKS)
     if agent == AGENT_GROK:
         return _GROK_MARK in raw
-    return _AGY_MARK in raw
+    if agent == AGENT_KIMI:
+        return _AGY_MARK in raw
+    return False
 
 
 def _row_for(
@@ -1145,7 +1453,9 @@ def _row_for(
         return _codex_row(record, offset, cand, cursor)
     if agent == AGENT_GROK:
         return _grok_row(record, offset, cand, cursor)
-    return _agy_row(record, offset, cand, cursor)
+    if agent == AGENT_KIMI:
+        return _agy_row(record, offset, cand, cursor)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1638,6 +1948,7 @@ __all__ = [
     "AGENT_CLAUDE",
     "AGENT_CODEX",
     "AGENT_GROK",
+    "AGENT_KIMI",
     "AGENT_OPENCODE",
     "COST_READER_FOR_HARNESS",
     "DB_NAME",

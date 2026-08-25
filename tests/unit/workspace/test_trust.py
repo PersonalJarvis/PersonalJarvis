@@ -1,4 +1,4 @@
-"""Trust pre-seed for Claude Code, Codex and Grok Build."""
+"""Trust pre-seed for Claude Code, Codex, Grok Build and Antigravity."""
 
 from __future__ import annotations
 
@@ -65,6 +65,20 @@ def test_claude_is_idempotent_noop_second_run(tmp_path: Path) -> None:
     [res2] = ensure_trusted(repo, ["claude"], home=home)
     assert res2.ok
     assert res2.method == "noop"
+
+
+def test_antigravity_writes_a_scalar_trust_map(tmp_path: Path) -> None:
+    """trustedFolders.json is ``{ path: "TRUST_FOLDER" }``, not a nested object."""
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = _repo(tmp_path)
+
+    [res] = ensure_trusted(repo, ["antigravity"], home=home)
+    assert res.ok and res.agent == "antigravity"
+
+    data = json.loads((home / ".gemini" / "trustedFolders.json").read_text(encoding="utf-8"))
+    assert data[str(repo)] == "TRUST_FOLDER"
+    assert data[repo.as_posix()] == "TRUST_FOLDER"
 
 
 def test_grok_build_writes_trusted_folders_toml(tmp_path: Path) -> None:

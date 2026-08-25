@@ -37,7 +37,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _create(client: TestClient, **overrides) -> dict:
-    payload = {"display_name": "Antigravity", "command": "agy", **overrides}
+    payload = {"display_name": "Helix", "command": "helix", **overrides}
     response = client.post("/api/workspace-clis", json=payload)
     assert response.status_code == 200, response.text
     return response.json()
@@ -54,20 +54,20 @@ def test_the_empty_list_still_carries_the_form_limits(client: TestClient) -> Non
 
 def test_a_created_cli_is_immediately_openable(client: TestClient) -> None:
     """Stored, registered and offered — without a restart, which is the point."""
-    entry = _create(client, description="Google's terminal coding CLI.")
-    assert entry["id"] == "antigravity"
-    assert entry["binary"] == "agy"
+    entry = _create(client, description="A user-added terminal CLI.")
+    assert entry["id"] == "helix"
+    assert entry["binary"] == "helix"
     assert entry["runs_through_shell"] is False
     assert entry["logo_url"] == ""
 
-    assert "antigravity" in registry.coding_agent_names()
-    agent = registry.get_agent("antigravity")
+    assert "helix" in registry.coding_agent_names()
+    agent = registry.get_agent("helix")
     assert agent is not None and agent.custom is True
 
 
 def test_a_shell_command_says_so_in_the_payload(client: TestClient) -> None:
     """It changes what "the pane exited" means, so the UI has to be able to say."""
-    entry = _create(client, display_name="Piped", command="agy | tee log.txt")
+    entry = _create(client, display_name="Piped", command="helix | tee log.txt")
     assert entry["runs_through_shell"] is True
 
 
@@ -85,12 +85,12 @@ def test_a_blank_command_is_refused_with_a_readable_reason(
 def test_a_patch_leaves_untouched_fields_alone(client: TestClient) -> None:
     entry = _create(client, description="Original description.")
     updated = client.patch(
-        f"/api/workspace-clis/{entry['id']}", json={"display_name": "Antigravity CLI"}
+        f"/api/workspace-clis/{entry['id']}", json={"display_name": "Helix CLI"}
     ).json()
     assert updated["id"] == entry["id"]
-    assert updated["display_name"] == "Antigravity CLI"
+    assert updated["display_name"] == "Helix CLI"
     assert updated["description"] == "Original description."
-    assert updated["command"] == "agy"
+    assert updated["command"] == "helix"
 
 
 def test_patching_something_that_is_gone_says_so(client: TestClient) -> None:
@@ -103,7 +103,7 @@ def test_patching_something_that_is_gone_says_so(client: TestClient) -> None:
 def test_delete_removes_it_from_the_registry(client: TestClient) -> None:
     entry = _create(client)
     assert client.delete(f"/api/workspace-clis/{entry['id']}").json()["ok"] is True
-    assert "antigravity" not in registry.coding_agent_names()
+    assert "helix" not in registry.coding_agent_names()
 
 
 def test_a_logo_round_trips_with_the_headers_that_make_it_safe(
