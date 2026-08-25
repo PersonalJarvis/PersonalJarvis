@@ -25,6 +25,14 @@ export interface StepProps {
   setSummary: (text: string | null) => void;
   /** Every step's current summary, keyed by step id (the finish step reads it). */
   summaries: Record<string, string | null>;
+  /**
+   * What this step leaves UNDONE, in one plain sentence — "no key yet, chat
+   * stays off", "wake word off until the local model is installed". The
+   * finish step lists every gap and asks for one acknowledgement before the
+   * assistant starts; a step with nothing missing reports null.
+   */
+  setGap: (text: string | null) => void;
+  gaps: Record<string, string | null>;
 }
 
 // Restart batching (2026-07-18): permissions + wake-word sit LAST before
@@ -103,6 +111,7 @@ export function OnboardingFlow({
   const [maxVisited, setMaxVisited] = useState(0);
   const [skipped, setSkipped] = useState<string[]>(onb.state?.skipped_steps ?? []);
   const [summaries, setSummaries] = useState<Record<string, string | null>>({});
+  const [gaps, setGaps] = useState<Record<string, string | null>>({});
 
   const safeIdx = Math.min(idx, steps.length - 1);
   const stepKey = steps[safeIdx];
@@ -126,6 +135,13 @@ export function OnboardingFlow({
     [stepKey],
   );
 
+  const setGap = useCallback(
+    (text: string | null) => {
+      setGaps((g) => (g[stepKey] === text ? g : { ...g, [stepKey]: text }));
+    },
+    [stepKey],
+  );
+
   const props: StepProps = {
     onb,
     goNext: () => advance(safeIdx + 1),
@@ -135,6 +151,8 @@ export function OnboardingFlow({
     isLast: safeIdx === steps.length - 1,
     setSummary,
     summaries,
+    setGap,
+    gaps,
   };
 
   const title = t(`onboarding.steps.${stepKey}.title`);
@@ -143,12 +161,12 @@ export function OnboardingFlow({
   return (
     <div
       data-testid="onboarding-flow"
-      className="flex h-full min-h-0 flex-col font-display"
+      className="flex h-full min-h-0 flex-col font-display text-[15px]"
     >
-      <header className="shrink-0 border-b border-border/70 px-5 py-5 sm:px-8">
-        <div className="mx-auto flex w-full max-w-5xl items-start justify-between gap-6">
+      <header className="shrink-0 border-b border-border/70 px-6 py-6 sm:px-12 xl:py-8">
+        <div className="mx-auto flex w-full max-w-[1400px] items-start justify-between gap-6">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary/80">
               {t("onboarding.eyebrow")}
               <span className="px-2 text-muted-foreground/50">/</span>
               <span
@@ -164,21 +182,21 @@ export function OnboardingFlow({
                   .replace("{1}", String(steps.length).padStart(2, "0"))}
               </span>
             </p>
-            <h1 className="mt-2 text-xl font-semibold tracking-tight text-foreground [text-wrap:balance] sm:text-2xl">
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground [text-wrap:balance] sm:text-3xl xl:text-4xl">
               {title}
             </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            <p className="mt-2 max-w-3xl text-[15px] leading-relaxed text-muted-foreground xl:text-base">
               {hint}
             </p>
           </div>
           <div className="shrink-0 pt-0.5">
-            <MascotGigi size={44} reactToVoice={false} enableComments={false} />
+            <MascotGigi size={56} reactToVoice={false} enableComments={false} />
           </div>
         </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
-        <div className="mx-auto grid w-full max-w-5xl gap-x-10 gap-y-4 px-5 pb-8 pt-5 sm:px-8 lg:grid-cols-[200px_minmax(0,1fr)]">
+        <div className="mx-auto grid w-full max-w-[1400px] gap-x-14 gap-y-4 px-6 pb-12 pt-6 sm:px-12 lg:grid-cols-[260px_minmax(0,1fr)] xl:pt-8">
           <nav aria-label={t("onboarding.progress_label")} className="min-w-0">
             <ol
               className="grid border-b border-border/70 lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6"
@@ -197,7 +215,7 @@ export function OnboardingFlow({
                       disabled={!enabled}
                       onClick={() => setIdx(index)}
                       className={cn(
-                        "group relative w-full min-w-0 px-2 py-3 text-left transition-colors lg:px-0 lg:py-3.5",
+                        "group relative w-full min-w-0 px-2 py-3 text-left transition-colors lg:px-0 lg:py-4",
                         "disabled:cursor-not-allowed disabled:opacity-35",
                         selected ? "text-foreground" : "text-muted-foreground",
                       )}
@@ -209,13 +227,13 @@ export function OnboardingFlow({
                           selected ? "bg-primary" : "bg-transparent",
                         )}
                       />
-                      <span className="block font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                      <span className="block font-mono text-[11px] tabular-nums text-muted-foreground/70">
                         {(index + 1).toString().padStart(2, "0")}
                       </span>
-                      <span className="mt-1 block truncate text-sm font-medium">
+                      <span className="mt-1 block truncate text-[15px] font-medium">
                         {t(`onboarding.steps.${key}.label`)}
                       </span>
-                      <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground lg:block">
+                      <span className="mt-0.5 hidden truncate text-xs text-muted-foreground lg:block">
                         {summary ?? " "}
                       </span>
                     </button>
@@ -227,7 +245,7 @@ export function OnboardingFlow({
 
           <section
             key={stepKey}
-            className="profile-rise min-w-0 pt-2"
+            className="profile-rise min-w-0 max-w-[920px] pt-2"
             aria-labelledby="onboarding-step-title"
           >
             <h2 id="onboarding-step-title" className="sr-only">

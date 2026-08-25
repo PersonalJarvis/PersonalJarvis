@@ -46,7 +46,7 @@ export function permissionSnapshotReady(snapshot: PermissionSnapshot | null): bo
  * `visibleSteps`). The rows are the Settings panel's own, so what the user
  * grants here is exactly what they will see there.
  */
-export function PermissionsStep({ goNext, goBack, skip, setSummary }: StepProps) {
+export function PermissionsStep({ goNext, goBack, skip, setSummary, setGap }: StepProps) {
   const t = useT();
   const [allReady, setAllReady] = useState(false);
   const onSnapshot = useCallback((snapshot: PermissionSnapshot | null) => {
@@ -55,7 +55,8 @@ export function PermissionsStep({ goNext, goBack, skip, setSummary }: StepProps)
 
   useEffect(() => {
     setSummary(allReady ? t("onboarding.permissions.summary_ready") : null);
-  }, [allReady, setSummary, t]);
+    setGap(allReady ? null : t("onboarding.permissions.gap"));
+  }, [allReady, setSummary, setGap, t]);
 
   return (
     <div className="space-y-6">

@@ -33,6 +33,8 @@ function props(overrides: Record<string, unknown> = {}) {
     isFirst: false,
     isLast: true,
     setSummary: vi.fn(),
+    setGap: vi.fn(),
+    gaps: {},
     summaries: { language: "Deutsch · Auto", "api-keys": "OpenRouter", "wake-word": "Hey Nova" },
     ...overrides,
   };
@@ -122,4 +124,33 @@ it("the tour is an external link, not an embedded player", () => {
   expect(link.href).toContain("youtube.com");
   expect(link.target).toBe("_blank");
   expect(document.querySelector("iframe")).toBeNull();
+});
+
+it("with nothing missing there is no disclaimer and Start is live", () => {
+  render(<FinishStep {...props()} />);
+  expect(screen.queryByTestId("onboarding-gaps")).toBeNull();
+  expect(screen.queryByTestId("onboarding-gaps-ack")).toBeNull();
+  expect((screen.getByTestId("onboarding-start") as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("lists every reported gap and every skipped step, and Start waits for the acknowledgement", () => {
+  const p = props({
+    onb: {
+      state: { skipped_steps: ["wake-word"], steps: STEPS },
+      complete: vi.fn(),
+    } as never,
+    summaries: { language: "Deutsch · Auto", "api-keys": "Gemini + OpenAI · Google Gemini" },
+    gaps: { "api-keys": "OpenAI key missing — live voice stays off." },
+  });
+  render(<FinishStep {...p} />);
+  const gaps = screen.getByTestId("onboarding-gaps");
+  expect(gaps.textContent).toContain("OpenAI key missing");
+  expect(gaps.textContent).toContain("onboarding.finish.gap_skipped_wake_word");
+  // A step that reported nothing and was not skipped is not listed.
+  expect(gaps.textContent).not.toContain("gap_skipped_language");
+
+  const start = screen.getByTestId("onboarding-start") as HTMLButtonElement;
+  expect(start.disabled).toBe(true);
+  fireEvent.click(screen.getByTestId("onboarding-gaps-ack"));
+  expect(start.disabled).toBe(false);
 });

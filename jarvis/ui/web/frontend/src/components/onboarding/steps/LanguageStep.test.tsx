@@ -26,6 +26,8 @@ it("changes UI language, reports the summary, and advances", async () => {
       isFirst={false}
       isLast={false}
       setSummary={setSummary}
+      setGap={vi.fn()}
+      gaps={{}}
       summaries={{}}
     />,
   );

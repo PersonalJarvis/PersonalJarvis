@@ -48,6 +48,8 @@ function renderStep(goNext = vi.fn(), setSummary = vi.fn()) {
       isFirst={false}
       isLast={false}
       setSummary={setSummary}
+      setGap={vi.fn()}
+      gaps={{}}
       summaries={{}}
     />,
   );

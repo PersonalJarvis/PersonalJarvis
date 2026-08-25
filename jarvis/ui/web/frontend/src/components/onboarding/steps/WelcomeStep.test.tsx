@@ -23,6 +23,8 @@ it("renders the intro and the capability register; continue stays disabled until
       onb={{ acceptTerms: vi.fn() } as never}
       goNext={vi.fn()}
       setSummary={vi.fn()}
+      setGap={vi.fn()}
+      gaps={{}}
     />,
   );
   expect(screen.getByTestId("intro")).toBeDefined();
@@ -48,6 +50,8 @@ it("AWAITS the terms record before advancing and reports the summary", async () 
       onb={{ acceptTerms } as never}
       goNext={goNext}
       setSummary={setSummary}
+      setGap={vi.fn()}
+      gaps={{}}
     />,
   );
   fireEvent.click(screen.getByTestId("onboarding-accept"));
@@ -68,6 +72,8 @@ it("a failed acceptance stays on the step and says so", async () => {
       onb={{ acceptTerms: vi.fn().mockRejectedValue(new Error("HTTP 503")) } as never}
       goNext={goNext}
       setSummary={vi.fn()}
+      setGap={vi.fn()}
+      gaps={{}}
     />,
   );
   fireEvent.click(screen.getByTestId("onboarding-accept"));
@@ -93,6 +99,8 @@ it("decline posts decline-terms and renders the goodbye state", async () => {
       onb={{ acceptTerms: vi.fn() } as never}
       goNext={vi.fn()}
       setSummary={vi.fn()}
+      setGap={vi.fn()}
+      gaps={{}}
     />,
   );
   fireEvent.click(screen.getByTestId("onboarding-decline"));

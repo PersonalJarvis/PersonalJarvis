@@ -218,7 +218,7 @@ function LocalPath({ onActivated }: { onActivated: () => void }) {
  * The list is driven by the backend catalog, so a catalog with one provider
  * renders one row and nothing here changes.
  */
-export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
+export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepProps) {
   const t = useT();
   const { providers, loading, error, refetch } = useProviders();
   const [open, setOpen] = useState<string | null>(null);
@@ -305,6 +305,34 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasKey, localActive, planApplied, configured.map((p) => p.id).join(","), setSummary, t]);
 
+  // What this step leaves undone, for the finish step's disclaimer. A plan
+  // that still misses a key is the important one: with "Gemini + OpenAI" and
+  // only the Gemini key saved, chat works but live voice does not — the user
+  // must see that before pressing Start, not discover it by talking.
+  useEffect(() => {
+    if (plan && !planComplete) {
+      const missing = plan.key_slots
+        .filter((s) => !allStartable.some((p) => primarySlot(p) === s.slot && slotEffective(p)))
+        .map((s) => s.label);
+      if (missing.length === plan.key_slots.length) {
+        setGap(t("onboarding.api_keys.gap_none"));
+      } else {
+        setGap(
+          t("onboarding.api_keys.gap_plan_partial")
+            .replace("{0}", planLabel(plan))
+            .replace("{1}", missing.join(", ")),
+        );
+      }
+    } else if (!hasKey && !localActive) {
+      setGap(t("onboarding.api_keys.gap_none"));
+    } else if (!plan && hasKey) {
+      setGap(t("onboarding.api_keys.gap_custom"));
+    } else {
+      setGap(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.id, planComplete, hasKey, localActive, configured.map((p) => p.id).join(","), setGap, t]);
+
   // Open the first row by default so a fresh install shows an input, not a
   // list of closed doors. Once anything is configured, everything stays shut.
   useEffect(() => {
@@ -346,29 +374,66 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary }: StepProps) {
     <div className="space-y-8">
       {plans.length > 0 && (
         <StepSection label={t("onboarding.api_keys.plan_label")}>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {t("onboarding.api_keys.plan_explainer")}
+          </p>
           <div className="space-y-2" role="radiogroup" data-testid="onboarding-plan-picker">
-            {plans.map((p) => (
-              <ChoiceRow
-                key={p.id}
-                selected={planId === p.id}
-                title={p.recommended ? `${planLabel(p)} — ${t("onboarding.api_keys.recommended")}` : planLabel(p)}
-                body={planSummary(p)}
-                onSelect={() => void choosePlan(p.id)}
-                testId={`onboarding-plan-${p.id}`}
-              />
-            ))}
+            {plans.map((p) => {
+              const n = p.key_slots.length;
+              const keysLabel =
+                n === 1
+                  ? t("onboarding.api_keys.keys_one")
+                  : t("onboarding.api_keys.keys_n").replace("{0}", String(n));
+              const modeLabel =
+                p.mode === "realtime"
+                  ? t("onboarding.api_keys.mode_realtime")
+                  : t("onboarding.api_keys.mode_pipeline");
+              return (
+                <ChoiceRow
+                  key={p.id}
+                  selected={planId === p.id}
+                  title={planLabel(p)}
+                  badge={p.recommended ? t("onboarding.api_keys.recommended") : null}
+                  body={`${planSummary(p)} ${t("onboarding.api_keys.plan_keys_from").replace(
+                    "{0}",
+                    p.key_slots.map((s) => s.label).join(" + "),
+                  )}`}
+                  meta={
+                    <>
+                      <span className={n === 1 ? "text-primary" : undefined}>{keysLabel}</span>
+                      <span className="px-1.5 text-muted-foreground/50">·</span>
+                      {modeLabel}
+                    </>
+                  }
+                  onSelect={() => void choosePlan(p.id)}
+                  testId={`onboarding-plan-${p.id}`}
+                />
+              );
+            })}
             <ChoiceRow
               selected={planId === CUSTOM_PLAN}
               title={t("onboarding.api_keys.plan_custom_title")}
               body={t("onboarding.api_keys.plan_custom_body")}
+              meta={t("onboarding.api_keys.keys_several")}
               onSelect={() => void choosePlan(CUSTOM_PLAN)}
               testId="onboarding-plan-custom"
             />
           </div>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {t("onboarding.api_keys.mode_explainer")}
+          </p>
         </StepSection>
       )}
 
-      <StepSection label={t("onboarding.api_keys.providers_label")}>
+      <StepSection
+        label={
+          plan
+            ? t("onboarding.api_keys.plan_progress")
+                .replace("{0}", String(configured.length))
+                .replace("{1}", String(plan.key_slots.length))
+            : t("onboarding.api_keys.providers_label")
+        }
+      >
         {loading && startable.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">{t("onboarding.api_keys.loading")}</p>
         ) : error && startable.length === 0 ? (

@@ -40,7 +40,7 @@ type MicCheckState = "idle" | "checking" | "done";
  * unfolds its input in place. One microphone check (the old step had two
  * buttons wired to the same probe).
  */
-export function WakeWordStep({ onb, goNext, goBack, setSummary }: StepProps) {
+export function WakeWordStep({ onb, goNext, goBack, setSummary, setGap }: StepProps) {
   const t = useT();
   const { saveWakeWord, setWakeActivation } = useWakeWord();
   const [mode, setMode] = useState<Mode>("wake");
@@ -116,6 +116,7 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary }: StepProps) {
         return;
       }
       await setWakeActivation(true);
+      setGap(null);
       goNext();
     } catch (e) {
       setErr((e as Error).message);
@@ -129,6 +130,9 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary }: StepProps) {
     setErr(null);
     try {
       await setWakeActivation(true);
+      // The phrase is saved but nothing can hear it yet — the finish step
+      // must say so before the user expects "Hey X" to work.
+      setGap(t("onboarding.wake_word.gap_degraded").replace("{0}", `Hey ${trimmed}`));
       goNext();
     } catch (e) {
       setErr((e as Error).message);
@@ -142,6 +146,7 @@ export function WakeWordStep({ onb, goNext, goBack, setSummary }: StepProps) {
     setErr(null);
     try {
       await setWakeActivation(false);
+      setGap(null);
       goNext();
     } catch (e) {
       setErr((e as Error).message);

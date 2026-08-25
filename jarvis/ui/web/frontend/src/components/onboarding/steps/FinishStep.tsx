@@ -3,7 +3,7 @@ import { ExternalLink, Play } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
 import type { StepProps } from "../OnboardingFlow";
-import { StatusLine, StepFooter, StepSection } from "../primitives";
+import { ConsentLine, StatusLine, StepFooter, StepSection } from "../primitives";
 
 interface AutostartState {
   enabled: boolean;
@@ -26,12 +26,26 @@ const REVIEW_STEPS = ["language", "api-keys", "permissions", "wake-word"] as con
  * the marker is written — and a failure shows in place instead of leaving
  * the button dead.
  */
-export function FinishStep({ onb, goBack, summaries }: StepProps) {
+export function FinishStep({ onb, goBack, summaries, gaps }: StepProps) {
   const t = useT();
   const skipped = new Set(onb.state?.skipped_steps ?? []);
   const steps = onb.state?.steps ?? [];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The disclaimer: every gap a step reported, plus a generic line for any
+  // step that was skipped without reporting one. Nothing missing → no list,
+  // no checkbox, Start is live. Something missing → the user ticks that they
+  // have read what stays off before the assistant starts.
+  const [gapsAcknowledged, setGapsAcknowledged] = useState(false);
+  const gapList = REVIEW_STEPS.filter((key) => steps.includes(key)).flatMap((key) => {
+    const text = gaps[key];
+    if (text) return [{ key, text }];
+    if (skipped.has(key) && !summaries[key]) {
+      return [{ key, text: t(`onboarding.finish.gap_skipped_${key.replace("-", "_")}`) }];
+    }
+    return [];
+  });
+  const hasGaps = gapList.length > 0;
 
   // "Start at login" toggle (formerly a terminal-wizard question).
   // Capability-gated: hidden on hosts where autostart is unsupported
@@ -148,7 +162,40 @@ export function FinishStep({ onb, goBack, summaries }: StepProps) {
         </a>
       </StepSection>
 
-      <p className="text-[13px] leading-relaxed text-muted-foreground">
+      {hasGaps && (
+        <StepSection label={t("onboarding.finish.gaps_label")}>
+          <div
+            data-testid="onboarding-gaps"
+            className="space-y-3 border-l-2 border-amber-500/70 py-1 pl-4"
+          >
+            <p className="text-[15px] font-medium text-foreground">
+              {t("onboarding.finish.gaps_intro")}
+            </p>
+            <ul className="space-y-2">
+              {gapList.map((g) => (
+                <li key={g.key} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 text-sm">
+                  <span className="pt-0.5 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                    {t(`onboarding.steps.${g.key}.label`)}
+                  </span>
+                  <span className="leading-relaxed text-foreground">{g.text}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {t("onboarding.finish.gaps_outro")}
+            </p>
+          </div>
+          <ConsentLine
+            checked={gapsAcknowledged}
+            onChange={setGapsAcknowledged}
+            testId="onboarding-gaps-ack"
+          >
+            {t("onboarding.finish.gaps_ack")}
+          </ConsentLine>
+        </StepSection>
+      )}
+
+      <p className="text-sm leading-relaxed text-muted-foreground">
         {t("onboarding.finish.boot_notice")}
       </p>
 
@@ -160,6 +207,7 @@ export function FinishStep({ onb, goBack, summaries }: StepProps) {
           label: busy ? t("onboarding.finish.starting") : t("onboarding.finish.start_cta"),
           onClick: () => void start(),
           busy,
+          disabled: hasGaps && !gapsAcknowledged,
           testId: "onboarding-start",
         }}
         hidePrimaryArrow

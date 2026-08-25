@@ -46,9 +46,9 @@ export function Register({
       {items.map((item, index) => (
         <li
           key={item.key}
-          className="grid grid-cols-[2rem_minmax(0,1fr)] items-baseline gap-2 border-b border-border/50 py-2.5 text-sm last:border-b-0"
+          className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-baseline gap-2 border-b border-border/50 py-3 text-[15px] last:border-b-0"
         >
-          <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
+          <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
             {(index + 1).toString().padStart(2, "0")}
           </span>
           <span className="flex min-w-0 items-start gap-2.5">
@@ -76,12 +76,18 @@ export function ChoiceRow({
   body,
   onSelect,
   testId,
+  badge,
+  meta,
 }: {
   selected: boolean;
   title: string;
   body: string;
   onSelect: () => void;
   testId?: string;
+  /** A short gold tag after the title ("Recommended"). */
+  badge?: string | null;
+  /** Small mono facts on the right ("1 key · Pipeline"). */
+  meta?: ReactNode;
 }) {
   const t = useT();
   return (
@@ -92,7 +98,7 @@ export function ChoiceRow({
       data-testid={testId}
       onClick={onSelect}
       className={cn(
-        "flex w-full items-start justify-between gap-4 rounded-control border px-4 py-3 text-left transition-colors",
+        "flex w-full items-start justify-between gap-4 rounded-control border px-5 py-4 text-left transition-colors",
         FOCUS_RING,
         selected
           ? "border-primary/70 bg-primary/[0.04]"
@@ -100,16 +106,28 @@ export function ChoiceRow({
       )}
     >
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{title}</span>
-        <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">
-          {body}
+        <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+          <span className="text-base font-medium text-foreground">{title}</span>
+          {badge ? (
+            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+              {badge}
+            </span>
+          ) : null}
         </span>
+        <span className="mt-1 block text-sm leading-relaxed text-muted-foreground">{body}</span>
       </span>
-      {selected ? (
-        <span className="shrink-0 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
-          {t("onboarding.wake_word.selected")}
-        </span>
-      ) : null}
+      <span className="flex shrink-0 flex-col items-end gap-1.5 pt-0.5">
+        {selected ? (
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+            {t("onboarding.wake_word.selected")}
+          </span>
+        ) : null}
+        {meta ? (
+          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            {meta}
+          </span>
+        ) : null}
+      </span>
     </button>
   );
 }
@@ -127,7 +145,7 @@ export function ConsentLine({
   testId?: string;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 py-1 text-sm leading-relaxed">
+    <label className="flex cursor-pointer items-start gap-3 py-1 text-[15px] leading-relaxed">
       <input
         type="checkbox"
         data-testid={testId}
@@ -158,7 +176,7 @@ export function StatusLine({
     <p
       data-testid={testId}
       className={cn(
-        "border-l-2 py-1 pl-3 text-[13px] leading-relaxed",
+        "border-l-2 py-1 pl-3 text-sm leading-relaxed",
         tone === "ok" && "border-emerald-500/70 text-emerald-700 dark:text-emerald-400",
         tone === "warning" && "border-amber-500/70 text-amber-700 dark:text-amber-300",
         tone === "error" && "border-destructive/70 text-destructive",
@@ -198,7 +216,7 @@ export function StepFooter({
 }) {
   const t = useT();
   return (
-    <footer className="mt-8 flex min-h-10 flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-5">
+    <footer className="mt-10 flex min-h-10 flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-6">
       {onBack ? (
         <Button variant="subtle" onClick={onBack} data-testid="onboarding-back">
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -221,7 +239,7 @@ export function StepFooter({
         ) : null}
         <Button
           variant="primary"
-          className="min-w-36 px-4"
+          className="h-10 min-w-40 px-5 text-[15px]"
           onClick={primary.onClick}
           disabled={primary.disabled || primary.busy}
           data-testid={primary.testId ?? "onboarding-primary"}

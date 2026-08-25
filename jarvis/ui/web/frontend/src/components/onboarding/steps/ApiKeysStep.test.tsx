@@ -142,6 +142,8 @@ function renderStep(overrides: Record<string, unknown> = {}) {
     isFirst: false,
     isLast: false,
     setSummary: vi.fn(),
+    setGap: vi.fn(),
+    gaps: {},
     summaries: {},
     ...overrides,
   };
@@ -297,4 +299,48 @@ it("with Ollama running but empty, explains the missing model and shows no activ
   renderStep();
   await screen.findByText("onboarding.api_keys.local_detected_empty");
   expect(screen.queryByRole("button", { name: "onboarding.api_keys.local_use_button" })).toBeNull();
+});
+
+it("reports a gap while a two-key plan still misses a key, and clears it once complete", async () => {
+  plansState.fail = false;
+  plansState.plans = [
+    {
+      ...GEMINI_PLAN,
+      id: "gemini-openai-realtime",
+      label: "Gemini + OpenAI",
+      mode: "realtime",
+      recommended: false,
+      key_slots: [
+        { family: "gemini", slot: "gemini_api_key", label: "Google Gemini", present: true },
+        { family: "openai", slot: "openai_api_key", label: "OpenAI", present: false },
+      ],
+    },
+  ];
+  providersState.providers = [
+    provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: true }, configured: true }),
+    provider({ id: "openai", label: "OpenAI", secret_keys: ["openai_api_key"], secrets_set: { openai_api_key: false } }),
+  ];
+  stubFetch(null);
+  const p = renderStep();
+  // Not recommended, so not preselected: pick it as a user would.
+  fireEvent.click(await screen.findByTestId("onboarding-plan-gemini-openai-realtime"));
+  // The picker says how many keys and which engine each plan needs.
+  expect(screen.getByTestId("onboarding-plan-gemini-openai-realtime").textContent).toContain(
+    "onboarding.api_keys.keys_n",
+  );
+  expect(screen.getByTestId("onboarding-plan-gemini-openai-realtime").textContent).toContain(
+    "onboarding.api_keys.mode_realtime",
+  );
+  await waitFor(() =>
+    expect(p.setGap).toHaveBeenLastCalledWith("onboarding.api_keys.gap_plan_partial"),
+  );
+
+  providersState.providers = [
+    provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: true }, configured: true }),
+    provider({ id: "openai", label: "OpenAI", secret_keys: ["openai_api_key"], secrets_set: { openai_api_key: true }, configured: true }),
+  ];
+  cleanup();
+  const again = renderStep();
+  fireEvent.click(await screen.findByTestId("onboarding-plan-gemini-openai-realtime"));
+  await waitFor(() => expect(again.setGap).toHaveBeenLastCalledWith(null));
 });
