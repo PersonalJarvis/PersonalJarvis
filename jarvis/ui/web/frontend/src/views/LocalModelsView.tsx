@@ -50,7 +50,7 @@ import { useLocaleChunk, useT } from "@/i18n";
 
 export type LocalModelsMode = "simple" | "advanced";
 export type LocalModelsTab =
-  "overview" | "models" | "catalogue" | "huggingface" | "server";
+  "overview" | "assistant" | "models" | "catalogue" | "huggingface" | "server";
 
 /** Browser-local preference; a private window simply starts on Simple. */
 export const LOCAL_MODELS_MODE_KEY = "jarvis.localModels.mode";
@@ -150,22 +150,19 @@ export function LocalModelsView() {
   // it and asks for a setup run; "Something is not working" opens it in
   // diagnose mode (the Server tab with the log stays one link away inside
   // the panel). The token makes a repeated click a repeated request.
-  const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantRequest, setAssistantRequest] =
     useState<AssistantRequest | null>(null);
   const [serverLogOpen, setServerLogOpen] = useState(false);
   const openBrowse = useCallback(() => setTab("catalogue"), []);
+  // The helper is an area of its own, not a block that pushes the overview
+  // down: the rail stays on screen, so "Browse models" is always one click
+  // away and the page never grows to a scroll of thousands of pixels.
   const openAssistant = useCallback(() => {
-    setAssistantOpen((open) => {
-      if (!open) {
-        setAssistantRequest((r) => ({ mode: "setup", token: (r?.token ?? 0) + 1 }));
-      }
-      return !open;
-    });
+    setTab("assistant");
+    setAssistantRequest((r) => ({ mode: "setup", token: (r?.token ?? 0) + 1 }));
   }, []);
-  const closeAssistant = useCallback(() => setAssistantOpen(false), []);
   const reportProblem = useCallback(() => {
-    setAssistantOpen(true);
+    setTab("assistant");
     setAssistantRequest((r) => ({ mode: "diagnose", token: (r?.token ?? 0) + 1 }));
   }, []);
   const openServerLog = useCallback(() => {
@@ -192,6 +189,7 @@ export function LocalModelsView() {
   const tabs = useMemo(() => {
     const all: { id: LocalModelsTab; label: string }[] = [
       { id: "overview", label: t("local_models.tab_overview") },
+      { id: "assistant", label: t("local_models.tab_assistant") },
       { id: "models", label: t("local_models.tab_models") },
       { id: "catalogue", label: t("local_models.tab_catalogue") },
       { id: "huggingface", label: t("local_models.tab_huggingface") },
@@ -212,7 +210,22 @@ export function LocalModelsView() {
         <PanelHeader
           title={t("local_models.title")}
           subtitle={t("local_models.subtitle")}
-          actions={
+        />
+
+        {/* The rail and the detail level belong together: the switch adds two
+            areas to this very row (and detail to the rows below), so it sits
+            beside what it changes instead of alone in the header. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SegmentedFilter<LocalModelsTab>
+            label={t("local_models.tabs_label")}
+            value={tab}
+            onChange={setTab}
+            options={tabs}
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+              {t("local_models.mode_label")}
+            </span>
             <SegmentedFilter<LocalModelsMode>
               label={t("local_models.mode_label")}
               value={mode}
@@ -222,15 +235,8 @@ export function LocalModelsView() {
                 { id: "advanced", label: t("local_models.mode_advanced") },
               ]}
             />
-          }
-        />
-
-        <SegmentedFilter<LocalModelsTab>
-          label={t("local_models.tabs_label")}
-          value={tab}
-          onChange={setTab}
-          options={tabs}
-        />
+          </div>
+        </div>
 
         {loading && !providerId && (
           <p className="text-sm text-muted-foreground">
@@ -255,18 +261,7 @@ export function LocalModelsView() {
               onBrowse={openBrowse}
               onOpenAssistant={openAssistant}
               onReportProblem={reportProblem}
-              assistantSlot={
-                assistantOpen ? (
-                  <AssistantPanel
-                    providerId={providerId}
-                    serverLabel={descriptor?.label ?? "Ollama"}
-                    request={assistantRequest}
-                    onOpenApiKeys={openApiKeys}
-                    onOpenServerLog={openServerLog}
-                    onClose={closeAssistant}
-                  />
-                ) : null
-              }
+              advanced={mode === "advanced"}
             />
             {tuneModel && (
               <RoleTuneDrawer
@@ -275,6 +270,18 @@ export function LocalModelsView() {
                 onClose={closeTune}
               />
             )}
+          </div>
+        )}
+
+        {providerId && tab === "assistant" && (
+          <div data-testid="local-models-assistant-tab">
+            <AssistantPanel
+              providerId={providerId}
+              serverLabel={descriptor?.label ?? "Ollama"}
+              request={assistantRequest}
+              onOpenApiKeys={openApiKeys}
+              onOpenServerLog={openServerLog}
+            />
           </div>
         )}
 

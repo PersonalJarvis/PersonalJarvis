@@ -315,7 +315,7 @@ export function RolesPanel({
 
   return (
     <Panel className="p-4">
-      <div className="space-y-3" data-testid="local-models-roles">
+      <div className="space-y-3" data-testid="local-models-roles" data-variant={variant}>
         <PanelHeader
           title={t("local_models.roles.title")}
           subtitle={t("local_models.roles.subtitle")}

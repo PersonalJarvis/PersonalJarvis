@@ -9,9 +9,9 @@
  * now), and the roles as a checklist. Nothing here writes; the roles part is
  * `RolesPanel`, mounted underneath so the integration wires one component.
  *
- * The setup assistant plugs in through `assistantSlot` + `onOpenAssistant`:
- * the caller owns the open state and the panel it renders, so the assistant
- * can land without touching this file again.
+ * The setup assistant is NOT rendered here: "Help me set up" and "Something is
+ * not working" switch the section to the helper's own area, so the overview
+ * never becomes a page thousands of pixels tall with the roles at the bottom.
  *
  * Props take `providerId` — the id of the card that declares
  * `supports_model_pull` — never a provider name.
@@ -46,12 +46,16 @@ import { RolesPanel, type RolesPanelProps } from "./RolesPanel";
 export interface OverviewPanelProps extends RolesPanelProps {
   /** Opens the catalogue ("Browse models"); the button hides without it. */
   onBrowse?: () => void;
-  /** Opens the setup assistant; the caller renders it into `assistantSlot`. */
+  /** Opens the setup assistant — its own area, not a block inside this one. */
   onOpenAssistant?: () => void;
-  /** Rendered right under the action row while the assistant is open. */
-  assistantSlot?: ReactNode;
-  /** "Something is not working" — the Server tab with the log open. */
+  /** "Something is not working" — opens the assistant in diagnose mode. */
   onReportProblem?: () => void;
+  /**
+   * Detail level. The switch beside the rail must change what is on screen
+   * HERE too, or it reads as a dead control: Simple keeps the roles a
+   * checklist, Advanced opens every row to its picker, capabilities and Tune.
+   */
+  advanced?: boolean;
 }
 
 /** Bytes to a short gigabyte figure ("12.4 GB"); "0 GB" below a megabyte. */
@@ -68,8 +72,8 @@ export function OverviewPanel({
   onOpenApiKeys,
   onBrowse,
   onOpenAssistant,
-  assistantSlot,
   onReportProblem,
+  advanced = false,
 }: OverviewPanelProps) {
   const t = useT();
   const overview = useOverview(providerId);
@@ -290,8 +294,6 @@ export function OverviewPanel({
         </div>
       )}
 
-      {assistantSlot}
-
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatTile
           icon={<HardDrive className="h-3.5 w-3.5" />}
@@ -323,7 +325,7 @@ export function OverviewPanel({
         providerId={providerId}
         onTune={onTune}
         onOpenApiKeys={onOpenApiKeys}
-        variant="checklist"
+        variant={advanced ? "ledger" : "checklist"}
       />
     </div>
   );

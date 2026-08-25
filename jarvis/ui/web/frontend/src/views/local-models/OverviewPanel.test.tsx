@@ -412,7 +412,6 @@ describe("OverviewPanel", () => {
       onBrowse,
       onOpenAssistant,
       onReportProblem,
-      assistantSlot: <div data-testid="assistant-slot" />,
     });
 
     await screen.findByTestId("overview-actions");
@@ -428,7 +427,19 @@ describe("OverviewPanel", () => {
     expect(onBrowse).toHaveBeenCalledTimes(1);
     expect(onOpenAssistant).toHaveBeenCalledTimes(1);
     expect(onReportProblem).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("assistant-slot")).toBeDefined();
+  });
+
+  it("the detail level changes the roles on this very screen", async () => {
+    installFetchMock();
+    const { unmount } = renderPanel();
+    const simple = await screen.findByTestId("local-models-roles");
+    expect(simple.getAttribute("data-variant")).toBe("checklist");
+    unmount();
+
+    installFetchMock();
+    renderPanel({ advanced: true });
+    const advanced = await screen.findByTestId("local-models-roles");
+    expect(advanced.getAttribute("data-variant")).not.toBe("checklist");
   });
 
   it("hides the action row when no handler is wired", async () => {

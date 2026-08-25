@@ -1,35 +1,42 @@
 /**
- * The Local models setup assistant — a guided chat inside the section.
+ * The Local models setup assistant — a plain chat that shows its work.
  *
  * Three buttons start a canned turn on the backend (`POST …/assistant/run`
  * with a mode): "Help me set up" plans one complete setup, "Test" runs the
  * end-to-end check, "Something is broken" diagnoses. The conversation itself
- * is an ordinary agent-chat session on the `local-models` surface, so the
- * timeline, streaming, approval cards and cancel are the shared ones; only
- * the store instance is this panel's own (`assistantStore.ts`).
+ * is an ordinary agent-chat session on the `local-models` surface, so
+ * streaming, approvals and cancel are the shared ones; only the store instance
+ * is this panel's own (`assistantStore.ts`).
  *
- * When the assistant ends a turn with a ```jarvis-proposal block, the plan
- * is shown as a checklist (`SetupProposalCard`). ONE Confirm sends the
- * "Execute steps: …" message and remembers the steps; every
- * `approval_required` the runner raises for exactly those steps is answered
- * "allow" here, on the client, so the user clicks once. The ToolExecutor still
- * asks (AP-3) — the panel only answers what was already confirmed; anything
- * else keeps its ordinary card.
+ * Three deliberate departures from the coding-agent chat:
  *
- * Honest states, never toasts: a 409 from `/run` means the Tool Model (or its Agents-tier fallback)
- * is not usable and the sentence links to API Keys; a 404 means the backend
- * predates the assistant. The header carries the monitor's last check with a
- * "Fix" that opens diagnose mode.
+ * 1. **The conversation scrolls inside itself.** The panel is one screen with
+ *    the composer at the bottom, so opening the helper never turns the section
+ *    into a page thousands of pixels tall that buries the roles below it.
+ * 2. **Only the current run is shown.** Every click on a mode button starts a
+ *    new run; the ones before collapse behind one "earlier messages" line
+ *    instead of stacking five identical setups on top of each other.
+ * 3. **Steps read as sentences** (`AssistantSteps`), not as tool names — this
+ *    reader wants to follow what is being done to their machine.
+ *
+ * When a turn ends with a ```jarvis-proposal block, the plan is shown as a
+ * checklist (`SetupProposalCard`). ONE Confirm sends the "Execute steps: …"
+ * message and remembers the steps; every `approval_required` the runner raises
+ * for exactly those steps is answered "allow" here, on the client, so the user
+ * clicks once. The ToolExecutor still asks (AP-3) — the panel only answers what
+ * was already confirmed; anything else keeps its own inline question.
+ *
+ * Honest states, never toasts: a 409 from `/run` means the Tool Model (or its
+ * Agents-tier fallback) is not usable and the sentence links to API Keys; a 404
+ * means the backend predates the assistant.
  */
-import { AlertTriangle, FlaskConical, Send, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, FlaskConical, History, Send, Sparkles, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AgentTimeline } from "@/components/agentchat/AgentTimeline";
-import type { TextBlock, TurnItem } from "@/components/agentchat/reduce";
-import { Panel, SoftButton, StatusDot } from "@/components/extensions/primitives";
+import type { TextBlock, TimelineItem, TurnItem } from "@/components/agentchat/reduce";
+import { SoftButton, StatusDot } from "@/components/extensions/primitives";
 import { fill, useT } from "@/i18n";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 
 import {
@@ -41,6 +48,7 @@ import {
   type AssistantHealth,
   type AssistantMode,
 } from "./assistantApi";
+import { AssistantSteps } from "./AssistantSteps";
 import {
   matchesConfirmedStep,
   proposalFromText,
@@ -61,27 +69,37 @@ export interface AssistantRequest {
 /** The steps confirmed per session survive a close/reopen of the panel. */
 const confirmedBySession = new Map<string, { hash: string; steps: ProposalStep[] }>();
 
+function turnText(turn: TurnItem): string {
+  return turn.blocks
+    .filter((b): b is TextBlock => b.kind === "text")
+    .map((b) => b.text)
+    .join("\n");
+}
+
 /** The text of the last finished assistant turn — where a proposal lives. */
-function lastAssistantText(items: readonly { type: string }[]): { text: string; turnId: string } | null {
+function lastAssistantText(items: readonly TimelineItem[]): { text: string; turnId: string } | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
     if (item.type !== "turn") continue;
-    const turn = item as TurnItem;
     // A turn still streaming has no plan yet; the previous finished one keeps
     // its card instead of the card blinking out for the length of a follow-up.
-    if (turn.status !== "done") continue;
-    const text = turn.blocks
-      .filter((b): b is TextBlock => b.kind === "text")
-      .map((b) => b.text)
-      .join("\n");
-    return { text, turnId: turn.id };
+    if (item.status !== "done") continue;
+    return { text: turnText(item), turnId: item.id };
   }
   return null;
 }
 
-function isRunning(items: readonly { type: string }[]): boolean {
+function isRunning(items: readonly TimelineItem[]): boolean {
   const last = items[items.length - 1];
-  return Boolean(last && last.type === "turn" && (last as TurnItem).status === "running");
+  return Boolean(last && last.type === "turn" && last.status === "running");
+}
+
+/** Where the current run begins: the last user message, or the whole history. */
+function defaultRunStart(items: readonly TimelineItem[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].type === "user") return i;
+  }
+  return 0;
 }
 
 export function AssistantPanel({
@@ -90,7 +108,6 @@ export function AssistantPanel({
   request,
   onOpenApiKeys,
   onOpenServerLog,
-  onClose,
 }: {
   providerId: string;
   /** What the section calls the local server ("Ollama"). */
@@ -98,12 +115,10 @@ export function AssistantPanel({
   /** The mode the section asked for (Help me set up / Something is not working). */
   request: AssistantRequest | null;
   onOpenApiKeys: () => void;
-  /** The old "Something is not working" path: the Server tab with the log open. */
+  /** The Server tab with the log open — one link for the reader who wants it raw. */
   onOpenServerLog?: () => void;
-  onClose?: () => void;
 }) {
   const t = useT();
-  const assistantName = useEventStore((s) => s.assistantName);
   const items = useLocalModelsAssistantStore((s) => s.timeline.items);
   const pendingApprovals = useLocalModelsAssistantStore((s) => s.timeline.pendingApprovals);
   const activeSessionId = useLocalModelsAssistantStore((s) => s.activeSessionId);
@@ -124,9 +139,17 @@ export function AssistantPanel({
   const [runError, setRunError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [confirmed, setConfirmed] = useState<{ hash: string; steps: ProposalStep[] } | null>(null);
+  /** Index in `items` where the current run starts; null = derive it. */
+  const [runStart, setRunStart] = useState<number | null>(null);
+  const [showEarlier, setShowEarlier] = useState(false);
   const answered = useRef<Set<string>>(new Set());
+  const scroller = useRef<HTMLDivElement | null>(null);
 
   const running = isRunning(items);
+  const start = runStart ?? defaultRunStart(items);
+  const current = items.slice(Math.min(start, items.length));
+  const earlier = items.slice(0, Math.min(start, items.length));
+  const shown = showEarlier ? items : current;
 
   // The one session per install: open it (and its socket) when the panel mounts.
   useEffect(() => {
@@ -166,11 +189,21 @@ export function AssistantPanel({
     answered.current = new Set();
   }, [activeSessionId]);
 
+  // Follow the conversation while it writes, the way a chat does.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [items, shown.length]);
+
   const run = useCallback(
     async (mode: AssistantMode) => {
       setStarting(mode);
       setBlocked(null);
       setRunError(null);
+      setShowEarlier(false);
+      // Everything already on screen becomes "earlier": a second setup run is
+      // a fresh start, not a fifth copy stacked under the fourth.
+      setRunStart(useLocalModelsAssistantStore.getState().timeline.items.length);
       try {
         const res = await runAssistant(providerId, mode);
         if (res.session_id !== activeSessionId) openSession(res.session_id);
@@ -197,33 +230,13 @@ export function AssistantPanel({
     if (!running) void loadHealth();
   }, [running, loadHealth]);
 
-  // The chat shows the words, the card shows the plan: the raw JSON block is
-  // stripped from every finished turn's text before the timeline sees it.
-  const displayItems = useMemo(
-    () =>
-      items.map((item) => {
-        if (item.type !== "turn") return item;
-        const turn = item as TurnItem;
-        if (!turn.blocks.some((b) => b.kind === "text" && /```jarvis-proposal/.test((b as TextBlock).text))) {
-          return item;
-        }
-        return {
-          ...turn,
-          blocks: turn.blocks.map((b) =>
-            b.kind === "text" ? { ...b, text: stripProposalBlocks((b as TextBlock).text) } : b,
-          ),
-        };
-      }),
-    [items],
-  );
-
-  // The plan in the last finished turn, if any.
+  // The plan in the last finished turn of the current run, if any.
   const proposal: { value: Proposal; turnId: string } | null = useMemo(() => {
-    const last = lastAssistantText(items);
+    const last = lastAssistantText(current);
     if (!last) return null;
     const value = proposalFromText(last.text);
     return value ? { value, turnId: last.turnId } : null;
-  }, [items]);
+  }, [current]);
 
   const onConfirm = useCallback(
     async (steps: ProposalStep[], message: string) => {
@@ -255,8 +268,6 @@ export function AssistantPanel({
     [decide],
   );
 
-  const providerLabel = useCallback((id: string) => id, []);
-
   const submit = useCallback(async () => {
     const text = draft.trim();
     if (!text || !activeSessionId || busy || running) return;
@@ -269,45 +280,59 @@ export function AssistantPanel({
     health?.status === "ok" ? "ok" : health?.status === "unknown" || !health ? "off" : "warn";
   const needsFix = health?.status === "error" || health?.status === "needs_setup";
 
+  // One line that says what the helper is doing right now.
+  const statusLine = running
+    ? t("local_models.assistant.status_working")
+    : starting
+      ? t("local_models.assistant.status_starting")
+      : proposal
+        ? t("local_models.assistant.status_plan_ready")
+        : items.length > 0
+          ? t("local_models.assistant.status_idle")
+          : t("local_models.assistant.status_empty");
+
+  const busyNow = starting !== null || running;
+
   return (
-    <Panel className="p-4">
-      <div className="space-y-4" data-testid="local-models-assistant">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+    <div
+      className="flex flex-col gap-3 rounded-xl border border-border bg-card/60"
+      data-testid="local-models-assistant"
+    >
+      {/* Header: what it is, what it is doing, and the three things it can start. */}
+      <div className="flex flex-col gap-3 border-b border-border/70 px-4 pt-4 pb-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-semibold leading-tight">
+              {t("local_models.assistant.title")}
+            </h3>
+            <p className="mt-0.5 text-sm text-muted-foreground" data-testid="assistant-status">
+              {statusLine}
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
-            <SoftButton
-              primary
-              onClick={() => void run("setup")}
-              disabled={starting !== null || running}
-            >
+            <SoftButton primary onClick={() => void run("setup")} disabled={busyNow}>
               <Sparkles className="h-3.5 w-3.5" />
               {t("local_models.assistant.action_setup")}
             </SoftButton>
-            <SoftButton onClick={() => void run("test")} disabled={starting !== null || running}>
+            <SoftButton onClick={() => void run("test")} disabled={busyNow}>
               <FlaskConical className="h-3.5 w-3.5" />
               {t("local_models.assistant.action_test")}
             </SoftButton>
-            <SoftButton onClick={() => void run("diagnose")} disabled={starting !== null || running}>
+            <SoftButton onClick={() => void run("diagnose")} disabled={busyNow}>
               <AlertTriangle className="h-3.5 w-3.5" />
               {t("local_models.assistant.action_diagnose")}
             </SoftButton>
-          </div>
-          <div className="flex items-center gap-2">
             {running && (
               <SoftButton onClick={() => void cancel()} ariaLabel={t("local_models.assistant.cancel")}>
                 <Square className="h-3.5 w-3.5" />
                 {t("local_models.assistant.cancel")}
               </SoftButton>
             )}
-            {onClose && (
-              <SoftButton onClick={onClose} ariaLabel={t("local_models.assistant.close")}>
-                <X className="h-3.5 w-3.5" />
-              </SoftButton>
-            )}
           </div>
         </div>
 
         {health && checkedAt && (
-          <p className="flex flex-wrap items-center gap-3 text-sm" data-testid="assistant-health">
+          <p className="flex flex-wrap items-center gap-3 text-[13px]" data-testid="assistant-health">
             <StatusDot
               tone={healthTone}
               label={fill(t("local_models.assistant.last_check"), {
@@ -318,7 +343,7 @@ export function AssistantPanel({
             {needsFix && (
               <button
                 type="button"
-                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+                className="font-medium text-primary underline-offset-4 hover:underline"
                 onClick={() => void run("diagnose")}
                 data-testid="assistant-health-fix"
               >
@@ -327,7 +352,9 @@ export function AssistantPanel({
             )}
           </p>
         )}
+      </div>
 
+      <div className="flex flex-col gap-3 px-4 pb-4">
         {blocked && (
           <div
             className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
@@ -351,38 +378,86 @@ export function AssistantPanel({
         )}
 
         {items.length === 0 && !blocked && !backendMissing && (
-          <p className="text-sm text-muted-foreground">
-            {starting ? t("local_models.assistant.starting") : t("local_models.assistant.empty")}
+          <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+            {t("local_models.assistant.empty")}
           </p>
         )}
 
         {items.length > 0 && (
-          <div className="flex max-h-[60vh] flex-col gap-5 overflow-y-auto pr-1" data-testid="assistant-timeline">
-            <AgentTimeline
-              items={displayItems}
-              assistantName={assistantName}
-              providerLabel={providerLabel}
-              onDecide={onDecide}
-            />
+          <div
+            ref={scroller}
+            className="flex max-h-[46vh] min-h-[8rem] flex-col gap-4 overflow-y-auto pr-1"
+            data-testid="assistant-timeline"
+          >
+            {earlier.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowEarlier((v) => !v)}
+                className="mx-auto inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                data-testid="assistant-earlier"
+              >
+                <History className="h-3 w-3" />
+                {showEarlier
+                  ? t("local_models.assistant.earlier_hide")
+                  : fill(t("local_models.assistant.earlier_show"), { n: String(earlier.length) })}
+              </button>
+            )}
+
+            {shown.map((item) => {
+              if (item.type === "user") {
+                return (
+                  <p
+                    key={item.id}
+                    className="self-end max-w-[85%] rounded-xl rounded-br-sm bg-primary/10 px-3 py-2 text-[13.5px] text-foreground"
+                    data-testid="assistant-you"
+                  >
+                    {item.text}
+                  </p>
+                );
+              }
+              if (item.type === "error") {
+                return (
+                  <p key={item.id} className="text-sm text-destructive">
+                    {item.text}
+                  </p>
+                );
+              }
+              const answer = stripProposalBlocks(turnText(item));
+              return (
+                <div key={item.id} className="flex flex-col gap-3">
+                  <AssistantSteps blocks={item.blocks} onDecide={onDecide} />
+                  {answer && (
+                    <div
+                      className="whitespace-pre-wrap text-[14px] leading-relaxed text-foreground"
+                      data-testid="assistant-answer"
+                    >
+                      {answer}
+                    </div>
+                  )}
+                  {item.status === "error" && item.error && (
+                    <p className="text-sm text-destructive">{item.error}</p>
+                  )}
+                  {proposal?.turnId === item.id && (
+                    <>
+                      <SetupProposalCard
+                        proposal={proposal.value}
+                        onConfirm={onConfirm}
+                        busy={running || busy}
+                        confirmedHash={confirmed?.hash ?? null}
+                      />
+                      {proposal.value.brain_switch && !running && (
+                        <BrainSwitchCard
+                          provider={proposal.value.brain_switch.provider}
+                          why={proposal.value.brain_switch.why}
+                          serverLabel={serverLabel}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        )}
-
-        {proposal && (
-          <SetupProposalCard
-            key={proposal.turnId}
-            proposal={proposal.value}
-            onConfirm={onConfirm}
-            busy={running || busy}
-            confirmedHash={confirmed?.hash ?? null}
-          />
-        )}
-
-        {proposal?.value.brain_switch && !running && (
-          <BrainSwitchCard
-            provider={proposal.value.brain_switch.provider}
-            why={proposal.value.brain_switch.why}
-            serverLabel={serverLabel}
-          />
         )}
 
         <form
@@ -401,7 +476,7 @@ export function AssistantPanel({
                 void submit();
               }
             }}
-            rows={2}
+            rows={1}
             disabled={!activeSessionId}
             placeholder={
               activeSessionId
@@ -430,13 +505,13 @@ export function AssistantPanel({
           <button
             type="button"
             onClick={onOpenServerLog}
-            className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            className="self-start text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             data-testid="assistant-open-server-log"
           >
             {t("local_models.assistant.open_server_log")}
           </button>
         )}
       </div>
-    </Panel>
+    </div>
   );
 }

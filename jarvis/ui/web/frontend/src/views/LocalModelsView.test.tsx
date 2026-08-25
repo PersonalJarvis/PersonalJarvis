@@ -104,11 +104,9 @@ vi.mock("@/components/local-models/AssistantPanel", () => ({
   AssistantPanel: ({
     request,
     onOpenServerLog,
-    onClose,
   }: {
     request: { mode: string; token: number } | null;
     onOpenServerLog?: () => void;
-    onClose?: () => void;
   }) => (
     <div
       data-testid="local-models-assistant"
@@ -117,9 +115,6 @@ vi.mock("@/components/local-models/AssistantPanel", () => ({
     >
       <button type="button" onClick={onOpenServerLog}>
         server log
-      </button>
-      <button type="button" onClick={onClose}>
-        close assistant
       </button>
     </div>
   ),
@@ -282,23 +277,25 @@ describe("LocalModelsView", () => {
     expect(screen.getByText("local_models.no_provider")).toBeDefined();
   });
 
-  it("wires the overview actions: browse, the assistant in setup mode, diagnose mode, server log", () => {
+  it("the helper is an area of its own, and the rail stays reachable from it", () => {
     render(<LocalModelsView />);
 
-    // "Help me set up" opens the assistant and asks for a setup run; a
-    // second click closes it again.
+    // "Help me set up" switches to the helper's area with a setup run.
     fireEvent.click(screen.getByRole("button", { name: "assistant" }));
     const panel = screen.getByTestId("local-models-assistant");
     expect(panel.getAttribute("data-mode")).toBe("setup");
     expect(panel.getAttribute("data-token")).toBe("1");
-    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
+    // The overview is no longer underneath it — this is a separate screen.
+    expect(screen.queryByTestId("overview-panel")).toBeNull();
+
+    // The user's complaint: from the helper, the catalogue is ONE click away.
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.tab_catalogue" }),
+    );
+    expect(screen.getByTestId("catalogue-panel")).toBeDefined();
     expect(screen.queryByTestId("local-models-assistant")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "browse" }));
-    expect(screen.getByTestId("catalogue-panel")).toBeDefined();
-
-    // "Something is not working" opens the assistant in diagnose mode and
-    // stays on the overview; the server log is one link away inside it.
+    // "Something is not working" opens the same area in diagnose mode.
     fireEvent.click(
       screen.getByRole("tab", { name: "local_models.tab_overview" }),
     );
@@ -314,10 +311,4 @@ describe("LocalModelsView", () => {
     ).toBe("yes");
   });
 
-  it("closes the assistant from its own close button", () => {
-    render(<LocalModelsView />);
-    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
-    fireEvent.click(screen.getByRole("button", { name: "close assistant" }));
-    expect(screen.queryByTestId("local-models-assistant")).toBeNull();
-  });
 });
