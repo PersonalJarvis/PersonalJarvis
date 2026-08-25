@@ -293,44 +293,84 @@ interface UseProvidersOptions {
 }
 
 /**
+ * One `/api/providers` request shared by every mounted `useProviders`.
+ *
+ * Several panels of one section mount the hook at once (the section view, the
+ * roles panel, the server panel); before this each fired its own request, so
+ * one open cost three identical round-trips. Mount-time loads and one window
+ * event fan-out now JOIN the request in flight; an explicit `refetch()` still
+ * starts a fresh one (server truth after a write must not be an older answer
+ * that happened to be pending). `lastGood` is the last list any instance
+ * received: a remount on the same page starts from it instead of an empty
+ * list, so a tab switch does not blank the consumers for a round-trip.
+ */
+interface SharedRequest {
+  promise: Promise<ProviderDescriptor[]>;
+}
+let sharedRequest: SharedRequest | null = null;
+let lastGood: ProviderDescriptor[] | null = null;
+/** Window events already turned into a request — the other instances join. */
+const seenEvents = new WeakSet<Event>();
+
+async function fetchProvidersOnce(): Promise<ProviderDescriptor[]> {
+  const res = await fetch("/api/providers", { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data: ProvidersResponse = await res.json();
+  // A 200 whose body is not the expected shape (a proxy's error page, a
+  // partially-written response) must leave an EMPTY list, never
+  // `undefined`: every consumer maps or filters this, so one malformed
+  // payload would take the whole provider console down with a TypeError
+  // instead of showing the honest "no providers" state.
+  const list = Array.isArray(data?.providers) ? data.providers : [];
+  lastGood = list;
+  return list;
+}
+
+/** Start a request, or join the one in flight when `join` is set. */
+function loadProviders(join: boolean): Promise<ProviderDescriptor[]> {
+  if (join && sharedRequest) return sharedRequest.promise;
+  const entry: SharedRequest = { promise: fetchProvidersOnce() };
+  sharedRequest = entry;
+  const clear = () => {
+    if (sharedRequest === entry) sharedRequest = null;
+  };
+  entry.promise.then(clear, clear);
+  return entry.promise;
+}
+
+/** Test seam: forget the shared request and the last good list. */
+export function _resetProvidersCacheForTests(): void {
+  sharedRequest = null;
+  lastGood = null;
+}
+
+/**
  * Loads /api/providers and re-fetches on relevant WS events. The hook updates
  * the UI state live whenever a secret is set on the backend or a brain
  * provider was switched — without the component having to track that itself.
  */
 export function useProviders(options: UseProvidersOptions = {}) {
-  const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
+  const [providers, setProviders] = useState<ProviderDescriptor[]>(
+    () => lastGood ?? [],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
-  const requestController = useRef<AbortController | null>(null);
   const retryAttempt = useRef(0);
   const retryDelays = useRef<readonly number[]>(PROVIDER_RETRY_DELAYS_MS);
   retryDelays.current = options.retryDelaysMs ?? PROVIDER_RETRY_DELAYS_MS;
 
-  const refetch = useCallback(async () => {
+  const load = useCallback(async (join: boolean) => {
     const version = ++requestVersion.current;
-    requestController.current?.abort();
-    const controller = new AbortController();
-    requestController.current = controller;
     setError(null);
     try {
-      const res = await fetch("/api/providers", {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: ProvidersResponse = await res.json();
+      const list = await loadProviders(join);
       if (version === requestVersion.current) {
         retryAttempt.current = 0;
-        // A 200 whose body is not the expected shape (a proxy's error page, a
-        // partially-written response) must leave an EMPTY list, never
-        // `undefined`: every consumer maps or filters this, so one malformed
-        // payload would take the whole provider console down with a TypeError
-        // instead of showing the honest "no providers" state.
-        setProviders(Array.isArray(data?.providers) ? data.providers : []);
+        setProviders(list);
       }
     } catch (e) {
-      if ((e as Error).name !== "AbortError" && version === requestVersion.current) {
+      if (version === requestVersion.current) {
         setError(
           e instanceof TypeError
             ? PROVIDER_BACKEND_UNREACHABLE
@@ -339,9 +379,11 @@ export function useProviders(options: UseProvidersOptions = {}) {
       }
     } finally {
       if (version === requestVersion.current) setLoading(false);
-      if (requestController.current === controller) requestController.current = null;
     }
   }, []);
+
+  /** Fresh server truth — never an answer that was already pending. */
+  const refetch = useCallback(() => load(false), [load]);
 
   useEffect(() => {
     if (error !== PROVIDER_BACKEND_UNREACHABLE || retryDelays.current.length === 0) {
@@ -375,37 +417,31 @@ export function useProviders(options: UseProvidersOptions = {}) {
   }, []);
 
   useEffect(() => {
-    void refetch();
-    const onSecret = () => void refetch();
-    const onBrain = () => void refetch();
-    const onTts = () => void refetch();
-    const onStt = () => void refetch();
-    const onRealtime = () => void refetch();
-    const onComputerUse = () => void refetch();
-    const onDictationPolish = () => void refetch();
-    window.addEventListener("jarvis:secret-configured", onSecret);
-    window.addEventListener("jarvis:brain-switched", onBrain);
-    window.addEventListener("jarvis:tts-switched", onTts);
-    window.addEventListener("jarvis:stt-switched", onStt);
-    window.addEventListener("jarvis:realtime-switched", onRealtime);
-    window.addEventListener("jarvis:computer-use-switched", onComputerUse);
-    window.addEventListener("jarvis:dictation-polish-switched", onDictationPolish);
-    return () => {
-      ++requestVersion.current;
-      requestController.current?.abort();
-      requestController.current = null;
-      window.removeEventListener("jarvis:secret-configured", onSecret);
-      window.removeEventListener("jarvis:brain-switched", onBrain);
-      window.removeEventListener("jarvis:tts-switched", onTts);
-      window.removeEventListener("jarvis:stt-switched", onStt);
-      window.removeEventListener("jarvis:realtime-switched", onRealtime);
-      window.removeEventListener("jarvis:computer-use-switched", onComputerUse);
-      window.removeEventListener(
-        "jarvis:dictation-polish-switched",
-        onDictationPolish,
-      );
+    void load(true);
+    // One window event reaches every mounted instance; the first one starts
+    // the request, the rest join it.
+    const onEvent = (e: Event) => {
+      const join = seenEvents.has(e);
+      seenEvents.add(e);
+      void load(join);
     };
-  }, [refetch]);
+    const events = [
+      "jarvis:secret-configured",
+      "jarvis:brain-switched",
+      "jarvis:tts-switched",
+      "jarvis:stt-switched",
+      "jarvis:realtime-switched",
+      "jarvis:computer-use-switched",
+      "jarvis:dictation-polish-switched",
+    ];
+    for (const name of events) window.addEventListener(name, onEvent);
+    return () => {
+      // The shared request may still serve another instance: only stop
+      // listening for its answer here, never abort it.
+      ++requestVersion.current;
+      for (const name of events) window.removeEventListener(name, onEvent);
+    };
+  }, [load]);
 
   return { providers, loading, error, refetch, setActiveOptimistic };
 }
