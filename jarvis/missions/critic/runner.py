@@ -33,6 +33,8 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
+from jarvis.costs.ledger import usage_context
+
 from ..stream_evidence import (
     capability_refusal_answer,
     diff_has_action_evidence,
@@ -1929,7 +1931,9 @@ class CriticRunner:
             parts: list[str] = []
             async with asyncio.timeout(self._timeout):
                 with override_provider_secrets({provider: worker_key}):
-                    async for delta in brain.complete(req):
+                    with usage_context("mission-critic"):
+                        _stream = brain.complete(req)
+                    async for delta in _stream:
                         chunk = getattr(delta, "content", None)
                         if chunk:
                             parts.append(chunk)

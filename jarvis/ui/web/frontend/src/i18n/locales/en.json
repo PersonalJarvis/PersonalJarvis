@@ -5430,6 +5430,9 @@
     "col_share": "Share",
     "col_cost": "Cost",
     "col_calls": "Calls",
+    "billing_label": "Which spend to show",
+    "top_refs_subtitle_counted": "The {shown} most expensive of {total} conversations, chats and missions — {share} of the total. Click one to filter by it.",
+    "billing": {"all": "All", "billed": "Billed to keys", "subscription": "On subscriptions"},
     "speech_area_note": "Hearing and speaking are billed in audio seconds and characters — never tokens. A speech-to-speech model has no separate ear or mouth, so its turns sit under {name} → Realtime voice. A row at $0.00 is either a local engine (free) or a vendor that publishes no rate — the Rate column says which.",
     "col_rate": "Rate",
     "stat_total_hint_seat_only": "API-equivalent — fully covered by subscriptions, nothing billed to a key",
@@ -5499,6 +5502,7 @@
     "rate_default": "default rate",
     "footnote": "Read from {sources}. {estimated} of the total was priced here from the rate tables rather than reported by the provider. EUR converted at {rate} ({rateSource}).",
     "role": {
+      "background": "Background job",
       "realtime": "Realtime voice",
       "tool": "Tool model",
       "pipeline": "Pipeline brain",
@@ -5508,6 +5512,7 @@
       "tts": "Text to speech"
     },
     "surface": {
+      "background": "Behind the scenes",
       "voice": "Voice",
       "agent_chat": "Agent chat",
       "mission": "Mission",

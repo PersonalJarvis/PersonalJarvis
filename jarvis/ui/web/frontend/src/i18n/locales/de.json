@@ -5430,6 +5430,9 @@
     "col_share": "Anteil",
     "col_cost": "Kosten",
     "col_calls": "Aufrufe",
+    "billing_label": "Welche Ausgaben zeigen",
+    "top_refs_subtitle_counted": "Die {shown} teuersten von {total} Gesprächen, Chats und Missionen — {share} der Gesamtsumme. Zum Filtern anklicken.",
+    "billing": {"all": "Alle", "billed": "Über Keys bezahlt", "subscription": "Über Abos"},
     "speech_area_note": "Hören und Sprechen werden in Audiosekunden und Zeichen abgerechnet — nie in Tokens. Ein Sprache-zu-Sprache-Modell hat kein eigenes Ohr und keinen eigenen Mund; seine Turns stehen unter {name} → Realtime-Stimme. Eine Zeile mit 0,00 $ ist entweder eine lokale Engine (kostenlos) oder ein Anbieter ohne veröffentlichten Tarif — die Spalte „Tarif“ sagt, was zutrifft.",
     "col_rate": "Tarif",
     "stat_total_hint_seat_only": "API-Gegenwert — vollständig durch Abos gedeckt, nichts über einen Key abgerechnet",
@@ -5499,6 +5502,7 @@
     "rate_default": "Standardkurs",
     "footnote": "Gelesen aus {sources}. {estimated} der Summe wurden hier aus den Preistabellen berechnet, nicht vom Anbieter gemeldet. EUR umgerechnet mit {rate} ({rateSource}).",
     "role": {
+      "background": "Hintergrundjob",
       "realtime": "Echtzeit-Stimme",
       "tool": "Tool-Modell",
       "pipeline": "Pipeline-Gehirn",
@@ -5508,6 +5512,7 @@
       "tts": "Text zu Sprache"
     },
     "surface": {
+      "background": "Im Hintergrund",
       "voice": "Sprache",
       "agent_chat": "Agenten-Chat",
       "mission": "Mission",

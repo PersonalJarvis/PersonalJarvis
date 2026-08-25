@@ -5430,6 +5430,9 @@
     "col_share": "Parte",
     "col_cost": "Coste",
     "col_calls": "Llamadas",
+    "billing_label": "Qué gasto mostrar",
+    "top_refs_subtitle_counted": "Las {shown} más caras de {total} conversaciones, chats y misiones — {share} del total. Haz clic en una para filtrar.",
+    "billing": {"all": "Todo", "billed": "Facturado a claves", "subscription": "Con suscripciones"},
     "speech_area_note": "Escuchar y hablar se facturan en segundos de audio y caracteres — nunca en tokens. Un modelo voz a voz no tiene oído ni boca propios; sus turnos están en {name} → Voz en tiempo real. Una fila a $0,00 es un motor local (gratis) o un proveedor sin tarifa publicada — la columna «Tarifa» lo indica.",
     "col_rate": "Tarifa",
     "stat_total_hint_seat_only": "Equivalente API — cubierto por completo por suscripciones, nada facturado a una clave",
@@ -5499,6 +5502,7 @@
     "rate_default": "tipo por defecto",
     "footnote": "Leído de {sources}. {estimated} del total se calculó aquí con las tablas de tarifas, no lo informó el proveedor. EUR convertido a {rate} ({rateSource}).",
     "role": {
+      "background": "Tarea en segundo plano",
       "realtime": "Voz en tiempo real",
       "tool": "Modelo de herramientas",
       "pipeline": "Cerebro de la cadena",
@@ -5508,6 +5512,7 @@
       "tts": "Texto a voz"
     },
     "surface": {
+      "background": "En segundo plano",
       "voice": "Voz",
       "agent_chat": "Chat de agentes",
       "mission": "Misión",

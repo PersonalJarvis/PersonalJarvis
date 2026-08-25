@@ -967,7 +967,7 @@ def _agy_row(
 
 def _grok_row(
     record: Mapping[str, Any], offset: int, cand: _Candidate, cursor: _Cursor
-) -> _Row | None:
+) -> _PricedRow | None:
     params = _payload(record, "params")
     update = _payload(params, "update")
     if update.get("sessionUpdate") != "turn_completed":
@@ -989,6 +989,10 @@ def _grok_row(
     session_id = str(params.get("sessionId") or cursor.session_id)
     prompt_id = str(update.get("prompt_id") or "")
     dedup = f"{session_id}:{prompt_id}" if session_id and prompt_id else f"{cand.key}:{offset}"
+    # xAI writes what it billed for the turn, in ticks of 1e-10 USD (verified
+    # against its list price to the cent, 2026-08-25). Grok Build runs on the
+    # user's own key, so this IS the bill, not an estimate.
+    cost_usd = _int(usage.get("costUsdTicks")) / 1e10
     return (
         cand.agent,
         dedup,
@@ -1001,6 +1005,7 @@ def _grok_row(
         cached,
         cursor.cwd,
         cursor.label,
+        cost_usd,
     )
 
 
@@ -1065,7 +1070,7 @@ def _agy_context(path: Path) -> tuple[str, str, str]:
 
 @dataclass(slots=True)
 class _FileScan:
-    rows: list[_Row]
+    rows: list[_Row | _PricedRow]
     offset: int
     cursor: _Cursor
     bytes_read: int
@@ -1289,7 +1294,7 @@ def _scan_antigravity(cand: _Candidate, start: int) -> _FileScan:
     with a space would stay at $0 forever.
     """
     del start
-    rows: list[_Row] = []
+    rows: list[_Row | _PricedRow] = []
     session_id = cand.path.stem
     cwd = ""
     model = ""
@@ -1377,7 +1382,7 @@ def _scan_opencode(cand: _Candidate, start: int) -> _FileScan:
     indexed (the "offset" column holds a timestamp for this agent), so a run
     reads only what arrived since. A store that shrank (vacuum) re-reads from
     zero and the message-id key keeps every turn counted once."""
-    rows: list[_PricedRow] = []
+    rows: list[_Row | _PricedRow] = []
     newest = start
     failed = False
     try:
@@ -1441,7 +1446,7 @@ def _scan_opencode(cand: _Candidate, start: int) -> _FileScan:
     finally:
         conn.close()
     return _FileScan(
-        rows=list(rows),  # type: ignore[arg-type]
+        rows=rows,
         offset=max(newest, cand.size),
         cursor=_Cursor(),
         bytes_read=cand.size,
@@ -1456,7 +1461,7 @@ def _scan(cand: _Candidate, start: int, cursor: _Cursor, deadline: float) -> _Fi
         return _scan_opencode(cand, start)
     if cand.agent == AGENT_AGY:
         return _scan_antigravity(cand, start)
-    rows: list[_Row] = []
+    rows: list[_Row | _PricedRow] = []
     reader = _LineReader(None, start)
     if cand.agent == AGENT_KIMI and not cursor.session_id:
         cursor.session_id, cursor.cwd, cursor.label = _agy_context(cand.path)
@@ -1510,7 +1515,7 @@ def _wanted(agent: str, raw: bytes) -> bool:
 
 def _row_for(
     agent: str, record: Mapping[str, Any], offset: int, cand: _Candidate, cursor: _Cursor
-) -> _Row | None:
+) -> _Row | _PricedRow | None:
     if agent == AGENT_CLAUDE:
         return _claude_row(record, cand, cursor)
     if agent == AGENT_CODEX:

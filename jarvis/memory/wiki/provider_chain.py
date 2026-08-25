@@ -30,6 +30,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from jarvis.core.redact import safe_preview
+from jarvis.costs.ledger import usage_context
 from jarvis.memory.wiki.telemetry import telemetry
 
 log = logging.getLogger(__name__)
@@ -323,7 +324,8 @@ async def complete_with_fallback(
             failure_summaries.append(f"{provider} unavailable")
             continue
         try:
-            stream = brain.complete(request)
+            with usage_context("wiki"):
+                stream = brain.complete(request)
         except Exception as exc:  # noqa: BLE001 — synchronous provider failure
             detail = _exception_summary(exc)
             log.warning(

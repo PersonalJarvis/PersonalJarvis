@@ -18,10 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .ledger import DB_NAME as LEDGER_DB_NAME
+from .ledger import read_usage
 from .model import (
     MISSION_SUBSCRIPTION_CLIS,
     OPENAI_CONVENTION_RUNNERS,
     ROLE_AGENT,
+    ROLE_BACKGROUND,
     ROLE_PIPELINE,
     ROLE_REALTIME,
     ROLE_STT,
@@ -31,6 +34,7 @@ from .model import (
     SUBSCRIPTION_RUNNERS,
     SURFACE_AGENT_CHAT,
     SURFACE_AGENTIC_IDE,
+    SURFACE_BACKGROUND,
     SURFACE_JARVIS_VOICE,
     SURFACE_MISSION,
     SURFACE_VOICE,
@@ -63,9 +67,11 @@ class CostSources:
     #: a test with its own fixtures, above all — does not silently get this
     #: machine's.
     cli_index_dir: Path | None = None
+    #: The usage ledger every metered provider writes to.
+    ledger_db: Path | None = None
 
     def existing(self) -> list[Path]:
-        candidates = [self.sessions_db, self.missions_db, self.agent_chat_db]
+        candidates = [self.sessions_db, self.missions_db, self.agent_chat_db, self.ledger_db]
         if self.cli_index_dir is not None:
             # The index is a source like the others: a refresh that adds
             # thousands of CLI turns must invalidate a cached report.
@@ -103,6 +109,7 @@ def default_sources(data_dir: Path | None = None) -> CostSources:
         missions_db=root / "missions.db",
         agent_chat_db=root / "agent_chat.db",
         cli_index_dir=root,
+        ledger_db=root / LEDGER_DB_NAME,
     )
 
 
@@ -687,6 +694,44 @@ def _cli_entries(
         )
 
 
+# Callers whose spend a richer source already reports. Their ledger rows are
+# the audit trail, not a second bill: a voice turn is on BrainTurnCompleted
+# with its role split, a chat turn on turn_finished, a mission worker on its
+# draft.
+COVERED_ELSEWHERE: frozenset[str] = frozenset({"voice-turn", "agent-chat", "mission-worker"})
+
+
+def _ledger_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator[CostEntry]:
+    """Every model call no surface claims, as the ledger recorded it."""
+    if path is None:
+        return
+    for row in read_usage(path, since_ms, until_ms):
+        if row.caller in COVERED_ELSEWHERE:
+            continue
+        cost, source = price_entry(
+            provider=row.provider,
+            model=row.model,
+            tokens_in=row.tokens_in,
+            tokens_out=row.tokens_out,
+            recorded_usd=row.cost_usd,
+            tokens_cached=row.tokens_cached,
+        )
+        yield CostEntry(
+            ts_ms=row.ts_ms,
+            surface=SURFACE_BACKGROUND,
+            role=ROLE_BACKGROUND,
+            provider=row.provider or "unknown",
+            model=row.model,
+            tokens_in=row.tokens_in,
+            tokens_out=row.tokens_out,
+            tokens_cached=row.tokens_cached,
+            cost_usd=cost,
+            price_source=source,
+            ref_id="",
+            label=_clip(row.label or row.caller or "background"),
+        )
+
+
 def collect_entries(
     sources: CostSources,
     *,
@@ -703,5 +748,6 @@ def collect_entries(
     entries.extend(
         _cli_entries(sources.cli_index_dir, since_ms, until_ms, bucket_ms)
     )
+    entries.extend(_ledger_entries(sources.ledger_db, since_ms, until_ms))
     entries.sort(key=lambda e: e.ts_ms)
     return entries

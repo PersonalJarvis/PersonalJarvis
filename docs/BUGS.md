@@ -12790,3 +12790,45 @@ index-state endpoint ("63 % of 12.7 GB read") does not exist yet.
 and every reader is a place to be wrong in its own way. The audit that found
 these was one agent per area with the real databases in front of it, not a
 walk through the code.
+
+---
+
+## BUG-179: OpenRouter and Gemini spend nobody could see — twenty callers of the brain protocol never reached the ledger (HIGH, FIXED 2026-08-25)
+
+**Symptom (maintainer, 2026-08-25).** "I have spent money on OpenRouter, I
+know it 100 %, and on Gemini too — the report shows almost nothing." The
+provider table showed OpenRouter at $0.00 and Gemini at $0.19.
+
+**Root cause.** The Costs section learned about spend only from the surfaces
+that happened to record it: a voice turn's `BrainTurnCompleted`, a chat's
+`turn_finished`, a mission's draft, the CLI transcripts. Everything else that
+calls `Brain.complete()` — dictation polish (its own HTTP clients, not even a
+plugin), the wiki curator and session roll-ups, awareness digests, the
+mission critic and decomposer, computer-use planning, skill authoring, board
+profiles, recap/prompt composers — spent on the configured primary brain
+(`openrouter` → `google/gemini-3.5-flash` on this machine) and told no one.
+`rg "\.complete\("` outside plugins and tests: 24 files.
+
+**Fix.**
+
+* `jarvis/costs/ledger.py` — one append-only ledger (`data/llm_usage.db`),
+  written by a daemon thread off the hot path (AP-9), read by the report.
+  `usage_context("wiki")` tags who asked.
+* `jarvis/brain/usage_meter.py` — `MeteredBrain` wraps every provider at the
+  one door they all come through, `BrainProviderRegistry.instantiate`. The
+  usage block a plugin yields is written down with the caller; `__class__`
+  forwards so `isinstance` checks keep their answer.
+* Surfaces that already keep a richer record tag their calls (`voice-turn`,
+  `agent-chat`, `mission-worker`) and the reader skips those tags — the
+  ledger row is the audit trail, not a second bill.
+* The dictation polish clients parse the usage their responses carry and
+  record it as `dictation`.
+* New surface `background` / role `background`, shown inside "{name}"; the
+  entry's label names the job.
+* The section gains a spend switch — all · billed to keys · on
+  subscriptions — and "Where it went" says "the 12 most expensive of N ·
+  share of the total" instead of reading like a sum.
+
+**Lesson.** A report that depends on every caller remembering to report is a
+report of the callers that remembered. Meter where the object is made, not
+where it is used.

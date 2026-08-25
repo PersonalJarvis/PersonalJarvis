@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.core.protocols import BrainMessage, BrainRequest
+from jarvis.costs.ledger import usage_context
 
 from .api_agent_tools import WORKER_TOOL_SPECS, execute_worker_tool_async
 from .capabilities import WorkerCapabilityInventory
@@ -432,7 +433,9 @@ class ApiAgentWorker:
                     # call. ContextVar isolation keeps concurrent Brain and
                     # Jarvis-Agent tasks from observing one another's keys.
                     with override_provider_secrets({self.provider: worker_key}):
-                        async for delta in brain.complete(req):
+                        with usage_context("mission-worker"):
+                            _stream = brain.complete(req)
+                        async for delta in _stream:
                             if delta.content:
                                 text_parts.append(delta.content)
                             if delta.tool_call:
