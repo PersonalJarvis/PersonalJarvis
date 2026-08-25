@@ -135,14 +135,19 @@ A `.deb` install updates through the package, not through the app.
 
 ## What has actually been tested
 
-Proven in a `python:3.12-bookworm` container on 2026-08-25, against a real
-156 MB AppImage built by this script:
+Proven in a `python:3.12-bookworm` container on 2026-08-25, against real
+artifacts built by this script (a 156 MB AppImage and a 172 MB `.deb`, whole
+build ~2 minutes):
 
 * `appimagetool` digest check, AppDir assembly, `desktop-file-validate` passes
+* both executables come out of one freeze - `PersonalJarvis` (windowed) and
+  `jarvis` (console) - and `usr/bin/Jarvis` links to the windowed one
 * `--version` through the packaged AppImage (`APPIMAGE_EXTRACT_AND_RUN=1`),
-  through the extracted `AppRun`, and through `usr/bin/jarvis`
-* `AppRun serve` boots the backend and `/api/health` answers in ~3 s
-* the browser hand-off calls the opener with `http://127.0.0.1:47821`
+  through the extracted `AppRun`, through `usr/bin/Jarvis` and through
+  `usr/bin/jarvis`
+* `AppRun serve` boots the backend and `/api/health` answers in 1-3 s
+* the browser hand-off calls the opener with `http://127.0.0.1:47821`, and the
+  app's own degrade message is in the log next to it
 * the Debian package's control file, symlinks and desktop entry
 
 Not tested: a real FUSE-mounted run on a desktop distribution, and the app on a
