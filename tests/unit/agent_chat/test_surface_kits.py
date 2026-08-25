@@ -117,3 +117,14 @@ async def test_search_fn_wraps_the_brains_search_web_tool() -> None:
     assert rows == [{"title": "t", "url": "u", "snippet": "s"}]
     assert search.queries == ["qwen3.5 LMArena"]
     assert surface_kits.local_models_search_fn(_Brain(_cfg(), {})) is None
+
+
+def test_local_models_surface_drives_cli_seats_through_the_brain() -> None:
+    """A coding agent's loop has none of the lm_* tools, so a seat whose
+    provider also ships a brain plugin runs through Jarvis' brain here."""
+    from jarvis.agent_chat.service import resolve_runner
+
+    assert resolve_runner("antigravity", surface="local-models") == "brain"
+    assert resolve_runner("gemini", surface="local-models") == "brain"
+    # The Jarvis surface keeps the vendor CLI for a subscription seat.
+    assert resolve_runner("antigravity", surface="jarvis") != "brain"

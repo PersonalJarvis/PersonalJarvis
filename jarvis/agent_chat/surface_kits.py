@@ -68,6 +68,11 @@ class SurfaceKit:
 
     surface: str
     brain_runner: bool = False
+    #: Every provider is driven by the brain runner, CLI seats included. A
+    #: coding agent's own loop has none of this surface's tools, so a seat
+    #: whose provider also ships a brain plugin (antigravity, codex, claude)
+    #: must run through Jarvis' brain here rather than its vendor CLI.
+    brain_only: bool = False
     ladder: str | None = None
     uses_stance: bool = False
     tools: ToolsBuilder | None = None
@@ -155,6 +160,7 @@ _KITS: Final[dict[str, SurfaceKit]] = {
     LOCAL_MODELS_SURFACE: SurfaceKit(
         surface=LOCAL_MODELS_SURFACE,
         brain_runner=True,
+        brain_only=True,
         ladder=_JARVIS_LADDER,
         uses_stance=True,
         tools=_local_models_tools,

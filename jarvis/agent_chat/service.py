@@ -69,8 +69,14 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     subscription only pays for the vendor's own loop — and run as Jarvis
     (see :mod:`jarvis.agent_chat.jarvis_harness`).
     """
-    api_runner = "brain" if kit_for(surface).brain_runner else "api"
+    kit = kit_for(surface)
+    api_runner = "brain" if kit.brain_runner else "api"
     row = provider_row(provider)
+    if kit.brain_only:
+        # The surface's tools only exist inside the brain loop: a CLI seat
+        # (agy-cli, codex-cli, claude-cli) would run the vendor's coding agent
+        # without them, so any provider the brain knows is driven by the brain.
+        return "brain" if row is not None or supports_api_runner(provider) else "unknown"
     if row is None:
         return api_runner if supports_api_runner(provider) else "unknown"
     if row.id == "claude-api":
