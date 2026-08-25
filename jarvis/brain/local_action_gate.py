@@ -188,6 +188,135 @@ _EXPLICIT_COMPUTER_USE_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Question / narration guard (maintainer mandate 2026-08-25).
+#
+# Live bug, flight recorder 2026-08-25 16:50:08: "Wie nennt man das, wenn ...
+# dann KLICKE ICH da drauf ... wie nennt sich das in der Fachsprache?" -- a pure
+# vocabulary question -- was shipped verbatim to the computer-use harness. Two
+# independent defects produced it:
+#
+#   1. ``_GUI_VERB_RE`` matched the narrated "klicke" and returned True BEFORE
+#      the instructional guard below could veto it, so a question that opens
+#      with "wie" could never be recognised as one.
+#   2. The GUI-verb match ignored WHO acts. "klicke ICH" is the user describing
+#      their own habit; a command is addressed to Jarvis and carries no subject.
+#
+# The rule the maintainer stated: decide whether the turn is a TASK or a
+# QUESTION. A polite request in question form stays a task ("Kannst du bitte
+# einen Screenshot machen?") -- it carries no interrogative opener. An
+# information question carries one and gives no order.
+# ---------------------------------------------------------------------------
+
+#: An interrogative that OPENS a clause -- at the start of the utterance or
+#: right after a clause break. Trailing question clauses matter as much as
+#: leading ones: the live utterance asked its real question in the LAST clause
+#: ("..., wie nennt sich das in der Fachsprache?"), long after the narrated GUI
+#: verb. Word-boundaried so "wo" never fires inside "worker" or "wonach".
+_QUESTION_OPENER_RE = re.compile(
+    r"(?:^|[,;:.!?]\s*|\b(?:und|oder|aber|and|or|but)\s+)"
+    r"(?:"
+    r"wie|was|warum|wieso|weshalb|wozu|wann|wo|wofuer|woran|worin|worum|"
+    r"woher|wohin|wonach|welche[rsnm]?|wer|wen|wem|wessen"
+    r"|how|what|why|when|where|which|who|whom|whose"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: 2nd-person imperative stems that address Jarvis. Mirrors the LLM-path guard
+#: in ``jarvis.brain.tool_use_loop`` (``_IMPERATIVE_VERB_RE``) -- deliberately
+#: kept to the desktop-control verbs this gate can actually route. German
+#: infinitives cannot match: "oeffnen"/"klicken" carry no word boundary after
+#: the imperative stem.
+_ASSISTANT_IMPERATIVE_RE = re.compile(
+    r"\b(?:"
+    r"mach|mache|oeffne|starte|beende|schliess|schliesse|"
+    r"klick|klicke|tipp|tippe|drueck|druecke|scroll|scrolle|"
+    r"zeig|zeige|spiel|spiele|schreib|schreibe|such|suche|"
+    r"wechsle|wechsel|geh|gehe|nimm|hol|hole|navigier|navigiere|"
+    r"minimier|minimiere|maximier|maximiere|zieh|ziehe|verschieb|verschiebe"
+    r"|open|close|click|type|press|scroll|show|play|write|search|switch|"
+    r"start|launch|take|grab|drag|minimize|maximize|navigate"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: An explicit subject turns the identical German verb form into a 1st-person
+#: indicative: "klicke ICH", "macht MAN", "gehe ICH". A real imperative never
+#: carries one. Same token set as ``tool_use_loop._INDICATIVE_SUBJECT_RE`` so
+#: the two guards classify the same sentence the same way.
+_INDICATIVE_SUBJECT_AFTER_RE = re.compile(
+    r"\s*(?:ich|man|wir|i|we|you|yo|uno)\b",
+    re.IGNORECASE,
+)
+#: English (and the German infinitive marker) put the subject in FRONT of the
+#: verb: "...how do I click", "...um zu klicken".
+_INDICATIVE_SUBJECT_BEFORE_RE = re.compile(
+    r"\b(?:i|you|we|they|to|ich|man|wir|zu)\s+$",
+    re.IGNORECASE,
+)
+#: German subordinate clauses push the verb to the END, far from its subject:
+#: "…, wenn ICH auf den roten Button KLICKE?". Adjacency alone therefore misses
+#: the subject, so the clause in front of the verb is scanned as a whole. Only
+#: 1st-person and impersonal subjects count here — never "du"/"you", which can
+#: perfectly well address Jarvis ("du sollst mal runterscrollen" is an order,
+#: not narration).
+_CLAUSE_START_RE = re.compile(r"[,;:.!?]")
+_NARRATING_SUBJECT_RE = re.compile(r"\b(?:ich|man|wir|i|we)\b", re.IGNORECASE)
+
+
+def _is_narrated(text: str, start: int, end: int) -> bool:
+    """True when the verb at ``[start:end)`` carries an explicit subject.
+
+    A described action ("dann klicke ich da drauf") is not an order. Same shape
+    as ``spawn_gate._REPORTED_VEHICLE_RE``: the vocabulary matches, but the
+    grammar says the user is reporting, not requesting.
+    """
+    before = text[:start]
+    clause_breaks = list(_CLAUSE_START_RE.finditer(before))
+    clause = before[clause_breaks[-1].end():] if clause_breaks else before
+    return bool(
+        _INDICATIVE_SUBJECT_AFTER_RE.match(text, end)
+        or _INDICATIVE_SUBJECT_BEFORE_RE.search(before)
+        or _NARRATING_SUBJECT_RE.search(clause)
+    )
+
+
+def _has_assistant_imperative(text: str) -> bool:
+    """True when the turn gives Jarvis an order somewhere in it."""
+    return any(
+        not _is_narrated(text, match.start(), match.end())
+        for match in _ASSISTANT_IMPERATIVE_RE.finditer(text)
+    )
+
+
+def _is_information_question(text: str) -> bool:
+    """True when the turn ASKS something instead of ordering desktop work.
+
+    Both halves are required. The interrogative opener alone would veto
+    "Warum ist Spotify zu, mach es auf" -- which opens as a question and still
+    ends in an order the user wants executed (the same stand-down as
+    ``tool_use_loop._is_instructional_question``). An order alone is not enough
+    either: "Kannst du bitte einen Screenshot machen?" carries no interrogative
+    opener at all and stays a task.
+    """
+    if not _QUESTION_OPENER_RE.search(text):
+        return False
+    return not _has_assistant_imperative(text)
+
+
+def _has_commanding_gui_verb(text: str) -> bool:
+    """True when a GUI verb is an ORDER, not the user narrating their own use.
+
+    ``_GUI_VERB_RE`` alone matched "dann klicke ich da drauf" and handed a
+    vocabulary question to the vision loop (live 2026-08-25).
+    """
+    return any(
+        not _is_narrated(text, match.start(), match.end())
+        for match in _GUI_VERB_RE.finditer(text)
+    )
+
+
 def _looks_like_desktop_control(text: str) -> bool:
     """True for GUI-manipulation commands that should drive the computer-use loop.
 
@@ -198,6 +327,14 @@ def _looks_like_desktop_control(text: str) -> bool:
     answer. The broader verbs are guarded against how-to questions so
     "wie navigiere ich…" / "wie mache ich einen Screenshot" stay brain answers.
     """
+    # TASK or QUESTION — decided FIRST, for every branch below. Until 2026-08-25
+    # the instructional guard sat UNDER the GUI-verb branch, so a question could
+    # only ever be recognised when it contained no GUI vocabulary at all; the
+    # narrated "klicke" inside a question about download terminology was enough
+    # to seize the desktop. Nothing below can be desktop-control when the turn
+    # asks a question and gives no order.
+    if _is_information_question(text):
+        return False
     # A "starte/oeffne X und Y" compound is desktop-control ONLY when X/Y is real
     # GUI work — never when it is heavy worker / research / sub-agent work. Live
     # bug 2026-06-15: "Starte eine Sub-Agent-Mission und recherchiere …" matched
@@ -205,7 +342,9 @@ def _looks_like_desktop_control(text: str) -> bool:
     # verbs (klick/scroll/tippe/…) stay desktop-control regardless of the nouns.
     if _COMPOUND_OPEN_CONTROL_RE.match(text) and not _NOT_OPEN_APP_RE.search(text):
         return True
-    if _GUI_VERB_RE.search(text):
+    # ...but only when the user ORDERS the click; "dann klicke ich da drauf" is
+    # the user describing their own workflow (live 2026-08-25).
+    if _has_commanding_gui_verb(text):
         return True
     if _OPEN_INSTRUCTIONAL_RE.search(text):
         return False
@@ -967,6 +1106,11 @@ def _match_direct_open_app(text: str) -> LocalActionPlan | None:
 
 
 def _matches_visual_target(text: str) -> bool:
+    # Same TASK-or-QUESTION rule as _looks_like_desktop_control: the leading
+    # "klick" pattern also matches a narrated "Klick ich da jetzt drauf oder
+    # nicht?", which is a question about the screen, not an order to touch it.
+    if _is_information_question(text):
+        return False
     return any(pattern.match(text) for pattern in _VISUAL_TARGET_PATTERNS)
 
 

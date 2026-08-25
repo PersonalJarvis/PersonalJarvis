@@ -7,6 +7,7 @@ from jarvis.brain.local_action_gate import (
     LocalActionPlan,
     LocalToolCall,
     _CapabilityRegistryLike,
+    _is_information_question,
     _unsupported_response,
     external_integration_terms,
     is_open_app_intent,
@@ -1132,3 +1133,107 @@ def test_external_integration_terms_names_the_matched_systems() -> None:
     # matcher needs the product names a connected tool would carry.
     assert "twitter" in external_integration_terms("poste das auf X")
     assert external_integration_terms("analysier das repo") == ()
+
+
+# ---------------------------------------------------------------------------
+# TASK or QUESTION (maintainer mandate 2026-08-25, flight recorder 16:50:08).
+#
+# "Wie nennt man das, wenn ... dann klicke ich da drauf ... wie nennt sich das
+# in der Fachsprache?" - a vocabulary question - was shipped verbatim to the
+# computer-use harness, which answered "Ich erledige das direkt am Bildschirm"
+# and started clicking. The narrated "klicke" matched the GUI-verb branch, and
+# that branch sat ABOVE the instructional guard, so a question containing any
+# GUI word could never be recognised as a question.
+#
+# The rule: a turn that ASKS and gives no order never reaches the desktop; a
+# polite request in question form ("Kannst du bitte einen Screenshot machen?")
+# still does, because it carries no interrogative opener.
+# ---------------------------------------------------------------------------
+
+_LIVE_2026_08_25 = (
+    "Wie nennt man das, wenn z.B. auf so einer Website auf so ein "
+    "Download-Button geht oder auf IT-Fachsprache und sich dann eine App "
+    "downloadet, nicht mehr in Ziel iCommand, sondern z.B. nicht in in den "
+    "Chrome Browser runterladen will, dann gibt das so Download Chrome für "
+    "Windows oder Mac Linux und dann klicke ich da drauf, dann wird irgendwie "
+    "so eine Datei runtergeladen und dann so dann gehe ich halt durch diesen "
+    "klassischen Downloading Prozess, wie nennt sich das in der Fachsprache?"
+)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        _LIVE_2026_08_25,
+        # A GUI verb inside the QUESTION itself.
+        "Wie klicke ich denn auf so einen Button?",
+        "Was passiert, wenn ich auf den roten Button klicke?",
+        "Wo klickt man da hin, um das Fenster zu schließen?",
+        "Wieso scrollt die Seite nicht, wenn ich scrolle?",
+        # Narration / complaint - the user reports, never orders.
+        "Ich klicke da immer drauf und es passiert nichts, woran liegt das?",
+        # Explanation requests that mention the harness or a window op.
+        "Was ist Computer-Use eigentlich genau?",
+        "Erklär mir mal, wie man ein Fenster minimiert",
+    ],
+)
+def test_questions_never_seize_the_desktop(utterance: str) -> None:
+    """A question is not a task - it must never reach the computer-use loop."""
+    plan = match_local_action(utterance, _registry=None)
+    assert plan is None or plan.mode is not LocalActionMode.COMPUTER_USE, (
+        f"{utterance!r} wrongly routed to COMPUTER_USE: {plan} - the user "
+        "asked something, they did not hand over the screen"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Bare imperatives.
+        "Klick mal auf den grünen Button",
+        "Mach einen Screenshot",
+        "Scroll mal runter",
+        "Minimier mal das Fenster",
+        "Zieh das Fenster nach links",
+        "Wechsel zum nächsten Tab",
+        "Navigiere zu den Einstellungen",
+        # A polite request IN QUESTION FORM is still a task - it carries no
+        # interrogative opener, only a modal ("kannst/könntest du ...").
+        "Kannst du bitte einen Screenshot machen?",
+        "Kannst du mal auf den blauen Button klicken?",
+        # Compound open-and-operate, and the named-instrument phrasing.
+        "Öffne WhatsApp und schreib Mama hallo",
+        "Mit Computer-Use in Spotify Shape of You abspielen",
+    ],
+)
+def test_orders_still_reach_computer_use(utterance: str) -> None:
+    """The guard must not cost a single real desktop command."""
+    plan = match_local_action(utterance, _registry=None)
+    assert plan is not None, f"{utterance!r} produced no plan at all"
+    assert plan.mode is LocalActionMode.COMPUTER_USE, (
+        f"{utterance!r} should drive the computer-use loop, got {plan.mode}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("utterance", "is_question"),
+    [
+        # A question that ENDS in an order is an ORDER - the guard stands down
+        # so the command can still run (same rule as
+        # ``tool_use_loop._is_instructional_question``). That the window-op
+        # pattern then fails to match "schliess ES" (noun before verb) is a
+        # separate, pre-existing gap in _WINDOW_OP_RE, not this guard's doing.
+        ("warum ist das fenster noch offen, schliess es mal", False),
+        ("warum ist spotify nicht offen, mach es auf", False),
+        # No interrogative opener at all - a polite order stays an order.
+        ("kannst du bitte einen screenshot machen", False),
+        # Pure questions, leading and trailing interrogative alike.
+        ("wie klicke ich denn auf so einen button", True),
+        ("das ist komisch, wieso scrollt die seite nicht", True),
+        # "du" is the addressee, never a narrating subject: an order survives.
+        ("du sollst mal runterscrollen", False),
+    ],
+)
+def test_information_question_classifier(utterance: str, is_question: bool) -> None:
+    """The TASK-or-QUESTION decision itself, on already-normalised input."""
+    assert _is_information_question(utterance) is is_question

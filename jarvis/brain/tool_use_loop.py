@@ -281,6 +281,12 @@ _SELF_IDENTIFICATION_RE = re.compile(
 
 _SIDE_EFFECT_TOOL_NAMES = {
     "click",
+    # The LLM-visible computer-use tool was missing here while its internal
+    # sibling ``dispatch_to_harness`` was listed, so the how-to-question guard
+    # covered the deterministic path and left the model's own CU call open
+    # (found while fixing the 2026-08-25 misroute of a vocabulary question onto
+    # the screenshot harness). Both doors to the desktop are guarded now.
+    "computer_use",
     "dispatch_to_harness",
     "dispatch_with_review",
     "hotkey",

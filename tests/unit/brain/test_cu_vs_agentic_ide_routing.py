@@ -17,6 +17,14 @@ that reads intent from single verbs cannot tell "copy this" from "copying is
 broken", so the tie has to be broken by the stronger signal: the user named a
 pane.
 
+Since 2026-08-25 the desktop gate can also make that distinction itself. Its
+TASK-or-QUESTION guard reads the clause
+"wieso man ... nicht kopieren kann"  # i18n-allow: quoted transcript
+as a question and stands down. The pane-precedence rule below stays exactly as
+it was — it is the layer that must hold when the wording is a genuine order
+that merely sounds like desktop work, and one gate being fixed is no reason to
+remove the other.
+
 This is the sibling of ``test_cu_vs_spawn_routing.py``. There a depth marker
 ("Deep Dive") wrongly beat an explicit screen request; here a screen verb
 wrongly beats an explicitly addressed terminal. Same shape, opposite direction:
@@ -142,15 +150,24 @@ def _prompted(registry: Registry) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_desktop_gate_really_does_claim_this_turn() -> None:
-    """Pin the precondition, so the guard below is never tested against a myth.
+def test_the_desktop_gate_no_longer_claims_this_turn() -> None:
+    """The root cause itself is gone as of 2026-08-25 — belt AND braces.
 
-    If this ever stops holding, the ordering guard has become dead weight and
-    the tests that follow would pass for the wrong reason.
+    This test used to pin the opposite: the desktop gate DID claim the turn,
+    and only the pane-precedence rule below saved it. The header called that
+    out as the real defect ("a gate that reads intent from single verbs cannot
+    tell 'copy this' from 'copying is broken'"), and the TASK-or-QUESTION guard
+    in ``local_action_gate`` now makes exactly that distinction: the clause
+    "wieso man keine Texte rein kopieren KANN"  # i18n-allow: quoted transcript
+    asks about pasting, it does not order a paste.
+
+    The pane-precedence tests below are unaffected — they exercise
+    ``intent.owns_turn`` and the end-to-end briefing directly, so they still
+    fail loudly if the workspace ever stops owning an addressed turn. Two
+    independent reasons now keep this utterance off the screen instead of one.
     """
     plan = match_local_action(LIVE_FAILURE, "de")
-    assert plan is not None
-    assert plan.mode is LocalActionMode.COMPUTER_USE
+    assert plan is None or plan.mode is not LocalActionMode.COMPUTER_USE
 
 
 def test_an_addressed_pane_outranks_the_desktop_gate() -> None:
