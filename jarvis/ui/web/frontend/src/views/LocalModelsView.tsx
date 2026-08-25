@@ -3,7 +3,7 @@
  * a server the user names): the Ollama runtime, the installed models, the
  * public catalogue and, later, Hugging Face.
  *
- * The column layout is the Costs view's, the header carries a Simple |
+ * The column runs the full window width (a catalogue is browsed, not read), the header carries a Simple |
  * Advanced switch (persisted per browser) and a rail of tabs. Simple shows
  * Overview (server facts + the four roles), Catalogue and Server; Advanced
  * adds Models (the installed ledger with the Tune sheet) and Hugging Face.
@@ -146,7 +146,7 @@ export function LocalModelsView() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="mx-auto flex max-w-[1720px] flex-col gap-4 px-6 py-6">
+      <div className="flex w-full flex-col gap-4 px-8 py-6">
         <BackLink
           label={t("local_models.back")}
           onClick={() => setActiveSection("apikeys")}
