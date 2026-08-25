@@ -170,7 +170,8 @@ describe("AgentInsight", () => {
     // Quoted in the verdict AND in the story's kill entry — both on purpose.
     expect(screen.getAllByText("You've reached your limit.").length).toBeGreaterThanOrEqual(2);
     // The kill and where in the pipeline it broke.
-    expect(screen.getByText("Worker (round 0) stopped")).toBeTruthy();
+    // Rounds are 1-based for people; the worker id says iter0.
+    expect(screen.getByText("Worker (round 1) stopped")).toBeTruthy();
     expect(screen.getByText("budget or provider quota")).toBeTruthy();
     // The story timeline lands on the failure by default for a failed run.
     expect(await screen.findByText("Worker started · claude · round 1")).toBeTruthy();

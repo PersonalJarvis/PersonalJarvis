@@ -229,10 +229,15 @@ export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
                     {t("subagents_view.action_map")}
                   </SoftButton>
                 )}
-                <SoftButton primary disabled={!slug} onClick={() => slug && onOpenOutput(slug)}>
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                  {t("subagents_view.action_open_output")}
-                </SoftButton>
+                {/* Only while the output directory exists: a bright primary
+                    button that cannot do anything reads as broken, and the
+                    tab bar already says the directory is gone. */}
+                {slug && (
+                  <SoftButton primary onClick={() => onOpenOutput(slug)}>
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                    {t("subagents_view.action_open_output")}
+                  </SoftButton>
+                )}
               </>
             }
           />
@@ -414,12 +419,14 @@ export function outcomeLines(agent: SubAgentNode, outcome: AgentOutcome, t: T): 
       lines.push({ id: "provider", tone: "neutral", label: t("subagents_view.line_provider"), text: outcome.failed_provider });
     }
     for (const kill of outcome.kills) {
+      // Rounds are numbered from 1 everywhere the page speaks to a person;
+      // the worker id carries the 0-based iteration.
       const iter = /::iter(\d+)$/.exec(kill.worker_id)?.[1];
       lines.push({
         id: `kill-${kill.worker_id}`,
         tone: kill.reason === "user" ? "warn" : "error",
         label: iter != null
-          ? fill(t("subagents_view.line_worker_stopped_iter"), { n: iter })
+          ? fill(t("subagents_view.line_worker_stopped_iter"), { n: Number(iter) + 1 })
           : t("subagents_view.line_worker_stopped"),
         text: kill.error_detail && kill.error_detail !== outcome.error_detail
           ? `${killLabel(kill.reason, t)} — ${kill.error_detail}`
