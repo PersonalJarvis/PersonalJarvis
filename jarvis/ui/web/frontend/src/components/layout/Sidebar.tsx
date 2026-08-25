@@ -195,6 +195,12 @@ export function Sidebar({
   // names let the tooltip say WHICH plugin, not just "something is off".
   const pluginAttention = usePluginAttention();
   const pluginsNeedReconnect = pluginAttention.count > 0;
+  // The Local models health monitor (D7) writes a `local_models` record; a
+  // failing or half-configured local setup gets the same amber dot — badge
+  // only, never a toast.
+  const localModelsHealth = sectionHealth.local_models;
+  const localModelsNeedAttention =
+    localModelsHealth?.status === "error" || localModelsHealth?.status === "needs_setup";
   // Name the culprit(s) in the hover text so the dot stops being cryptic; the
   // full plain-language banner + jump button live in the Plugins view itself.
   const pluginWarnTitle = pluginAttention.names.length
@@ -439,8 +445,18 @@ export function Sidebar({
                     betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
                     alert={item.id === "apikeys" ? apikeysHasError : false}
                     alertTitle={t("sidebar.apikeys_alert")}
-                    warn={item.id === "skills" ? pluginsNeedReconnect : false}
-                    warnTitle={pluginWarnTitle}
+                    warn={
+                      item.id === "skills"
+                        ? pluginsNeedReconnect
+                        : item.id === "local-models"
+                          ? localModelsNeedAttention
+                          : false
+                    }
+                    warnTitle={
+                      item.id === "local-models"
+                        ? localModelsHealth?.detail || localModelsHealth?.reason || undefined
+                        : pluginWarnTitle
+                    }
                     // A plugin problem sends the "Skills & Tools" row straight into
                     // the Plugins tab (where the banner + jump button are), so one
                     // click lands on the fix instead of the default Skills tab.

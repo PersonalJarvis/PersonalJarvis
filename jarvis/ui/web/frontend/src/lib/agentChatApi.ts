@@ -52,11 +52,13 @@ export interface AgentChatCatalog {
 
 /**
  * Where a session lives: the front page's typed chat (`jarvis` — the same
- * assistant as the microphone, on a keyboard) or a coding session listed by
- * the Agentic IDE (`agent`). Each surface asks the backend for its own list
- * and catalog, so the two never mix in a sidebar.
+ * assistant as the microphone, on a keyboard), a coding session listed by
+ * the Agentic IDE (`agent`), or the Local models section's setup assistant
+ * (`local-models`). Each surface asks the backend for its own list and
+ * catalog, so they never mix in a sidebar. Mirrors `SURFACES` in
+ * `jarvis/agent_chat/store.py` (a parity test reads this union).
  */
-export type AgentChatSurface = "jarvis" | "agent";
+export type AgentChatSurface = "jarvis" | "agent" | "local-models";
 
 export interface AgentChatSession {
   session_id: string;

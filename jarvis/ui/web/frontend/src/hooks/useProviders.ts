@@ -463,6 +463,14 @@ export interface SectionHealth {
   detail: string;
   /** Exact provider/integration checked by the backend. */
   subject_id: string | null;
+  /**
+   * Only on the `local_models` record (written by the health monitor,
+   * `jarvis/local_models/health_monitor.py`): when the current status began,
+   * the last time it was ok, and when the check ran — ISO or epoch seconds.
+   */
+  since?: string | number | null;
+  last_ok?: string | number | null;
+  checked_at?: string | number | null;
 }
 
 export interface SectionHealthResponse {
