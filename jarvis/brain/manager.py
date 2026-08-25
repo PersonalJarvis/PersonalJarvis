@@ -11457,10 +11457,13 @@ class BrainManager:
                 continue
 
             try:
-                brain = self._get_brain(
-                    prov_name,
-                    model,
-                    scope=turn_override.credential_scope if turn_override else None,
+                # The classic call keeps its two-argument shape (tests and
+                # callers replace ``_get_brain`` with that signature); only an
+                # overridden turn asks for its own credential scope.
+                brain = (
+                    self._get_brain(prov_name, model, scope=turn_override.credential_scope)
+                    if turn_override is not None
+                    else self._get_brain(prov_name, model)
                 )
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
