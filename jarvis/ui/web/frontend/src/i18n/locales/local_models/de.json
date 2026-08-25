@@ -213,7 +213,9 @@
       "readback_gpu": "Läuft mit {ctx} Kontext vollständig auf der Grafikkarte.",
       "readback_ctx": "Läuft mit {ctx} Kontext.",
       "readback_defaults": "Läuft mit den eigenen Vorgaben des Modells.",
-      "tune_skipped": "Zugewiesen; die Einstellungen bleiben bei den Vorgaben des Modells."
+      "tune_skipped": "Zugewiesen; die Einstellungen bleiben bei den Vorgaben des Modells.",
+      "voice_context_auto": "Läuft mit {context} Kontext — nach dem Speicher dieses Rechners bemessen. Über „Abstimmen“ selbst festlegen.",
+      "voice_context_manual": "Läuft mit {context} Kontext — von dir unter „Abstimmen“ festgelegt."
     },
     "server": {
       "host_eyebrow": "Host",
@@ -269,7 +271,16 @@
       "log_title": "Serverprotokoll",
       "log_refresh": "Protokoll neu laden",
       "log_loading": "Lese das Protokoll…",
-      "log_empty": "Noch kein Protokoll. Jarvis schreibt eines, wenn es den Server selbst startet."
+      "log_empty": "Noch kein Protokoll. Jarvis schreibt eines, wenn es den Server selbst startet.",
+      "idle_eyebrow": "Speicher",
+      "idle_title": "Speicher bei Leerlauf freigeben",
+      "idle_subtitle": "Der lokale Sprach-Stack — Voice-Server und Voice-Brain — gibt die Grafikkarte nach dieser Zeit ohne Anruf frei. Der nächste Anruf zahlt den Start erneut.",
+      "idle_label": "Nach",
+      "idle_minutes": "Minuten ohne Anruf",
+      "idle_never": "= alles geladen lassen",
+      "idle_save": "Speichern",
+      "idle_saving": "Speichern…",
+      "idle_hint": "0 lässt die Modelle geladen, solange Jarvis läuft. Gilt ab der nächsten Prüfung, kein Neustart nötig."
     },
     "tune": {
       "aria": "{model} feinjustieren",
@@ -339,7 +350,8 @@
       "saved_cleared": "{model} läuft wieder mit den Ollama-Standardwerten.",
       "footnote_alias": "Läuft über das Profil {alias}; der erste Gebrauch nach einer Änderung dauert ein paar Sekunden.",
       "footnote_will_bake": "Diese Einstellungen werden beim Speichern zu einem Profil des Modells; der erste Gebrauch danach dauert ein paar Sekunden.",
-      "footnote_no_alias": "Diese Einstellungen gehen mit jeder Anfrage mit; nichts wird neu gebaut."
+      "footnote_no_alias": "Diese Einstellungen gehen mit jeder Anfrage mit; nichts wird neu gebaut.",
+      "num_ctx_over_suggested": "Liegt laut Schätzung über dem, was in diesen Rechner passt (empfohlen {context}; das braucht etwa {estimate} GB). Wird trotzdem übernommen — das Modell kann in den Arbeitsspeicher ausweichen, langsam laufen oder nicht laden. Dein Rechner, deine Entscheidung."
     },
     "tune_missing": "Dieses Modell ist nicht mehr installiert, es gibt also nichts einzustellen."
   }

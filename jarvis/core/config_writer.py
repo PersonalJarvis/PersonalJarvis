@@ -1425,6 +1425,17 @@ def set_session_idle_timeout_s(
     _patch_table(path, "trigger", "session_idle_timeout_s", value)
 
 
+def set_local_idle_release_minutes(minutes: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[voice] local_idle_release_minutes`` — how long the local voice
+    stack may sit idle before it releases the accelerator (0 = never).
+
+    Negative input is normalised to 0. Read by the local-realtime supervisor on
+    its next monitor tick; no restart needed. TOML-only, like
+    :func:`set_session_idle_timeout_s`.
+    """
+    _patch_table(path, "voice", "local_idle_release_minutes", max(0, int(minutes)))
+
+
 def set_bar_persistent(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ui] bar_persistent`` (the 'show bar at all times' toggle).
 

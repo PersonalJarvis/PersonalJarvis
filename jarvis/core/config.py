@@ -2887,6 +2887,13 @@ class VoiceConfig(BaseModel):
     # (``tool_declaration_budget_tokens`` capability, AP-21); the smaller of
     # the two applies. 0 disables the bound.
     realtime_tool_declaration_budget_tokens: int = 0
+    # Minutes without a voice call after which the LOCAL voice stack lets go
+    # of the accelerator: the managed voice server (its STT/TTS models) is
+    # stopped and the Ollama voice brain's keep-alive is allowed to lapse.
+    # The next call pays the cold start again. 0 = keep everything loaded
+    # while Jarvis runs (the pre-2026-08-24 behaviour). Read by
+    # ``jarvis.realtime.local_server.supervisor.idle_release_s``.
+    local_idle_release_minutes: int = Field(default=30, ge=0, le=1440)
     # ADR-0034 (2026-08-18). When the user opens a NEW turn while an earlier
     # order's provider function call (jarvis_action) is still unanswered on
     # the wire, the session answers that call at once with a closed "still

@@ -103,6 +103,39 @@ BRAIN_KEEP_ALIVE = "2h"
 #: costs one empty HTTP request from a thread that is already polling.
 BRAIN_REWARM_INTERVAL_S = 45 * 60.0
 
+#: Fallback for ``[voice] local_idle_release_minutes`` when the config cannot
+#: be read (30 min). 0 = never release.
+DEFAULT_IDLE_RELEASE_S = 30 * 60.0
+
+
+def idle_release_s() -> float:
+    """Seconds of voice idleness after which the local stack frees the accelerator.
+
+    Maintainer mandate 2026-08-24: graphics memory belongs to the local models
+    only while they are actually in use. ``0`` keeps everything resident.
+    Read fresh on every monitor tick so a settings change applies without a
+    restart; an unreadable config keeps the default.
+    """
+    try:
+        from jarvis.core.config import load_config
+
+        minutes = getattr(getattr(load_config(), "voice", None), "local_idle_release_minutes", None)
+        if minutes is None:
+            return DEFAULT_IDLE_RELEASE_S
+        return max(0.0, float(minutes)) * 60.0
+    except Exception:  # noqa: BLE001 — a config hiccup must not change residency policy
+        log.debug("supervisor: idle-release setting unreadable, using the default", exc_info=True)
+        return DEFAULT_IDLE_RELEASE_S
+
+
+def _brain_keep_alive(release_s: float) -> str:
+    """Ollama ``keep_alive`` matching the release policy: the model lapses on
+    its own once the idle window has passed; ``0`` keeps the long residency."""
+    if release_s <= 0:
+        return BRAIN_KEEP_ALIVE
+    return f"{int(max(release_s, 60.0))}s"
+
+
 # Ollama's OpenAI-compatible endpoints cannot accept a per-request context
 # size.  Current long-context models can therefore reserve their full native
 # window (qwen3.5:4b used 262,144 tokens and spilled 5+ GiB into shared GPU
@@ -1579,6 +1612,8 @@ def _runtime_monitor(
     """Detect an idle process exit promptly and a wedged pool conservatively."""
     next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
     next_brain_warm = time.monotonic() + BRAIN_REWARM_INTERVAL_S
+    # A spawn means someone wanted the stack: the idle clock starts now.
+    last_use_at = time.monotonic()
     unready_since: float | None = None
     unhealthy_kind = ""
     last_outcome = ""
@@ -1642,11 +1677,28 @@ def _runtime_monitor(
                     unready_since = None
                     unhealthy_kind = ""
                     last_outcome = ""
+                    if int(pool.get("in_use", 0)) > 0 or int(pool.get("active", 0)) > 0:
+                        last_use_at = now
+                    release_s = idle_release_s()
+                    if release_s > 0 and now - last_use_at >= release_s:
+                        # Nobody has spoken for the whole idle window: give the
+                        # accelerator back. The brain's keep-alive lapses by
+                        # itself; the next call's preflight spawns again.
+                        log.info(
+                            "local-realtime supervisor: no voice call for %d min; "
+                            "stopping the local voice server to free the accelerator",
+                            int(release_s // 60),
+                        )
+                        stop(owned_only=True)
+                        return
                     if now >= next_brain_warm:
                         # Re-arm the brain's residency deadline on a proven
-                        # healthy server, so an overnight gap cannot make the
-                        # first sentence of the morning pay a cold model load.
-                        next_brain_warm = now + BRAIN_REWARM_INTERVAL_S
+                        # healthy server, so a gap inside the idle window
+                        # cannot make the next sentence pay a cold model load.
+                        interval = BRAIN_REWARM_INTERVAL_S
+                        if release_s > 0:
+                            interval = min(interval, release_s / 2.0)
+                        next_brain_warm = now + interval
                         warm_brain(launch_command=launch_command)
                     continue
                 if unready_since is None or unhealthy_kind != kind:
@@ -2091,7 +2143,12 @@ def warm_brain(*, launch_command: str, timeout: float = 5.0) -> bool:
         return False
     root = brain_url[: -len("/v1")] if brain_url.endswith("/v1") else brain_url
     payload = json.dumps(
-        {"model": model, "prompt": "", "keep_alive": BRAIN_KEEP_ALIVE, "stream": False}
+        {
+            "model": model,
+            "prompt": "",
+            "keep_alive": _brain_keep_alive(idle_release_s()),
+            "stream": False,
+        }
     ).encode("utf-8")
     import urllib.error
     import urllib.request
@@ -2111,7 +2168,7 @@ def warm_brain(*, launch_command: str, timeout: float = 5.0) -> bool:
     log.info(
         "local-realtime supervisor: brain model %s warmed (keep_alive=%s)",
         model,
-        BRAIN_KEEP_ALIVE,
+        _brain_keep_alive(idle_release_s()),
     )
     return True
 
@@ -2132,7 +2189,9 @@ def prepare_voice_brain_command(launch_command: str, *, timeout: float = 30.0) -
         return launch_command
 
     source_model, _ = _voice_context_models(model)
-    context_tokens, why = voice_brain_context_tokens(root, source_model, timeout=timeout)
+    context_tokens, why = voice_brain_context_tokens(
+        root, source_model, timeout=timeout, override=_voice_context_override(source_model)
+    )
     _, voice_model = _voice_context_models(source_model, context_tokens)
     cache_key = (root, source_model, voice_model)
     with _VOICE_MODEL_PREPARE_LOCK:
@@ -2214,8 +2273,37 @@ def _ollama_model_facts(
     return size_gb, native
 
 
-def voice_brain_context_tokens(root: str, model: str, *, timeout: float = 10.0) -> tuple[int, str]:
+def _voice_context_override(model: str) -> int | None:
+    """The ``num_ctx`` the user set for ``model`` in Local Models → Tune, or None.
+
+    The one place a person overrides the automatic size. Stored on the Ollama
+    card (``[brain.providers.ollama].models.<tag>.num_ctx``); the Tune sheet
+    warns when it is above what fits, and then applies it anyway — the
+    maintainer's rule is "warn, never refuse".
+    """
+    try:
+        from jarvis.brain.ollama_inventory import same_model
+        from jarvis.core.config import load_config
+
+        providers = getattr(getattr(load_config(), "brain", None), "providers", None) or {}
+        card = providers.get("ollama") if isinstance(providers, dict) else None
+        models = getattr(card, "models", None) or {}
+        for key, opts in models.items():
+            if same_model(str(key), model):
+                value = getattr(opts, "num_ctx", None)
+                return int(value) if isinstance(value, int) and value > 0 else None
+    except Exception:  # noqa: BLE001 — an unreadable override means "automatic"
+        log.debug("supervisor: voice context override unreadable for %s", model, exc_info=True)
+    return None
+
+
+def voice_brain_context_tokens(
+    root: str, model: str, *, timeout: float = 10.0, override: int | None = None
+) -> tuple[int, str]:
     """``(num_ctx, reason)`` for the managed voice brain on THIS machine.
+
+    ``override`` (the user's own ``num_ctx`` from the Tune sheet) wins
+    outright; everything below is the automatic sizing.
 
     Budget = usable accelerator memory (dedicated VRAM, or unified memory on
     Apple Silicon) minus :data:`VOICE_STACK_RESERVE_GB` for the local STT and
@@ -2228,6 +2316,10 @@ def voice_brain_context_tokens(root: str, model: str, *, timeout: float = 10.0) 
     from jarvis.hardware.detection import system_ram_gb, usable_accelerator_gb
 
     floor = VOICE_BRAIN_CONTEXT_TOKENS_FLOOR
+    if override is not None and override > 0:
+        return int(
+            override
+        ), f"{model}: num_ctx {int(override):,} set by you in Local Models → Tune"
     size_gb, native = _ollama_model_facts(root, model, timeout=timeout)
     if size_gb is None:
         return floor, f"{model}: size unreadable from Ollama, using the {floor}-token floor"

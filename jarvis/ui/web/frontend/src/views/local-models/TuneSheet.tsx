@@ -203,6 +203,15 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
     return list;
   }, [native]);
 
+  // The user may go above what fits this machine — with a warning, never a
+  // refusal (maintainer rule 2026-08-24: their machine, their call).
+  const suggestedCtx = suggested.data?.options.num_ctx ?? null;
+  const overSuggested =
+    suggestedCtx !== null &&
+    suggestedCtx !== undefined &&
+    typeof draft.num_ctx === "number" &&
+    draft.num_ctx > suggestedCtx;
+
   const set = <K extends keyof OllamaModelOptions>(
     key: K,
     value: OllamaModelOptions[K],
@@ -364,6 +373,17 @@ export function TuneSheet({ providerId, model, onClose }: TuneSheetProps) {
             </Chip>
           ))}
         </Knob>
+        {overSuggested && typeof draft.num_ctx === "number" && (
+          <p
+            className="text-xs text-amber-600 dark:text-amber-400"
+            data-testid="tune-ctx-warning"
+          >
+            {fill(k("num_ctx_over_suggested"), {
+              context: formatContext(suggestedCtx as number),
+              estimate: estimateContextGb(draft.num_ctx, modelGb).toFixed(1),
+            })}
+          </p>
+        )}
       </div>
 
       {/* Placement */}

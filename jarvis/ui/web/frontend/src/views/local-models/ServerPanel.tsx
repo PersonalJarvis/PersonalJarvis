@@ -42,7 +42,9 @@ import {
 } from "@/components/providers/ProviderTierSection";
 import {
   useEnvGuide,
+  useIdleRelease,
   useServer,
+  useSetIdleRelease,
   useServerLog,
   useStopServer,
   useTestServer,
@@ -97,6 +99,66 @@ function guessOs(): EnvGuideOs | undefined {
   if (ua.includes("mac")) return "macos";
   if (ua.includes("linux")) return "linux";
   return undefined;
+}
+
+/**
+ * Minutes of voice idleness before the local voice stack frees the
+ * accelerator (0 = keep loaded). Saved on click; the supervisor reads it on
+ * its next tick, no restart.
+ */
+function IdleReleaseControl({ providerId }: { providerId: string }) {
+  const t = useT();
+  const current = useIdleRelease(providerId);
+  const save = useSetIdleRelease(providerId);
+  const [draft, setDraft] = useState<string>("");
+  useEffect(() => {
+    if (current.data) setDraft(String(current.data.minutes));
+  }, [current.data]);
+  const minutes = Number.parseInt(draft, 10);
+  const valid = Number.isFinite(minutes) && minutes >= 0 && minutes <= 1440;
+  const dirty = current.data ? minutes !== current.data.minutes : false;
+  return (
+    <div className="space-y-2" data-testid="idle-release">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-sm text-foreground" htmlFor="idle-release-minutes">
+          {t("local_models.server.idle_label")}
+        </label>
+        <input
+          id="idle-release-minutes"
+          type="number"
+          min={0}
+          max={1440}
+          step={5}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+          aria-label={t("local_models.server.idle_label")}
+        />
+        <span className="text-xs text-muted-foreground">
+          {minutes === 0
+            ? t("local_models.server.idle_never")
+            : t("local_models.server.idle_minutes")}
+        </span>
+        <SoftButton
+          onClick={() => save.mutate(minutes)}
+          disabled={!valid || !dirty || save.isPending}
+          ariaLabel={t("local_models.server.idle_save")}
+        >
+          {save.isPending
+            ? t("local_models.server.idle_saving")
+            : t("local_models.server.idle_save")}
+        </SoftButton>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {t("local_models.server.idle_hint")}
+      </p>
+      {save.isError && (
+        <p className="text-sm text-destructive" role="alert">
+          {save.error instanceof Error ? save.error.message : String(save.error)}
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function ServerPanel({ providerId }: { providerId: string }) {
@@ -347,6 +409,20 @@ export function ServerPanel({ providerId }: { providerId: string }) {
           )}
         </div>
       </Panel>
+
+      {/* Memory release --------------------------------------------------------- */}
+      {!remote && (
+        <Panel>
+          <div className="space-y-3 p-4">
+            <p className={EYEBROW}>{t("local_models.server.idle_eyebrow")}</p>
+            <PanelHeader
+              title={t("local_models.server.idle_title")}
+              subtitle={t("local_models.server.idle_subtitle")}
+            />
+            <IdleReleaseControl providerId={providerId} />
+          </div>
+        </Panel>
+      )}
 
       {/* Loaded now ------------------------------------------------------------ */}
       <Panel>

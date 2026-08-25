@@ -268,3 +268,23 @@ def test_roles_using_is_latest_tolerant() -> None:
     cfg.brain.providers["ollama"].model = "gemma4"
     assert ollama_roles.roles_using(cfg, "gemma4:latest") == ["chat"]
     assert ollama_roles.roles_using(cfg, "qwen3-embedding:4b") == ["embedding"]
+
+
+# -- Idle release + the user's own choice --
+
+
+@pytest.mark.asyncio
+async def test_voice_context_reports_where_the_size_came_from(monkeypatch) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(supervisor, "_voice_context_override", lambda model: None)
+    monkeypatch.setattr(
+        supervisor,
+        "voice_brain_context_tokens",
+        lambda root, model, timeout, override: (65_536, "auto"),
+    )
+    assert await ollama_roles.voice_context(_cfg(), "qwen3.5:4b") == (65_536, "automatic")
+    monkeypatch.setattr(supervisor, "_voice_context_override", lambda model: 16_384)
+    assert (await ollama_roles.voice_context(_cfg(), "qwen3.5:4b"))[1] == "manual"
+    # No launch command -> no root -> no guess.
+    assert await ollama_roles.voice_context(JarvisConfig(), "qwen3.5:4b") == (None, "")

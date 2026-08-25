@@ -151,6 +151,10 @@ class RoleState:
     recommended: str
     #: One sentence when the slot is not Ollama-backed right now.
     note: str = ""
+    #: The voice brain's effective ``num_ctx`` on this machine (voice role only).
+    context_tokens: int | None = None
+    #: ``"automatic"`` (sized from memory) | ``"manual"`` (set in Tune) | ``""``.
+    context_source: str = ""
 
 
 # ── Reading ──────────────────────────────────────────────────────────────
@@ -307,6 +311,10 @@ async def list_roles(
     for spec in ROLES:
         current, note = current_pick(cfg, spec.id)
         qualifying = qualifying_models(spec, models)
+        context_tokens: int | None = None
+        context_source = ""
+        if spec.id == "voice" and current and error is None:
+            context_tokens, context_source = await voice_context(cfg, current)
         states.append(
             RoleState(
                 spec=spec,
@@ -315,9 +323,38 @@ async def list_roles(
                 qualifying=qualifying,
                 recommended=_recommended_for(spec, shortlist),
                 note=note,
+                context_tokens=context_tokens,
+                context_source=context_source,
             )
         )
     return states, error
+
+
+async def voice_context(cfg: Any, model: str) -> tuple[int | None, str]:
+    """``(num_ctx, source)`` the managed voice brain would run ``model`` with.
+
+    Off the event loop: the sizing reads the machine's memory and asks Ollama
+    for the model's facts. Any failure is ``(None, "")`` — the row then simply
+    shows no context line rather than a guess.
+    """
+    import asyncio
+
+    from jarvis.realtime.local_server import supervisor  # lazy: off the read path
+
+    command = _str(getattr(_voice_provider(cfg), "launch_command", ""))
+    _model, base = supervisor._brain_endpoint(command)
+    root = base[: -len("/v1")] if base.endswith("/v1") else base
+    if not root.startswith(("http://", "https://")):
+        return None, ""
+    override = supervisor._voice_context_override(model)
+    try:
+        tokens, _why = await asyncio.to_thread(
+            supervisor.voice_brain_context_tokens, root, model, timeout=2.0, override=override
+        )
+    except Exception:  # noqa: BLE001 — a sizing failure must not break the roles list
+        log.debug("ollama-roles: voice context sizing failed for %s", model, exc_info=True)
+        return None, ""
+    return tokens, "manual" if override else "automatic"
 
 
 # ── Writing ──────────────────────────────────────────────────────────────

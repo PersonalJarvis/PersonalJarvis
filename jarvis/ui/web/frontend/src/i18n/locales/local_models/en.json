@@ -213,7 +213,9 @@
       "readback_gpu": "Runs with a {ctx} context fully on the graphics card.",
       "readback_ctx": "Runs with a {ctx} context.",
       "readback_defaults": "Runs with the model's own defaults.",
-      "tune_skipped": "Assigned; the settings stay at the model's defaults."
+      "tune_skipped": "Assigned; the settings stay at the model's defaults.",
+      "voice_context_auto": "Runs with a {context} context — sized from this machine's memory. Tune to set it yourself.",
+      "voice_context_manual": "Runs with a {context} context — set by you in Tune."
     },
     "server": {
       "host_eyebrow": "Host",
@@ -269,7 +271,16 @@
       "log_title": "Server log",
       "log_refresh": "Refresh log",
       "log_loading": "Reading the log…",
-      "log_empty": "No log yet. Jarvis writes one when it starts the server itself."
+      "log_empty": "No log yet. Jarvis writes one when it starts the server itself.",
+      "idle_eyebrow": "Memory",
+      "idle_title": "Release memory when idle",
+      "idle_subtitle": "The local voice stack — its voice server and the voice brain — frees the graphics card after this long without a call. The next call pays the start-up again.",
+      "idle_label": "After",
+      "idle_minutes": "minutes without a call",
+      "idle_never": "= keep everything loaded",
+      "idle_save": "Save",
+      "idle_saving": "Saving…",
+      "idle_hint": "0 keeps the models loaded while Jarvis runs. Applies on the next check, no restart needed."
     },
     "tune": {
       "aria": "Tune {model}",
@@ -339,7 +350,8 @@
       "saved_cleared": "{model} runs on Ollama's defaults again.",
       "footnote_alias": "Runs through the profile {alias}; the first use after a change takes a few seconds.",
       "footnote_will_bake": "These settings become a profile of the model on save; the first use afterwards takes a few seconds.",
-      "footnote_no_alias": "These settings go with each request; nothing is rebuilt."
+      "footnote_no_alias": "These settings go with each request; nothing is rebuilt.",
+      "num_ctx_over_suggested": "Above what fits this machine by estimate (suggested {context}; this needs roughly {estimate} GB). It will still be applied — the model may spill into system memory, run slowly or fail to load. Your machine, your call."
     },
     "tune_missing": "That model is no longer installed, so there is nothing to tune."
   }

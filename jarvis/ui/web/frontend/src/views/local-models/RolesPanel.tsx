@@ -500,6 +500,21 @@ function RoleLedgerRow({
             </span>
           ))}
         </div>
+        {row.id === "voice" && row.context_tokens ? (
+          <p
+            className="mt-1 text-xs text-muted-foreground"
+            data-testid="voice-context"
+          >
+            {fill(
+              t(
+                row.context_source === "manual"
+                  ? "local_models.roles.voice_context_manual"
+                  : "local_models.roles.voice_context_auto",
+              ),
+              { context: contextLabel(row.context_tokens) },
+            )}
+          </p>
+        ) : null}
         <div className="mt-1 text-sm">
           {row.current ? (
             <StatusDot

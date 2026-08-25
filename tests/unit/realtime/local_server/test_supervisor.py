@@ -1713,6 +1713,9 @@ def test_cloud_brain_command_is_not_rewritten(monkeypatch) -> None:
 def test_warm_brain_pings_ollama_with_keep_alive(monkeypatch) -> None:
     import urllib.request
 
+    # keep_alive follows the idle-release window; 0 = the long residency.
+    monkeypatch.setattr(supervisor, "idle_release_s", lambda: 0.0)
+
     requests: list[tuple[str, dict[str, Any]]] = []
 
     class _Response:

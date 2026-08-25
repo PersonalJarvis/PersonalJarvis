@@ -122,6 +122,15 @@ export interface RoleRow {
   advanced: boolean;
   /** Sentence when the slot is served by something other than Ollama. */
   note: string;
+  /** The voice brain's effective context on this machine (voice role only). */
+  context_tokens?: number | null;
+  /** "automatic" (sized from memory) | "manual" (set in Tune) | "". */
+  context_source?: "" | "automatic" | "manual";
+}
+
+export interface IdleReleaseResponse {
+  /** Minutes of voice idleness before the local stack frees memory; 0 = never. */
+  minutes: number;
 }
 
 export interface RolesResponse {
@@ -414,6 +423,27 @@ export async function getRoles(providerId: string): Promise<RolesResponse> {
   return request(`${base(providerId)}/roles`);
 }
 
+export async function getIdleRelease(
+  providerId: string,
+): Promise<IdleReleaseResponse> {
+  return request(`${base(providerId)}/runtime/idle-release`);
+}
+
+export async function setIdleRelease(
+  providerId: string,
+  minutes: number,
+): Promise<IdleReleaseResponse> {
+  return request(
+    `${base(providerId)}/runtime/idle-release`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ minutes }),
+    },
+    WRITE_TIMEOUT_MS,
+  );
+}
+
 export async function setRole(
   providerId: string,
   role: LocalModelRole,
@@ -616,6 +646,7 @@ export const localModelsKeys = {
   model: (p: string, name: string) =>
     ["local-models", p, "inventory", name] as const,
   roles: (p: string) => ["local-models", p, "roles"] as const,
+  idleRelease: (p: string) => ["local-models", p, "idle-release"] as const,
   options: (p: string, name: string) =>
     ["local-models", p, "options", name] as const,
   suggested: (p: string, name: string) =>
@@ -930,6 +961,26 @@ export function useStopServer(providerId: string | undefined) {
       });
       void qc.invalidateQueries({
         queryKey: localModelsKeys.inventory(providerId ?? ""),
+      });
+    },
+  });
+}
+
+export function useIdleRelease(providerId: string | undefined) {
+  return useQuery({
+    queryKey: localModelsKeys.idleRelease(providerId ?? ""),
+    queryFn: () => getIdleRelease(providerId as string),
+    enabled: !!providerId,
+  });
+}
+
+export function useSetIdleRelease(providerId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (minutes: number) => setIdleRelease(providerId as string, minutes),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: localModelsKeys.idleRelease(providerId ?? ""),
       });
     },
   });

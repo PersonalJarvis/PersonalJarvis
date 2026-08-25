@@ -579,3 +579,43 @@ def test_server_stop_carries_the_danger_flag() -> None:
         if (getattr(route, "openapi_extra", None) or {}).get("x-jarvis-dangerous")
     }
     assert f"{BASE.replace('ollama', '{provider_id}')}/server/stop" in flagged
+
+
+# -- Idle release + the user's own choice --
+
+
+def test_idle_release_round_trip(server: WebServer, fake, monkeypatch) -> None:
+    written: list[int] = []
+    monkeypatch.setattr(
+        config_writer, "set_local_idle_release_minutes", lambda minutes: written.append(minutes)
+    )
+    with TestClient(server.app) as client:
+        assert client.get(f"{BASE}/runtime/idle-release").json() == {"minutes": 30}
+        assert client.put(f"{BASE}/runtime/idle-release", json={"minutes": 0}).json() == {
+            "minutes": 0
+        }
+        assert written == [0]
+        assert client.get(f"{BASE}/runtime/idle-release").json() == {"minutes": 0}
+        assert client.put(f"{BASE}/runtime/idle-release", json={"minutes": -1}).status_code == 422
+
+
+def test_roles_carry_the_voice_brains_context(server: WebServer, fake, monkeypatch) -> None:
+    from jarvis.brain import ollama_roles
+
+    server.app.state.config.brain.providers["local-realtime"] = BrainProviderConfig(
+        launch_command=(
+            "python -m server --model_name qwen3.5:4b "
+            "--responses_api_base_url http://127.0.0.1:11434/v1"
+        )
+    )
+
+    async def sized(cfg, model):
+        return 65_536, "automatic"
+
+    monkeypatch.setattr(ollama_roles, "voice_context", sized)
+    with TestClient(server.app) as client:
+        rows = {r["id"]: r for r in client.get(f"{BASE}/roles").json()["roles"]}
+    assert rows["voice"]["context_tokens"] == 65_536
+    assert rows["voice"]["context_source"] == "automatic"
+    assert rows["chat"]["context_tokens"] is None
+    assert rows["chat"]["context_source"] == ""

@@ -47,6 +47,7 @@ from jarvis.brain.ollama_inventory import (
     same_model,
 )
 from jarvis.core import config as cfg_mod
+from jarvis.core import config_writer
 from jarvis.core.config import OLLAMA_MODEL_OPTION_KEYS, OllamaModelOptions
 from jarvis.ui.web.provider_routes import _require_pull_capable, _resolve_cfg
 
@@ -381,6 +382,10 @@ class RoleRow(BaseModel):
     advanced: bool
     #: One sentence when the slot is served by something other than Ollama.
     note: str = ""
+    #: The voice brain's effective context on this machine (voice role only).
+    context_tokens: int | None = None
+    #: "automatic" | "manual" | "".
+    context_source: str = ""
 
 
 class RolesResponse(BaseModel):
@@ -418,6 +423,8 @@ def _role_row(state: ollama_roles.RoleState) -> RoleRow:
         writable=spec.writable,
         advanced=spec.advanced,
         note=state.note,
+        context_tokens=state.context_tokens,
+        context_source=state.context_source,
     )
 
 
@@ -846,6 +853,39 @@ async def post_server_stop(provider_id: str) -> ServerActionResponse:
     _require_pull_capable(provider_id)
     ok, message = ollama_runtime.stop_server()
     return ServerActionResponse(ok=ok, message=message)
+
+
+class IdleReleaseBody(BaseModel):
+    #: Minutes of voice idleness before the local stack frees the accelerator; 0 = never.
+    minutes: int = Field(ge=0, le=1440)
+
+
+class IdleReleaseResponse(BaseModel):
+    minutes: int
+
+
+@router.get("/runtime/idle-release", response_model=IdleReleaseResponse)
+async def get_idle_release(provider_id: str, request: Request) -> IdleReleaseResponse:
+    """How long the local voice stack may sit idle before it releases memory."""
+    _require_pull_capable(provider_id)
+    voice = getattr(_resolve_cfg(request), "voice", None)
+    return IdleReleaseResponse(minutes=int(getattr(voice, "local_idle_release_minutes", 30)))
+
+
+@router.put("/runtime/idle-release", response_model=IdleReleaseResponse)
+async def put_idle_release(
+    provider_id: str, body: IdleReleaseBody, request: Request
+) -> IdleReleaseResponse:
+    """Persist the idle window; the supervisor reads it on its next tick."""
+    _require_pull_capable(provider_id)
+    config_writer.set_local_idle_release_minutes(body.minutes)
+    voice = getattr(_resolve_cfg(request), "voice", None)
+    if voice is not None:
+        try:
+            voice.local_idle_release_minutes = int(body.minutes)
+        except Exception:  # noqa: BLE001 — a frozen in-memory config still got the TOML write
+            log.debug("local-models: in-memory idle-release update skipped", exc_info=True)
+    return IdleReleaseResponse(minutes=int(body.minutes))
 
 
 @router.post("/server/test", response_model=ServerProbeResponse)
