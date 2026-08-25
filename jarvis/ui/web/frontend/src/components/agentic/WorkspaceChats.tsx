@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Folder, MessageSquare, Plus, Trash2 } from "lucide-react";
 
 import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
-import { useAgentChatStore } from "@/store/agentChat";
+import { useAgentSessionStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
 import { folderLeaf } from "@/lib/folderPath";
 import { folderColor } from "@/components/agentic/folderColor";
@@ -31,13 +31,13 @@ export function WorkspaceChats() {
   const workspace = useIdeChatStore((s) => s.workspace);
   const setSidebarFace = useIdeChatStore((s) => s.setSidebarFace);
 
-  const sessions = useAgentChatStore((s) => s.sessions);
-  const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
-  const loadSessions = useAgentChatStore((s) => s.loadSessions);
-  const openSession = useAgentChatStore((s) => s.openSession);
-  const removeSession = useAgentChatStore((s) => s.removeSession);
-  const newChat = useAgentChatStore((s) => s.newChat);
-  const setDraft = useAgentChatStore((s) => s.setDraft);
+  const sessions = useAgentSessionStore((s) => s.sessions);
+  const activeSessionId = useAgentSessionStore((s) => s.activeSessionId);
+  const loadSessions = useAgentSessionStore((s) => s.loadSessions);
+  const openSession = useAgentSessionStore((s) => s.openSession);
+  const removeSession = useAgentSessionStore((s) => s.removeSession);
+  const newChat = useAgentSessionStore((s) => s.newChat);
+  const setDraft = useAgentSessionStore((s) => s.setDraft);
 
   useEffect(() => {
     void loadSessions();

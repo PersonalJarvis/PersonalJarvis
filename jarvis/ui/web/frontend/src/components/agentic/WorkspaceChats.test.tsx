@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceChats, groupByFolder } from "@/components/agentic/WorkspaceChats";
-import { useAgentChatStore } from "@/store/agentChat";
+import { useAgentSessionStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
 import type { AgentChatSession } from "@/lib/agentChatApi";
 
@@ -45,7 +45,7 @@ describe("the sidebar's chat face", () => {
       sidebarFace: "chats",
       workspace: { id: "w1", name: "Personal Jarvis", path: HERE },
     });
-    useAgentChatStore.setState({
+    useAgentSessionStore.setState({
       sessions: SESSIONS,
       activeSessionId: "a",
       loadSessions: async () => {},

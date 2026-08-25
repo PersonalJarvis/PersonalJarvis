@@ -1,20 +1,25 @@
 import { useEffect } from "react";
 
+import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatStage } from "@/components/home/ChatStage";
-import { useAgentChatStore } from "@/store/agentChat";
+import { useAgentSessionStore } from "@/store/agentChat";
 import type { IdeWorkspace } from "@/store/ideChat";
 
 /**
- * The Agentic IDE's chat surface — the agent chat, in this workspace's folder.
+ * The Agentic IDE's chat surface — a coding-agent session in this workspace's folder.
  *
- * It IS the front page's chat: same `ChatStage`, same composer, same store, so
- * a conversation started here can be picked up there and neither has to be
- * kept in step with the other by hand. What this component adds is the one
- * thing the IDE knows and the front page does not — WHICH FOLDER you are
- * working in. The workspace you opened is the working directory of every chat
- * started on this surface, which is what "logged into your workspace" means in
- * practice: the agent runs there, on those files, under that folder's
- * credentials.
+ * It wears the front page's face — same `ChatStage`, same composer — and is a
+ * DIFFERENT chat: the front page is Jarvis with a keyboard, this is a coding
+ * agent (Claude Code, Codex, the API loop) working in the folder. So it runs
+ * on its own store (`useAgentSessionStore`, surface `agent`): its own
+ * sessions, draft and socket, handed to the shared components through
+ * `AgentChatStoreProvider`. Opening a chat here never changes what the front
+ * page shows, and the other way round (maintainer, 2026-08-25). What this
+ * component adds on top is the one thing the IDE knows and the front page
+ * does not — WHICH FOLDER you are working in. The workspace you opened is the
+ * working directory of every chat started on this surface, which is what
+ * "logged into your workspace" means in practice: the agent runs there, on
+ * those files, under that folder's credentials.
  *
  * A chat belonging to another folder is not silently re-pointed. Moving an
  * existing conversation to a new working directory mid-thread would change
@@ -27,10 +32,10 @@ import type { IdeWorkspace } from "@/store/ideChat";
  */
 export function IdeChatSurface({ workspace }: { workspace: IdeWorkspace }) {
   const folder = workspace.path;
-  const activeSession = useAgentChatStore((s) => s.activeSession);
-  const draftCwd = useAgentChatStore((s) => s.draft.cwd);
-  const setDraft = useAgentChatStore((s) => s.setDraft);
-  const newChat = useAgentChatStore((s) => s.newChat);
+  const activeSession = useAgentSessionStore((s) => s.activeSession);
+  const draftCwd = useAgentSessionStore((s) => s.draft.cwd);
+  const setDraft = useAgentSessionStore((s) => s.setDraft);
+  const newChat = useAgentSessionStore((s) => s.newChat);
 
   useEffect(() => {
     if (!folder) return;
@@ -52,7 +57,9 @@ export function IdeChatSurface({ workspace }: { workspace: IdeWorkspace }) {
       data-workspace={workspace.id}
       data-folder={folder}
     >
-      <ChatStage />
+      <AgentChatStoreProvider store={useAgentSessionStore}>
+        <ChatStage />
+      </AgentChatStoreProvider>
     </div>
   );
 }

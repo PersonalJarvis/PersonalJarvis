@@ -553,3 +553,15 @@ export function createAgentChatStore(surface: AgentChatSurface) {
 
 /** The front page's store — every existing call site reads this one. */
 export const useAgentChatStore = createAgentChatStore("jarvis");
+
+/**
+ * The Agentic IDE's chat store — surface `agent`: coding-agent sessions in a
+ * workspace's folder, with their own sessions, draft and socket. The shared
+ * chat components reach it through `AgentChatStoreProvider`
+ * (components/agentchat/AgentChatStoreContext); nothing on the front page
+ * ever reads it, so the IDE's last chat can never appear there.
+ */
+export const useAgentSessionStore = createAgentChatStore("agent");
+
+/** The hook a `createAgentChatStore` call returns — what the context carries. */
+export type AgentChatStoreHook = typeof useAgentChatStore;

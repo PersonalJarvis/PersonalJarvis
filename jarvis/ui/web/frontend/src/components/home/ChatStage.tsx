@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { useEventStore } from "@/store/events";
-import { useAgentChatStore } from "@/store/agentChat";
+import { useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AgentComposer } from "@/components/agentchat/AgentComposer";
 import { AgentTimeline } from "@/components/agentchat/AgentTimeline";
@@ -43,12 +43,13 @@ import { useT } from "@/i18n";
 export function ChatStage() {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
-  const items = useAgentChatStore((s) => s.timeline.items);
-  const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
-  const catalog = useAgentChatStore((s) => s.catalog);
-  const decide = useAgentChatStore((s) => s.decide);
-  const loadCatalog = useAgentChatStore((s) => s.loadCatalog);
-  const loadSessions = useAgentChatStore((s) => s.loadSessions);
+  const surface = useAgentChat((s) => s.surface);
+  const items = useAgentChat((s) => s.timeline.items);
+  const activeSessionId = useAgentChat((s) => s.activeSessionId);
+  const catalog = useAgentChat((s) => s.catalog);
+  const decide = useAgentChat((s) => s.decide);
+  const loadCatalog = useAgentChat((s) => s.loadCatalog);
+  const loadSessions = useAgentChat((s) => s.loadSessions);
   const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
   const hasContent = items.length > 0;
 
@@ -136,7 +137,9 @@ export function ChatStage() {
 
   // A spoken thread was opened from the history: read it here, in the column
   // the composer would otherwise own. An agent chat opening clears this.
-  if (voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
+  // Only the front page shares its column with the voice archive; the IDE's
+  // chat is coding sessions and never shows a spoken thread.
+  if (surface === "jarvis" && voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
 
   if (!hasContent) {
     return (

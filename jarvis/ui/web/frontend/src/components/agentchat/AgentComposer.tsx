@@ -14,7 +14,8 @@ import {
 
 import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { useAgentChatStore, type ProviderOption } from "@/store/agentChat";
+import { useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
+import type { ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { pickAgentChatFolder } from "@/lib/agentChatApi";
 import { runningTurn } from "@/components/agentchat/reduce";
@@ -70,30 +71,31 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [restarting, setRestarting] = useState(false);
 
-  const catalog = useAgentChatStore((s) => s.catalog);
-  const catalogError = useAgentChatStore((s) => s.catalogError);
-  const backendOutdated = useAgentChatStore((s) => s.backendOutdated);
-  const connections = useAgentChatStore((s) => s.connections);
-  const liveModels = useAgentChatStore((s) => s.liveModels);
-  const draft = useAgentChatStore((s) => s.draft);
-  const timeline = useAgentChatStore((s) => s.timeline);
-  const busy = useAgentChatStore((s) => s.busy);
-  const lastError = useAgentChatStore((s) => s.lastError);
-  const setDraft = useAgentChatStore((s) => s.setDraft);
-  const setPlan = useAgentChatStore((s) => s.setPlan);
-  const send = useAgentChatStore((s) => s.send);
-  const cancel = useAgentChatStore((s) => s.cancel);
-  const loadCatalog = useAgentChatStore((s) => s.loadCatalog);
+  const store = useAgentChatApi();
+  const catalog = useAgentChat((s) => s.catalog);
+  const catalogError = useAgentChat((s) => s.catalogError);
+  const backendOutdated = useAgentChat((s) => s.backendOutdated);
+  const connections = useAgentChat((s) => s.connections);
+  const liveModels = useAgentChat((s) => s.liveModels);
+  const draft = useAgentChat((s) => s.draft);
+  const timeline = useAgentChat((s) => s.timeline);
+  const busy = useAgentChat((s) => s.busy);
+  const lastError = useAgentChat((s) => s.lastError);
+  const setDraft = useAgentChat((s) => s.setDraft);
+  const setPlan = useAgentChat((s) => s.setPlan);
+  const send = useAgentChat((s) => s.send);
+  const cancel = useAgentChat((s) => s.cancel);
+  const loadCatalog = useAgentChat((s) => s.loadCatalog);
 
   useEffect(() => {
     if (!catalog) void loadCatalog();
   }, [catalog, loadCatalog]);
 
   const providers = useMemo<ProviderOption[]>(
-    () => useAgentChatStore.getState().providerOptions(),
+    () => store.getState().providerOptions(),
     // Recompute when either half of the join changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [catalog, connections],
+    [catalog, connections, store],
   );
   const provider = providers.find((p) => p.id === draft.provider) ?? null;
 
