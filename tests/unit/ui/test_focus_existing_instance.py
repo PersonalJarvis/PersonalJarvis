@@ -9,6 +9,34 @@ with no window.
 from __future__ import annotations
 
 
+class _Resp:
+    def __init__(self, status_code=200, payload=None, json_error=False):
+        self.status_code = status_code
+        self._payload = payload
+        self._json_error = json_error
+
+    def json(self):
+        if self._json_error:
+            raise ValueError("no body")
+        return self._payload
+
+
+def test_focus_response_requires_a_raised_window():
+    from jarvis.ui import desktop_app
+
+    assert desktop_app._focus_response_means_window_raised(
+        _Resp(payload={"ok": True, "focused": True})
+    )
+    assert not desktop_app._focus_response_means_window_raised(
+        _Resp(payload={"ok": True, "focused": False})
+    )
+    assert not desktop_app._focus_response_means_window_raised(
+        _Resp(payload={"ok": False, "focused": False, "reason": "no_window"})
+    )
+    assert desktop_app._focus_response_means_window_raised(_Resp(payload={"ok": True}))
+    assert not desktop_app._focus_response_means_window_raised(_Resp(status_code=403))
+
+
 def test_focus_headers_send_the_control_key_when_one_exists(monkeypatch):
     from jarvis.ui import desktop_app
 

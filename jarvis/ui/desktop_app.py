@@ -504,6 +504,26 @@ def _pid_listening_on_port_netstat(port: int) -> int | None:
     return None
 
 
+def _focus_response_means_window_raised(response: Any) -> bool:
+    """True only when the running instance actually raised a window.
+
+    HTTP 200 is not enough: a headless holder answers 200 with
+    ``focused=False`` (and used to answer ``ok=True``), which made the
+    desktop launch exit as if it had brought a window forward.
+    """
+    if not (200 <= int(getattr(response, "status_code", 0)) < 300):
+        return False
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 — a 2xx with no JSON still counts
+        return True
+    if not isinstance(payload, dict):
+        return True
+    if "focused" in payload:
+        return bool(payload.get("focused"))
+    return bool(payload.get("ok", True))
+
+
 def _focus_request_headers(port: int) -> dict[str, str]:
     """Authenticate the launcher's focus ping so CSRF does not reject it.
 
@@ -553,7 +573,7 @@ def _focus_existing_instance() -> bool:
         # Nothing listening = no running instance, which is the ANSWER this
         # function returns, not a failure worth reporting.
         return False
-    return 200 <= r.status_code < 300
+    return _focus_response_means_window_raised(r)
 
 
 def focus_existing_instance_robust() -> bool:
@@ -590,17 +610,9 @@ def focus_existing_instance_robust() -> bool:
             except Exception:  # noqa: BLE001, S112
                 # This port is not the running instance; try the next candidate.
                 continue
-            if 200 <= r.status_code < 300:
-                try:
-                    payload = r.json()
-                    focused = bool(payload.get("ok", True))
-                except Exception:  # noqa: BLE001
-                    # A 2xx without a JSON body still means the instance
-                    # accepted the focus request, so treat it as success.
-                    focused = True
-                if focused:
-                    _bring_window_to_front_by_title(WINDOW_TITLE)
-                    return True
+            if _focus_response_means_window_raised(r):
+                _bring_window_to_front_by_title(WINDOW_TITLE)
+                return True
 
     return _bring_window_to_front_by_title(WINDOW_TITLE) or focused
 

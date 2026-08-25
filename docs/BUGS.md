@@ -12794,7 +12794,9 @@ found and the running process is unknown.
 * Recovery names the holder from sidecar, then the error text, then the
   listening pid, so the "stop and start fresh?" dialog can actually run.
 * The focus ping sends the Control-API Bearer (loopback Origin only if no
-  key exists yet).
+  key exists yet). A 200 from a headless holder with `focused=false` is
+  not treated as "window raised"; the placeholder route now returns
+  `ok=false, reason=no_window`.
 
 **Tests.** `tests/contract/test_single_instance.py`
 (`test_missing_sidecar_names_the_listener_instead_of_waiting`),

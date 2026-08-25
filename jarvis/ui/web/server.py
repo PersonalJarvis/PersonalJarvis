@@ -1,4 +1,4 @@
-﻿"""FastAPI + WebSocket server for the desktop UI (Phase 1a).
+"""FastAPI + WebSocket server for the desktop UI (Phase 1a).
 
 Responsibilities:
 - REST endpoints for health, config read-only, plugin discovery, debug.
@@ -10,6 +10,7 @@ Explicitly NOT here:
 - The React build itself (Agent 5).
 - Single-instance focus logic (only a placeholder endpoint).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -250,9 +251,7 @@ class WebServer:
                 allow_headers=["*"],
             )
 
-        twilio_cfg = getattr(
-            getattr(self.cfg, "integrations", None), "twilio", None
-        )
+        twilio_cfg = getattr(getattr(self.cfg, "integrations", None), "twilio", None)
         public_urls = tuple(
             value
             for value in (
@@ -410,6 +409,7 @@ class WebServer:
         from .workflows_routes import router as workflows_router
         from .workspace_clis_routes import router as workspace_clis_router
         from .workspace_routes import router as workspace_router
+
         # Conductor is an external package in the same monorepo. Import
         # defensively — anyone who checks out the repo without conductor would
         # otherwise get an ImportError here at server boot.
@@ -640,8 +640,10 @@ class WebServer:
         # user can already type (and use browser voice). A real voice pipeline
         # starts at ready=False (warmup_start) and flips True via the subscriber
         # below, so this seed only ever sticks when voice is genuinely off.
-        _voice_disabled = (
-            os.environ.get("JARVIS_VOICE", "").strip().lower() in ("0", "off", "false")
+        _voice_disabled = os.environ.get("JARVIS_VOICE", "").strip().lower() in (
+            "0",
+            "off",
+            "false",
         )
         self._voice_ready = _voice_disabled
 
@@ -695,9 +697,7 @@ class WebServer:
         # the bus publish below fails; the WS event then updates live tabs.
         self._voice_ready = True
         try:
-            await self.bus.publish(
-                VoiceBootStatus(ready=True, detail="watchdog_timeout")
-            )
+            await self.bus.publish(VoiceBootStatus(ready=True, detail="watchdog_timeout"))
         except Exception as exc:  # noqa: BLE001 — mirror already set; never crash
             logger.debug("watchdog VoiceBootStatus publish failed: %s", exc)
 
@@ -789,12 +789,12 @@ class WebServer:
             app.state.bio_store = bio_store
             logger.info(
                 "Board ready (jsonl={}, db={}, achievements={})",
-                jsonl_dir, db_path, len(evaluator.list_all()),
+                jsonl_dir,
+                db_path,
+                len(evaluator.list_all()),
             )
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning(
-                "Board setup failed — /board returns empty"
-            )
+            logger.opt(exception=exc).warning("Board setup failed — /board returns empty")
             self._board_aggregator = None
             self._board_aggregator_task = None
             self._board_evaluator = None
@@ -828,9 +828,7 @@ class WebServer:
             # reload_sync() (disk glob + parse) is deferred off the boot critical
             # path — run after uvicorn is listening (start()).
             self._pending_reloads.append(("SkillRegistry", registry))
-            logger.info(
-                "SkillRegistry created (scan deferred) from {}", skills_root
-            )
+            logger.info("SkillRegistry created (scan deferred) from {}", skills_root)
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
                 "SkillRegistry setup failed — Skills view stays empty"
@@ -863,13 +861,9 @@ class WebServer:
             # The initial Markdown scan + FTS index build is deferred off the
             # boot critical path and runs after uvicorn is listening (start()).
             self._pending_reloads.append(("DocRegistry", registry))
-            logger.info(
-                "DocRegistry created (scan deferred) for {} roots", len(roots)
-            )
+            logger.info("DocRegistry created (scan deferred) for {} roots", len(roots))
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning(
-                "DocRegistry setup failed — Docs view stays empty"
-            )
+            logger.opt(exception=exc).warning("DocRegistry setup failed — Docs view stays empty")
             app.state.doc_registry = None
 
     def _setup_cli_registry(self, app: FastAPI) -> None:
@@ -978,10 +972,11 @@ class WebServer:
 
         @app.post("/api/window/focus")
         async def window_focus() -> dict[str, Any]:
-            # Placeholder — the actual focus call lands in the desktop app
-            # (pywebview shell). Just an ACK here, so single-instance ping
-            # gets a defined status.
-            return {"ok": True, "focused": False, "note": "handled by desktop-shell"}
+            # Placeholder until the desktop shell replaces this with a real
+            # raise. Headless / VPS has no window: ok=False so a later
+            # desktop launch does not treat this ACK as "I brought a window
+            # forward" and silently exit (BUG-182).
+            return {"ok": False, "focused": False, "reason": "no_window"}
 
         @app.get("/api/brain/status")
         async def brain_status() -> dict[str, Any]:
@@ -1073,9 +1068,7 @@ class WebServer:
             # brain never drifts from the worker that runs. (Bug 2026-05-28:
             # the UI showed Gemini active while heavy work ran on Claude.)
             sub_cfg = getattr(cfg.brain, "worker", None)
-            sub_raw = (
-                getattr(sub_cfg, "provider", None) if sub_cfg is not None else None
-            )
+            sub_raw = getattr(sub_cfg, "provider", None) if sub_cfg is not None else None
             sub_provider = (
                 canonical_worker_provider(sub_raw)
                 if canonical_worker_provider is not None
@@ -1086,13 +1079,10 @@ class WebServer:
             # Model: an explicit ``[brain.sub_jarvis].model`` wins; else the
             # active provider's deep_model (frontier) from
             # ``[brain.providers.<provider>]``.
-            sub_model_override = (
-                getattr(sub_cfg, "model", None) if sub_cfg is not None else None
-            )
+            sub_model_override = getattr(sub_cfg, "model", None) if sub_cfg is not None else None
             prov_cfg = cfg.brain.providers.get(primary)
             primary_deep_model = (sub_model_override or "").strip() or (
-                getattr(prov_cfg, "deep_model", None)
-                or getattr(prov_cfg, "model", None)
+                getattr(prov_cfg, "deep_model", None) or getattr(prov_cfg, "model", None)
                 if prov_cfg
                 else None
             )
@@ -1110,9 +1100,7 @@ class WebServer:
             elif provider_slug and primary_deep_model:
                 model_resolved = f"{provider_slug}/{primary_deep_model}"
 
-            binary_path = (
-                oc_cfg.binary_path if oc_cfg is not None else "openclaw"
-            )
+            binary_path = oc_cfg.binary_path if oc_cfg is not None else "openclaw"
             binary_detected: str | None = shutil.which(binary_path)
             if not binary_detected:
                 for ext in (".cmd", ".ps1", ".exe"):
@@ -1137,9 +1125,7 @@ class WebServer:
                 slot = jarvis_agent_secret_slot(mapping.jarvis)
                 secret_key = slot[0] if slot else None
                 try:
-                    dedicated_key_set = bool(
-                        slot and get_secret(slot[0], env_fallback=slot[1])
-                    )
+                    dedicated_key_set = bool(slot and get_secret(slot[0], env_fallback=slot[1]))
                     shared_key_set = bool(get_provider_secret(mapping.jarvis))
                 except Exception:  # noqa: BLE001
                     dedicated_key_set = False
@@ -1158,17 +1144,12 @@ class WebServer:
                             freshest_claude_oauth,
                         )
 
-                        auth_status = await asyncio.to_thread(
-                            ClaudeAuthService().status
-                        )
+                        auth_status = await asyncio.to_thread(ClaudeAuthService().status)
                         oauth_connected = bool(
-                            auth_status.connected
-                            and auth_status.mode == "subscription"
+                            auth_status.connected and auth_status.mode == "subscription"
                         )
                         snapshot_status = freshest_claude_oauth().status
-                        oauth_stale = (
-                            not oauth_connected and snapshot_status == "expired"
-                        )
+                        oauth_stale = not oauth_connected and snapshot_status == "expired"
                     except Exception:  # noqa: BLE001
                         oauth_connected = False
                         oauth_stale = False
@@ -1210,9 +1191,7 @@ class WebServer:
                         # ready the moment it exists, and gating it on a key it
                         # never has locked it out of the picker entirely.
                         "key_set": (
-                            True
-                            if keyless
-                            else api_key_set or oauth_connected or oauth_stale
+                            True if keyless else api_key_set or oauth_connected or oauth_stale
                         ),
                         "api_key_set": api_key_set,
                         "dedicated_key_set": dedicated_key_set,
@@ -1249,16 +1228,12 @@ class WebServer:
             try:
                 from jarvis.codex_auth import CodexAuthService
 
-                codex_bin = (
-                    getattr(getattr(cfg, "codex", None), "binary_path", "") or None
-                )
+                codex_bin = getattr(getattr(cfg, "codex", None), "binary_path", "") or None
                 # Off the event loop like the Claude probe above: it spawns the
                 # CLI binary, and on the loop that few-hundred-millisecond pause
                 # froze the realtime voice socket into an audible mid-sentence
                 # hole (forensic 2026-07-27).
-                codex_status = await asyncio.to_thread(
-                    CodexAuthService(codex_bin).status
-                )
+                codex_status = await asyncio.to_thread(CodexAuthService(codex_bin).status)
                 codex_connected = codex_status.connected
                 codex_installed = codex_status.installed
             except Exception:  # noqa: BLE001
@@ -1316,12 +1291,9 @@ class WebServer:
                 )
 
                 # Off the event loop for the same reason as the Codex probe.
-                antigravity_status = await asyncio.to_thread(
-                    GoogleCliAuthService().status
-                )
+                antigravity_status = await asyncio.to_thread(GoogleCliAuthService().status)
                 antigravity_connected = (
-                    antigravity_status.connected
-                    and antigravity_status.mode == "oauth-personal"
+                    antigravity_status.connected and antigravity_status.mode == "oauth-personal"
                 )
             except Exception:  # noqa: BLE001
                 antigravity_connected = False
@@ -1381,12 +1353,9 @@ class WebServer:
                     grok_build_provider_ready,
                 )
 
-                grok_build_status = await asyncio.to_thread(
-                    GrokBuildAuthService().status
-                )
+                grok_build_status = await asyncio.to_thread(GrokBuildAuthService().status)
                 grok_build_connected = (
-                    grok_build_status.connected
-                    and grok_build_status.mode == "subscription"
+                    grok_build_status.connected and grok_build_status.mode == "subscription"
                 )
             except Exception:  # noqa: BLE001
                 # A probe that cannot answer means "not connected" on this
@@ -1501,12 +1470,7 @@ class WebServer:
             The frontend uses this to populate the shell dropdown with only
             available options — no "command not found" on spawn.
             """
-            return {
-                "shells": [
-                    {"id": s.id, "label": s.label}
-                    for s in discover_shells()
-                ]
-            }
+            return {"shells": [{"id": s.id, "label": s.label} for s in discover_shells()]}
 
         # The wallpaper picker. Registered here, with the REST routes, rather
         # than beside the static mounts: those are skipped entirely in dev mode,
@@ -1550,9 +1514,7 @@ class WebServer:
                 async with send_lock:
                     # Bounded send: a stalled/half-open client must NEVER block
                     # the bus (BUG-CU-STALL). On timeout we drop the client.
-                    await asyncio.wait_for(
-                        ws.send_json(envelope), timeout=_WS_SEND_TIMEOUT_S
-                    )
+                    await asyncio.wait_for(ws.send_json(envelope), timeout=_WS_SEND_TIMEOUT_S)
             except WebSocketDisconnect:
                 _drop_stalled_client()
             except TimeoutError:
@@ -1743,9 +1705,7 @@ class WebServer:
         except WebSocketDisconnect:
             self._remove_ws_client(session_id)
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).debug(
-                "Microphone level send failed", session_id=session_id
-            )
+            logger.opt(exception=exc).debug("Microphone level send failed", session_id=session_id)
             stale_ws = self._remove_ws_client(session_id)
             if stale_ws is not None:
                 try:
@@ -1825,9 +1785,7 @@ class WebServer:
                 async with send_lock:
                     await ws.send_json({"type": "pong", "payload": cmd.payload})
         elif cmd.action == "test_event":
-            await self.bus.publish(
-                SystemStarted(version=__version__, source_layer="ui.web.ws.cmd")
-            )
+            await self.bus.publish(SystemStarted(version=__version__, source_layer="ui.web.ws.cmd"))
         elif cmd.action == "terminal.spawn":
             await self._handle_terminal_spawn(session_id, cmd.payload, send_lock)
         elif cmd.action == "terminal.input":
@@ -1843,9 +1801,7 @@ class WebServer:
         # provider_switch/set_state now run over REST (POST /api/brain/switch
         # or POST /api/secrets/{key}). Duplicate code paths removed here.
 
-    async def _handle_mission_inject(
-        self, session_id: str, payload: dict[str, Any]
-    ) -> None:
+    async def _handle_mission_inject(self, session_id: str, payload: dict[str, Any]) -> None:
         """Drag-drop a mission card → inject it into the live conversation.
 
         Composes a bounded, human-readable user turn from the card's own data
@@ -2170,10 +2126,7 @@ class WebServer:
         the operation exactly-once even if start is invoked again before the
         callback runs.
         """
-        if (
-            self._refresh_scheduler is not None
-            or self._refresh_scheduler_start_handle is not None
-        ):
+        if self._refresh_scheduler is not None or self._refresh_scheduler_start_handle is not None:
             return
         self._refresh_scheduler_stopping = False
         loop = asyncio.get_running_loop()
@@ -2252,8 +2205,7 @@ class WebServer:
             scheduler.start()
         except Exception as exc:  # noqa: BLE001 -- refresh must never block boot
             logger.opt(exception=exc).warning(
-                "Marketplace refresh scheduler did not start; connected OAuth "
-                "plugins may expire."
+                "Marketplace refresh scheduler did not start; connected OAuth plugins may expire."
             )
             return
 
@@ -2355,9 +2307,7 @@ class WebServer:
             try:
                 await scheduler.stop()
             except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
-                logger.opt(exception=exc).warning(
-                    "Marketplace refresh scheduler stop failed."
-                )
+                logger.opt(exception=exc).warning("Marketplace refresh scheduler stop failed.")
 
         # A successful token refresh may already have queued a live MCP-session
         # rebuild. Drain those tasks before PluginToolRegistry.stop(); otherwise
@@ -2541,9 +2491,7 @@ class WebServer:
         try:
             await self._init_ultrawiki()
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning(
-                "UltraWiki init failed — /api/ultrawiki answers 503"
-            )
+            logger.opt(exception=exc).warning("UltraWiki init failed — /api/ultrawiki answers 503")
         _boot_mark("ultrawiki")
 
         # Voice-session recorder + store for the transcription view.
@@ -2563,9 +2511,7 @@ class WebServer:
         try:
             await self._init_task_stack()
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning(
-                "TaskStack init failed — /api/tasks returns 503"
-            )
+            logger.opt(exception=exc).warning("TaskStack init failed — /api/tasks returns 503")
         _boot_mark("task_stack")
 
         # Start the skill hot-reload watcher once the loop is stable.
@@ -2591,6 +2537,7 @@ class WebServer:
         # and builds tool instances. ``asyncio.create_task`` runs the call as
         # a background task so ``start()`` itself doesn't block.
         if self._cli_registry is not None:
+
             async def _bootstrap_clis() -> None:
                 try:
                     await self._cli_registry.bootstrap()
@@ -2598,12 +2545,14 @@ class WebServer:
                     logger.opt(exception=exc).warning(
                         "CliToolRegistry bootstrap failed — CLIs view empty"
                     )
+
             asyncio.create_task(_bootstrap_clis(), name="cli-registry-bootstrap")
 
         # Bootstrap the plugin registry asynchronously — opens an in-process
         # MCPClient per connected plugin and bridges its tools into the
         # live brain (BrainToolsChanged re-expands). Mirrors the CLI registry.
         if self._plugin_registry is not None:
+
             async def _bootstrap_plugins() -> None:
                 try:
                     await self._plugin_registry.bootstrap()
@@ -2611,6 +2560,7 @@ class WebServer:
                     logger.opt(exception=exc).warning(
                         "PluginToolRegistry bootstrap failed — plugins worker-only"
                     )
+
             asyncio.create_task(_bootstrap_plugins(), name="plugin-registry-bootstrap")
 
         # Board aggregator as a never-ending task. run_forever() does an
@@ -2626,9 +2576,7 @@ class WebServer:
             try:
                 self._board_evaluator.attach()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "AchievementEvaluator.attach() failed"
-                )
+                logger.opt(exception=exc).warning("AchievementEvaluator.attach() failed")
 
         # Bio scheduler — weekly + master achievement trigger.
         # The brain isn't finalized here yet (app.state.brain usually
@@ -2638,9 +2586,7 @@ class WebServer:
             try:
                 self._bio_scheduler.start()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "BioScheduler.start() failed"
-                )
+                logger.opt(exception=exc).warning("BioScheduler.start() failed")
 
         # Friends-Stack: FriendRegistry + ChannelManager. Started as a BACKGROUND
         # task so a slow Telegram/Discord network connect (bot login / getUpdates
@@ -2694,7 +2640,8 @@ class WebServer:
                             await asyncio.to_thread(registry.reload_sync)
                         logger.info(
                             "{} deferred scan complete ({} entries)",
-                            label, len(registry.list()),
+                            label,
+                            len(registry.list()),
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.opt(exception=exc).warning(
@@ -2735,8 +2682,7 @@ class WebServer:
         retention_days = self.cfg.telemetry.flight_recorder_retention_days
         if retention_days <= 0:
             logger.info(
-                "Screenshot retention disabled "
-                "(flight_recorder_retention_days={})",
+                "Screenshot retention disabled (flight_recorder_retention_days={})",
                 retention_days,
             )
             return
@@ -2764,8 +2710,7 @@ class WebServer:
                 )
                 if stats["removed"] > 0:
                     logger.info(
-                        "Screenshot retention boot sweep: removed={} freed={:.1f} MB "
-                        "(cutoff={}d)",
+                        "Screenshot retention boot sweep: removed={} freed={:.1f} MB (cutoff={}d)",
                         stats["removed"],
                         stats["bytes_freed"] / (1024 * 1024),
                         retention_days,
@@ -2783,9 +2728,7 @@ class WebServer:
                 interval_seconds=DEFAULT_RETENTION_INTERVAL_SECONDS,
             )
 
-        self._screenshot_retention_task = asyncio.create_task(
-            _boot_sweep_then_retain()
-        )
+        self._screenshot_retention_task = asyncio.create_task(_boot_sweep_then_retain())
 
     async def _init_flight_recorder(self) -> None:
         """Attach the flight-recorder audit log to the EventBus (ADR-0007).
@@ -2809,9 +2752,7 @@ class WebServer:
             return
         self._flight_recorder = rec
         self.app.state.flight_recorder = rec
-        logger.info(
-            "Flight recorder attached — events -> data/flight_recorder/*.jsonl"
-        )
+        logger.info("Flight recorder attached — events -> data/flight_recorder/*.jsonl")
 
     async def _init_mission_stack(self) -> None:
         """Phase-6 production wiring: bootstrap_missions() returns the
@@ -2922,7 +2863,8 @@ class WebServer:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "set_mission_manager/kontrollierer wiring failed — "
-                "spawn_worker is disabled for this run: %s", exc,
+                "spawn_worker is disabled for this run: %s",
+                exc,
             )
             # Surface the failure for both downstream readers:
             #  - `self.app.state.worker_available` lets REST routes and
@@ -2935,6 +2877,7 @@ class WebServer:
             self.app.state.worker_available = False
             try:
                 from jarvis.brain.factory import set_worker_bootstrap_failed
+
                 set_worker_bootstrap_failed(True)
             except Exception as inner_exc:  # noqa: BLE001
                 logger.warning(
@@ -2959,8 +2902,11 @@ class WebServer:
         sweep = result["sweep_stats"]
         logger.info(
             "Phase-6 stack online (db={}, recovered={}, sweep={}/{}/{} scanned/removed/errors)",
-            db_path, len(recovered),
-            sweep["scanned"], sweep["removed"], sweep["errors"],
+            db_path,
+            len(recovered),
+            sweep["scanned"],
+            sweep["removed"],
+            sweep["errors"],
         )
 
         # Periodic recovery re-sweep (2026-06-10, mission 019eb25c): boot
@@ -3034,7 +2980,7 @@ class WebServer:
             repo=repo,
             vault_root=vault_root,
             config=wiki_cfg,
-            brain_caller=None,      # curator uses BrainProviderRegistry internally
+            brain_caller=None,  # curator uses BrainProviderRegistry internally
             scheduler_factory=_wiki_scheduler_factory,
             voice_bridge_config=self.cfg.memory.wiki.voice_bridge,
         )
@@ -3096,8 +3042,7 @@ class WebServer:
                     )
                     if result.sessions_reviewed or result.candidates_journaled:
                         logger.info(
-                            "wiki auto-backfill: reviewed {} session(s), "
-                            "journaled {} candidate(s)",
+                            "wiki auto-backfill: reviewed {} session(s), journaled {} candidate(s)",
                             result.sessions_reviewed,
                             result.candidates_journaled,
                         )
@@ -3213,9 +3158,7 @@ class WebServer:
                 try:
                     from jarvis.memory.wiki.health import health as _wiki_health
 
-                    _wiki_health.record_chain_failure(
-                        f"wiki index reconciliation failed: {exc}"
-                    )
+                    _wiki_health.record_chain_failure(f"wiki index reconciliation failed: {exc}")
                 except Exception:  # noqa: BLE001
                     logger.debug("wiki index health recording failed", exc_info=True)
             finally:
@@ -3358,7 +3301,9 @@ class WebServer:
 
         logger.info(
             "TaskStack live (db={}, recovered={}, hydrated={} scheduled)",
-            db_path, recovered, len(scheduler._heap),
+            db_path,
+            recovered,
+            len(scheduler._heap),
         )
 
     def _read_sessions_toml_section(self) -> dict:
@@ -3372,6 +3317,7 @@ class WebServer:
             return {}
         try:
             import tomllib
+
             with toml_path.open("rb") as fh:
                 raw = tomllib.load(fh)
             return raw.get("sessions", {}) or {}
@@ -3498,13 +3444,9 @@ class WebServer:
         else:
             errs = manager.start_errors().get("telegram")
             if errs:
-                logger.info(
-                    "Friends-Stack live: Telegram-Channel disabled ({})", errs
-                )
+                logger.info("Friends-Stack live: Telegram-Channel disabled ({})", errs)
             else:
-                logger.info(
-                    "Friends-Stack live: Telegram-Channel disabled (config off)"
-                )
+                logger.info("Friends-Stack live: Telegram-Channel disabled (config off)")
 
     def _build_agent_chat_service(self) -> Any:
         """Build the agent-chat service on first use (see agent_chat_routes)."""
@@ -3558,6 +3500,7 @@ class WebServer:
         # a reference to a "dead" registry when the server restarts.
         try:
             from jarvis.clis.shared import set_active_registry
+
             set_active_registry(None)
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).debug("CLI shared-registry cleanup failed: {}", exc)
@@ -3570,12 +3513,11 @@ class WebServer:
         if self._plugin_registry is not None:
             try:
                 from jarvis.marketplace.plugin_shared import set_active_plugin_registry
+
                 set_active_plugin_registry(None)
                 await self._plugin_registry.stop()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).debug(
-                    "PluginToolRegistry cleanup failed: {}", exc
-                )
+                logger.opt(exception=exc).debug("PluginToolRegistry cleanup failed: {}", exc)
             self._plugin_registry = None
             self.app.state.plugin_registry = None
 
@@ -3651,9 +3593,7 @@ class WebServer:
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception as exc:  # noqa: BLE001 — shutdown best-effort
-                logger.opt(exception=exc).debug(
-                    "UltraWiki start-task cancel failed: {}", exc
-                )
+                logger.opt(exception=exc).debug("UltraWiki start-task cancel failed: {}", exc)
         self._ultrawiki_start_task = None
 
         # Clear the brain-facing seam BEFORE the shutdown, so no memory surface
@@ -3690,9 +3630,7 @@ class WebServer:
             try:
                 await wiki_watcher.shutdown()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).debug(
-                    "WikiWatcher.shutdown() failed"
-                )
+                logger.opt(exception=exc).debug("WikiWatcher.shutdown() failed")
             self._wiki_watcher = None
 
         # Terminate PTY sessions before uvicorn goes down — prevents reader
@@ -3733,9 +3671,7 @@ class WebServer:
             except asyncio.CancelledError:
                 pass
             except TimeoutError:
-                logger.warning(
-                    "retention_task: did not stop within 2s — may be blocking on I/O"
-                )
+                logger.warning("retention_task: did not stop within 2s — may be blocking on I/O")
             self._screenshot_retention_task = None
 
         # Flush + close the flight-recorder audit log so the last buffered events
@@ -3761,25 +3697,19 @@ class WebServer:
             try:
                 await cancel_all(reason="app_shutdown")
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "In-flight mission finalize on shutdown failed"
-                )
+                logger.opt(exception=exc).warning("In-flight mission finalize on shutdown failed")
 
         try:
             await self._mission_tool_approvals.deny_all(reason="app_shutdown")
         except Exception as exc:  # noqa: BLE001 - shutdown remains best-effort
-            logger.opt(exception=exc).warning(
-                "Pending mission tool approval cleanup failed"
-            )
+            logger.opt(exception=exc).warning("Pending mission tool approval cleanup failed")
 
         mission_manager = getattr(self.app.state, "mission_manager", None)
         if mission_manager is not None:
             try:
                 await mission_manager.stop()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "MissionManager.stop() failed"
-                )
+                logger.opt(exception=exc).warning("MissionManager.stop() failed")
             self.app.state.mission_manager = None
             self.app.state.kontrollierer = None
 
@@ -3823,11 +3753,10 @@ class WebServer:
         if recorder is not None or store is not None:
             try:
                 from jarvis.sessions.init import shutdown_sessions
+
                 shutdown_sessions({"store": store, "recorder": recorder})
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "SessionRecorder shutdown failed"
-                )
+                logger.opt(exception=exc).warning("SessionRecorder shutdown failed")
             self._session_recorder = None
             self.app.state.session_store = None
 
@@ -3838,9 +3767,7 @@ class WebServer:
             try:
                 await channel_bridge.stop()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "ChannelChatBridge shutdown failed"
-                )
+                logger.opt(exception=exc).warning("ChannelChatBridge shutdown failed")
             self._channel_chat_bridge = None
             self.app.state.channel_chat_bridge = None
         if channel_manager is not None or friend_registry is not None:
@@ -3854,9 +3781,7 @@ class WebServer:
                 elif friend_registry is not None:
                     await friend_registry.close()
             except Exception as exc:  # noqa: BLE001
-                logger.opt(exception=exc).warning(
-                    "ChannelStack shutdown failed"
-                )
+                logger.opt(exception=exc).warning("ChannelStack shutdown failed")
             self.app.state.channel_manager = None
             self.app.state.friend_registry = None
 
@@ -3880,9 +3805,7 @@ class WebServer:
 
             await close_shared_codex_app_servers()
         except Exception as exc:  # noqa: BLE001 - shutdown continues best-effort
-            logger.opt(exception=exc).warning(
-                "Codex subscription app-server cleanup failed"
-            )
+            logger.opt(exception=exc).warning("Codex subscription app-server cleanup failed")
 
     @property
     def running(self) -> bool:

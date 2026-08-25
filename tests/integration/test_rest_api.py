@@ -1,4 +1,5 @@
 """Integration tests for the WebServer's REST endpoints."""
+
 from __future__ import annotations
 
 import pytest
@@ -69,4 +70,9 @@ def test_window_focus_endpoint(web_server: WebServer) -> None:
     with TestClient(web_server.app) as client:
         resp = client.post("/api/window/focus")
         assert resp.status_code == 200
-        assert resp.json()["ok"] is True
+        body = resp.json()
+        # Headless / no pywebview shell: this placeholder must NOT look like
+        # a raised window, or a desktop launch treats it as already focused.
+        assert body["ok"] is False
+        assert body.get("focused") is False
+        assert body.get("reason") == "no_window"
