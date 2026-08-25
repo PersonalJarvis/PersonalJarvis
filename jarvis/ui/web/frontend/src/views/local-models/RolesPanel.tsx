@@ -68,6 +68,7 @@ interface Progress {
 
 const WRITABLE: readonly LocalModelRole[] = [
   "chat",
+  "voice",
   "tools_screen",
   "deep",
   "embedding",

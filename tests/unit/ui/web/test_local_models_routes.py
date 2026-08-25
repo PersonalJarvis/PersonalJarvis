@@ -158,13 +158,8 @@ def test_delete_with_reassign_rewrites_the_roles_first(server: WebServer, fake, 
     body = resp.json()
     assert body["reassigned"] == ["chat"]
     assert body["reassigned_to"] == "gemma4:12b-it-qat"
-    assert writes == [
-        (
-            "brain",
-            "ollama",
-            {"model": "gemma4:12b-it-qat", "deep_model": None, "tool_model": None},
-        )
-    ]
+    # Reassignment goes through ollama_roles.set_role — one writer per slot.
+    assert writes == [("brain", "ollama", {"model": "gemma4:12b-it-qat"})]
     assert "qwen3.5:4b" not in fake.models
     # The live config agrees with the TOML from now on.
     assert server.app.state.config.brain.providers["ollama"].model == "gemma4:12b-it-qat"

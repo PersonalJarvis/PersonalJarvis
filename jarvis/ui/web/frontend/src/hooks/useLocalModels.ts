@@ -32,10 +32,10 @@ export type { OllamaModelOptions } from "../lib/ollamaModelOptions";
 // Wire types — inventory
 // ---------------------------------------------------------------------------
 
-/** The four writable slots. */
-export type LocalModelRole = "chat" | "tools_screen" | "deep" | "embedding";
+/** The five writable slots (voice = the managed voice server's own brain). */
+export type LocalModelRole = "chat" | "voice" | "tools_screen" | "deep" | "embedding";
 /** Every role row the backend renders, read-only ones included. */
-export type LocalModelRoleId = LocalModelRole | "voice" | "ack" | "polish";
+export type LocalModelRoleId = LocalModelRole | "ack" | "polish";
 
 export interface RunningModelRow {
   name: string;

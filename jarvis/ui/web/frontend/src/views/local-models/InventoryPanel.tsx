@@ -57,6 +57,7 @@ export interface InventoryPanelProps {
 
 const WRITABLE_ROLES: LocalModelRole[] = [
   "chat",
+  "voice",
   "tools_screen",
   "deep",
   "embedding",
@@ -65,6 +66,7 @@ const WRITABLE_ROLES: LocalModelRole[] = [
 /** Which capability a role needs; mirrors `ollama_roles.ROLES.required`. */
 const ROLE_NEEDS: Record<LocalModelRole, string | null> = {
   chat: null,
+  voice: null,
   tools_screen: "tools",
   deep: null,
   embedding: "embedding",

@@ -54,18 +54,6 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/providers/{provider_id}/local-models", tags=["local-models"])
 
-#: Role id -> where the brain reads it. The three ``[brain.providers.ollama]``
-#: model fields plus the wiki's embedding slot (Ollama-backed when
-#: ``embedding_provider == "ollama"``). Chunk 5 grows this into
-#: ``ollama_roles.ROLES``; the ids are kept stable for that.
-ROLE_FIELDS: tuple[tuple[str, str], ...] = (
-    ("chat", "model"),
-    ("tools_screen", "tool_model"),
-    ("deep", "deep_model"),
-)
-EMBEDDING_ROLE = "embedding"
-
-
 # ── Response / body models (AP-4, Python half) ───────────────────────────
 
 
@@ -148,23 +136,17 @@ def _ollama_provider_cfg(cfg: Any) -> Any:
 
 
 def _roles_using(cfg: Any, name: str) -> list[str]:
-    """Role ids whose configured pick is ``name`` (``:latest`` tolerant)."""
+    """Role ids whose configured pick is ``name`` (``:latest`` tolerant).
+
+    Delegates to :func:`jarvis.brain.ollama_roles.roles_using` so the ledger's
+    "Used by" badges and the delete refusal agree with the Roles panel — the
+    voice slot (read from the voice server's launch command) included.
+    """
     if cfg is None:
         return []
-    out: list[str] = []
-    provider = _ollama_provider_cfg(cfg)
-    for role, field in ROLE_FIELDS:
-        value = str(getattr(provider, field, "") or "") if provider is not None else ""
-        if value and same_model(value, name):
-            out.append(role)
-    ultrawiki = getattr(cfg, "ultrawiki", None)
-    if (
-        ultrawiki is not None
-        and str(getattr(ultrawiki, "embedding_provider", "") or "") == "ollama"
-        and same_model(str(getattr(ultrawiki, "embedding_model", "") or ""), name)
-    ):
-        out.append(EMBEDDING_ROLE)
-    return out
+    from jarvis.brain.ollama_roles import roles_using
+
+    return roles_using(cfg, name)
 
 
 def _row(
@@ -355,31 +337,19 @@ async def delete_inventory_model(
 
 
 def _reassign_roles(cfg: Any, roles: list[str], target: str) -> list[str]:
-    """Persist ``target`` for every role in ``roles`` and mirror it into the
-    live config object so the next read agrees with the TOML."""
-    from jarvis.core import config_writer
+    """Persist ``target`` for every role in ``roles`` through the roles module.
 
-    fields = [field for role, field in ROLE_FIELDS if role in roles]
+    One writer per slot lives in :mod:`jarvis.brain.ollama_roles` (chat, voice,
+    tools/screen, deep, embedding); going through it keeps the delete path
+    honest for the voice slot, whose pick is not a plain config field.
+    """
+    from jarvis.brain.ollama_roles import set_role
+
     done: list[str] = []
     try:
-        if fields:
-            config_writer.set_brain_provider_model(
-                "ollama",
-                model=target if "model" in fields else None,
-                deep_model=target if "deep_model" in fields else None,
-                tool_model=target if "tool_model" in fields else None,
-            )
-            provider = _ollama_provider_cfg(cfg)
-            for field in fields:
-                if provider is not None:
-                    setattr(provider, field, target)
-            done.extend(role for role, field in ROLE_FIELDS if field in fields)
-        if EMBEDDING_ROLE in roles:
-            config_writer.set_ultrawiki_slot("embedding_model", target)
-            ultrawiki = getattr(cfg, "ultrawiki", None)
-            if ultrawiki is not None:
-                ultrawiki.embedding_model = target
-            done.append(EMBEDDING_ROLE)
+        for role in roles:
+            set_role(role, target, cfg=cfg)
+            done.append(role)
     except Exception as exc:  # noqa: BLE001 — the delete must not run on a half-written config
         log.warning("local-models: reassigning %s to %s failed: %s", roles, target, exc)
         raise HTTPException(
