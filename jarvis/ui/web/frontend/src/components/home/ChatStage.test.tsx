@@ -228,6 +228,46 @@ describe("ChatStage (agent chat)", () => {
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
+  it("wears one glyph per stance on the unified ladder", async () => {
+    // The front page's catalog hands every provider the same four-step ladder
+    // (jarvis/agent_chat/permissions.py, surface=jarvis); the composer draws
+    // what it is given and never a ladder typed here.
+    const unified = [
+      { id: "ask", label: "Ask before acting", description: "" },
+      { id: "accept-edits", label: "Auto-accept edits", description: "" },
+      { id: "plan", label: "Plan", description: "" },
+      { id: "bypass", label: "Bypass permissions", description: "" },
+    ];
+    useAgentChatStore.setState((s) => ({
+      catalog: {
+        ...CATALOG,
+        providers: CATALOG.providers.map((p) => ({
+          ...p,
+          permission_modes: unified,
+          default_permission_mode: "ask",
+        })),
+      },
+      draft: { ...s.draft, permissionMode: "ask", buildMode: "ask" },
+    }));
+    render(<ChatStage />);
+    const pill = screen.getByTestId("composer-permission");
+    expect(pill.getAttribute("data-value")).toBe("ask");
+    expect(pill.querySelector("svg.lucide-shield-question")).not.toBeNull();
+    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
+    fireEvent.click(pill);
+    const panel = await screen.findByTestId("composer-permission-panel");
+    const rows = within(panel).getAllByRole("option");
+    // Plan is the switch next door, so the list holds the other three.
+    expect(rows.map((el) => el.getAttribute("data-value"))).toEqual(["ask", "accept-edits", "bypass"]);
+    const glyphs = rows.map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
+    expect(glyphs[0]).toContain("lucide-shield-question");
+    expect(glyphs[1]).toContain("lucide-file-pen");
+    expect(glyphs[2]).toContain("lucide-shield-off");
+    expect(new Set(glyphs).size).toBe(glyphs.length);
+    // The plan entry still powers the Build | Plan switch.
+    expect(screen.getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+  });
+
   it("grows the text box with the typed text and caps it at its max height", () => {
     render(<ChatStage />);
     const box = screen.getByPlaceholderText("Ask anything…") as HTMLTextAreaElement;

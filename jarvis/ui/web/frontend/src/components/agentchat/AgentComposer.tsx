@@ -18,6 +18,7 @@ import { useAgentChatStore, type ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { pickAgentChatFolder } from "@/lib/agentChatApi";
 import { runningTurn } from "@/components/agentchat/reduce";
+import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -240,11 +241,23 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   );
   const hasPlan = Boolean((provider?.permission_modes ?? []).some((m) => m.id === "plan"));
   const planOn = draft.permissionMode === "plan";
+  // Every mode wears its stance's glyph (permissionIcons.ts) in the list and,
+  // once picked, on the pill — the Combobox draws the selected option's icon
+  // on its trigger, so the column's shield below only shows for a pick the
+  // catalog no longer lists.
   const permissionGroups = useMemo<ComboboxGroup[]>(
     () => [
       {
         id: "permission",
-        options: permissionModes.map((m) => ({ value: m.id, label: m.label, searchText: m.description })),
+        options: permissionModes.map((m) => {
+          const Icon = permissionModeIcon(m.id);
+          return {
+            value: m.id,
+            label: m.label,
+            searchText: m.description,
+            icon: <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />,
+          };
+        }),
       },
     ],
     [permissionModes],
