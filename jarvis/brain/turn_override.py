@@ -100,6 +100,11 @@ class TurnOverride:
         Whether the deterministic force-spawn heuristic may hand the turn to
         a background worker. A chat that IS the worker in its folder says no;
         an explicit "spawn an agent for this" still spawns either way.
+    ``system_extra``
+        A per-turn addendum to the system prompt, appended after the
+        manager's own ``_system_prompt_extra``. Empty leaves the prompt
+        byte-identical; a surface with its own briefing (the local-models
+        setup assistant) sets it for its turns only.
     """
 
     provider: str
@@ -111,6 +116,7 @@ class TurnOverride:
     credential_scope: str = "agent"
     max_turns: int | None = None
     allow_force_spawn: bool = False
+    system_extra: str = ""
     receipt: TurnReceipt = field(default_factory=TurnReceipt)
 
 

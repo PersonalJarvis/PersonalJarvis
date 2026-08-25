@@ -262,3 +262,50 @@ def test_receipt_usage_is_the_agent_chat_shape() -> None:
         finish_reason="ok",
     )
     assert receipt.usage() == {"input_tokens": 10, "output_tokens": 3, "cost_usd": 0.5}
+
+
+# ------------------------------------------------------------ system_extra
+
+
+def _prompt_manager() -> BrainManager:
+    """A manager with ``__init__`` bypassed — only what ``_build_system_prompt`` reads."""
+    from jarvis.core.config import load_config
+
+    m = BrainManager.__new__(BrainManager)
+    m._soul = None
+    m._user_profile = None
+    m._people = None
+    m._core_memory = None
+    m._awareness_manager = None
+    m._system_prompt_extra = "ROUTER DISCIPLINE BLOCK"
+    m._wiki_context_suffix = ""
+    m._reply_language = "auto"
+    m._active_turn_identity = None
+    cfg = load_config()
+    cfg.performance.cache_optimized_prompt = False
+    m._config = cfg
+    return m
+
+
+def test_system_prompt_is_byte_identical_without_system_extra() -> None:
+    m = _prompt_manager()
+    baseline = m._build_system_prompt()
+    token = _TURN_OVERRIDE.set(TurnOverride(provider=PICK))
+    try:
+        with_override = m._build_system_prompt()
+    finally:
+        _TURN_OVERRIDE.reset(token)
+    assert with_override == baseline
+
+
+def test_system_prompt_carries_system_extra_after_the_manager_extra() -> None:
+    m = _prompt_manager()
+    addendum = "LOCAL MODELS ASSISTANT BRIEFING 7f3a"
+    token = _TURN_OVERRIDE.set(TurnOverride(provider=PICK, system_extra=addendum))
+    try:
+        prompt = m._build_system_prompt()
+    finally:
+        _TURN_OVERRIDE.reset(token)
+    assert addendum in prompt
+    assert prompt.index("ROUTER DISCIPLINE BLOCK") < prompt.index(addendum)
+    assert addendum not in m._build_system_prompt(), "the addendum lives for one turn only"

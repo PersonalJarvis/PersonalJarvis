@@ -4187,6 +4187,12 @@ class BrainManager:
         if self._system_prompt_extra:
             parts.append(self._system_prompt_extra)
 
+        # Per-turn addendum (TurnOverride.system_extra): a surface's own
+        # briefing for THIS turn only; empty on every other turn.
+        _turn_override = _TURN_OVERRIDE.get()
+        if _turn_override is not None and _turn_override.system_extra:
+            parts.append(_turn_override.system_extra)
+
         # Structural-only base block (2026-06-29 consolidation): the editable
         # persona above now OWNS voice / tone / length / anti-filler /
         # screen-context rules. They used to be duplicated AND contradicted here
