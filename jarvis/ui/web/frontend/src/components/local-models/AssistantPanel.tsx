@@ -57,6 +57,7 @@ import {
   type Proposal,
   type ProposalStep,
 } from "./assistantProposal";
+import { renderInline } from "./assistantText";
 import { useLocalModelsAssistantStore } from "./assistantStore";
 import { BrainSwitchCard, SetupProposalCard } from "./SetupProposalCard";
 
@@ -479,12 +480,12 @@ export function AssistantPanel({
                   <AssistantSteps blocks={item.blocks} live={live} onDecide={onDecide} />
                   {answer && (
                     <div
-                      className="flex max-w-[68ch] flex-col gap-2.5 text-[14px] leading-[1.65] text-foreground"
+                      className="flex max-w-[38rem] flex-col gap-2.5 text-[14px] leading-[1.65] text-foreground"
                       data-testid="assistant-answer"
                     >
                       {answer.split(/\n{2,}/).map((para, k) => (
                         <p key={k} className="whitespace-pre-wrap">
-                          {para}
+                          {renderInline(para)}
                         </p>
                       ))}
                     </div>
