@@ -31,10 +31,12 @@ import time
 from pathlib import Path
 
 from jarvis.core.branding import (
+    CONFIG_FILE_NAME,
     MACOS_APP_DIR_NAME,
     MANAGED_INSTALL_MARKER,
     PRODUCT_NAME,
     WINDOWS_BRANDED_LAUNCH_ENV_VAR,
+    WINDOWS_BRANDED_LAUNCHER_DIR_NAME,
 )
 
 LAUNCHER_MODULE = "jarvis.ui.web.launcher"
@@ -42,6 +44,14 @@ MANAGED_MARKER = MANAGED_INSTALL_MARKER
 PENDING_UPDATE_FILENAME = ".jarvis-update-pending.json"
 UPDATE_RESULT_FILENAME = ".jarvis-update-result.json"
 _REVISION_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+#: Must match ``jarvis.ui.web.launcher._DEFAULT_ADMIN_PORT`` / the packaged
+#: ``[ui].admin_api_port`` default. Used only when the checkout's config
+#: cannot be read, so a restart still has a port to probe.
+_DEFAULT_ADMIN_PORT = 47821
+#: ``CREATE_BREAKAWAY_FROM_JOB``. Without it a restart helper that was spawned
+#: from a process inside a Windows Job Object dies with its parent — the
+#: window closes and nothing comes back (BUG-181).
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 
 
 def build_launch_command(executable: str) -> list[str]:
@@ -83,6 +93,14 @@ def build_launch_command(executable: str) -> list[str]:
                 "Could not validate the macOS restart bundle; using its canonical path"
             )
             return ["/usr/bin/open", "-W", "-a", str(bundle)]
+    if sys.platform == "win32":
+        branded = _existing_branded_launcher()
+        if branded is not None:
+            # Launch the branded exe itself so the PID we watch IS the window
+            # process. Spawning ``python -m launcher`` used to re-exec through
+            # this copy and exit; the helper treated that exit as a bounce and
+            # started two more copies that raced the first (BUG-181).
+            return [str(branded), "-m", LAUNCHER_MODULE, *identity.launcher_args]
     return fallback
 
 
@@ -156,14 +174,177 @@ def detached_creationflags() -> int:
     """Windows creationflags that make a child outlive its parent, windowless.
 
     ``DETACHED_PROCESS`` cuts the child loose from the parent's console/process
-    group; ``CREATE_NO_WINDOW`` keeps ``pythonw`` from flashing a console. ``0``
-    on non-Windows (the caller uses ``start_new_session`` there instead).
+    group; ``CREATE_NO_WINDOW`` keeps ``pythonw`` from flashing a console;
+    ``CREATE_BREAKAWAY_FROM_JOB`` lets the child survive if the parent is
+    inside a Job Object that kills its members on close (the "Restart
+    shut the window and nothing came back" failure). ``0`` on non-Windows
+    (the caller uses ``start_new_session`` there instead).
     """
     if sys.platform == "win32":
         detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-        return detached | no_window
+        breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", _CREATE_BREAKAWAY_FROM_JOB)
+        return detached | no_window | breakaway
     return 0
+
+
+def detached_popen_kwargs(
+    *, cwd: str | None = None, env: dict[str, str] | None = None
+) -> dict[str, object]:
+    """Popen kwargs for a child that must outlive this process, with valid stdio.
+
+    ``DETACHED_PROCESS`` leaves stdin/stdout/stderr as invalid handles unless
+    they are redirected; a boot-time write then kills the child before a
+    window appears (the same defect ``maybe_reexec_through_branded_launcher``
+    already fixed for the Start-Menu path).
+    """
+    kwargs: dict[str, object] = {
+        "close_fds": True,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if cwd is not None:
+        kwargs["cwd"] = cwd
+    if env is not None:
+        kwargs["env"] = env
+    if sys.platform == "win32":
+        kwargs["creationflags"] = detached_creationflags()
+    else:
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def spawn_detached(
+    argv: list[str],
+    *,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    _popen: object | None = None,
+) -> object:
+    """Spawn ``argv`` so it outlives this process.
+
+    Retries once without ``CREATE_BREAKAWAY_FROM_JOB`` when Windows refuses
+    the flag (the parent is in a job that forbids breakaway — WinError 5).
+    The child still starts; it just stays in the parent's job.
+    """
+    popen = _popen or subprocess.Popen
+    kwargs = detached_popen_kwargs(cwd=cwd, env=env)
+    flags = int(kwargs.get("creationflags", 0) or 0)
+    try:
+        return popen(argv, **kwargs)  # type: ignore[operator]  # noqa: S603
+    except PermissionError:
+        if sys.platform != "win32" or not (flags & _CREATE_BREAKAWAY_FROM_JOB):
+            raise
+        kwargs = dict(kwargs)
+        kwargs["creationflags"] = flags & ~_CREATE_BREAKAWAY_FROM_JOB
+        logging.getLogger(__name__).warning(
+            "relauncher spawn denied CREATE_BREAKAWAY_FROM_JOB; retrying without it"
+        )
+        return popen(argv, **kwargs)  # type: ignore[operator]  # noqa: S603
+
+
+def _existing_branded_launcher() -> Path | None:
+    """Return an already-built branded launcher exe, or ``None``.
+
+    Cheap existence check only — never copies, never smoke-starts. The Start
+    Menu path owns creating the file; a restart just needs to find it.
+    """
+    if sys.platform != "win32":
+        return None
+    from jarvis.core.instance import current_instance
+
+    name = current_instance().windows_branded_launcher_file_name
+    candidates: list[Path] = [Path(sys.executable).with_name(name)]
+    base = getattr(sys, "_base_executable", "") or ""
+    if base:
+        candidates.append(Path(base).with_name(name))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local) / WINDOWS_BRANDED_LAUNCHER_DIR_NAME / "bin" / name)
+    seen: set[str] = set()
+    for cand in candidates:
+        key = str(cand).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if cand.is_file() and cand.stat().st_size > 0:
+                return cand
+        except OSError:
+            continue
+    return None
+
+
+def _apply_branded_launch_env(env: dict[str, str], argv: list[str]) -> dict[str, str]:
+    """Mark a branded-exe spawn so the child does not re-exec itself.
+
+    ``fresh_user_env`` strips the one-process branding loop guard (a restart
+    is a new launch chain). When THIS spawn *is* the branded exe, put the
+    guard back so the child boots in-process and the PID we watch stays up.
+    """
+    if sys.platform != "win32" or not argv:
+        return env
+    from jarvis.core.instance import current_instance
+
+    branded_name = current_instance().windows_branded_launcher_file_name.casefold()
+    if Path(argv[0]).name.casefold() != branded_name:
+        return env
+    env = dict(env)
+    env[WINDOWS_BRANDED_LAUNCH_ENV_VAR] = "1"
+    branded = Path(argv[0])
+    if (branded.parent.parent / "pyvenv.cfg").is_file():
+        env.pop("__PYVENV_LAUNCHER__", None)
+    else:
+        venv_pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if venv_pythonw.is_file():
+            env["__PYVENV_LAUNCHER__"] = str(venv_pythonw)
+    return env
+
+
+def _restart_admin_port(cwd: str | Path | None = None) -> int:
+    """Admin port the fresh instance will bind, including the instance offset."""
+    from jarvis.core.instance import current_instance
+
+    base = _DEFAULT_ADMIN_PORT
+    root = Path(cwd) if cwd else None
+    if root is not None:
+        cfg = root / CONFIG_FILE_NAME
+        try:
+            import tomllib
+
+            data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+            port = data.get("ui", {}).get("admin_api_port")
+            if isinstance(port, int) and 1 <= port <= 65535:
+                base = port
+        except (OSError, UnicodeDecodeError, ValueError, TypeError, AttributeError):
+            pass
+    return current_instance().port(base)
+
+
+def _desktop_is_serving(
+    *,
+    cwd: str | Path | None = None,
+    host: str = "127.0.0.1",
+    timeout: float = 0.25,
+    _connect=None,
+) -> bool:
+    """True when something is already accepting on this instance's admin port.
+
+    Used to recognise a successful Windows branded hand-off: the python
+    launcher PID dies on purpose after spawning ``PersonalJarvis.exe``, and
+    the new window process is a different PID. A listening port is the
+    honest "the app came back" signal.
+    """
+    import socket
+
+    connect = _connect or socket.create_connection
+    port = _restart_admin_port(cwd)
+    try:
+        with connect((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def pid_alive(pid: int) -> bool:
@@ -278,24 +459,37 @@ def _new_instance_settled(
     *,
     _alive=pid_alive,
     _sleep=time.sleep,
-    checks: int = 5,
+    _serving=None,
+    checks: int = 8,
     interval: float = 1.0,
 ) -> bool:
-    """True if a freshly spawned launcher is still alive after a short grace.
+    """True if a freshly spawned launcher actually came up.
 
-    A secondary that bounces off the single-instance lock prints "already
-    running", focuses the existing window, and exits within ~1 s; a real primary
-    keeps running. So "still alive after a few seconds" is a good proxy for "the
-    new instance actually came up". An unverifiable pid (missing/invalid) is
-    treated as success to avoid spinning needlessly.
+    Two success signals, because they diverge on Windows:
+
+    * The spawn PID stays alive for the whole grace — an in-process boot
+      (macOS bundle, Linux, a python that did not re-exec).
+    * The desktop admin port starts accepting — the Windows branded hand-off.
+      ``python -m launcher`` (and even a branded spawn that still re-execs)
+      exits within a second after starting ``PersonalJarvis.exe``. Treating
+      that exit as a bounce used to spawn two more copies that raced the
+      first, and sometimes none of them kept the window (BUG-181).
+
+    A true bounce (already-running secondary) dies AND never binds the
+    port, so both signals stay false. An unverifiable pid is treated as
+    success to avoid spinning needlessly.
     """
+    serving = _serving if _serving is not None else _desktop_is_serving
     if not isinstance(pid, int) or pid <= 0:
         return True
+    still_alive = True
     for _ in range(checks):
         _sleep(interval)
+        if serving():
+            return True
         if not _alive(pid):
-            return False
-    return True
+            still_alive = False
+    return still_alive or serving()
 
 
 def _read_pending_update(root: Path) -> dict[str, object] | None:
@@ -561,6 +755,7 @@ def main(
     _alive=pid_alive,
     _settled=_new_instance_settled,
     _finalize_update=finalize_pending_update,
+    _serving=None,
     _report=None,
     attempts: int = 3,
 ) -> int:
@@ -568,8 +763,10 @@ def main(
 
     The single-instance lock frees only once the old process is gone, so we
     wait for that first. After spawning the new launcher we verify it actually
-    stayed up (it would otherwise have bounced off a still-held lock) and retry
-    a couple of times if not.
+    came up — either the spawn PID stayed alive, or (on Windows) the branded
+    child bound the admin port after this PID handed off. Retry only when
+    neither signal is present, so a branded hand-off is not mistaken for a
+    bounce and doubled.
 
     Returns ``2`` on bad argv, ``0`` once a new instance is confirmed up, ``1``
     if every spawn attempt failed to bring one up.
@@ -583,15 +780,19 @@ def main(
         return 2
     cwd = argv[1]
     _report = _report or _report_restart_failure
+    serving = _serving if _serving is not None else (lambda: _desktop_is_serving(cwd=cwd))
 
-    kwargs: dict[str, object] = {"cwd": cwd, "close_fds": True}
-    # Fresh JARVIS__* overrides for the new instance — never the dying
-    # process's fossilized copy (see fresh_user_env).
-    kwargs["env"] = fresh_user_env()
-    if sys.platform == "win32":
-        kwargs["creationflags"] = detached_creationflags()
-    else:
-        kwargs["start_new_session"] = True
+    try:
+        from jarvis.ui.desktop_log import _install_desktop_log_sink, desktop_log_path
+
+        _install_desktop_log_sink(desktop_log_path())
+        logging.getLogger(__name__).info("relauncher: start parent_pid=%s cwd=%s", pid, cwd)
+    except Exception:  # noqa: BLE001, S110 — a mute helper is what we had before
+        pass
+
+    cmd = build_launch_command(sys.executable)
+    env = _apply_branded_launch_env(fresh_user_env(), cmd)
+    kwargs = detached_popen_kwargs(cwd=cwd, env=env)
 
     update_finalized = False
     for attempt in range(attempts):
@@ -612,9 +813,24 @@ def main(
             _finalize_update(cwd)
             update_finalized = True
 
-        proc = _spawn(build_launch_command(sys.executable), **kwargs)
+        try:
+            proc = _spawn(cmd, **kwargs)
+        except PermissionError:
+            flags = int(kwargs.get("creationflags", 0) or 0)
+            if sys.platform != "win32" or not (flags & _CREATE_BREAKAWAY_FROM_JOB):
+                raise
+            kwargs = dict(kwargs)
+            kwargs["creationflags"] = flags & ~_CREATE_BREAKAWAY_FROM_JOB
+            proc = _spawn(cmd, **kwargs)
         new_pid = getattr(proc, "pid", None)
-        if _settled(new_pid, _alive=_alive, _sleep=_sleep):
+        logging.getLogger(__name__).info(
+            "relauncher: spawn attempt %s pid=%s cmd=%s",
+            attempt + 1,
+            new_pid,
+            cmd[0] if cmd else "",
+        )
+        if _settled(new_pid, _alive=_alive, _sleep=_sleep, _serving=serving):
+            logging.getLogger(__name__).info("relauncher: new instance is up (pid=%s)", new_pid)
             return 0
     _report(pid, still_alive=_alive(pid))
     return 1

@@ -4,6 +4,7 @@ The wait loop, command construction, argv handling, the new-instance
 verify/retry loop, and the dying-app quit sequence are all pure and injectable,
 so they are tested without spawning real processes or actually exiting.
 """
+
 from __future__ import annotations
 
 import threading
@@ -27,9 +28,7 @@ def test_build_launch_command_uses_macos_bundle(monkeypatch, tmp_path):
     bundle = tmp_path / "Personal Jarvis.app"
     monkeypatch.setattr(relauncher.sys, "platform", "darwin")
     monkeypatch.setattr(bundle_module, "macos_app_bundle_path", lambda: bundle)
-    monkeypatch.setattr(
-        bundle_module, "macos_app_bundle_is_launchable", lambda _bundle: True
-    )
+    monkeypatch.setattr(bundle_module, "macos_app_bundle_is_launchable", lambda _bundle: True)
 
     assert relauncher.build_launch_command("python3") == [
         "/usr/bin/open",
@@ -105,12 +104,15 @@ def test_main_waits_then_spawns_fresh_launcher(monkeypatch):
         _spawn=fake_spawn,
         _sleep=lambda _s: None,
         _alive=lambda _p: True,  # old pid 'alive' → one wait; new pid stays up
+        _serving=lambda: False,
     )
     assert rc == 0
     assert waited == [4242]  # waited for the old pid first
     assert len(spawned) == 1
     assert spawned[0]["cmd"][1:] == ["-m", "jarvis.ui.web.launcher"]
     assert spawned[0]["kwargs"]["cwd"] == r"C:\repo"
+    assert spawned[0]["kwargs"]["stdin"] is relauncher.subprocess.DEVNULL
+    assert spawned[0]["kwargs"]["start_new_session"] is True
 
 
 def test_main_retries_when_new_instance_bounces():
@@ -130,6 +132,7 @@ def test_main_retries_when_new_instance_bounces():
         _spawn=fake_spawn,
         _sleep=lambda _s: None,
         _alive=lambda p: alive.get(p, True),
+        _serving=lambda: False,
     )
     assert rc == 0
     assert len(spawned) == 2  # bounced once, succeeded on retry
@@ -149,6 +152,7 @@ def test_main_gives_up_after_three_failed_spawns():
         _spawn=fake_spawn,
         _sleep=lambda _s: None,
         _alive=lambda _p: False,  # nothing ever stays up
+        _serving=lambda: False,
     )
     assert rc == 1
     assert len(spawned) == 3
@@ -167,14 +171,110 @@ def test_main_does_not_spawn_on_bad_argv():
 
 def test_new_instance_settled_true_when_alive_throughout():
     assert relauncher._new_instance_settled(
-        555, _alive=lambda _p: True, _sleep=lambda _s: None, checks=3
+        555,
+        _alive=lambda _p: True,
+        _sleep=lambda _s: None,
+        _serving=lambda: False,
+        checks=3,
     )
 
 
 def test_new_instance_settled_false_when_it_dies():
     assert not relauncher._new_instance_settled(
-        555, _alive=lambda _p: False, _sleep=lambda _s: None, checks=3
+        555,
+        _alive=lambda _p: False,
+        _sleep=lambda _s: None,
+        _serving=lambda: False,
+        checks=3,
     )
+
+
+def test_new_instance_settled_true_when_pid_dies_but_desktop_serves():
+    """Windows branded hand-off: the python launcher PID exits on purpose."""
+    assert relauncher._new_instance_settled(
+        555,
+        _alive=lambda _p: False,
+        _sleep=lambda _s: None,
+        _serving=lambda: True,
+        checks=3,
+    )
+
+
+def test_main_does_not_respawn_after_branded_handoff():
+    """A spawn PID that dies while the desktop port answers is success, not a bounce."""
+    spawned: list[list[str]] = []
+
+    def fake_spawn(cmd, **kwargs):
+        spawned.append(cmd)
+        return SimpleNamespace(pid=901)
+
+    rc = relauncher.main(
+        ["4242", "cwd"],
+        _wait=lambda pid, **_kw: True,
+        _spawn=fake_spawn,
+        _sleep=lambda _s: None,
+        _alive=lambda _p: False,
+        _serving=lambda: True,
+    )
+    assert rc == 0
+    assert len(spawned) == 1
+
+
+def test_detached_creationflags_breaks_away_from_job_on_windows(monkeypatch):
+    monkeypatch.setattr(relauncher.sys, "platform", "win32")
+    flags = relauncher.detached_creationflags()
+    assert flags & relauncher._CREATE_BREAKAWAY_FROM_JOB
+    assert flags & getattr(relauncher.subprocess, "DETACHED_PROCESS", 0x00000008)
+    assert flags & getattr(relauncher.subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
+def test_spawn_detached_retries_without_breakaway_on_permission_error(monkeypatch):
+    monkeypatch.setattr(relauncher.sys, "platform", "win32")
+    calls: list[int] = []
+
+    def fake_popen(cmd, **kwargs):
+        flags = int(kwargs.get("creationflags", 0) or 0)
+        calls.append(flags)
+        if flags & relauncher._CREATE_BREAKAWAY_FROM_JOB:
+            raise PermissionError(5)
+        return SimpleNamespace(pid=1)
+
+    proc = relauncher.spawn_detached(["x"], cwd=".", _popen=fake_popen)
+    assert proc.pid == 1
+    assert len(calls) == 2
+    assert calls[0] & relauncher._CREATE_BREAKAWAY_FROM_JOB
+    assert not (calls[1] & relauncher._CREATE_BREAKAWAY_FROM_JOB)
+
+
+def test_build_launch_command_prefers_existing_branded_exe_on_windows(monkeypatch, tmp_path):
+    from jarvis.core.instance import current_instance
+
+    branded = tmp_path / current_instance().windows_branded_launcher_file_name
+    branded.write_bytes(b"MZ")
+    monkeypatch.setattr(relauncher.sys, "platform", "win32")
+    monkeypatch.setattr(relauncher.sys, "executable", str(tmp_path / "python.exe"))
+    monkeypatch.setattr(relauncher.sys, "_base_executable", "", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    cmd = relauncher.build_launch_command("python.exe")
+    assert cmd[0] == str(branded)
+    assert cmd[1:] == ["-m", "jarvis.ui.web.launcher"]
+
+
+def test_apply_branded_launch_env_sets_the_loop_guard_only_for_the_branded_exe(
+    monkeypatch, tmp_path
+):
+    from jarvis.core.instance import current_instance
+
+    branded = tmp_path / current_instance().windows_branded_launcher_file_name
+    monkeypatch.setattr(relauncher.sys, "platform", "win32")
+    python_env = relauncher._apply_branded_launch_env(
+        {"PATH": "/bin"}, [str(tmp_path / "python.exe"), "-m", "jarvis.ui.web.launcher"]
+    )
+    assert "JARVIS_BRANDED_LAUNCH" not in python_env
+    branded_env = relauncher._apply_branded_launch_env(
+        {"PATH": "/bin"}, [str(branded), "-m", "jarvis.ui.web.launcher"]
+    )
+    assert branded_env["JARVIS_BRANDED_LAUNCH"] == "1"
 
 
 def test_restart_quit_sequence_marks_quit_destroys_then_hard_exits():

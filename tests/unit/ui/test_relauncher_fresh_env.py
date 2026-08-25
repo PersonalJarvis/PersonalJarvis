@@ -11,6 +11,7 @@ HKCU Environment) for the NEW launcher; ``main`` passes that environment to
 the spawn. On hosts with no persisted user env (POSIX) the inherited env is
 already the freshest source and stays untouched.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ from jarvis.ui import relauncher
 def test_fresh_env_replaces_stale_jarvis_overrides():
     base = {
         "PATH": r"C:\bin",
-        "JARVIS__TTS__VOICE_DE": "Kore",   # fossilized in the dying process
+        "JARVIS__TTS__VOICE_DE": "Kore",  # fossilized in the dying process
         "JARVIS__TTS__VOICE_EN": "Kore",
     }
     persisted = {
@@ -82,6 +83,9 @@ def test_main_spawns_the_new_launcher_with_the_fresh_env(monkeypatch):
         _sleep=lambda _s: None,
         _alive=lambda _p: True,
         _finalize_update=lambda _cwd: True,
+        _serving=lambda: False,
     )
     assert rc == 0
-    assert spawned[0]["kwargs"]["env"] == fresh
+    env = spawned[0]["kwargs"]["env"]
+    assert env["JARVIS__TTS__VOICE_DE"] == "Charon"
+    assert env["PATH"] == "/bin"
