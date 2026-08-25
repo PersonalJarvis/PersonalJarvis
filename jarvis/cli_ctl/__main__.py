@@ -32,6 +32,7 @@ from jarvis.cli_ctl.commands import docs as docs_cmd
 from jarvis.cli_ctl.commands import friends as friends_cmd
 from jarvis.cli_ctl.commands import frontier as frontier_cmd
 from jarvis.cli_ctl.commands import ide as ide_cmd
+from jarvis.cli_ctl.commands import local_models as local_models_cmd
 from jarvis.cli_ctl.commands import marketplace as marketplace_cmd
 from jarvis.cli_ctl.commands import mcps as mcps_cmd
 from jarvis.cli_ctl.commands import missions as missions_cmd
@@ -134,6 +135,7 @@ app.add_typer(costs_cmd.app, name="costs")
 app.add_typer(docs_cmd.app, name="docs")
 app.add_typer(frontier_cmd.app, name="frontier")
 app.add_typer(ide_cmd.app, name="ide")
+app.add_typer(local_models_cmd.app, name="local-models")
 
 
 def _in_completion() -> bool:

@@ -23,8 +23,8 @@ The CLI is a **thin HTTP client over the REST API**, in two layers:
 2. **Curated layer (`jarvis <group> <command>`)** — hand-written, ergonomic
    commands for the common domains: `brain`, `config`, `missions`, `wiki`,
    `sessions`, `skills`, `outputs`, `board`, `costs`, `workflows`, `conductor`,
-   `contacts`, `telephony`, `marketplace`, `mcps`, `docs`, `frontier`, plus
-   `auth`, `system`, `tasks`.
+   `contacts`, `telephony`, `marketplace`, `mcps`, `docs`, `frontier`,
+   `local-models`, plus `auth`, `system`, `tasks`.
 
 Because the CLI only ever calls the same routes the WebUI calls, it inherits all
 of Jarvis's safety machinery (risk tiers, the atomic config-write pipeline, the
@@ -112,6 +112,45 @@ entries (`marketplace-browse`, `marketplace-install`), so the assistant can look
 the name up and then install it. Installing pulls somebody else's published
 content onto your machine, so that path asks you to confirm out loud first.
 
+## Local models from the terminal
+
+The "Local models" section — what is installed on the pull-capable local server
+(Ollama today), which download fills each role, per-model option profiles, the
+public catalogue, Hugging Face GGUF browsing and the server itself — is one
+curated group. The provider defaults to `ollama`; `--provider <id>` names
+another pull-capable card (a cloud card answers with a sentence, never an empty
+table):
+
+```bash
+jarvis local-models roles                          # chat / tools_screen / deep / embedding
+jarvis local-models roles set deep qwen3:32b
+jarvis local-models models                         # every download, what is loaded, disk total
+jarvis local-models models show qwen3:32b
+jarvis local-models models unload qwen3:32b --yes  # frees memory; the next turn reloads
+jarvis local-models models delete old:7b --reassign qwen3:32b --yes
+jarvis local-models options set qwen3:32b num_ctx=16384 temperature=0.2 think=false
+jarvis local-models options suggest qwen3:32b     # an advisory profile for this machine
+jarvis local-models catalog search "vision" --capability vision
+jarvis local-models catalog tags qwen3
+jarvis local-models catalog recommended
+jarvis local-models hf enable on                   # off by default; nothing calls huggingface.co until then
+jarvis local-models hf search "llama 3.1 gguf"
+jarvis local-models hf files bartowski Llama-3.1-8B-Instruct-GGUF
+jarvis local-models hf pull bartowski Llama-3.1-8B-Instruct-GGUF --quant Q4_K_M
+jarvis local-models server status
+jarvis local-models server test http://127.0.0.1:11434
+jarvis local-models server log --lines 80
+jarvis local-models server env-guide --os linux
+jarvis local-models server stop --yes              # only a server Jarvis itself started
+```
+
+`options set` replaces the whole profile: `KEY=VALUE` pairs are typed (numbers,
+`true`/`false`, JSON lists such as `stop='["</s>"]'`), and the writer clamps the
+values rather than rejecting them. Deleting a download is refused with a 409
+while a configured role still points at it, unless `--reassign` names another
+installed model — then the roles are rewritten first, and the delete runs only
+on a valid config. `--json` before the group prints the untouched API payload.
+
 ## Safety model
 
 The CLI is agent-first, so it stays out of your way for safe work and only gates
@@ -120,7 +159,8 @@ the genuinely consequential:
 - **Reads** (`GET`) and **reversible mutations** (switch provider, set language,
   enable a skill) just run.
 - **Destructive** actions — every `DELETE`, plus `config set`, `missions dispatch`,
-  and `telephony outbound` — refuse unless you pass `--yes` (or set
+  `telephony outbound`, `local-models models unload` and `local-models server
+  stop` — refuse unless you pass `--yes` (or set
   `JARVIS_CLI_ASSUME_YES=1`). A prompt is not an accepted substitute.
 - **Desktop restart is UI-only.** Control/API clients, including
   `jarvis system restart`, cannot restart the app even with `--yes --force`;

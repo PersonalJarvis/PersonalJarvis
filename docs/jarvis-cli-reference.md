@@ -111,6 +111,32 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis ide close-terminals <names> --yes --dry-run` — Stop several coding agents and close their terminal panes.
 - `jarvis ide rename-terminal <name> <new_name> --dry-run` — Rename a running terminal pane without restarting its agent.
 
+## local-models
+
+- `jarvis local-models catalog recommended --provider` — The curated shortlist ranked for this machine, with its review date.
+- `jarvis local-models catalog search <query> --sort --capability --limit --provider` — Browse the library; offline is reported as a sentence, not a failure.
+- `jarvis local-models catalog tags <name> --provider` — Every tag of one library model with size, quantization, context and fit.
+- `jarvis local-models hf enable <state> --provider --dry-run` — Show or flip the Hugging Face browsing switch.
+- `jarvis local-models hf files <user> <repo> --provider` — The .gguf files of one repository with quantization, size and fit.
+- `jarvis local-models hf pull <user> <repo> --quant --provider --dry-run` — Start pulling hf.co/<user>/<repo>[:<quant>] through the normal pull path.
+- `jarvis local-models hf search <query> --sort --limit --provider` — GGUF repositories on Hugging Face.
+- `jarvis local-models models delete <name> --reassign --provider --yes --dry-run` — Remove a download from the server (refused while a role still uses it).
+- `jarvis local-models models list --provider` — Every download with its facts, what is loaded, and the disk total.
+- `jarvis local-models models show <name> --provider` — One download with the long facts (license, parameters, template).
+- `jarvis local-models models unload <name> --provider --yes --dry-run` — Free the memory a loaded model holds; the next turn pays the load again.
+- `jarvis local-models options clear <name> --provider --dry-run` — Drop the profile so the server's defaults apply again.
+- `jarvis local-models options get <name> --provider` — The profile of one model as configured (empty when none).
+- `jarvis local-models options set <name> <values> --provider --dry-run` — Replace the profile of a model with the given knobs (whole set).
+- `jarvis local-models options suggest <name> --provider` — An advisory profile for this machine, with one reason per knob.
+- `jarvis local-models roles list --provider` — Every role with its pick, what qualifies, and the recommendation.
+- `jarvis local-models roles set <role> <model> --provider --dry-run` — Assign a model to a role (written through the config writers).
+- `jarvis local-models server env-guide --os --provider` — Copyable per-OS commands for the server's environment variables.
+- `jarvis local-models server log --lines --provider` — The last lines of the server log Jarvis writes when it starts the server.
+- `jarvis local-models server status --provider` — Runtime picture plus what is loaded and how much disk the downloads take.
+- `jarvis local-models server stop --provider --yes --dry-run` — Stop the server Jarvis itself started (never one started elsewhere).
+- `jarvis local-models server test <base_url> --provider` — Probe a host before saving it: version and latency, or why it failed.
+
+
 ## marketplace
 
 - `jarvis marketplace browse` — Show everything the community marketplace offers, and what you already have.
