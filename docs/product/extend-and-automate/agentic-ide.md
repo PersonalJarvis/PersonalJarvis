@@ -109,10 +109,11 @@ a guess. An explicit background-mission request still goes to Jarvis-Agents.
 
 ## Send Clear Work
 
-Select a coding pane in the prompt bar, write a rough instruction, and press
-Enter. Jarvis can prepare a fuller project-aware brief and show it before
-delivery. You can send the prepared brief, keep your original words, or cancel.
-A spoken instruction follows the same project-aware composition path.
+Every pane is a live coding-agent CLI with a cursor of its own, so the direct
+way to send work is to type into the pane, exactly as you would in a terminal.
+
+Jarvis's own path is spoken. Name the pane and the work, and Jarvis prepares a
+fuller project-aware brief and types that into the pane for you.
 
 For several panes, say whether they should receive the same work or divide it:
 
@@ -133,8 +134,7 @@ shows exact prompts and their recorded submission states.
 Drop a project file directly on a pane to type its path without submitting it;
 add your instruction, then press Enter. Drag it either from your computer's own
 file manager or from the workspace explorer beside the grid — a folder works the
-same way as a file. Drop or paste a screenshot or document on the prompt bar to
-let Jarvis extract or describe its contents for the prepared brief.
+same way as a file.
 
 External files and clipboard images are copied into the Git-ignored
 `.jarvis/drops` folder; project files stay where they are. Later drops clean up
