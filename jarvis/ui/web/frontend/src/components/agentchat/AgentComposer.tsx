@@ -388,7 +388,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         <button
           type="button"
           onClick={() => void onPickFolder()}
-          title={draft.cwd ? `${t("agent_chat.folder")}: ${draft.cwd}` : t("agent_chat.folder")}
+          title={draft.cwd ? `${t("agent_chat.folder_hint")}: ${draft.cwd}` : t("agent_chat.folder")}
           aria-label={t("agent_chat.folder")}
           data-testid="composer-folder"
           className="inline-flex h-7 max-w-[160px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"

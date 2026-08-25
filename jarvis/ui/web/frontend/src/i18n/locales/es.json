@@ -605,6 +605,7 @@
     "build_hint": "Modo construir: el agente puede cambiar archivos. Clic para el modo planificar.",
     "plan_hint": "Modo planificar: el agente lee y planifica, no cambia nada. Clic para el modo construir.",
     "folder": "Carpeta de trabajo",
+    "folder_hint": "Jarvis trabaja en esta carpeta para este chat",
     "attach_drop_hint": "Suelta aquí los archivos para adjuntarlos",
     "attach_remove": "Quitar {name}",
     "attach_working": "Adjuntando…",
