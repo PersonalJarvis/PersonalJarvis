@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -35,13 +34,13 @@ from pydantic import BaseModel, Field
 from jarvis.brain import ollama_inventory as inventory
 from jarvis.brain import (
     ollama_library,
+    ollama_overview,
     ollama_profiles,
     ollama_pull,
     ollama_roles,
     ollama_runtime,
 )
 from jarvis.brain.ollama_inventory import (
-    OllamaModelInfo,
     OllamaModelNotFound,
     OllamaRunningModel,
     OllamaServerError,
@@ -151,30 +150,6 @@ def _roles_using(cfg: Any, name: str) -> list[str]:
     return roles_using(cfg, name)
 
 
-def _row(
-    info: OllamaModelInfo, running: dict[str, OllamaRunningModel], used_by: list[str]
-) -> dict[str, Any]:
-    live = next((r for key, r in running.items() if same_model(key, info.name)), None)
-    return {
-        "name": info.name,
-        "size_bytes": info.size_bytes,
-        "digest": info.digest,
-        "modified_at": info.modified_at,
-        "family": info.family,
-        "parameter_size": info.parameter_size,
-        "quantization_level": info.quantization_level,
-        "context_length": info.context_length,
-        "capabilities": list(info.capabilities),
-        "license": info.license,
-        "probed": info.probed,
-        "used_by": used_by,
-        "loaded": live is not None,
-        "size_vram_bytes": live.size_vram_bytes if live else 0,
-        "expires_at": live.expires_at if live else "",
-        "running_context_length": live.context_length if live else None,
-    }
-
-
 async def _running_by_name(root: str) -> dict[str, OllamaRunningModel]:
     """``/api/ps`` as a map from the shared snapshot; an unanswered probe is an
     empty map (logged), so a server that lists downloads but stalls on
@@ -205,31 +180,10 @@ async def get_inventory(provider_id: str, request: Request) -> InventoryResponse
     visible and ``loaded_vram_bytes`` stays honest.
     """
     _require_pull_capable(provider_id)
-    root = _server_root()
-    cfg = _resolve_cfg(request)
-    try:
-        snapshot = await inventory.cached_snapshot(root)
-    except OllamaServerError as exc:
-        return InventoryResponse(
-            provider=provider_id,
-            server=root,
-            models=[],
-            running=[],
-            disk_bytes=0,
-            loaded_vram_bytes=0,
-            error=str(exc),
-        )
-    models = snapshot.models
-    running = {r.name: r for r in snapshot.running}
-    rows = [LocalModelRow(**_row(m, running, _roles_using(cfg, m.name))) for m in models]
-    return InventoryResponse(
-        provider=provider_id,
-        server=root,
-        models=rows,
-        running=[RunningModelRow(**asdict(r)) for r in running.values()],
-        disk_bytes=sum(m.size_bytes for m in models),
-        loaded_vram_bytes=sum(r.size_vram_bytes for r in running.values()),
+    payload = await ollama_overview.inventory_payload(
+        provider_id, _server_root(), _resolve_cfg(request)
     )
+    return InventoryResponse(**payload)
 
 
 @router.get("/inventory/{name:path}", response_model=LocalModelDetail)
@@ -242,7 +196,9 @@ async def get_inventory_model(provider_id: str, name: str, request: Request) -> 
     except OllamaServerError as exc:
         raise _http_error(exc) from exc
     running = await _running_by_name(root)
-    payload = _row(info, running, _roles_using(_resolve_cfg(request), info.name))
+    payload = ollama_overview.model_row(
+        info, running, _roles_using(_resolve_cfg(request), info.name)
+    )
     payload["parameters"] = info.parameters
     payload["template"] = info.template
     return LocalModelDetail(**payload)
@@ -412,35 +368,14 @@ class RoleSetResponse(BaseModel):
     message: str
 
 
-def _role_row(state: ollama_roles.RoleState) -> RoleRow:
-    spec = state.spec
-    return RoleRow(
-        id=spec.id,
-        label_key=spec.label_key,
-        config_key=spec.config_key,
-        current=state.current,
-        installed=state.installed,
-        required=list(spec.required),
-        recommended_capabilities=list(spec.recommended),
-        qualifying=list(state.qualifying),
-        recommended=state.recommended,
-        writable=spec.writable,
-        advanced=spec.advanced,
-        note=state.note,
-        context_tokens=state.context_tokens,
-        context_source=state.context_source,
-    )
-
-
 @router.get("/roles", response_model=RolesResponse)
 async def get_roles(provider_id: str, request: Request) -> RolesResponse:
     """Every model slot with its pick, what qualifies, and the recommendation."""
     _require_pull_capable(provider_id)
-    root = _server_root()
-    states, error = await ollama_roles.list_roles(root, _resolve_cfg(request))
-    return RolesResponse(
-        provider=provider_id, server=root, roles=[_role_row(s) for s in states], error=error
+    payload = await ollama_overview.roles_payload(
+        provider_id, _server_root(), _resolve_cfg(request)
     )
+    return RolesResponse(**payload)
 
 
 @router.put("/roles/{role}", response_model=RoleSetResponse)
@@ -824,34 +759,9 @@ class EnvGuideResponse(BaseModel):
 async def get_server(provider_id: str) -> ServerResponse:
     """Runtime picture plus what is loaded and how much disk the downloads take."""
     _require_pull_capable(provider_id)
-    # A synchronous urllib probe (up to 1.5 s when the server is down) — off
-    # the loop so the sibling panels' requests keep flowing meanwhile.
-    status = await asyncio.to_thread(ollama_runtime.runtime_status)
-    root = str(status.get("base_url") or _server_root())
-    running: list[RunningModelRow] = []
-    disk = 0
-    error: str | None = None
-    if status.get("running"):
-        try:
-            disk = await inventory.disk_usage(root)
-        except OllamaServerError as exc:
-            log.info("local-models: disk usage unavailable at %s: %s", root, exc)
-            error = str(exc)
-        running = [RunningModelRow(**asdict(r)) for r in (await _running_by_name(root)).values()]
-    return ServerResponse(
-        installed=bool(status.get("installed")),
-        binary=str(status.get("binary") or ""),
-        running=bool(status.get("running")),
-        version=str(status.get("version") or ""),
-        detail=str(status.get("detail") or ""),
-        base_url=root,
-        host_kind=str(status.get("host_kind") or "local"),
-        models_dir=str(status.get("models_dir") or ""),
-        running_models=running,
-        disk_bytes=disk,
-        loaded_vram_bytes=sum(r.size_vram_bytes for r in running),
-        error=error,
-    )
+    # The synchronous runtime probe (up to 1.5 s when the server is down)
+    # runs off the loop inside ``server_payload``.
+    return ServerResponse(**await ollama_overview.server_payload(_server_root()))
 
 
 @router.post(
@@ -919,6 +829,51 @@ async def get_server_log(
     """The last lines of the server log Jarvis writes when it starts Ollama."""
     _require_pull_capable(provider_id)
     return ServerLogResponse(lines=await asyncio.to_thread(ollama_runtime.tail_log, lines))
+
+
+class OverviewResponse(BaseModel):
+    """ONE payload for the section's first paint (TS mirror ``OverviewResponse``
+    in ``src/hooks/useLocalModels.ts``; parity-tested).
+
+    ``server`` / ``roles`` / ``inventory`` / ``recommended`` are exactly what
+    the four single endpoints answer; ``source`` says whether this is a live
+    build or the disk snapshot from a previous open (``"cache"``, with a
+    refresh already running); ``fetched_at`` is the build time, epoch seconds.
+    """
+
+    server: ServerResponse
+    roles: RolesResponse
+    inventory: InventoryResponse
+    recommended: dict[str, Any]
+    source: str
+    fetched_at: float
+
+
+@router.get("/overview", response_model=OverviewResponse)
+async def get_overview(
+    provider_id: str,
+    request: Request,
+    fresh: int = Query(default=0, ge=0, le=1, description="1 = build live, skip the cache"),
+) -> OverviewResponse:
+    """Server, roles, inventory and the shortlist in one answer, cache first.
+
+    The last good overview is kept on disk; it is answered at once as
+    ``source: "cache"`` while one background refresh runs, so the section
+    paints before the server has even been asked. ``?fresh=1`` forces a live
+    build (the section uses it after a change it made itself).
+    """
+    _require_pull_capable(provider_id)
+    payload, source = await ollama_overview.get_overview(
+        _server_root(), _resolve_cfg(request), provider_id=provider_id, fresh=bool(fresh)
+    )
+    return OverviewResponse(
+        server=ServerResponse(**payload["server"]),
+        roles=RolesResponse(**payload["roles"]),
+        inventory=InventoryResponse(**payload["inventory"]),
+        recommended=dict(payload.get("recommended") or {}),
+        source=source,
+        fetched_at=float(payload.get("fetched_at") or 0.0),
+    )
 
 
 @router.get("/server/env-guide", response_model=EnvGuideResponse)
