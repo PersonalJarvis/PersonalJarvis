@@ -92,6 +92,14 @@ def _usable(provider: str) -> bool:
     )
 
 
+async def _live(cfg: Any) -> dict[tuple[str, str], tuple[bool, str]]:
+    """One real call per candidate pair (cached ten minutes): a key that
+    authenticates but is refused for quota is not a working assistant."""
+    from jarvis.local_models.assistant_session import chain_candidates, probe_live
+
+    return await probe_live(cfg, chain_candidates(cfg, usable=_usable))
+
+
 def _svc(request: Request) -> Any:
     svc = _service_from_state(request.app.state)
     if svc is None:
@@ -115,8 +123,9 @@ async def post_run(provider_id: str, body: RunBody, request: Request) -> RunResp
     _require_pull_capable(provider_id)
     cfg = _cfg(request)
     svc = _svc(request)
+    live = await _live(cfg)
     try:
-        session = ensure_session(svc, cfg, usable=_usable)
+        session = ensure_session(svc, cfg, usable=_usable, live=live)
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -138,7 +147,8 @@ async def get_session(provider_id: str, request: Request) -> SessionResponse:
     _require_pull_capable(provider_id)
     cfg = _cfg(request)
     svc = _svc(request)
-    return SessionResponse(**session_state(svc, cfg, usable=_usable))
+    live = await _live(cfg)
+    return SessionResponse(**session_state(svc, cfg, usable=_usable, live=live))
 
 
 @router.post("/test")

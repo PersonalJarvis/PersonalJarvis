@@ -49,6 +49,19 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeOllamaServer:
     return server
 
 
+@pytest.fixture(autouse=True)
+def live_probe_is_a_fake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The routes ask every candidate pair for one real generation; a unit
+    test answers "alive" for all of them instead of calling a vendor."""
+    from jarvis.local_models import assistant_session
+
+    async def _alive(cfg, pairs, *, timeout_s=20.0, tester=None):
+        return {pair: (True, "") for pair in pairs}
+
+    assistant_session._reset_for_tests()
+    monkeypatch.setattr(assistant_session, "probe_live", _alive)
+
+
 @pytest.fixture
 def server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WebServer:
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))

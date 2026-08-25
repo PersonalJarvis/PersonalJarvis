@@ -94,3 +94,37 @@ def test_session_state_shape() -> None:
     state = policy.session_state(svc, cfg, usable=lambda _p: False)
     assert state["session_id"] == session.session_id
     assert state["ready"] is False and state["reason"] == policy.NOT_READY
+
+
+def test_a_pair_the_live_probe_refuses_yields_to_the_next_and_names_the_reason() -> None:
+    cfg = _cfg("gemini", "g-pro", fallback_provider="openai", fallback_model="o-1")
+    live = {
+        ("gemini", "g-pro"): (False, "gemini (g-pro): no credits — quota 0"),
+        ("openai", "o-1"): (True, ""),
+    }
+    tier = policy.agents_tier(cfg, usable=lambda _p: True, tool_capable=lambda _p: True, live=live)
+    assert (tier.provider, tier.model, tier.ready) == ("openai", "o-1", True)
+    live[("openai", "o-1")] = (False, "openai (o-1): bad key")
+    stuck = policy.agents_tier(cfg, usable=lambda _p: True, tool_capable=lambda _p: True, live=live)
+    assert stuck.ready is False and stuck.reason == "openai (o-1): bad key"
+
+
+@pytest.mark.asyncio
+async def test_probe_live_classifies_with_the_provider_test_and_caches() -> None:
+    from jarvis.brain.provider_test import ProviderTestResult
+
+    policy._reset_for_tests()
+    calls: list[tuple[str, str | None]] = []
+
+    async def _tester(spec, cfg, *, model=None, timeout_s=20.0):
+        calls.append((spec.id, model))
+        status = "no_credits" if spec.id == "gemini" else "ok"
+        return ProviderTestResult(provider=spec.id, status=status, detail="quota 0")
+
+    cfg = _cfg("gemini", "g-pro", fallback_provider="openai", fallback_model="o-1")
+    pairs = policy.chain_candidates(cfg, usable=lambda _p: True, tool_capable=lambda _p: True)
+    out = await policy.probe_live(cfg, pairs, tester=_tester)
+    assert out[("gemini", "g-pro")][0] is False and "no credits" in out[("gemini", "g-pro")][1]
+    assert out[("openai", "o-1")] == (True, "")
+    again = await policy.probe_live(cfg, pairs, tester=_tester)
+    assert again == out and len(calls) == 2  # cached, no second real call

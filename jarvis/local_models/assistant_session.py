@@ -14,7 +14,7 @@ never a silent fallback onto another tier.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -94,56 +94,143 @@ def _default_usable(provider: str) -> bool:
         return False
 
 
+def _chain(cfg: Any) -> list[tuple[str, str]]:
+    brain = getattr(cfg, "brain", None)
+    worker = getattr(brain, "worker", None)
+    if worker is None:
+        return []
+    pairs = [
+        ("provider", "model"),
+        ("fallback_provider", "fallback_model"),
+        ("fallback_provider_2", "fallback_model_2"),
+    ]
+    out: list[tuple[str, str]] = []
+    for p_key, m_key in pairs:
+        provider = str(getattr(worker, p_key, "") or "").strip()
+        model = str(getattr(worker, m_key, "") or "").strip()
+        if provider:
+            out.append((provider, model))
+    return out
+
+
+def chain_candidates(
+    cfg: Any,
+    *,
+    usable: Callable[[str], bool] | None = None,
+    tool_capable: Callable[[str], bool] | None = None,
+) -> list[tuple[str, str]]:
+    """The worker pairs worth a live probe: known, tool-capable, credentialed."""
+    can_tools = tool_capable or _tool_capable
+    probe = usable or _default_usable
+    out: list[tuple[str, str]] = []
+    for provider, model in _chain(cfg):
+        if not _known(provider) or not can_tools(provider):
+            continue
+        try:
+            if probe(provider):
+                out.append((provider, model))
+        except Exception:  # noqa: BLE001 — a failing probe is "not ready", with the reason logged
+            log.info("agents tier: usability probe for %s failed", provider, exc_info=True)
+    return out
+
+
+#: (provider, model) -> (ok, reason, monotonic) — one real call per pair per
+#: ten minutes; a run and the session read share it.
+_LIVE_CACHE: dict[tuple[str, str], tuple[bool, str, float]] = {}
+_LIVE_TTL_S: Final[float] = 600.0
+
+
+def _reset_for_tests() -> None:
+    _LIVE_CACHE.clear()
+
+
+async def probe_live(
+    cfg: Any,
+    pairs: list[tuple[str, str]],
+    *,
+    timeout_s: float = 20.0,
+    tester: Callable[..., Awaitable[Any]] | None = None,
+) -> dict[tuple[str, str], tuple[bool, str]]:
+    """One real one-token generation per pair, classified like the API-keys
+    page's "Test" (``provider_test``): a key that authenticates but is refused
+    for quota or billing is NOT usable here, and the sentence says so."""
+    import time
+
+    from jarvis.brain import provider_test
+    from jarvis.ui.web.provider_spec import get_spec
+
+    out: dict[tuple[str, str], tuple[bool, str]] = {}
+    now = time.monotonic()
+    for provider, model in pairs:
+        hit = _LIVE_CACHE.get((provider, model))
+        if hit is not None and now - hit[2] < _LIVE_TTL_S:
+            out[(provider, model)] = (hit[0], hit[1])
+            continue
+        spec = get_spec(provider)
+        if spec is None:
+            out[(provider, model)] = (False, f"{provider} is not a provider this build knows.")
+            continue
+        run = tester or provider_test.run_provider_test
+        try:
+            result = await run(spec, cfg, model=model or None, timeout_s=timeout_s)
+            ok = result.status == provider_test.OK
+            reason = (
+                ""
+                if ok
+                else f"{provider} ({model or 'default model'}): {result.status.replace('_', ' ')}"
+                + (f" — {result.detail}" if result.detail else "")
+            )
+        except Exception as exc:  # noqa: BLE001 — a probe crash is "not usable", logged
+            log.warning("agents tier: live probe of %s/%s crashed: %s", provider, model, exc)
+            ok, reason = False, f"{provider} ({model}): probe failed — {exc}"
+        _LIVE_CACHE[(provider, model)] = (ok, reason, time.monotonic())
+        out[(provider, model)] = (ok, reason)
+    return out
+
+
 def agents_tier(
     cfg: Any,
     *,
     usable: Callable[[str], bool] | None = None,
     tool_capable: Callable[[str], bool] | None = None,
+    live: dict[tuple[str, str], tuple[bool, str]] | None = None,
 ) -> AgentsTier:
     """The pair the assistant runs on and whether it can run right now.
 
     Walks the worker chain (primary, fallback, fallback 2) and takes the first
-    provider that is known, can call tools and has a credential. ``usable`` is
-    the credential / login probe (the routes pass the provider-agnostic worker
-    check the API-keys page uses; the default reads the Agents-tier secret);
-    ``tool_capable`` defaults to asking the brain plugin.
+    provider that is known, can call tools, has a credential and — when a
+    ``live`` map from :func:`probe_live` is given — answered a real call.
+    ``usable`` is the credential / login probe (the routes pass the
+    provider-agnostic worker check the API-keys page uses; the default reads
+    the Agents-tier secret); ``tool_capable`` defaults to asking the plugin.
     """
-    brain = getattr(cfg, "brain", None)
-    worker = getattr(brain, "worker", None)
-    if worker is None:
+    chain = _chain(cfg)
+    if not chain:
         return AgentsTier("", "", False, NOT_READY)
-    chain = [
-        (
-            str(getattr(worker, "provider", "") or "").strip(),
-            str(getattr(worker, "model", "") or "").strip(),
-        ),
-        (
-            str(getattr(worker, "fallback_provider", "") or "").strip(),
-            str(getattr(worker, "fallback_model", "") or "").strip(),
-        ),
-        (
-            str(getattr(worker, "fallback_provider_2", "") or "").strip(),
-            str(getattr(worker, "fallback_model_2", "") or "").strip(),
-        ),
-    ]
-    known = [(p, m) for p, m in chain if p and _known(p)]
+    known = [(p, m) for p, m in chain if _known(p)]
     if not known:
-        first = next((p for p, _m in chain if p), "")
-        return AgentsTier(first, "", False, NOT_READY)
+        return AgentsTier(chain[0][0], "", False, NOT_READY)
     can_tools = tool_capable or _tool_capable
     handy = [(p, m) for p, m in known if can_tools(p)]
     if not handy:
         return AgentsTier(known[0][0], known[0][1], False, NO_TOOLS)
     probe = usable or _default_usable
+    last_reason = NOT_READY
     for provider, model in handy:
         try:
             ok = bool(probe(provider))
         except Exception:  # noqa: BLE001 — a failing probe is "not ready", with the reason logged
             log.info("agents tier: usability probe for %s failed", provider, exc_info=True)
             ok = False
-        if ok:
-            return AgentsTier(provider, model, True, "")
-    return AgentsTier(handy[0][0], handy[0][1], False, NOT_READY)
+        if not ok:
+            continue
+        if live is not None and (provider, model) in live:
+            alive, reason = live[(provider, model)]
+            if not alive:
+                last_reason = reason or NOT_READY
+                continue
+        return AgentsTier(provider, model, True, "")
+    return AgentsTier(handy[0][0], handy[0][1], False, last_reason)
 
 
 def _current(svc: Any) -> Any | None:
@@ -151,9 +238,15 @@ def _current(svc: Any) -> Any | None:
     return sessions[0] if sessions else None
 
 
-def session_state(svc: Any, cfg: Any, *, usable: Callable[[str], bool] | None = None) -> dict:
+def session_state(
+    svc: Any,
+    cfg: Any,
+    *,
+    usable: Callable[[str], bool] | None = None,
+    live: dict[tuple[str, str], tuple[bool, str]] | None = None,
+) -> dict:
     """``GET /session``: the session id (or null), the pair, readiness, reason."""
-    tier = agents_tier(cfg, usable=usable)
+    tier = agents_tier(cfg, usable=usable, live=live)
     current = _current(svc)
     matches = (
         current is not None
@@ -170,12 +263,18 @@ def session_state(svc: Any, cfg: Any, *, usable: Callable[[str], bool] | None = 
     }
 
 
-def ensure_session(svc: Any, cfg: Any, *, usable: Callable[[str], bool] | None = None) -> Any:
+def ensure_session(
+    svc: Any,
+    cfg: Any,
+    *,
+    usable: Callable[[str], bool] | None = None,
+    live: dict[tuple[str, str], tuple[bool, str]] | None = None,
+) -> Any:
     """The one ``local-models`` session, created or re-created for the current pair.
 
-    Raises ``PermissionError(NOT_READY)`` when the Agents tier cannot run.
+    Raises ``PermissionError(reason)`` when the Agents tier cannot run.
     """
-    tier = agents_tier(cfg, usable=usable)
+    tier = agents_tier(cfg, usable=usable, live=live)
     if not tier.ready:
         raise PermissionError(tier.reason or NOT_READY)
     current = _current(svc)
