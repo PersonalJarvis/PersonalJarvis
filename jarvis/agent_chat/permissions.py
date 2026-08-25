@@ -262,7 +262,9 @@ def _stance(runner: str, mode: str) -> int:
 def ladder_key(surface: str, runner: str) -> str:
     """Which ladder a session shows: the runner's own on the agent surface,
     the one Jarvis ladder on the front page's chat."""
-    return JARVIS_LADDER if surface == "jarvis" else runner
+    from jarvis.agent_chat.surface_kits import kit_for  # lazy: kits import no ladder
+
+    return kit_for(surface).ladder or runner
 
 
 def stance_of(mode: str) -> int:

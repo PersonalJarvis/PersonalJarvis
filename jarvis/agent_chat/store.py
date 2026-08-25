@@ -73,7 +73,7 @@ _PREVIEW_MAX_CHARS = 120
 #: ``CreateSessionBody.surface`` in ``jarvis/ui/web/agent_chat_routes.py`` —
 #: ``tests/unit/agent_chat/test_agent_chat_surface_parity.py`` keeps the three
 #: in step (AP-4).
-SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent")
+SURFACES: Final[tuple[str, ...]] = ("jarvis", "agent", "local-models")
 DEFAULT_SURFACE: Final[str] = "agent"
 
 

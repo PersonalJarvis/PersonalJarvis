@@ -55,7 +55,7 @@ log = logging.getLogger(__name__)
 
 #: The Pydantic twin of ``jarvis.agent_chat.store.SURFACES`` (AP-4; the parity
 #: test in tests/unit/agent_chat/test_agent_chat_surface_parity.py pins it).
-SurfaceName = Literal["jarvis", "agent"]
+SurfaceName = Literal["jarvis", "agent", "local-models"]
 
 router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 

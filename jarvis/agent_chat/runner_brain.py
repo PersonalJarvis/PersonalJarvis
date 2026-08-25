@@ -27,7 +27,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, get_args
 
@@ -36,9 +36,10 @@ from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.folder_tools import PLAN_STANCE, folder_tools, plan_filter
 from jarvis.agent_chat.runner_api import messages_from_events
+from jarvis.agent_chat.surface_kits import kit_for
 from jarvis.agent_chat.tools import summarize_call
 from jarvis.brain.turn_override import TurnOverride
-from jarvis.core.protocols import BrainMessage, ReasoningEffort
+from jarvis.core.protocols import BrainMessage, ReasoningEffort, Tool
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -137,9 +138,13 @@ def build_override(
     stance: str,
     cwd: Path,
     ref: str,
+    kit_tools: Mapping[str, Tool] | None = None,
+    system_extra: str = "",
 ) -> TurnOverride:
     """The pick for this turn: the session's provider / model / effort, the
-    folder's hands, and the tool context that routes approvals to the card."""
+    surface's hands (its kit's tools, else the folder's), and the tool context
+    that routes approvals to the card."""
+    kit = kit_for(session.surface)
     provider = session.provider
     model = (session.model or "").strip() or _default_model(brain, provider)
     effort = normalize_effort(provider, session.effort)
@@ -150,8 +155,12 @@ def build_override(
         provider=provider,
         model=model,
         reasoning_effort=reasoning_effort,
-        tools_extra=folder_tools(cwd, stance=stance),
+        tools_extra=(
+            dict(kit_tools) if kit_tools is not None else folder_tools(cwd, stance=stance)
+        ),
         tool_filter=plan_filter if stance == PLAN_STANCE else None,
+        credential_scope=kit.credential_scope,
+        system_extra=system_extra,
         tool_context={
             # A typed answer is read, not heard: no spoken two-liners.
             "delivery": "written",
@@ -159,11 +168,38 @@ def build_override(
             "approval_surface": "interactive",
             "approval_ref": ref,
             "approval_timeout_s": APPROVAL_TIMEOUT_S,
-            "tool_origin": "agent-chat",
+            "tool_origin": kit.tool_origin,
             "cwd": str(cwd),
         },
-        max_turns=MAX_TURNS,
+        max_turns=kit.max_turns or MAX_TURNS,
     )
+
+
+async def kit_payload(session: AgentChatSession, brain: Any) -> tuple[dict[str, Tool] | None, str]:
+    """The surface kit's per-turn hands and briefing: ``(tools, system_extra)``.
+
+    ``(None, "")`` on a surface without its own kit tools (the folder tools
+    then apply). A kit builder that fails loses only its part — the turn
+    still runs, and the failure is in the log.
+    """
+    kit = kit_for(session.surface)
+    cfg = getattr(brain, "_config", None)
+    tools: dict[str, Tool] | None = None
+    extra = ""
+    if kit.tools is not None:
+        try:
+            tools = kit.tools(cfg, brain)
+        except Exception as exc:  # noqa: BLE001 — the turn runs without the kit's hands
+            log.warning("surface %s: kit tools not built: %s", session.surface, exc, exc_info=True)
+            tools = {}
+    if kit.system_extra is not None:
+        try:
+            extra = await kit.system_extra(cfg, brain)
+        except Exception as exc:  # noqa: BLE001 — the turn runs without the briefing
+            log.warning(
+                "surface %s: kit briefing not built: %s", session.surface, exc, exc_info=True
+            )
+    return tools, extra
 
 
 def _default_model(brain: Any, provider: str) -> str | None:
@@ -356,7 +392,16 @@ async def run_brain_turn(
 
     cwd = Path(session.cwd or Path.home())
     stance = handle.stance or "ask"
-    override = build_override(session, brain, stance=stance, cwd=cwd, ref=ref)
+    kit_tools, system_extra = await kit_payload(session, brain)
+    override = build_override(
+        session,
+        brain,
+        stance=stance,
+        cwd=cwd,
+        ref=ref,
+        kit_tools=kit_tools,
+        system_extra=system_extra,
+    )
     _note_skill_trigger(brain, text)
 
     if bridge is not None:
@@ -514,5 +559,6 @@ __all__ = [
     "brain_history_from_events",
     "brain_manager",
     "build_override",
+    "kit_payload",
     "run_brain_turn",
 ]

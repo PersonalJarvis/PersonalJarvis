@@ -36,6 +36,7 @@ from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_
 from jarvis.agent_chat.runner_brain import run_brain_turn
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
 from jarvis.agent_chat.store import DEFAULT_SURFACE, AgentChatSession, AgentChatStore
+from jarvis.agent_chat.surface_kits import kit_for
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     subscription only pays for the vendor's own loop — and run as Jarvis
     (see :mod:`jarvis.agent_chat.jarvis_harness`).
     """
-    api_runner = "brain" if surface == "jarvis" else "api"
+    api_runner = "brain" if kit_for(surface).brain_runner else "api"
     row = provider_row(provider)
     if row is None:
         return api_runner if supports_api_runner(provider) else "unknown"
@@ -248,7 +249,7 @@ class AgentChatService:
             assistant_name=self._assistant_name(),
             bus=bus,
             surface=session.surface,
-            stance=session.permission_mode if session.surface == "jarvis" else "",
+            stance=session.permission_mode if kit_for(session.surface).uses_stance else "",
         )
 
         async def _body() -> None:
