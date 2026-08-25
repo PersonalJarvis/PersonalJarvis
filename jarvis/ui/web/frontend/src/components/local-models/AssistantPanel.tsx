@@ -316,12 +316,16 @@ export function AssistantPanel({
         // between them. The height is the screen's, minus what the section
         // header and the rail already take.
         "flex h-[calc(100vh-14.5rem)] min-h-[26rem] flex-col overflow-hidden rounded-xl border border-border",
-        "bg-[color-mix(in_srgb,var(--card)_92%,var(--foreground)_3%)]",
+        // Token colours only: `--card` and friends are HSL triplets, not
+        // colours, so a color-mix() on them is invalid CSS and the room would
+        // render with no ground at all. The conversation sits a shade off the
+        // page, the two bars a shade above it.
+        "bg-card/40",
       )}
       data-testid="local-models-assistant"
     >
       {/* ── header ─────────────────────────────────────────────────────── */}
-      <div className="shrink-0 border-b border-border/70 bg-card/40 px-5 py-3">
+      <div className="shrink-0 border-b border-border/70 bg-card px-5 py-3">
         <div className="mx-auto flex w-full max-w-[46rem] flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold leading-tight tracking-[-0.01em]">
@@ -536,7 +540,7 @@ export function AssistantPanel({
       </div>
 
       {/* ── composer ───────────────────────────────────────────────────── */}
-      <div className="shrink-0 border-t border-border/70 bg-card/40 px-5 py-3">
+      <div className="shrink-0 border-t border-border/70 bg-card px-5 py-3">
         <div className="mx-auto w-full max-w-[46rem]">
           <form
             className={cn(
