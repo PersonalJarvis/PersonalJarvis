@@ -816,7 +816,7 @@
       "timed_out": "Zeit abgelaufen"
     },
     "story_empty": "Für diesen Lauf sind keine Ereignisse aufgezeichnet.",
-    "transcript_no_dir": "Das Worker-Transkript ist mit dem Ausgabeordner verschwunden — der Reiter Verlauf hat weiterhin jedes Ereignis des Laufs.",
+    "transcript_no_dir": "Das vollständige Worker-Transkript ist mit dem Ausgabeordner verschwunden — die Schritte oben decken weiterhin jedes Ereignis des Laufs ab.",
     "transcript_truncated": "Das Transkript war länger als hier gezeigt.",
     "transcript_dropped": "{n} weitere Schritte werden nicht gezeigt.",
     "final_answer": "Abschließende Antwort",

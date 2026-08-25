@@ -816,7 +816,7 @@
       "timed_out": "Ran out of time"
     },
     "story_empty": "No events recorded for this run.",
-    "transcript_no_dir": "The worker transcript went with the output directory — the Story tab still has every event of the run.",
+    "transcript_no_dir": "The worker's full transcript went with the output folder — the steps above still cover every event of the run.",
     "transcript_truncated": "The transcript was longer than what is shown.",
     "transcript_dropped": "{n} more steps are not shown.",
     "final_answer": "Final answer",

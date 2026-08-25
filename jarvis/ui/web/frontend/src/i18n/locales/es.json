@@ -814,7 +814,7 @@
       "timed_out": "Se agotó el tiempo"
     },
     "story_empty": "No hay eventos registrados para esta ejecución.",
-    "transcript_no_dir": "La transcripción del worker se fue con la carpeta de salida — la pestaña Historia conserva cada evento de la ejecución.",
+    "transcript_no_dir": "La transcripción completa del worker se fue con la carpeta de salida — los pasos de arriba siguen cubriendo cada evento de la ejecución.",
     "transcript_truncated": "La transcripción era más larga de lo que se muestra.",
     "transcript_dropped": "{n} pasos más no se muestran.",
     "final_answer": "Respuesta final",
