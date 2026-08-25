@@ -1,0 +1,4 @@
+# Shell scripts run inside the AppImage and on Linux runners; a CRLF shebang
+# breaks them. AppRun has no extension and needs its own rule.
+*.sh   text eol=lf
+AppRun text eol=lf

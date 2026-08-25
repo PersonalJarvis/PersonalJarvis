@@ -1,0 +1,108 @@
+#!/bin/sh
+#
+# AppRun - the entry point the AppImage runtime executes.
+#
+# Two jobs, in this order:
+#
+#   1. Pass every argument straight through to the frozen executable, so
+#      `./PersonalJarvis-Linux-x86_64.AppImage serve`, `--version`, `--doctor`
+#      and every other CLI invocation behave exactly like the pip-installed
+#      `jarvis` command. This is the whole reason the AppImage is also the CLI.
+#
+#   2. On a bare double-click (no arguments, graphical session), open the user
+#      interface in the default browser once the backend answers.
+#
+# Why (2) exists: this AppImage deliberately does NOT bundle GTK/WebKit2GTK, so
+# it has no native window to show - see packaging/linux/README.md for the full
+# reasoning. The app itself detects that and keeps serving its interface over
+# loopback HTTP, but it can only WRITE that fact to stderr, and a double-clicked
+# AppImage has no terminal to write to. Without this the user would double-click
+# and see nothing happen at all. The `browser-ui` marker below is written by
+# packaging/linux/build.sh only when the frozen bundle really has no window
+# backend, so a future build that does bundle one stops opening a second copy of
+# the interface in a browser tab.
+#
+# POSIX sh on purpose: this runs on whatever the user has, not on a machine we
+# provisioned.
+set -u
+
+if [ -n "${APPDIR:-}" ]; then
+  HERE="${APPDIR}"
+else
+  HERE="$(dirname "$(readlink -f "$0")")"
+fi
+
+APP="${HERE}/usr/bin/Jarvis"
+BROWSER_UI_MARKER="${HERE}/usr/share/personal-jarvis/browser-ui"
+
+# Default port from jarvis/core/config.py (ui.admin_api_port). A user who
+# changed it in jarvis.toml simply gets no auto-opened tab: the probe below
+# never answers, nothing is opened, and the app still runs and logs its real
+# address. Guessing wrong is worse than doing nothing, so this never opens a
+# tab it has not confirmed first.
+JARVIS_UI_URL="http://127.0.0.1:47821"
+
+if [ ! -x "${APP}" ]; then
+  echo "AppRun: ${APP} is missing or not executable - this AppImage is damaged." >&2
+  exit 1
+fi
+
+# Any explicit argument means the CLI was invoked. Hand over the process and
+# stop here, so exit codes, stdin, stdout and signals all belong to the app.
+if [ "$#" -gt 0 ]; then
+  exec "${APP}" "$@"
+fi
+
+_probe() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS -o /dev/null --max-time 2 "$1"
+    return $?
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -q -O /dev/null -T 2 "$1"
+    return $?
+  fi
+  return 2
+}
+
+_open_url() {
+  for opener in xdg-open gio x-www-browser sensible-browser firefox chromium google-chrome; do
+    if command -v "${opener}" >/dev/null 2>&1; then
+      if [ "${opener}" = "gio" ]; then
+        gio open "$1" >/dev/null 2>&1 &
+      else
+        "${opener}" "$1" >/dev/null 2>&1 &
+      fi
+      return 0
+    fi
+  done
+  return 1
+}
+
+_open_ui_when_ready() {
+  parent="$1"
+  url="$2"
+  waited=0
+  while [ "${waited}" -lt 90 ]; do
+    # The app is gone (crash, quick exit, user closed it): stop waiting rather
+    # than leaving a poller behind for another minute.
+    kill -0 "${parent}" 2>/dev/null || return 1
+    if _probe "${url}/api/health"; then
+      _open_url "${url}" || echo "Personal Jarvis is running at ${url}" >&2
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+if [ -f "${BROWSER_UI_MARKER}" ] \
+  && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] \
+  && [ "${JARVIS_APPIMAGE_NO_BROWSER:-0}" != "1" ]; then
+  # $$ is this shell's pid, which `exec` below hands to the app - so the poller
+  # watches the app itself, not a shell that no longer exists.
+  _open_ui_when_ready "$$" "${JARVIS_UI_URL}" &
+fi
+
+exec "${APP}"
