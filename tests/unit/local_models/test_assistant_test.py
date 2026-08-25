@@ -20,8 +20,6 @@ from jarvis.local_models import assistant_test
 from jarvis.local_models.assistant_test import NOT_SET, run_setup_test
 from tests.fakes.fake_ollama_server import FakeOllamaServer
 
-pytestmark = pytest.mark.asyncio
-
 
 class _HealthResult:
     def __init__(self, ok: bool, error: str | None) -> None:
