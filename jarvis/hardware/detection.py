@@ -5,6 +5,7 @@ STT configuration (local Whisper model vs. cloud API) to the user.
 
 All checks are read-only; nothing is installed or modified.
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,6 +13,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -21,6 +24,7 @@ log = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 # DataClasses
 # ----------------------------------------------------------------------
+
 
 @dataclass(slots=True)
 class GPUInfo:
@@ -59,10 +63,11 @@ class HardwareReport:
 @dataclass(slots=True)
 class WhisperRecommendation:
     """Recommended Whisper configuration based on detected hardware."""
-    provider: str          # "faster-whisper" | "openai-api"
-    model: str             # tiny | base | small | large-v3-turbo | large-v3
-    device: str            # cuda | cpu
-    compute_type: str      # int8_float16 | fp16 | int8
+
+    provider: str  # "faster-whisper" | "openai-api"
+    model: str  # tiny | base | small | large-v3-turbo | large-v3
+    device: str  # cuda | cpu
+    compute_type: str  # int8_float16 | fp16 | int8
     expected_latency_ms: int
     rationale: str
 
@@ -70,6 +75,7 @@ class WhisperRecommendation:
 # ----------------------------------------------------------------------
 # Detection
 # ----------------------------------------------------------------------
+
 
 def _run(cmd: list[str], timeout: int = 10) -> str:
     try:
@@ -132,8 +138,7 @@ def _detect_nvidia_gpus() -> list[GPUInfo]:
         pynvml.nvmlShutdown()
         return gpus
     except Exception:  # noqa: BLE001 — no pynvml / no driver is a normal state
-        log.debug("hardware: pynvml probe unavailable, falling back to nvidia-smi",
-                  exc_info=True)
+        log.debug("hardware: pynvml probe unavailable, falling back to nvidia-smi", exc_info=True)
 
     # Fallback: nvidia-smi
     out = _run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
@@ -208,6 +213,7 @@ def _detect_existing_installs() -> dict[str, str]:
 # Public API
 # ----------------------------------------------------------------------
 
+
 def analyze() -> HardwareReport:
     """Full hardware analysis (run once during setup and on demand)."""
     cpu_name, cpu_phys, cpu_log = _detect_cpu()
@@ -260,9 +266,7 @@ def recommend_whisper(
     large-v3-turbo anyway).
     """
     gpu_usable = (
-        report.has_nvidia_gpu
-        and report.torch_cuda_available
-        and gpu_inference_verified is True
+        report.has_nvidia_gpu and report.torch_cuda_available and gpu_inference_verified is True
     )
     if not gpu_usable:
         cuda_present_unverified = report.has_nvidia_gpu and report.torch_cuda_available
@@ -335,6 +339,7 @@ def recommend_whisper(
 # CLI
 # ----------------------------------------------------------------------
 
+
 def _format_report(report: HardwareReport, rec: WhisperRecommendation) -> str:
     lines = [
         "╔══════════════════════════════════════════════════════════╗",
@@ -393,9 +398,7 @@ def _format_report(report: HardwareReport, rec: WhisperRecommendation) -> str:
     return "\n".join(lines)
 
 
-def check_records(
-    report: HardwareReport, rec: WhisperRecommendation
-) -> list[dict[str, object]]:
+def check_records(report: HardwareReport, rec: WhisperRecommendation) -> list[dict[str, object]]:
     """The same preflight as :func:`_format_report`, as machine-readable records.
 
     One record per component, in the closed vocabulary defined by
@@ -450,9 +453,7 @@ def check_records(
                 detail += f", compute capability {gpu.compute_capability}"
             records.append(record(f"gpu{i}", "ok", detail))
     else:
-        records.append(
-            record("gpu", "info", "no NVIDIA GPU detected — everything runs on CPU")
-        )
+        records.append(record("gpu", "info", "no NVIDIA GPU detected — everything runs on CPU"))
 
     records.append(
         record(
@@ -510,8 +511,43 @@ def cuda_inference_verified() -> bool | None:
         return None
 
 
+#: :func:`usable_accelerator_gb` shells out to ``nvidia-smi`` (or drives
+#: pynvml) — 100–400 ms on a Windows box — and the "Local models" section asks
+#: it from several panels per paint. A card does not change size while the app
+#: runs, so one probe per minute is the honest cadence; the memo is process-wide
+#: and thread-safe because the callers hop to a worker thread.
+_ACCELERATOR_TTL_S = 60.0
+_accelerator_lock = threading.Lock()
+_accelerator_memo: tuple[float, tuple[float, str]] | None = None  # (monotonic, answer)
+
+
+def _reset_for_tests() -> None:
+    """Forget the memoised accelerator probe (tests only)."""
+    global _accelerator_memo
+    with _accelerator_lock:
+        _accelerator_memo = None
+
+
 def usable_accelerator_gb() -> tuple[float, str]:
     """Usable accelerator memory in GiB and where that figure came from.
+
+    Memoised for :data:`_ACCELERATOR_TTL_S`; see :func:`_probe_accelerator_gb`
+    for the probe itself.
+    """
+    global _accelerator_memo
+    now = time.monotonic()
+    with _accelerator_lock:
+        hit = _accelerator_memo
+        if hit is not None and now - hit[0] < _ACCELERATOR_TTL_S:
+            return hit[1]
+    answer = _probe_accelerator_gb()
+    with _accelerator_lock:
+        _accelerator_memo = (time.monotonic(), answer)
+    return answer
+
+
+def _probe_accelerator_gb() -> tuple[float, str]:
+    """The uncached accelerator probe behind :func:`usable_accelerator_gb`.
 
     ``(gb, source)`` with source ``"nvidia-smi"`` | ``"apple-unified"`` |
     ``"none"``. Dedicated NVIDIA VRAM counts as-is; on Apple Silicon the GPU

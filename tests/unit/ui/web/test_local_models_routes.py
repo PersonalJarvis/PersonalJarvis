@@ -619,3 +619,38 @@ def test_roles_carry_the_voice_brains_context(server: WebServer, fake, monkeypat
     assert rows["voice"]["context_source"] == "automatic"
     assert rows["chat"]["context_tokens"] is None
     assert rows["chat"]["context_source"] == ""
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Instant paint: nothing blocks the loop
+# ═════════════════════════════════════════════════════════════════════════
+
+
+async def test_server_and_inventory_overlap_instead_of_queueing(server, fake, monkeypatch) -> None:
+    """The runtime probe is synchronous (urllib, up to 1.5 s when Ollama is
+    down); it used to run ON the loop, so ``/inventory`` waited behind it.
+    Off the loop, the two requests take about the slowest one, not the sum."""
+    import asyncio
+    import time
+
+    def _slow_status() -> dict:
+        time.sleep(0.4)
+        return _status(False)
+
+    monkeypatch.setattr(ollama_runtime, "runtime_status", _slow_status)
+
+    async def _slow_inventory(root: str, **_kw) -> list:
+        await asyncio.sleep(0.4)
+        return []
+
+    monkeypatch.setattr(ollama_inventory, "list_models", _slow_inventory)
+    # Loopback peer + loopback Host, so the surface guard serves it like the app.
+    transport = httpx.ASGITransport(app=server.app, client=("127.0.0.1", 1))
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        started = time.perf_counter()
+        first, second = await asyncio.gather(
+            client.get(f"{BASE}/server"), client.get(f"{BASE}/inventory")
+        )
+        elapsed = time.perf_counter() - started
+    assert first.status_code == 200 and second.status_code == 200
+    assert elapsed < 0.7, f"the two requests queued: {elapsed:.2f}s"

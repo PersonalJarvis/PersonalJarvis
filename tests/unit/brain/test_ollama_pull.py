@@ -84,6 +84,8 @@ def test_installed_matching_understands_the_latest_tag(
 class _FakeTagsClient:
     payload: dict[str, Any] = {}
     fail: bool = False
+    #: Manifest requests the registry half answered (memo proof).
+    registry_calls: int = 0
 
     #: Registry manifests keyed by model id, for the real-size lookup. Empty by
     #: default, which is the offline case: the curated estimates are used.
@@ -104,6 +106,7 @@ class _FakeTagsClient:
         # report a nonsense size, and a test suite that reaches the real
         # registry would be a network dependency in a unit test.
         if "registry.ollama.ai" in url:
+            _FakeTagsClient.registry_calls += 1
             return _registry_response(url)
         if _FakeTagsClient.fail:
             raise httpx.ConnectError("connection refused")
@@ -145,9 +148,10 @@ def fake_tags(monkeypatch):
     _FakeTagsClient.fail = False
     _FakeTagsClient.payload = {}
     _FakeTagsClient.manifests = {}
-    pull._registry_sizes.clear()
+    _FakeTagsClient.registry_calls = 0
+    pull._reset_for_tests()
     yield _FakeTagsClient
-    pull._registry_sizes.clear()
+    pull._reset_for_tests()
 
 
 async def test_installed_models_excludes_cloud_references(fake_tags) -> None:
@@ -487,3 +491,36 @@ async def test_the_payload_names_the_hardware_it_judged_against(fake_tags, monke
     assert result["accelerator_gb"] == 16.0
     assert result["accelerator_source"] == "nvidia-smi"
     assert result["memory_gb"] == 32.0
+
+
+# ── Instant paint: probes and registry sweeps are memoised ───────────────
+async def test_the_accelerator_is_probed_once_across_two_calls(fake_tags, monkeypatch) -> None:
+    """``nvidia-smi`` costs hundreds of milliseconds; the section asks several
+    times per paint, so the probe answers from a 60 s memo after the first."""
+    from jarvis.hardware import detection
+
+    probes: list[int] = []
+
+    def _probe() -> tuple[float, str]:
+        probes.append(1)
+        return 16.0, "nvidia-smi"
+
+    detection._reset_for_tests()
+    monkeypatch.setattr(detection, "_probe_accelerator_gb", _probe)
+    try:
+        await pull.recommendations()
+        await pull.recommendations()
+        assert pull.accelerator_gb() == (16.0, "nvidia-smi")
+    finally:
+        detection._reset_for_tests()
+    assert len(probes) == 1
+
+
+async def test_an_offline_registry_is_not_asked_again_within_the_memo(fake_tags) -> None:
+    """Fifteen manifest misses per open, each waiting out a connect timeout,
+    is what made the shortlist feel slow offline — the miss is remembered."""
+    await pull.recommendations()
+    first = fake_tags.registry_calls
+    assert first == len(pull.RECOMMENDED_MODELS)
+    await pull.recommendations()
+    assert fake_tags.registry_calls == first

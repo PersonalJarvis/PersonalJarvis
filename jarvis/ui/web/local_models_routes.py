@@ -24,6 +24,7 @@ the two steps leaves a valid config, never an empty slot.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import asdict
 from typing import Any
@@ -460,6 +461,11 @@ async def set_role(
         if tag
         else f"{role} is back to discovery: Jarvis picks the smallest capable download."
     )
+    if not written.get("drift_guarded", True):
+        message += (
+            " This pick may be reverted by the drift guard — "
+            "the config baseline could not be updated."
+        )
     return RoleSetResponse(
         ok=True, role=role, model=tag, config_key=written["config_key"], message=message
     )
@@ -815,7 +821,9 @@ class EnvGuideResponse(BaseModel):
 async def get_server(provider_id: str) -> ServerResponse:
     """Runtime picture plus what is loaded and how much disk the downloads take."""
     _require_pull_capable(provider_id)
-    status = ollama_runtime.runtime_status()
+    # A synchronous urllib probe (up to 1.5 s when the server is down) — off
+    # the loop so the sibling panels' requests keep flowing meanwhile.
+    status = await asyncio.to_thread(ollama_runtime.runtime_status)
     root = str(status.get("base_url") or _server_root())
     running: list[RunningModelRow] = []
     disk = 0
@@ -851,7 +859,7 @@ async def get_server(provider_id: str) -> ServerResponse:
 async def post_server_stop(provider_id: str) -> ServerActionResponse:
     """Stop the Ollama Jarvis itself started — never one started elsewhere."""
     _require_pull_capable(provider_id)
-    ok, message = ollama_runtime.stop_server()
+    ok, message = await asyncio.to_thread(ollama_runtime.stop_server)
     return ServerActionResponse(ok=ok, message=message)
 
 
@@ -907,7 +915,7 @@ async def get_server_log(
 ) -> ServerLogResponse:
     """The last lines of the server log Jarvis writes when it starts Ollama."""
     _require_pull_capable(provider_id)
-    return ServerLogResponse(lines=ollama_runtime.tail_log(lines))
+    return ServerLogResponse(lines=await asyncio.to_thread(ollama_runtime.tail_log, lines))
 
 
 @router.get("/server/env-guide", response_model=EnvGuideResponse)

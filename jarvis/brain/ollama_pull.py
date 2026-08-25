@@ -29,6 +29,7 @@ import asyncio
 import datetime
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -420,8 +421,29 @@ async def registry_size_gb(client: httpx.AsyncClient, model: str) -> float | Non
     return size
 
 
+#: The whole-shortlist registry sweep is memoised for five minutes INCLUDING
+#: a negative answer: offline, every open of the section used to fire fifteen
+#: manifest requests that each waited out the connect timeout. The per-model
+#: positives above live for the process; this memo is the one that remembers
+#: "the registry did not answer" long enough for the panel to stay instant.
+_REAL_SIZES_TTL_S = 300.0
+_real_sizes_memo: tuple[float, dict[str, float]] | None = None  # (monotonic, sizes)
+
+
+def _reset_for_tests() -> None:
+    """Forget the registry memos (tests only)."""
+    global _real_sizes_memo
+    _real_sizes_memo = None
+    _registry_sizes.clear()
+
+
 async def _real_sizes() -> dict[str, float]:
-    """Registry sizes for the whole shortlist, fetched concurrently."""
+    """Registry sizes for the whole shortlist, fetched concurrently and
+    memoised for :data:`_REAL_SIZES_TTL_S` (misses included)."""
+    global _real_sizes_memo
+    hit = _real_sizes_memo
+    if hit is not None and time.monotonic() - hit[0] < _REAL_SIZES_TTL_S:
+        return dict(hit[1])
     async with httpx.AsyncClient(timeout=_REGISTRY_TIMEOUT) as client:
         results = await asyncio.gather(
             *(registry_size_gb(client, entry.id) for entry in RECOMMENDED_MODELS),
@@ -431,6 +453,7 @@ async def _real_sizes() -> dict[str, float]:
     for entry, result in zip(RECOMMENDED_MODELS, results, strict=True):
         if isinstance(result, float):
             sizes[entry.id] = result
+    _real_sizes_memo = (time.monotonic(), dict(sizes))
     return sizes
 
 
@@ -483,10 +506,15 @@ async def recommendations() -> dict[str, Any]:
     verdict weighs GPU memory ahead of RAM, and each role gets exactly one
     "recommended" entry — the largest one this box runs well.
     """
-    installed, error = await installed_models()
-    memory_gb = total_memory_gb()
-    accel, accel_source = accelerator_gb()
-    real_sizes = await _real_sizes()
+    # The two hardware probes are synchronous (psutil, nvidia-smi) and go to a
+    # worker thread; everything runs concurrently so the panel waits for the
+    # slowest leg, not the sum.
+    (installed, error), memory_gb, (accel, accel_source), real_sizes = await asyncio.gather(
+        installed_models(),
+        asyncio.to_thread(total_memory_gb),
+        asyncio.to_thread(accelerator_gb),
+        _real_sizes(),
+    )
 
     models: list[dict[str, Any]] = []
     for entry in RECOMMENDED_MODELS:
