@@ -1,9 +1,10 @@
 """The model slots Ollama fills, read and written from ONE place.
 
-Today the local brain is spread over four config keys the user never sees
-side by side: the chat model, the tool/screen model, the deep model and the
-wiki's embedding model — plus three read-only consumers (the managed voice
-server, the quick ack, dictation polish) that follow or pin their own tag.
+Today the local brain is spread over five config keys the user never sees
+side by side: the chat model, the voice model (the managed voice server's
+brain, baked into its launch command), the tool/screen model, the deep model
+and the wiki's embedding model — plus two read-only consumers (the quick ack,
+dictation polish) that pin their own tag.
 This module names every slot as a :class:`RoleSpec`, reads its current pick
 from a loaded config, judges which INSTALLED downloads qualify for it (by the
 capabilities ``/api/show`` declares) and points at the shortlist's pick for
@@ -77,6 +78,14 @@ ROLES: tuple[RoleSpec, ...] = (
         pull_role="chat",
     ),
     RoleSpec(
+        id="voice",
+        label_key="local_models.role_voice",
+        config_key="brain.providers.local-realtime.launch_command",
+        required=("completion",),
+        recommended=("tools",),
+        pull_role="chat",
+    ),
+    RoleSpec(
         id="tools_screen",
         label_key="local_models.role_tools_screen",
         config_key="brain.providers.ollama.tool_model",
@@ -100,20 +109,8 @@ ROLES: tuple[RoleSpec, ...] = (
         recommended=(),
         pull_role="embedding",
     ),
-    # Read-only consumers. The managed voice server prefers the chat pick
-    # (``preflight._preferred_brain_model`` reads the same key) and keeps its
-    # own ``-voice-8k`` alias; the ack and polish models have their own
-    # pickers on their own cards.
-    RoleSpec(
-        id="voice",
-        label_key="local_models.role_voice",
-        config_key="brain.providers.ollama.model",
-        required=("completion",),
-        recommended=("tools",),
-        pull_role="chat",
-        writable=False,
-        advanced=True,
-    ),
+    # Read-only consumers: the ack and polish models have their own pickers
+    # on their own cards, so the rows only say which tag they follow.
     RoleSpec(
         id="ack",
         label_key="local_models.role_ack",
@@ -186,8 +183,10 @@ def current_pick(cfg: Any, role_id: str) -> tuple[str, str]:
     if cfg is None:
         return "", ""
     provider = _ollama_provider(cfg)
-    if role_id in ("chat", "voice"):
+    if role_id == "chat":
         return _str(getattr(provider, "model", "")), ""
+    if role_id == "voice":
+        return _voice_pick(cfg)
     if role_id == "tools_screen":
         return (
             _str(getattr(provider, "tool_model", "")) or _str(getattr(provider, "cu_model", "")),
@@ -214,6 +213,34 @@ def current_pick(cfg: Any, role_id: str) -> tuple[str, str]:
             return "", f"Dictation polish runs on {backend}, not on Ollama."
         return model, ""
     raise ValueError(f"Unknown role '{role_id}'.")
+
+
+def _voice_provider(cfg: Any) -> Any:
+    providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
+    return providers.get("local-realtime") if isinstance(providers, dict) else None
+
+
+def _voice_pick(cfg: Any) -> tuple[str, str]:
+    """The managed voice server's brain: the ``--model_name`` of its command.
+
+    A voice call and a typed chat are different jobs (a call wants a small,
+    fast model; a chat can afford a stronger one), so the voice brain has its
+    own slot. It is not a config field of its own — the server bakes it into
+    the launch command the installer wrote — hence the parse here, with the
+    ``-voice-8k`` context alias folded back to the base tag the user picked.
+    """
+    command = _str(getattr(_voice_provider(cfg), "launch_command", ""))
+    if not command:
+        return "", "The managed voice server is not installed; a call answers with the Chat model."
+    from jarvis.realtime.local_server.supervisor import (  # lazy: off the read path
+        _brain_endpoint,
+        _voice_context_models,
+    )
+
+    model, _base = _brain_endpoint(command)
+    if not model:
+        return "", "The voice server's launch command names no brain model."
+    return _voice_context_models(model)[0], ""
 
 
 def qualifying_models(spec: RoleSpec, models: list[OllamaModelInfo]) -> tuple[str, ...]:
@@ -320,6 +347,25 @@ def set_role(role_id: str, model: str, *, cfg: Any = None) -> dict[str, str]:
         config_writer.set_brain_provider_model("ollama", model=tag)
         if provider is not None:
             provider.model = tag
+    elif spec.id == "voice":
+        if not tag:
+            raise ValueError(
+                "The voice role needs a model name; the voice server cannot discover one."
+            )
+        voice = _voice_provider(cfg)
+        command = _str(getattr(voice, "launch_command", ""))
+        if not command or "--model_name" not in command:
+            raise ValueError(
+                "Install the managed voice server first; until then a call "
+                "answers with the Chat model."
+            )
+        # The same writer the voice card uses: rewrites ONLY the model flag of
+        # the persisted command, never a bring-your-own command.
+        config_writer.update_local_realtime_launch_model(tag)
+        if voice is not None:
+            from jarvis.realtime.local_server.supervisor import _replace_brain_model
+
+            voice.launch_command = _replace_brain_model(command, tag)
     elif spec.id == "tools_screen":
         # Same pair the cu-model setter writes: canonical + legacy key.
         config_writer.set_brain_provider_model("ollama", tool_model=tag, cu_model=tag)

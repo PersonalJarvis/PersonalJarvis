@@ -13,9 +13,15 @@
  *  - a started download reports real progress instead of freezing on a spinner.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
-import { AuthWidget } from "@/components/providers/ProviderTierSection";
+import { LocalModelDownloadPanel } from "@/components/providers/ProviderTierSection";
 import type { ProviderDescriptor } from "@/hooks/useProviders";
 
 vi.mock("@/i18n", () => ({
@@ -26,10 +32,12 @@ vi.mock("@/i18n", () => ({
       "apikeys_model_pull.size": "~{0} GB",
       "apikeys_model_pull.installed": "Installed",
       "apikeys_model_pull.download": "Download",
-      "apikeys_model_pull.custom_placeholder": "Search the library, or type an exact name…",
+      "apikeys_model_pull.custom_placeholder":
+        "Search the library, or type an exact name…",
       "apikeys_model_pull.library_title": "Every model in the Ollama library",
       "apikeys_model_pull.library_searching": "Searching the library…",
-      "apikeys_model_pull.library_no_results": "No models found for that search.",
+      "apikeys_model_pull.library_no_results":
+        "No models found for that search.",
       "apikeys_model_pull.library_loading_versions": "Loading versions…",
       "apikeys_model_pull.library_hosted": "Hosted",
       "apikeys_model_pull.library_context": "{0} context",
@@ -97,17 +105,21 @@ const CATALOG = {
   ],
 };
 
-function installFetchMock(handler: (url: string, init?: RequestInit) => unknown) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const body = handler(String(input), init);
-    return {
-      ok: true,
-      status: 200,
-      statusText: "OK",
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-    } as Response;
-  });
+function installFetchMock(
+  handler: (url: string, init?: RequestInit) => unknown,
+) {
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = handler(String(input), init);
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      } as Response;
+    },
+  );
   (globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch;
   return fetchMock;
@@ -121,22 +133,32 @@ afterEach(() => {
 describe("local model download panel", () => {
   it("renders nothing on a card whose server has no download API", async () => {
     const fetchMock = installFetchMock(() => CATALOG);
-    const cloudCard = { ...PULL_CARD, id: "openai", supports_model_pull: false };
+    const cloudCard = {
+      ...PULL_CARD,
+      id: "openai",
+      supports_model_pull: false,
+    };
 
-    render(<AuthWidget descriptor={cloudCard} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={cloudCard} onChanged={() => {}} />,
+    );
 
     expect(screen.queryByText("Models on this machine")).toBeNull();
     // And it must not even ASK: a cloud card firing this request would get a
     // 400 on every render of the provider list.
     expect(
-      fetchMock.mock.calls.filter((c) => String(c[0]).includes("pullable-models")),
+      fetchMock.mock.calls.filter((c) =>
+        String(c[0]).includes("pullable-models"),
+      ),
     ).toHaveLength(0);
   });
 
   it("shows what the server reports: sizes, memory, and what is already there", async () => {
     installFetchMock(() => CATALOG);
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
     expect(screen.getByText("32 GB RAM")).toBeTruthy();
@@ -147,10 +169,14 @@ describe("local model download panel", () => {
   it("shows a tight fit as a caution, never as a blocked download", async () => {
     installFetchMock(() => CATALOG);
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
     await waitFor(() =>
-      expect(screen.getByText("Needs about 8 GB with 8 GB installed.")).toBeTruthy(),
+      expect(
+        screen.getByText("Needs about 8 GB with 8 GB installed."),
+      ).toBeTruthy(),
     );
     const buttons = screen.getAllByRole("button", { name: /download/i });
     expect(buttons.some((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
@@ -174,7 +200,9 @@ describe("local model download panel", () => {
       return CATALOG;
     });
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
 
     const download = screen
@@ -182,8 +210,12 @@ describe("local model download panel", () => {
       .find((b) => !(b as HTMLButtonElement).disabled)!;
     fireEvent.click(download);
 
-    await waitFor(() => expect(screen.getByText(/qwen3-vl: Starting/)).toBeTruthy());
-    expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(true);
+    await waitFor(() =>
+      expect(screen.getByText(/qwen3-vl: Starting/)).toBeTruthy(),
+    );
+    expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(
+      true,
+    );
   });
 
   it("keeps the shortlist visible when the server is down, with its reason", async () => {
@@ -193,7 +225,9 @@ describe("local model download panel", () => {
       message: "Ollama did not answer at http://localhost:11434.",
     }));
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
     await waitFor(() =>
       expect(screen.getByText(/Ollama did not answer/)).toBeTruthy(),
@@ -284,13 +318,17 @@ describe("local model download panel — hardware-aware ranking", () => {
   it("marks the server's pick for this machine, one per role", async () => {
     installFetchMock(() => RANKED_CATALOG);
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
     await waitFor(() => expect(screen.getByText("GPT-OSS 20B")).toBeTruthy());
     const recommended = document.querySelectorAll('[data-recommended="true"]');
     expect(recommended).toHaveLength(2);
     expect(
-      screen.getByTestId("model-pull-row-gpt-oss:20b").getAttribute("data-recommended"),
+      screen
+        .getByTestId("model-pull-row-gpt-oss:20b")
+        .getAttribute("data-recommended"),
     ).toBe("true");
     // The biggest model is NOT the pick — it does not fit this card.
     expect(
@@ -303,10 +341,16 @@ describe("local model download panel — hardware-aware ranking", () => {
   it("names the graphics memory the verdicts were judged against", async () => {
     installFetchMock(() => RANKED_CATALOG);
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
-    await waitFor(() => expect(screen.getByTestId("model-pull-hardware")).toBeTruthy());
-    expect(screen.getByTestId("model-pull-hardware").textContent).toContain("24");
+    await waitFor(() =>
+      expect(screen.getByTestId("model-pull-hardware")).toBeTruthy(),
+    );
+    expect(screen.getByTestId("model-pull-hardware").textContent).toContain(
+      "24",
+    );
   });
 
   it("falls back to the RAM figure when no accelerator could be read", async () => {
@@ -316,10 +360,16 @@ describe("local model download panel — hardware-aware ranking", () => {
       accelerator_source: "none",
     }));
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
-    await waitFor(() => expect(screen.getByTestId("model-pull-hardware")).toBeTruthy());
-    expect(screen.getByTestId("model-pull-hardware").textContent).toContain("64");
+    await waitFor(() =>
+      expect(screen.getByTestId("model-pull-hardware")).toBeTruthy(),
+    );
+    expect(screen.getByTestId("model-pull-hardware").textContent).toContain(
+      "64",
+    );
   });
 
   it("keeps working on a payload with no roles at all", async () => {
@@ -327,10 +377,14 @@ describe("local model download panel — hardware-aware ranking", () => {
     // before roles existed. No empty headings, no crash.
     installFetchMock(() => CATALOG);
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
-    expect(document.querySelectorAll('[data-recommended="true"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-recommended="true"]')).toHaveLength(
+      0,
+    );
   });
 });
 
@@ -414,7 +468,8 @@ function libraryFetchMock(overrides: Record<string, unknown> = {}) {
     }
     if (url.includes("/library/search")) return LIBRARY_SEARCH;
     if (url.includes("/tags")) return LIBRARY_TAGS;
-    if (url.endsWith("/pull")) return { state: "running", model: "x", message: "Starting…" };
+    if (url.endsWith("/pull"))
+      return { state: "running", model: "x", message: "Starting…" };
     return CATALOG;
   });
   return calls;
@@ -429,10 +484,14 @@ describe("local model download panel — browsing the public library", () => {
     // been delivered, so the heading is part of the feature, not decoration.
     libraryFetchMock();
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
     await waitFor(() =>
-      expect(screen.getByText("Every model in the Ollama library")).toBeTruthy(),
+      expect(
+        screen.getByText("Every model in the Ollama library"),
+      ).toBeTruthy(),
     );
   });
 
@@ -441,7 +500,9 @@ describe("local model download panel — browsing the public library", () => {
     // the catalog once per card on every render of the settings view.
     const calls = libraryFetchMock();
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
 
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
     expect(calls.some((u) => u.includes("/library/search"))).toBe(false);
@@ -450,7 +511,9 @@ describe("local model download panel — browsing the public library", () => {
   it("searches the catalog and shows what it found", async () => {
     libraryFetchMock();
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
 
     fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
@@ -469,7 +532,9 @@ describe("local model download panel — browsing the public library", () => {
   it("opens a model into its real published versions, with sizes", async () => {
     libraryFetchMock();
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
     fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
       target: { value: "qwen" },
@@ -485,14 +550,20 @@ describe("local model download panel — browsing the public library", () => {
       expect(screen.getByTestId("library-tag-qwen3.5:9b")).toBeTruthy(),
     );
     // The whole point of the tag list: sizes differ by an order of magnitude.
-    expect(screen.getByTestId("library-tag-qwen3.5:122b").textContent).toContain("65.4");
-    expect(screen.getByTestId("library-tag-qwen3.5:9b").textContent).toContain("6.6");
+    expect(
+      screen.getByTestId("library-tag-qwen3.5:122b").textContent,
+    ).toContain("65.4");
+    expect(screen.getByTestId("library-tag-qwen3.5:9b").textContent).toContain(
+      "6.6",
+    );
   });
 
   it("downloads the exact tag the user picked, not the bare name", async () => {
     const calls = libraryFetchMock();
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
     fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
       target: { value: "qwen" },
@@ -510,14 +581,18 @@ describe("local model download panel — browsing the public library", () => {
     fireEvent.click(row.querySelector("button")!);
 
     await waitFor(() =>
-      expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(true),
+      expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(
+        true,
+      ),
     );
   });
 
   it("offers no download for a hosted-only tag", async () => {
     libraryFetchMock();
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
     fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
       target: { value: "qwen" },
@@ -547,20 +622,29 @@ describe("local model download panel — browsing the public library", () => {
       },
     });
 
-    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    render(
+      <LocalModelDownloadPanel descriptor={PULL_CARD} onChanged={() => {}} />,
+    );
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
 
     const field = screen.getByPlaceholderText(/Search the library/);
     fireEvent.change(field, { target: { value: "mistral" } });
 
-    await waitFor(() => expect(screen.getByText(/did not answer/)).toBeTruthy(), {
-      timeout: 3000,
-    });
+    await waitFor(
+      () => expect(screen.getByText(/did not answer/)).toBeTruthy(),
+      {
+        timeout: 3000,
+      },
+    );
 
-    const downloadButtons = screen.getAllByRole("button", { name: /download/i });
+    const downloadButtons = screen.getAllByRole("button", {
+      name: /download/i,
+    });
     fireEvent.click(downloadButtons[downloadButtons.length - 1]);
     await waitFor(() =>
-      expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(true),
+      expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(
+        true,
+      ),
     );
   });
 });

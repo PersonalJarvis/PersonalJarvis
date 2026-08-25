@@ -3,11 +3,12 @@
  * a server the user names): the Ollama runtime, the installed models, the
  * public catalogue and, later, Hugging Face.
  *
- * Step 1 of the plan: the skeleton. The column layout is the Costs view's,
- * the header carries a Simple | Advanced switch (persisted per browser) and a
- * rail of tabs. Models and Hugging Face are Advanced-only; the Catalogue and
- * Server tabs already mount the existing provider-card panels, the others
- * hold a placeholder until their own step lands.
+ * The column layout is the Costs view's, the header carries a Simple |
+ * Advanced switch (persisted per browser) and a rail of tabs. Simple shows
+ * Overview (server facts + the four roles), Catalogue and Server; Advanced
+ * adds Models (the installed ledger with the Tune sheet) and Hugging Face.
+ * "Tune" from a role row opens the Tune sheet for that model right under the
+ * overview, so a non-developer never has to find the model in the ledger.
  *
  * Everything is gated on the capability `supports_model_pull`, never on a
  * provider name — a second pull-capable server later gets the same section.
@@ -20,22 +21,28 @@ import {
   PanelHeader,
   SegmentedFilter,
 } from "@/components/extensions/primitives";
-import {
-  BaseUrlField,
-  LocalModelDownloadPanel,
-  OllamaRuntimePanel,
-} from "@/components/providers/ProviderTierSection";
+import { useInventory } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
+import { CataloguePanel } from "@/views/local-models/CataloguePanel";
+import { HuggingFacePanel } from "@/views/local-models/HuggingFacePanel";
+import { InventoryPanel } from "@/views/local-models/InventoryPanel";
+import { OverviewPanel } from "@/views/local-models/OverviewPanel";
+import { ServerPanel } from "@/views/local-models/ServerPanel";
+import { TuneSheet } from "@/views/local-models/TuneSheet";
 import { useEventStore } from "@/store/events";
 import { useLocaleChunk, useT } from "@/i18n";
 
 export type LocalModelsMode = "simple" | "advanced";
-export type LocalModelsTab = "overview" | "models" | "catalogue" | "huggingface" | "server";
+export type LocalModelsTab =
+  "overview" | "models" | "catalogue" | "huggingface" | "server";
 
 /** Browser-local preference; a private window simply starts on Simple. */
 export const LOCAL_MODELS_MODE_KEY = "jarvis.localModels.mode";
 
-const ADVANCED_ONLY: ReadonlySet<LocalModelsTab> = new Set(["models", "huggingface"]);
+const ADVANCED_ONLY: ReadonlySet<LocalModelsTab> = new Set([
+  "models",
+  "huggingface",
+]);
 
 function readStoredMode(): LocalModelsMode {
   try {
@@ -57,11 +64,45 @@ function storeMode(mode: LocalModelsMode): void {
   }
 }
 
+/**
+ * The Tune sheet opened from a role row. The sheet wants the inventory row
+ * (capabilities, native context, size), so it is looked up here; a model the
+ * inventory no longer lists gets one honest sentence instead of a blank sheet.
+ */
+function RoleTuneDrawer({
+  providerId,
+  model,
+  onClose,
+}: {
+  providerId: string;
+  model: string;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const inventory = useInventory(providerId);
+  const row = inventory.data?.models.find((m) => m.name === model) ?? null;
+  return (
+    <div data-testid="local-models-tune-drawer">
+      <Panel className="p-4">
+        {row ? (
+          <TuneSheet providerId={providerId} model={row} onClose={onClose} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {inventory.isLoading
+              ? t("local_models.loading")
+              : t("local_models.tune_missing")}
+          </p>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 export function LocalModelsView() {
   const t = useT();
   useLocaleChunk("local_models");
   const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const { providers, loading, refetch } = useProviders();
+  const { providers, loading } = useProviders();
 
   // The one server that can download models. Capability, not provider id.
   const descriptor = useMemo(
@@ -71,6 +112,13 @@ export function LocalModelsView() {
 
   const [mode, setMode] = useState<LocalModelsMode>(readStoredMode);
   const [tab, setTab] = useState<LocalModelsTab>("overview");
+  // The model whose Tune sheet is open under the overview ("" = none).
+  const [tuneModel, setTuneModel] = useState<string>("");
+  const openApiKeys = useCallback(
+    () => setActiveSection("apikeys"),
+    [setActiveSection],
+  );
+  const closeTune = useCallback(() => setTuneModel(""), []);
 
   const changeMode = useCallback((next: LocalModelsMode) => {
     setMode(next);
@@ -83,10 +131,6 @@ export function LocalModelsView() {
     if (mode === "simple" && ADVANCED_ONLY.has(tab)) setTab("overview");
   }, [mode, tab]);
 
-  const onChanged = useCallback(() => {
-    void refetch();
-  }, [refetch]);
-
   const tabs = useMemo(() => {
     const all: { id: LocalModelsTab; label: string }[] = [
       { id: "overview", label: t("local_models.tab_overview") },
@@ -95,13 +139,18 @@ export function LocalModelsView() {
       { id: "huggingface", label: t("local_models.tab_huggingface") },
       { id: "server", label: t("local_models.tab_server") },
     ];
-    return mode === "advanced" ? all : all.filter((o) => !ADVANCED_ONLY.has(o.id));
+    return mode === "advanced"
+      ? all
+      : all.filter((o) => !ADVANCED_ONLY.has(o.id));
   }, [mode, t]);
 
   return (
     <ScrollArea className="h-full">
-      <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-6 py-6">
-        <BackLink label={t("local_models.back")} onClick={() => setActiveSection("apikeys")} />
+      <div className="mx-auto flex max-w-[1720px] flex-col gap-4 px-6 py-6">
+        <BackLink
+          label={t("local_models.back")}
+          onClick={() => setActiveSection("apikeys")}
+        />
         <PanelHeader
           title={t("local_models.title")}
           subtitle={t("local_models.subtitle")}
@@ -126,36 +175,40 @@ export function LocalModelsView() {
         />
 
         {loading && !descriptor && (
-          <p className="text-sm text-muted-foreground">{t("local_models.loading")}</p>
+          <p className="text-sm text-muted-foreground">
+            {t("local_models.loading")}
+          </p>
         )}
 
         {!loading && !descriptor && (
           <Panel className="p-4">
-            <p className="text-sm text-muted-foreground">{t("local_models.no_provider")}</p>
+            <p className="text-sm text-muted-foreground">
+              {t("local_models.no_provider")}
+            </p>
           </Panel>
         )}
 
         {descriptor && tab === "overview" && (
-          <Panel className="p-4">
-            <div className="space-y-3" data-testid="local-models-overview">
-              <PanelHeader title={t("local_models.overview_title")} />
-              <OllamaRuntimePanel providerId={descriptor.id} onChanged={onChanged} alwaysVisible />
-              <p className="text-sm text-muted-foreground">
-                {t("local_models.overview_placeholder")}
-              </p>
-            </div>
-          </Panel>
+          <div className="space-y-4" data-testid="local-models-overview">
+            <OverviewPanel
+              providerId={descriptor.id}
+              onTune={setTuneModel}
+              onOpenApiKeys={openApiKeys}
+            />
+            {tuneModel && (
+              <RoleTuneDrawer
+                providerId={descriptor.id}
+                model={tuneModel}
+                onClose={closeTune}
+              />
+            )}
+          </div>
         )}
 
         {descriptor && tab === "models" && (
-          <Panel className="p-4">
-            <div className="space-y-3" data-testid="local-models-models">
-              <PanelHeader title={t("local_models.models_title")} />
-              <p className="text-sm text-muted-foreground">
-                {t("local_models.models_placeholder")}
-              </p>
-            </div>
-          </Panel>
+          <div data-testid="local-models-models">
+            <InventoryPanel providerId={descriptor.id} />
+          </div>
         )}
 
         {descriptor && tab === "catalogue" && (
@@ -165,8 +218,7 @@ export function LocalModelsView() {
                 title={t("local_models.catalogue_title")}
                 subtitle={t("local_models.catalogue_subtitle")}
               />
-              {/* The download panel already embeds the library browser. */}
-              <LocalModelDownloadPanel descriptor={descriptor} onChanged={onChanged} />
+              <CataloguePanel providerId={descriptor.id} />
             </div>
           </Panel>
         )}
@@ -175,26 +227,15 @@ export function LocalModelsView() {
           <Panel className="p-4">
             <div className="space-y-3" data-testid="local-models-huggingface">
               <PanelHeader title={t("local_models.huggingface_title")} />
-              <p className="text-sm text-muted-foreground">
-                {t("local_models.huggingface_placeholder")}
-              </p>
+              <HuggingFacePanel providerId={descriptor.id} />
             </div>
           </Panel>
         )}
 
         {descriptor && tab === "server" && (
-          <Panel className="p-4">
-            <div className="space-y-3" data-testid="local-models-server">
-              <PanelHeader
-                title={t("local_models.server_title")}
-                subtitle={t("local_models.server_subtitle")}
-              />
-              <OllamaRuntimePanel providerId={descriptor.id} onChanged={onChanged} alwaysVisible />
-              {descriptor.supports_base_url && (
-                <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
-              )}
-            </div>
-          </Panel>
+          <div data-testid="local-models-server">
+            <ServerPanel providerId={descriptor.id} />
+          </div>
         )}
       </div>
     </ScrollArea>

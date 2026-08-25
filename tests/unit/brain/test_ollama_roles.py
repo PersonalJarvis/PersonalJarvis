@@ -22,6 +22,12 @@ def _cfg() -> JarvisConfig:
     )
     cfg.ultrawiki.embedding_provider = "ollama"
     cfg.ultrawiki.embedding_model = "qwen3-embedding:4b"
+    cfg.brain.providers["local-realtime"] = BrainProviderConfig(
+        launch_command=(
+            "python -m server --model_name qwen3.5:4b-voice-8k "
+            "--responses_api_base_url http://127.0.0.1:11434/v1"
+        )
+    )
     return cfg
 
 
@@ -99,10 +105,14 @@ def writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
     return calls
 
 
-def test_the_four_writable_roles_come_first_in_order() -> None:
-    assert ollama_roles.WRITABLE_ROLE_IDS == ("chat", "tools_screen", "deep", "embedding")
-    assert [r.id for r in ollama_roles.ROLES][4:] == ["voice", "ack", "polish"]
-    assert all(r.advanced and not r.writable for r in ollama_roles.ROLES[4:])
+def test_the_five_writable_roles_come_first_in_order() -> None:
+    assert ollama_roles.WRITABLE_ROLE_IDS == ("chat", "voice", "tools_screen", "deep", "embedding")
+    assert [r.id for r in ollama_roles.ROLES][5:] == ["ack", "polish"]
+    assert all(r.advanced and not r.writable for r in ollama_roles.ROLES[5:])
+    # Voice is its own slot, never a mirror of the chat pick.
+    voice = ollama_roles.role_spec("voice")
+    assert voice.writable and not voice.advanced
+    assert voice.config_key != ollama_roles.role_spec("chat").config_key
 
 
 def test_current_pick_reads_every_slot() -> None:
@@ -115,7 +125,11 @@ def test_current_pick_reads_every_slot() -> None:
     assert ollama_roles.current_pick(cfg, "tools_screen") == ("qwen3.5:4b", "")
     assert ollama_roles.current_pick(cfg, "deep") == ("gemma4:12b-it-qat", "")
     assert ollama_roles.current_pick(cfg, "embedding") == ("qwen3-embedding:4b", "")
+    # The voice brain is the launch command's model, alias folded to the base tag.
     assert ollama_roles.current_pick(cfg, "voice") == ("qwen3.5:4b", "")
+    del cfg.brain.providers["local-realtime"]
+    tag, note = ollama_roles.current_pick(cfg, "voice")
+    assert tag == "" and "not installed" in note
     assert ollama_roles.current_pick(cfg, "ack")[0] == cfg.ack_brain.providers.ollama.model
     assert ollama_roles.current_pick(None, "chat") == ("", "")
 
@@ -216,9 +230,32 @@ def test_set_role_embedding_switches_the_wiki_to_ollama_when_needed(writes) -> N
         ollama_roles.set_role("embedding", "", cfg=cfg)
 
 
+def test_set_role_voice_rewrites_only_the_launch_command_model(
+    writes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rewrites: list[str] = []
+    monkeypatch.setattr(
+        config_writer,
+        "update_local_realtime_launch_model",
+        lambda model, **kw: rewrites.append(model) or True,
+    )
+    cfg = _cfg()
+    out = ollama_roles.set_role("voice", "gemma4:12b-it-qat", cfg=cfg)
+    assert out["config_key"] == "brain.providers.local-realtime.launch_command"
+    assert rewrites == ["gemma4:12b-it-qat"]
+    assert "--model_name gemma4:12b-it-qat " in cfg.brain.providers["local-realtime"].launch_command
+    assert writes == []  # the chat slot is untouched
+    with pytest.raises(ValueError, match="needs a model name"):
+        ollama_roles.set_role("voice", "", cfg=cfg)
+    del cfg.brain.providers["local-realtime"]
+    with pytest.raises(ValueError, match="Install the managed voice server"):
+        ollama_roles.set_role("voice", "x", cfg=cfg)
+    assert rewrites == ["gemma4:12b-it-qat"]
+
+
 def test_set_role_refuses_read_only_and_unknown_roles(writes) -> None:
     with pytest.raises(ValueError, match="own card"):
-        ollama_roles.set_role("voice", "x", cfg=_cfg())
+        ollama_roles.set_role("ack", "x", cfg=_cfg())
     with pytest.raises(ValueError, match="Unknown role"):
         ollama_roles.set_role("nope", "x", cfg=_cfg())
     assert writes == []
@@ -226,7 +263,8 @@ def test_set_role_refuses_read_only_and_unknown_roles(writes) -> None:
 
 def test_roles_using_is_latest_tolerant() -> None:
     cfg = _cfg()
-    assert ollama_roles.roles_using(cfg, "qwen3.5:4b") == ["chat"]
+    # The fixture's voice server runs the same base tag, so both slots answer.
+    assert ollama_roles.roles_using(cfg, "qwen3.5:4b") == ["chat", "voice"]
     cfg.brain.providers["ollama"].model = "gemma4"
     assert ollama_roles.roles_using(cfg, "gemma4:latest") == ["chat"]
     assert ollama_roles.roles_using(cfg, "qwen3-embedding:4b") == ["embedding"]

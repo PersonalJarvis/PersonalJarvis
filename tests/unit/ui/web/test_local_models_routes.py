@@ -261,7 +261,7 @@ def test_roles_list_every_slot_with_pick_qualifying_and_recommendation(
     body = resp.json()
     assert body["error"] is None
     roles = {r["id"]: r for r in body["roles"]}
-    assert list(roles) == ["chat", "tools_screen", "deep", "embedding", "voice", "ack", "polish"]
+    assert list(roles) == ["chat", "voice", "tools_screen", "deep", "embedding", "ack", "polish"]
     assert roles["chat"]["current"] == "qwen3.5:4b"
     assert roles["chat"]["installed"] is True
     assert roles["chat"]["recommended"] == "qwen3.8:27b"
@@ -270,7 +270,8 @@ def test_roles_list_every_slot_with_pick_qualifying_and_recommendation(
     assert roles["tools_screen"]["qualifying"] == ["qwen3.5:4b"]
     assert roles["deep"]["recommended"] == "ornith:9b"
     assert roles["embedding"]["qualifying"] == ["qwen3-embedding:4b"]
-    assert roles["voice"]["writable"] is False and roles["voice"]["advanced"] is True
+    assert roles["voice"]["writable"] is True and roles["voice"]["advanced"] is False
+    assert roles["ack"]["writable"] is False and roles["ack"]["advanced"] is True
     assert roles["chat"]["label_key"] == "local_models.role_chat"
 
 
@@ -302,7 +303,7 @@ def test_put_role_writes_through_the_config_writer(server, fake, writes) -> None
 
 def test_put_role_refuses_read_only_and_unknown_roles(server, fake, writes) -> None:
     with TestClient(server.app) as client:
-        ro = client.put(f"{BASE}/roles/voice", json={"model": "x"})
+        ro = client.put(f"{BASE}/roles/ack", json={"model": "x"})
         unknown = client.put(f"{BASE}/roles/nope", json={"model": "x"})
         empty_embedding = client.put(f"{BASE}/roles/embedding", json={"model": ""})
     assert ro.status_code == 422

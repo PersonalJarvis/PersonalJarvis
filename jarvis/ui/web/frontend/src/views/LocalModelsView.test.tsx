@@ -15,7 +15,8 @@ const { mockState, mockProviders } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/store/events", () => ({
-  useEventStore: (selector: (s: typeof mockState) => unknown) => selector(mockState),
+  useEventStore: (selector: (s: typeof mockState) => unknown) =>
+    selector(mockState),
 }));
 
 vi.mock("@/i18n", () => ({
@@ -28,16 +29,65 @@ vi.mock("@/hooks/useProviders", () => ({
   useProviders: () => mockProviders,
 }));
 
-// The provider-card panels have their own tests; here only their mount matters.
-vi.mock("@/components/providers/ProviderTierSection", () => ({
-  OllamaRuntimePanel: ({ alwaysVisible }: { alwaysVisible?: boolean }) => (
-    <div data-testid="runtime-panel" data-always={alwaysVisible ? "true" : "false"} />
+// Every panel has its own tests; here only the mount and the wiring matter.
+vi.mock("@/views/local-models/OverviewPanel", () => ({
+  OverviewPanel: ({
+    providerId,
+    onTune,
+    onOpenApiKeys,
+  }: {
+    providerId: string;
+    onTune?: (model: string) => void;
+    onOpenApiKeys?: () => void;
+  }) => (
+    <div data-testid="overview-panel" data-provider={providerId}>
+      <button type="button" onClick={() => onTune?.("qwen3.5:4b")}>
+        tune
+      </button>
+      <button type="button" onClick={() => onOpenApiKeys?.()}>
+        keys
+      </button>
+    </div>
   ),
-  BaseUrlField: () => <div data-testid="base-url-field" />,
-  LocalModelDownloadPanel: () => <div data-testid="download-panel" />,
+}));
+vi.mock("@/views/local-models/InventoryPanel", () => ({
+  InventoryPanel: () => <div data-testid="inventory-panel" />,
+}));
+vi.mock("@/views/local-models/CataloguePanel", () => ({
+  CataloguePanel: () => <div data-testid="catalogue-panel" />,
+}));
+vi.mock("@/views/local-models/HuggingFacePanel", () => ({
+  HuggingFacePanel: () => <div data-testid="huggingface-panel" />,
+}));
+vi.mock("@/views/local-models/ServerPanel", () => ({
+  ServerPanel: () => <div data-testid="server-panel" />,
+}));
+vi.mock("@/views/local-models/TuneSheet", () => ({
+  TuneSheet: ({
+    model,
+    onClose,
+  }: {
+    model: { name: string };
+    onClose?: () => void;
+  }) => (
+    <div data-testid="tune-sheet" data-model={model.name}>
+      <button type="button" onClick={onClose}>
+        close
+      </button>
+    </div>
+  ),
+}));
+vi.mock("@/hooks/useLocalModels", () => ({
+  useInventory: () => ({
+    isLoading: false,
+    data: { models: [{ name: "qwen3.5:4b" }] },
+  }),
 }));
 
-import { LOCAL_MODELS_MODE_KEY, LocalModelsView } from "@/views/LocalModelsView";
+import {
+  LOCAL_MODELS_MODE_KEY,
+  LocalModelsView,
+} from "@/views/LocalModelsView";
 
 const OLLAMA = {
   id: "ollama",
@@ -63,41 +113,90 @@ describe("LocalModelsView", () => {
     render(<LocalModelsView />);
 
     expect(screen.getByText("local_models.title")).toBeDefined();
-    expect(screen.getByRole("tab", { name: "local_models.tab_overview" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "local_models.tab_catalogue" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "local_models.tab_server" })).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "local_models.tab_overview" }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "local_models.tab_catalogue" }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "local_models.tab_server" }),
+    ).toBeDefined();
     // Simple hides the Advanced-only tabs.
-    expect(screen.queryByRole("tab", { name: "local_models.tab_models" })).toBeNull();
-    expect(screen.queryByRole("tab", { name: "local_models.tab_huggingface" })).toBeNull();
+    expect(
+      screen.queryByRole("tab", { name: "local_models.tab_models" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("tab", { name: "local_models.tab_huggingface" }),
+    ).toBeNull();
     expect(screen.getByTestId("local-models-overview")).toBeDefined();
   });
 
-  it("switches tabs and mounts the existing panels on Catalogue and Server", () => {
+  it("switches tabs and mounts the Catalogue and Server panels", () => {
     render(<LocalModelsView />);
+    expect(
+      screen.getByTestId("overview-panel").getAttribute("data-provider"),
+    ).toBe("ollama");
 
-    fireEvent.click(screen.getByRole("tab", { name: "local_models.tab_catalogue" }));
-    expect(screen.getByTestId("download-panel")).toBeDefined();
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.tab_catalogue" }),
+    );
+    expect(screen.getByTestId("catalogue-panel")).toBeDefined();
     expect(screen.queryByTestId("local-models-overview")).toBeNull();
 
-    fireEvent.click(screen.getByRole("tab", { name: "local_models.tab_server" }));
-    expect(screen.getByTestId("base-url-field")).toBeDefined();
-    expect(screen.getByTestId("runtime-panel").getAttribute("data-always")).toBe("true");
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.tab_server" }),
+    );
+    expect(screen.getByTestId("server-panel")).toBeDefined();
+  });
+
+  it("opens the Tune sheet for the model a role row names, and closes it again", () => {
+    render(<LocalModelsView />);
+    expect(screen.queryByTestId("local-models-tune-drawer")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "tune" }));
+    expect(screen.getByTestId("tune-sheet").getAttribute("data-model")).toBe(
+      "qwen3.5:4b",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "close" }));
+    expect(screen.queryByTestId("local-models-tune-drawer")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "keys" }));
+    expect(mockState.setActiveSection).toHaveBeenCalledWith("apikeys");
   });
 
   it("reveals Models in Advanced and remembers the choice", () => {
     render(<LocalModelsView />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "local_models.mode_advanced" }));
-    expect(screen.getByRole("tab", { name: "local_models.tab_models" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "local_models.tab_huggingface" })).toBeDefined();
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.mode_advanced" }),
+    );
+    expect(
+      screen.getByRole("tab", { name: "local_models.tab_models" }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "local_models.tab_huggingface" }),
+    ).toBeDefined();
     expect(window.localStorage.getItem(LOCAL_MODELS_MODE_KEY)).toBe("advanced");
 
-    fireEvent.click(screen.getByRole("tab", { name: "local_models.tab_models" }));
-    expect(screen.getByTestId("local-models-models")).toBeDefined();
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.tab_models" }),
+    );
+    expect(screen.getByTestId("inventory-panel")).toBeDefined();
+
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.tab_huggingface" }),
+    );
+    expect(screen.getByTestId("huggingface-panel")).toBeDefined();
 
     // Back to Simple: the rail drops Models and the view falls back to Overview.
-    fireEvent.click(screen.getByRole("tab", { name: "local_models.mode_simple" }));
-    expect(screen.queryByRole("tab", { name: "local_models.tab_models" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("tab", { name: "local_models.mode_simple" }),
+    );
+    expect(
+      screen.queryByRole("tab", { name: "local_models.tab_models" }),
+    ).toBeNull();
     expect(screen.getByTestId("local-models-overview")).toBeDefined();
   });
 
