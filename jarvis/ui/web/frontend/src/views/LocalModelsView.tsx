@@ -35,6 +35,10 @@ import {
   readLocalModelsSeed,
   writeLocalModelsSeed,
 } from "@/lib/localModelsSeed";
+import {
+  AssistantPanel,
+  type AssistantRequest,
+} from "@/components/local-models/AssistantPanel";
 import { CataloguePanel } from "@/views/local-models/CataloguePanel";
 import { HuggingFacePanel } from "@/views/local-models/HuggingFacePanel";
 import { InventoryPanel } from "@/views/local-models/InventoryPanel";
@@ -142,14 +146,29 @@ export function LocalModelsView() {
   const [tab, setTab] = useState<LocalModelsTab>("overview");
   // The model whose Tune sheet is open under the overview ("" = none).
   const [tuneModel, setTuneModel] = useState<string>("");
-  // The setup assistant panel under the action row (Part D plugs the real
-  // panel into `assistantSlot`; until then a one-sentence placeholder).
+  // The setup assistant panel under the action row. "Help me set up" toggles
+  // it and asks for a setup run; "Something is not working" opens it in
+  // diagnose mode (the Server tab with the log stays one link away inside
+  // the panel). The token makes a repeated click a repeated request.
   const [assistantOpen, setAssistantOpen] = useState(false);
-  // "Something is not working" lands on the Server tab with the log open.
+  const [assistantRequest, setAssistantRequest] =
+    useState<AssistantRequest | null>(null);
   const [serverLogOpen, setServerLogOpen] = useState(false);
   const openBrowse = useCallback(() => setTab("catalogue"), []);
-  const openAssistant = useCallback(() => setAssistantOpen((v) => !v), []);
+  const openAssistant = useCallback(() => {
+    setAssistantOpen((open) => {
+      if (!open) {
+        setAssistantRequest((r) => ({ mode: "setup", token: (r?.token ?? 0) + 1 }));
+      }
+      return !open;
+    });
+  }, []);
+  const closeAssistant = useCallback(() => setAssistantOpen(false), []);
   const reportProblem = useCallback(() => {
+    setAssistantOpen(true);
+    setAssistantRequest((r) => ({ mode: "diagnose", token: (r?.token ?? 0) + 1 }));
+  }, []);
+  const openServerLog = useCallback(() => {
     setServerLogOpen(true);
     setTab("server");
   }, []);
@@ -238,14 +257,14 @@ export function LocalModelsView() {
               onReportProblem={reportProblem}
               assistantSlot={
                 assistantOpen ? (
-                  <Panel className="p-4">
-                    <p
-                      className="text-sm text-muted-foreground"
-                      data-testid="local-models-assistant"
-                    >
-                      {t("local_models.overview.assistant_placeholder")}
-                    </p>
-                  </Panel>
+                  <AssistantPanel
+                    providerId={providerId}
+                    serverLabel={descriptor?.label ?? "Ollama"}
+                    request={assistantRequest}
+                    onOpenApiKeys={openApiKeys}
+                    onOpenServerLog={openServerLog}
+                    onClose={closeAssistant}
+                  />
                 ) : null
               }
             />

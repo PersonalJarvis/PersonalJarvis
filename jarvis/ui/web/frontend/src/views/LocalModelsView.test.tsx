@@ -100,6 +100,30 @@ vi.mock("@/views/local-models/TuneSheet", () => ({
     </div>
   ),
 }));
+vi.mock("@/components/local-models/AssistantPanel", () => ({
+  AssistantPanel: ({
+    request,
+    onOpenServerLog,
+    onClose,
+  }: {
+    request: { mode: string; token: number } | null;
+    onOpenServerLog?: () => void;
+    onClose?: () => void;
+  }) => (
+    <div
+      data-testid="local-models-assistant"
+      data-mode={request?.mode ?? ""}
+      data-token={request?.token ?? 0}
+    >
+      <button type="button" onClick={onOpenServerLog}>
+        server log
+      </button>
+      <button type="button" onClick={onClose}>
+        close assistant
+      </button>
+    </div>
+  ),
+}));
 vi.mock("@/hooks/useLocalModels", () => ({
   useInventory: () => ({
     isLoading: false,
@@ -258,23 +282,42 @@ describe("LocalModelsView", () => {
     expect(screen.getByText("local_models.no_provider")).toBeDefined();
   });
 
-  it("wires the overview actions: browse, assistant placeholder, server log", () => {
+  it("wires the overview actions: browse, the assistant in setup mode, diagnose mode, server log", () => {
     render(<LocalModelsView />);
 
+    // "Help me set up" opens the assistant and asks for a setup run; a
+    // second click closes it again.
     fireEvent.click(screen.getByRole("button", { name: "assistant" }));
-    expect(screen.getByTestId("local-models-assistant")).toBeDefined();
+    const panel = screen.getByTestId("local-models-assistant");
+    expect(panel.getAttribute("data-mode")).toBe("setup");
+    expect(panel.getAttribute("data-token")).toBe("1");
     fireEvent.click(screen.getByRole("button", { name: "assistant" }));
     expect(screen.queryByTestId("local-models-assistant")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "browse" }));
     expect(screen.getByTestId("catalogue-panel")).toBeDefined();
 
+    // "Something is not working" opens the assistant in diagnose mode and
+    // stays on the overview; the server log is one link away inside it.
     fireEvent.click(
       screen.getByRole("tab", { name: "local_models.tab_overview" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "broken" }));
+    const diagnose = screen.getByTestId("local-models-assistant");
+    expect(diagnose.getAttribute("data-mode")).toBe("diagnose");
+    expect(diagnose.getAttribute("data-token")).toBe("2");
+    expect(screen.queryByTestId("server-panel")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "server log" }));
     expect(
       screen.getByTestId("server-panel").getAttribute("data-log-open"),
     ).toBe("yes");
+  });
+
+  it("closes the assistant from its own close button", () => {
+    render(<LocalModelsView />);
+    fireEvent.click(screen.getByRole("button", { name: "assistant" }));
+    fireEvent.click(screen.getByRole("button", { name: "close assistant" }));
+    expect(screen.queryByTestId("local-models-assistant")).toBeNull();
   });
 });
