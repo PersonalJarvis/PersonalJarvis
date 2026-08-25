@@ -235,7 +235,13 @@ class AgentChatService:
                     "turn_id": turn_id,
                     "provider": session.provider,
                     "model": session.model,
-                    "effort": normalize_effort(session.provider, session.effort),
+                    # The effort the turn RUNS with: a surface may ask for more
+                    # than the session's own pick (the setup helper does), and
+                    # the timeline must not report the stale one.
+                    "effort": normalize_effort(
+                        session.provider,
+                        kit_for(session.surface).effort or session.effort,
+                    ),
                     "runner": runner,
                     "surface": session.surface,
                 },
