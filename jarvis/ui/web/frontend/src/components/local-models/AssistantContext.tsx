@@ -20,7 +20,6 @@
 import { useMemo } from "react";
 
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { StatusDot } from "@/components/extensions/primitives";
 import { useRoles, useServer } from "@/hooks/useLocalModels";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -186,21 +185,16 @@ export function AssistantContext({
       <section data-testid="assistant-machine">
         <RailTitle>{t("local_models.assistant.machine_title")}</RailTitle>
         <div className="mt-2.5">
-          <StatusDot
-            tone={server.data?.running ? "ok" : "off"}
-            label={
-              <span className="text-[12.5px]">
-                {fill(
-                  t(
-                    server.data?.running
-                      ? "local_models.assistant.machine_server_running"
-                      : "local_models.assistant.machine_server_stopped",
-                  ),
-                  { server: serverLabel },
-                )}
-              </span>
-            }
-          />
+          <RailStatus tone={server.data?.running ? "ok" : "off"}>
+            {fill(
+              t(
+                server.data?.running
+                  ? "local_models.assistant.machine_server_running"
+                  : "local_models.assistant.machine_server_stopped",
+              ),
+              { server: serverLabel },
+            )}
+          </RailStatus>
         </div>
 
         {rows.length > 0 ? (
@@ -245,19 +239,14 @@ export function AssistantContext({
       {/* ── the monitor's verdict, parked instead of scrolling away ──── */}
       {health && checkedAt && (
         <section data-testid="assistant-health-rail">
-          <StatusDot
-            tone={healthTone(health)}
-            label={
-              <span className="text-[12px] leading-relaxed">
-                {fill(t("local_models.assistant.last_check"), {
-                  when: checkedAt.toLocaleString(),
-                  what:
-                    health.reason ||
-                    t(`local_models.assistant.health_${health.status}`),
-                })}
-              </span>
-            }
-          />
+          <RailStatus tone={healthTone(health)}>
+            {fill(t("local_models.assistant.last_check"), {
+              when: checkedAt.toLocaleString(),
+              what:
+                health.reason ||
+                t(`local_models.assistant.health_${health.status}`),
+            })}
+          </RailStatus>
           {needsFix && (
             <button
               type="button"
@@ -271,6 +260,40 @@ export function AssistantContext({
         </section>
       )}
     </aside>
+  );
+}
+
+/**
+ * A dot and a sentence that WRAPS.
+ *
+ * Not the shared `StatusDot`: that one is an `inline-flex` whose label is
+ * `truncate`, so a health sentence keeps its full single-line width, pushes
+ * the rail's scrollWidth past 600px in a 293px column and gets clipped. A
+ * column this narrow needs the text to break, not to be cut.
+ */
+function RailStatus({
+  tone,
+  children,
+}: {
+  tone: "ok" | "off" | "warn" | "error";
+  children: React.ReactNode;
+}) {
+  const color = {
+    ok: "bg-emerald-500",
+    off: "bg-muted-foreground/40",
+    warn: "bg-amber-500",
+    error: "bg-destructive",
+  }[tone];
+  return (
+    <span className="flex items-start gap-2">
+      <span
+        aria-hidden
+        className={cn("mt-[0.32rem] h-2 w-2 shrink-0 rounded-full", color)}
+      />
+      <span className="min-w-0 flex-1 text-[12px] leading-relaxed text-muted-foreground">
+        {children}
+      </span>
+    </span>
   );
 }
 
