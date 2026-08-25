@@ -366,9 +366,7 @@ async def _terminal_outcome_details(
                 "terminal_event": event_type,
                 "terminal_reason": None,
                 "terminal_summary": (
-                    preferred_summary
-                    or payload.get("summary_en")
-                    or payload.get("summary_de")
+                    preferred_summary or payload.get("summary_en") or payload.get("summary_de")
                 ),
             }
         if event_type in ("MissionFailed", "MissionCancelled"):
@@ -618,9 +616,11 @@ async def list_outputs(request: Request) -> OutputsResponse:
             # card and graph node would show that boilerplate instead of the
             # user's actual ask. `clean_request_body` exists precisely for
             # UI previews — see its docstring in stream_evidence.py.
-            summary["utterance"] = summary["utterance"] or clean_request_body(
-                str(mission_row.get("prompt") or "")
-            ) or None
+            summary["utterance"] = (
+                summary["utterance"]
+                or clean_request_body(str(mission_row.get("prompt") or ""))
+                or None
+            )
             summary["summary"] = mission_row.get("terminal_summary")
             summary["terminal_reason"] = mission_row.get("terminal_reason")
             summary["terminal_event"] = mission_row.get("terminal_event")
@@ -645,8 +645,9 @@ async def list_outputs(request: Request) -> OutputsResponse:
                     )
         artifact_count = artifact_counts.get(entry, 0)
         summary["artifact_count"] = artifact_count
-        summary["has_partial_output"] = (
-            artifact_count > 0 and summary["status"] in ("error", "cancelled")
+        summary["has_partial_output"] = artifact_count > 0 and summary["status"] in (
+            "error",
+            "cancelled",
         )
         terminal_reason = str(summary.get("terminal_reason") or "")
         reason_key = terminal_reason.split(":", 1)[0]
@@ -1128,7 +1129,9 @@ async def view_output_artifact(slug: str, path: str, request: Request) -> HTMLRe
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"read failed: {exc}") from exc
     return HTMLResponse(
-        render_artifact_html(target.name, text),
+        # `?theme=` is what the Artifacts stage appends so the page follows
+        # the app's theme rather than the OS's; absent = OS preference.
+        render_artifact_html(target.name, text, theme=request.query_params.get("theme")),
         headers={
             "Content-Security-Policy": VIEW_CSP,
             "X-Content-Type-Options": "nosniff",

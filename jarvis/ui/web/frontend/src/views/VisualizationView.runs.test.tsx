@@ -5,8 +5,10 @@
  *
  * Contracts:
  * - a run without a page or picture shows as a run row; its stage opens on
- *   Files, with the summary / reason it ended above the files; the empty
- *   state appears only when there are no runs at all,
+ *   Preview as a composed output page (the answer, the reason it ended, its
+ *   files in place), with Files one tab away carrying the notes above the
+ *   reader; the empty state appears only when there are no runs at all,
+ * - the rail narrows to artifacts or outputs and back, remembering the pick,
  * - Continue / Restart gating per status, the needs-review card, the live
  *   continuation chip that jumps to the child, hold-to-abort while running,
  * - Files: clean paths with primary files first, no direct download, the
@@ -143,8 +145,13 @@ const REPORT = file("tasks/019edf/artifacts/files/report.md", {
   preview: "# Report",
 });
 
+/** The stage opens on Preview; the Files reader is one click away. */
+async function openFiles() {
+  fireEvent.click(await screen.findByTestId("visualization-tab-files"));
+}
+
 describe("VisualizationView — runs without an artifact", () => {
-  it("lists a page-less run as a run row and opens it on Files with its notes", async () => {
+  it("lists a page-less run as a run row and opens it on Preview as a page, Files one tab away", async () => {
     installFetchMock(
       [
         run({
@@ -166,16 +173,68 @@ describe("VisualizationView — runs without an artifact", () => {
     expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0);
     // No empty state: the run IS the content.
     expect(screen.queryByTestId("visualization-empty")).toBeNull();
-    // The stage opens on Files (there is no page to preview) …
-    const filesTab = await screen.findByTestId("visualization-tab-files");
-    expect(filesTab.getAttribute("aria-selected")).toBe("true");
-    expect(screen.queryByTestId("visualization-tab-preview")).toBeNull();
-    // … with the summary above the files, and the file itself in the reader.
+    // The stage opens on Preview — the same four tabs every run gets …
+    const previewTab = await screen.findByTestId("visualization-tab-preview");
+    expect(previewTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("visualization-tab-files")).toBeDefined();
+    expect(screen.getByTestId("visualization-tab-run")).toBeDefined();
+    // … and the page composed from the run: headline, the answer, the file in place.
+    const page = await screen.findByTestId("output-preview");
+    expect(within(page).getByTestId("output-preview-title").textContent).toBe("Write notes");
+    await within(page).findByTestId("output-preview-answer");
+    expect(within(page).getAllByText("Three notes, saved.").length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(within(page).getAllByTestId("output-preview-file")).toHaveLength(1),
+    );
+    // Files: the notes above the reader, the file itself in it.
+    await openFiles();
     await screen.findByTestId("run-notes");
-    expect(screen.getAllByText("Three notes, saved.").length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByTestId("artifact-path").textContent).toBe("notes.md"));
     // The run status sits in the toolbar, one badge.
     expect(screen.getByTestId("run-status-badge").textContent).toContain("success");
+  });
+
+  it("narrows the rail to artifacts or outputs and remembers the pick", async () => {
+    window.localStorage.removeItem("jarvis.artifacts.rail-filter");
+    installFetchMock(
+      [
+        run({ slug: "page-run", utterance: "Draw a dashboard", status: "success" }),
+        run({ slug: "notes-run", utterance: "Write notes", status: "success" }),
+      ],
+      {
+        "page-run": [
+          file("tasks/t1/artifacts/files/dashboard.html", {
+            preview: "<title>Sales</title>",
+          }),
+        ],
+        "notes-run": [file("tasks/t2/artifacts/files/notes.md")],
+      },
+    );
+
+    renderView();
+
+    await screen.findAllByTestId("visualization-artifact-row");
+    await screen.findAllByTestId("visualization-run-row");
+    const filter = screen.getByTestId("visualization-filter");
+    expect(within(filter).getByTestId("visualization-filter-all").textContent).toContain("2");
+
+    fireEvent.click(within(filter).getByTestId("visualization-filter-artifacts"));
+    await waitFor(() => expect(screen.queryAllByTestId("visualization-run-row")).toHaveLength(0));
+    expect(screen.getAllByTestId("visualization-artifact-row")).toHaveLength(1);
+    expect(window.localStorage.getItem("jarvis.artifacts.rail-filter")).toBe("artifacts");
+
+    fireEvent.click(within(filter).getByTestId("visualization-filter-outputs"));
+    await waitFor(() =>
+      expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0),
+    );
+    expect(screen.getAllByTestId("visualization-run-row")).toHaveLength(1);
+    // The stage followed the filter: the output is on stage, not the page.
+    await screen.findByTestId("output-preview");
+
+    fireEvent.click(within(filter).getByTestId("visualization-filter-all"));
+    await waitFor(() => expect(screen.getAllByTestId("visualization-run-row")).toHaveLength(1));
+    expect(screen.getAllByTestId("visualization-artifact-row")).toHaveLength(1);
+    window.localStorage.removeItem("jarvis.artifacts.rail-filter");
   });
 
   it("says so only when there are no runs at all", async () => {
@@ -219,6 +278,12 @@ describe("VisualizationView — runs without an artifact", () => {
 
     renderView();
 
+    // The output page leads with why the run ended …
+    const outcome = await screen.findByTestId("output-preview-outcome");
+    expect(within(outcome).getAllByText("Needs review").length).toBeGreaterThan(0);
+    expect(within(outcome).getByText("critic_loop_exhausted")).toBeDefined();
+    // … and Files carries the same verdict above the reader.
+    await openFiles();
     await waitFor(() => expect(screen.getByTestId("output-needs-review")).toBeDefined());
     expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0);
     expect(screen.getAllByText("critic_loop_exhausted").length).toBeGreaterThan(0);
@@ -241,6 +306,10 @@ describe("VisualizationView — runs without an artifact", () => {
 
     renderView();
 
+    const outcome = await screen.findByTestId("output-preview-outcome");
+    expect(within(outcome).getByText("task_error")).toBeDefined();
+    expect(within(outcome).queryByText("Needs review")).toBeNull();
+    await openFiles();
     await waitFor(() => expect(screen.getByTestId("output-terminal-reason")).toBeDefined());
     expect(screen.queryByTestId("output-needs-review")).toBeNull();
     expect(screen.getByTestId("run-status-badge").textContent).toContain("error");
@@ -335,6 +404,7 @@ describe("VisualizationView — the Files tab", () => {
     );
 
     renderView();
+    await openFiles();
 
     await waitFor(() => expect(screen.getAllByTestId("artifact-path")).toHaveLength(3));
     expect(screen.getAllByTestId("artifact-path").map((node) => node.textContent)).toEqual([
@@ -350,8 +420,9 @@ describe("VisualizationView — the Files tab", () => {
     });
 
     renderView();
+    await openFiles();
 
-    await waitFor(() => expect(screen.getByText("report.md")).toBeDefined());
+    await waitFor(() => expect(screen.getByTestId("artifact-path").textContent).toBe("report.md"));
     expect(screen.queryByText("tasks/019edf/artifacts/files/report.md")).toBeNull();
 
     expect(screen.queryByTitle("Download")).toBeNull();
@@ -378,8 +449,9 @@ describe("VisualizationView — the Files tab", () => {
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
     renderView();
+    await openFiles();
 
-    await waitFor(() => expect(screen.getByText("report.md")).toBeDefined());
+    await waitFor(() => expect(screen.getByTestId("artifact-path").textContent).toBe("report.md"));
 
     fireEvent.click(screen.getByTitle("Change how this opens"));
     fireEvent.click(await screen.findByText("Browser"));
@@ -413,8 +485,9 @@ describe("VisualizationView — the Files tab", () => {
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
     renderView();
+    await openFiles();
 
-    await waitFor(() => expect(screen.getByText("report.md")).toBeDefined());
+    await waitFor(() => expect(screen.getByTestId("artifact-path").textContent).toBe("report.md"));
     // The remembered preference is a query of its own; "Open" asks the chooser
     // until it has resolved, so wait for it before clicking.
     await waitFor(() =>
