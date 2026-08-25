@@ -131,6 +131,57 @@ export function formatBucketFull(key: string, bucket: "day" | "hour"): string {
     : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 
+/**
+ * `(start, end)` in epoch ms for a local `YYYY-MM-DD` day.
+ *
+ * Built from the local midnight of that date, not from UTC: the daily report
+ * has to draw the same day the person's own clock drew, and the backend cuts
+ * its days the same way (`jarvis/costs/aggregate.py:day_bounds_ms`).
+ */
+export function dayBoundsMs(date: string): [number, number] {
+  const start = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return [0, 0];
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return [start.getTime(), end.getTime() - 1];
+}
+
+/** `today` / `yesterday` / `""` for a local `YYYY-MM-DD` day. */
+export function relativeDay(date: string): "today" | "yesterday" | "" {
+  const today = new Date();
+  const key = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  if (key(today) === date) return "today";
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  return key(yesterday) === date ? "yesterday" : "";
+}
+
+/** "Tuesday, 25 August 2026" — the day report's own headline. */
+export function formatDayLong(date: string): string {
+  const d = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return date;
+  return d.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/** "Tue, 25 Aug" — the ledger row's own label. */
+export function formatDayShort(date: string): string {
+  const d = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return date;
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** "09:53" — a clock time, for the window a day's work actually ran in. */
+export function formatClock(ms: number): string {
+  if (!ms) return "—";
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
 export function formatTimestamp(ms: number): string {
   if (!ms) return "—";
   return new Date(ms).toLocaleString(undefined, {

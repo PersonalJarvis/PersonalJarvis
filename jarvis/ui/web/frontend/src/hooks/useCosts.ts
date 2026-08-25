@@ -127,6 +127,31 @@ export interface CostSummary {
   sources_present: string[];
 }
 
+/**
+ * One calendar day of spend, already broken down — the section's ledger row.
+ *
+ * Mirrors `DayRow` in costs_routes.py. A day, not a session, is the unit:
+ * a session row carries the timestamp of its FIRST call, so a long morning
+ * run sorts below a short one started later and reads as if it never
+ * happened.
+ */
+export interface CostDayRow {
+  /** Local `YYYY-MM-DD`. */
+  date: string;
+  since_ms: number;
+  until_ms: number;
+  totals: CostTotals;
+  by_model: CostBucket[];
+  by_provider: CostBucket[];
+  by_role: CostBucket[];
+  by_surface: CostBucket[];
+}
+
+export interface CostDailyLedger {
+  days: CostDayRow[];
+  currency: CostCurrency;
+}
+
 export interface CostEntryRow {
   ts_ms: number;
   surface: CostSurface;
@@ -178,6 +203,14 @@ export interface CostFilters {
   /** Session / mission ids — set by clicking a row in "Where it went". */
   refs: string[];
   search: string;
+  /**
+   * An explicit window, in epoch ms. When set it wins over `days` — the
+   * daily report drills into ONE day and everything it shows (the hourly
+   * curve, the breakdowns, the calls) is the same request the section
+   * already makes, just bounded to that day.
+   */
+  sinceMs?: number;
+  untilMs?: number;
 }
 
 export const EMPTY_FILTERS: CostFilters = {
@@ -205,6 +238,8 @@ export function hasActiveFilters(f: CostFilters): boolean {
 function toParams(f: CostFilters): URLSearchParams {
   const params = new URLSearchParams();
   params.set("days", String(f.days));
+  if (f.sinceMs !== undefined) params.set("since_ms", String(Math.floor(f.sinceMs)));
+  if (f.untilMs !== undefined) params.set("until_ms", String(Math.floor(f.untilMs)));
   // Repeated params rather than one comma-joined value: a model id may
   // legitimately contain a comma-free but slash-heavy vendor prefix, and
   // repeating keeps the split unambiguous on the backend.
@@ -236,6 +271,24 @@ export function useCostSummary(filters: CostFilters) {
     // section current without re-reading three SQLite files every second.
     refetchInterval: 30_000,
     staleTime: 10_000,
+  });
+}
+
+/**
+ * The daily ledger — one row per day for the whole selected range.
+ *
+ * Same filters as the summary, so a drill-down into a provider or a model
+ * narrows the days too rather than leaving a second, disagreeing list on
+ * screen.
+ */
+export function useCostDaily(filters: CostFilters) {
+  const params = toParams(filters);
+  return useQuery({
+    queryKey: ["costs", "daily", params.toString()],
+    queryFn: () => getJson<CostDailyLedger>(`/api/costs/daily?${params.toString()}`),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+    placeholderData: (prev) => prev,
   });
 }
 

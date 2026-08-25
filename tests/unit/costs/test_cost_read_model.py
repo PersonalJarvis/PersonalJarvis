@@ -673,3 +673,58 @@ def test_a_bring_your_own_key_cli_row_is_billed_at_its_recorded_price(tmp_path: 
     assert entries["gpt-5.5"].price_source == "recorded"
     assert entries["gpt-5.5"].cost_usd == pytest.approx(0.0123)
     assert entries["nemotron:free"].price_source == "free"
+# ---------------------------------------------------------------------------
+# The coding-CLI source reads at ONE grain, whatever the report draws at
+# ---------------------------------------------------------------------------
+
+
+def _claude_transcript(home: Path, *, hours: list[int]) -> None:
+    """A Claude Code session with one response in each of the given hours."""
+    path = home / ".claude" / "projects" / "-work-jarvis" / "sess-1.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "uuid": f"u{hour}",
+                "sessionId": "sess-1",
+                "timestamp": f"2026-08-23T{hour:02d}:30:00.000Z",
+                "cwd": "/work/jarvis",
+                "message": {
+                    "id": f"msg_{hour}",
+                    "model": "claude-opus-5",
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                },
+            }
+        )
+        for hour in hours
+    ]
+    path.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+
+def test_a_session_counts_the_same_whatever_grain_the_report_draws_at(
+    tmp_path: Path,
+) -> None:
+    """A day must not gain rows just because a chart asked for hours.
+
+    The coding-CLI index pre-aggregates before the read model ever sees it,
+    so it has to be told a grain. When that grain was the report's own, one
+    session spanning three hours of a day collapsed into a single row for a
+    30-day view and into three for a one-day view — and the daily ledger and
+    the day report behind it then counted the same day differently (113 vs
+    204 calls, 2026-08-25). It now always reads at the finest grain the
+    section ever draws, and rolls up from there.
+    """
+    from jarvis.costs.cli_usage_index import refresh
+
+    data = tmp_path / "data"
+    _claude_transcript(tmp_path, hours=[9, 10, 11])
+    refresh(data_dir=data, home=tmp_path)
+
+    sources = CostSources(cli_index_dir=data)
+    hourly = collect_entries(sources, bucket_ms=60 * 60 * 1000)
+    daily = collect_entries(sources, bucket_ms=24 * 60 * 60 * 1000)
+
+    assert len(hourly) == 3
+    assert len(daily) == len(hourly)
+    assert sum(e.tokens_total for e in daily) == sum(e.tokens_total for e in hourly)

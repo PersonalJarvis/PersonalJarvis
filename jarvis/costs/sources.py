@@ -607,6 +607,10 @@ def _speech_label(stage: str, chars: int, audio_ms: float) -> str:
 # Coding CLIs — the index, not the transcripts
 # ---------------------------------------------------------------------------
 
+#: The finest grain the section ever draws. See :func:`_cli_entries`.
+_CLI_READ_BUCKET_MS = 60 * 60 * 1000
+
+
 def _cli_entries(
     data_dir: Path | None, since_ms: int, until_ms: int, bucket_ms: int
 ) -> Iterator[CostEntry]:
@@ -619,9 +623,19 @@ def _cli_entries(
     A CLI on a monthly seat is quoted at what the same work would have cost
     through the API and labelled ``subscription``; one on the user's own key
     (OpenCode) carries the price it recorded, which is money that moved.
+
+    ``bucket_ms`` is an upper bound, never the grain itself. The report's own
+    grain must not decide how many rows a day HAS: read day-wide and a
+    session collapses into one row, read hour-wide and the same session
+    becomes several — so the daily ledger and the day report behind it
+    counted the same day differently (113 vs 204 calls, 2026-08-25). Reading
+    always at the finest grain the section ever draws keeps every count the
+    same number wherever it appears; rolling those rows up into days is what
+    :func:`jarvis.costs.aggregate.build_report` does anyway.
     """
     if data_dir is None:
         return
+    bucket_ms = min(int(bucket_ms), _CLI_READ_BUCKET_MS)
     try:
         from .cli_usage_index import rollups as indexed_rollups
     except ImportError as exc:  # pragma: no cover — the module ships with us

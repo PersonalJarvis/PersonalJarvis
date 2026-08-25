@@ -17,8 +17,11 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   AudioLines,
+  CalendarDays,
   ChevronDown,
+  ChevronRight,
   Coins,
+  CreditCard,
   Hash,
   Layers,
   RefreshCw,
@@ -27,14 +30,17 @@ import {
   Sparkles,
   Tag,
   Terminal,
+  Ticket,
   Wallet,
   X,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import {
+  BackLink,
   Cell,
   Column,
+  DetailHeader,
   EmptyRow,
   IconButton,
   InlineSearch,
@@ -49,7 +55,11 @@ import {
 } from "@/components/extensions/primitives";
 import { CostTrendChart, type TrendMetric } from "@/components/costs/CostTrendChart";
 import {
+  dayBoundsMs,
   formatBucketFull,
+  formatClock,
+  formatDayLong,
+  formatDayShort,
   formatExact,
   formatMoney,
   formatShare,
@@ -59,6 +69,7 @@ import {
   keyColor,
   priceSourceLabelKey,
   priceSourceTone,
+  relativeDay,
   roleColor,
   roleLabelKey,
   SURFACE_GROUPS,
@@ -69,10 +80,12 @@ import {
 import {
   EMPTY_FILTERS,
   hasActiveFilters,
+  useCostDaily,
   useCostEntries,
   useCostPricing,
   useCostSummary,
   type CostBucket,
+  type CostDayRow,
   type CostFilters,
   type CostRole,
   type CostSurface,
@@ -93,13 +106,13 @@ export function CostsView() {
   const [currency, setCurrency] = useState<Currency>("usd");
   const [metric, setMetric] = useState<TrendMetric>("cost");
   const [dimension, setDimension] = useState<Dimension>("provider");
-  const [sort, setSort] = useState<EntrySort>("recent");
-  const [visible, setVisible] = useState(ENTRY_PAGE);
   const [searchOpen, setSearchOpen] = useState(false);
   const [ratesOpen, setRatesOpen] = useState(false);
+  /** Which day's report is open, as a local `YYYY-MM-DD`. Null is the ledger. */
+  const [openDay, setOpenDay] = useState<string | null>(null);
 
   const summary = useCostSummary(filters);
-  const entries = useCostEntries(filters, sort, visible, 0);
+  const daily = useCostDaily(filters);
   const pricing = useCostPricing(filters.days, ratesOpen);
 
   const data = summary.data;
@@ -110,7 +123,6 @@ export function CostsView() {
   // One toggle for every filter dimension: clicking a row that is already
   // filtered removes it again, so a drill-down is never a one-way door.
   const toggle = (key: keyof CostFilters, value: string) => {
-    setVisible(ENTRY_PAGE);
     setFilters((f) => {
       const list = f[key] as string[];
       const next = list.includes(value)
@@ -146,7 +158,6 @@ export function CostsView() {
   const pickArea = (id: string) => {
     const group = SURFACE_GROUPS.find((g) => g.id === id);
     if (!group) return;
-    setVisible(ENTRY_PAGE);
     // Every row-level filter is cleared with the area, not just roles: a
     // provider picked inside Agentic IDE ("claude-cli") carried over to the
     // assistant's area, where no row can ever match it, and the tab showed
@@ -172,6 +183,21 @@ export function CostsView() {
   const billed = Math.max(0, (totals?.cost_usd ?? 0) - seat);
   const perDay = billed / Math.max(1, rangeMs / 86_400_000);
 
+  // A day report replaces the section rather than sitting inside it: it is
+  // the same question at a different grain, and two scrollers on one screen
+  // is how a reader loses track of which totals belong to what.
+  if (openDay) {
+    return (
+      <DayReport
+        date={openDay}
+        filters={filters}
+        currency={currency}
+        eurPerUsd={eurPerUsd}
+        onBack={() => setOpenDay(null)}
+      />
+    );
+  }
+
   return (
     <ScrollArea className="h-full">
       <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-6 py-6">
@@ -194,10 +220,7 @@ export function CostsView() {
               <SegmentedFilter<string>
                 label={t("costs_view.range_label")}
                 value={String(filters.days)}
-                onChange={(v) => {
-                  setVisible(ENTRY_PAGE);
-                  setFilters((f) => ({ ...f, days: Number(v) }));
-                }}
+                onChange={(v) => setFilters((f) => ({ ...f, days: Number(v) }))}
                 options={RANGES.map((d) => ({
                   id: String(d),
                   label: d === 0 ? t("costs_view.range_all") : fill(t("costs_view.range_days"), { days: String(d) }),
@@ -251,10 +274,7 @@ export function CostsView() {
             <InlineSearch
               autoFocus
               value={filters.search}
-              onChange={(v) => {
-                setVisible(ENTRY_PAGE);
-                setFilters((f) => ({ ...f, search: v }));
-              }}
+              onChange={(v) => setFilters((f) => ({ ...f, search: v }))}
               placeholder={t("costs_view.search_placeholder")}
             />
           </div>
@@ -266,10 +286,7 @@ export function CostsView() {
             data?.top_refs.find((r) => r.key === value)?.label || `${value.slice(0, 8)}…`
           }
           onRemove={(key, value) => toggle(key, value)}
-          onClear={() => {
-            setVisible(ENTRY_PAGE);
-            setFilters((f) => ({ ...EMPTY_FILTERS, days: f.days }));
-          }}
+          onClear={() => setFilters((f) => ({ ...EMPTY_FILTERS, days: f.days }))}
         />
 
         {summary.isError ? (
@@ -503,51 +520,22 @@ export function CostsView() {
           </div>
         </Panel>
 
-        {/* Line items -------------------------------------------------- */}
+        {/* The daily ledger -------------------------------------------- */}
         <Panel>
           <div className="px-4 pt-4">
             <PanelHeader
-              title={t("costs_view.entries_title")}
-              subtitle={fill(t("costs_view.entries_subtitle"), {
-                shown: formatExact(Math.min(entries.data?.total ?? 0, visible)),
-                total: formatExact(entries.data?.total ?? 0),
-              })}
-              actions={
-                <SegmentedFilter<EntrySort>
-                  label={t("costs_view.sort_label")}
-                  value={sort}
-                  onChange={(v) => {
-                    setSort(v);
-                    setVisible(ENTRY_PAGE);
-                  }}
-                  options={[
-                    { id: "recent", label: t("costs_view.sort_recent") },
-                    { id: "cost", label: t("costs_view.sort_cost") },
-                    { id: "tokens", label: t("costs_view.sort_tokens") },
-                  ]}
-                />
-              }
+              title={t("costs_view.daily_title")}
+              subtitle={t("costs_view.daily_subtitle")}
             />
           </div>
           <div className="mt-3">
-            <EntriesTable
-              rows={entries.data?.items ?? []}
+            <DailyTable
+              rows={daily.data?.days ?? []}
               money={money}
-              loading={entries.isLoading}
-              onFilterModel={(model) => toggle("models", model)}
+              loading={daily.isLoading}
+              onOpen={setOpenDay}
             />
           </div>
-          {(entries.data?.total ?? 0) > visible ? (
-            <div className="border-t border-border px-4 py-3">
-              <button
-                type="button"
-                onClick={() => setVisible((v) => v + ENTRY_PAGE)}
-                className="text-sm font-medium text-foreground/80 transition-colors hover:text-foreground"
-              >
-                {fill(t("costs_view.load_more"), { count: String(ENTRY_PAGE) })}
-              </button>
-            </div>
-          ) : null}
         </Panel>
 
         {/* Rate card --------------------------------------------------- */}
@@ -1167,7 +1155,8 @@ function EntriesTable({
   rows: EntryRowShape[];
   money: (usd: number) => string;
   loading?: boolean;
-  onFilterModel: (model: string) => void;
+  /** Omitted inside a day report - there is nothing above it to filter. */
+  onFilterModel?: (model: string) => void;
 }) {
   const t = useT();
   const columns: Column[] = [
@@ -1193,7 +1182,7 @@ function EntriesTable({
         <TableRow
           key={`${row.ts_ms}-${row.ref_id}-${i}`}
           columns={columns}
-          onClick={row.model ? () => onFilterModel(row.model) : undefined}
+          onClick={row.model && onFilterModel ? () => onFilterModel(row.model) : undefined}
           ariaLabel={row.model || row.provider}
         >
           <Cell muted>
@@ -1315,6 +1304,659 @@ function RatesTable({
           </TableRow>
         ))}
       </Table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The daily ledger — one row per day, and the report behind it
+// ---------------------------------------------------------------------------
+
+/**
+ * One row per calendar day.
+ *
+ * This replaced a flat list of every session: the section used to put five to
+ * fifteen rows on a single day, each one a session labelled with the model of
+ * that session, and the day's real composition was impossible to see. Worse,
+ * a session row carries the timestamp of its FIRST call, so "newest first"
+ * buried a long morning run under a short one started later — a day of one
+ * model's work read as a day of something else entirely (maintainer,
+ * 2026-08-25).
+ *
+ * A day has no such ambiguity. It names every model it saw, biggest first,
+ * whichever vendor they came from, and opens into the full report.
+ */
+function DailyTable({
+  rows,
+  money,
+  loading,
+  onOpen,
+}: {
+  rows: CostDayRow[];
+  money: (usd: number) => string;
+  loading?: boolean;
+  onOpen: (date: string) => void;
+}) {
+  const t = useT();
+  const columns: Column[] = [
+    { id: "day", label: t("costs_view.col_day"), width: "196px" },
+    { id: "models", label: t("costs_view.col_models") },
+    { id: "calls", label: t("costs_view.col_calls"), width: "80px", align: "right" },
+    { id: "tokens", label: t("costs_view.stat_tokens"), width: "116px", align: "right" },
+    { id: "cost", label: t("costs_view.col_cost"), width: "132px", align: "right" },
+    { id: "open", label: "", width: "32px", align: "right" },
+  ];
+
+  if (!loading && rows.length === 0) {
+    return (
+      <div className="px-4 pb-4">
+        <EmptyRow>{t("costs_view.daily_empty")}</EmptyRow>
+      </div>
+    );
+  }
+
+  return (
+    <Table label={t("costs_view.daily_title")}>
+      <TableHead columns={columns} />
+      {rows.map((row) => {
+        const rel = relativeDay(row.date);
+        const seat = row.totals.subscription_usd;
+        const billed = Math.max(0, row.totals.cost_usd - seat);
+        // A day where nothing was billed still ranks its models — by tokens,
+        // because a share of zero dollars tells nobody anything.
+        const priced = row.totals.cost_usd > 0;
+        const shown = row.by_model.slice(0, 3);
+        const rest = row.by_model.length - shown.length;
+        return (
+          <TableRow
+            key={row.date}
+            columns={columns}
+            onClick={() => onOpen(row.date)}
+            ariaLabel={fill(t("costs_view.day_open"), { day: row.date })}
+          >
+            <Cell>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">
+                    {rel ? t(`costs_view.daily_${rel}`) : formatDayShort(row.date)}
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {rel
+                      ? formatDayShort(row.date)
+                      : fill(t("costs_view.day_byline_window"), {
+                          from: formatClock(row.totals.first_ts_ms),
+                          to: formatClock(row.totals.last_ts_ms),
+                        })}
+                  </div>
+                </div>
+              </div>
+            </Cell>
+            <Cell>
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {shown.map((m) => (
+                  <span
+                    key={m.key}
+                    className="inline-flex max-w-[210px] items-center gap-1.5 rounded-md border border-border bg-card/60 px-1.5 py-0.5 text-xs"
+                    title={m.key}
+                  >
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-[2px]"
+                      style={{ background: keyColor(m.key) }}
+                      aria-hidden
+                    />
+                    <span className="truncate text-foreground/90">{m.key}</span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {formatShare(priced ? m.cost_share : m.token_share)}
+                    </span>
+                  </span>
+                ))}
+                {rest > 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    {fill(t("costs_view.daily_more_models"), { count: String(rest) })}
+                  </span>
+                ) : null}
+              </div>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums">{formatExact(row.totals.entries)}</span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums" title={formatExact(row.totals.tokens_total)}>
+                {formatTokensOrNone(row.totals.tokens_total)}
+              </span>
+            </Cell>
+            <Cell align="right">
+              <div>
+                <div className="font-medium tabular-nums text-foreground">
+                  {money(row.totals.cost_usd)}
+                </div>
+                {seat > 0 ? (
+                  <div
+                    className="text-[11px] tabular-nums text-muted-foreground"
+                    title={t("costs_view.day_stat_billed")}
+                  >
+                    {money(billed)}
+                  </div>
+                ) : null}
+              </div>
+            </Cell>
+            <Cell align="right" muted>
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </Cell>
+          </TableRow>
+        );
+      })}
+    </Table>
+  );
+}
+
+/**
+ * One day, in full — the answer to "where did today's money and tokens go".
+ *
+ * Everything on this page is the SAME request the section above makes, only
+ * bounded to one local day (`since_ms`/`until_ms`), so a day can never
+ * disagree with the range it belongs to. Nothing is vendor-specific: whatever
+ * models, providers and areas the day actually saw are what it names.
+ */
+function DayReport({
+  date,
+  filters,
+  currency,
+  eurPerUsd,
+  onBack,
+}: {
+  date: string;
+  filters: CostFilters;
+  currency: Currency;
+  eurPerUsd: number;
+  onBack: () => void;
+}) {
+  const t = useT();
+  const [metric, setMetric] = useState<TrendMetric>("cost");
+  const [sort, setSort] = useState<EntrySort>("cost");
+  const [visible, setVisible] = useState(ENTRY_PAGE);
+
+  const [sinceMs, untilMs] = dayBoundsMs(date);
+  // The row filters carry over — drilling into a day from a filtered section
+  // must not silently widen back out to everything.
+  const dayFilters = useMemo(
+    () => ({ ...filters, sinceMs, untilMs }),
+    [filters, sinceMs, untilMs],
+  );
+  const summary = useCostSummary(dayFilters);
+  const entries = useCostEntries(dayFilters, sort, visible, 0);
+
+  const data = summary.data;
+  const totals = data?.totals;
+  const money = (usd: number) => formatMoney(usd, eurPerUsd, currency);
+  const seat = totals?.subscription_usd ?? 0;
+  const billed = Math.max(0, (totals?.cost_usd ?? 0) - seat);
+  const priced = (totals?.cost_usd ?? 0) > 0;
+  const rel = relativeDay(date);
+  const long = formatDayLong(date);
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-6 py-6">
+        <BackLink label={t("costs_view.day_back")} onClick={onBack} />
+
+        <DetailHeader
+          leading={
+            <div className="rounded-xl border border-border bg-card/50 p-2.5">
+              <CalendarDays className="h-5 w-5 text-muted-foreground" aria-hidden />
+            </div>
+          }
+          title={rel ? t(`costs_view.daily_${rel}`) : long}
+          titleAccessory={
+            rel ? <span className="text-sm text-muted-foreground">{long}</span> : null
+          }
+          byline={
+            data
+              ? `${fill(t("costs_view.day_byline"), {
+                  calls: formatExact(totals?.entries ?? 0),
+                  models: String(data.by_model.length),
+                  providers: String(data.by_provider.length),
+                })} · ${fill(t("costs_view.day_byline_window"), {
+                  from: formatClock(totals?.first_ts_ms ?? 0),
+                  to: formatClock(totals?.last_ts_ms ?? 0),
+                })}`
+              : t("costs_view.subtitle_loading")
+          }
+          actions={
+            <IconButton
+              label={t("costs_view.refresh")}
+              busy={summary.isFetching}
+              onClick={() => void summary.refetch()}
+            >
+              <RefreshCw className="h-4 w-4" />
+            </IconButton>
+          }
+        />
+
+        {summary.isError ? <EmptyRow>{t("costs_view.load_error")}</EmptyRow> : null}
+
+        {/* ---------------------------------------------------------------
+            Three money numbers, deliberately kept apart: what the day was
+            WORTH at list price, what an API key was actually charged, and
+            what a monthly seat already covered. Folding the third into the
+            first is how a dashboard starts reading like a bill nobody got.
+        --------------------------------------------------------------- */}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile
+            icon={<Coins className="h-4 w-4" />}
+            label={t("costs_view.day_stat_worth")}
+            value={money(totals?.cost_usd ?? 0)}
+            hint={t("costs_view.day_stat_worth_hint")}
+            loading={summary.isLoading}
+          />
+          <StatTile
+            icon={<CreditCard className="h-4 w-4" />}
+            label={t("costs_view.day_stat_billed")}
+            value={money(billed)}
+            hint={t("costs_view.day_stat_billed_hint")}
+            tone={billed > 0 ? "primary" : "ok"}
+            loading={summary.isLoading}
+          />
+          <StatTile
+            icon={<Ticket className="h-4 w-4" />}
+            label={t("costs_view.day_stat_seat")}
+            value={seat > 0 ? money(seat) : "—"}
+            hint={seat > 0 ? t("costs_view.day_stat_seat_hint") : t("costs_view.day_stat_seat_none")}
+            loading={summary.isLoading}
+          />
+          <StatTile
+            icon={<Sigma className="h-4 w-4" />}
+            label={t("costs_view.stat_tokens")}
+            value={formatTokens(totals?.tokens_total ?? 0)}
+            hint={fill(
+              t(
+                (totals?.tokens_cached ?? 0) > 0
+                  ? "costs_view.stat_tokens_hint_cached"
+                  : "costs_view.stat_tokens_hint",
+              ),
+              {
+                in: formatTokens(totals?.tokens_in ?? 0),
+                cached: formatTokens(totals?.tokens_cached ?? 0),
+                out: formatTokens(totals?.tokens_out ?? 0),
+              },
+            )}
+            loading={summary.isLoading}
+          />
+        </div>
+
+        {/* Hour by hour ------------------------------------------------- */}
+        <Panel className="p-4">
+          <PanelHeader
+            title={t("costs_view.day_hours_title")}
+            subtitle={t("costs_view.day_hours_subtitle")}
+            actions={
+              <SegmentedFilter<TrendMetric>
+                label={t("costs_view.metric_label")}
+                value={metric}
+                onChange={setMetric}
+                options={[
+                  { id: "cost", label: t("costs_view.metric_cost") },
+                  { id: "tokens", label: t("costs_view.metric_tokens") },
+                ]}
+              />
+            }
+          />
+          <div className="mt-3 h-[220px]">
+            <CostTrendChart
+              series={data?.series ?? []}
+              bucket="hour"
+              metric={metric}
+              currency={currency}
+              eurPerUsd={eurPerUsd}
+            />
+          </div>
+        </Panel>
+
+        {/* Which models ------------------------------------------------ */}
+        <Panel>
+          <div className="px-4 pt-4">
+            <PanelHeader
+              title={t("costs_view.day_models_title")}
+              subtitle={t("costs_view.day_models_subtitle")}
+            />
+          </div>
+          <div className="mt-3">
+            <DayModelsTable
+              rows={data?.by_model ?? []}
+              priced={priced}
+              money={money}
+              loading={summary.isLoading}
+            />
+          </div>
+        </Panel>
+
+        {/* Token composition ------------------------------------------- */}
+        <Panel className="p-4">
+          <PanelHeader
+            title={t("costs_view.day_tokens_title")}
+            subtitle={t("costs_view.day_tokens_subtitle")}
+          />
+          <TokenSplitBar
+            tokensIn={totals?.tokens_in ?? 0}
+            tokensCached={totals?.tokens_cached ?? 0}
+            tokensOut={totals?.tokens_out ?? 0}
+          />
+        </Panel>
+
+        {/* Where in the app -------------------------------------------- */}
+        <Panel className="p-4">
+          <PanelHeader
+            title={t("costs_view.day_split_title")}
+            subtitle={t("costs_view.day_split_subtitle")}
+          />
+          <div className="mt-4 grid gap-6 md:grid-cols-2">
+            <ShareBars
+              rows={data?.by_surface ?? []}
+              labelOf={(key) => t(surfaceLabelKey(key))}
+              colorOf={(key) => keyColor(key)}
+              priced={priced}
+              money={money}
+              empty={t("costs_view.breakdown_empty")}
+            />
+            <ShareBars
+              rows={data?.by_role ?? []}
+              labelOf={(key) => t(roleLabelKey(key))}
+              colorOf={(key) => roleColor(key)}
+              priced={priced}
+              money={money}
+              empty={t("costs_view.breakdown_empty")}
+            />
+          </div>
+        </Panel>
+
+        {/* Which sessions ---------------------------------------------- */}
+        <Panel>
+          <div className="px-4 pt-4">
+            <PanelHeader
+              title={t("costs_view.top_refs_title")}
+              subtitle={t("costs_view.top_refs_subtitle")}
+            />
+          </div>
+          <div className="mt-3">
+            <TopRefsTable
+              rows={data?.top_refs ?? []}
+              active={[]}
+              onToggle={() => undefined}
+              money={money}
+              loading={summary.isLoading}
+            />
+          </div>
+        </Panel>
+
+        {/* Every call --------------------------------------------------- */}
+        <Panel>
+          <div className="px-4 pt-4">
+            <PanelHeader
+              title={t("costs_view.day_calls_title")}
+              subtitle={fill(t("costs_view.entries_subtitle"), {
+                shown: formatExact(Math.min(entries.data?.total ?? 0, visible)),
+                total: formatExact(entries.data?.total ?? 0),
+              })}
+              actions={
+                <SegmentedFilter<EntrySort>
+                  label={t("costs_view.sort_label")}
+                  value={sort}
+                  onChange={(v) => {
+                    setSort(v);
+                    setVisible(ENTRY_PAGE);
+                  }}
+                  options={[
+                    { id: "cost", label: t("costs_view.sort_cost") },
+                    { id: "tokens", label: t("costs_view.sort_tokens") },
+                    { id: "recent", label: t("costs_view.sort_recent") },
+                  ]}
+                />
+              }
+            />
+          </div>
+          <div className="mt-3">
+            <EntriesTable
+              rows={entries.data?.items ?? []}
+              money={money}
+              loading={entries.isLoading}
+            />
+          </div>
+          {(entries.data?.total ?? 0) > visible ? (
+            <div className="border-t border-border px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setVisible((v) => v + ENTRY_PAGE)}
+                className="text-sm font-medium text-foreground/80 transition-colors hover:text-foreground"
+              >
+                {fill(t("costs_view.load_more"), { count: String(ENTRY_PAGE) })}
+              </button>
+            </div>
+          ) : null}
+        </Panel>
+      </div>
+    </ScrollArea>
+  );
+}
+
+/** Every model of one day: how much of it, how many tokens, what it cost. */
+function DayModelsTable({
+  rows,
+  priced,
+  money,
+  loading,
+}: {
+  rows: CostBucket[];
+  /** Did the day cost anything? If not, the bar ranks by tokens instead. */
+  priced: boolean;
+  money: (usd: number) => string;
+  loading?: boolean;
+}) {
+  const t = useT();
+  const columns: Column[] = [
+    { id: "model", label: t("costs_view.dim_model") },
+    { id: "share", label: t("costs_view.col_share"), width: "150px" },
+    { id: "calls", label: t("costs_view.col_calls"), width: "76px", align: "right" },
+    { id: "in", label: t("costs_view.tokens_in"), width: "92px", align: "right" },
+    { id: "cached", label: t("costs_view.tokens_cached"), width: "92px", align: "right" },
+    { id: "out", label: t("costs_view.tokens_out"), width: "92px", align: "right" },
+    { id: "cost", label: t("costs_view.col_cost"), width: "112px", align: "right" },
+  ];
+
+  if (!loading && rows.length === 0) {
+    return (
+      <div className="px-4 pb-4">
+        <EmptyRow>{t("costs_view.breakdown_empty")}</EmptyRow>
+      </div>
+    );
+  }
+
+  return (
+    <Table label={t("costs_view.day_models_title")}>
+      <TableHead columns={columns} />
+      {rows.map((row) => {
+        const share = priced ? row.cost_share : row.token_share;
+        const provider = row.members[0] ?? "";
+        return (
+          <TableRow key={row.key} columns={columns} ariaLabel={row.key}>
+            <Cell>
+              <div className="flex min-w-0 items-center gap-2.5">
+                {provider ? (
+                  <ProviderLogo providerId={provider} label={row.key} size="sm" />
+                ) : (
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                    style={{ background: keyColor(row.key) }}
+                    aria-hidden
+                  />
+                )}
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">{row.key}</div>
+                  {provider ? (
+                    <div className="truncate text-xs text-muted-foreground">{provider}</div>
+                  ) : null}
+                </div>
+              </div>
+            </Cell>
+            <Cell>
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-sheen/[0.08]">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.max(2, Math.round(share * 100))}%`,
+                      background: keyColor(row.key),
+                    }}
+                  />
+                </div>
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {formatShare(share)}
+                </span>
+              </div>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums">{formatExact(row.entries)}</span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums" title={formatExact(row.tokens_in)}>
+                {formatTokensOrNone(row.tokens_in)}
+              </span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums" title={formatExact(row.tokens_cached)}>
+                {formatTokensOrNone(row.tokens_cached)}
+              </span>
+            </Cell>
+            <Cell align="right" muted>
+              <span className="tabular-nums" title={formatExact(row.tokens_out)}>
+                {formatTokensOrNone(row.tokens_out)}
+              </span>
+            </Cell>
+            <Cell align="right">
+              <span className="font-medium tabular-nums text-foreground">
+                {money(row.cost_usd)}
+              </span>
+            </Cell>
+          </TableRow>
+        );
+      })}
+    </Table>
+  );
+}
+
+/**
+ * The day's tokens as one bar: fresh input, cache reads, output.
+ *
+ * The three bill at three different rates, and the cheapest of them is
+ * usually the largest — a single "tokens" number hides exactly the thing
+ * that explains the bill.
+ */
+function TokenSplitBar({
+  tokensIn,
+  tokensCached,
+  tokensOut,
+}: {
+  tokensIn: number;
+  tokensCached: number;
+  tokensOut: number;
+}) {
+  const t = useT();
+  const parts = [
+    { id: "tokens_in", value: tokensIn, color: "hsl(199 90% 62%)" },
+    { id: "tokens_cached", value: tokensCached, color: "hsl(268 72% 68%)" },
+    { id: "tokens_out", value: tokensOut, color: "hsl(50 100% 52%)" },
+  ];
+  const total = parts.reduce((sum, p) => sum + p.value, 0);
+
+  if (total <= 0) {
+    return (
+      <div className="mt-4">
+        <EmptyRow>{t("costs_view.chart_empty")}</EmptyRow>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-sheen/[0.08]">
+        {parts
+          .filter((p) => p.value > 0)
+          .map((p) => (
+            <div
+              key={p.id}
+              style={{ width: `${(p.value / total) * 100}%`, background: p.color }}
+              title={`${t(`costs_view.${p.id}`)} · ${formatExact(p.value)}`}
+            />
+          ))}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+        {parts.map((p) => (
+          <div key={p.id} className="flex items-center gap-2">
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+              style={{ background: p.color }}
+              aria-hidden
+            />
+            <span className="text-sm text-muted-foreground">{t(`costs_view.${p.id}`)}</span>
+            <span
+              className="text-sm font-medium tabular-nums text-foreground"
+              title={formatExact(p.value)}
+            >
+              {formatTokensOrNone(p.value)}
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {formatShare(p.value / total)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A small ranked bar list — the day cut by area, or by what a model did. */
+function ShareBars({
+  rows,
+  labelOf,
+  colorOf,
+  priced,
+  money,
+  empty,
+}: {
+  rows: CostBucket[];
+  labelOf: (key: string) => string;
+  colorOf: (key: string) => string;
+  priced: boolean;
+  money: (usd: number) => string;
+  empty: string;
+}) {
+  if (rows.length === 0) {
+    return <EmptyRow>{empty}</EmptyRow>;
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {rows.map((row) => {
+        const share = priced ? row.cost_share : row.token_share;
+        return (
+          <div key={row.key}>
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="truncate text-foreground">{labelOf(row.key)}</span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {money(row.cost_usd)} · {formatShare(share)}
+              </span>
+            </div>
+            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-sheen/[0.08]">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.max(2, Math.round(share * 100))}%`,
+                  background: colorOf(row.key),
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
