@@ -118,6 +118,30 @@ if (Test-Path (Join-Path $FrontendDist "index.html")) {
 }
 
 # --- 2. PyInstaller --------------------------------------------------------
+# jarvis.spec bundles ./jarvis.toml unconditionally, and that file is
+# .gitignore'd - a fresh clone (every CI runner) does not have one and
+# PyInstaller aborts before it starts with "Unable to find ... jarvis.toml".
+# Seed the shipped default so the build works from a clean checkout. On a
+# machine that already has a live config the spec bundles THAT file as-is,
+# which is a privacy question the build cannot answer for the maintainer, so
+# it says so instead of quietly shipping it.
+#
+# packaging/macos/build.sh and packaging/linux/build.sh have done this since
+# they were written; this script did not, which is why the first CI run
+# produced a DMG and an AppImage and no .exe.
+$ConfigFile = Join-Path $RepoRoot "jarvis.toml"
+$ConfigExample = Join-Path $RepoRoot "jarvis.toml.example"
+if (-not (Test-Path $ConfigFile)) {
+    if (-not (Test-Path $ConfigExample)) {
+        Stop-WithError "neither jarvis.toml nor jarvis.toml.example exists; jarvis.spec cannot bundle a default configuration"
+    }
+    Write-Step "seeding jarvis.toml from jarvis.toml.example (clean checkout)"
+    Copy-Item -LiteralPath $ConfigExample -Destination $ConfigFile
+} elseif ((Test-Path $ConfigExample) -and
+          ((Get-FileHash -LiteralPath $ConfigFile).Hash -ne (Get-FileHash -LiteralPath $ConfigExample).Hash)) {
+    Write-Step "WARNING: jarvis.spec bundles this machine's jarvis.toml into the installer, and it differs from jarvis.toml.example. Check it carries nothing personal before publishing the build."
+}
+
 if ($SkipPyInstaller) {
     Write-Step "2/3 reusing the existing bundle (-SkipPyInstaller)"
 } else {
