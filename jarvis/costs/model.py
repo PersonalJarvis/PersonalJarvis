@@ -265,7 +265,9 @@ def price_entry(
             subscription=True,
             tokens_cached=tokens_cached,
         )
-    if model.strip().casefold().endswith(":free"):
+    # ":free" is OpenRouter's free tier; "-free" is OpenCode's (its bundled
+    # zero-cost models are named that way, e.g. nemotron-3-ultra-free).
+    if model.strip().casefold().endswith((":free", "-free")):
         return 0.0, "free"
 
     # Lazy import: jarvis.brain.cost pulls the catalog cache and is not worth

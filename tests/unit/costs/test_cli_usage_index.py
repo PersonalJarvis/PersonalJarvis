@@ -993,3 +993,99 @@ def test_codex_rows_before_the_first_turn_context_get_the_model(tmp_path: Path) 
     refresh(data_dir=data, home=tmp_path)
 
     assert {t.model for t in _all(data)} == {"gpt-5.6-terra"}
+
+
+# ---------------------------------------------------------------------------
+# OpenCode
+# ---------------------------------------------------------------------------
+
+
+def _opencode_store(home: Path) -> Path:
+    import sqlite3
+
+    folder = home / ".local" / "share" / "opencode"
+    folder.mkdir(parents=True, exist_ok=True)
+    db = folder / "opencode.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT);"
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created TEXT, "
+        " time_updated TEXT, data TEXT);"
+    )
+    conn.execute("INSERT INTO session VALUES (?,?,?)", ("ses_1", "C:/work/opencode-app", "t"))
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _opencode_message(db: Path, msg_id: str, ts: int, *, cost: float, model: str) -> None:
+    import sqlite3
+
+    data = {
+        "role": "assistant",
+        "cost": cost,
+        "tokens": {"total": 1_050, "input": 1_000, "output": 50, "reasoning": 0,
+                   "cache": {"read": 200, "write": 0}},
+        "modelID": model,
+        "providerID": "opencode",
+        "path": {"cwd": "C:/work/opencode-app"},
+    }
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO message VALUES (?,?,?,?,?)",
+        (msg_id, "ses_1", str(ts), str(ts), json.dumps(data)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_opencode_messages_are_indexed_with_their_recorded_cost(tmp_path: Path) -> None:
+    from jarvis.costs.cli_usage_index import AGENT_OPENCODE
+
+    data = tmp_path / "data"
+    db = _opencode_store(tmp_path)
+    _opencode_message(db, "msg_1", 1_787_422_998_689, cost=0.0123, model="gpt-5.5")
+    _opencode_message(db, "msg_2", 1_787_422_999_000, cost=0.0, model="nemotron-3-ultra-free")
+
+    refresh(data_dir=data, home=tmp_path)
+
+    turns = sorted(_all(data), key=lambda t: t.ts_ms)
+    assert [t.agent for t in turns] == [AGENT_OPENCODE] * 2
+    assert turns[0].cost_usd == 0.0123
+    assert turns[0].tokens_in == 1_000 and turns[0].tokens_cached == 200
+    assert turns[0].label == "opencode-app"
+    assert turns[1].model == "nemotron-3-ultra-free"
+
+
+def test_opencode_reads_only_what_arrived_since_the_last_run(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    db = _opencode_store(tmp_path)
+    _opencode_message(db, "msg_1", 1_787_422_998_689, cost=0.01, model="gpt-5.5")
+    refresh(data_dir=data, home=tmp_path)
+
+    _opencode_message(db, "msg_2", 1_787_422_999_000, cost=0.02, model="gpt-5.5")
+    result = refresh(data_dir=data, home=tmp_path)
+
+    assert result.turns_added == 1
+    assert len(_all(data)) == 2
+
+
+def test_an_index_from_version_two_keeps_its_rows_and_gains_the_column(tmp_path: Path) -> None:
+    import sqlite3
+
+    from jarvis.costs.cli_usage_index import index_db_path
+
+    data = tmp_path / "data"
+    session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
+    _write(_codex_path(tmp_path, session), [*_codex_prelude(session), _codex_token_line()])
+    refresh(data_dir=data, home=tmp_path)
+
+    db = index_db_path(data)
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE cli_turns DROP COLUMN cost_usd")
+        conn.execute("PRAGMA user_version=2")
+
+    refresh(data_dir=data, home=tmp_path)
+
+    turns = _all(data)
+    assert len(turns) == 1 and turns[0].cost_usd == 0.0

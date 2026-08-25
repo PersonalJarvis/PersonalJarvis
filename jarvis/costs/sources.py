@@ -464,7 +464,8 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
                 continue
             if not isinstance(meta, dict):
                 continue
-            step = meta.get("step") if isinstance(meta.get("step"), dict) else {}
+            raw_step = meta.get("step")
+            step: dict[str, Any] = raw_step if isinstance(raw_step, dict) else {}
             cli = str(meta.get("cli") or step.get("worker_cli") or "")
             model = str(meta.get("model") or step.get("model") or "")
             spawned[str(r["worker_id"] or "")] = (cli, model)
@@ -614,9 +615,9 @@ def _cli_entries(
     parsed here: :mod:`jarvis.costs.cli_usage_index` reads each file once in
     the background and this walks the small table it leaves behind.
 
-    Every one of these ran on a monthly seat, so the amount is what the same
-    work would have cost through the API and is labelled ``subscription``
-    rather than counted as money that moved.
+    A CLI on a monthly seat is quoted at what the same work would have cost
+    through the API and labelled ``subscription``; one on the user's own key
+    (OpenCode) carries the price it recorded, which is money that moved.
     """
     if data_dir is None:
         return
@@ -643,13 +644,16 @@ def _cli_entries(
         # ``claude-cli`` / ``codex-cli`` already carry their vendor in the
         # name, which is all the logo lookup needs — no translation table.
         provider = turn.agent
+        # Seat-driven CLIs are quoted at the API-equivalent; a bring-your-own-
+        # key CLI (OpenCode) recorded what its key was actually billed, and a
+        # free model there stays free rather than becoming a gap.
         cost, source = price_entry(
             provider=provider,
             model=turn.model,
             tokens_in=turn.tokens_in,
             tokens_out=turn.tokens_out,
-            recorded_usd=0.0,
-            subscription=True,
+            recorded_usd=turn.cost_usd,
+            subscription=provider in SUBSCRIPTION_RUNNERS,
             tokens_cached=turn.tokens_cached,
         )
         yield CostEntry(

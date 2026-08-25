@@ -646,3 +646,30 @@ def test_a_subscription_provider_is_priced_not_free() -> None:
     )
     assert source == "subscription"
     assert cost > 0
+
+
+def test_a_bring_your_own_key_cli_row_is_billed_at_its_recorded_price(tmp_path: Path) -> None:
+    """OpenCode priced the call on the user's key: that number is the bill,
+    not a subscription quote, and its free models stay free."""
+    import sqlite3
+
+    from jarvis.costs.cli_usage_index import _SCHEMA, DB_NAME
+
+    data = tmp_path / "data"
+    data.mkdir()
+    conn = sqlite3.connect(data / DB_NAME)
+    conn.executescript(_SCHEMA)
+    conn.execute("PRAGMA user_version=3")
+    t0 = 1_700_000_000_000
+    rows = [
+        ("opencode-cli", "m1", "p", "s1", t0, "gpt-5.5", 1000, 50, 0, "", "app", 0.0123),
+        ("opencode-cli", "m2", "p", "s1", t0 + 1000, "nemotron:free", 1000, 50, 0, "", "app", 0.0),
+    ]
+    conn.executemany("INSERT INTO cli_turns VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    entries = {e.model: e for e in collect_entries(CostSources(cli_index_dir=data))}
+    assert entries["gpt-5.5"].price_source == "recorded"
+    assert entries["gpt-5.5"].cost_usd == pytest.approx(0.0123)
+    assert entries["nemotron:free"].price_source == "free"

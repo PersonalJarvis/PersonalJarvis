@@ -130,7 +130,40 @@ follows the OpenAI convention — ``inputTokens`` INCLUDES ``cachedReadTokens``.
 single key of ``usage.modelUsage``; cwd and session id come from the folder's
 ``summary.json``. 608 MB of these were read by nothing until 2026-08-25."""
 
-AGENTS: tuple[str, ...] = (AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY, AGENT_GROK)
+AGENT_OPENCODE = "opencode-cli"
+"""OpenCode. Everything lives in one SQLite store,
+``~/.local/share/opencode/opencode.db`` (``$XDG_DATA_HOME/opencode`` when
+set): ``message.data`` is JSON with ``role``, ``modelID``, ``providerID``,
+``tokens.{input,output,reasoning,cache.{read,write}}`` and — because the
+user brings their own key — the ``cost`` OpenCode itself computed. Read
+with a timestamp cursor instead of a byte offset; the message id is the
+identity. Not a subscription: the recorded cost is the bill."""
+
+AGENTS: tuple[str, ...] = (AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY, AGENT_GROK, AGENT_OPENCODE)
+
+#: Every coding harness the workspace registry can open, mapped to the
+#: index reader that counts its spend. A harness whose transcripts cannot be
+#: read from disk is listed in ``HARNESSES_WITHOUT_LOCAL_TRANSCRIPT`` with the
+#: reason. ``tests/unit/costs/test_harness_cost_parity.py`` fails the build
+#: when a registry entry is in neither — so a new harness is not shippable
+#: until its cost accounting exists (maintainer mandate, 2026-08-25).
+COST_READER_FOR_HARNESS: dict[str, str] = {
+    "claude": AGENT_CLAUDE,
+    "codex": AGENT_CODEX,
+    "kimi": AGENT_AGY,
+    "grok-build": AGENT_GROK,
+    "opencode": AGENT_OPENCODE,
+    # GLM runs the Claude Code binary against z.ai with the same config
+    # directory, so its sessions land in ~/.claude and are read — and priced —
+    # as Claude Code. Attributing them to z.ai needs a config dir of their own
+    # at spawn (docs/BUGS.md BUG-178, still open).
+    "glm": AGENT_CLAUDE,
+}
+HARNESSES_WITHOUT_LOCAL_TRANSCRIPT: dict[str, str] = {
+    "deepseek-harness": (
+        "dsh keeps no usage log on disk (checked ~/.dsh, ~/.deepseek, %LOCALAPPDATA%/dsh)"
+    ),
+}
 
 #: Filename of the index, relative to the data dir.
 DB_NAME = "cli_usage_index.db"
@@ -192,7 +225,11 @@ _ROLLOUT_ID = re.compile(r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}
 # the old rule would be wrong. An older index is dropped and rebuilt from the
 # transcripts, which are the source of truth; nothing is lost but time.
 #   2 — Codex: cached input subtracted from input; lineage-based dedup.
-_SCHEMA_VERSION = 2
+#   3 — cost_usd column (OpenCode records its own price). Additive: migrated
+#       in place, no rebuild.
+_SCHEMA_VERSION = 3
+#: Versions whose rows are still right and only need columns added.
+_MIGRATE_IN_PLACE_FROM = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indexed_files (
@@ -219,6 +256,7 @@ CREATE TABLE IF NOT EXISTS cli_turns (
     tokens_cached INTEGER NOT NULL DEFAULT 0,
     cwd           TEXT NOT NULL DEFAULT '',
     label         TEXT NOT NULL DEFAULT '',
+    cost_usd      REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (agent, dedup_key)
 );
 CREATE INDEX IF NOT EXISTS idx_cli_turns_ts ON cli_turns (ts_ms);
@@ -231,8 +269,8 @@ CREATE INDEX IF NOT EXISTS idx_cli_turns_session ON cli_turns (agent, session_id
 _INSERT_TURN = (
     "INSERT INTO cli_turns "
     "(agent, dedup_key, path, session_id, ts_ms, model, "
-    " tokens_in, tokens_out, tokens_cached, cwd, label) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    " tokens_in, tokens_out, tokens_cached, cwd, label, cost_usd) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
     "ON CONFLICT(agent, dedup_key) DO UPDATE SET model=excluded.model "
     "WHERE cli_turns.model = '' AND excluded.model <> ''"
 )
@@ -271,6 +309,9 @@ class CliTurn:
     tokens_cached: int
     cwd: str
     label: str
+    #: What the CLI itself priced the call at, when it does (OpenCode). 0.0
+    #: for the seat-driven CLIs, whose bill is derived from the rate tables.
+    cost_usd: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +335,7 @@ class CliRollup:
     turns: int
     cwd: str
     label: str
+    cost_usd: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +559,19 @@ def _agy_roots(home: Path | None) -> list[Path]:
     return [base / ".kimi", base / ".kimi-code"]
 
 
+def _opencode_roots(home: Path | None) -> list[Path]:
+    """``$XDG_DATA_HOME/opencode``, else ``~/.local/share/opencode`` — the
+    same path on every OS, which is how OpenCode itself resolves it."""
+    if home is not None:
+        return [home / ".local" / "share" / "opencode"]
+    roots: list[Path] = []
+    xdg = os.environ.get("XDG_DATA_HOME", "").strip()
+    if xdg:
+        roots.append(Path(xdg).expanduser() / "opencode")
+    roots.append(Path.home() / ".local" / "share" / "opencode")
+    return _dedup_paths(roots)
+
+
 def _grok_roots(home: Path | None) -> list[Path]:
     """``GROK_HOME`` when set, the default, and every managed account."""
     if home is not None:
@@ -544,6 +599,8 @@ _LAYOUTS: tuple[tuple[str, str], ...] = (
     (AGENT_AGY, "sessions/*/*/agents/*/wire.jsonl"),
     # Grok Build: one folder per session under a url-encoded cwd.
     (AGENT_GROK, "sessions/*/*/updates.jsonl"),
+    # OpenCode: the one SQLite store.
+    (AGENT_OPENCODE, "opencode.db"),
 )
 
 
@@ -554,6 +611,8 @@ def _roots_for(agent: str, home: Path | None) -> list[Path]:
         return _codex_roots(home)
     if agent == AGENT_GROK:
         return _grok_roots(home)
+    if agent == AGENT_OPENCODE:
+        return _opencode_roots(home)
     return _agy_roots(home)
 
 
@@ -677,6 +736,9 @@ def _decode(raw: bytes) -> dict[str, Any] | None:
 
 # One row as the turn table takes it.
 _Row = tuple[str, str, str, str, int, str, int, int, int, str, str]
+#: A row plus the price the CLI recorded. Readers without one emit ``_Row``
+#: and the writer pads it, so four readers stay untouched by the column.
+_PricedRow = tuple[str, str, str, str, int, str, int, int, int, str, str, float]
 
 
 def _claude_row(
@@ -884,7 +946,8 @@ def _grok_context(path: Path) -> tuple[str, str, str, str]:
         if summary.is_file():
             parsed = json.loads(summary.read_text(encoding="utf-8", errors="replace"))
             if isinstance(parsed, dict):
-                info = parsed.get("info") if isinstance(parsed.get("info"), dict) else {}
+                raw_info = parsed.get("info")
+                info: dict[str, Any] = raw_info if isinstance(raw_info, dict) else {}
                 session_id = str(info.get("id") or session_id)
                 cwd = str(info.get("cwd") or "")
                 model = str(parsed.get("current_model_id") or "")
@@ -941,8 +1004,88 @@ class _FileScan:
     failed: bool = False
 
 
+def _scan_opencode(cand: _Candidate, start: int) -> _FileScan:
+    """Read OpenCode's store. ``start`` is the newest ``time_created`` already
+    indexed (the "offset" column holds a timestamp for this agent), so a run
+    reads only what arrived since. A store that shrank (vacuum) re-reads from
+    zero and the message-id key keeps every turn counted once."""
+    rows: list[_PricedRow] = []
+    newest = start
+    failed = False
+    try:
+        uri = f"file:{cand.path.as_posix()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=_DB_TIMEOUT_S)
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: %s not readable (%s)", cand.path, exc)
+        return _FileScan(
+            rows=[], offset=start, cursor=_Cursor(), bytes_read=0, reason="error", failed=True
+        )
+    try:
+        conn.row_factory = sqlite3.Row
+        for row in conn.execute(
+            "SELECT m.id, m.session_id, m.time_created, m.data, s.directory "
+            "FROM message m LEFT JOIN session s ON s.id = m.session_id "
+            "WHERE CAST(m.time_created AS INTEGER) > ? ORDER BY m.time_created",
+            (start,),
+        ):
+            ts_ms = _int(row["time_created"])
+            newest = max(newest, ts_ms)
+            try:
+                data = json.loads(row["data"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(data, dict) or data.get("role") != "assistant":
+                continue
+            raw_tokens = data.get("tokens")
+            tokens: dict[str, Any] = raw_tokens if isinstance(raw_tokens, dict) else {}
+            raw_cache = tokens.get("cache")
+            cache: dict[str, Any] = raw_cache if isinstance(raw_cache, dict) else {}
+            tokens_in = _int(tokens.get("input")) + _int(cache.get("write"))
+            tokens_out = _int(tokens.get("output"))
+            if tokens_out <= 0:
+                tokens_out = _int(tokens.get("reasoning"))
+            tokens_cached = _int(cache.get("read"))
+            if tokens_in + tokens_out + tokens_cached <= 0:
+                continue
+            cwd = str(row["directory"] or "")
+            raw_path = data.get("path")
+            path_info: dict[str, Any] = raw_path if isinstance(raw_path, dict) else {}
+            cwd = cwd or str(path_info.get("cwd") or "")
+            rows.append(
+                (
+                    cand.agent,
+                    str(row["id"]),
+                    cand.key,
+                    str(row["session_id"] or ""),
+                    ts_ms,
+                    str(data.get("modelID") or ""),
+                    tokens_in,
+                    tokens_out,
+                    tokens_cached,
+                    cwd,
+                    _clip(Path(cwd).name) if cwd else "",
+                    float(data.get("cost") or 0.0),
+                )
+            )
+    except sqlite3.Error as exc:
+        log.warning("cli usage index: %s query failed (%s)", cand.path, exc)
+        failed = True
+    finally:
+        conn.close()
+    return _FileScan(
+        rows=list(rows),  # type: ignore[arg-type]
+        offset=max(newest, cand.size),
+        cursor=_Cursor(),
+        bytes_read=cand.size,
+        reason="eof",
+        failed=failed,
+    )
+
+
 def _scan(cand: _Candidate, start: int, cursor: _Cursor, deadline: float) -> _FileScan:
     """Read one transcript from ``start`` and return the turns it added."""
+    if cand.agent == AGENT_OPENCODE:
+        return _scan_opencode(cand, start)
     rows: list[_Row] = []
     reader = _LineReader(None, start)
     if cand.agent == AGENT_AGY and not cursor.session_id:
@@ -1037,6 +1180,13 @@ def _open_rw(path: Path) -> sqlite3.Connection | None:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         version = _int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if _MIGRATE_IN_PLACE_FROM <= version < _SCHEMA_VERSION:
+            # Rows counted under this version are right; only the shape grew.
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(cli_turns)")}
+            if "cost_usd" not in columns:
+                conn.execute("ALTER TABLE cli_turns ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0")
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+            version = _SCHEMA_VERSION
         if version < _SCHEMA_VERSION:
             # Rows counted under an older rule are wrong, not stale. Rebuild.
             if _has_rows(conn):
@@ -1266,7 +1416,7 @@ def entries(
     try:
         for row in conn.execute(
             "SELECT agent, session_id, ts_ms, model, tokens_in, tokens_out, "
-            "       tokens_cached, cwd, label FROM cli_turns "
+            "       tokens_cached, cwd, label, cost_usd FROM cli_turns "
             "WHERE ts_ms BETWEEN ? AND ? ORDER BY ts_ms",
             (since_ms, until_ms),
         ):
@@ -1280,6 +1430,7 @@ def entries(
                 tokens_cached=_int(row["tokens_cached"]),
                 cwd=str(row["cwd"] or ""),
                 label=str(row["label"] or ""),
+                cost_usd=float(row["cost_usd"] or 0.0),
             )
     except sqlite3.Error as exc:
         log.warning("cli usage index: read failed (%s)", exc)
@@ -1312,7 +1463,7 @@ def rollups(
             "       MIN(ts_ms) AS ts_ms, "
             "       SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out, "
             "       SUM(tokens_cached) AS tokens_cached, COUNT(*) AS turns, "
-            "       MIN(cwd) AS cwd, MIN(label) AS label "
+            "       MIN(cwd) AS cwd, MIN(label) AS label, SUM(cost_usd) AS cost_usd "
             "FROM cli_turns WHERE ts_ms BETWEEN ? AND ? "
             "GROUP BY agent, session_id, model, ts_ms / ? "
             "ORDER BY ts_ms",
@@ -1329,6 +1480,7 @@ def rollups(
                 turns=_int(row["turns"]),
                 cwd=str(row["cwd"] or ""),
                 label=str(row["label"] or ""),
+                cost_usd=float(row["cost_usd"] or 0.0),
             )
     except sqlite3.Error as exc:
         log.warning("cli usage index: rollup failed (%s)", exc)
@@ -1443,7 +1595,8 @@ def _commit_file(conn: sqlite3.Connection, cand: _Candidate, scan: _FileScan) ->
     before = conn.total_changes
     try:
         if scan.rows:
-            conn.executemany(_INSERT_TURN, scan.rows)
+            priced = [r if len(r) == 12 else (*r, 0.0) for r in scan.rows]
+            conn.executemany(_INSERT_TURN, priced)
         added = conn.total_changes - before
         if scan.cursor.model:
             # A replayed prefix lands before the file's ``turn_context``; the
@@ -1485,7 +1638,10 @@ __all__ = [
     "AGENT_CLAUDE",
     "AGENT_CODEX",
     "AGENT_GROK",
+    "AGENT_OPENCODE",
+    "COST_READER_FOR_HARNESS",
     "DB_NAME",
+    "HARNESSES_WITHOUT_LOCAL_TRANSCRIPT",
     "CliRollup",
     "CliTurn",
     "IndexState",
