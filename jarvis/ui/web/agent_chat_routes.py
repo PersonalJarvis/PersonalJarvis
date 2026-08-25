@@ -192,10 +192,7 @@ async def get_catalog(request: Request) -> dict[str, Any]:
         d = row.to_dict()
         runner = resolve_runner(row.id)
         d["runner"] = runner
-        # ``None`` = "not a CLI question": an API-key row is connected by its
-        # key, and reporting False there greyed every brain out as "not
-        # installed" (live 2026-08-24).
-        d["cli_installed"] = _cli_installed(runner) if runner.endswith("-cli") else None
+        d["cli_installed"] = _cli_installed(runner) if runner != "api" else None
         # A CLI that publishes its own model list (agy, Codex) overrides the
         # curated fallback with what THIS account can actually pick.
         if d["cli_installed"] and runner in live_models and live_models[runner]:

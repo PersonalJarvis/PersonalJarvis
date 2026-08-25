@@ -8,18 +8,11 @@ approval card. Cancel sets the turn's event and awaits the task; a runner
 that is mid-tool or mid-stream ends at the next boundary (the API loop
 between deltas, the CLI by killing the child).
 
-The runner is picked per turn from the provider row, and either way the
-answer is JARVIS — the difference is only who runs the loop and who pays:
-
-* an API-key row runs :mod:`runner_brain`: Jarvis' own brain thinks with that
-  provider's model, billed per token;
-* a subscription row runs :mod:`runner_cli`: the vendor CLI drives the loop
-  (that is what a Claude Max / ChatGPT / Antigravity seat pays for) inside the
-  Jarvis harness, so it works with Jarvis' tools and answers as Jarvis.
-
-``claude-api`` is the dual row: Claude Code when the binary is on PATH, the
-brain on the Anthropic key otherwise. The choice is recorded in
-``turn_started`` so the timeline can say what answered.
+The runner is picked per turn from the provider row: a CLI-backed provider
+uses :mod:`runner_cli`; ``claude-api`` uses the CLI when the ``claude``
+binary is on PATH and the API otherwise; everything else uses
+:mod:`runner_api`. The choice is recorded in ``turn_started`` so the
+timeline can say what answered.
 """
 
 from __future__ import annotations
@@ -36,9 +29,7 @@ from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
-from jarvis.agent_chat.runner_api import TurnHandle
-from jarvis.agent_chat.runner_brain import RUNNER as BRAIN_RUNNER
-from jarvis.agent_chat.runner_brain import run_brain_turn
+from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
 from jarvis.agent_chat.store import AgentChatSession, AgentChatStore
 
@@ -59,18 +50,18 @@ class NoSuchSession(KeyError):
 def resolve_runner(provider: str) -> str:
     """Which runner answers for ``provider`` on this machine, right now.
 
-    ``claude-api`` is dual: Claude Code (the CLI) when it is installed — the
-    subscription path, no per-token cost — else Jarvis' brain on the Anthropic
-    key. Every other row names its runner outright, and an unknown provider
-    falls back to the brain, which reports honestly if it cannot answer.
+    ``claude-api`` is dual: Claude Code (the CLI) when it is installed — that
+    is the subscription path and the one with the CLI's own tools — else the
+    Anthropic API in the in-process loop. Every other provider row names its
+    runner outright.
     """
     row = provider_row(provider)
     if row is None:
-        return BRAIN_RUNNER
+        return "api" if supports_api_runner(provider) else "unknown"
     if row.id == "claude-api":
         if shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"):
             return "claude-cli"
-        return BRAIN_RUNNER
+        return "api"
     return row.runner
 
 
@@ -90,10 +81,8 @@ class AgentChatService:
         *,
         assistant_name: Callable[[], str] | None = None,
         default_cwd: Callable[[], str] | None = None,
-        bus: Any | None = None,
     ) -> None:
         self.store = store
-        self._bus = bus
         self._assistant_name = assistant_name or (lambda: "Jarvis")
         self._default_cwd = default_cwd or (lambda: str(Path.home()))
         self._running: dict[str, _Running] = {}
@@ -117,8 +106,8 @@ class AgentChatService:
         title: str = "",
     ) -> AgentChatSession:
         row = provider_row(provider)
-        if row is None:
-            raise ValueError(f"Unknown chat provider: {provider!r}")
+        if row is None and not supports_api_runner(provider):
+            raise ValueError(f"Unknown agent-chat provider: {provider!r}")
         permission_mode = normalize_permission(resolve_runner(provider), permission_mode)
         eff = normalize_effort(provider, effort) if effort is not None else ""
         if effort is None:
@@ -212,7 +201,6 @@ class AgentChatService:
             cancel=cancel,
             history=history,
             assistant_name=self._assistant_name(),
-            bus=self._bus,
         )
 
         async def _body() -> None:
@@ -221,8 +209,25 @@ class AgentChatService:
                     vendor = await run_cli_turn(handle, text, runner)
                     if vendor and vendor != session.vendor_session:
                         self.store.update_session(session_id, vendor_session=vendor)
+                elif runner == "api" and supports_api_runner(session.provider):
+                    await run_api_turn(handle, text)
                 else:
-                    await run_brain_turn(handle, text)
+                    await self._emit(
+                        session_id,
+                        make_event(
+                            "turn_finished",
+                            {
+                                "turn_id": turn_id,
+                                "status": "error",
+                                "duration_ms": 0,
+                                "usage": {},
+                                "error": (
+                                    f"No runner for provider {session.provider!r} on this "
+                                    "machine. Connect it under API Keys → Agents."
+                                ),
+                            },
+                        ),
+                    )
             except asyncio.CancelledError:
                 await self._emit(
                     session_id,

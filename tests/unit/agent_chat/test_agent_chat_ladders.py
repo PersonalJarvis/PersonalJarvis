@@ -9,7 +9,6 @@ import pytest
 
 from jarvis.agent_chat import permissions, runner_cli
 from jarvis.agent_chat.catalog import CODEX_FALLBACK_MODELS, provider_row
-from jarvis.agent_chat.effort import effort_levels
 from jarvis.agent_chat.runner_cli import (
     _AgyState,
     agy_model_args,
@@ -393,17 +392,19 @@ def test_read_codex_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
     assert CODEX_FALLBACK_MODELS[0].id == "gpt-5.6-sol"
 
 
-def test_the_coding_clis_keep_their_own_runner_and_ladders():
-    """A subscription row runs its CLI — never the brain — with its own dials."""
-    for cli, runner in (
-        ("antigravity", "agy-cli"),
-        ("openai-codex", "codex-cli"),
-        ("grok-build", "grok-cli"),
-    ):
-        row = provider_row(cli)
-        assert row is not None, f"{cli} is missing from the picker"
-        assert row.runner == runner
-    assert "low" in effort_levels("antigravity")
+def test_catalog_rows_carry_per_model_efforts_for_cli_runners():
+    agy = provider_row("antigravity")
+    assert agy is not None
+    models = agy.to_dict()["curated_models"]
+    assert models[0]["id"] == "gemini-3.7-flash" and models[0]["efforts"] == [
+        "low",
+        "medium",
+        "high",
+    ]
+    assert any(m["id"] == "claude-sonnet-4-6" and m["efforts"] == [] for m in models)
+    codex = provider_row("openai-codex")
+    assert codex is not None
+    assert codex.to_dict()["curated_models"][0]["efforts"][-1] == "ultra"
 
 
 # ------------------------------------------------------------ Anthropic API effort

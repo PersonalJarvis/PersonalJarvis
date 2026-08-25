@@ -1,18 +1,15 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUp, Mic, Square } from "lucide-react";
 import { getWSClient } from "@/hooks/useWebSocket";
-import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { prettyProviderName } from "@/lib/prettyProviderName";
+import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-// Safety net: a backend hang must not leave the UI waiting forever. This is a
-// SILENCE window, not a turn budget — every sign of life (a reasoning step, a
-// streamed piece of the answer) re-arms it. A turn that reads the calendar,
-// runs a skill and then writes three paragraphs takes well over a minute and
-// is perfectly healthy; only a turn that goes quiet is one nobody is having.
-const THINKING_SILENCE_MS = 60_000;
+// Safety net: if the brain doesn't respond within 60s (no reply, no error event),
+// we revert the indicator. A backend hang must not leave the UI stuck in the
+// wait state permanently.
+const THINKING_TIMEOUT_MS = 60_000;
 
 /**
  * The composer — a card with the text box and, on its bottom row, dictation,
@@ -27,23 +24,14 @@ export function ChatInput() {
   const [value, setValue] = useState("");
   const connected = useEventStore((s) => s.connected);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
-  // What will answer HERE. A typed turn always runs the classic brain
-  // (desktop_app._on_user_message -> BrainManager) — the realtime engine is
-  // the voice stage's, it never sees a typed prompt. Naming it here said the
-  // chat ran on "Gemini Live" while the answer actually came from the
-  // configured brain provider, which is the pick people make under Agents /
-  // API keys (maintainer, 2026-08-24).
-  const brainProvider = useEventStore((s) => s.brainProvider);
-  const brainModel = useEventStore((s) => s.brainModel);
-  const brainLabel = brainProvider ? prettyProviderName(brainProvider) : "";
+  // What will answer: the classic brain, or the realtime engine when voice
+  // mode is realtime — the same resolver the header and the sidebar use.
+  const engine = useVoiceEngineDisplay();
   const wsWarming = useEventStore((s) => s.wsWarming);
   // The turn's progress is no longer mirrored in the composer — the chat
   // column renders the live steps (components/home/TurnSteps) as the
   // in-progress assistant turn. The composer only arms the wait state.
   const setChatThinking = useEventStore((s) => s.setChatThinking);
-  const chatThinking = useEventStore((s) => s.chatThinking);
-  const stepCount = useEventStore((s) => s.thinkingSteps.length);
-  const liveLength = useEventStore((s) => s.liveReply?.text.length ?? 0);
   // Mic-dictation: live transcript streams into the box as the user speaks.
   const dictating = useEventStore((s) => s.dictating);
   const dictationText = useEventStore((s) => s.dictationText);
@@ -62,24 +50,11 @@ export function ChatInput() {
   const mirroringRef = useRef(false);
   const lastCommitSeqRef = useRef(dictationCommitSeq);
 
-  // Arm the silence window while a turn is in flight, and re-arm it whenever
-  // the turn shows a sign of life. `stepCount`/`liveLength` are the two live
-  // signals the brain produces; either one moving means the turn is alive.
   useEffect(() => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (!chatThinking) {
-      timeoutRef.current = null;
-      return;
-    }
-    timeoutRef.current = setTimeout(() => {
-      setChatThinking(false);
-      timeoutRef.current = null;
-    }, THINKING_SILENCE_MS);
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
     };
-  }, [chatThinking, stepCount, liveLength, setChatThinking]);
+  }, []);
 
   // While dictating, mirror the live interim tail into the textarea in real time.
   useEffect(() => {
@@ -143,6 +118,11 @@ export function ChatInput() {
       payload: { content },
     });
     setChatThinking(true);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setChatThinking(false);
+      timeoutRef.current = null;
+    }, THINKING_TIMEOUT_MS);
     setValue("");
   }
 
@@ -247,12 +227,9 @@ export function ChatInput() {
           data-testid="composer-model"
           className="inline-flex h-8 max-w-[280px] items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
-          {brainProvider && (
-            <ProviderLogo providerId={brainProvider} label={brainLabel} size="sm" />
-          )}
-          <span className="truncate font-medium text-foreground">{brainLabel || "—"}</span>
-          {brainModel && (
-            <span className="truncate font-mono text-[10px] text-muted-foreground">{brainModel}</span>
+          <span className="truncate font-medium text-foreground">{engine.providerLabel}</span>
+          {engine.model && (
+            <span className="truncate font-mono text-[10px] text-muted-foreground">{engine.model}</span>
           )}
         </button>
         <button

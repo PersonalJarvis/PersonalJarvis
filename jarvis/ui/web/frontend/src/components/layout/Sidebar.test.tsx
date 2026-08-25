@@ -325,9 +325,6 @@ describe("Sidebar brain footer", () => {
 
 describe("Sidebar footer in realtime voice mode", () => {
   beforeEach(() => {
-    // The card follows the surface, so every case here states its own — the
-    // store keeps whatever the previous test left behind.
-    useHomeStore.setState({ surface: "voice" });
     useEventStore.setState({
       voiceState: "idle",
       transcription: "",
@@ -388,26 +385,6 @@ describe("Sidebar footer in realtime voice mode", () => {
 
     expect(screen.getByText("OpenAI Realtime")).toBeTruthy();
     expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gpt-realtime-2.1");
-  });
-
-  test("the chat surface names the brain even when realtime is configured", () => {
-    // The mirror of the case above: standing in a typed chat, the realtime
-    // engine is the dormant one — a typed turn always runs the classic brain.
-    // Naming "Gemini Live" there read as if the chat ran on the realtime model.
-    useHomeStore.setState({ surface: "chat" });
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "realtime",
-      activeProvider: "gemini-live",
-      activeProviderLabel: "Gemini Live",
-      activeModel: "gemini-3.1-flash-live-preview",
-    };
-
-    renderSidebar();
-
-    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Brain");
-    expect(screen.queryByText("Gemini Live")).toBeNull();
-    expect(screen.getByText("OpenRouter")).toBeTruthy();
   });
 
   test("pipeline mode keeps the classic brain footer", () => {

@@ -139,11 +139,6 @@ class TurnHandle:
     cancel: asyncio.Event
     history: list[dict[str, Any]] = field(default_factory=list)
     assistant_name: str = "Jarvis"
-    #: The app's event bus, when there is one. The brain runner watches it for
-    #: the turn's own steps — the tools Jarvis reached for and why — so the
-    #: timeline shows the work instead of a spinner. ``None`` in tests and in
-    #: any build without a bus; the turn then simply has no step rows.
-    bus: Any | None = None
 
 
 # ------------------------------------------------------------ history

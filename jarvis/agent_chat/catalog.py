@@ -1,34 +1,32 @@
-"""The provider rows the chat composer can pick from.
+"""The provider rows the agent-chat composer can pick from.
 
-The picker lists the providers Jarvis can THINK with — the brain-tier keys
-from the API-Keys page. Picking one makes it the live brain for the turn
-(:mod:`jarvis.agent_chat.runner_brain`), so what the row names is the model
-behind the assistant, not a different assistant.
+The picker lists every provider of the AGENT tier — the same families the
+API-Keys "Agents" section shows (``MAPPINGS`` in
+``jarvis.missions.worker_runtime.provider_map`` plus the three direct CLI
+workers) — whether or not a credential is saved: a provider without one is
+shown disabled with a "connect" hint that leads to the API-Keys page, so the
+person sees what they *could* use (maintainer, 2026-08-23: all agents, not
+only the active one).
 
-Two kinds of row, and the difference is who pays and who runs the loop:
+Two kinds of runner sit behind the rows:
 
-``brain``
-    An API key. Jarvis thinks with that provider's model — the router, the
-    tools, the memory, all of it (:mod:`runner_brain`). Billed per token.
+``api``
+    The provider's own chat API, driven in-process in a tool loop
+    (:mod:`jarvis.agent_chat.runner_api`). Model lists come live from the
+    provider catalog (``GET /api/providers/{id}/models``).
 
 ``claude-cli`` / ``codex-cli`` / ``agy-cli`` / ``grok-cli``
-    A SUBSCRIPTION seat (Claude Max, ChatGPT, Antigravity, Grok). The vendor
-    CLI runs the loop — that is what a subscription pays for — but inside the
-    Jarvis harness (:mod:`jarvis_harness`): it gets Jarvis' own tools over MCP
-    and a preamble telling it whose hands those are, so it acts as Jarvis and
-    not as a coding assistant that happens to sit in this folder.
+    A vendor CLI driven non-interactively (:mod:`jarvis.agent_chat.runner_cli`).
+    The CLI brings its own tools and permissions; the model list is the
+    CLI's own — read live where the CLI publishes one (``agy models``,
+    Codex's ``models_cache.json``), else the curated fallback here — and
+    ``""`` means "the CLI's default".
 
-Both are offered because both are worth having: the subscription costs
-nothing per turn, the API keys reach models no CLI exposes.
-
-Rows are shown whether or not a credential is saved: one without a key is
-disabled with a "connect" hint that leads to the API-Keys page, so the person
-sees what they *could* use (maintainer, 2026-08-23: all agents, not only the
-active one).
-
-Model lists come live from the provider catalog
-(``GET /api/providers/{id}/models``) where the provider publishes one, else
-from the curated list below; ``""`` means "the provider's default".
+``claude-api`` is the one dual row: with a Claude subscription login the
+``claude`` CLI runs the session (Claude Code proper — tools, skills, the
+Max plan's included usage); with only an Anthropic API key the API runner
+does. The route decides per request by probing; this module only carries the
+static shape.
 
 Presentation data only — nothing here decides behaviour (AP-21); the rows
 exist so the picker can show a provider before a key is typed.
@@ -42,11 +40,7 @@ from typing import Any, Final, Literal
 from jarvis.agent_chat.effort import default_effort, effort_levels
 from jarvis.brain.model_catalog import CURATED_MODELS
 
-#: ``brain`` = Jarvis thinks with this provider's model (runner_brain).
-#: The ``*-cli`` runners are the subscription seats: a vendor CLI driven
-#: non-interactively INSIDE the Jarvis harness (runner_cli + jarvis_harness),
-#: so the model works with Jarvis' own tools and answers as Jarvis.
-Runner = Literal["brain", "claude-cli", "codex-cli", "agy-cli", "grok-cli"]
+Runner = Literal["api", "claude-cli", "codex-cli", "agy-cli", "grok-cli"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,26 +195,26 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         curated_models=_curated("grok"),
         default_model="",
     ),
-    ProviderRow(id="openai", label="OpenAI", family="openai", runner="brain", models_source="live"),
+    ProviderRow(id="openai", label="OpenAI", family="openai", runner="api", models_source="live"),
     ProviderRow(
-        id="gemini", label="Google Gemini", family="gemini", runner="brain", models_source="live"
+        id="gemini", label="Google Gemini", family="gemini", runner="api", models_source="live"
     ),
-    ProviderRow(id="grok", label="xAI Grok", family="xai", runner="brain", models_source="live"),
+    ProviderRow(id="grok", label="xAI Grok", family="xai", runner="api", models_source="live"),
     ProviderRow(
         id="openrouter",
         label="OpenRouter",
         family="openrouter",
-        runner="brain",
+        runner="api",
         models_source="live",
     ),
     ProviderRow(
-        id="nvidia", label="NVIDIA NIM", family="nvidia", runner="brain", models_source="live"
+        id="nvidia", label="NVIDIA NIM", family="nvidia", runner="api", models_source="live"
     ),
     ProviderRow(
         id="vertex",
         label="Google Vertex AI",
         family="google-cloud",
-        runner="brain",
+        runner="api",
         models_source="curated",
         curated_models=_curated("gemini"),
     ),
@@ -228,7 +222,7 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         id="ollama",
         label="Ollama",
         family="ollama",
-        runner="brain",
+        runner="api",
         models_source="live",
         keyless=True,
     ),
@@ -236,7 +230,7 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         id="local-openai",
         label="Local OpenAI-compatible",
         family="local",
-        runner="brain",
+        runner="api",
         models_source="live",
         keyless=True,
     ),

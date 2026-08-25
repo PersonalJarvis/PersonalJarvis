@@ -3491,10 +3491,7 @@ class WebServer:
             except Exception:  # noqa: BLE001 — the name is cosmetic
                 return "Jarvis"
 
-        # The bus lets the brain runner mirror the turn's own steps into the
-        # timeline — the tools Jarvis reached for and the sentence it wrote
-        # next to each one — instead of a bare spinner.
-        return AgentChatService(store, assistant_name=_name, bus=self.bus)
+        return AgentChatService(store, assistant_name=_name)
 
     async def stop(self) -> None:
         self._mic_level_sessions.clear()

@@ -18,8 +18,6 @@ import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
-import { useAgentChatStore } from "@/store/agentChat";
-import { prettyProviderName } from "@/lib/prettyProviderName";
 import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
@@ -28,6 +26,7 @@ import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
+import { useAgentChatStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
 import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { PRODUCT_NAME } from "@/lib/branding";
@@ -130,11 +129,11 @@ export function Sidebar({
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
   // "+ New" starts a new conversation of the KIND you are looking at: on the
-  // chat surface an empty chat with Jarvis, on the voice stage a fresh voice
-  // run. Sending someone standing in Voice to the chat page is what the one
-  // button used to do, and it read as the button being broken.
+  // chat surface an empty agent chat, on the voice stage a fresh voice run.
+  // Sending someone standing in Voice to the chat page is what the one button
+  // used to do, and it read as the button being broken.
   const { newChat, newVoiceRun } = useConversations();
-  const newChatSession = useAgentChatStore((s) => s.newChat);
+  const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
   // see `presentNavItem`.
@@ -168,12 +167,11 @@ export function Sidebar({
     void newVoiceRun();
     setActive("chats");
   };
-  // On the chat surface: an empty page for a new chat with Jarvis. Both stores
-  // are cleared — the chat session that owns the stage, and the voice thread —
-  // so a reopened conversation does not linger behind the fresh page.
+  // On the chat surface: an empty agent chat. The voice thread is cleared as
+  // well so a reopened voice session does not linger behind the fresh page.
   const startNewChat = () => {
     newChat();
-    newChatSession();
+    newAgentChat();
     setSurface("chat");
     setActive("chats");
   };
@@ -215,8 +213,6 @@ export function Sidebar({
   // pick so a mid-call cross-family fallback is visible (AP-22).
   const voiceMode = useVoiceMode();
   const engine = useVoiceEngineDisplay();
-  const brainProvider = useEventStore((s) => s.brainProvider);
-  const brainModel = useEventStore((s) => s.brainModel);
 
   // The window connects in ~1s but the voice feature warms up ~20s in the
   // background. During that gap show a "Voice starting…" spinner instead of the
@@ -241,22 +237,15 @@ export function Sidebar({
         ? t("voice_state.connecting")
         : t(`voice_state.${voiceState}`);
 
-  // ...but only on the VOICE surface. On the chat surface the realtime engine
-  // is the dormant one — a typed turn always runs the classic brain — so
-  // naming "Gemini Live" under a chat you are typing into is the same mislead
-  // in the other direction, and it read as if the chat ran on the realtime
-  // model (maintainer, 2026-08-24). The card follows the surface.
-  const realtimeFooter = engine.tier === "realtime" && onVoiceSurface;
+  const realtimeFooter = engine.tier === "realtime";
   const footerLabel = realtimeFooter
     ? t("sidebar.realtime_label")
     : t("sidebar.brain_label");
   const footerTooltip = realtimeFooter
     ? t("sidebar.realtime_tooltip")
     : t("sidebar.brain_tooltip");
-  const footerProvider = realtimeFooter
-    ? engine.providerLabel
-    : prettyProviderName(brainProvider) || engine.providerLabel;
-  const footerModel = realtimeFooter ? engine.model : brainModel || engine.model;
+  const footerProvider = engine.providerLabel;
+  const footerModel = engine.model;
 
   const [logoRetry, setLogoRetry] = useState(0);
 

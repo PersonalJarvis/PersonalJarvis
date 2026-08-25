@@ -502,15 +502,6 @@ interface EventStore {
   setWarming: (warming: boolean) => void;
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
-  /**
-   * Which tab the API-Keys view should open on, set by whoever sends someone
-   * there. Null once that view has consumed it, so a later visit opens
-   * normally. Without this, "connect this provider" landed on whichever tab
-   * the view defaults to — Realtime, when the voice engine is realtime — and
-   * the key the person came to set was nowhere on screen (live 2026-08-24).
-   */
-  apiKeysTab: string | null;
-  setApiKeysTab: (tab: string | null) => void;
   setDetachedViews: (views: SectionId[]) => void;
   /**
    * Route a visual into the Visualization section and go there.
@@ -594,7 +585,6 @@ export const useEventStore = create<EventStore>((set, get) => ({
   voiceReady: false,
   connected: false,
   wsWarming: true,
-  apiKeysTab: null,
   activeSection: initialSectionFromSearch(
     typeof window === "undefined" ? "" : window.location.search,
   ),
@@ -642,7 +632,6 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setWarming: (warming) => set({ wsWarming: warming }),
   clearEvents: () => set({ events: [] }),
   setActiveSection: (s) => set({ activeSection: s }),
-  setApiKeysTab: (tab) => set({ apiKeysTab: tab }),
   setDetachedViews: (views) => set({ detachedViews: views }),
 
   requestVisual: (target = "latest") =>

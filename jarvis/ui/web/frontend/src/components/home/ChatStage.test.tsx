@@ -149,7 +149,7 @@ describe("ChatStage (agent chat)", () => {
       id: "openai",
       label: "OpenAI",
       family: "openai",
-      runner: "brain",
+      runner: "api",
       models_source: "live" as const,
       curated_models: [],
       cli_installed: null,

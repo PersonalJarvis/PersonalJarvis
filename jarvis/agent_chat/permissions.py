@@ -179,15 +179,7 @@ _API: Final[tuple[PermissionMode, ...]] = (
 )
 
 # runner -> (ladder, default)
-#
-# ``brain`` has NO ladder, and that is the honest answer rather than a missing
-# one: Jarvis' own risk tiers decide what a tool may do (safe / monitor / ask /
-# block, ``ToolExecutor``), a consequential action asks back inside the answer,
-# and none of that is a per-chat dial. A picker offering vendor permission
-# modes there would be a control wired to nothing (AP-31). The composer hides
-# the pick — and the Build | Plan switch with it — when the ladder is empty.
 _LADDERS: Final[dict[str, tuple[tuple[PermissionMode, ...], str]]] = {
-    "brain": ((), ""),
     "claude-cli": (_CLAUDE, "acceptEdits"),
     "codex-cli": (_CODEX, "auto"),
     "agy-cli": (_AGY, "accept-edits"),

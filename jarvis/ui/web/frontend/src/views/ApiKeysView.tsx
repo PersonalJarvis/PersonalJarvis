@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, Brain, KeyRound, Mic, Phone, Radio, SlidersHorizontal, Terminal, Volume2, Wand2 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
-import { useEventStore } from "@/store/events";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
@@ -63,14 +62,8 @@ const PIPELINE_TABS: CategoryKey[] = [
   "jarvis-key",
   "advanced",
 ];
-// "brain" is in BOTH sets on purpose. Realtime replaces the brain for the
-// SPOKEN turn only — the typed chat always runs the classic brain
-// (agent_chat/runner_brain.py), and so do tools and missions. Hiding the brain
-// key in realtime mode meant "connect this provider" from the chat composer
-// landed on a page where that key was not on screen at all (live 2026-08-24).
 const REALTIME_TABS: CategoryKey[] = [
   "realtime",
-  "brain",
   "computer-use",
   "subagents",
   "jarvis-key",
@@ -115,21 +108,7 @@ export function ApiKeysView() {
   // Reset the selected tab to the mode's first tab whenever the mode changes,
   // so switching Pipeline→Realtime never leaves `active` pointing at a tab
   // that no longer exists in the new mode (e.g. "tts").
-  // Somebody sent us here for a specific tab ("connect this provider"). That
-  // pick outranks both defaults below, and is consumed so a later visit opens
-  // normally. Declared FIRST so it wins the mount race with them.
-  const pendingTab = useEventStore((s) => s.apiKeysTab);
-  const setApiKeysTab = useEventStore((s) => s.setApiKeysTab);
-  const deepLinked = useRef(false);
   useEffect(() => {
-    if (!pendingTab) return;
-    deepLinked.current = true;
-    setActive(pendingTab as CategoryKey);
-    setApiKeysTab(null);
-  }, [pendingTab, setApiKeysTab]);
-
-  useEffect(() => {
-    if (deepLinked.current) return;
     setActive(engineMode === "realtime" ? "realtime" : "brain");
   }, [engineMode]);
 
@@ -142,12 +121,6 @@ export function ApiKeysView() {
     viewSyncedToLive.current = true;
     setEngineMode(liveMode === "realtime" ? "realtime" : "pipeline");
   }, [liveMode, liveModeLoading]);
-
-  // A tab the person clicks themselves takes the wheel back from the link.
-  function pickTab(tab: CategoryKey) {
-    deepLinked.current = false;
-    setActive(tab);
-  }
 
   const modeTabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
 
@@ -179,7 +152,7 @@ export function ApiKeysView() {
         }
       />
 
-      <CategoryTabs active={active} onSelect={pickTab} health={health} tabs={modeTabs} />
+      <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
 
       <div
         data-testid="api-keys-provider-scroll"
