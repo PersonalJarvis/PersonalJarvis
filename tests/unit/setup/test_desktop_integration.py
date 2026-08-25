@@ -246,3 +246,137 @@ def test_desktop_boot_repairs_registration_after_first_paint() -> None:
 
     source = inspect.getsource(desktop_app.DesktopApp._inject_token)
     assert "_start_desktop_integration_repair" in source
+
+
+# --- Frozen (native-installer) builds ---------------------------------------
+#
+# A native installer (Windows Setup.exe, macOS .dmg, Linux .AppImage/.deb)
+# creates the Start-menu entry, the Applications bundle and the .desktop file,
+# and removes them again on uninstall. Two things must therefore never happen
+# from inside a frozen app: writing a second, source-shaped launcher over the
+# installer's working one (a frozen executable cannot run
+# "<interpreter> -m jarvis.ui.web.launcher" at all), and deleting an artifact
+# it did not create.
+
+
+def _freeze(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Make ``jarvis.core.frozen.is_frozen()`` report a PyInstaller onedir bundle."""
+
+    internal = tmp_path / "bundle" / "_internal"
+    internal.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(internal), raising=False)
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_frozen_install_registers_nothing(
+    platform: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _freeze(monkeypatch, tmp_path)
+    # Deliberately a MANAGED tree: the frozen probe has to win even over the
+    # marker that normally authorizes registration.
+    root = _managed_root(tmp_path)
+    apps = tmp_path / "applications"
+    programs = tmp_path / "Programs"
+
+    report = di.ensure_desktop_integration(
+        install_dir=root,
+        platform=platform,
+        windows_programs_dir=programs,
+        windows_desktop_dir=tmp_path / "Desktop",
+        windows_registry_subkey=rf"Software\PersonalJarvisTests\Frozen\{tmp_path.name}",
+        windows_aumid=f"PersonalJarvis.Test.Frozen.{tmp_path.name}",
+        macos_applications_dir=apps,
+        linux_applications_dir=apps,
+    )
+
+    assert report.attempted is False
+    assert report.ok is True
+    assert report.artifacts == ()
+    assert report.skipped_reason == di.FROZEN_SKIP_REASON
+    assert not apps.exists()
+    assert not programs.exists()
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_frozen_uninstall_leaves_the_installers_artifacts_alone(
+    platform: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _freeze(monkeypatch, tmp_path)
+    apps = tmp_path / "applications"
+    apps.mkdir()
+    entry = apps / "personal-jarvis.desktop"
+    entry.write_text("[Desktop Entry]\n", encoding="utf-8")
+    bundle_plist = apps / "Personal Jarvis.app" / "Contents" / "Info.plist"
+    bundle_plist.parent.mkdir(parents=True)
+    bundle_plist.write_text("<plist/>\n", encoding="utf-8")
+    programs = tmp_path / "Programs"
+    programs.mkdir()
+    shortcut = programs / "Personal Jarvis.lnk"
+    shortcut.write_bytes(b"the installer's own launcher")
+
+    report = di.remove_desktop_integration(
+        platform=platform,
+        windows_programs_dir=programs,
+        windows_desktop_dir=tmp_path / "Desktop",
+        windows_registry_subkey=rf"Software\PersonalJarvisTests\Frozen\{tmp_path.name}",
+        windows_aumid=f"PersonalJarvis.Test.Frozen.{tmp_path.name}",
+        macos_applications_dir=apps,
+        linux_applications_dir=apps,
+    )
+
+    assert report.attempted is False
+    assert report.ok is True
+    assert report.artifacts == ()
+    assert report.skipped_reason == di.FROZEN_SKIP_REASON
+    # Deleting these would leave an installed product with no way to start it.
+    assert entry.is_file()
+    assert bundle_plist.is_file()
+    assert shortcut.read_bytes() == b"the installer's own launcher"
+
+
+def test_frozen_build_writes_no_linux_application_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Runs on every OS: the applications_dir seam is what makes the writer
+    # reachable off Linux, and inside an AppImage sys.executable points into a
+    # mount that is gone the moment the app exits - so the entry this would
+    # write launches nothing at all.
+    from jarvis.ui import icon_utils
+
+    _freeze(monkeypatch, tmp_path)
+    apps = tmp_path / "applications"
+
+    assert icon_utils.ensure_linux_desktop_entry(applications_dir=apps) is False
+    assert not apps.exists()
+
+
+def test_windows_shortcut_writers_consult_the_frozen_guard() -> None:
+    from jarvis.ui import icon_utils
+
+    for writer in (
+        icon_utils.ensure_start_menu_shortcut,
+        icon_utils.ensure_desktop_shortcut,
+    ):
+        source = inspect.getsource(writer)
+        assert "_installer_owns_shell_registration" in source, writer.__name__
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows shell links only")
+def test_frozen_windows_build_does_not_touch_the_installers_shortcut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.ui import icon_utils
+
+    _freeze(monkeypatch, tmp_path)
+    programs = tmp_path / "Programs"
+    programs.mkdir()
+    installer_lnk = programs / icon_utils.START_MENU_SHORTCUT_NAME
+    installer_lnk.write_bytes(b"the installer's own launcher")
+    desktop = tmp_path / "Desktop"
+    desktop.mkdir()
+
+    assert icon_utils.ensure_start_menu_shortcut(programs_dir=programs) is False
+    assert icon_utils.ensure_desktop_shortcut(desktop_dir=desktop) is False
+    assert installer_lnk.read_bytes() == b"the installer's own launcher"
+    assert not (desktop / icon_utils.START_MENU_SHORTCUT_NAME).exists()

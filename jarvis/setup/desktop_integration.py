@@ -14,6 +14,17 @@ Installer, updater, first desktop boot, and uninstaller all call this module so
 an update cannot move the code while leaving its launcher behind.  Registration
 is restricted to installer-managed trees by default; a developer checkout must
 never acquire an uninstall entry which could delete the checkout.
+
+**A frozen build registers nothing.**  When Personal Jarvis arrived through a
+native installer (Windows ``Setup.exe``, macOS ``.dmg``, Linux ``.AppImage`` or
+``.deb``) that installer owns every shell artifact: it created the Start-menu
+entry, the ``Applications`` bundle, the ``.desktop`` file and the uninstall
+record, and it removes them again on uninstall.  Registering a second time from
+inside the app would overwrite a working launcher with one built for the
+source-install layout (``<interpreter> -m jarvis.ui.web.launcher``), which a
+frozen executable cannot run at all — and on the removal path it would delete
+shortcuts this app never created.  Every entry point here is therefore a quiet,
+logged no-op under :func:`jarvis.core.frozen.is_frozen`.
 """
 
 from __future__ import annotations
@@ -41,8 +52,14 @@ from jarvis.core.branding import (
 from jarvis.core.branding import (
     WINDOWS_UNINSTALL_REGISTRY_SUBKEY as WINDOWS_UNINSTALL_SUBKEY,
 )
+from jarvis.core.frozen import is_frozen
 
 log = logging.getLogger(__name__)
+
+#: ``skipped_reason`` reported when a native-installer build declines to touch
+#: the shell. A constant rather than a literal so the installer, the tests and
+#: the ``--json`` contract cannot drift apart.
+FROZEN_SKIP_REASON = "native installer owns desktop registration"
 
 
 def _windows_aumid_subkey(aumid: str) -> str:
@@ -302,10 +319,31 @@ def ensure_desktop_integration(
     macos_applications_dir: Path | None = None,
     linux_applications_dir: Path | None = None,
 ) -> DesktopIntegrationReport:
-    """Install or repair the current platform's desktop-shell artifacts."""
+    """Install or repair the current platform's desktop-shell artifacts.
+
+    Returns an ``attempted=False`` report on a frozen build: the native
+    installer already registered the app and nothing here may touch it.
+    """
+
+    plat = _platform(platform)
+    # Before any path work: ``_install_root()`` would resolve to a directory
+    # inside the frozen bundle, and every answer derived from it would be about
+    # a tree the installer owns rather than one this module may write to.
+    if is_frozen():
+        log.info(
+            "Desktop integration skipped: %s was installed by a native "
+            "installer, which owns the shell registration.",
+            PRODUCT_NAME,
+        )
+        return DesktopIntegrationReport(
+            platform=plat,
+            managed=False,
+            attempted=False,
+            ok=True,
+            skipped_reason=FROZEN_SKIP_REASON,
+        )
 
     root = (install_dir or _install_root()).resolve()
-    plat = _platform(platform)
     managed = is_managed_install(root)
     if require_managed and not managed:
         return DesktopIntegrationReport(
@@ -431,9 +469,30 @@ def remove_desktop_integration(
     macos_applications_dir: Path | None = None,
     linux_applications_dir: Path | None = None,
 ) -> DesktopIntegrationReport:
-    """Remove the current platform's external desktop-shell artifacts."""
+    """Remove the current platform's external desktop-shell artifacts.
+
+    Returns an ``attempted=False`` report on a frozen build. This is the half
+    that would do real damage: the Start-menu entry, the ``Applications``
+    bundle and the ``.desktop`` file of a native install belong to the
+    installer's uninstaller, and deleting them from inside the app would leave
+    an installed product with no way to start it.
+    """
 
     plat = _platform(platform)
+    if is_frozen():
+        log.info(
+            "Desktop cleanup skipped: %s was installed by a native installer, "
+            "which removes its own shell registration on uninstall.",
+            PRODUCT_NAME,
+        )
+        return DesktopIntegrationReport(
+            platform=plat,
+            managed=False,
+            attempted=False,
+            ok=True,
+            skipped_reason=FROZEN_SKIP_REASON,
+        )
+
     warnings: list[str] = []
     artifacts: list[str] = []
     if plat == "windows":
@@ -524,6 +583,7 @@ if __name__ == "__main__":  # pragma: no cover
 
 __all__ = [
     "DesktopIntegrationReport",
+    "FROZEN_SKIP_REASON",
     "MANAGED_MARKER",
     "WINDOWS_APP_USER_MODEL_ID",
     "WINDOWS_UNINSTALL_SUBKEY",

@@ -71,6 +71,31 @@ _LAUNCHER_MODULE = "jarvis.ui.web.launcher"
 # IID_IPropertyStore — the COM interface for reading/writing a .lnk's AUMID.
 _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
 
+
+def _installer_owns_shell_registration(artifact: str) -> bool:
+    """True when a native installer owns ``artifact`` and this app must not.
+
+    Every shell artifact written in this module relaunches Jarvis as
+    ``<interpreter> -m jarvis.ui.web.launcher`` — the source-install shape. A
+    PyInstaller executable cannot run that command line, and inside an AppImage
+    the interpreter path points into a mount that disappears when the app
+    exits, so the entry would be broken twice over. The native installers
+    (``Setup.exe``, ``.dmg``, ``.deb``/AppImage integration) create the real
+    launcher and remove it again on uninstall; this app only has to keep its
+    hands off it. See ``jarvis/setup/desktop_integration.py`` for the same rule
+    on the registration lifecycle as a whole.
+    """
+    from jarvis.core.frozen import is_frozen
+
+    if not is_frozen():
+        return False
+    logger.debug(
+        "{} not written: this is a native-installer build and the installer "
+        "owns the shell registration.",
+        artifact,
+    )
+    return True
+
 # A per-install copy of ``pythonw.exe`` (next to the interpreter, or in the
 # per-user ``%LOCALAPPDATA%\PersonalJarvis\bin`` when the base dir is read-only),
 # carrying the Jarvis mascot as its EMBEDDED icon. On Windows the taskbar button of
@@ -703,8 +728,16 @@ def ensure_start_menu_shortcut(
     exact interpreter is left alone), Windows-only, best-effort - it never
     raises and never blocks boot. Returns ``True`` only when a matching shortcut
     is present afterwards.
+
+    A frozen build writes nothing: the shortcut it would create points at
+    ``<interpreter> -m jarvis.ui.web.launcher``, a command a PyInstaller
+    executable cannot run, and the native installer already placed a working
+    one. The self-heal below would otherwise replace the installer's launcher
+    with a broken one on every boot.
     """
     if sys.platform != "win32":
+        return False
+    if _installer_owns_shell_registration("Start-Menu shortcut"):
         return False
     programs = programs_dir or _default_start_menu_programs_dir()
     if programs is None:
@@ -859,8 +892,14 @@ def ensure_desktop_shortcut(
     ``create_if_missing=False`` repairs an existing shortcut but never
     resurrects a deleted one — a user who threw the icon away keeps their empty
     desktop. The installer passes ``True``; incidental callers should not.
+
+    A frozen build writes nothing — see :func:`ensure_start_menu_shortcut`; the
+    native installer owns the Desktop icon too, including the user's choice not
+    to have one.
     """
     if sys.platform != "win32":
+        return False
+    if _installer_owns_shell_registration("Desktop shortcut"):
         return False
     desktop = desktop_dir or _default_desktop_dir()
     if desktop is None or not desktop.is_dir():
@@ -1432,7 +1471,15 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
     Pure ``pathlib`` text I/O, idempotent (rewritten only when the rendered
     content changed), best-effort — never raises, never blocks the window.
     ``applications_dir`` is a test seam; without it, non-Linux is a no-op.
+
+    A frozen build writes nothing. Inside an AppImage ``sys.executable`` points
+    into a temporary mount that is gone the moment the app exits, so the entry
+    would launch nothing at all; the AppImage's own ``.desktop`` (built by
+    ``packaging/linux/build.sh``) and the Debian package are what register the
+    app there.
     """
+    if _installer_owns_shell_registration("Linux application-menu entry"):
+        return False
     if applications_dir is None:
         if sys.platform != "linux":
             return False
