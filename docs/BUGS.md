@@ -12759,6 +12759,70 @@ a shortcut that targets the in-venv branded exe directly skips it.
 
 ---
 
+## BUG-183: local speech-to-text silently disappeared after a restart because the launcher shortcut had been repointed at a Python without the engine (HIGH, FIXED 2026-08-25)
+
+**Symptom.** Local voice transcription "sometimes" stops working after a
+restart. The window opens normally, the models are on disk, and nothing
+announces a change — until dictation starts returning errors from a cloud
+provider. `data/jarvis_desktop.log`:
+
+```
+Interpreter: …\Programs\Python\Python312\pythonw.exe (Python 3.12.10)
+Local STT is selected but the faster-whisper engine is not installed on this
+  host; using 'openrouter-stt' instead.
+final dictation transcription refused (STTHTTPError: OpenRouter STT failed:
+  OpenRouter account out of credit) — not retrying
+🎙️ dictation ended (0 chars, … LOST 24.3s after 6 failed call(s))
+```
+
+Meanwhile the API-Keys health panel kept reporting `faster-whisper` as the
+active recognizer, and the package was demonstrably installed — in three of
+the machine's four Python installs.
+
+**Root cause.** Three layers, each individually reasonable:
+
+1. **Whether the engine exists is a property of the PROCESS, not the host.**
+   `jarvis` is importable from every install carrying an editable `.pth`,
+   so the app boots fine anywhere; only the heavy voice extras
+   (`faster_whisper`, `ctranslate2`, `torch`) live in one of them. The log
+   line said "not installed on this host", which sent the reader looking for
+   a package that was present and hid the real question — *which* Python.
+2. **The launcher shortcut was repointed by the wrong interpreter.**
+   `ensure_desktop_integration` rewrites the Start-Menu and Desktop entries
+   on every boot, gated by `_interpreter_can_open_a_window()`. That guard was
+   added on 2026-08-16 after a window-less interpreter stole the entry — but
+   it asks about ONE capability. Python 3.12 had pywebview and no
+   `faster_whisper`, so it passed, took the shortcut, and every later launch
+   inherited the interpreter that cannot transcribe locally. Self-reinforcing:
+   the same repair had already been made once, on 2026-08-09, and drifted back.
+3. **The health panel and the pipeline answered the question differently.**
+   `build_stt_from_config` knew about the engine-missing crossing;
+   `_active_stt` (what the UI renders) only knew about the *keyless* one. So
+   the app displayed a recognizer it had refused to build, and the swap became
+   visible only when the borrowed cloud account ran out of credit — a
+   privacy problem too: someone who chose on-device speech was uploading it.
+
+**Fix.**
+* `jarvis/plugins/stt/__init__.py`: `_resolve_effective_stt` is now the ONE
+  answer to "which recognizer is in front", covering both crossings;
+  `resolve_effective_stt_provider` is what the health panel reads.
+  `local_stt_unavailable_reason()` names `sys.executable` instead of "this host".
+* `jarvis/ui/web/provider_routes.py`: `_active_stt` asks that resolver, so the
+  panel can no longer name a provider the factory declined to build.
+* `jarvis/ui/icon_utils.py`: `_interpreter_may_own_the_launcher_shortcut()`
+  gates both shortcut writers on window *and* speech capability. Conditional on
+  the user's CHOICE, never on the package — a cloud-first base install has no
+  on-device engine and must still own its own shortcut.
+
+**Tests.** `tests/unit/plugins/stt/test_effective_stt_parity.py`,
+`tests/unit/ui/test_start_menu_shortcut_target.py::TestSpeechCapabilityProbe`,
+`::TestShortcutWriterRefusesASpeechLessInterpreter`.
+
+**Also fixed here.** `tests/unit/plugins/stt/conftest.py`: the Vertex keyless
+ADC probe reads the machine rather than the test's credential double, so ten
+cross-family assertions passed in CI and failed on any host with `gcloud` ADC
+configured — the AP-28 shape.
+
 ## BUG-182: the desktop app "does not start" because a leftover headless instance holds the lock and focus is rejected as CSRF (HIGH, FIXED 2026-08-25)
 
 **Symptom.** Clicking the Start-Menu shortcut or `run.bat` does nothing.

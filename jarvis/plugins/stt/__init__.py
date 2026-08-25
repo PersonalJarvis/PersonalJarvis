@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Iterable
 from functools import lru_cache
@@ -201,7 +202,7 @@ def _stt_family_has_key(provider_name: str) -> bool:
     return _stt_keyless_credential(provider_name)
 
 
-def _resolve_keyed_stt_provider(primary_name: str) -> str:
+def _resolve_keyed_stt_provider(primary_name: str, *, quiet: bool = False) -> str:
     """Pick a cloud STT the host can actually run (open-source AP-22).
 
     Keeps the configured provider when it has a usable key — so the maintainer
@@ -210,6 +211,10 @@ def _resolve_keyed_stt_provider(primary_name: str) -> str:
     an entry-point. When NO cloud family has a usable key, returns the configured
     name unchanged; the caller then drops to the key-free local faster-whisper as
     the universal floor. Mirrors the TTS factory's ``_resolve_keyed_tts_provider``.
+
+    ``quiet`` suppresses the log line. The health panel asks this question on
+    every poll to render which recognizer is really in front; a warning per poll
+    is log spam that buries the one occurrence that mattered.
     """
     if _stt_family_has_key(primary_name):
         return primary_name
@@ -217,16 +222,96 @@ def _resolve_keyed_stt_provider(primary_name: str) -> str:
         if cand == primary_name:
             continue
         if _stt_family_has_key(cand) and _load_provider_class(cand) is not None:
-            logger.warning(
-                "STT provider {!r} has no usable API key; crossing to {!r} — the "
-                "cloud STT family the user actually has a key for — so voice input "
-                "still works for a single-key user (open-source AP-22). Set "
-                "[stt].provider to silence this.",
-                primary_name,
-                cand,
-            )
+            if not quiet:
+                logger.warning(
+                    "STT provider {!r} has no usable API key; crossing to {!r} — the "
+                    "cloud STT family the user actually has a key for — so voice input "
+                    "still works for a single-key user (open-source AP-22). Set "
+                    "[stt].provider to silence this.",
+                    primary_name,
+                    cand,
+                )
             return cand
     return primary_name
+
+
+def local_stt_unavailable_reason() -> str:
+    """Why the on-device recognizer cannot run *in this interpreter*, or ``""``.
+
+    Named the way it is because the distinction is the whole bug. Whether
+    ``faster-whisper`` is importable is a property of the PYTHON PROCESS, not of
+    the machine: ``jarvis`` itself is commonly importable from several installs
+    at once (an editable install, a project ``.venv``, a system Python), while
+    the heavy voice extras were only ever installed into one of them. Boot
+    through a different shortcut and the same computer, the same config and the
+    same models produce "local speech recognition is gone".
+
+    Saying "not installed on this host" sent the reader looking for a package
+    that is demonstrably present and made the real cause — *which* Python is
+    running — invisible. So the sentence names the interpreter.
+    """
+    if _faster_whisper_installed():
+        return ""
+    return (
+        "the local speech engine (faster-whisper) is not installed in the Python "
+        f"running Jarvis ({sys.executable})"
+    )
+
+
+def _resolve_effective_stt(provider_name: str) -> tuple[str, str]:
+    """``(recognizer that will really run, English reason it is not the configured one)``.
+
+    THE one place that answers "which recognizer is in front", because two
+    places answering it is how the app came to display a provider it was not
+    using. Until this existed the on-device-engine-missing crossing lived inside
+    ``build_stt_from_config`` alone, so the runtime crossed to a cloud family
+    while the health panel — which only knew about the *keyless* crossing below
+    — kept reporting ``faster-whisper``. The user was told local speech was
+    running right up to the moment the cloud account it had silently moved to
+    ran out of credit (live 2026-08-25: six failed calls, 24.3 s of speech lost).
+
+    Silent by contract: the health panel calls this on every poll. The caller
+    that BUILDS the provider owns the log line.
+    """
+    name = (provider_name or "").strip()
+    if not name:
+        return name, ""
+    # A user who deliberately SELECTED the on-device engine can still arrive on
+    # an interpreter where it is absent — a fresh machine, a rebuilt venv, a
+    # base install that carried the config over, a shortcut aimed at a second
+    # Python. Building it anyway yields a provider that raises on the first
+    # utterance, which reads as "voice input is broken" with no cause. Cross to
+    # a cloud family this host holds a key for instead (AP-22); with no key
+    # anywhere the local path stands and ``_maybe_hint_no_working_stt`` states
+    # the dead-end honestly.
+    if name == "faster-whisper":
+        reason = local_stt_unavailable_reason()
+        if not reason:
+            return name, ""
+        alternatives = [
+            cand for cand in available_stt_provider_names() if cand != "faster-whisper"
+        ]
+        if not alternatives:
+            return name, ""
+        return alternatives[0], reason
+    # Open-source AP-22: when the configured cloud STT has no usable key, cross
+    # to a cloud STT family the user DOES have a key for BEFORE dropping to local
+    # faster-whisper (which is not installed on a base/headless host). The
+    # maintainer (whose configured key resolves) is unaffected; local whisper
+    # stays the last-resort floor when no cloud family has a usable key.
+    crossed = _resolve_keyed_stt_provider(name, quiet=True)
+    if crossed == name:
+        return name, ""
+    return crossed, f"{name!r} has no usable API key on this host"
+
+
+def resolve_effective_stt_provider(provider_name: str) -> str:
+    """The recognizer that will really transcribe, for callers that only need the name.
+
+    What the health panel renders, so the UI and the pipeline never disagree
+    about which provider is in front. See :func:`_resolve_effective_stt`.
+    """
+    return _resolve_effective_stt(provider_name)[0]
 
 
 #: Class attribute a recognizer plugin sets to declare that it transcribes on
@@ -412,34 +497,22 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     Falls back to a local FasterWhisperProvider if the configured provider has
     no entry-point or raises on construction.
     """
-    provider_name = (getattr(stt_cfg, "provider", "") or "").strip()
-    # The mirror image of the cross-family rule below: a user who deliberately
-    # SELECTED the on-device engine can still arrive on a host where it is not
-    # installed — a fresh machine, a rebuilt venv, a base install that carried
-    # the config over. Building it anyway yields a provider that raises on the
-    # first utterance, which reads to the user as "voice input is broken" with
-    # no cause. Cross to a cloud family this host holds a key for instead
-    # (AP-22); with no key anywhere the local path stands and
-    # ``_maybe_hint_no_working_stt`` states the dead-end honestly.
-    if provider_name == "faster-whisper" and not _faster_whisper_installed():
-        alternatives = [
-            name for name in available_stt_provider_names() if name != "faster-whisper"
-        ]
-        if alternatives:
-            logger.warning(
-                "Local STT is selected but the faster-whisper engine is not "
-                "installed on this host; using {!r} instead. Install the local "
-                "engine from the API-Keys view to switch back.",
-                alternatives[0],
-            )
-            provider_name = alternatives[0]
-    # Open-source AP-22: when the configured cloud STT has no usable key, cross to
-    # a cloud STT family the user DOES have a key for BEFORE dropping to local
-    # faster-whisper (which is not installed on a base/headless host). The
-    # maintainer (whose configured key resolves) is unaffected; local whisper stays
-    # the last-resort floor when no cloud family has a usable key.
-    if provider_name and provider_name != "faster-whisper":
-        provider_name = _resolve_keyed_stt_provider(provider_name)
+    configured_name = (getattr(stt_cfg, "provider", "") or "").strip()
+    # Both crossings — the on-device engine missing from THIS interpreter, and a
+    # cloud family with no usable key — live in one resolver so the health panel
+    # reports the provider the pipeline actually built. See
+    # ``_resolve_effective_stt``; the log line is owned here because this is the
+    # call that happens once per pipeline build, not once per health poll.
+    provider_name, crossed_reason = _resolve_effective_stt(configured_name)
+    if crossed_reason:
+        logger.warning(
+            "Speech-to-text falls back from {!r} to {!r}: {}. Install the local "
+            "engine from the API-Keys view, or start Jarvis with the Python that "
+            "has it, to switch back.",
+            configured_name,
+            provider_name,
+            crossed_reason,
+        )
     language = getattr(stt_cfg, "language", "auto")
     language = language if language and language != "auto" else None
     bias_prompt = (getattr(stt_cfg, "bias_prompt", "") or "").strip()

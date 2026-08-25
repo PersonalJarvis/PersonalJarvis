@@ -220,6 +220,83 @@ def _interpreter_can_open_a_window() -> bool:
         return False
 
 
+#: Config value that means "transcribe on this machine". The shortcut guard has
+#: to recognise the choice without importing the STT package — that package pulls
+#: the whole provider catalogue, and this runs while the app is booting.
+_ON_DEVICE_STT_PROVIDER = "faster-whisper"
+
+
+def _configured_stt_provider() -> str:
+    """The recognizer named in ``jarvis.toml``, or ``""`` when it cannot be read.
+
+    A direct, BOM-safe TOML read (the idiom
+    ``jarvis.ui.jarvisbar.interaction._load_jarvisbar_section`` already uses):
+    one file stat and a parse, no pydantic, no provider catalogue, nothing
+    initialised (AP-26). An unreadable or absent file answers ``""``, which the
+    caller treats as "cannot tell" and therefore never as a reason to refuse.
+    """
+    import tomllib
+
+    try:
+        from jarvis.core.config import DEFAULT_CONFIG_FILE
+
+        raw = Path(DEFAULT_CONFIG_FILE).read_bytes()
+        data = tomllib.loads(raw.decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ImportError) as exc:
+        # Silence is correct and load-bearing here (AP-30): every one of these
+        # means "this build cannot tell what the user chose", and the caller
+        # reads "" as "no reason to refuse". Logging a warning per boot for a
+        # base install that has no config file yet would be pure noise.
+        logger.debug("Could not read the configured STT provider: {}", exc)
+        return ""
+    section = data.get("stt")
+    if not isinstance(section, dict):
+        return ""
+    provider = section.get("provider")
+    return provider.strip() if isinstance(provider, str) else ""
+
+
+def _interpreter_can_run_the_configured_speech() -> bool:
+    """Can the RUNNING interpreter do the speech recognition the config asks for?
+
+    The other half of the 2026-08-16 rule, learned the hard way on 2026-08-25.
+    That rule stopped a window-LESS interpreter from claiming the launcher; this
+    stops a speech-less one. Python 3.12 on the maintainer's box had pywebview
+    but not ``faster_whisper``, so it passed the window probe, rewrote the
+    Start-Menu entry to itself, and every launch after that opened a perfectly
+    normal window whose local transcription had silently been swapped for a
+    cloud provider. The swap only surfaced when that cloud account ran out of
+    credit and a dictation lost 24.3 s of speech.
+
+    Deliberately conditional on the CHOICE, not on the package: a cloud-first
+    install (the default, and what a base download gets) never has the on-device
+    engine and must still be able to own its own shortcut. Only a user who
+    picked the on-device recognizer has an interpreter without it refused — for
+    them, a launcher that cannot transcribe locally is a broken launcher.
+
+    ``find_spec`` only resolves; nothing is imported (AP-26).
+    """
+    if _configured_stt_provider() != _ON_DEVICE_STT_PROVIDER:
+        return True
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("faster_whisper") is not None
+    except (ImportError, ValueError):  # broken/partial install
+        return False
+
+
+def _interpreter_may_own_the_launcher_shortcut() -> bool:
+    """Whether this interpreter is allowed to (re)write the launcher shortcuts.
+
+    One gate in front of both entries, because "last run wins" is the failure
+    mode: whichever interpreter last reached this code used to take the shortcut,
+    however much less it could do than the one already there. A capability it
+    lacks is a capability the user loses on their next double-click.
+    """
+    return _interpreter_can_open_a_window() and _interpreter_can_run_the_configured_speech()
+
+
 def _replace_exe_icon(exe_path: Path, ico_path: Path) -> bool:
     """Overwrite ``exe_path``'s embedded application icon with ``ico_path``.
 
@@ -765,13 +842,15 @@ def ensure_start_menu_shortcut(
 
     reveal_real_path(lnk)
 
-    if not _interpreter_can_open_a_window():
-        # This interpreter cannot start the desktop app, so it must not become
-        # the shortcut's target. Leave whatever is there — a working entry from
-        # the installer or from a real desktop run — strictly alone.
+    if not _interpreter_may_own_the_launcher_shortcut():
+        # This interpreter cannot start the desktop app the way the user
+        # configured it, so it must not become the shortcut's target. Leave
+        # whatever is there — a working entry from the installer or from a real
+        # desktop run — strictly alone.
         logger.debug(
-            "Start-Menu shortcut left untouched: {} has no pywebview and would "
-            "be a dead launch target",
+            "Start-Menu shortcut left untouched: {} cannot open the window or "
+            "cannot run the configured on-device recognizer, and would be a "
+            "degraded launch target",
             pythonw,
         )
         return lnk.is_file()
@@ -919,9 +998,9 @@ def ensure_desktop_shortcut(
 
     if not lnk.is_file() and not create_if_missing:
         return False
-    if not _interpreter_can_open_a_window():
+    if not _interpreter_may_own_the_launcher_shortcut():
         # Same rule as the Start-Menu entry: never aim it at an interpreter that
-        # cannot open the window.
+        # can do less than the one it would replace.
         return lnk.is_file()
     if lnk.is_file() and _shortcut_matches_install(
         lnk,

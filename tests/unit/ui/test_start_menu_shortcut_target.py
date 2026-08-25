@@ -406,3 +406,98 @@ class TestImportPathHasNoShortcutSideEffect:
             "importing jarvis.ui.desktop_app must not rewrite the Start-Menu "
             "shortcut — an import is no promise of a window"
         )
+
+
+class TestSpeechCapabilityProbe:
+    """The other half of the rule: a speech-LESS interpreter may not claim it either.
+
+    Live failure 2026-08-25. The maintainer's box carries four Python installs
+    with an editable ``jarvis`` in each; only some have the on-device speech
+    engine. A boot through the 3.12 install passed the window probe, rewrote the
+    Start-Menu entry to itself, and from then on every launch opened a normal
+    window whose local transcription had been swapped for a cloud provider —
+    invisible until that account ran out of credit mid-dictation.
+    """
+
+    def test_a_cloud_first_install_is_never_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A base download has no on-device engine and must still own its shortcut.
+
+        Requiring the engine unconditionally would leave the common install with
+        no Start-Menu entry at all — a far worse bug than the one being fixed.
+        """
+        monkeypatch.setattr(icon_utils, "_configured_stt_provider", lambda: "groq-api")
+
+        assert icon_utils._interpreter_can_run_the_configured_speech() is True
+
+    def test_the_on_device_choice_requires_the_on_device_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.util
+
+        monkeypatch.setattr(
+            icon_utils, "_configured_stt_provider", lambda: "faster-whisper"
+        )
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+
+        assert icon_utils._interpreter_can_run_the_configured_speech() is False
+
+    def test_an_unreadable_config_is_not_a_reason_to_refuse(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """"Cannot tell" must behave exactly as it did before this guard existed."""
+        monkeypatch.setattr(icon_utils, "_configured_stt_provider", lambda: "")
+
+        assert icon_utils._interpreter_can_run_the_configured_speech() is True
+
+    def test_the_gate_needs_both_capabilities(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(icon_utils, "_interpreter_can_open_a_window", lambda: True)
+        monkeypatch.setattr(
+            icon_utils, "_interpreter_can_run_the_configured_speech", lambda: False
+        )
+        assert icon_utils._interpreter_may_own_the_launcher_shortcut() is False
+
+        monkeypatch.setattr(icon_utils, "_interpreter_can_open_a_window", lambda: False)
+        monkeypatch.setattr(
+            icon_utils, "_interpreter_can_run_the_configured_speech", lambda: True
+        )
+        assert icon_utils._interpreter_may_own_the_launcher_shortcut() is False
+
+    def test_config_read_never_raises_on_a_missing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import jarvis.core.config as core_cfg
+
+        monkeypatch.setattr(core_cfg, "DEFAULT_CONFIG_FILE", tmp_path / "absent.toml")
+
+        assert icon_utils._configured_stt_provider() == ""
+
+
+@windows_only
+class TestShortcutWriterRefusesASpeechLessInterpreter:
+    def test_leaves_an_existing_shortcut_untouched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The 2026-08-25 regression: a speech-less run must not steal the entry."""
+        programs = tmp_path / "Programs"
+        programs.mkdir()
+        lnk = programs / icon_utils.START_MENU_SHORTCUT_NAME
+        lnk.write_bytes(b"the working shortcut, written by an interpreter that can")
+        before = lnk.read_bytes()
+
+        monkeypatch.setattr(icon_utils, "_interpreter_can_open_a_window", lambda: True)
+        monkeypatch.setattr(
+            icon_utils, "_interpreter_can_run_the_configured_speech", lambda: False
+        )
+        result = icon_utils.ensure_start_menu_shortcut(
+            aumid=_TEST_AUMID, programs_dir=programs
+        )
+
+        assert lnk.read_bytes() == before, (
+            "an interpreter without the configured on-device recognizer rewrote "
+            "the shortcut, which is how local speech silently disappears"
+        )
+        assert result is True, "an existing entry is still present, so report it"

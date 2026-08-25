@@ -757,6 +757,12 @@ def _active_stt(request: Request) -> str | None:
     """The STT provider actually powering voice input — the resolved cross-family
     provider, not the raw configured default (which may be a dead, keyless default
     the runtime already crossed away from). See ``_active_tts`` for the rationale.
+
+    Asks the SAME resolver the pipeline builds from. It used to ask only about
+    missing keys, so a host whose on-device engine was absent from the running
+    interpreter had its panel report ``faster-whisper`` while every utterance
+    went to a cloud provider — and the swap only became visible when that cloud
+    account ran out of credit.
     """
     cfg = _resolve_cfg(request)
     stt_cfg = getattr(cfg, "stt", None) if cfg else None
@@ -766,9 +772,9 @@ def _active_stt(request: Request) -> str | None:
     if not configured:
         return configured
     try:
-        from jarvis.plugins.stt import _resolve_keyed_stt_provider
+        from jarvis.plugins.stt import resolve_effective_stt_provider
 
-        resolved = _resolve_keyed_stt_provider(configured)
+        resolved = resolve_effective_stt_provider(configured)
         if resolved and resolved != configured:
             return resolved
     except Exception as exc:  # noqa: BLE001 — the health panel must never 500
