@@ -59,6 +59,7 @@ describe("RecentChats", () => {
           effort: "high",
           cwd: "C:\work",
           permission_mode: "acceptEdits",
+          surface: "jarvis",
           vendor_session: null,
           created_ms: 500,
           updated_ms: 900,

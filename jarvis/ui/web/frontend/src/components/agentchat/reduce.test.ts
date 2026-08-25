@@ -108,6 +108,20 @@ describe("agent-chat reduce", () => {
     expect(turn.blocks[1]).toMatchObject({ kind: "tool", output: "hit", durationMs: 340 });
   });
 
+  it("carries a turn run by the brain — the front page's Jarvis — untouched", () => {
+    // The typed front page is Jarvis on a keyboard: its turns are announced
+    // with runner "brain" instead of a CLI's or the API runner's name. The
+    // reducer keeps the word as given; nothing here decides what it means.
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "what did I plan for today?" }),
+      ev("turn_started", { turn_id: "t8", provider: "jarvis", model: "", effort: "", runner: "brain" }),
+    ]);
+    const turn = tl.items[1] as TurnItem;
+    expect(turn.runner).toBe("brain");
+    expect(turn.provider).toBe("jarvis");
+    expect(runningTurn(tl)?.id).toBe("t8");
+  });
+
   it("counts tokens live and keeps them when the finished turn brings no usage", () => {
     let tl = reduceEvents(EMPTY_TIMELINE, [
       ev("turn_started", { turn_id: "t7" }),

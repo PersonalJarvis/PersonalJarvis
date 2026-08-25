@@ -50,6 +50,14 @@ export interface AgentChatCatalog {
   shell: string;
 }
 
+/**
+ * Where a session lives: the front page's typed chat (`jarvis` — the same
+ * assistant as the microphone, on a keyboard) or a coding session listed by
+ * the Agentic IDE (`agent`). Each surface asks the backend for its own list
+ * and catalog, so the two never mix in a sidebar.
+ */
+export type AgentChatSurface = "jarvis" | "agent";
+
 export interface AgentChatSession {
   session_id: string;
   title: string;
@@ -58,6 +66,8 @@ export interface AgentChatSession {
   effort: string;
   cwd: string;
   permission_mode: string;
+  /** Absent on a backend older than the surface split; the store keeps such rows. */
+  surface?: AgentChatSurface;
   vendor_session: string | null;
   created_ms: number;
   updated_ms: number;
@@ -109,8 +119,9 @@ async function json<T>(res: Response, what: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function fetchAgentChatCatalog(): Promise<AgentChatCatalog> {
-  return json(await fetch("/api/agent-chat/catalog"), "catalog-failed");
+export async function fetchAgentChatCatalog(surface?: AgentChatSurface): Promise<AgentChatCatalog> {
+  const query = surface ? `?surface=${encodeURIComponent(surface)}` : "";
+  return json(await fetch(`/api/agent-chat/catalog${query}`), "catalog-failed");
 }
 
 export async function fetchAgentConnections(): Promise<AgentConnectionRow[]> {
@@ -144,9 +155,13 @@ export async function fetchProviderModels(providerId: string): Promise<LiveModel
     .filter((m): m is LiveModel => m !== null);
 }
 
-export async function fetchAgentChatSessions(limit = 200): Promise<AgentChatSession[]> {
+export async function fetchAgentChatSessions(
+  limit = 200,
+  surface?: AgentChatSurface,
+): Promise<AgentChatSession[]> {
+  const query = surface ? `&surface=${encodeURIComponent(surface)}` : "";
   const data = await json<{ sessions: AgentChatSession[] }>(
-    await fetch(`/api/agent-chat/sessions?limit=${limit}`),
+    await fetch(`/api/agent-chat/sessions?limit=${limit}${query}`),
     "sessions-failed",
   );
   return data.sessions;
@@ -159,6 +174,7 @@ export interface CreateSessionInput {
   cwd?: string | null;
   permission_mode?: string;
   title?: string;
+  surface?: AgentChatSurface;
 }
 
 export async function createAgentChatSession(input: CreateSessionInput): Promise<AgentChatSession> {
