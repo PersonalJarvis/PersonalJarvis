@@ -12645,6 +12645,49 @@ policy as well, so the app does not depend on every shell agreeing with it.
 
 ---
 
+## BUG-181: clicking Restart sometimes only shut the window down (HIGH, FIXED 2026-08-25)
+
+**Symptom.** Click Restart (top bar, Settings, the permissions banner). The
+window closes. Sometimes nothing comes back. A Start-menu click later starts
+it normally. Intermittent: the same button often works.
+
+**Root cause.** Two cooperating defects, both visible in `jarvis_desktop.log`
+around a live restart (2026-08-25 10:52:56 and 16:06:21):
+
+1. The restart helper (`jarvis.ui.relauncher`) spawned
+   `python -m jarvis.ui.web.launcher` and treated "that PID stayed alive for
+   5 seconds" as proof the app came up. On Windows the launcher immediately
+   re-execs through `PersonalJarvis.exe` (taskbar branding) and the python
+   PID exits in ~40 ms. The helper read that as a bounce off the
+   single-instance lock and spawned two more copies. Three branded processes
+   then raced: the first still booting (lock taken, no window yet), the
+   later ones hitting `_recover_from_already_running` ("lock is held but the
+   holder is not responding"). One of them could focus, bounce, or — if the
+   user confirmed, or if Job-Object kill-on-close took the helper with the
+   dying parent — leave nothing running.
+2. The helper was spawned `DETACHED_PROCESS | CREATE_NO_WINDOW` without
+   `CREATE_BREAKAWAY_FROM_JOB` and without redirecting stdio. A parent
+   inside a Windows Job Object (Windows Terminal, some Start-Menu launches)
+   killed the helper on `os._exit`; invalid stdio could kill a child on its
+   first log line. Both look like "it only shut down".
+
+**Fix.**
+* `build_launch_command` on Windows launches the existing branded exe
+  directly and sets `JARVIS_BRANDED_LAUNCH=1` so it does not re-exec.
+* `_new_instance_settled` succeeds when the admin port answers, not only
+  when the spawn PID stays alive — a branded hand-off is success, not a
+  bounce, so the helper does not spawn extras.
+* `detached_creationflags` includes `CREATE_BREAKAWAY_FROM_JOB` (retry
+  without it on WinError 5). Stdio is redirected to `DEVNULL`.
+* `_recover_from_already_running` waits out a holder that is only seconds
+  old and has no window yet, instead of offering to kill a boot in progress.
+
+**Tests.** `tests/unit/ui/test_relauncher.py` (handoff does not respawn,
+breakaway retry, branded argv) and
+`tests/unit/ui/test_launcher_boot_trace.py` (young holder is waited for).
+
+---
+
 ## BUG-180: the app "takes minutes to start" — every launch that never reached a window was mute, and a stuck earlier instance turned every click into a silent exit (HIGH, FIXED 2026-08-25)
 
 **Symptom.** Click the Start-Menu shortcut, wait, nothing. Click again,
@@ -12713,6 +12756,52 @@ never the boot.
 `pythonw` parent before it re-execs through the branded exe is the price of a
 branded taskbar button (`icon_utils.maybe_reexec_through_branded_launcher`);
 a shortcut that targets the in-venv branded exe directly skips it.
+
+---
+
+## BUG-182: the desktop app "does not start" because a leftover headless instance holds the lock and focus is rejected as CSRF (HIGH, FIXED 2026-08-25)
+
+**Symptom.** Clicking the Start-Menu shortcut or `run.bat` does nothing.
+`data/jarvis_desktop.log` shows:
+
+```
+POST http://127.0.0.1:47821/api/window/focus "HTTP/1.1 403 Forbidden"
+launcher: Jarvis lock is held but the holder is not responding. — NO window found
+Personal Jarvis reports that it is already running, but no window could be
+found and the running process is unknown.
+```
+
+**Root cause.** Three things stacked:
+
+1. A `--headless` leftover (smoke / agent / `run.bat --headless`) bound
+   port 47821 and took `data/jarvis.lock`. Headless is allowed to be
+   primary when it is the sole instance, but it never wrote the
+   `.jarvis-running` sidecar, so the desktop launch could not name a pid.
+2. With no sidecar, `acquire_single_instance_lock` treated the holder as a
+   zombie, waited 5 s, and raised "holder is not responding" — even though
+   `/api/health` was 200.
+3. Recovery POSTed `/api/window/focus` with no Origin and no Bearer.
+   Loopback open-access lets the request through authentication, then the
+   CSRF check (`origin_is_trusted(required=True)`) rejects a missing Origin
+   as 403 `Untrusted Origin header.`. No window exists on a headless
+   holder anyway, and with no pid the Yes/No eviction dialog never appeared.
+
+**Fix.**
+* Headless writes the sidecar when it claims the lock, and removes it on
+  shutdown (`launcher._claim_headless_primary_lock(port=…)`).
+* A held production lock with a missing sidecar looks up the process bound
+  to the admin port instead of waiting 5 s.
+* Recovery names the holder from sidecar, then the error text, then the
+  listening pid, so the "stop and start fresh?" dialog can actually run.
+* The focus ping sends the Control-API Bearer (loopback Origin only if no
+  key exists yet).
+
+**Tests.** `tests/contract/test_single_instance.py`
+(`test_missing_sidecar_names_the_listener_instead_of_waiting`),
+`tests/unit/ui/test_launcher_boot_trace.py` (pid from error / port),
+`tests/unit/ui/test_focus_existing_instance.py`,
+`tests/unit/ui/web/test_launcher_primary_instance.py`
+(`test_sole_headless_instance_writes_the_sidecar`).
 
 ---
 
@@ -12790,3 +12879,45 @@ index-state endpoint ("63 % of 12.7 GB read") does not exist yet.
 and every reader is a place to be wrong in its own way. The audit that found
 these was one agent per area with the real databases in front of it, not a
 walk through the code.
+
+---
+
+## BUG-179: OpenRouter and Gemini spend nobody could see — twenty callers of the brain protocol never reached the ledger (HIGH, FIXED 2026-08-25)
+
+**Symptom (maintainer, 2026-08-25).** "I have spent money on OpenRouter, I
+know it 100 %, and on Gemini too — the report shows almost nothing." The
+provider table showed OpenRouter at $0.00 and Gemini at $0.19.
+
+**Root cause.** The Costs section learned about spend only from the surfaces
+that happened to record it: a voice turn's `BrainTurnCompleted`, a chat's
+`turn_finished`, a mission's draft, the CLI transcripts. Everything else that
+calls `Brain.complete()` — dictation polish (its own HTTP clients, not even a
+plugin), the wiki curator and session roll-ups, awareness digests, the
+mission critic and decomposer, computer-use planning, skill authoring, board
+profiles, recap/prompt composers — spent on the configured primary brain
+(`openrouter` → `google/gemini-3.5-flash` on this machine) and told no one.
+`rg "\.complete\("` outside plugins and tests: 24 files.
+
+**Fix.**
+
+* `jarvis/costs/ledger.py` — one append-only ledger (`data/llm_usage.db`),
+  written by a daemon thread off the hot path (AP-9), read by the report.
+  `usage_context("wiki")` tags who asked.
+* `jarvis/brain/usage_meter.py` — `MeteredBrain` wraps every provider at the
+  one door they all come through, `BrainProviderRegistry.instantiate`. The
+  usage block a plugin yields is written down with the caller; `__class__`
+  forwards so `isinstance` checks keep their answer.
+* Surfaces that already keep a richer record tag their calls (`voice-turn`,
+  `agent-chat`, `mission-worker`) and the reader skips those tags — the
+  ledger row is the audit trail, not a second bill.
+* The dictation polish clients parse the usage their responses carry and
+  record it as `dictation`.
+* New surface `background` / role `background`, shown inside "{name}"; the
+  entry's label names the job.
+* The section gains a spend switch — all · billed to keys · on
+  subscriptions — and "Where it went" says "the 12 most expensive of N ·
+  share of the total" instead of reading like a sum.
+
+**Lesson.** A report that depends on every caller remembering to report is a
+report of the callers that remembered. Meter where the object is made, not
+where it is used.

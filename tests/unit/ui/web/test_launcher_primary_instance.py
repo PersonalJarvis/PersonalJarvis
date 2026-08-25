@@ -15,8 +15,11 @@ by the desktop app or another run) marks itself NON-primary and must not
 sweep — but still boots (headless is meant to coexist with a primary for
 tests / parallel dev / smoke probes).
 """
+
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,18 +32,14 @@ from jarvis.ui.web.launcher import (
 )
 
 
-def test_sole_headless_instance_is_primary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sole_headless_instance_is_primary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A headless run that is the ONLY instance holds the lock and IS primary,
     so it still recovers genuinely orphaned missions (the VPS case)."""
     monkeypatch.delenv("JARVIS_PRIMARY_INSTANCE", raising=False)
     lock_path = tmp_path / "jarvis.lock"
     meta_path = tmp_path / "jarvis.lock.meta"
 
-    lock = _acquire_primary_lock_for_headless(
-        lock_path=lock_path, meta_path=meta_path
-    )
+    lock = _acquire_primary_lock_for_headless(lock_path=lock_path, meta_path=meta_path)
     try:
         assert lock is not None, "sole instance must acquire the lock"
         import os
@@ -63,13 +62,9 @@ def test_secondary_headless_instance_is_not_primary(
 
     # Simulate the desktop instance already holding the lock in THIS (live)
     # process — the meta PID is our own, so stale-detection sees it alive.
-    held = acquire_single_instance_lock(
-        lock_path=lock_path, meta_path=meta_path
-    )
+    held = acquire_single_instance_lock(lock_path=lock_path, meta_path=meta_path)
     try:
-        lock = _acquire_primary_lock_for_headless(
-            lock_path=lock_path, meta_path=meta_path
-        )
+        lock = _acquire_primary_lock_for_headless(lock_path=lock_path, meta_path=meta_path)
         assert lock is None, "secondary instance must not acquire the lock"
         import os
 
@@ -101,7 +96,29 @@ def test_no_lock_headless_instance_is_secondary_and_does_not_hold_lock(
 
     assert os.environ["JARVIS_PRIMARY_INSTANCE"] == "0"
 
-    desktop_lock = acquire_single_instance_lock(
-        lock_path=lock_path, meta_path=meta_path
-    )
+    desktop_lock = acquire_single_instance_lock(lock_path=lock_path, meta_path=meta_path)
     desktop_lock.release()
+
+
+def test_sole_headless_instance_writes_the_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later desktop launch must be able to name this process and ask to stop it."""
+    monkeypatch.delenv("JARVIS_PRIMARY_INSTANCE", raising=False)
+    lock_path = tmp_path / "jarvis.lock"
+    meta_path = tmp_path / ".jarvis-running"
+
+    lock = _claim_headless_primary_lock(
+        SimpleNamespace(no_lock=False),
+        lock_path=lock_path,
+        meta_path=meta_path,
+        port=47821,
+    )
+    try:
+        assert lock is not None
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert data["pid"] == os.getpid()
+        assert data["port"] == 47821
+    finally:
+        if lock is not None:
+            lock.release()

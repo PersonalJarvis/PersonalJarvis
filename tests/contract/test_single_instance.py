@@ -4,6 +4,7 @@ Uses isolated temp paths so parallel test runs don't block each other —
 the prod paths live under `DATA_DIR` and are reserved for real Jarvis
 instances.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,9 +22,7 @@ def test_first_claim_succeeds(tmp_path) -> None:
     lock_file = tmp_path / "jarvis.lock"
     meta_file = tmp_path / ".jarvis-running"
 
-    lock = acquire_single_instance_lock(
-        timeout=0.0, lock_path=lock_file, meta_path=meta_file
-    )
+    lock = acquire_single_instance_lock(timeout=0.0, lock_path=lock_file, meta_path=meta_file)
     try:
         assert lock.is_locked
     finally:
@@ -34,9 +33,7 @@ def test_second_claim_raises_when_first_alive(tmp_path) -> None:
     lock_file = tmp_path / "jarvis.lock"
     meta_file = tmp_path / ".jarvis-running"
 
-    first = acquire_single_instance_lock(
-        timeout=0.0, lock_path=lock_file, meta_path=meta_file
-    )
+    first = acquire_single_instance_lock(timeout=0.0, lock_path=lock_file, meta_path=meta_file)
     # Write the meta file with our PID (our process is guaranteed to be alive)
     meta_file.write_text(
         json.dumps({"pid": os.getpid(), "port": 47821, "started_at": 0}),
@@ -44,9 +41,7 @@ def test_second_claim_raises_when_first_alive(tmp_path) -> None:
     )
     try:
         with pytest.raises(SingleInstanceError):
-            acquire_single_instance_lock(
-                timeout=0.0, lock_path=lock_file, meta_path=meta_file
-            )
+            acquire_single_instance_lock(timeout=0.0, lock_path=lock_file, meta_path=meta_file)
     finally:
         first.release()
 
@@ -68,9 +63,7 @@ def test_live_but_portless_holder_is_evicted(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
     # Pretend the zombie pid is alive (it is — that is the whole trap).
-    monkeypatch.setattr(
-        "jarvis.ui.desktop_app._pid_alive", lambda pid: pid == 424242
-    )
+    monkeypatch.setattr("jarvis.ui.desktop_app._pid_alive", lambda pid: pid == 424242)
 
     killed: dict[str, int] = {}
 
@@ -99,9 +92,7 @@ def test_live_holder_with_responsive_port_is_respected(tmp_path) -> None:
     lock_file = tmp_path / "jarvis.lock"
     meta_file = tmp_path / ".jarvis-running"
 
-    first = acquire_single_instance_lock(
-        timeout=0.0, lock_path=lock_file, meta_path=meta_file
-    )
+    first = acquire_single_instance_lock(timeout=0.0, lock_path=lock_file, meta_path=meta_file)
     meta_file.write_text(
         json.dumps({"pid": os.getpid(), "port": 47821, "started_at": 0}),
         encoding="utf-8",
@@ -129,9 +120,7 @@ def test_live_self_pid_holder_is_never_terminated(tmp_path) -> None:
     lock_file = tmp_path / "jarvis.lock"
     meta_file = tmp_path / ".jarvis-running"
 
-    first = acquire_single_instance_lock(
-        timeout=0.0, lock_path=lock_file, meta_path=meta_file
-    )
+    first = acquire_single_instance_lock(timeout=0.0, lock_path=lock_file, meta_path=meta_file)
     meta_file.write_text(
         json.dumps({"pid": os.getpid(), "port": 47821, "started_at": 0}),
         encoding="utf-8",
@@ -153,6 +142,38 @@ def test_live_self_pid_holder_is_never_terminated(tmp_path) -> None:
         first.release()
 
 
+def test_missing_sidecar_names_the_listener_instead_of_waiting(tmp_path, monkeypatch) -> None:
+    """A headless boot holds the lock and never writes ``.jarvis-running``.
+
+    The desktop launch must name that process immediately — not wait 5 s and
+    report "not responding" with no pid to evict.
+    """
+    lock_file = tmp_path / "jarvis.lock"
+    meta_file = tmp_path / ".jarvis-running"
+
+    first = acquire_single_instance_lock(timeout=0.0, lock_path=lock_file, meta_path=meta_file)
+    monkeypatch.setattr(
+        "jarvis.ui.desktop_app._pid_alive",
+        lambda pid: pid == 99 or pid == os.getpid(),
+    )
+
+    def must_not_terminate(pid: int) -> bool:  # pragma: no cover - must never run
+        raise AssertionError(f"a healthy listener must not be evicted, got pid={pid}")
+
+    try:
+        with pytest.raises(SingleInstanceError, match=r"pid=99"):
+            acquire_single_instance_lock(
+                timeout=0.0,
+                lock_path=lock_file,
+                meta_path=meta_file,
+                health_probe=lambda port: True,
+                listen_pid=lambda port: 99,
+                terminate=must_not_terminate,
+            )
+    finally:
+        first.release()
+
+
 def test_stale_lock_is_reclaimed(tmp_path) -> None:
     """If the PID in the meta file is dead, a new process may take over."""
     lock_file = tmp_path / "jarvis.lock"
@@ -164,9 +185,7 @@ def test_stale_lock_is_reclaimed(tmp_path) -> None:
 
     stale = FileLock(str(lock_file))
     stale.acquire(timeout=0.0)
-    meta_file.write_text(
-        json.dumps({"pid": 0, "port": 47821, "started_at": 0}), encoding="utf-8"
-    )
+    meta_file.write_text(json.dumps({"pid": 0, "port": 47821, "started_at": 0}), encoding="utf-8")
 
     # Release the lock again, so the stale detection can kick in.
     # (The prod case would be: a dead holder held the lock and the kernel
@@ -174,9 +193,7 @@ def test_stale_lock_is_reclaimed(tmp_path) -> None:
     stale.release()
 
     # A new claim must go through (PID 0 is never a real user process).
-    fresh = acquire_single_instance_lock(
-        timeout=0.0, lock_path=lock_file, meta_path=meta_file
-    )
+    fresh = acquire_single_instance_lock(timeout=0.0, lock_path=lock_file, meta_path=meta_file)
     try:
         assert fresh.is_locked
     finally:

@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import contextlib
 import os
+import re
 import signal
 import sys
 import time
@@ -69,12 +70,12 @@ def _is_brain_diagnostic(text: str) -> bool:
     """True for backend diagnostics that don't count as a Jarvis reply."""
     t = text.lower()
     return (
-        t.startswith("kein brain-key gefunden")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
-        or t.startswith("keine brain-provider")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
-        or t.startswith("brain nicht verfuegbar")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
-        or t.startswith("brain-fehler")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        t.startswith("kein brain-key gefunden")  # i18n-allow
+        or t.startswith("keine brain-provider")  # i18n-allow
+        or t.startswith("brain nicht verfuegbar")  # i18n-allow
+        or t.startswith("brain-fehler")  # i18n-allow
         or "api-key" in t
-        or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))  # i18n-allow
     )
 
 
@@ -206,15 +207,33 @@ def _acquire_primary_lock_for_headless(*, lock_path=None, meta_path=None):
     return lock
 
 
-def _claim_headless_primary_lock(args, *, lock_path=None, meta_path=None):
-    """Claim the headless primary lock unless this is an explicit no-lock run."""
+def _claim_headless_primary_lock(args, *, lock_path=None, meta_path=None, port=None):
+    """Claim the headless primary lock unless this is an explicit no-lock run.
+
+    When the lock is taken, the PID sidecar is written so a later desktop
+    launch can find this process. Headless used to skip that write, which
+    left the desktop start with a held lock and no pid to ask about.
+    """
     if bool(getattr(args, "no_lock", False)):
         os.environ["JARVIS_PRIMARY_INSTANCE"] = "0"
         return None
-    return _acquire_primary_lock_for_headless(
+    lock = _acquire_primary_lock_for_headless(
         lock_path=lock_path,
         meta_path=meta_path,
     )
+    if lock is not None and port is not None:
+        try:
+            from jarvis.ui.desktop_app import _write_meta
+
+            _write_meta(int(port), os.getpid(), meta_path=meta_path)
+        except Exception:  # noqa: BLE001 — sidecar is recovery, not boot
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "headless could not write the instance sidecar",
+                exc_info=True,
+            )
+    return lock
 
 
 def _direct_filelock_fallback(lock_path=None):
@@ -541,7 +560,7 @@ async def _run_headless(args) -> int:
     # init below. Deferred off the time-to-serving path (its desktop_app import
     # is ~420 ms). After a host crash a stale lock is reclaimed here via the
     # PID-sidecar in acquire_single_instance_lock.
-    _headless_lock = _claim_headless_primary_lock(args)
+    _headless_lock = _claim_headless_primary_lock(args, port=_port)
     _lx_mark("lock")
 
     from jarvis.brain.factory import build_default_brain
@@ -875,6 +894,16 @@ async def _run_headless(args) -> int:
                 _logging.getLogger(__name__).debug(
                     "headless lock release failed on shutdown: %s", exc
                 )
+            try:
+                from jarvis.ui.desktop_app import META_FILE_PATH
+
+                META_FILE_PATH.unlink(missing_ok=True)
+            except Exception as exc:  # noqa: BLE001 — next boot reclaims a leftover sidecar
+                import logging as _logging
+
+                _logging.getLogger(__name__).debug(
+                    "headless sidecar cleanup failed on shutdown: %s", exc
+                )
 
     return 0
 
@@ -1004,6 +1033,65 @@ def _install_boot_trace(raw_argv: list[str]) -> None:
         pass
 
 
+_HOLDER_PID_RE = re.compile(r"pid=(\d+)")
+
+
+def _holder_pid_from_error(error: Exception) -> int | None:
+    """Read a pid out of a ``SingleInstanceError`` message, if one was named."""
+    match = _HOLDER_PID_RE.search(str(error))
+    if match is None:
+        return None
+    pid = int(match.group(1))
+    return pid if pid > 0 else None
+
+
+def _discover_holder_pid(error: Exception, meta) -> int | None:
+    """Name the process that is blocking this desktop launch.
+
+    Order: sidecar, the lock-error text, then whoever is bound to the admin
+    port. A headless boot that never wrote the sidecar still has a pid on
+    the port; without this the user got "running process is unknown" and
+    no window.
+    """
+    pid = None
+    with contextlib.suppress(Exception):
+        if meta and meta.get("pid") is not None:
+            pid = int(meta["pid"])
+    if pid is None:
+        with contextlib.suppress(Exception):
+            pid = _holder_pid_from_error(error)
+    if pid is None:
+        with contextlib.suppress(Exception):
+            from jarvis.ui.desktop_app import (
+                _fallback_admin_port,
+                _pid_listening_on_port,
+            )
+
+            port = None
+            if meta and meta.get("port") is not None:
+                port = int(meta["port"])
+            if port is None:
+                port = _fallback_admin_port()
+            found = _pid_listening_on_port(port)
+            if found is not None:
+                pid = int(found)
+    if pid is None or pid <= 0 or pid == os.getpid():
+        return None
+    return pid
+
+
+def _process_age_seconds(pid: int) -> float | None:
+    """How long ``pid`` has been running, or ``None`` when we cannot tell."""
+    if pid <= 0:
+        return None
+    try:
+        import psutil
+
+        return max(0.0, time.time() - float(psutil.Process(pid).create_time()))
+    except Exception:  # noqa: BLE001 — unknown / gone / no psutil → not "young"
+        return None
+
+
 def _recover_from_already_running(
     error: Exception,
     *,
@@ -1012,6 +1100,11 @@ def _recover_from_already_running(
     ask=None,
     terminate=None,
     acquire=None,
+    process_age=None,
+    sleep=None,
+    now=None,
+    booting_grace: float = 20.0,
+    discover_pid=None,
 ):
     """The lock is held. Bring the holder forward — or, with consent, evict it.
 
@@ -1026,6 +1119,11 @@ def _recover_from_already_running(
     stuck process died on its own. Now that turns into one native Yes/No box,
     and Yes terminates the holder and takes the lock. No consent, no kill: the
     default button is No and any failure to ask counts as No.
+
+    A holder that is only a few seconds old and has no window yet is not
+    stuck — it is still booting (the Restart helper used to spawn extras that
+    landed here and offered to kill the copy that was about to appear). Wait
+    out the remaining boot grace and try to focus again before asking.
     """
     from loguru import logger
 
@@ -1035,6 +1133,9 @@ def _recover_from_already_running(
     read_meta = read_meta or _desktop_app._read_meta
     terminate = terminate or _desktop_app._terminate_pid
     acquire = acquire or _desktop_app.acquire_single_instance_lock
+    process_age = process_age or _process_age_seconds
+    sleep = sleep or time.sleep
+    now = now or time.monotonic
     if ask is None:
         from jarvis.ui.native_dialog import ask_yes_no
 
@@ -1056,9 +1157,43 @@ def _recover_from_already_running(
     meta = None
     with contextlib.suppress(Exception):
         meta = read_meta()
+    discover = discover_pid or _discover_holder_pid
     pid = None
     with contextlib.suppress(Exception):
-        pid = int(meta["pid"]) if meta and meta.get("pid") is not None else None
+        pid = discover(error, meta)
+    if pid is not None and pid != os.getpid() and booting_grace > 0:
+        age = None
+        with contextlib.suppress(Exception):
+            age = process_age(pid)
+        if isinstance(age, int | float) and 0 <= float(age) < booting_grace:
+            remaining = booting_grace - float(age)
+            deadline = now() + remaining
+            logger.info(
+                "launcher: holder pid={} is only {:.1f}s old with no window yet — "
+                "waiting up to {:.1f}s for it to finish booting",
+                pid,
+                age,
+                remaining,
+            )
+            while now() < deadline:
+                sleep(0.5)
+                try:
+                    if focus():
+                        logger.info(
+                            "launcher: booting holder pid={} grew a window — focusing it",
+                            pid,
+                        )
+                        return None
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("launcher: focusing the booting instance failed: {}", exc)
+                    break
+            try:
+                focused = bool(focus())
+            except Exception:  # noqa: BLE001
+                focused = False
+            if focused:
+                return None
+            logger.info("launcher: booting holder pid={} never grew a window", pid)
     if pid is None or pid == os.getpid():
         _report_startup_failure(
             f"{APP_DISPLAY_NAME} reports that it is already running, but no window "

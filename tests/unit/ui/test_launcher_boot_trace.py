@@ -68,6 +68,12 @@ class _Calls:
         return _Lock()
 
 
+def _meta_pid(_error, meta):
+    if meta and meta.get("pid") is not None:
+        return int(meta["pid"])
+    return None
+
+
 def _recover(calls: _Calls):
     return launcher._recover_from_already_running(
         RuntimeError("Jarvis is already running (pid=4242)."),
@@ -76,6 +82,8 @@ def _recover(calls: _Calls):
         ask=calls.ask,
         terminate=calls.terminate,
         acquire=calls.acquire,
+        process_age=lambda _pid: None,  # a long-lived stuck holder, not a boot
+        discover_pid=_meta_pid,
     )
 
 
@@ -83,6 +91,59 @@ def test_a_healthy_holder_is_focused_and_never_asked_about(monkeypatch):
     calls = _Calls(focused=True, meta={"pid": 4242, "port": 47821}, consent=True)
     assert _recover(calls) is None
     assert calls.asked == []
+    assert calls.terminated == []
+
+
+def test_a_young_holder_is_waited_for_not_killed():
+    """A restart sibling that lands here while the real copy is still booting
+    must not offer to kill it. Wait until a window appears, then focus it."""
+
+    class _Booting(_Calls):
+        def __init__(self):
+            super().__init__(focused=False, meta={"pid": 4242}, consent=True)
+            self.focus_n = 0
+
+        def focus(self):
+            self.focus_n += 1
+            return self.focus_n >= 3
+
+    calls = _Booting()
+    clock = {"t": 0.0}
+    result = launcher._recover_from_already_running(
+        RuntimeError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=calls.acquire,
+        process_age=lambda _pid: 2.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        now=lambda: clock["t"],
+        booting_grace=5.0,
+    )
+    assert result is None
+    assert calls.asked == []
+    assert calls.terminated == []
+    assert calls.focus_n >= 3
+
+
+def test_a_young_holder_that_never_grows_a_window_is_still_asked():
+    calls = _Calls(focused=False, meta={"pid": 4242, "port": 47821}, consent=False)
+    clock = {"t": 0.0}
+    result = launcher._recover_from_already_running(
+        RuntimeError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=calls.acquire,
+        process_age=lambda _pid: 1.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        now=lambda: clock["t"],
+        booting_grace=2.0,
+    )
+    assert result is None
+    assert calls.asked
     assert calls.terminated == []
 
 
@@ -110,6 +171,43 @@ def test_an_unknown_holder_is_reported_not_killed(monkeypatch):
     assert _recover(calls) is None
     assert calls.asked == []
     assert seen and "already running" in seen[0]
+
+
+def test_a_holder_named_only_in_the_lock_error_can_still_be_evicted():
+    """Headless never wrote the sidecar, but the lock error still names the pid."""
+    calls = _Calls(focused=False, meta=None, consent=True)
+    lock = launcher._recover_from_already_running(
+        RuntimeError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=calls.acquire,
+        process_age=lambda _pid: None,
+        discover_pid=launcher._discover_holder_pid,
+    )
+    assert isinstance(lock, _Lock)
+    assert calls.terminated == [4242]
+
+
+def test_a_holder_found_on_the_admin_port_can_still_be_evicted(monkeypatch):
+    """No sidecar, no pid in the error — the process bound to 47821 is the holder."""
+    monkeypatch.setattr(launcher, "_holder_pid_from_error", lambda _error: None)
+    monkeypatch.setattr("jarvis.ui.desktop_app._pid_listening_on_port", lambda _port: 4242)
+    monkeypatch.setattr("jarvis.ui.desktop_app._fallback_admin_port", lambda: 47821)
+    calls = _Calls(focused=False, meta=None, consent=True)
+    lock = launcher._recover_from_already_running(
+        RuntimeError("Jarvis lock is held but the holder is not responding."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=calls.ask,
+        terminate=calls.terminate,
+        acquire=calls.acquire,
+        process_age=lambda _pid: None,
+        discover_pid=launcher._discover_holder_pid,
+    )
+    assert isinstance(lock, _Lock)
+    assert calls.terminated == [4242]
 
 
 def test_a_kill_that_did_not_take_is_reported(monkeypatch):

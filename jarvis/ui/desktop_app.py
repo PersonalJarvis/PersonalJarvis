@@ -335,18 +335,19 @@ def _pid_alive(pid: int) -> bool:
         return True
 
 
-def _write_meta(port: int, pid: int) -> None:
+def _write_meta(port: int, pid: int, *, meta_path: Path | None = None) -> None:
     """Writes the PID sidecar next to the lock file (atomic via tmp+replace)."""
+    path = meta_path or META_FILE_PATH
     try:
-        META_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "pid": int(pid),
             "port": int(port),
             "started_at": time.time(),
         }
-        tmp = META_FILE_PATH.with_suffix(META_FILE_PATH.suffix + ".tmp")
+        tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload), encoding="utf-8")
-        os.replace(tmp, META_FILE_PATH)
+        os.replace(tmp, path)
     except OSError as exc:
         try:
             from loguru import logger
@@ -412,6 +413,122 @@ def _read_meta() -> dict[str, Any] | None:
     return data
 
 
+def _fallback_admin_port() -> int:
+    """The port a missing sidecar still has to probe.
+
+    Headless boots bind this before they write ``.jarvis-running`` (and until
+    2026-08-25 they never wrote it). The desktop launch must still find them.
+    Config is best-effort: a broken TOML must not block the lock path.
+    """
+    try:
+        port = int(load_config().ui.admin_api_port)
+    except Exception:  # noqa: BLE001
+        return 47821
+    return port if port > 0 else 47821
+
+
+def _pid_listening_on_port(port: int) -> int | None:
+    """PID that currently LISTENs on loopback *port*, or ``None``.
+
+    Used when the ``.jarvis-running`` sidecar is missing so a desktop launch
+    can still name the holder and ask to evict it. Best-effort: a probe that
+    cannot see other processes returns None and the caller keeps the safe
+    "unknown holder" path rather than guessing.
+    """
+    port = int(port)
+    pid = _pid_listening_on_port_psutil(port)
+    if pid is not None:
+        return pid
+    return _pid_listening_on_port_netstat(port)
+
+
+def _pid_listening_on_port_psutil(port: int) -> int | None:
+    try:
+        import psutil  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        connections = psutil.net_connections(kind="inet")
+    except Exception:  # noqa: BLE001 — AccessDenied / platform limits
+        return None
+    listen = getattr(psutil, "CONN_LISTEN", "LISTEN")
+    for conn in connections:
+        if getattr(conn, "status", None) != listen:
+            continue
+        laddr = getattr(conn, "laddr", None)
+        if laddr is None or int(getattr(laddr, "port", 0) or 0) != port:
+            continue
+        pid = getattr(conn, "pid", None)
+        if pid:
+            return int(pid)
+    return None
+
+
+def _pid_listening_on_port_netstat(port: int) -> int | None:
+    """Windows fallback when psutil cannot see other processes' sockets."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import subprocess
+
+        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+        completed = subprocess.run(  # noqa: S603 — fixed argv, port is an int
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5.0,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    needle = f":{int(port)}"
+    for raw in completed.stdout.splitlines():
+        line = raw.upper()
+        if "LISTEN" not in line and "ABH" not in line:
+            continue
+        if needle not in raw:
+            continue
+        parts = raw.split()
+        if not parts:
+            continue
+        try:
+            pid = int(parts[-1])
+        except ValueError:
+            continue
+        if pid > 0:
+            return pid
+    return None
+
+
+def _focus_request_headers(port: int) -> dict[str, str]:
+    """Authenticate the launcher's focus ping so CSRF does not reject it.
+
+    Loopback open-access lets an unauthenticated POST through, but unsafe
+    methods still require a trusted Origin OR a control-key Bearer. pythonw
+    sends neither, so the 2026-08-25 desktop launch saw HTTP 403
+    ``Untrusted Origin header.`` and treated a live holder as windowless.
+    """
+    headers: dict[str, str] = {}
+    try:
+        from jarvis.core.control_key import get_control_key
+
+        key = get_control_key()
+    except Exception:  # noqa: BLE001 — a missing key must not block focusing
+        key = None
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    else:
+        # No key yet (very early boot): a loopback Origin is enough for the
+        # CSRF check on open-access, and browsers cannot spoof this from a
+        # foreign page. Prefer Bearer whenever the key exists.
+        headers["Origin"] = f"http://127.0.0.1:{int(port)}"
+    return headers
+
+
 def _focus_existing_instance() -> bool:
     """Asks the running instance to bring its window to the front.
 
@@ -428,9 +545,10 @@ def _focus_existing_instance() -> bool:
         # httpx is absent on a minimal install; the caller falls back to the
         # window-title path, which needs no HTTP at all.
         return False
-    url = f"http://127.0.0.1:{int(meta['port'])}/api/window/focus"
+    port = int(meta["port"])
+    url = f"http://127.0.0.1:{port}/api/window/focus"
     try:
-        r = httpx.post(url, timeout=1.0)
+        r = httpx.post(url, headers=_focus_request_headers(port), timeout=1.0)
     except Exception:  # noqa: BLE001
         # Nothing listening = no running instance, which is the ANSWER this
         # function returns, not a failure worth reporting.
@@ -466,6 +584,7 @@ def focus_existing_instance_robust() -> bool:
             try:
                 r = httpx.post(
                     f"http://127.0.0.1:{port}/api/window/focus",
+                    headers=_focus_request_headers(port),
                     timeout=1.0,
                 )
             except Exception:  # noqa: BLE001, S112
@@ -713,12 +832,12 @@ def _is_brain_diagnostic(text: str) -> bool:
     """True for backend diagnostics that don't count as a Jarvis reply."""
     t = text.lower()
     return (
-        t.startswith("kein brain-key gefunden")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
-        or t.startswith("keine brain-provider")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
-        or t.startswith("brain nicht verfuegbar")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
-        or t.startswith("brain-fehler")  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        t.startswith("kein brain-key gefunden")  # i18n-allow
+        or t.startswith("keine brain-provider")  # i18n-allow
+        or t.startswith("brain nicht verfuegbar")  # i18n-allow
+        or t.startswith("brain-fehler")  # i18n-allow
         or "api-key" in t
-        or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))  # i18n-allow: matches German diagnostic text produced by jarvis/brain/manager.py
+        or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))  # i18n-allow
     )
 
 
@@ -950,6 +1069,7 @@ def acquire_single_instance_lock(
     meta_path: Path | None = None,
     health_probe: Callable[[int], bool] | None = None,
     terminate: Callable[[int], bool] | None = None,
+    listen_pid: Callable[[int], int | None] | None = None,
 ) -> FileLock:
     """Acquire the exclusive lock or raise :class:`SingleInstanceError`.
 
@@ -971,12 +1091,17 @@ def acquire_single_instance_lock(
         meta_path: Override for tests.
         health_probe: Override for tests — ``(port) -> bool`` health check.
         terminate: Override for tests — ``(pid) -> bool`` process kill.
+        listen_pid: Override for tests — ``(port) -> pid`` of the process
+            bound to that port. Production finds a headless holder that
+            never wrote the sidecar.
     """
     lp = lock_path or LOCK_FILE_PATH
     mp = meta_path or META_FILE_PATH
     lp.parent.mkdir(parents=True, exist_ok=True)
     probe = health_probe or _default_lock_holder_health
     killer = terminate or _terminate_pid
+    finder_overridden = listen_pid is not None
+    finder = listen_pid or _pid_listening_on_port
 
     lock = FileLock(str(lp))
     try:
@@ -993,12 +1118,43 @@ def acquire_single_instance_lock(
         raw = mp.read_text(encoding="utf-8")
         meta = json.loads(raw)
     except (FileNotFoundError, OSError, json.JSONDecodeError):
-        # No usable sidecar: pid/port stay None below, which routes to the
-        # conservative path (assume a healthy holder, do not evict).
+        # No usable sidecar: pid/port stay None below. A headless boot used
+        # to never write one, so we still name the process on the admin port
+        # instead of waiting 5 s and reporting "not responding".
         meta = None
 
     pid = int(meta["pid"]) if meta and "pid" in meta else None
     port = int(meta["port"]) if meta and "port" in meta and meta["port"] else None
+    if pid is None or not _pid_alive(pid):
+        # Sidecar missing or stale. Only look at the live admin port when this
+        # IS the production lock (or a test that passed ``listen_pid``).
+        # Isolated test paths must not inherit whatever happens to be bound
+        # on 47821 on the developer machine.
+        try:
+            same_lock = lp.resolve() == LOCK_FILE_PATH.resolve()
+        except OSError:
+            same_lock = False
+        may_discover = same_lock or finder_overridden
+        probe_port = port
+        if probe_port is None and may_discover:
+            probe_port = _fallback_admin_port()
+        if probe_port is not None and may_discover:
+            discovered = None
+            with suppress(Exception):
+                discovered = finder(int(probe_port))
+            if (
+                discovered is not None
+                and int(discovered) > 0
+                and int(discovered) != os.getpid()
+                and _pid_alive(int(discovered))
+            ):
+                pid = int(discovered)
+                if port is None:
+                    port = int(probe_port)
+            elif probe(int(probe_port)):
+                raise SingleInstanceError(
+                    f"Jarvis is already running (port={int(probe_port)} answering, pid unknown)."
+                )
     if pid is not None and _pid_alive(pid):
         # Holder is alive. Is it actually FUNCTIONAL (serving its port)? A
         # healthy instance, the own pid, or a holder with no recorded port is
@@ -3134,14 +3290,13 @@ class DesktopApp:
         launcher → window) lands at ordinary integrity. Any failure returns
         ``(False, detail)`` WITHOUT scheduling the quit.
         """
-        import subprocess
-
         from loguru import logger
 
         from jarvis.ui.relauncher import (
             detached_creationflags,
             fresh_user_env,
             run_restart_quit_sequence,
+            spawn_detached,
         )
 
         window = getattr(self, "_window", None)
@@ -3174,15 +3329,10 @@ class DesktopApp:
                     )
                     return (False, outcome.detail)
             else:
-                kwargs: dict[str, Any] = {"cwd": repo_root, "close_fds": True}
-                if sys.platform == "win32":
-                    kwargs["creationflags"] = detached_creationflags()
-                else:
-                    kwargs["start_new_session"] = True
-                subprocess.Popen(  # noqa: S603 — fixed argv, no shell, own interpreter
-                    argv,
-                    **kwargs,
-                )
+                # Break away from any Job Object and give the helper valid
+                # stdio: without both, the helper dies with this process or
+                # crashes on its first log line, and Restart only shuts down.
+                spawn_detached(argv, cwd=repo_root, env=fresh_user_env())
         except Exception as exc:  # noqa: BLE001 — never half-quit on a spawn error
             logger.opt(exception=exc).warning(
                 "relauncher spawn failed — staying up (no self-restart)"
