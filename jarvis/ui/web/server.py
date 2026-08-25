@@ -139,6 +139,9 @@ class WebServer:
         # the pending handle also makes repeated start() calls idempotent.
         self._refresh_scheduler: Any | None = None
         self._refresh_scheduler_start_handle: asyncio.Handle | None = None
+        # Local models self-check (badge only): started next to the refresh
+        # scheduler, i.e. after the serving path returned — never on boot.
+        self._local_models_health_monitor: Any | None = None
         self._refresh_registry_tasks: set[asyncio.Task[Any]] = set()
         self._refresh_scheduler_stopping = False
         # Realtime transport pre-warm — scheduled at the end of start() so the
@@ -362,6 +365,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .local_models_assistant_routes import router as local_models_assistant_router
         from .local_models_routes import router as local_models_router
         from .marketplace_publish_routes import router as marketplace_publish_router
         from .marketplace_routes import router as marketplace_router
@@ -430,6 +434,8 @@ class WebServer:
         # Local models section: inventory / unload / delete behind the
         # pull-capable card (same capability gate as the pull routes).
         app.include_router(local_models_router)
+        # Its setup assistant: run / session / test / benchmarks / health.
+        app.include_router(local_models_assistant_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
         app.include_router(grok_build_router)
@@ -2175,6 +2181,29 @@ class WebServer:
             self._start_marketplace_refresh_scheduler
         )
 
+    def _start_local_models_health_monitor(self) -> None:
+        """The Local models self-check task (best-effort, exactly once, off the boot path)."""
+        if self._local_models_health_monitor is not None:
+            return
+        try:
+            from jarvis.local_models.health_monitor import HealthMonitor
+
+            monitor = HealthMonitor(lambda: self.cfg)
+            monitor.start()
+        except Exception as exc:  # noqa: BLE001 -- a badge must never block boot
+            logger.opt(exception=exc).warning("Local models health monitor did not start.")
+            return
+        self._local_models_health_monitor = monitor
+
+    async def _stop_local_models_health_monitor(self) -> None:
+        monitor = self._local_models_health_monitor
+        self._local_models_health_monitor = None
+        if monitor is not None:
+            try:
+                await monitor.stop()
+            except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+                logger.opt(exception=exc).debug("Local models health monitor stop failed.")
+
     def _start_marketplace_refresh_scheduler(self) -> None:
         """Create the periodic OAuth refresh task (best-effort, exactly once)."""
         self._refresh_scheduler_start_handle = None
@@ -2681,6 +2710,7 @@ class WebServer:
         # catalog/keyring reads or refresh network calls can begin. This shared
         # hook covers normal desktop, headless, and direct WebServer starts.
         self._schedule_marketplace_refresh_scheduler()
+        self._start_local_models_health_monitor()
         # Same reasoning, and the same three boot paths: a headless or
         # browser-only install has no desktop shell to warm the realtime
         # transport for it.
@@ -3507,6 +3537,7 @@ class WebServer:
         # Stop token refresh before the plugin registry so an in-flight refresh
         # cannot enqueue a live-session rebuild while that registry is closing.
         await self._stop_marketplace_refresh_scheduler()
+        await self._stop_local_models_health_monitor()
 
         # Stop the skill watcher, otherwise the watchdog thread stays behind
         # as a zombie and prevents the process from exiting.

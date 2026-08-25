@@ -2002,7 +2002,28 @@ async def _compute_section_health(
         *(_safe_check(section, check) for section, check in checks.items())
     )
     sections.update(zip(checks, results, strict=True))
+    # The Local models sidebar badge: the persisted self-check record only —
+    # a file read, never a live call from this polled route.
+    sections["local_models"] = await _safe_check(
+        "local_models", asyncio.to_thread(_local_models_section_health)
+    )
     return sections
+
+
+def _local_models_section_health() -> SectionHealth:
+    """The Local models badge from ``state/local_models_health.json`` (file only)."""
+    from jarvis.local_models.health_monitor import read_health_record
+
+    record = read_health_record()
+    status = record["status"]
+    if status not in _section_health.SECTION_HEALTH_STATUSES:
+        status = _section_health.UNKNOWN
+    return SectionHealth(
+        status=status,
+        reason=record["reason"] or status,
+        detail=record["reason"] or "Local models: no self-check yet",
+        subject_id="ollama",
+    )
 
 
 # ----------------------------------------------------------------------

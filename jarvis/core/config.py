@@ -863,6 +863,9 @@ class BrainProviderConfig(BaseModel):
     # install that wants no outbound Hugging Face traffic makes none; read via
     # :func:`ollama_hf_enabled` by the local-models routes.
     hf_enabled: bool = False
+    # Cadence of the Local models self-check (badge only, no toasts), in
+    # hours; read by :func:`jarvis.local_models.health_monitor.interval_hours`.
+    health_check_hours: float = 6.0
 
     @field_validator("models", mode="before")
     @classmethod
