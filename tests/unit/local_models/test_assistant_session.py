@@ -33,6 +33,24 @@ def test_unknown_primary_falls_back_to_the_fallback_pair() -> None:
     assert (tier.provider, tier.model) == ("gemini", "g-2")
 
 
+def test_a_cli_only_primary_yields_to_the_tool_capable_fallback() -> None:
+    """Antigravity drives a CLI on a flat prompt and drops every tool; the
+    assistant needs its lm_* tools, so the chain moves on to a fallback that
+    can call them — and says why when none can."""
+    cfg = _cfg("antigravity", "gemini-3.5-flash", fallback_provider="gemini", fallback_model="g-2")
+    tier = policy.agents_tier(
+        cfg, usable=lambda _p: True, tool_capable=lambda p: p != "antigravity"
+    )
+    assert (tier.provider, tier.model, tier.ready) == ("gemini", "g-2", True)
+    stuck = policy.agents_tier(cfg, usable=lambda _p: True, tool_capable=lambda _p: False)
+    assert stuck.ready is False and stuck.reason == policy.NO_TOOLS
+
+
+def test_the_real_antigravity_plugin_reports_no_tools() -> None:
+    assert policy._tool_capable("antigravity") is False
+    assert policy._tool_capable("gemini") is True
+
+
 def test_no_worker_tier_is_not_ready() -> None:
     cfg = JarvisConfig()
     cfg.brain.worker = None

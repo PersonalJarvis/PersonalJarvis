@@ -31,6 +31,14 @@ __all__ = [
 
 SURFACE: Final[str] = "local-models"
 NOT_READY: Final[str] = "Connect the Jarvis Agents tier first — the setup assistant runs on it."
+#: The tier is connected but every provider in its chain drives a vendor CLI
+#: on a flat prompt (Antigravity, for one) and cannot call the assistant's
+#: tools; a fallback with an API key fixes it.
+NO_TOOLS: Final[str] = (
+    "The Jarvis Agents tier cannot call tools here (a CLI-only provider such as "
+    "Antigravity). Set a tool-capable fallback with an API key — Gemini, OpenAI "
+    "or OpenRouter — on the Agents tier and try again."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +56,34 @@ def _known(provider: str) -> bool:
     return provider_row(provider) is not None or supports_api_runner(provider)
 
 
+def _tool_capable(provider: str) -> bool:
+    """Whether ``provider``'s brain plugin can call tools inside the brain loop.
+
+    Read from the plugin itself (``can_call_tools`` / ``supports_tools``) via
+    the ``jarvis.brain`` entry point, never from the name (AP-21). A plugin
+    that cannot be loaded here answers True: the turn then fails honestly
+    instead of a healthy provider being skipped by a probe glitch.
+    """
+    from importlib.metadata import entry_points
+
+    try:
+        eps = [ep for ep in entry_points(group="jarvis.brain") if ep.name == provider]
+        if not eps:
+            return True
+        cls = eps[0].load()
+        try:
+            brain = cls()
+        except TypeError:
+            brain = cls(model=None)
+        probe = getattr(brain, "can_call_tools", None)
+        if callable(probe):
+            return bool(probe())
+        return bool(getattr(brain, "supports_tools", True))
+    except Exception:  # noqa: BLE001 — a probe glitch must not hide a working provider
+        log.debug("agents tier: tool-capability probe for %s failed", provider, exc_info=True)
+        return True
+
+
 def _default_usable(provider: str) -> bool:
     from jarvis.core.config import get_jarvis_agent_secret
 
@@ -58,33 +94,56 @@ def _default_usable(provider: str) -> bool:
         return False
 
 
-def agents_tier(cfg: Any, *, usable: Callable[[str], bool] | None = None) -> AgentsTier:
+def agents_tier(
+    cfg: Any,
+    *,
+    usable: Callable[[str], bool] | None = None,
+    tool_capable: Callable[[str], bool] | None = None,
+) -> AgentsTier:
     """The pair the assistant runs on and whether it can run right now.
 
-    ``usable(provider)`` is the credential / login probe; the routes pass the
-    provider-agnostic worker check the API-keys page uses, the default reads
-    the Agents-tier secret.
+    Walks the worker chain (primary, fallback, fallback 2) and takes the first
+    provider that is known, can call tools and has a credential. ``usable`` is
+    the credential / login probe (the routes pass the provider-agnostic worker
+    check the API-keys page uses; the default reads the Agents-tier secret);
+    ``tool_capable`` defaults to asking the brain plugin.
     """
     brain = getattr(cfg, "brain", None)
     worker = getattr(brain, "worker", None)
-    provider = str(getattr(worker, "provider", "") or "").strip()
-    model = str(getattr(worker, "model", "") or "").strip()
-    if not provider or not _known(provider):
-        fallback = str(getattr(worker, "fallback_provider", "") or "").strip()
-        if fallback and _known(fallback):
-            provider = fallback
-            model = str(getattr(worker, "fallback_model", "") or "").strip()
-    if not provider:
+    if worker is None:
         return AgentsTier("", "", False, NOT_READY)
-    if not _known(provider):
-        return AgentsTier(provider, model, False, NOT_READY)
+    chain = [
+        (
+            str(getattr(worker, "provider", "") or "").strip(),
+            str(getattr(worker, "model", "") or "").strip(),
+        ),
+        (
+            str(getattr(worker, "fallback_provider", "") or "").strip(),
+            str(getattr(worker, "fallback_model", "") or "").strip(),
+        ),
+        (
+            str(getattr(worker, "fallback_provider_2", "") or "").strip(),
+            str(getattr(worker, "fallback_model_2", "") or "").strip(),
+        ),
+    ]
+    known = [(p, m) for p, m in chain if p and _known(p)]
+    if not known:
+        first = next((p for p, _m in chain if p), "")
+        return AgentsTier(first, "", False, NOT_READY)
+    can_tools = tool_capable or _tool_capable
+    handy = [(p, m) for p, m in known if can_tools(p)]
+    if not handy:
+        return AgentsTier(known[0][0], known[0][1], False, NO_TOOLS)
     probe = usable or _default_usable
-    try:
-        ok = bool(probe(provider))
-    except Exception:  # noqa: BLE001 — a failing probe is "not ready", with the reason logged
-        log.info("agents tier: usability probe for %s failed", provider, exc_info=True)
-        ok = False
-    return AgentsTier(provider, model, ok, "" if ok else NOT_READY)
+    for provider, model in handy:
+        try:
+            ok = bool(probe(provider))
+        except Exception:  # noqa: BLE001 — a failing probe is "not ready", with the reason logged
+            log.info("agents tier: usability probe for %s failed", provider, exc_info=True)
+            ok = False
+        if ok:
+            return AgentsTier(provider, model, True, "")
+    return AgentsTier(handy[0][0], handy[0][1], False, NOT_READY)
 
 
 def _current(svc: Any) -> Any | None:
