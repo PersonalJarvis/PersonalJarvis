@@ -1158,6 +1158,7 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "model",
         "intent_level",
         "tokens_in",
+        "tokens_cached",
         "tokens_out",
         "cost_usd",
         # SpeechUsageRecorded: speech bills by audio second and by character,

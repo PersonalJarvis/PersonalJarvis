@@ -3189,7 +3189,11 @@ class SpeechPipeline:
             return False
 
         previous = getattr(self, "_utterance_stt", None)
-        self._utterance_stt = rebuilt
+        # Re-wrapped like ``set_tts`` does, or hearing spend would stop being
+        # recorded the first time someone changed the STT provider.
+        self._utterance_stt = meter_stt(
+            rebuilt, getattr(self, "_speech_spend", None), trace_id=self._speech_trace
+        )
         # A lightweight/cloud-first pipeline has no local preview recognizer,
         # so its preview must follow the selected provider. A heavy wake path
         # keeps its dedicated local probe.
@@ -3259,7 +3263,10 @@ class SpeechPipeline:
             log.debug("STT dictionary wrapper unavailable on live switch: %s", exc)
 
         previous = self._utterance_stt
-        self._utterance_stt = rebuilt
+        # Same rule as ``set_stt_provider``: the meter wraps the new instance.
+        self._utterance_stt = meter_stt(
+            rebuilt, getattr(self, "_speech_spend", None), trace_id=self._speech_trace
+        )
         # The preview probe follows only when it was the SAME object — in the
         # local-Whisper path it is the wake model, which must keep its own
         # language (AP-27: the wake never rides on the utterance setting).
@@ -8362,6 +8369,12 @@ class SpeechPipeline:
                         )
                     except Exception:  # noqa: BLE001 — teardown must never crash
                         log.debug("Workspace brief teardown failed", exc_info=True)
+                # Whatever was spoken after the last utterance (the goodbye, a
+                # late announcement) is settled BEFORE the session closes, or
+                # the recorder has no open session to file it under.
+                spend = getattr(self, "_speech_spend", None)
+                if spend is not None:
+                    spend.flush()
                 await self._publish_event(
                     VoiceSessionEnded(
                         source_layer="speech.pipeline",
@@ -10521,6 +10534,11 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001 — corrections are not load-bearing
             log.warning("STT dictionary wrapper unavailable for dictation: %s", exc)
 
+        # Dictation transcribes minute-long buffers; unmetered it was the
+        # largest invisible hearing cost on a pipeline box.
+        instance = meter_stt(
+            instance, getattr(self, "_speech_spend", None), trace_id=self._speech_trace
+        )
         self._dictation_stt_instance = instance
         return instance
 
@@ -16438,6 +16456,13 @@ class SpeechPipeline:
             built = build_realtime_surface_tts(self._config, key)
         except Exception:  # noqa: BLE001 — the emergency voice must never break the turn
             built = None
+        if built is not None:
+            # Every readback and announcement spoken DURING a realtime call
+            # goes through this voice; on a realtime-first box that is nearly
+            # all of the TTS spend, and it was the one voice nobody metered.
+            built = meter_tts(
+                built, getattr(self, "_speech_spend", None), trace_id=self._speech_trace
+            )
         self._realtime_surface_tts_cache = (key, built)
         return built
 

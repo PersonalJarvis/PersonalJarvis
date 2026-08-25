@@ -452,14 +452,20 @@ async def _stream_via_responses(
         elif etype in ("response.completed", "response.incomplete"):
             usage = getattr(getattr(event, "response", None), "usage", None)
             if usage is not None:
+                details = getattr(usage, "input_tokens_details", None)
+                cached = int(getattr(details, "cached_tokens", 0) or 0)
                 usage_payload = {
-                    "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                    # The canonical cost contract (gemini.py does the same):
+                    # ``input_tokens`` is the UNCACHED share. OpenAI counts
+                    # cache hits inside its input figure; leaving them there
+                    # billed every hit at the full rate (2026-08-25).
+                    "input_tokens": max(
+                        int(getattr(usage, "input_tokens", 0) or 0) - cached, 0
+                    ),
                     "output_tokens": int(
                         getattr(usage, "output_tokens", 0) or 0
                     ),
                 }
-                details = getattr(usage, "input_tokens_details", None)
-                cached = int(getattr(details, "cached_tokens", 0) or 0)
                 if cached > 0:
                     usage_payload["cache_hit_tokens"] = cached
         elif etype in ("response.failed", "error"):
@@ -645,16 +651,18 @@ async def stream_complete(
         # Usage info (OpenAI delivers this in the last chunk)
         usage = getattr(chunk, "usage", None)
         if usage is not None:
-            usage_payload = {
-                "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
-                "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
-            }
             # Cache hits were invisible on this path (2026-07-28 cost audit:
             # 84% of tool-loop tokens ran through OpenAI-protocol gateways) —
             # without the protocol's cache_hit_tokens key nobody can measure
             # whether a prompt-cache change works or what a turn really cost.
             details = getattr(usage, "prompt_tokens_details", None)
             cached = int(getattr(details, "cached_tokens", 0) or 0)
+            usage_payload = {
+                # ``prompt_tokens`` INCLUDES the cached share; the contract
+                # wants the uncached one (see the Responses path above).
+                "input_tokens": max(int(getattr(usage, "prompt_tokens", 0) or 0) - cached, 0),
+                "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            }
             if cached > 0:
                 usage_payload["cache_hit_tokens"] = cached
             yield BrainDelta(usage=usage_payload)

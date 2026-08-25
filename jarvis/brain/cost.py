@@ -39,9 +39,12 @@ If a model is missing here AND in the feed, ``calculate_cost_usd`` returns
 mandatory so that missing entries become visible rather than silently
 turning into a "free" banner.
 
-Aliases are NOT mapped here — callers must pass the canonical model name
-(e.g. ``claude-opus-4-7-20251022`` instead of ``opus``). PROVIDER_ALIASES
-in ``manager.py`` is for provider names, not model IDs.
+Only the three short names a coding CLI accepts on its command line
+(``sonnet`` / ``opus`` / ``haiku``) are mapped, in ``MODEL_ALIASES``: mission
+workers are spawned with exactly those, and 64 drafts holding 1.78M tokens
+sat unpriced because "sonnet" matched nothing (2026-08-25). Every other
+caller passes the canonical id. PROVIDER_ALIASES in ``manager.py`` is for
+provider names, not model IDs.
 """
 
 from __future__ import annotations
@@ -62,6 +65,10 @@ log = logging.getLogger(__name__)
 PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # ── Anthropic Claude (Frontier: Fable 5, Sonnet 4.6, Haiku 4.5) ──
     "claude-fable-5": (10.0, 50.0),
+    # Claude 5 family (feed-verified 2026-08-25; the CLIs' "opus" / "sonnet"
+    # aliases resolve here via MODEL_ALIASES).
+    "claude-opus-5": (5.0, 25.0),
+    "claude-sonnet-5": (2.0, 10.0),
     "claude-opus-4-8": (15.0, 75.0),
     "claude-opus-4-7-20251022": (15.0, 75.0),
     "claude-opus-4-7": (15.0, 75.0),
@@ -104,6 +111,12 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "gemini-live-2.5-flash-native-audio": (0.50, 2.0),
     # ── OpenAI (Frontier: GPT-5.5 + 5.5-pro, released 2026-04-23) ──
     "gpt-5.5": (5.0, 30.0),
+    # Not a vendor model: Codex's review pass, which runs on the session's own
+    # model. Tracks gpt-5.6-sol, the default that pass runs on.
+    "codex-auto-review": (2.0, 10.0),
+    # Moonshot Kimi, as Codex names it when routed through Ollama
+    # ("kimi-k2.5:cloud" — the variant tag is stripped in resolve_rates).
+    "kimi-k2.5": (0.6, 3.0),
     "gpt-5.5-pro": (30.0, 180.0),  # corrected 2026-07-28 (OpenRouter feed)
     # Realtime API — TEXT rates; audio rates in the realtime table below.
     "gpt-realtime-2.1": (4.0, 16.0),
@@ -117,6 +130,15 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # smarter than 4.20; older entries kept for historical
     # cost-tracking analysis) ────────────────────────────────────────
     "grok-4.3": (1.25, 2.50),
+    # 82 voice calls ran on grok-4.5 with no row here and were recorded at
+    # $0.00 (2026-08-25). Rate from the OpenRouter feed for x-ai/grok-4.5,
+    # which mirrors xAI's list price.
+    "grok-4.5": (2.0, 6.0),
+    # Grok Build's transcripts name the model "grok-4.6-build". Rates confirmed
+    # to the cent against xAI's own costUsdTicks in those transcripts
+    # (2026-08-25): $2 uncached in / $0.50 cached / $6 out.
+    "grok-4.6": (2.0, 6.0),
+    "grok-4.6-build": (2.0, 6.0),
     "grok-4.20": (2.0, 6.0),
     "grok-4-0709": (5.0, 15.0),
     "grok-4": (5.0, 15.0),
@@ -161,6 +183,9 @@ CACHE_READ_FRACTION_DEFAULT = 0.10
 CACHE_READ_FRACTION_BY_PREFIX: tuple[tuple[str, float], ...] = (
     ("gemini", 0.25),
     ("google/", 0.25),
+    # Measured from xAI's own costUsdTicks (2026-08-25): a quarter, not a tenth.
+    ("grok", 0.25),
+    ("x-ai/", 0.25),
 )
 
 
@@ -315,6 +340,16 @@ def feed_rates(model: str) -> tuple[float, float] | None:
     return _feed_by_name.get(_norm(model))
 
 
+#: The short names a vendor CLI resolves to its current model of that
+#: family. Kept to the frontier entry of each family so a spawn that said
+#: "sonnet" is priced as the Sonnet the CLI actually ran.
+MODEL_ALIASES: dict[str, str] = {
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+    "haiku": "claude-haiku-4-5",
+}
+
+
 def resolve_rates(model: str | None) -> tuple[float, float] | None:
     """The (in, out) USD-per-1M-token rates for ``model``, or ``None``.
 
@@ -325,9 +360,20 @@ def resolve_rates(model: str | None) -> tuple[float, float] | None:
     """
     if not model:
         return None
+    model = MODEL_ALIASES.get(model.strip().casefold(), model)
     if "/" in model:
-        return feed_rates(model) or PRICING_USD_PER_MTOK.get(model)
-    return PRICING_USD_PER_MTOK.get(model) or feed_rates(model)
+        rates = feed_rates(model) or PRICING_USD_PER_MTOK.get(model)
+    else:
+        rates = PRICING_USD_PER_MTOK.get(model) or feed_rates(model)
+    if rates is not None:
+        return rates
+    # An Ollama-style variant tag ("kimi-k2.5:cloud", "qwen3:32b") prices as
+    # the untagged model. ":free" is not a variant — it is the free tier and
+    # price_entry settles it before ever asking here — so it stays unknown.
+    base, sep, tag = model.partition(":")
+    if sep and tag and tag != "free":
+        return resolve_rates(base)
+    return None
 
 
 async def ensure_pricing_for(model: str | None, *, timeout_s: float = 3.0) -> bool:

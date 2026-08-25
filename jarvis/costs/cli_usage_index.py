@@ -121,7 +121,16 @@ AGENT_CODEX = "codex-cli"
 AGENT_AGY = "agy-cli"
 """The agy CLI (both generations of its data root)."""
 
-AGENTS: tuple[str, ...] = (AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY)
+AGENT_GROK = "grok-cli"
+"""Grok Build (``~/.grok``). ``sessions/<url-encoded cwd>/<uuid>/updates.jsonl``
+carries one ``turn_completed`` record per turn with a usage block that is
+per-turn (verified against three turn_started/turn_completed pairs) and
+follows the OpenAI convention — ``inputTokens`` INCLUDES ``cachedReadTokens``.
+``prompt_id`` identifies the turn wherever it is written. The model is the
+single key of ``usage.modelUsage``; cwd and session id come from the folder's
+``summary.json``. 608 MB of these were read by nothing until 2026-08-25."""
+
+AGENTS: tuple[str, ...] = (AGENT_CLAUDE, AGENT_CODEX, AGENT_AGY, AGENT_GROK)
 
 #: Filename of the index, relative to the data dir.
 DB_NAME = "cli_usage_index.db"
@@ -162,6 +171,7 @@ _AGY_KEY_MAP = {
 _CLAUDE_MARK = b'"usage"'
 _CODEX_MARKS = (b'"token_count"', b'"turn_context"', b'"session_meta"')
 _AGY_MARK = b'"token_usage"'
+_GROK_MARK = b'"turn_completed"'
 
 _LABEL_MAX = 90
 _DB_TIMEOUT_S = 5.0
@@ -212,6 +222,7 @@ CREATE TABLE IF NOT EXISTS cli_turns (
     PRIMARY KEY (agent, dedup_key)
 );
 CREATE INDEX IF NOT EXISTS idx_cli_turns_ts ON cli_turns (ts_ms);
+CREATE INDEX IF NOT EXISTS idx_cli_turns_session ON cli_turns (agent, session_id);
 """
 
 # A duplicate is ignored except for one field: a row indexed without a model
@@ -423,34 +434,100 @@ class _Candidate:
     mtime_ns: int
 
 
+def _account_roots(platform: str) -> list[Path]:
+    """Every extra login of a CLI the app manages (:mod:`jarvis.agent_accounts`).
+
+    A second subscription runs with its own config directory under the app's
+    data dir, and the CLI writes that account's transcripts THERE, not under
+    ``~/.claude``. Three such accounts held 724 session files nobody counted
+    (2026-08-25). The registry is optional here: the index must work on a
+    machine — or in a test — where it cannot be loaded.
+    """
+    try:
+        from jarvis import agent_accounts
+    except Exception as exc:  # noqa: BLE001 — the index never needs the registry to run
+        log.debug("cli usage index: account registry unavailable (%s)", exc)
+        return []
+    roots: list[Path] = []
+    try:
+        if platform in agent_accounts.platforms():
+            roots.extend(
+                Path(account.config_dir)
+                for account in agent_accounts.list_accounts(platform)  # type: ignore[arg-type]
+                if not account.builtin
+            )
+    except Exception as exc:  # noqa: BLE001 — a broken store must not stop the scan
+        log.warning("cli usage index: could not list %s accounts (%s)", platform, exc)
+    # A deleted account keeps its directory unless the user asked to remove
+    # the files, and its spend was real. Every directory under the platform's
+    # accounts folder counts, registered or not.
+    try:
+        from jarvis.core.paths import user_data_dir
+
+        folder = user_data_dir() / "agent-accounts" / platform
+        if folder.is_dir():
+            roots.extend(p for p in folder.iterdir() if p.is_dir())
+    except Exception as exc:  # noqa: BLE001 — same rule: the scan goes on
+        log.debug("cli usage index: accounts folder for %s unreadable (%s)", platform, exc)
+    return roots
+
+
+def _dedup_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    out: list[Path] = []
+    for path in paths:
+        key = _key_of(path)
+        if key not in seen:
+            seen.add(key)
+            out.append(path)
+    return out
+
+
 def _claude_roots(home: Path | None) -> list[Path]:
-    """Claude Code config dirs: the CLI's own override first, then the default."""
+    """Claude Code config dirs: the CLI's own override, the default, and every
+    managed account's directory."""
     if home is not None:
         return [home / ".claude"]
     roots: list[Path] = []
     override = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
     if override:
         roots.append(Path(override).expanduser())
-    default = Path.home() / ".claude"
-    if default not in roots:
-        roots.append(default)
-    return roots
+    roots.append(Path.home() / ".claude")
+    roots.extend(_account_roots("claude"))
+    return _dedup_paths(roots)
 
 
 def _codex_roots(home: Path | None) -> list[Path]:
-    """``CODEX_HOME`` when the CLI is pointed elsewhere, else the default."""
+    """``CODEX_HOME`` when the CLI is pointed elsewhere, the default, and every
+    managed account's directory."""
     if home is not None:
         return [home / ".codex"]
+    roots: list[Path] = []
     override = os.environ.get("CODEX_HOME", "").strip()
     if override:
-        return [Path(override).expanduser()]
-    return [Path.home() / ".codex"]
+        roots.append(Path(override).expanduser())
+    roots.append(Path.home() / ".codex")
+    roots.extend(_account_roots("codex"))
+    return _dedup_paths(roots)
 
 
 def _agy_roots(home: Path | None) -> list[Path]:
     """Both generations. A machine can carry both histories at once."""
     base = home if home is not None else Path.home()
     return [base / ".kimi", base / ".kimi-code"]
+
+
+def _grok_roots(home: Path | None) -> list[Path]:
+    """``GROK_HOME`` when set, the default, and every managed account."""
+    if home is not None:
+        return [home / ".grok"]
+    roots: list[Path] = []
+    override = os.environ.get("GROK_HOME", "").strip()
+    if override:
+        roots.append(Path(override).expanduser())
+    roots.append(Path.home() / ".grok")
+    roots.extend(_account_roots("grok-build"))
+    return _dedup_paths(roots)
 
 
 #: ``agent -> (root resolver, glob patterns relative to the root)``. Patterns
@@ -465,6 +542,8 @@ _LAYOUTS: tuple[tuple[str, str], ...] = (
     (AGENT_AGY, "sessions/*/*/wire.jsonl"),
     # agy, current layout (``sessions/<wd_...>/<session>/agents/<name>/wire.jsonl``).
     (AGENT_AGY, "sessions/*/*/agents/*/wire.jsonl"),
+    # Grok Build: one folder per session under a url-encoded cwd.
+    (AGENT_GROK, "sessions/*/*/updates.jsonl"),
 )
 
 
@@ -473,6 +552,8 @@ def _roots_for(agent: str, home: Path | None) -> list[Path]:
         return _claude_roots(home)
     if agent == AGENT_CODEX:
         return _codex_roots(home)
+    if agent == AGENT_GROK:
+        return _grok_roots(home)
     return _agy_roots(home)
 
 
@@ -753,6 +834,66 @@ def _agy_row(
     )
 
 
+def _grok_row(
+    record: Mapping[str, Any], offset: int, cand: _Candidate, cursor: _Cursor
+) -> _Row | None:
+    params = _payload(record, "params")
+    update = _payload(params, "update")
+    if update.get("sessionUpdate") != "turn_completed":
+        return None
+    usage = update.get("usage")
+    if not isinstance(usage, Mapping):
+        return None
+    cached = _int(usage.get("cachedReadTokens"))
+    tokens_in = max(0, _int(usage.get("inputTokens")) - cached) + _int(
+        usage.get("cacheCreationTokens")
+    )
+    tokens_out = _int(usage.get("outputTokens"))
+    if tokens_in + tokens_out + cached <= 0:
+        return None
+    model = cursor.model
+    per_model = usage.get("modelUsage")
+    if isinstance(per_model, Mapping) and per_model:
+        model = str(next(iter(per_model.keys())) or model)
+    session_id = str(params.get("sessionId") or cursor.session_id)
+    prompt_id = str(update.get("prompt_id") or "")
+    dedup = f"{session_id}:{prompt_id}" if session_id and prompt_id else f"{cand.key}:{offset}"
+    return (
+        cand.agent,
+        dedup,
+        cand.key,
+        session_id,
+        _epoch_ms(record.get("timestamp")),
+        model,
+        tokens_in,
+        tokens_out,
+        cached,
+        cursor.cwd,
+        cursor.label,
+    )
+
+
+def _grok_context(path: Path) -> tuple[str, str, str, str]:
+    """``(session_id, cwd, label, model)`` from the folder's ``summary.json``."""
+    folder = path.parent
+    session_id = folder.name
+    cwd = ""
+    model = ""
+    summary = folder / "summary.json"
+    try:
+        if summary.is_file():
+            parsed = json.loads(summary.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(parsed, dict):
+                info = parsed.get("info") if isinstance(parsed.get("info"), dict) else {}
+                session_id = str(info.get("id") or session_id)
+                cwd = str(info.get("cwd") or "")
+                model = str(parsed.get("current_model_id") or "")
+    except (OSError, ValueError) as exc:
+        log.debug("cli usage index: %s unreadable (%s)", summary, exc)
+    label = _clip(Path(cwd).name if cwd else session_id)
+    return session_id, cwd, label, model
+
+
 def _agy_session_dir(path: Path) -> Path:
     """The session folder of a ``wire.jsonl``, in either layout."""
     if path.parent.parent.name == "agents":
@@ -806,6 +947,9 @@ def _scan(cand: _Candidate, start: int, cursor: _Cursor, deadline: float) -> _Fi
     reader = _LineReader(None, start)
     if cand.agent == AGENT_AGY and not cursor.session_id:
         cursor.session_id, cursor.cwd, cursor.label = _agy_context(cand.path)
+    if cand.agent == AGENT_GROK and not cursor.session_id:
+        cursor.session_id, cursor.cwd, cursor.label, model = _grok_context(cand.path)
+        cursor.model = cursor.model or model
     failed = False
     try:
         with cand.path.open("rb") as fh:
@@ -844,6 +988,8 @@ def _wanted(agent: str, raw: bytes) -> bool:
         return _CLAUDE_MARK in raw
     if agent == AGENT_CODEX:
         return any(mark in raw for mark in _CODEX_MARKS)
+    if agent == AGENT_GROK:
+        return _GROK_MARK in raw
     return _AGY_MARK in raw
 
 
@@ -854,6 +1000,8 @@ def _row_for(
         return _claude_row(record, cand, cursor)
     if agent == AGENT_CODEX:
         return _codex_row(record, offset, cand, cursor)
+    if agent == AGENT_GROK:
+        return _grok_row(record, offset, cand, cursor)
     return _agy_row(record, offset, cand, cursor)
 
 
@@ -938,6 +1086,60 @@ def _open_ro(path: Path) -> sqlite3.Connection | None:
         return None
 
 
+def _backfill_models(conn: sqlite3.Connection, keys: list[str]) -> None:
+    """Give model-less rows of the files just scanned the model their session
+    recorded elsewhere.
+
+    A Codex fork replays its parent before its own ``turn_context``, so those
+    rows are inserted with no model, and the parent file — scanned later or
+    earlier — is where the model lives. Scoped to the scanned files so a
+    refresh never pays for the whole table (the unscoped sweep took 12 s on
+    132k rows, 2026-08-25).
+    """
+    sql = (
+        "UPDATE cli_turns SET model = ("
+        " SELECT t2.model FROM cli_turns t2"
+        "  WHERE t2.agent = cli_turns.agent AND t2.session_id = cli_turns.session_id"
+        "    AND t2.model <> '' ORDER BY t2.ts_ms LIMIT 1)"
+        " WHERE model = '' AND session_id <> '' AND path = ? AND EXISTS ("
+        " SELECT 1 FROM cli_turns t3 WHERE t3.agent = cli_turns.agent"
+        "   AND t3.session_id = cli_turns.session_id AND t3.model <> '')"
+    )
+    conn.executemany(sql, [(key,) for key in keys])
+
+
+def _prune_vanished(
+    conn: sqlite3.Connection,
+    candidates: list[_Candidate],
+    known: dict[str, sqlite3.Row],
+    home: Path | None,
+) -> None:
+    """Drop the rows of transcripts that no longer exist.
+
+    ``_drop_rows`` only fires when a file SHRANK; a deleted file kept its rows
+    forever (446 rows / 88M tokens from six vanished transcripts,
+    2026-08-25). Pruning is limited to roots that are readable right now, so
+    an unmounted drive or a transient permission error never wipes history.
+    """
+    live: list[str] = []
+    for agent, _pattern in _LAYOUTS:
+        for root_dir in _roots_for(agent, home):
+            try:
+                if root_dir.is_dir():
+                    live.append(_key_of(root_dir))
+            except OSError:
+                continue
+    if not live:
+        return
+    fresh = {c.key for c in candidates}
+    for key in list(known):
+        if key in fresh or not any(key.startswith(r) for r in live):
+            continue
+        _drop_rows(conn, key)
+        conn.execute("DELETE FROM indexed_files WHERE path = ?", (key,))
+        known.pop(key, None)
+
+
 def _resume_rows(conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
     try:
         return {
@@ -994,8 +1196,10 @@ def refresh(
     turns_added = 0
     errors = 0
     complete = True
+    scanned_keys: list[str] = []
     try:
         known = _resume_rows(conn)
+        _prune_vanished(conn, candidates, known, home)
         pending = _pending(candidates, known, since_ms)
         # Newest first: the file a user just closed is the one whose numbers
         # they are looking at, and it is the one most likely to be small.
@@ -1012,6 +1216,7 @@ def refresh(
                 _drop_rows(conn, cand.key)
             scan = _scan(cand, start, cursor, deadline)
             scanned += 1
+            scanned_keys.append(cand.key)
             bytes_read += scan.bytes_read
             if scan.failed:
                 errors += 1
@@ -1020,6 +1225,8 @@ def refresh(
             turns_added += _commit_file(conn, cand, scan)
             if scan.reason == "deadline":
                 break
+        if scanned_keys:
+            _backfill_models(conn, scanned_keys)
     except sqlite3.Error as exc:
         log.warning("cli usage index: refresh aborted (%s)", exc)
         errors += 1
@@ -1238,6 +1445,14 @@ def _commit_file(conn: sqlite3.Connection, cand: _Candidate, scan: _FileScan) ->
         if scan.rows:
             conn.executemany(_INSERT_TURN, scan.rows)
         added = conn.total_changes - before
+        if scan.cursor.model:
+            # A replayed prefix lands before the file's ``turn_context``; the
+            # context that follows is authoritative for every row in the
+            # file (130 Codex rows / 16.4M tokens sat unpriced, 2026-08-25).
+            conn.execute(
+                "UPDATE cli_turns SET model = ? WHERE path = ? AND agent = ? AND model = ''",
+                (scan.cursor.model, cand.key, cand.agent),
+            )
         conn.execute(
             _UPSERT_FILE,
             (
@@ -1269,6 +1484,7 @@ __all__ = [
     "AGENT_AGY",
     "AGENT_CLAUDE",
     "AGENT_CODEX",
+    "AGENT_GROK",
     "DB_NAME",
     "CliRollup",
     "CliTurn",

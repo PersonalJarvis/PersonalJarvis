@@ -497,9 +497,9 @@ def test_codex_fork_replays_its_parent_but_is_counted_once(tmp_path: Path) -> No
     # Two real calls in the parent, one new call in the fork. Not five.
     assert len(turns) == 3
     assert {t.session_id for t in turns} == {parent}
-    # The replayed rows had no model; the parent's copy supplied it.
-    assert sum(1 for t in turns if t.model == "gpt-5.6-terra") == 2
-    assert sum(1 for t in turns if t.model == "") == 1
+    # The replayed rows had no model; the parent's copy supplied it — and the
+    # fork's own new turn inherits the session's model as well.
+    assert {t.model for t in turns} == {"gpt-5.6-terra"}
 
 
 def test_an_index_built_under_an_older_rule_is_rebuilt(tmp_path: Path) -> None:
@@ -827,3 +827,169 @@ def test_rollup_totals_match_the_raw_turns(tmp_path: Path) -> None:
 def test_rollup_of_an_absent_index_is_empty(tmp_path: Path) -> None:
     """A machine that has never indexed returns nothing, not an error."""
     assert _rolled(tmp_path / "nothing") == []
+
+
+# ---------------------------------------------------------------------------
+# Grok Build
+# ---------------------------------------------------------------------------
+
+
+def _grok_update_line(
+    *,
+    session: str,
+    prompt_id: str,
+    ts: int = 1_786_719_765,
+    input_tokens: int = 1_000,
+    cached: int = 900,
+    output: int = 50,
+    model: str = "grok-4.6-build",
+) -> str:
+    usage = {
+        "inputTokens": input_tokens,
+        "outputTokens": output,
+        "cachedReadTokens": cached,
+        "cacheCreationTokens": 0,
+        "reasoningTokens": 10,
+        "modelCalls": 3,
+        "modelUsage": {model: {"inputTokens": input_tokens}},
+    }
+    return json.dumps(
+        {
+            "timestamp": ts,
+            "method": "_x.ai/session/update",
+            "params": {
+                "sessionId": session,
+                "update": {
+                    "sessionUpdate": "turn_completed",
+                    "prompt_id": prompt_id,
+                    "usage": usage,
+                },
+            },
+        }
+    )
+
+
+def _grok_session(home: Path, session: str, cwd: str = "/work/grok-app") -> Path:
+    folder = home / ".grok" / "sessions" / "C%3A%5Cwork%5Cgrok-app" / session
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "summary.json").write_text(
+        json.dumps({"info": {"id": session, "cwd": cwd}, "current_model_id": "grok-4.6"}),
+        encoding="utf-8",
+    )
+    return folder / "updates.jsonl"
+
+
+def test_grok_turn_completed_is_one_row_per_turn(tmp_path: Path) -> None:
+    """Per-turn usage; ``inputTokens`` includes the cached share (OpenAI style)."""
+    from jarvis.costs.cli_usage_index import AGENT_GROK
+
+    data = tmp_path / "data"
+    session = "01a000c5-0f40-7652-9519-acd71f097d48"
+    _write(
+        _grok_session(tmp_path, session),
+        [
+            json.dumps({"timestamp": 1, "method": "_x.ai/session/update",
+                        "params": {
+                            "sessionId": session,
+                            "update": {"sessionUpdate": "turn_started"},
+                        }}),
+            _grok_update_line(session=session, prompt_id="p-1"),
+            _grok_update_line(session=session, prompt_id="p-2", input_tokens=500, cached=0),
+        ],
+    )
+
+    refresh(data_dir=data, home=tmp_path)
+
+    turns = _all(data)
+    assert len(turns) == 2
+    assert {t.agent for t in turns} == {AGENT_GROK}
+    assert sorted(t.tokens_in for t in turns) == [100, 500]
+    assert sorted(t.tokens_cached for t in turns) == [0, 900]
+    assert {t.model for t in turns} == {"grok-4.6-build"}
+    assert {t.session_id for t in turns} == {session}
+    assert {t.cwd for t in turns} == {"/work/grok-app"}
+    assert {t.label for t in turns} == {"grok-app"}
+
+
+def test_grok_replayed_turn_counts_once(tmp_path: Path) -> None:
+    """The same prompt_id written twice (a resumed session) is one turn."""
+    data = tmp_path / "data"
+    session = "01a000c5-0f40-7652-9519-acd71f097d48"
+    _write(
+        _grok_session(tmp_path, session),
+        [_grok_update_line(session=session, prompt_id="p-1"),
+         _grok_update_line(session=session, prompt_id="p-1", ts=1_786_719_999)],
+    )
+
+    refresh(data_dir=data, home=tmp_path)
+
+    assert len(_all(data)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Housekeeping: vanished transcripts, model backfill
+# ---------------------------------------------------------------------------
+
+
+def test_a_transcript_that_disappeared_loses_its_rows(tmp_path: Path) -> None:
+    import sqlite3
+
+    from jarvis.costs.cli_usage_index import index_db_path
+
+    data = tmp_path / "data"
+    session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
+    path = _codex_path(tmp_path, session)
+    _write(path, [*_codex_prelude(session), _codex_token_line()])
+    refresh(data_dir=data, home=tmp_path)
+    assert len(_all(data)) == 1
+
+    path.unlink()
+    refresh(data_dir=data, home=tmp_path)
+
+    assert _all(data) == []
+    with sqlite3.connect(index_db_path(data)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM indexed_files").fetchone()[0] == 0
+
+
+def test_an_unreadable_root_never_prunes(tmp_path: Path) -> None:
+    """A root that vanished entirely (unmounted drive) keeps its history."""
+    import shutil
+
+    data = tmp_path / "data"
+    session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
+    _write(_codex_path(tmp_path, session), [*_codex_prelude(session), _codex_token_line()])
+    refresh(data_dir=data, home=tmp_path)
+
+    shutil.rmtree(tmp_path / ".codex")
+    refresh(data_dir=data, home=tmp_path)
+
+    assert len(_all(data)) == 1
+
+
+def test_codex_rows_before_the_first_turn_context_get_the_model(tmp_path: Path) -> None:
+    """A fork replays its parent BEFORE its own turn_context; the model that
+    follows is the file's, so the replayed rows inherit it."""
+    data = tmp_path / "data"
+    session = "019ffba8-3748-7652-bf9d-f3b54697b10a"
+    meta = json.dumps(
+        {"timestamp": "2026-08-13T15:05:44.589Z", "type": "session_meta",
+         "payload": {"session_id": session, "cwd": "/work/downloads"}}
+    )
+    context = json.dumps(
+        {"timestamp": "2026-08-13T15:05:53.434Z", "type": "turn_context",
+         "payload": {"model": "gpt-5.6-terra", "cwd": "/work/downloads"}}
+    )
+    _write(
+        _codex_path(tmp_path, session),
+        [
+            meta,
+            _codex_token_line(turn=1),
+            _codex_token_line(turn=2),
+            context,
+            _codex_token_line(turn=3),
+        ],
+    )
+
+    refresh(data_dir=data, home=tmp_path)
+
+    assert {t.model for t in _all(data)} == {"gpt-5.6-terra"}

@@ -80,6 +80,16 @@ SURFACES: tuple[str, ...] = (
     SURFACE_JARVIS_VOICE,
 )
 
+# Runners whose usage object follows the OpenAI convention: ``input_tokens``
+# INCLUDES the cached share, so the cached count is subtracted before pricing.
+# Anthropic-style runners report the two disjoint and need nothing.
+OPENAI_CONVENTION_RUNNERS: frozenset[str] = frozenset({"codex-cli"})
+
+# Mission workers name their CLI in ``WorkerSpawned`` with the bare vendor
+# word, not the ``-cli`` runner id the chat surface uses. Every one of these
+# runs on a monthly seat; the amount the worker reports is an API-equivalent.
+MISSION_SUBSCRIPTION_CLIS: frozenset[str] = frozenset({"claude", "codex", "agy", "gemini"})
+
 PriceSource = Literal["recorded", "derived", "free", "unknown", "subscription"]
 
 # Providers that run on the user's own hardware: 0.00 is the correct price,
@@ -216,8 +226,10 @@ def price_entry(
     for a coding agent they are nine tenths of every bill.
     """
     tokens = max(0, tokens_in) + max(0, tokens_out) + max(0, tokens_cached)
-    if subscription and tokens > 0:
+    if subscription and (tokens > 0 or recorded_usd > 0):
         if recorded_usd > 0:
+            # A seat that quotes its own API-equivalent (Claude Code does)
+            # is a subscription row even when it reports no token count.
             return float(recorded_usd), "subscription"
         # Lazy, like the branch below: a report of nothing but priced seats
         # never has to load the catalogue.
@@ -238,8 +250,21 @@ def price_entry(
         return 0.0, "recorded"
 
     key = (provider or "").strip().casefold()
-    if key in LOCAL_PROVIDERS or key in SUBSCRIPTION_PROVIDERS:
+    if key in LOCAL_PROVIDERS:
         return 0.0, "free"
+    if key in SUBSCRIPTION_PROVIDERS:
+        # A seat is not free: the work is worth its API-equivalent and the
+        # label says a subscription covered it. "$0.00 free" for a paid seat
+        # was the one thing the maintainer asked never to see (2026-08-25).
+        return price_entry(
+            provider=provider,
+            model=model,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            recorded_usd=recorded_usd,
+            subscription=True,
+            tokens_cached=tokens_cached,
+        )
     if model.strip().casefold().endswith(":free"):
         return 0.0, "free"
 

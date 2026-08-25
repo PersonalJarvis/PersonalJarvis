@@ -12713,3 +12713,80 @@ never the boot.
 `pythonw` parent before it re-execs through the branded exe is the price of a
 branded taskbar button (`icon_utils.maybe_reexec_through_branded_launcher`);
 a shortcut that targets the in-venv branded exe directly skips it.
+
+---
+
+## BUG-178: the Costs section could not add up — a stuck filter emptied an area, seats read as "$0.00", Grok Build and three Claude accounts were never counted, and speech metering leaked (HIGH, FIXED 2026-08-25)
+
+**Symptom (maintainer, 2026-08-25).** Overall showed "Total spend $18.41"
+over a provider table summing to $6,000+; Agentic IDE showed "$0.00 —
+$4,452 on a subscription"; the "{name}" tab showed "0 calls" although it had
+worked an hour earlier; "{name} Voice" showed nothing; "Unpriced tokens
+16.73M". "The calculations simply do not add up."
+
+**Root causes (four deep-dive audits, one per area).**
+
+1. *Headline.* `CostsView` subtracted the seat-covered amount and showed only
+   what an API key was billed. The API-equivalent of everything is the
+   number the maintainer asked for; the split is the sub-line now.
+2. *Stuck filter.* `pickArea` cleared only surfaces and roles, so a provider
+   chosen inside Agentic IDE (`claude-cli`) survived the switch to "{name}"
+   where no row can match it. Every row filter is cleared with the area, and
+   an empty area under a row filter now says so with a one-click clear.
+3. *Missing accounts.* The CLI index scanned `~/.claude` only. Two further
+   Claude subscriptions run with their own config directories under
+   `agent-accounts/claude/<id>/` and held 396 session files / 6.5 billion
+   tokens nobody counted. `_account_roots` adds every managed account and
+   every leftover folder of a deleted one.
+4. *Grok Build invisible.* `~/.grok/sessions/**/updates.jsonl` (608 MB) had
+   no reader. `turn_completed` carries per-turn usage in the OpenAI
+   convention (input includes cache reads); `prompt_id` is the identity.
+   New `AGENT_GROK` reader; xAI's cache-read discount measured from its own
+   `costUsdTicks` is 25 %, not 10 %.
+5. *Seats priced as free.* `price_entry` returned `(0.0, "free")` for
+   `SUBSCRIPTION_PROVIDERS`. A seat is worth its API-equivalent and is
+   labelled `subscription`; "free" is for local engines and `:free` models.
+6. *Missions.* `WorkerDraftReady` carries no CLI or model; both live on
+   `WorkerSpawned` for the same `worker_id`. 64 drafts (1.78M tokens) were
+   unpriced and 189 seat quotes passed as billed. The reader joins the two,
+   the CLI's short names (`sonnet`/`opus`/`haiku`) resolve via
+   `MODEL_ALIASES`, and the Claude worker's turn count no longer lands in a
+   token column.
+7. *Codex cache hits twice.* `_agent_chat_entries` summed `input_tokens`
+   and `cached_input_tokens` for the Codex runner; only OpenAI-convention
+   runners subtract. Same class as BUG-177, second reader.
+8. *Voice pipeline cache blind.* `manager.py` read `input_tokens` and
+   `output_tokens` only; the plugins report `cache_hit_tokens` and the
+   OpenAI plugin counted them inside the input. `BrainTurnCompleted` carries
+   `tokens_cached`, the OpenAI plugin honours the canonical contract (input =
+   uncached), and grok-4.5 — 82 calls at $0.00 — has a rate.
+9. *Speech metering leaks.* `set_stt_provider` and the live language switch
+   replaced the metered STT with a bare one; dictation and the realtime
+   surface voice were never wrapped; nothing flushed outside a classic turn
+   or at session end. All four wrapped; flush before `VoiceSessionEnded`
+   and after 20 s of idle.
+10. *Index hygiene.* Codex fork replays inserted rows before their file's
+    `turn_context` (130 rows / 16.4M tokens with no model) — backfilled from
+    the session; rows of deleted transcripts lived forever (446 rows / 88M
+    tokens) — pruned when the file's root is readable and the file is gone;
+    `kimi-k2.5:cloud` and `codex-auto-review` priced; the report cache now
+    keys on the index file too.
+
+**Numbers on the same machine, before → after.** Agentic IDE $4,452 (one
+account, Claude only) → $12.6k API-equivalent across two seats, Codex, Kimi
+and Grok Build; unpriced tokens 16.7M → agy's 1.4M (the one CLI that writes
+no model id, named as such).
+
+**Still open, deliberately.** GLM panes run the Claude binary against z.ai
+with no config dir of their own and are counted as Claude Code at Anthropic
+rates (12× too high) — a spawn-side fix (own `CLAUDE_CONFIG_DIR`), T3. A
+chat turn or mission worker that drives a vendor CLI is counted once by its
+surface and once by the index; latent while the chat store holds one turn,
+needs the vendor session id persisted on both sides. Per-account
+attribution ("which seat burned this") needs an account column. An
+index-state endpoint ("63 % of 12.7 GB read") does not exist yet.
+
+**Lesson.** A spend report has as many readers as the app has ways to spend,
+and every reader is a place to be wrong in its own way. The audit that found
+these was one agent per area with the real databases in front of it, not a
+walk through the code.

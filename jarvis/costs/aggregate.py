@@ -40,6 +40,39 @@ def bucket_ms_for(since_ms: int, until_ms: int) -> int:
     return _HOUR_MS if (until_ms - since_ms) <= _HOURLY_RANGE_MS else _DAY_MS
 
 
+def day_key(ts_ms: int) -> str:
+    """The local calendar day a timestamp belongs to, as ``YYYY-MM-DD``.
+
+    Local, not UTC: a person asks "what did yesterday cost", and yesterday
+    ends when their clock says midnight, not when Greenwich agrees.
+    """
+    return datetime.fromtimestamp(max(0, ts_ms) / 1000).strftime("%Y-%m-%d")
+
+
+def day_bounds_ms(key: str) -> tuple[int, int]:
+    """``(start, end)`` in epoch ms for the local day :func:`day_key` named.
+
+    The end is the last millisecond OF that day, not the next midnight, so a
+    range built from it can never pull one call of the following day in.
+    """
+    start = datetime.strptime(key, "%Y-%m-%d")
+    end = start + timedelta(days=1)
+    return int(start.timestamp() * 1000), int(end.timestamp() * 1000) - 1
+
+
+def group_by_day(entries: list[CostEntry]) -> list[tuple[str, list[CostEntry]]]:
+    """Every line item filed under its local day, newest day first.
+
+    The section's daily report is built on this rather than on the time
+    series: a series bucket carries sums, and a day report needs the rows
+    themselves to break the day down by model, provider, area and session.
+    """
+    days: dict[str, list[CostEntry]] = defaultdict(list)
+    for entry in entries:
+        days[day_key(entry.ts_ms)].append(entry)
+    return sorted(days.items(), key=lambda kv: kv[0], reverse=True)
+
+
 @dataclass(slots=True)
 class Bucket:
     """Running totals for one group key."""
@@ -58,6 +91,9 @@ class Bucket:
     #: model's row can say what it consumed when it has no tokens to show.
     chars: int = 0
     audio_ms: int = 0
+    #: Every price source seen in the bucket, so a $0.00 row can say whether
+    #: it is a local engine (free) or a vendor with no published rate (unknown).
+    price_sources: set[str] = field(default_factory=set)
     #: Secondary dimension — which providers/models/roles fed this bucket.
     members: dict[str, float] = field(default_factory=lambda: defaultdict(float))
 
@@ -73,6 +109,7 @@ class Bucket:
             self.gap_tokens += entry.tokens_total
         if entry.price_source == "subscription":
             self.subscription_usd += entry.cost_usd
+        self.price_sources.add(entry.price_source)
         self.last_ts_ms = max(self.last_ts_ms, entry.ts_ms)
         if member:
             self.members[member] += entry.cost_usd
@@ -92,6 +129,7 @@ class Bucket:
             "subscription_usd": round(self.subscription_usd, 6),
             "chars": self.chars,
             "audio_ms": self.audio_ms,
+            "price_sources": sorted(self.price_sources),
             "last_ts_ms": self.last_ts_ms,
             "cost_share": round(self.cost_usd / total_cost, 6) if total_cost > 0 else 0.0,
             "token_share": round(tokens / total_tokens, 6) if total_tokens > 0 else 0.0,
@@ -300,8 +338,9 @@ def _bucket(store: dict[str, Bucket], key: str) -> Bucket:
 
 def _stamp(ts_ms: int, hourly: bool) -> str:
     """Local-time bucket key — the user reasons in their own day, not UTC."""
-    dt = datetime.fromtimestamp(max(0, ts_ms) / 1000)
-    return dt.strftime("%Y-%m-%dT%H:00") if hourly else dt.strftime("%Y-%m-%d")
+    if not hourly:
+        return day_key(ts_ms)
+    return datetime.fromtimestamp(max(0, ts_ms) / 1000).strftime("%Y-%m-%dT%H:00")
 
 
 def _ranked(
@@ -311,7 +350,14 @@ def _ranked(
         store.values(),
         # Cost first; a bucket that spent nothing still ranks by the tokens it
         # burned, which is what makes unpriced models visible at all.
-        key=lambda b: (-b.cost_usd, -(b.tokens_in + b.tokens_out + b.tokens_cached)),
+        # Speech rows carry no tokens and are often free, so their volume
+        # (characters, audio) breaks the tie — or the busiest voice is the one
+        # the top-N cut drops.
+        key=lambda b: (
+            -b.cost_usd,
+            -(b.tokens_in + b.tokens_out + b.tokens_cached),
+            -(b.chars + b.audio_ms),
+        ),
     )
     return [b.to_dict(total_cost, total_tokens) for b in rows[:limit]]
 

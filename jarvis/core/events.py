@@ -1449,6 +1449,11 @@ class BrainTurnStarted(Event):
 class BrainTurnCompleted(Event):
     tokens_in: int = 0
     tokens_out: int = 0
+    #: Prompt tokens served from the vendor's cache, billed at a fraction of
+    #: the input rate. Kept apart from ``tokens_in`` (which is the UNCACHED
+    #: share) so the ledger can price a voice session honestly — one that
+    #: re-sends its whole context every turn is mostly cache hits.
+    tokens_cached: int = 0
     cost_usd: float = 0.0
     text_len: int = 0
     finish_reason: str = ""

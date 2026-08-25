@@ -147,10 +147,20 @@ export function CostsView() {
     const group = SURFACE_GROUPS.find((g) => g.id === id);
     if (!group) return;
     setVisible(ENTRY_PAGE);
-    // Roles are cleared with the area: "pipeline brain" means nothing once you
-    // are looking at the speech layer, and a stale role filter would silently
-    // empty the new area.
-    setFilters((f) => ({ ...f, surfaces: [...group.surfaces], roles: [] }));
+    // Every row-level filter is cleared with the area, not just roles: a
+    // provider picked inside Agentic IDE ("claude-cli") carried over to the
+    // assistant's area, where no row can ever match it, and the tab showed
+    // "0 calls" as if nothing had been spent (maintainer, 2026-08-25). An
+    // area switch is a fresh question; only the time range and the search
+    // box survive it.
+    setFilters((f) => ({
+      ...f,
+      surfaces: [...group.surfaces],
+      roles: [],
+      providers: [],
+      models: [],
+      refs: [],
+    }));
   };
 
   const topSpender = data?.by_provider[0];
@@ -266,6 +276,33 @@ export function CostsView() {
           <EmptyRow>{t("costs_view.load_error")}</EmptyRow>
         ) : null}
 
+        {/*
+          An empty report under a row filter is indistinguishable from
+          "nothing was spent" — the tab looked broken for a day because a
+          provider picked in another area was still on (2026-08-25). Name
+          the cause and offer the one click that fixes it.
+        */}
+        {data &&
+        !summary.isLoading &&
+        (totals?.entries ?? 0) === 0 &&
+        (filters.providers.length > 0 ||
+          filters.models.length > 0 ||
+          filters.roles.length > 0 ||
+          filters.refs.length > 0) ? (
+          <EmptyRow>
+            <span>{t("costs_view.empty_filtered")}</span>{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-foreground"
+              onClick={() =>
+                setFilters((f) => ({ ...f, providers: [], models: [], roles: [], refs: [] }))
+              }
+            >
+              {t("costs_view.empty_filtered_action")}
+            </button>
+          </EmptyRow>
+        ) : null}
+
         {/* ---------------------------------------------------------------
             Headline numbers. Cost and tokens sit side by side on purpose:
             the cheapest provider is often the loudest token consumer, and
@@ -273,24 +310,26 @@ export function CostsView() {
         --------------------------------------------------------------- */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {/*
-            Money that actually left the account. A monthly seat can be worth
-            orders of magnitude more than the metered spend beside it — the
-            coding CLIs alone run to four figures a month at API rates — so
-            adding the two into one headline would read as a bill nobody got.
-            The seat's worth is named on the line below instead, which is the
-            answer to a different question and deserves its own words.
+            Everything the work was worth at API list price — metered calls
+            AND the seat-covered ones. Showing only the metered part put
+            "$18" over a table that summed to six thousand and read as a lie
+            (maintainer, 2026-08-25). The split — what an API key was billed
+            vs. what a subscription covered — is the line below, which is the
+            answer to "did money leave the account".
           */}
           <StatTile
             icon={<Coins className="h-4 w-4" />}
             label={t("costs_view.stat_total")}
-            value={money(billed)}
+            value={money(totals?.cost_usd ?? 0)}
             hint={
-              seat > 0
-                ? fill(t("costs_view.stat_total_hint_seat"), {
-                    perDay: money(perDay),
-                    seat: money(seat),
-                  })
-                : fill(t("costs_view.stat_total_hint"), { perDay: money(perDay) })
+              seat > 0 && billed <= 0
+                ? t("costs_view.stat_total_hint_seat_only")
+                : seat > 0
+                  ? fill(t("costs_view.stat_total_hint_seat"), {
+                      billed: money(billed),
+                      seat: money(seat),
+                    })
+                  : fill(t("costs_view.stat_total_hint"), { perDay: money(perDay) })
             }
             loading={summary.isLoading}
           />
@@ -427,6 +466,9 @@ export function CostsView() {
         {area?.id === "jarvis-voice" ? (
           <Panel>
             <div className="px-4 pt-4">
+              <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+                {t("costs_view.speech_area_note")}
+              </p>
               <PanelHeader
                 title={t("costs_view.speech_models_title")}
                 subtitle={t("costs_view.speech_models_subtitle")}
@@ -926,6 +968,7 @@ function SpeechModelsTable({
     { id: "spoken", label: t("costs_view.col_spoken"), width: "110px", align: "right" },
     { id: "cost", label: t("costs_view.col_api_cost"), width: "110px", align: "right" },
     { id: "per_call", label: t("costs_view.col_per_call"), width: "110px", align: "right" },
+    { id: "rate", label: t("costs_view.col_rate"), width: "110px", align: "right" },
   ];
 
   if (!loading && rows.length === 0) {
@@ -971,6 +1014,18 @@ function SpeechModelsTable({
             </Cell>
             <Cell align="right" muted>
               <span className="tabular-nums">{money(perCall)}</span>
+            </Cell>
+            <Cell align="right" muted>
+              {/* "$0.00" means two different things; the worst case is named. */}
+              <span>
+                {t(
+                  priceSourceLabelKey(
+                    row.price_sources.includes("unknown")
+                      ? "unknown"
+                      : (row.price_sources[0] ?? "recorded"),
+                  ),
+                )}
+              </span>
             </Cell>
           </TableRow>
         );

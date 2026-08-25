@@ -3,6 +3,7 @@
 Endpoints::
 
     GET /api/costs/summary   Totals + every breakdown for a time range
+    GET /api/costs/daily     One row per calendar day — the section's ledger
     GET /api/costs/entries   The individual line items behind those totals
     GET /api/costs/pricing   The rate card each seen model was priced with
 
@@ -30,7 +31,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from jarvis.costs import CostEntry, CostSources, build_report, collect_entries, default_sources
-from jarvis.costs.aggregate import bucket_ms_for, filter_entries
+from jarvis.costs.aggregate import bucket_ms_for, day_bounds_ms, filter_entries, group_by_day
 from jarvis.costs.model import ROLES, SURFACES
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,8 @@ class Bucket(BaseModel):
     chars: int = 0
     """Characters synthesised — only speech rows carry these two."""
     audio_ms: int = 0
+    price_sources: list[str] = Field(default_factory=list)
+    """How the bucket's rows were priced (free / derived / unknown / …)."""
     last_ts_ms: int
     cost_share: float
     token_share: float
@@ -139,6 +142,31 @@ class CostSummary(BaseModel):
     currency: Currency
     sources_present: list[str]
     """Which stores actually existed — an empty section is explainable."""
+
+
+class DayRow(BaseModel):
+    """One calendar day of spend, already broken down.
+
+    The section shows ONE of these per day rather than one row per session:
+    a session row carries the timestamp of its FIRST call, so a long morning
+    run sorts below a short one started later and the day's real work reads
+    as if it never happened. A day has no such ambiguity.
+    """
+
+    date: str
+    """Local ``YYYY-MM-DD`` — the day as the person's own clock drew it."""
+    since_ms: int
+    until_ms: int
+    totals: Totals
+    by_model: list[Bucket]
+    by_provider: list[Bucket]
+    by_role: list[Bucket]
+    by_surface: list[Bucket]
+
+
+class DailyLedger(BaseModel):
+    days: list[DayRow]
+    currency: Currency
 
 
 class EntryRow(BaseModel):
@@ -402,6 +430,78 @@ async def get_summary(
     return CostSummary.model_validate(payload)
 
 
+# How many rows a day keeps of each dimension. A day is read at a glance —
+# the models are what people scan (which one did the work), so it keeps more
+# of them; providers and areas are a handful anyway.
+_DAY_TOP_MODELS = 12
+_DAY_TOP_PROVIDERS = 8
+
+
+@router.get("/daily", response_model=DailyLedger, summary="One row per calendar day")
+async def get_daily(
+    request: Request,
+    days: Annotated[int, Query(ge=0, le=3650)] = 30,
+    since_ms: Annotated[int | None, Query(ge=0)] = None,
+    until_ms: Annotated[int | None, Query(ge=0)] = None,
+    provider: Annotated[list[str] | None, Query()] = None,
+    model: Annotated[list[str] | None, Query()] = None,
+    role: Annotated[list[str] | None, Query()] = None,
+    surface: Annotated[list[str] | None, Query()] = None,
+    ref: Annotated[list[str] | None, Query()] = None,
+    search: str = "",
+) -> DailyLedger:
+    """The daily ledger: one entry per day, newest first.
+
+    Every source feeds it — an API-billed voice turn, a mission worker and a
+    coding CLI on a monthly seat all land in the same day. Nothing here is
+    vendor-specific: the day names whichever models it actually saw.
+
+    The per-day breakdowns come from :func:`build_report` over that day's own
+    rows, so a day's numbers are computed exactly the way the section's
+    headline numbers are and cannot drift from them.
+    """
+    sources = _sources(request)
+    start, end = _range(days, since_ms, until_ms)
+    entries = filter_entries(
+        _cache.get(sources, start, end),
+        providers=_split(provider),
+        models=_split(model),
+        roles=_split(role),
+        surfaces=_split(surface),
+        refs=_split(ref),
+        search=search,
+    )
+    rows: list[DayRow] = []
+    for key, day_entries in group_by_day(entries):
+        day_start, day_end = day_bounds_ms(key)
+        # ``build_report`` reads first/last from the ends of the list, and the
+        # collector concatenates one source after another rather than merging
+        # them, so a day has to be put in order before it can say when it
+        # started and when it stopped.
+        day_entries.sort(key=lambda e: e.ts_ms)
+        report = build_report(
+            day_entries,
+            since_ms=day_start,
+            until_ms=day_end,
+            top_n=_DAY_TOP_MODELS,
+        )
+        rows.append(
+            DayRow(
+                date=key,
+                since_ms=day_start,
+                until_ms=day_end,
+                totals=Totals.model_validate(report.totals),
+                by_model=[Bucket.model_validate(b) for b in report.by_model],
+                by_provider=[
+                    Bucket.model_validate(b) for b in report.by_provider[:_DAY_TOP_PROVIDERS]
+                ],
+                by_role=[Bucket.model_validate(b) for b in report.by_role],
+                by_surface=[Bucket.model_validate(b) for b in report.by_surface],
+            )
+        )
+    return DailyLedger(days=rows, currency=_currency())
+
+
 @router.get("/entries", response_model=EntriesPage, summary="Individual spend line items")
 async def get_entries(
     request: Request,
@@ -460,7 +560,12 @@ async def get_pricing(
 
     sources = _sources(request)
     start, end = _range(days, None, None)
-    seen = {e.model for e in _cache.get(sources, start, end) if e.model}
+    # A row without a model id is exactly what makes gap_tokens non-zero,
+    # so it is listed by its provider rather than silently dropped.
+    seen = {
+        e.model or f"({e.provider} — no model recorded)"
+        for e in _cache.get(sources, start, end)
+    }
     rows: list[RateRow] = []
     for name in sorted(seen):
         rates = resolve_rates(name)

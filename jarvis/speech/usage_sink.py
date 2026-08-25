@@ -49,18 +49,32 @@ class SpeechSpendRecorder:
     a turn that ended in a way that never reached it.
     """
 
+    #: A bucket older than this when the next call arrives belongs to an
+    #: earlier moment — an announcement spoken between turns, a readback
+    #: during a realtime call — and is settled on its own rather than folded
+    #: into whatever turn happens to end next.
+    IDLE_FLUSH_S = 20.0
+
     def __init__(self, bus: Any | None) -> None:
         """``bus`` is anything with an awaitable ``publish`` — typed loosely so
         this module never drags the bus implementation onto the import path."""
         self._bus = bus
         self._trace = ""
         self._buckets: dict[tuple[str, str, str], _Bucket] = {}
+        self._last_record_s = 0.0
 
     # -- UsageSink ---------------------------------------------------------
 
     def record(self, usage: SpeechUsage) -> None:
         """Take one metered call. Must not block and must not raise."""
         try:
+            now_s = time.monotonic()
+            if self._buckets and now_s - self._last_record_s > self.IDLE_FLUSH_S:
+                # Out-of-turn speech has no turn boundary to flush it; time is
+                # the boundary then. Realtime calls speak all their readbacks
+                # this way (trace_id is "" outside the classic pipeline).
+                self.flush()
+            self._last_record_s = now_s
             if usage.trace_id and usage.trace_id != self._trace:
                 # A new turn began without anyone flushing the last one.
                 self.flush()

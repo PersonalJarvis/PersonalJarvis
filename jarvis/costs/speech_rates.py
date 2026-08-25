@@ -42,6 +42,7 @@ LOCAL_SPEECH_PROVIDERS: frozenset[str] = frozenset(
         "faster-whisper",   # jarvis/plugins/stt/fwhisper.py
         "nemotron-local",   # jarvis/plugins/stt/nemotron_local.py
         "piper-local",      # jarvis/plugins/tts/piper_local.py
+        "sapi5",            # jarvis/plugins/tts/inworld_tts.py — Windows emergency voice
     }
 )
 

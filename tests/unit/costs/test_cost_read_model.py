@@ -518,3 +518,131 @@ def test_filters_narrow_the_entries(sources: CostSources) -> None:
 def test_empty_filters_keep_everything(sources: CostSources) -> None:
     entries = collect_entries(sources)
     assert filter_entries(entries) == entries
+
+
+# ---------------------------------------------------------------------------
+# Missions: who did the work lives on WorkerSpawned, not on the draft
+# ---------------------------------------------------------------------------
+
+
+def _missions_db_with_spawn(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_MISSIONS_DDL)
+    conn.execute(
+        "INSERT INTO missions (id, prompt, state, created_ms, cost_usd) VALUES (?,?,?,?,?)",
+        ("m-2", "write the tests", "done", T0, 0.0),
+    )
+    spawn = {
+        "event_type": "WorkerSpawned",
+        "worker_id": "w-9",
+        "step": {"worker_cli": "claude", "model": "sonnet"},
+        "cli": "claude",
+        "model": "sonnet",
+    }
+    rows = [
+        ("m-2", "w-9", "WorkerSpawned", T0 + 1_000, json.dumps(spawn)),
+        # A Claude Code seat quoting its own API-equivalent, and reporting its
+        # TURN count in the token slot (real shape, 2026-08-25).
+        ("m-2", "w-9", "WorkerDraftReady", T0 + 5_000,
+         json.dumps({"tokens_used": 4, "cost_usd": 3.15})),
+        # The same worker on a draft that reported tokens but no price.
+        ("m-2", "w-9", "WorkerDraftReady", T0 + 6_000,
+         json.dumps({"tokens_used": 33_000, "cost_usd": 0.0})),
+    ]
+    conn.executemany(
+        "INSERT INTO mission_events (mission_id, worker_id, event_type, ts_ms, payload_json) "
+        "VALUES (?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_mission_draft_takes_cli_and_model_from_its_spawn(tmp_path: Path) -> None:
+    path = tmp_path / "missions.db"
+    _missions_db_with_spawn(path)
+    rows = collect_entries(CostSources(missions_db=path))
+    assert len(rows) == 2
+    assert {e.provider for e in rows} == {"claude-cli"}
+    assert {e.model for e in rows} == {"sonnet"}
+
+
+def test_mission_seat_quote_is_subscription_not_billed(tmp_path: Path) -> None:
+    path = tmp_path / "missions.db"
+    _missions_db_with_spawn(path)
+    quoted = next(e for e in collect_entries(CostSources(missions_db=path)) if e.cost_usd == 3.15)
+    assert quoted.price_source == "subscription"
+    # 4 "tokens" for $3.15 is a turn count; it must not land in a token column.
+    assert quoted.tokens_in == 0
+
+
+def test_mission_short_model_name_is_priced_not_a_gap(tmp_path: Path) -> None:
+    path = tmp_path / "missions.db"
+    _missions_db_with_spawn(path)
+    tokens_only = next(
+        e for e in collect_entries(CostSources(missions_db=path)) if e.tokens_in == 33_000
+    )
+    assert tokens_only.price_source == "subscription"
+    assert tokens_only.cost_usd > 0
+
+
+# ---------------------------------------------------------------------------
+# Agent chat: the OpenAI usage convention counts cache hits inside the input
+# ---------------------------------------------------------------------------
+
+
+def _agent_chat_db_two_runners(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_AGENT_CHAT_DDL)
+    conn.execute(
+        "INSERT INTO agent_chat_sessions (session_id, title, provider, model, created_ms, "
+        "updated_ms) VALUES (?,?,?,?,?,?)",
+        ("chat-2", "Two runners", "claude", "claude-opus-4-7-20251022", T0, T0),
+    )
+    events = [
+        ("chat-2", 1, T0 + 1_000, "turn_started", json.dumps(
+            {"turn_id": "t-codex", "runner": "codex-cli", "provider": "codex",
+             "model": "gpt-5.5"})),
+        ("chat-2", 2, T0 + 2_000, "turn_finished", json.dumps(
+            {"turn_id": "t-codex", "status": "done", "cost_usd": 0.0,
+             "usage": {"input_tokens": 1_000, "cached_input_tokens": 900,
+                       "output_tokens": 10}})),
+        ("chat-2", 3, T0 + 3_000, "turn_started", json.dumps(
+            {"turn_id": "t-claude", "runner": "claude-cli", "provider": "claude",
+             "model": "claude-opus-4-7-20251022"})),
+        ("chat-2", 4, T0 + 4_000, "turn_finished", json.dumps(
+            {"turn_id": "t-claude", "status": "done", "cost_usd": 0.0,
+             "usage": {"input_tokens": 1_000, "cache_read_input_tokens": 900,
+                       "output_tokens": 10}})),
+    ]
+    conn.executemany(
+        "INSERT INTO agent_chat_events (session_id, seq, ts_ms, kind, payload) VALUES (?,?,?,?,?)",
+        events,
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_codex_cache_hits_are_subtracted_from_input_but_claude_ones_are_not(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "agent_chat.db"
+    _agent_chat_db_two_runners(path)
+    rows = {e.model: e for e in collect_entries(CostSources(agent_chat_db=path))}
+    assert rows["gpt-5.5"].tokens_in == 100
+    assert rows["gpt-5.5"].tokens_cached == 900
+    assert rows["claude-opus-4-7-20251022"].tokens_in == 1_000
+    assert rows["claude-opus-4-7-20251022"].tokens_cached == 900
+
+
+def test_a_subscription_provider_is_priced_not_free() -> None:
+    """A paid seat is worth its API-equivalent; "$0.00 free" is for local engines."""
+    cost, source = price_entry(
+        provider="codex-subscription-realtime",
+        model="gpt-5.5",
+        tokens_in=1_000_000,
+        tokens_out=0,
+        recorded_usd=0.0,
+    )
+    assert source == "subscription"
+    assert cost > 0

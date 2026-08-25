@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .model import (
+    MISSION_SUBSCRIPTION_CLIS,
+    OPENAI_CONVENTION_RUNNERS,
     ROLE_AGENT,
     ROLE_PIPELINE,
     ROLE_REALTIME,
@@ -62,7 +64,13 @@ class CostSources:
     cli_index_dir: Path | None = None
 
     def existing(self) -> list[Path]:
-        candidates = (self.sessions_db, self.missions_db, self.agent_chat_db)
+        candidates = [self.sessions_db, self.missions_db, self.agent_chat_db]
+        if self.cli_index_dir is not None:
+            # The index is a source like the others: a refresh that adds
+            # thousands of CLI turns must invalidate a cached report.
+            from .cli_usage_index import DB_NAME
+
+            candidates.append(self.cli_index_dir / DB_NAME)
         return [p for p in candidates if p and p.exists()]
 
     def newest_mtime(self) -> float:
@@ -204,6 +212,7 @@ def _voice_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator[
                     model=str(payload.get("model") or ""),
                     tokens_in=_int(payload.get("tokens_in")),
                     tokens_out=_int(payload.get("tokens_out")),
+                    tokens_cached=_int(payload.get("tokens_cached")),
                     recorded_usd=_float(payload.get("cost_usd")),
                     ref_id=str(row["session_id"] or ""),
                     label=_clip((turn or {}).get("user_text")),
@@ -255,6 +264,7 @@ def _voice_entry(
     recorded_usd: float,
     ref_id: str,
     label: str,
+    tokens_cached: int = 0,
 ) -> CostEntry:
     cost, source = price_entry(
         provider=provider,
@@ -262,6 +272,7 @@ def _voice_entry(
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         recorded_usd=recorded_usd,
+        tokens_cached=tokens_cached,
     )
     return CostEntry(
         ts_ms=ts_ms,
@@ -271,7 +282,7 @@ def _voice_entry(
         model=model,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
-        tokens_cached=0,
+        tokens_cached=tokens_cached,
         cost_usd=cost,
         price_source=source,
         ref_id=ref_id,
@@ -375,6 +386,12 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 continue
             session = sessions.get(str(row["session_id"] or ""))
             start = starts.get(str(payload.get("turn_id") or ""), {})
+            if start.get("runner", "") in OPENAI_CONVENTION_RUNNERS:
+                # Same asymmetry the CLI index documents: the OpenAI usage
+                # object counts cache hits INSIDE input_tokens. Summing both
+                # billed every cached token twice. Never applied to Claude or
+                # agy, which report the two disjoint.
+                tokens_in = max(0, tokens_in - tokens_cached)
             session_provider = str(session["provider"] if session is not None else "")
             provider = start.get("provider") or session_provider or "agent-cli"
             model = start.get("model") or str(session["model"] if session is not None else "")
@@ -415,10 +432,17 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
 def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator[CostEntry]:
     """Autonomous worker spend, per draft the worker delivered.
 
-    ``WorkerDraftReady`` carries the worker's own ``tokens_used`` / ``cost_usd``.
-    A worker driven by a subscription CLI reports zeros — that is the honest
-    number (the seat is paid monthly), and it is labelled as such rather than
-    left looking like missing data.
+    ``WorkerDraftReady`` carries the worker's own ``tokens_used`` / ``cost_usd``
+    and NOTHING about who did the work: the CLI and the model live on the
+    ``WorkerSpawned`` event of the same ``worker_id``, so the two are joined
+    here. Without the join every draft was a nameless "mission-worker" with
+    no rate (64 unpriced drafts, 2026-08-25), and a Claude Code seat's own
+    API-equivalent quote passed as money that moved.
+
+    ``tokens_used`` is not always tokens: the Claude worker reports its TURN
+    count there (1-31 per draft against a three-figure cost). A row whose
+    recorded cost could not possibly come from that many tokens is emitted
+    cost-only rather than writing a turn count into a token column.
     """
     conn = _connect(path)
     if conn is None:
@@ -430,6 +454,20 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
             str(r["id"]): _clip(r["prompt"])
             for r in conn.execute("SELECT id, prompt FROM missions")
         }
+        spawned: dict[str, tuple[str, str]] = {}
+        for r in conn.execute(
+            "SELECT worker_id, payload_json FROM mission_events WHERE event_type = 'WorkerSpawned'"
+        ):
+            try:
+                meta = json.loads(r["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            step = meta.get("step") if isinstance(meta.get("step"), dict) else {}
+            cli = str(meta.get("cli") or step.get("worker_cli") or "")
+            model = str(meta.get("model") or step.get("model") or "")
+            spawned[str(r["worker_id"] or "")] = (cli, model)
         for row in conn.execute(
             "SELECT mission_id, worker_id, ts_ms, payload_json FROM mission_events "
             "WHERE event_type = 'WorkerDraftReady' AND ts_ms BETWEEN ? AND ?",
@@ -446,14 +484,20 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
             recorded = _float(payload.get("cost_usd"))
             if tokens <= 0 and recorded <= 0:
                 continue
-            provider = str(payload.get("provider") or "mission-worker")
-            model = str(payload.get("model") or "")
+            cli, spawned_model = spawned.get(str(row["worker_id"] or ""), ("", ""))
+            provider = str(payload.get("provider") or (f"{cli}-cli" if cli else "mission-worker"))
+            model = str(payload.get("model") or spawned_model)
+            # A turn count masquerading as tokens: no model call costs more
+            # than a cent per token. Keep the money, drop the fake quantity.
+            if recorded > 0 and tokens > 0 and recorded / tokens > 0.01:
+                tokens = 0
             cost, source = price_entry(
                 provider=provider,
                 model=model,
                 tokens_in=tokens,
                 tokens_out=0,
                 recorded_usd=recorded,
+                subscription=cli in MISSION_SUBSCRIPTION_CLIS,
             )
             mission_id = str(row["mission_id"] or "")
             yield CostEntry(

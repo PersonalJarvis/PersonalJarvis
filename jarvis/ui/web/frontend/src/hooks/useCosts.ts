@@ -56,6 +56,8 @@ export interface CostBucket {
   /** Speech only: characters spoken and audio heard. Zero on token rows. */
   chars: number;
   audio_ms: number;
+  /** Every price source seen in the bucket: free, derived, recorded, unknown, subscription. */
+  price_sources: string[];
   last_ts_ms: number;
   cost_share: number;
   token_share: number;

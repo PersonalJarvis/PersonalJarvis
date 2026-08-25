@@ -71,8 +71,10 @@ from jarvis.core.protocols import (
     BrainRequest,
     CostRecord,
     ImageBlock,
+    ReasoningEffort,
     Tool,
 )
+from jarvis.brain.turn_override import TurnOverride
 from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
@@ -140,6 +142,13 @@ _PUBLISH_RESPONSE_EVENT: ContextVar[bool] = ContextVar(
 )
 _TURN_HISTORY_OVERRIDE: ContextVar[tuple[BrainMessage, ...] | None] = ContextVar(
     "jarvis.brain.manager.turn_history_override",
+    default=None,
+)
+#: The typed chat's per-turn pick (jarvis/brain/turn_override.py): read where
+#: the chain, the tool surface and the dispatcher are built; never persisted on
+#: the manager, so a concurrent voice turn keeps its own brain.
+_TURN_OVERRIDE: ContextVar[TurnOverride | None] = ContextVar(
+    "jarvis.brain.manager.turn_override",
     default=None,
 )
 
@@ -3350,9 +3359,16 @@ class BrainManager:
             log.warning("No credential-ready, tool-capable Tool Model is available.")
         return ready
 
-    def _get_brain(self, name: str, model: str | None = None) -> Brain:
-        """Retrieves a Brain instance from the cache, or builds a new one."""
-        key = (name, model)
+    def _get_brain(
+        self, name: str, model: str | None = None, *, scope: str | None = None
+    ) -> Brain:
+        """Retrieves a Brain instance from the cache, or builds a new one.
+
+        ``scope`` namespaces the cache entry (``"<name>@<scope>"``): a turn
+        under a ``TurnOverride`` gets its own instance, so its client — and
+        the credential that client resolved — is never the voice brain's.
+        """
+        key = (name if scope is None else f"{name}@{scope}", model)
         if key in self._brain_cache:
             return self._brain_cache[key]
 
@@ -3436,7 +3452,7 @@ class BrainManager:
         tools_override: dict[str, Tool] | None = None,
         max_turns: int | None = None,
         deadline_s: float | None = None,
-        reasoning_effort: Literal["none"] | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
         delegated_voice: bool = False,
         tool_context: dict[str, Any] | None = None,
     ) -> BrainDispatcher:
@@ -3490,6 +3506,30 @@ class BrainManager:
             tool_context=tool_context,
             **kwargs,
         )
+
+    def _apply_turn_override_tools(
+        self, tools: dict[str, Tool] | None, override: TurnOverride
+    ) -> dict[str, Tool]:
+        """The turn's tool surface plus the override's extra hands, then its filter."""
+        base: dict[str, Tool] = dict(tools) if tools is not None else dict(self._tools)
+        base.update(override.tools_extra)
+        if override.tool_filter is not None:
+            base = override.tool_filter(base)
+        return base
+
+    @staticmethod
+    def _override_dispatch_kwargs(override: TurnOverride | None) -> dict[str, Any]:
+        """Dispatcher kwargs for a caller-picked turn; ``{}`` for a classic one."""
+        if override is None:
+            return {}
+        kwargs: dict[str, Any] = {}
+        if override.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = override.reasoning_effort
+        if override.tool_context:
+            kwargs["tool_context"] = dict(override.tool_context)
+        if override.max_turns is not None:
+            kwargs["max_turns"] = override.max_turns
+        return kwargs
 
     def _build_tool_ack_emitter(
         self, user_text: str
@@ -4489,8 +4529,13 @@ class BrainManager:
                 providers[canonical] = BrainProviderConfig(**data)
 
         # Drop cached instances for this provider so the new model is used; lift
-        # any session-level deactivation (mirrors ``reactivate_provider``).
-        for key in [k for k in self._brain_cache if k[0] == canonical]:
+        # any session-level deactivation (mirrors ``reactivate_provider``). The
+        # scoped instances of a per-turn override ("<name>@<scope>") go too.
+        for key in [
+            k
+            for k in self._brain_cache
+            if k[0] == canonical or str(k[0]).startswith(canonical + "@")
+        ]:
             self._brain_cache.pop(key, None)
         self._dead_providers.discard(canonical)
         self._dead_provider_models = {
@@ -10100,12 +10145,15 @@ class BrainManager:
         )
 
     def _first_tool_capable_provider(
-        self, level: str
+        self, level: str, *, exclude: str | None = None
     ) -> tuple[str, str | None] | None:
         """First AVAILABLE provider that can emit tool_calls — used to lead a
         tool/action turn when the active talker cannot. deep_brain first, then a
         stable cross-provider order. Returns (name, model) or None when no
-        tool-capable provider is reachable (then the chain stays unchanged)."""
+        tool-capable provider is reachable (then the chain stays unchanged).
+        ``exclude`` names the talker being led (the active brain by default;
+        a per-turn pick under an override)."""
+        skip = exclude if exclude is not None else self._active_name
         available = set(self._registry.available())
         order: list[str] = []
         db = self._config.brain.deep_brain
@@ -10114,7 +10162,7 @@ class BrainManager:
         order += ["gemini", "claude-api", "openai", "openrouter", "grok", "nvidia"]
         seen: set[str] = set()
         for name in order:
-            if name in seen or name == self._active_name or name not in available:
+            if name in seen or name == skip or name not in available:
                 continue
             seen.add(name)
             # Skip providers dead-listed or rate-limited THIS session — the
@@ -10156,6 +10204,38 @@ class BrainManager:
             pass
         return False
 
+    def _override_chain(
+        self, override: TurnOverride, level: str
+    ) -> list[tuple[str, str | None]]:
+        """The chain for a caller-picked turn: exactly the pick, no stand-in.
+
+        A person who chose a model in the chat gets that model or an honest
+        error — never a silent cross-provider fallback (the "wrong model used,
+        shown right" defect, anti-drift mandate 2026-06-29). The one thing kept
+        from the normal chain is the intelligent-router lead: when the pick
+        cannot emit tool_calls at all, a tool-capable provider leads the turn
+        and falls through to the pick for the answer, exactly as for a
+        tool-incapable voice brain (``_router_lead_key``).
+        """
+        pick: tuple[str, str | None] = (override.provider, override.model)
+        chain: list[tuple[str, str | None]] = [pick]
+        intelligent = bool(getattr(self._config.brain.routing, "intelligent_router", True))
+        if (
+            intelligent
+            and getattr(self, "_turn_substantive", False)
+            and not self._brain_can_call_tools(override.provider, override.model)
+        ):
+            helper = self._first_tool_capable_provider(level, exclude=override.provider)
+            if helper is not None:
+                log.info(
+                    "Intelligent router: picked %s cannot call tools — %s leads this "
+                    "turn and picks the tool (falls through to %s if none).",
+                    override.provider, helper[0], override.provider,
+                )
+                self._router_lead_key = helper
+                chain.insert(0, helper)
+        return chain
+
     def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
         """Returns a prioritised list of (provider, model) attempts."""
         active = self._active_name
@@ -10164,6 +10244,10 @@ class BrainManager:
         # make the loop wrongly fall through). Set below only when we prepend an
         # intelligent-router lead.
         self._router_lead_key: tuple[str, str | None] | None = None
+
+        override = _TURN_OVERRIDE.get()
+        if override is not None:
+            return self._override_chain(override, level)
 
         # Capability-driven tool delegation (NOT a per-provider hardcode): the
         # subscription-CLI brains (Codex over the ChatGPT login, Antigravity over
@@ -10311,6 +10395,7 @@ class BrainManager:
         history_override: Iterable[BrainMessage] | None = None,
         force_output_language: str | None = None,
         consume_pending_voice_attachments: bool = False,
+        turn_override: TurnOverride | None = None,
     ) -> str:
         """Generate a turn, optionally leaving its public response event to the caller.
 
@@ -10320,11 +10405,15 @@ class BrainManager:
         ``history_override`` supplies caller-owned context for this turn without
         mutating the manager's shared conversation buffer; combine it with
         ``use_history=False`` when the caller owns history persistence too.
+        ``turn_override`` runs the turn on a caller-picked provider / model /
+        effort with extra tools and tool context (the typed chat's pick) —
+        the live brain, its config and its dead-lists are left untouched.
         """
         token = _PUBLISH_RESPONSE_EVENT.set(bool(publish_response))
         history_token = _TURN_HISTORY_OVERRIDE.set(
             tuple(history_override) if history_override is not None else None
         )
+        override_token = _TURN_OVERRIDE.set(turn_override)
         skill_state = _SkillTurnState(self)
         skill_token = _SKILL_TURN_STATE.set(skill_state)
         try:
@@ -10353,6 +10442,7 @@ class BrainManager:
             self._skill_turn_source_fallback = skill_state.source
             self._skill_injected_inline_fallback = skill_state.injected_inline
             _SKILL_TURN_STATE.reset(skill_token)
+            _TURN_OVERRIDE.reset(override_token)
             _TURN_HISTORY_OVERRIDE.reset(history_token)
             _PUBLISH_RESPONSE_EVENT.reset(token)
 
@@ -10909,6 +10999,15 @@ class BrainManager:
                 ", ".join(contextual_tool_names),
             )
             forced_spawn = None
+        elif (
+            _TURN_OVERRIDE.get() is not None
+            and not _TURN_OVERRIDE.get().allow_force_spawn  # type: ignore[union-attr]
+            and not self._is_explicit_heavy_request(user_text)
+        ):
+            # A caller-picked turn (the typed chat) IS the worker in its folder:
+            # the heuristic must not hand its work to a background mission. An
+            # explicit "spawn an agent for this" still spawns.
+            forced_spawn = None
         else:
             forced_spawn = await self._force_spawn_worker(
                 user_text, trace_id=turn_trace_id, source_layer=source_layer,
@@ -11136,6 +11235,9 @@ class BrainManager:
             return await self._provider_down_reply(trace_uuid, cause="missing_key")
 
         history_override = _TURN_HISTORY_OVERRIDE.get()
+        # The typed chat's pick, if any: its own credential scope and no
+        # dead-listing — a chat key that fails must not silence the voice brain.
+        turn_override = _TURN_OVERRIDE.get()
         history = (
             list(history_override)
             if history_override is not None
@@ -11307,14 +11409,16 @@ class BrainManager:
             # Skip providers already marked dead in THIS turn.
             # Example: gemini-fast fails with missing_key → gemini-deep would
             # still be in the chain but would fail for the same reason. Skip
-            # saves an avoidable subprocess/network call.
-            if prov_name in self._dead_providers:
+            # saves an avoidable subprocess/network call. An overridden turn
+            # runs on its own credential scope, so the voice brain's dead-list
+            # is not its truth.
+            if turn_override is None and prov_name in self._dead_providers:
                 continue
             # Model-scoped dead-list: this exact (provider, model) took a
             # billing rejection earlier THIS turn but the provider itself
             # was kept alive because another model was still untried — see
             # `_dead_provider_models`.
-            if (prov_name, model) in self._dead_provider_models:
+            if turn_override is None and (prov_name, model) in self._dead_provider_models:
                 continue
             # Circuit breaker: skip rate-limited providers during cooldown
             if not self._rate_tracker.is_available(prov_name, model):
@@ -11325,15 +11429,24 @@ class BrainManager:
                 continue
 
             try:
-                brain = self._get_brain(prov_name, model)
+                brain = self._get_brain(
+                    prov_name,
+                    model,
+                    scope=turn_override.credential_scope if turn_override else None,
+                )
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 msg = str(exc)
                 kind = _classify_provider_error(msg, default="init_fail")
                 # On missing_key: remove provider from the chain for the rest
                 # of the session. Prevents each voice turn from running 8x
-                # sequentially against the same missing keys.
-                if kind in _DEAD_LIST_KINDS and prov_name not in self._dead_providers:
+                # sequentially against the same missing keys. Never for an
+                # overridden turn: its key is the chat's, not the voice's.
+                if (
+                    turn_override is None
+                    and kind in _DEAD_LIST_KINDS
+                    and prov_name not in self._dead_providers
+                ):
                     self._dead_providers.add(prov_name)
                     if kind == "missing_key":
                         log.warning(
@@ -11494,6 +11607,13 @@ class BrainManager:
                 _turn_tools = self._hide_screenshot_for_blind_brain(
                     _turn_tools, brain, prov_name=prov_name, model=model
                 )
+            if turn_override is not None:
+                # The caller's extra hands (a chat's folder tools) join the
+                # surface AFTER every gate above, and a plan-mode filter runs
+                # last — the gates decide what Jarvis may reach for, the
+                # override only adds a folder and, in plan mode, takes the
+                # writing hands away.
+                _turn_tools = self._apply_turn_override_tools(_turn_tools, turn_override)
             # Active-model self-awareness: stamp the provider/model that is about
             # to answer so _build_system_prompt injects the correct, specific
             # self-identity (anti-"I'm Gemini" hallucination, forensic 2026-06-20).
@@ -11517,7 +11637,7 @@ class BrainManager:
                     "delegated_voice": True,
                 }
                 if prefer_tool_model
-                else {}
+                else self._override_dispatch_kwargs(turn_override)
             )
             disp = self._build_dispatcher(
                 brain, tools_override=_turn_tools, **_disp_kwargs
@@ -11693,6 +11813,9 @@ class BrainManager:
                 # die Voice-Session-DB.
                 tokens_in_total = int(agg.usage.get("input_tokens", 0)) if agg.usage else 0
                 tokens_out_total = int(agg.usage.get("output_tokens", 0)) if agg.usage else 0
+                # Every plugin reports cache hits under the protocol key and
+                # keeps ``input_tokens`` to the uncached share.
+                tokens_cached_total = int(agg.usage.get("cache_hit_tokens", 0)) if agg.usage else 0
                 cost_usd_total = 0.0
                 try:
                     from jarvis.brain.cost import (
@@ -11703,9 +11826,11 @@ class BrainManager:
                     # from the provider feed — ONE refresh per model per
                     # process (capped at 3 s), so a new generation stops
                     # shipping as "$0.00" until someone edits the table.
-                    if tokens_in_total > 0 or tokens_out_total > 0:
+                    if tokens_in_total > 0 or tokens_out_total > 0 or tokens_cached_total > 0:
                         await ensure_pricing_for(model)
-                    cost_usd_total = calculate_cost_usd(model, tokens_in_total, tokens_out_total)
+                    cost_usd_total = calculate_cost_usd(
+                        model, tokens_in_total, tokens_out_total, tokens_cached_total
+                    )
                     if cost_usd_total == 0.0 and tokens_in_total > 0:
                         # An unknown model prices as $0.00 and every surface
                         # then renders the turn as free — that silence is how
@@ -11733,10 +11858,20 @@ class BrainManager:
                     model=model,
                     tokens_in=tokens_in_total,
                     tokens_out=tokens_out_total,
+                    tokens_cached=tokens_cached_total,
                     cost_usd=cost_usd_total,
                     text_len=len(response_text or ""),
                     finish_reason=str(getattr(agg, "finish_reason", "ok") or "ok"),
                 ))
+                if turn_override is not None:
+                    turn_override.receipt.record(
+                        provider=prov_name,
+                        model=model,
+                        tokens_in=tokens_in_total,
+                        tokens_out=tokens_out_total,
+                        cost_usd=cost_usd_total,
+                        finish_reason=str(getattr(agg, "finish_reason", "ok") or "ok"),
+                    )
 
                 if idx > 0:
                     log.info(
@@ -11765,7 +11900,11 @@ class BrainManager:
                         (prov_name, model, "rate_limit", "HTTP 429"))
                 else:
                     log.warning("Brain %s(%s) fehlgeschlagen: %s", prov_name, model, exc)
-                    if kind in _DEAD_LIST_KINDS and prov_name not in self._dead_providers:
+                    if (
+                        turn_override is None
+                        and kind in _DEAD_LIST_KINDS
+                        and prov_name not in self._dead_providers
+                    ):
                         # account_blocked (e.g. a bare 402) is model-scoped when
                         # the SAME provider still has an untried model later in
                         # this turn's chain (a capped paid model with a funded
