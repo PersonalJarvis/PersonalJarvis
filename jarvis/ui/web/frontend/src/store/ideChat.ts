@@ -37,20 +37,49 @@ export interface IdeWorkspace {
  */
 export type IdeSidebarFace = "chats" | "sections";
 
+/**
+ * A session list asking for one pane to be brought to the front.
+ *
+ * The list lives in the app sidebar, the panes live inside the IDE view, and
+ * neither can reach the other by props — so the ask travels through here and
+ * the view performs it. The `nonce` is what makes asking for the SAME pane
+ * twice work: without it a second click on the pane already staged changes
+ * nothing observable, and the click reads as broken.
+ */
+export interface PaneRequest {
+  workspaceId: string;
+  pane: string;
+  nonce: number;
+}
+
 interface IdeChatStore {
   view: WorkspaceView;
   workspace: IdeWorkspace | null;
   sidebarFace: IdeSidebarFace;
+  paneRequest: PaneRequest | null;
+  /**
+   * The pane the chat view currently has on its stage, or null in grid view.
+   *
+   * Published by the grid so a session list somewhere else can mark the row
+   * the user is reading. A list that cannot say which of eleven sessions is
+   * open is a list you have to click through to find out.
+   */
+  stagedPane: string | null;
 
   setView: (next: WorkspaceView) => void;
   setWorkspace: (next: IdeWorkspace | null) => void;
   setSidebarFace: (next: IdeSidebarFace) => void;
+  /** Bring a pane to the front, switching workspace first when it lives elsewhere. */
+  requestPane: (workspaceId: string, pane: string) => void;
+  setStagedPane: (pane: string | null) => void;
 }
 
 export const useIdeChatStore = create<IdeChatStore>((set) => ({
   view: storedViewMode() ?? "grid",
   workspace: null,
   sidebarFace: "chats",
+  paneRequest: null,
+  stagedPane: null,
 
   setView: (next) => {
     rememberViewMode(next);
@@ -62,4 +91,12 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
 
   setWorkspace: (next) => set({ workspace: next }),
   setSidebarFace: (next) => set({ sidebarFace: next }),
+  requestPane: (workspaceId, pane) =>
+    set((state) => ({
+      paneRequest: { workspaceId, pane, nonce: (state.paneRequest?.nonce ?? 0) + 1 },
+    })),
+  setStagedPane: (pane) =>
+    // Guarded: the grid publishes this from an effect that runs on every poll,
+    // and an unconditional set would wake every subscriber each time.
+    set((state) => (state.stagedPane === pane ? state : { stagedPane: pane })),
 }));

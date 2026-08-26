@@ -262,23 +262,36 @@ export const WIZARD_COLUMN_HEIGHT = 2;
 /**
  * The panes a wizard-opened workspace of ``count`` terminals starts with.
  *
- * Columns of {@link WIZARD_COLUMN_HEIGHT}, each filled top to bottom before the
- * next is opened — which is literally what the backend writes when it opens a
- * session from the wizard (`agentic_ide/session.py`, the same arithmetic). Two
- * terminals stand one above the other; three are a full column plus one beside
- * it; six are three columns of two.
+ * Columns of {@link WIZARD_COLUMN_HEIGHT} — which is literally the shape the
+ * backend writes when it opens a session from the wizard
+ * (`agentic_ide/layout_tree.py`, `wizard_tree`). Two terminals stand one above
+ * the other; three are a full column plus one beside it; six are three columns
+ * of two.
  *
- * It exists so the preview cannot describe a workspace the backend would never
- * build. An earlier preview took a shortcut and derived its dots from the raw
- * terminal COUNT, which happened to agree only while every terminal got a
- * column of its own. Feed `paneGrid` the same panes the grid will receive and
- * the preview stops being a second opinion.
+ * Which pane lands in which cell is the other half, and the two halves parted
+ * ways on 2026-08-25. A workspace whose columns form a full RECTANGLE is now
+ * stood on its rows by the backend, so that each band can be resized on its
+ * own instead of one full-height seam dragging every band with it — and a tree
+ * standing on its rows is read across the top band first. So a rectangle is
+ * filled across, and a ragged shape (a count that does not fill its last
+ * column) keeps being filled down, because it is not stood on anything.
+ *
+ * The whole function exists so the preview cannot describe a workspace the
+ * backend would never build — and that now includes which terminal is WHERE,
+ * because the preview labels its tiles with the agents' own names.
  */
 export function wizardPanes(count: number): Positioned[] {
-  return Array.from({ length: Math.max(0, Math.trunc(count)) }, (_, index) => ({
-    column: Math.floor(index / WIZARD_COLUMN_HEIGHT),
-    slot: index % WIZARD_COLUMN_HEIGHT,
-  }));
+  const total = Math.max(0, Math.trunc(count));
+  const across = Math.ceil(total / WIZARD_COLUMN_HEIGHT);
+  const rectangular = across > 0 && total === across * WIZARD_COLUMN_HEIGHT;
+  return Array.from({ length: total }, (_, index) =>
+    rectangular
+      ? { column: index % across, slot: Math.floor(index / across) }
+      : {
+          column: Math.floor(index / WIZARD_COLUMN_HEIGHT),
+          slot: index % WIZARD_COLUMN_HEIGHT,
+        },
+  );
 }
 
 /**

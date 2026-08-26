@@ -32,6 +32,11 @@ Every function returns a tree in canonical form:
 * ``weights`` has exactly one positive finite entry per child. A weight is a
   plain multiplier against its siblings (two children at 1 and 1 are equal),
   never pixels — pixels do not survive a window resize, a weight does.
+* A grid stands on its ROWS. After every structural edit, a row of equally
+  divided columns is transposed into a column of rows (``rows_outermost``) —
+  the same picture, but each band owns its own vertical seam instead of one
+  full-height seam owning them all. See that function for why one of the two
+  readings has to win.
 
 ## Room accounting
 
@@ -150,9 +155,10 @@ def normalize(node: LayoutNode) -> LayoutNode:
 def leaves(node: LayoutNode | None) -> list[str]:
     """Every pane key in READING order — the order `_renumber` sorts by.
 
-    Depth-first, children left to right / top to bottom. For the plain
-    "columns of stacks" shape this is exactly the old ``(column, slot)`` sort,
-    so call-sign numbering keeps meaning what it always meant.
+    Depth-first, children left to right / top to bottom. Because
+    :func:`rows_outermost` stands a grid on its rows, this is the order a
+    person actually reads a workspace in — across the top band first, then
+    the next — rather than down one column and back up the next.
     """
     if node is None:
         return []
@@ -171,9 +177,18 @@ def contains(node: LayoutNode | None, pane: str) -> bool:
 def wizard_tree(panes: Iterable[str], depth: int) -> LayoutNode | None:
     """The tree a wizard-opened workspace starts with.
 
-    Columns of ``depth``, each filled top to bottom before the next is opened
-    — the same arithmetic the wizard preview draws with (frontend
-    ``layout.ts``), so the workspace that appears is the one that was shown.
+    The SHAPE is columns of ``depth`` — the same arithmetic the wizard preview
+    draws with (frontend ``layout.ts``), so the workspace that appears is the
+    one that was shown.
+
+    The panes are then seated into that shape in READING order, which is the
+    other half of the promise and the half that used to be free. Once a full
+    rectangle stands on its rows (:func:`rows_outermost`) it is read across
+    the top band first, so filling the shape column by column would put the
+    second pane under the first and the third beside it. Callers hand their
+    panes over in the order the user sees them — ``Registry.refold`` re-deals
+    a workspace someone is watching — and a fold that quietly permutes them
+    is a fold that cannot be undone by widening the window again.
     """
     keys = list(panes)
     if not keys:
@@ -189,8 +204,31 @@ def wizard_tree(panes: Iterable[str], depth: int) -> LayoutNode | None:
                 Split(direction="column", children=list(chunk), weights=[1.0] * len(chunk))
             )
     if len(columns) == 1:
-        return columns[0]
-    return Split(direction="row", children=columns, weights=[1.0] * len(columns))
+        return _reseat(columns[0], keys)
+    shape = _rows_outermost(Split(direction="row", children=columns, weights=[1.0] * len(columns)))
+    return _reseat(shape, keys)
+
+
+def _reseat(node: LayoutNode, keys: Iterable[str]) -> LayoutNode:
+    """``node``'s shape with its leaves refilled from ``keys``, in order.
+
+    The shape decides where the cells are; this decides which pane sits in
+    which. Keeping the two apart is what lets a caller pick a layout by its
+    geometry and still hand its panes over in the order they should be read.
+    """
+    supply = iter(keys)
+
+    def walk(current: LayoutNode) -> LayoutNode:
+        if isinstance(current, Leaf):
+            return Leaf(pane=next(supply))
+        return Split(
+            direction=current.direction,
+            children=[walk(child) for child in current.children],
+            weights=list(current.weights),
+            pinned=current.pinned,
+        )
+
+    return walk(node)
 
 
 def from_grid(entries: Iterable[tuple[str, int, int]]) -> LayoutNode | None:
@@ -198,7 +236,8 @@ def from_grid(entries: Iterable[tuple[str, int, int]]) -> LayoutNode | None:
 
     This is the migration path: resume snapshots written before the tree
     existed carry the two integers per pane, and the columns-of-stacks shape
-    they describe is exactly representable — a row of column stacks.
+    they describe is exactly representable — a row of column stacks, squared
+    up by :func:`rows_outermost` when it forms a full rectangle.
     """
     by_column: dict[int, list[tuple[int, str]]] = {}
     for key, column, slot in entries:
@@ -220,7 +259,7 @@ def from_grid(entries: Iterable[tuple[str, int, int]]) -> LayoutNode | None:
             )
     if len(columns) == 1:
         return columns[0]
-    return Split(direction="row", children=columns, weights=[1.0] * len(columns))
+    return _rows_outermost(Split(direction="row", children=columns, weights=[1.0] * len(columns)))
 
 
 def _insert_beside(
@@ -290,7 +329,7 @@ def split_pane(
     if anchor is not None:
         rewritten, found = _insert_beside(root, anchor, added, grown, after=True)
         if found:
-            return normalize(rewritten)
+            return _rows_outermost(normalize(rewritten))
     return append_pane(root, added)
 
 
@@ -308,7 +347,7 @@ def append_pane(root: LayoutNode | None, added: str) -> LayoutNode:
         share = sum(root.weights) / len(root.weights) if root.weights else 1.0
         root.children.append(Leaf(pane=added))
         root.weights.append(_clean_weight(share))
-        return normalize(root)
+        return _rows_outermost(normalize(root))
     return Split(direction="row", children=[root, Leaf(pane=added)], weights=[1.0, 1.0])
 
 
@@ -362,6 +401,126 @@ def _even_weights(node: Split) -> bool:
     return all(abs(share - first) <= EVEN_EPSILON * first for share in shares)
 
 
+def _shares(node: Split) -> list[float]:
+    """``node``'s weights as fractions of its own total.
+
+    Comparable ACROSS containers, which raw weights are not: two columns at
+    ``[1, 1]`` and ``[4, 4]`` divide their room at exactly the same height.
+    """
+    weights = [
+        _clean_weight(node.weights[index] if index < len(node.weights) else 1.0)
+        for index in range(len(node.children))
+    ]
+    total = sum(weights) or 1.0
+    return [weight / total for weight in weights]
+
+
+def _is_one_grid(node: Split) -> bool:
+    """Do ``node``'s children line up as ONE grid — same rows, same heights?
+
+    True only when every child is a column, they all hold the same number of
+    children, and they divide their height at the same fractions. That is
+    exactly the condition under which :func:`rows_outermost` may transpose
+    ``node`` without a single pane changing size.
+    """
+    if node.direction != "row" or len(node.children) < 2:
+        return False
+    columns: list[Split] = []
+    for child in node.children:
+        if not isinstance(child, Split) or child.direction != "column":
+            return False
+        columns.append(child)
+    depth = len(columns[0].children)
+    if depth < 2 or any(len(column.children) != depth for column in columns):
+        return False
+    first = _shares(columns[0])
+    return all(
+        abs(share - first[index]) <= EVEN_EPSILON * first[index]
+        for column in columns[1:]
+        for index, share in enumerate(_shares(column))
+    )
+
+
+def rows_outermost(root: LayoutNode | None) -> LayoutNode | None:
+    """A grid rewritten as rows of panes rather than columns of panes.
+
+    Geometry in, the SAME geometry out — this moves no boundary and resizes
+    no pane. What it changes is which container owns each boundary, and that
+    decides how far a seam drag reaches.
+
+    A workspace built by splitting right and then down twice comes out as
+    ``row[column[a, c], column[b, d]]``: two columns side by side, so the
+    line between them belongs to the ROOT and runs the full height. Dragging
+    it under the bottom pair therefore resizes the top pair too — the two
+    halves are welded together, which is what the maintainer reported on
+    2026-08-25 ("the upper and the lower terminal move with each other").
+    Reaching the same 2×2 the other way round — split down, then right twice
+    — gives ``column[row[a, b], row[c, d]]``, where each row owns its own
+    vertical line and the two rows resize independently. Same picture, two
+    behaviours, decided by the order the panes happened to be opened in.
+
+    So a grid is put in ONE of those forms, always the second: side-by-side
+    boundaries are the ones people size (a terminal needs width for its
+    output far more often than a column needs its own height), and the cost
+    is the single horizontal line now spanning the full width. Rows first is
+    the maintainer's call, not a fact about split trees — both readings are
+    legitimate, only one can be true at a time.
+
+    The transpose is refused unless every column divides its height at the
+    same fractions (:func:`_is_one_grid`): otherwise the horizontal lines sit
+    at different heights and no single row structure can draw them. That is
+    also what keeps this from undoing hand-dragged sizes — a column dragged
+    out of line with its neighbours simply stops qualifying.
+
+    Applied bottom-up, and only after STRUCTURAL edits (a split, a close, a
+    move). A seam drag never comes through here: the client posts back the
+    tree it was looking at, and reshaping under a drag would make the
+    workspace jump under the pointer.
+    """
+    return None if root is None else _rows_outermost(root)
+
+
+def _rows_outermost(root: LayoutNode) -> LayoutNode:
+    if isinstance(root, Leaf):
+        return root
+
+    node = Split(
+        direction=root.direction,
+        children=[_rows_outermost(child) for child in root.children],
+        weights=list(root.weights),
+        pinned=root.pinned,
+    )
+    if not _is_one_grid(node):
+        return normalize(node)
+
+    columns = [child for child in node.children if isinstance(child, Split)]
+    # The columns' shared height fractions become the outer stack's weights;
+    # the row's own weights become every new row's, so each band is cut at the
+    # verticals the grid already had.
+    heights = _shares(columns[0])
+    widths = [
+        _clean_weight(node.weights[index] if index < len(node.weights) else 1.0)
+        for index in range(len(columns))
+    ]
+    bands = [
+        Split(
+            direction="row",
+            children=[column.children[band] for column in columns],
+            weights=list(widths),
+            pinned=node.pinned,
+        )
+        for band in range(len(columns[0].children))
+    ]
+    return normalize(
+        Split(
+            direction="column",
+            children=list(bands),
+            weights=list(heights),
+            pinned=any(column.pinned for column in columns),
+        )
+    )
+
+
 def evened(root: LayoutNode | None) -> LayoutNode | None:
     """Every TERMINAL back at an equal share — except where a hand set them.
 
@@ -407,7 +566,15 @@ def remove_pane(root: LayoutNode | None, pane: str) -> LayoutNode | None:
     weight is dropped and the rest renormalise. A container left with one
     child dissolves, which is how a workspace that was split apart folds back
     to simple shapes instead of accumulating scar tissue.
+
+    A close can leave the survivors standing as a grid, so the result goes
+    through :func:`rows_outermost` — once, at the end, never per recursion
+    step.
     """
+    return rows_outermost(_removed(root, pane))
+
+
+def _removed(root: LayoutNode | None, pane: str) -> LayoutNode | None:
     if root is None:
         return None
     if isinstance(root, Leaf):
@@ -420,7 +587,7 @@ def remove_pane(root: LayoutNode | None, pane: str) -> LayoutNode | None:
         if isinstance(child, Leaf) and child.pane == pane:
             continue
         if isinstance(child, Split):
-            slimmed = remove_pane(child, pane)
+            slimmed = _removed(child, pane)
             if slimmed is None:
                 continue
             children.append(slimmed)
@@ -476,7 +643,9 @@ def move_pane(
 
     direction: Direction = "row" if position in ("left", "right") else "column"
     after = position in ("right", "below")
-    slimmed = remove_pane(root, pane)
+    # The untransposed removal on purpose: the drop is carved from the tree
+    # the user was looking at, and the grid is squared up once, afterwards.
+    slimmed = _removed(root, pane)
     if slimmed is None:
         return Leaf(pane=pane) if contains(root, pane) else root
     rewritten, found = _insert_beside(slimmed, target, pane, direction, after)
@@ -485,7 +654,7 @@ def move_pane(
         # DROP is recoverable; losing the PANE is not — put it back at the
         # edge rather than dropping it from the tree.
         return append_pane(slimmed, pane)
-    return normalize(rewritten)
+    return _rows_outermost(normalize(rewritten))
 
 
 # ------------------------------------------------------------- serialization
@@ -597,10 +766,12 @@ def grid_hints(root: LayoutNode | None) -> dict[str, tuple[int, int]]:
     """Coarse legacy ``(column, slot)`` for every pane, from the tree.
 
     Consumers that describe the workspace in words ("the top-left terminal")
-    still think in columns, and for the common shapes the mapping is exact.
-    For deeper nesting it is deliberately coarse: the column is the pane's
-    top-level branch, the slot its reading position within that branch —
-    stable, ordered, and never claiming precision the flat model cannot hold.
+    still think in columns, and for the common shapes the mapping is exact —
+    both readings of a grid, since :func:`rows_outermost` puts one of them in
+    the other's form. For deeper nesting it is deliberately coarse: the
+    outermost branch fixes one coordinate, reading position within it the
+    other — stable, ordered, and never claiming precision the flat model
+    cannot hold.
     """
     if root is None:
         return {}
@@ -610,5 +781,13 @@ def grid_hints(root: LayoutNode | None) -> dict[str, tuple[int, int]]:
             for column, child in enumerate(root.children)
             for slot, pane in enumerate(leaves(child))
         }
-    # A single stack (or a lone pane) is one column of many slots.
+    if isinstance(root, Split):
+        # A stack of bands: the band IS the slot, and reading across it gives
+        # the column. A plain column of panes falls out of this as column 0.
+        return {
+            pane: (column, slot)
+            for slot, child in enumerate(root.children)
+            for column, pane in enumerate(leaves(child))
+        }
+    # A lone pane.
     return {pane: (0, slot) for slot, pane in enumerate(leaves(root))}

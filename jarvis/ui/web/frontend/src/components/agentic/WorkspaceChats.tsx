@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Folder, MessageSquare, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, Folder, MessageSquare, Plus, Terminal, Trash2 } from "lucide-react";
 
 import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
 import { useAgentSessionStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
+import { useWorkspacePanes } from "@/store/workspacePanes";
+import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { folderLeaf } from "@/lib/folderPath";
 import { folderColor } from "@/components/agentic/folderColor";
 import { cn } from "@/lib/utils";
@@ -22,6 +24,13 @@ const FOLDED = 5;
  * repository any of them is touching. The folder you have open leads, under
  * its own band; everything else follows underneath.
  *
+ * Above the chats: the coding sessions RUNNING in the open workspace — the
+ * panes of the terminal grid. Switching from grid to chat used to leave them
+ * behind, because this column knew only about chat sessions and the grid knew
+ * only about panes, so the same workspace looked like two unrelated places
+ * depending on which view was on (maintainer, 2026-08-25). They are one list
+ * now: click a session here and the view brings that pane to the front.
+ *
  * The way back is the first thing in the column, not a hidden gesture: a
  * sidebar that swallows the navigation with no visible exit is a trap, so the
  * "Sections" button sits at the top where a back button belongs.
@@ -30,6 +39,11 @@ export function WorkspaceChats() {
   const t = useT();
   const workspace = useIdeChatStore((s) => s.workspace);
   const setSidebarFace = useIdeChatStore((s) => s.setSidebarFace);
+
+  const requestPane = useIdeChatStore((s) => s.requestPane);
+  const stagedPane = useIdeChatStore((s) => s.stagedPane);
+  // Shares one poll with every other reader of the list (see the store).
+  const panes = useWorkspacePanes();
 
   const sessions = useAgentSessionStore((s) => s.sessions);
   const activeSessionId = useAgentSessionStore((s) => s.activeSessionId);
@@ -52,6 +66,17 @@ export function WorkspaceChats() {
   // The open workspace's folder always sorts first (see `groupByFolder`), so
   // the leading group is "this workspace" — unless nothing is open, in which
   // case every group is just another folder.
+  /*
+   * The sessions of the workspace that is open, in the grid's own order.
+   *
+   * Only this workspace's: the other tabs have their own panes, and a column
+   * that mixed all of them would say nothing about where any of them runs.
+   */
+  const sessionsHere = useMemo(
+    () => (workspace ? panes.filter((pane) => pane.workspace_id === workspace.id) : []),
+    [panes, workspace],
+  );
+
   const openFolder = workspace?.path ?? "";
   const leads = openFolder !== "" && groups[0]?.folder === openFolder;
   const here = leads ? groups[0] : null;
@@ -89,6 +114,27 @@ export function WorkspaceChats() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-1 pb-3">
+        {workspace && (
+          <section data-testid="workspace-chats-sessions">
+            <Band>{t("ide_chats.running_sessions")}</Band>
+            {sessionsHere.length === 0 ? (
+              <p className="px-3 py-1 text-[11px] text-muted-foreground/50">
+                {t("ide_chats.no_sessions_here")}
+              </p>
+            ) : (
+              <ul className="space-y-px">
+                {sessionsHere.map((pane) => (
+                  <SessionRow
+                    key={pane.history_id}
+                    pane={pane}
+                    active={pane.name === stagedPane}
+                    onOpen={() => requestPane(pane.workspace_id, pane.name)}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
         {here && (
           <>
             <Band>{t("ide_chats.this_workspace")}</Band>
@@ -205,6 +251,68 @@ function FolderGroup({
         </button>
       )}
     </section>
+  );
+}
+
+/**
+ * One coding session of the open workspace.
+ *
+ * Reads like the chat row below it on purpose — same height, same indent, same
+ * active treatment — because from where the user sits these are the same kind
+ * of thing: a conversation with an agent. What differs is the mark (a terminal,
+ * not a speech bubble) and the dot, which carries the state the grid's badge
+ * shows: running, waiting to start, or finished.
+ */
+function SessionRow({
+  pane,
+  active,
+  onOpen,
+}: {
+  pane: WorkspacePaneRow;
+  active: boolean;
+  onOpen: () => void;
+}) {
+  const t = useT();
+  const label = pane.display_name || pane.name;
+  return (
+    <li className="group relative">
+      <button
+        type="button"
+        onClick={onOpen}
+        title={`${label} · ${pane.agent}`}
+        data-testid="workspace-session-row"
+        data-pane={pane.name}
+        data-status={pane.status}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-lg py-1.5 pl-3 pr-2 text-left transition-colors",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          active ? "bg-card text-foreground shadow-sm" : "hover:bg-background/60",
+        )}
+      >
+        <Terminal
+          aria-hidden
+          className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")}
+        />
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground">{label}</span>
+        <span className="shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
+          {pane.name}
+        </span>
+        <span
+          aria-hidden
+          title={t("ide_chats.session_here")}
+          className={cn(
+            "h-1.5 w-1.5 shrink-0 rounded-full",
+            pane.status === "live"
+              ? "bg-primary"
+              : pane.status === "pending"
+                ? "bg-muted-foreground/50"
+                : pane.status === "error"
+                  ? "bg-destructive"
+                  : "bg-muted-foreground/30",
+          )}
+        />
+      </button>
+    </li>
   );
 }
 

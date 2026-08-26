@@ -216,14 +216,37 @@ describe("columnDepthFor", () => {
 
 describe("wizardPanes", () => {
   it("is the columns of two the backend opens a workspace with", () => {
-    // Mirrors agentic_ide/session.py, which fills a column to
-    // WIZARD_COLUMN_HEIGHT before opening the next one. The preview feeds these
-    // to the same `paneGrid` the running workspace uses, so it cannot describe
-    // a layout the backend would never build.
+    // Mirrors agentic_ide/layout_tree.py `wizard_tree`, which fills a column
+    // to WIZARD_COLUMN_HEIGHT before opening the next one. The preview feeds
+    // these to the same `paneGrid` the running workspace uses, so it cannot
+    // describe a layout the backend would never build. Three does not fill its
+    // last column, so it is read down the columns.
     expect(wizardPanes(3)).toEqual([
       { column: 0, slot: 0 },
       { column: 0, slot: 1 },
       { column: 1, slot: 0 },
+    ]);
+  });
+
+  it("fills a full rectangle across its bands, the way the backend seats it", () => {
+    // The 2026-08-25 change: a rectangle is stood on its rows so each band
+    // resizes on its own, and a tree standing on its rows is read across the
+    // top band first. Four terminals therefore run 1-2 above 3-4 — not 1-2
+    // down the left and 3-4 down the right, which is what the preview drew
+    // while it was still guessing at the fill order.
+    expect(wizardPanes(4)).toEqual([
+      { column: 0, slot: 0 },
+      { column: 1, slot: 0 },
+      { column: 0, slot: 1 },
+      { column: 1, slot: 1 },
+    ]);
+    expect(wizardPanes(6)).toEqual([
+      { column: 0, slot: 0 },
+      { column: 1, slot: 0 },
+      { column: 2, slot: 0 },
+      { column: 0, slot: 1 },
+      { column: 1, slot: 1 },
+      { column: 2, slot: 1 },
     ]);
   });
 

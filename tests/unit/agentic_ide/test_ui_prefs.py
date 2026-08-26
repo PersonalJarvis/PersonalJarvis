@@ -136,15 +136,16 @@ def test_the_toolbar_and_the_backend_agree_on_the_bounds() -> None:
     stored value stops at another, and the size silently changes on the next
     restart — the exact class of bug this store was added to end.
     """
+    # The three numbers moved out of the grid into `paneFont.ts` on 2026-08-25
+    # (the grid imports them); the parity check follows the definition.
     grid = (
         Path(__file__).resolve().parents[3]
-        / "jarvis/ui/web/frontend/src/components/agentic/AgenticGrid.tsx"
+        / "jarvis/ui/web/frontend/src/components/agentic/paneFont.ts"
     ).read_text(encoding="utf-8")
 
     assert f"const FONT_MIN = {ui_prefs.FONT_MIN};" in grid
     assert f"const FONT_MAX = {ui_prefs.FONT_MAX};" in grid
-    # The grid holds the default as a named constant (it is also where
-    # Ctrl/Cmd+0 lands), so the parity check pins that definition rather than
-    # the inlined literal it used to be.
+    # The default is a named constant too (it is also where Ctrl/Cmd+0 lands),
+    # so the parity check pins that definition rather than an inlined literal.
     assert f"const FONT_DEFAULT = {ui_prefs.FONT_DEFAULT};" in grid
     assert "storedFontSize() ?? FONT_DEFAULT" in grid

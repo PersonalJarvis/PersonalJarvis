@@ -834,6 +834,11 @@ class PaneViewer:
     exit: Any
     cols: int
     rows: int
+    #: Called — synchronously, ``(cols, rows)`` — whenever the shared PTY takes
+    #: a size this viewer did not ask for, so a screen that no longer holds the
+    #: pane can follow the one that does (see ``Registry._announce_geometry``).
+    #: ``None`` for a viewer that only consumes bytes.
+    geometry: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1244,6 +1249,51 @@ class Terminal:
             "account_label": account_label(self.account),
         }
 
+    def to_row(self) -> dict[str, Any]:
+        """This pane as ONE LINE in a list of conversations.
+
+        Deliberately not ``to_dict``: that payload walks the pane's whole
+        scrollback twice (the line count and the recap) and carries the layout
+        and prompt statistics with it. A session list polls every open
+        workspace's panes on a clock, so a dozen scrollback walks per poll is
+        the difference between a list and a stutter — and none of what it pays
+        for is a line in that list.
+
+        What survives is what the line actually shows: who this pane is, what
+        it was last asked to do, and whether it is still doing it. The activity
+        reading is the same one the grid's badge uses (:mod:`.activity`), so a
+        pane cannot say "working" in one place and "done" in the other.
+        """
+        reading = self.reading()
+        return {
+            "key": self.key,
+            # The pane's LIFETIME id, not its call-sign: T1 is handed on to a
+            # replacement pane, and a list that keys on the call-sign would
+            # quietly show the newcomer's row as the dead one's.
+            "history_id": self.history_id,
+            "name": self.name,
+            "agent": self.agent,
+            "display_name": self.display_name,
+            "accepts_prompts": accepts_prompts(self.agent),
+            "status": self.status,
+            "exit_code": self.exit_code,
+            "activity": reading.activity,
+            "activity_since": reading.since,
+            "worked": has_work_behind_it(self),
+            "started_at": self.started_at,
+            "last_output_at": self.last_output_at,
+            # The opening of what was last asked of it — the closest thing a
+            # terminal has to a chat's title. Capped like the full state's copy.
+            "last_prompt": self.last_prompt[:200],
+            "last_prompt_at": self.last_prompt_at,
+            # Whether a readable conversation could exist for this pane at all.
+            # Whether one is actually on disk is the transcript endpoint's
+            # answer; this only says the pane holds a handle to look up.
+            "has_resume": self.resume is not None,
+            "account": self.account,
+            "account_label": account_label(self.account),
+        }
+
     def reading(self) -> Reading:
         """Is this pane's agent working, or has it stopped — and since when?
 
@@ -1362,14 +1412,9 @@ class Session:
     def contextual_terminal(self) -> Terminal | None:
         """The one pane the visible surface puts in front of the user.
 
-        Nothing does, today: the grid shows a dozen panes at once, and chat
-        shows none — it is the agent chat, not a way of reading the terminals.
-        Picking one anyway would be a guess dressed as a fact, so this answers
-        None and the caller asks for a call-sign.
-
-        The seam is kept rather than deleted because a surface that DOES stage
-        one pane is a plausible third value of the enum, and it would report
-        itself through exactly this field.
+        Chat view stages exactly one pane and can answer. The grid never
+        does — a dozen panes are visible there, and picking one of them would
+        be a guess dressed as a fact.
         """
         if self.surface_view != VIEW_CHAT:
             return None
@@ -1378,15 +1423,7 @@ class Session:
         return self.find(self.surface_terminal)
 
     def stages_one_pane(self) -> bool:
-        """May the visible surface name ONE pane as the one being read?
-
-        The grid never may. ``chat`` may, and today never does: the current
-        bundle's chat surface is the agent chat and reports no terminal at all.
-        The permission is kept rather than hard-coded away because the browser
-        is the only layer that knows what is on screen, and a desktop window
-        holding a bundle from before the switch is still entitled to be
-        believed until it reloads itself.
-        """
+        """Does the visible view show a single pane, rather than the wall?"""
         return self.surface_view == VIEW_CHAT
 
     def prompt_target_terminal(self) -> Terminal | None:
@@ -1516,6 +1553,7 @@ def _watch(
     rows: int,
     *,
     claim_owner: bool = True,
+    on_geometry: Any = None,
 ) -> bool:
     """Attach a viewer to ``term`` and optionally make it the owner.
 
@@ -1525,7 +1563,7 @@ def _watch(
     away from the window that is actually in front of the user.
     """
     term.watchers = [w for w in term.watchers if not _same_viewer(w.output, on_output)]
-    term.watchers.append(PaneViewer(on_output, on_exit, cols, rows))
+    term.watchers.append(PaneViewer(on_output, on_exit, cols, rows, on_geometry))
     if len(term.watchers) > MAX_WATCHERS:
         del term.watchers[0 : len(term.watchers) - MAX_WATCHERS]
     owner_is_attached = any(
@@ -1535,6 +1573,45 @@ def _watch(
         term.viewer_output = on_output
         term.viewer_exit = on_exit
     return _same_viewer(term.viewer_output, on_output)
+
+
+def _tell_geometry(watched: PaneViewer, cols: int, rows: int) -> None:
+    """Hand one viewer the size the PTY is really in — never fatally.
+
+    One screen that cannot be told (a socket mid-close, a handler that raises)
+    must not cost the resize that already happened, nor the other screens
+    their notice.
+    """
+    if watched.geometry is None:
+        return
+    try:
+        watched.geometry(cols, rows)
+    except Exception as exc:  # noqa: BLE001 - one viewer's notice, not the resize
+        logger.debug(
+            "Agentic IDE: could not report a {}x{} geometry to a viewer: {}", cols, rows, exc
+        )
+
+
+def _announce_geometry(term: Terminal, cols: int, rows: int, *, except_viewer: Any = None) -> None:
+    """Tell every attached viewer BUT ``except_viewer`` the PTY's new size.
+
+    A pane open in two windows has two screens and one pseudo-terminal, and the
+    screen that does not hold the pane has no way of its own to notice that
+    the size moved under it: its tile never changed, so it never measures
+    again, and it goes on holding a grid the agent is no longer drawing for.
+    The agent's next repaint then lands in that grid as fragments — rows
+    wrapped at the wrong width, an interface finished into the corner of a
+    pane that is much larger (reported 2026-08-25, a desktop pane displaced
+    by a browser tab a tool had opened).
+
+    The viewer that ASKED for the size is left out: it reflowed itself before
+    asking, and the socket route reports to it separately when — and only
+    when — its request was not granted (``report_geometry``).
+    """
+    for watched in term.watchers:
+        if except_viewer is not None and _same_viewer(watched.output, except_viewer):
+            continue
+        _tell_geometry(watched, cols, rows)
 
 
 def _viewers(term: Terminal) -> list[Any]:
@@ -1678,6 +1755,30 @@ class Registry:
     def workspaces(self) -> list[dict[str, Any]]:
         """Every open workspace as a tab card, in tab order."""
         return [s.to_card(active=s.id == self._active) for s in self._sessions.values()]
+
+    def panes(self) -> list[dict[str, Any]]:
+        """Every pane of EVERY open workspace, as rows for a conversation list.
+
+        ``state()`` answers with the front workspace alone, because that is the
+        one being drawn. A list of "everything I have running" is the other
+        question: a workspace in a background tab is not a workspace that
+        stopped, and a list that omits its four agents tells the user they have
+        none. So this walks all of them, in tab order, and marks which one is at
+        the front rather than hiding the rest.
+
+        Each row carries its workspace's identity — the folder is what the list
+        groups by, and the id is what a click needs to bring that tab forward.
+        """
+        rows: list[dict[str, Any]] = []
+        for session in self._sessions.values():
+            for term in session.terminals:
+                row = term.to_row()
+                row["workspace_id"] = session.id
+                row["workspace_name"] = session.name
+                row["folder"] = session.folder
+                row["workspace_active"] = session.id == self._active
+                rows.append(row)
+        return rows
 
     def state(self) -> dict[str, Any]:
         session = self.session
@@ -2186,7 +2287,13 @@ class Registry:
         # hints describe instead of failing the reopen.
         if space.layout is not None:
             try:
-                session.layout = layout_tree.from_dict(space.layout)
+                # Squared up on the way in: a workspace remembered as columns
+                # side by side draws the same picture with one full-height
+                # seam welding its bands together, and a reopen is the moment
+                # to hand it back its per-band seams (see `rows_outermost`).
+                session.layout = layout_tree.rows_outermost(
+                    layout_tree.from_dict(space.layout)
+                )
             except ValueError as exc:
                 logger.warning(
                     "Agentic IDE: the remembered layout of {} is unreadable, "
@@ -2590,6 +2697,7 @@ class Registry:
         appearance: str | None = None,
         on_replay: Any = None,
         claim_owner: bool = True,
+        on_geometry: Any = None,
     ) -> Terminal:
         """Point a viewer at terminal ``key`` — one attach at a time per pane.
 
@@ -2612,6 +2720,9 @@ class Registry:
         replay goes to ``on_output`` — correct for an internal caller that only
         wants the bytes, and wrong for a viewer that draws them, which is why
         the socket route passes one.
+
+        ``on_geometry`` is told, synchronously, whenever the shared PTY takes a
+        size this viewer did not ask for — see ``_announce_geometry``.
         """
         found = self._locate(key, workspace_id)
         if found is None:
@@ -2630,6 +2741,7 @@ class Registry:
                 appearance=appearance,
                 on_replay=on_replay,
                 claim_owner=claim_owner,
+                on_geometry=on_geometry,
             )
 
     async def _attach_locked(
@@ -2643,6 +2755,7 @@ class Registry:
         appearance: str | None = None,
         on_replay: Any = None,
         claim_owner: bool = True,
+        on_geometry: Any = None,
     ) -> Terminal:
         """Point a viewer at terminal ``key``, starting its agent if needed.
 
@@ -2750,6 +2863,7 @@ class Registry:
                 cols,
                 rows,
                 claim_owner=claim_owner,
+                on_geometry=on_geometry,
             )
             term.reattached = True
             term.stopping = False
@@ -2764,6 +2878,10 @@ class Registry:
                     # The TUI is about to redraw itself for the new geometry;
                     # that redraw must not read as the agent working.
                     term.last_resize_at = time.time()
+                    # The screens this viewer just displaced hold the old
+                    # grid; they follow the new one now, not at their next
+                    # unrelated window resize.
+                    _announce_geometry(term, cols, rows, except_viewer=on_output)
             needs_repaint = term.replay.truncated
             if geometry_changed and is_coding_agent(term.agent):
                 # A cursor-addressed TUI stream is meaningful only at the size
@@ -2884,7 +3002,7 @@ class Registry:
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
         term.replay.clear()
-        _watch(term, on_output, on_exit, cols, rows)
+        _watch(term, on_output, on_exit, cols, rows, on_geometry=on_geometry)
         term.reattached = False
         # This pane is wanted again, so the last deliberate kill is history.
         term.stopping = False
@@ -3674,6 +3792,9 @@ class Registry:
         # finished pane does not read as "working" every time the grid
         # re-lays itself out (chat view toggle, maximize, a dragged seam).
         term.last_resize_at = time.time()
+        # Every OTHER screen on this pane is now showing a grid the agent is
+        # no longer drawing for; tell them, so they can follow the owner.
+        _announce_geometry(term, cols, rows, except_viewer=viewer)
         if is_coding_agent(term.agent):
             # Future viewers must not replay cursor moves produced for the old
             # grid into the new one. The live viewer already has its screen;
@@ -3758,6 +3879,14 @@ class Registry:
                     "Agentic IDE: could not restore {} to its promoted viewer's geometry",
                     term.name,
                 )
+            # The survivor spent its time as a watcher following the departed
+            # owner's grid, and the restore above leaves it out on purpose (it
+            # is the viewer that "asked"). It is told outright instead: whether
+            # the PTY moved or not, the size it is in now is the one to show,
+            # and a screen holding the old owner's strip would otherwise keep
+            # it until something in that window happened to resize.
+            if term.pty_cols and term.pty_rows:
+                _tell_geometry(survivor, term.pty_cols, term.pty_rows)
             return
         term.viewer_output = None
         term.viewer_exit = None
@@ -4578,7 +4707,9 @@ class Registry:
         return data
 
     # -------------------------------------------------------- name resolution
-    def find_terminal(self, wanted: str) -> tuple[Session, Terminal] | None:
+    def find_terminal(
+        self, wanted: str, workspace_id: str | None = None
+    ) -> tuple[Session, Terminal] | None:
         """A pane by call-sign, anywhere — the front workspace answering first.
 
         The FRONT workspace deciding first is what makes positional call-signs
@@ -4591,7 +4722,19 @@ class Registry:
         a pane precisely so they can address it from anywhere: "tell Mika to
         run the tests" is an instruction to Mika, not a request to first go and
         find which tab Mika is in.
+
+        ``workspace_id`` turns that off and asks ONE workspace. A caller holding
+        a list of panes already knows which tab each row came from, and letting
+        the front workspace answer for it would hand back the wrong pane's
+        conversation whenever two tabs both have a T1 — which every pair of
+        workspaces does, since each numbers its panes from one.
         """
+        if workspace_id is not None:
+            owner = self._sessions.get(workspace_id)
+            if owner is None:
+                return None
+            term = owner.find(wanted)
+            return None if term is None else (owner, term)
         session = self.session
         if session is not None:
             term = session.find(wanted)

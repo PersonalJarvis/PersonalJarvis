@@ -73,12 +73,15 @@ async def test_folds_a_row_of_six_into_three_columns_of_two(
     """
     await _open_in_a_row(registry, tmp_path, 6)
     await registry.refold(2)
+    # Three across and two down, dealt in reading order: the panes keep the
+    # sequence the user knows them by, so widening the window undoes the fold
+    # instead of permuting the workspace.
     assert _layout(registry) == [
         ("T1", 0, 0),
-        ("T2", 0, 1),
-        ("T3", 1, 0),
-        ("T4", 1, 1),
-        ("T5", 2, 0),
+        ("T2", 1, 0),
+        ("T3", 2, 0),
+        ("T4", 0, 1),
+        ("T5", 1, 1),
         ("T6", 2, 1),
     ]
 

@@ -8,25 +8,19 @@
  * agentic_ide_routes.py), which Jarvis owns end-to-end — so the scrollbar
  * here is a normal, accurate browser scrollbar over real content, identical
  * for every provider. Opened from the pane scroll rail.
+ *
+ * The fetch and the turns are shared with the session PAGE the chat sidebar
+ * opens (./PaneConversation); this file is the dialog frame around them.
  */
-import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertCircle, BookOpenText, RefreshCw, X } from "lucide-react";
+import { BookOpenText, RefreshCw, X } from "lucide-react";
 
 import { useT } from "@/i18n";
 import {
-  fetchTerminalConversation,
-  type ConversationResponse,
-  type ConversationTurn,
-} from "@/lib/agenticIdeApi";
+  PaneConversationBody,
+  usePaneConversation,
+} from "@/components/agentic/PaneConversation";
 import { cn } from "@/lib/utils";
-
-function fill(template: string, ...values: Array<string | number>): string {
-  return values.reduce<string>(
-    (text, value, index) => text.replace(`{${index}}`, String(value)),
-    template,
-  );
-}
 
 export function PaneConversationDialog({
   terminal,
@@ -38,47 +32,9 @@ export function PaneConversationDialog({
   onOpenChange: (open: boolean) => void;
 }): JSX.Element {
   const t = useT();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [conversation, setConversation] = useState<ConversationResponse | null>(
-    null,
-  );
-  const [reloadToken, setReloadToken] = useState(0);
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    let current = true;
-    setLoading(true);
-    setError("");
-    fetchTerminalConversation(terminal)
-      .then((result) => {
-        if (current) setConversation(result);
-      })
-      .catch((reason: unknown) => {
-        if (current) {
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      })
-      .finally(() => {
-        if (current) setLoading(false);
-      });
-    return () => {
-      current = false;
-    };
-  }, [open, reloadToken, terminal]);
-
-  useEffect(() => {
-    // The newest exchange is what the user scrolled up FROM, so the view
-    // starts at the bottom — exactly like the terminal it explains.
-    if (loading || !conversation) return;
-    const scroller = scrollerRef.current;
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
-  }, [loading, conversation]);
-
-  const turns = conversation?.turns ?? [];
-  const empty =
-    !loading && !error && (!conversation || !conversation.available || turns.length === 0);
+  // Mounted while closed on purpose (the rail keeps it), so the fetch waits
+  // for the dialog to actually be opened.
+  const state = usePaneConversation(terminal, undefined, open);
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -98,7 +54,7 @@ export function PaneConversationDialog({
               <div className="mb-1 flex items-center gap-2">
                 <BookOpenText className="h-4 w-4 text-primary" aria-hidden="true" />
                 <Dialog.Title className="font-display text-base font-semibold tracking-tight text-foreground">
-                  {fill(t("agentic_grid.conversation.title"), terminal)}
+                  {t("agentic_grid.conversation.title").replace("{0}", terminal)}
                 </Dialog.Title>
               </div>
               <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
@@ -111,7 +67,7 @@ export function PaneConversationDialog({
                 aria-label={t("agentic_grid.conversation.refresh")}
                 title={t("agentic_grid.conversation.refresh")}
                 data-testid="pane-conversation-refresh"
-                onClick={() => setReloadToken((token) => token + 1)}
+                onClick={state.reload}
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:translate-y-px"
               >
                 <RefreshCw className="h-4 w-4" aria-hidden="true" />
@@ -128,103 +84,9 @@ export function PaneConversationDialog({
             </div>
           </header>
 
-          {loading ? (
-            <div className="flex-1 space-y-4 overflow-hidden p-6">
-              {["w-3/4", "w-full", "w-5/6", "w-2/3", "w-full", "w-4/5"].map(
-                (width, row) => (
-                  <div
-                    key={row}
-                    className={cn("h-3 animate-pulse rounded bg-muted/70", width)}
-                  />
-                ),
-              )}
-            </div>
-          ) : error ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-              <AlertCircle className="mb-3 h-6 w-6 text-destructive" aria-hidden="true" />
-              <p className="text-sm font-medium text-foreground">
-                {t("agentic_grid.conversation.load_failed")}
-              </p>
-              <p className="mt-1 max-w-md text-xs text-muted-foreground" role="alert">
-                {error}
-              </p>
-              <button
-                type="button"
-                onClick={() => setReloadToken((token) => token + 1)}
-                className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted active:translate-y-px"
-              >
-                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                {t("agentic_grid.conversation.retry")}
-              </button>
-            </div>
-          ) : empty ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted/30">
-                <BookOpenText className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-              </div>
-              <p className="text-sm font-medium text-foreground">
-                {t("agentic_grid.conversation.empty_title")}
-              </p>
-              <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
-                {t("agentic_grid.conversation.empty_detail")}
-              </p>
-            </div>
-          ) : (
-            <div
-              ref={scrollerRef}
-              data-testid="pane-conversation-scroller"
-              className="min-h-0 flex-1 overflow-y-auto scroll-pt-4 px-5 py-4 scrollbar-jarvis"
-            >
-              {turns.map((turn, index) => (
-                <TurnBlock key={index} turn={turn} />
-              ))}
-            </div>
-          )}
+          <PaneConversationBody state={state} />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-function TurnBlock({ turn }: { turn: ConversationTurn }): JSX.Element {
-  const t = useT();
-  const user = turn.role === "user";
-  const tools = [...new Set(turn.steps.map((step) => step.tool))];
-  return (
-    <div className="mb-4 last:mb-0">
-      <div
-        className={cn(
-          "mb-1 text-[10px] font-semibold uppercase tracking-[0.14em]",
-          user ? "text-primary" : "text-muted-foreground",
-        )}
-      >
-        {t(user ? "agentic_grid.conversation.you" : "agentic_grid.conversation.agent")}
-      </div>
-      {turn.text && (
-        <div
-          className={cn(
-            "whitespace-pre-wrap break-words rounded-xl border px-3.5 py-2.5 text-[12.5px] leading-relaxed",
-            user
-              ? "border-primary/25 bg-primary/[0.07] text-foreground"
-              : "border-border/60 bg-background/35 text-foreground/90",
-          )}
-        >
-          {turn.text}
-        </div>
-      )}
-      {turn.steps.length > 0 && (
-        <div className="mt-1 truncate text-[10px] text-muted-foreground/80">
-          {fill(
-            t(
-              turn.steps.length === 1
-                ? "agentic_grid.conversation.steps_one"
-                : "agentic_grid.conversation.steps_many",
-            ),
-            turn.steps.length,
-          )}
-          {tools.length > 0 && <> · {tools.slice(0, 6).join(", ")}</>}
-        </div>
-      )}
-    </div>
   );
 }

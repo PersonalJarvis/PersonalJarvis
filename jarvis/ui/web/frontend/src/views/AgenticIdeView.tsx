@@ -5,14 +5,7 @@
  *
  * * no workspace open → a five-step wizard: folder, how many terminals, an
  *   aggregate agent allocation, grid or chat view, then start,
- * * workspace open → one of TWO surfaces, picked by the switch in the bar:
- *   the terminal grid (see AgenticGrid) or the agent chat in this workspace's
- *   folder (see IdeChatSurface).
- *
- * The grid is never unmounted for the chat — it is covered. Every pane is a
- * live coding agent, and unmounting one kills it; a workspace that lost eleven
- * agents because somebody read a chat for a minute would be the worst bug this
- * view could have.
+ * * workspace open → the terminal grid (see AgenticGrid).
  *
  * The wizard order is deliberate and matches how the decision actually gets
  * made: you know the folder first, the number of panes second, then which agent
@@ -25,15 +18,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEventStore } from "@/store/events";
-import { AgenticGrid } from "@/components/agentic/AgenticGrid";
-import {
-  storedViewMode,
-  type WorkspaceView,
-} from "@/components/agentic/workspaceView";
-import { ViewSwitch } from "@/components/agentic/ViewSwitch";
-import { IdeChatSurface } from "@/components/agentic/IdeChatSurface";
 import { useIdeChatStore } from "@/store/ideChat";
-import { cn } from "@/lib/utils";
+import { AgenticGrid, rememberViewMode } from "@/components/agentic/AgenticGrid";
 import {
   VoiceBubble,
   storedVoiceBubbleOpen,
@@ -172,23 +158,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [folder, setFolder] = useState<string | null>(null);
   const [count, setCount] = useState(2);
   const [planned, setPlanned] = useState<PlannedTerminal[]>([]);
-  // Grid or chat, the wizard's last decision. Starts from the remembered
-  // reading preference so returning users see their usual answer preselected;
-  // it is written back only when a workspace actually opens (see `start`).
-  const [view, setView] = useState<WorkspaceView>(
-    () => storedViewMode() ?? "grid",
-  );
   /*
-   * Which surface an OPEN workspace is showing — the store, not this state.
+   * Grid or chat — held in the store, not here.
    *
-   * The switch that changes it lives in the workspace bar and the sidebar
-   * changes face with it, so the answer has to be readable from outside this
-   * subtree. The wizard's `view` above is a different question ("how should the
-   * one I am about to open start?") and stays local until `start` publishes it.
+   * Three copies of this answer used to exist (this view, the grid, the
+   * store), coupled only by a localStorage key each of them read once on
+   * mount. Flipping the switch in the workspace bar therefore moved the grid
+   * and nothing else: the sidebar went on showing the app's sections, because
+   * its copy of "which view" had been read minutes earlier and never heard
+   * about the change (maintainer, 2026-08-25 — the sessions did not come
+   * along when the view changed). One store, one answer, every reader on it.
    */
-  const ideView = useIdeChatStore((s) => s.view);
-  const setIdeView = useIdeChatStore((s) => s.setView);
-  const setIdeWorkspace = useIdeChatStore((s) => s.setWorkspace);
+  const view = useIdeChatStore((s) => s.view);
+  const setView = useIdeChatStore((s) => s.setView);
+  const publishWorkspace = useIdeChatStore((s) => s.setWorkspace);
+  const paneRequest = useIdeChatStore((s) => s.paneRequest);
   // The registered subscriptions per CLI. Only ever used to OFFER a choice, so
   // a failed load costs the picker, never the wizard: with none loaded every
   // pane simply opens on the active account, exactly as before.
@@ -573,9 +557,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const start = async () => {
     if (!folder) return;
     setBusy(true);
-    // Recorded BEFORE the workspace can mount, so the surface it opens on is
-    // the one the wizard was asked about. `setView` persists it too.
-    setIdeView(view);
+    // Recorded BEFORE the grid can mount: a grid coming up in a fresh window
+    // reads the stored preference, so the wizard's answer has to be on disk by
+    // then. `setView` writes it too; this is the belt for the braces.
+    rememberViewMode(view);
     try {
       // The open answers with the whole state — the new workspace AND the bar.
       // Re-fetching instead would be a race that can blank what was just opened.
@@ -655,10 +640,58 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
    * cannot re-fire on a value that has not changed.
    */
   const [jumpTo, setJumpTo] = useState<{ pane: string; nonce: number } | null>(null);
-  const jumpToPane = async (workspaceId: string, pane: string) => {
-    if (workspaceId !== session?.id) await switchTo(workspaceId);
-    setJumpTo({ pane, nonce: Date.now() });
-  };
+  const jumpToPane = useCallback(
+    async (workspaceId: string, pane: string) => {
+      if (workspaceId !== session?.id) await switchTo(workspaceId);
+      setJumpTo({ pane, nonce: Date.now() });
+    },
+    [session?.id, switchTo],
+  );
+
+  /*
+   * Tell the rest of the app WHICH workspace is open.
+   *
+   * Nothing published this, so the store's `workspace` stayed null forever and
+   * every reader that gates on it — the sidebar's chat face above all — was
+   * unreachable code. The folder travels with it because that is the one thing
+   * the IDE knows and a chat list does not: which project a session is
+   * touching.
+   */
+  useEffect(() => {
+    if (!onScreen) return;
+    publishWorkspace(
+      session
+        ? { id: session.id, name: session.project.name, path: session.folder }
+        : null,
+    );
+  }, [onScreen, publishWorkspace, session]);
+
+  /*
+   * Leaving the section hands the navigation back.
+   *
+   * Without this the sidebar keeps the workspace's chats while the user is
+   * reading Costs, because "is a workspace open" stayed true after this view
+   * went off screen.
+   */
+  useEffect(() => {
+    if (onScreen) return;
+    publishWorkspace(null);
+  }, [onScreen, publishWorkspace]);
+
+  /*
+   * A session list asked for one pane.
+   *
+   * The list is in the app sidebar, outside this view and outside the grid, so
+   * the ask arrives through the store and is performed here — by the same jump
+   * the notification bell and the voice bubble use, which already knows how to
+   * switch workspace first.
+   */
+  const lastPaneRequest = useRef(0);
+  useEffect(() => {
+    if (!paneRequest || paneRequest.nonce === lastPaneRequest.current) return;
+    lastPaneRequest.current = paneRequest.nonce;
+    void jumpToPane(paneRequest.workspaceId, paneRequest.pane);
+  }, [jumpToPane, paneRequest]);
 
   /*
    * A file dropped on a workspace TAB.
@@ -867,34 +900,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
    * carries them even with nothing open, which is why it renders at all in that
    * case. Passing them here as well would put Restart on screen twice.
    */
-  /*
-   * The open workspace, published for everyone outside this subtree: the
-   * sidebar groups its chats by folder, and the chat surface runs in it.
-   * Cleared when nothing is open so neither shows a folder that is not there.
-   */
-  const workspaceFolder = session?.folder ?? "";
-  const workspaceName = session?.project.name ?? "";
-  const workspaceId = session?.id ?? "";
-  useEffect(() => {
-    setIdeWorkspace(
-      workspaceId
-        ? { id: workspaceId, name: workspaceName, path: workspaceFolder }
-        : null,
-    );
-  }, [workspaceId, workspaceName, workspaceFolder, setIdeWorkspace]);
-
   const renderBar = (embedded: boolean) => (
     <WorkspaceBar
       embedded={embedded}
       actions={embedded ? undefined : <TopBarActions />}
-      /* Only with a workspace open: with none there is nothing to show on
-         either surface, and the wizard is the screen. A switch that changes
-         nothing visible is a dead control. */
-      viewSwitch={
-        session && !addingNew ? (
-          <ViewSwitch view={ideView} onView={setIdeView} />
-        ) : undefined
-      }
       workspaces={barWorkspaces}
       activeId={session?.id ?? null}
       addingNew={addingNew}
@@ -910,80 +919,43 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
   // ------------------------------------------------------------ running mode
   if (session && !addingNew) {
-    const onChat = ideView === "chat";
     return (
       <div className="flex h-full flex-col">
-        {/*
-          In chat mode the bar is its own row again: the grid it normally rides
-          in is behind the chat, and a switch you cannot see is a switch you
-          cannot switch back with.
-        */}
-        {onChat && renderBar(false)}
-        <div className="relative min-h-0 min-w-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
           {/*
             Keyed by workspace, so switching tabs REPLACES the grid instead of
             re-using it. That is deliberate: each pane's terminal is wired to
             one call-sign for its whole life, and re-using the component across
             workspaces would leave xterm instances pointed at the panes of the
             workspace that just left.
-
-            COVERED for the chat, never hidden and never unmounted. `display:
-            none` would measure every terminal at 0x0 and hand its agent a
-            zero-column window; unmounting would kill the agent outright. At
-            opacity 0 the panes keep their real geometry and simply are not
-            looked at, so switching back is instant and nothing was disturbed.
           */}
-          <div
-            className={cn(
-              "absolute inset-0",
-              onChat && "pointer-events-none opacity-0",
-            )}
-            aria-hidden={onChat}
-            data-testid="agentic-grid-layer"
-          >
-            <AgenticGrid
-              key={session.id}
-              session={session}
-              view={ideView}
-              workspaceBar={onChat ? undefined : renderBar(true)}
-              /* The app's own controls ride in whichever bar is visible;
-                 in chat that is the standalone one above, so the grid must
-                 not render a second, covered copy of them. */
-              appActions={onChat ? undefined : <TopBarActions />}
-              onAddProject={() => void startAdding()}
-              onNewSession={() => void startSession()}
-              onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
-              jumpTo={jumpTo}
-              focusMode={focusMode}
-              onToggleFocus={(v) => void toggleFocus(v)}
-              onClose={() => void close()}
-              busy={busy}
-              maxTerminals={maxTerminals}
-              agents={splitChoices}
-              /* An install started from a split menu changes the one thing this
-                 list answers, and the sweep behind it is cached — so the re-read
-                 is explicit rather than waited for. */
-              onAgentsChanged={() => void reloadAgents()}
-              onSessionChanged={setSession}
-              accounts={ideAccounts}
-              onStateChanged={applyStateFromSettings}
-              onScreen={onScreen}
-              onPromptTargetChange={setPromptTarget}
-              voiceOpen={voiceOpen}
-              onToggleVoice={toggleVoiceBubble}
-            />
-          </div>
-          {onChat && (
-            <div className="absolute inset-0 z-10 flex min-h-0 flex-col bg-background">
-              <IdeChatSurface
-                workspace={{
-                  id: session.id,
-                  name: session.project.name,
-                  path: session.folder,
-                }}
-              />
-            </div>
-          )}
+          <AgenticGrid
+            key={session.id}
+            session={session}
+            workspaceBar={renderBar(true)}
+            appActions={<TopBarActions />}
+            onAddProject={() => void startAdding()}
+            onNewSession={() => void startSession()}
+            onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
+            jumpTo={jumpTo}
+            focusMode={focusMode}
+            onToggleFocus={(v) => void toggleFocus(v)}
+            onClose={() => void close()}
+            busy={busy}
+            maxTerminals={maxTerminals}
+            agents={splitChoices}
+            /* An install started from a split menu changes the one thing this
+               list answers, and the sweep behind it is cached — so the re-read
+               is explicit rather than waited for. */
+            onAgentsChanged={() => void reloadAgents()}
+            onSessionChanged={setSession}
+            accounts={ideAccounts}
+            onStateChanged={applyStateFromSettings}
+            onScreen={onScreen}
+            onPromptTargetChange={setPromptTarget}
+            voiceOpen={voiceOpen}
+            onToggleVoice={toggleVoiceBubble}
+          />
         </div>
         {/*
           The floating voice bubble: talk to the assistant while the agents

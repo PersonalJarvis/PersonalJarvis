@@ -41,12 +41,16 @@ class Viewer:
     def __init__(self) -> None:
         self.seen: list[str] = []
         self.exits: list[int] = []
+        self.geometries: list[tuple[int, int]] = []
 
     async def output(self, text: str) -> None:
         self.seen.append(text)
 
     async def exit(self, code: int) -> None:
         self.exits.append(code)
+
+    def geometry(self, cols: int, rows: int) -> None:
+        self.geometries.append((cols, rows))
 
     @property
     def screen(self) -> str:
@@ -306,3 +310,93 @@ async def test_foreground_viewer_can_reclaim_its_geometry(
     )
     assert term.viewer_output == app.output
     assert fake_pty.resizes[-1] == (term.pty_id, 180, 50)
+
+
+async def test_a_displaced_viewer_is_told_the_size_the_owner_chose(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """The desktop pane a browser tab took over follows that tab's grid at once.
+
+    Its own tile never changed, so nothing in that window would measure again
+    — it used to hold the old grid until an unrelated resize, and the agent's
+    repaints for the tab's width landed in it as fragments (2026-08-25).
+    """
+    session, term = await _one_pane(registry, tmp_path)
+    app, tab = Viewer(), Viewer()
+    await registry.attach(term.name, 180, 50, app.output, app.exit, on_geometry=app.geometry)
+    await registry.attach(
+        term.name,
+        60,
+        20,
+        tab.output,
+        tab.exit,
+        claim_owner=False,
+        on_geometry=tab.geometry,
+    )
+    assert app.geometries == [], "nothing moved yet — a watcher joining is not a resize"
+
+    assert registry.claim_viewer(term.key, 60, 20, session.id, viewer=tab.output)
+
+    assert app.geometries == [(60, 20)], "the displaced screen was not told where the PTY went"
+    assert tab.geometries == [], (
+        "the viewer that asked already reflowed itself; the route answers it separately"
+    )
+
+
+async def test_a_viewer_that_takes_the_pane_at_attach_moves_the_others(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A second window opening on the pane in front is a resize like any other."""
+    _session, term = await _one_pane(registry, tmp_path)
+    app, window = Viewer(), Viewer()
+    await registry.attach(term.name, 180, 50, app.output, app.exit, on_geometry=app.geometry)
+
+    await registry.attach(
+        term.name, 100, 30, window.output, window.exit, on_geometry=window.geometry
+    )
+
+    assert app.geometries == [(100, 30)]
+    assert window.geometries == []
+
+
+async def test_a_promoted_viewer_is_told_its_geometry_is_back(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """When the owner leaves, the survivor hears that the PTY is its size again.
+
+    It spent its time as a watcher following the departed owner's grid, and
+    the restore is a resize it "asked for" only in the sense that it once did
+    — without a notice its screen kept the other window's strip.
+    """
+    session, term = await _one_pane(registry, tmp_path)
+    app, tab = Viewer(), Viewer()
+    await registry.attach(term.name, 180, 50, app.output, app.exit, on_geometry=app.geometry)
+    await registry.attach(term.name, 60, 20, tab.output, tab.exit, on_geometry=tab.geometry)
+    assert app.geometries == [(60, 20)]
+
+    registry.detach(term.key, session.id, viewer=tab.output)
+
+    assert term.viewer_output == app.output
+    assert fake_pty.resizes[-1] == (term.pty_id, 180, 50)
+    assert app.geometries[-1] == (180, 50), "the promoted screen was left holding the tab's grid"
+
+
+async def test_a_viewer_whose_notice_fails_costs_nobody_the_resize(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    session, term = await _one_pane(registry, tmp_path)
+    broken, app, tab = Viewer(), Viewer(), Viewer()
+
+    def explode(cols: int, rows: int) -> None:
+        raise RuntimeError("socket already closed")
+
+    await registry.attach(term.name, 180, 50, broken.output, broken.exit, on_geometry=explode)
+    await registry.attach(term.name, 180, 50, app.output, app.exit, on_geometry=app.geometry)
+    await registry.attach(
+        term.name, 60, 20, tab.output, tab.exit, claim_owner=False, on_geometry=tab.geometry
+    )
+
+    assert registry.claim_viewer(term.key, 60, 20, session.id, viewer=tab.output)
+
+    assert fake_pty.resizes[-1] == (term.pty_id, 60, 20)
+    assert app.geometries == [(60, 20)]

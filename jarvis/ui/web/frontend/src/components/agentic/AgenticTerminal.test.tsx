@@ -1354,6 +1354,115 @@ describe("pane refit", () => {
     });
   });
 
+  /*
+   * A pane open in two places — the desktop app and a tab some tool opened to
+   * take a look — has two screens and ONE pseudo-terminal, and the server
+   * hands the size to one of them. The other is told what the owner chose
+   * (a `size` frame) and follows it, which is right while it is merely
+   * watching and wrong the moment the user turns to it: until 2026-08-25 a
+   * pane maximized in the desktop app was fitted to the whole window and
+   * then resized straight back to the tab's strip, its agent drawing into
+   * the top-left corner of it. Every size change the user makes HERE takes
+   * the pane back.
+   */
+  const displacedBy = (cols: number, rows: number) => {
+    act(() => {
+      terminalHarness.handlers.current?.onGeometry?.({ cols, rows } as never);
+    });
+    expect(terminalHarness.resize).toHaveBeenCalledWith(cols, rows);
+    terminalHarness.send.mockClear();
+  };
+
+  it("takes the pane back when it is maximized after another viewer took the size", () => {
+    const view = render(pane(false));
+    settle();
+    displacedBy(30, 10);
+
+    view.rerender(pane(true));
+    settle();
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "claim",
+      cols: 80,
+      rows: 24,
+    });
+  });
+
+  it("takes the pane back when a seam drag ends after another viewer took the size", () => {
+    const view = render(pane(false, { layoutBusy: true }));
+    settle();
+    displacedBy(30, 10);
+
+    view.rerender(pane(false, { layoutBusy: false }));
+    settle();
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "claim",
+      cols: 80,
+      rows: 24,
+    });
+  });
+
+  it("takes the pane back on a click even while the document claims to be hidden", () => {
+    // The desktop shell can report an on-screen window as hidden for minutes
+    // (2026-08-23). A pointer pressed on the pane is proof enough of where
+    // the user is — gating this on the document's word left the app unable
+    // to take its own terminals back at all.
+    render(pane(false));
+    settle();
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => true,
+    });
+
+    try {
+      fireEvent.mouseDown(screen.getByTestId("agentic-terminal-host-Dana"));
+      settle();
+    } finally {
+      Reflect.deleteProperty(document, "hidden");
+    }
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "claim",
+      cols: 80,
+      rows: 24,
+    });
+  });
+
+  it("does not take a pane it is only watching from a window without focus", () => {
+    // The browser tab beside the app, not in front: it follows the owner's
+    // grid and stays quiet, whatever its own layout does.
+    const view = render(pane(false));
+    settle();
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+
+    view.rerender(pane(true));
+    settle();
+
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ t: "claim" }),
+    );
+  });
+
+  it("claims once, not on every pass of a settling layout", () => {
+    // Three passes follow a maximize (see the effect). Holding the size after
+    // the first, the pane has nothing to add on the next two.
+    const view = render(pane(false));
+    settle();
+    displacedBy(30, 10);
+
+    view.rerender(pane(true));
+    settle();
+
+    const claims = terminalHarness.send.mock.calls.filter(
+      ([frame]) => (frame as { t: string }).t === "claim",
+    );
+    expect(claims).toHaveLength(1);
+  });
+
   it("keeps offering a size the socket could not carry", () => {
     // A pane measured while its backend was restarting must not treat the
     // frame as delivered. Nothing measures a pane again on its own, so a size
@@ -1375,7 +1484,7 @@ describe("pane refit", () => {
     settle();
 
     expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
+      t: "claim",
       cols: 200,
       rows: 24,
     });
@@ -1410,7 +1519,7 @@ describe("pane refit", () => {
 
     expect(terminalHarness.fit).toHaveBeenCalled();
     expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
+      t: "claim",
       cols: 66,
       rows: 20,
     });
@@ -1438,7 +1547,7 @@ describe("pane refit", () => {
 
     expect(terminalHarness.fit).toHaveBeenCalled();
     expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
+      t: "claim",
       cols: 17,
       rows: 6,
     });
@@ -1470,7 +1579,7 @@ describe("pane refit", () => {
       // fit() sizes xterm to the tile, so the agent hearing the tile's own
       // measurement IS the two agreeing.
       expect(terminalHarness.send).toHaveBeenCalledWith({
-        t: "r",
+        t: "claim",
         cols: size.cols,
         rows: size.rows,
       });
@@ -1514,7 +1623,7 @@ describe("pane refit", () => {
     // The pane takes the tile's 40 columns without touching a single point of
     // the reader's text size, which is what this pins.
     expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
+      t: "claim",
       cols: 40,
       rows: 20,
     });
@@ -1742,7 +1851,7 @@ describe("pane refit while the agent is drawing", () => {
     expect(screen.queryByTestId("pane-too-narrow-Dana")).toBeNull();
     expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
     expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
+      t: "claim",
       cols: 22,
       rows: 30,
     });

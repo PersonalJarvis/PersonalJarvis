@@ -166,8 +166,12 @@ async def test_restoring_a_hundred_panes_keeps_every_position(
     result = await registry.restore(snapshot)
     session = result.sessions[0]
     assert len(session.terminals) == ide.MAX_TERMINALS
+    # Every pane sits exactly where it sat — twenty columns of five — read
+    # back across the bands rather than down the columns, because a grid
+    # stands on its rows once it is restored (`layout_tree.rows_outermost`).
+    across = ide.MAX_TERMINALS // 5
     assert [(t.column, t.slot) for t in session.terminals] == [
-        (i // 5, i % 5) for i in range(ide.MAX_TERMINALS)
+        (i % across, i // across) for i in range(ide.MAX_TERMINALS)
     ]
     # Every pane keeps its own conversation — no two share a handle.
     ids = [t.resume.id for t in session.terminals if t.resume]
