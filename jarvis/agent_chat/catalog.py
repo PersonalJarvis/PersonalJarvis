@@ -29,14 +29,21 @@ Two kinds of runner sit behind the rows:
     the Jarvis surface (the front page's chat), where the typed turn is
     Jarvis rather than a coding agent.
 
-``claude-api`` is the one dual row: with a Claude subscription login the
-``claude`` CLI runs the session (Claude Code proper — tools, skills, the
-Max plan's included usage); with only an Anthropic API key the API runner
-does (the brain runner on the Jarvis surface). The route decides per request
-by probing; this module only carries the static shape.
+``claude-api`` is the one dual row: on a surface with CLI seats, a Claude
+subscription login makes the ``claude`` CLI run the session (Claude Code
+proper — tools, skills, the Max plan's included usage); otherwise the
+Anthropic API answers, through the API runner or the brain one. The route
+decides per request by probing; this module only carries the static shape.
+
+Not every row reaches every surface: a surface whose kit has no CLI seats
+(``SurfaceKit.cli_seats``, the front page's chat) is offered only the rows
+with a brain plugin behind them — :func:`rows_for` is the one place that
+narrowing happens, and it gates on the capability, never on a provider name
+(AP-21).
 
 Presentation data only — nothing here decides behaviour (AP-21); the rows
 exist so the picker can show a provider before a key is typed.
+
 """
 
 from __future__ import annotations
@@ -252,3 +259,56 @@ def provider_row(provider_id: str) -> ProviderRow | None:
 
 def known_provider_ids() -> tuple[str, ...]:
     return tuple(row.id for row in PROVIDER_ROWS)
+
+
+def rows_for(surface: str) -> tuple[ProviderRow, ...]:
+    """The rows ``surface`` may pick from.
+
+    A surface with CLI seats sees all of them. One without (the front page's
+    chat) sees only the rows a brain plugin can drive — the providers whose
+    own API answers behind a key, so the turn runs through Jarvis' harness
+    and its model pick is one ``TurnOverride`` rather than a vendor process.
+    Decided by asking the runner whether it can drive the provider at all,
+    never from a list of names (AP-21).
+    """
+    from jarvis.agent_chat.surface_kits import kit_for
+
+    if kit_for(surface).cli_seats:
+        return PROVIDER_ROWS
+    from jarvis.agent_chat.runner_api import supports_api_runner
+
+    return tuple(row for row in PROVIDER_ROWS if supports_api_runner(row.id))
+
+
+def offers(surface: str, provider_id: str) -> bool:
+    """Whether ``provider_id`` is one of ``surface``'s rows."""
+    pid = (provider_id or "").strip().lower()
+    return any(row.id == pid for row in rows_for(surface))
+
+
+#: A CLI-only row and the API row of the same brand. A chat that was seated
+#: on a vendor CLI before the front page dropped its CLI seats moves across
+#: this map instead of being stranded on a provider its picker no longer
+#: lists — same brand, same key page, now the provider's own endpoint.
+API_TWIN: Final[dict[str, str]] = {
+    "openai-codex": "openai",
+    "antigravity": "gemini",
+    "grok-build": "grok",
+}
+
+
+def api_seat(provider: str, model: str) -> tuple[str, str]:
+    """Where a CLI-seated ``(provider, model)`` lands on an API-only surface.
+
+    The provider moves to its API twin; the model is kept only when the
+    provider's own catalog knows it. A CLI's model ids are the CLI's own —
+    ``opusplan``, ``best``, ``claude-opus-5[1m]``, ``gpt-5.6-sol`` as Codex
+    spells it — and sending one to the provider's endpoint is an error, not
+    a near miss. An unknown id therefore becomes ``""``: the provider's
+    default, which the picker shows as "Default" and the person can change
+    in one click.
+    """
+    pid = (provider or "").strip().lower()
+    seat = API_TWIN.get(pid, pid)
+    known = {m.id for m in CURATED_MODELS.get(seat, ())}
+    return seat, (model if model in known else "")

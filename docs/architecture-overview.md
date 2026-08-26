@@ -120,7 +120,7 @@ Ack-Brain (`jarvis/brain/ack_brain/`) emits a sub-second butler-style preamble b
 
 **Persona / custom system prompt:** the live persona comes from `jarvis/brain/persona_loader.py`. `base_persona_prompt()` returns an editable override (`data/custom_system_prompt.md`, written atomically via the Settings UI / `settings_routes.py`) when present, else the packaged `JARVIS_PERSONA.md`. `load_effective_persona_prompt()` is what the brains call: the base **plus the active mode's character block**. Edits apply on the **next turn** (no restart); `invalidate_cache()` clears the in-process cache. Never hardcode the persona string elsewhere.
 
-### The typed chat: two surfaces, three runners (2026-08-25)
+### The typed chat: two surfaces, three runners (2026-08-26)
 
 `jarvis/agent_chat/` serves two chats that look the same and mean different
 things — every session carries a `surface` (`store.SURFACES`, mirrored in
@@ -128,8 +128,20 @@ Pydantic and TypeScript, parity-tested):
 
 | Surface | What a typed turn is | Runner per seat | Permission ladder |
 |---|---|---|---|
-| `"jarvis"` — the front page's Chat section | **Jarvis with a keyboard**: the same assistant the microphone talks to (soul, persona, profile, identity card, memory, wiki, skills, ALL tools through the risk tiers) on the model the composer picked for THIS chat | API-key / local rows → `runner_brain` (`BrainManager.generate` + a `TurnOverride`); subscription CLIs → `runner_cli` with the Jarvis identity | ONE ladder in Claude Code's words — `ask` / `accept-edits` / `bypass` + `plan` — folded onto each CLI's own spelling |
+| `"jarvis"` — the front page's Chat section | **Jarvis with a keyboard**: the same assistant the microphone talks to (soul, persona, profile, identity card, memory, wiki, skills, ALL tools through the risk tiers) on the model the composer picked for THIS chat | EVERY seat → `runner_brain` (`BrainManager.generate` + a `TurnOverride`). No CLI seats at all (`SurfaceKit.cli_seats = False`) | ONE ladder in Claude Code's words — `ask` / `accept-edits` / `bypass` + `plan` |
 | `"agent"` — the Agentic IDE's chat mode | a plain coding-agent session in a folder | `runner_api` (tool loop) or a plain `runner_cli` | the vendor's own ladder |
+
+**Which providers a surface may be seated on** is `catalog.rows_for(surface)`,
+and it gates on the capability, never on a name (AP-21): a surface with CLI
+seats gets every row; one without gets only the rows a brain plugin drives
+(`runner_api.BRAIN_BY_PROVIDER`). The front page is the second case
+(maintainer, 2026-08-26) — one pipeline, one place the model is picked, one
+usage ledger, and a model change is a `TurnOverride` rather than a different
+vendor process. Its `claude-api` row therefore always resolves to the
+Anthropic endpoint, Claude Code installed or not. Chats seated on a CLI
+before the change move to the API row of the same brand once per database
+(`service._retire_cli_seats`, marked by SQLite's `user_version`), keeping
+their transcript and dropping only a model id the endpoint cannot take.
 
 **The per-turn override contract (binding).** A chat's pick of provider /
 model / effort NEVER moves the live brain: `BrainManager.generate(turn_override=…)`
@@ -159,9 +171,14 @@ handler) turns the stance into a decision: `ask` cards everything consequential,
 gate itself; `plan` offers reading hands only. The blacklist is never reached
 from here in any stance.
 
-**A CLI seat as Jarvis.** A subscription CLI keeps its own loop (that is what
-the subscription pays for; only the vendor's official binary spends it) but
-runs with Jarvis' head: `BrainManager.render_surface_prompt` renders the
+**A CLI seat as Jarvis** (built, currently unreachable). No surface seats a
+CLI as Jarvis any more — the front page dropped its CLI seats on 2026-08-26
+and the IDE's chat runs a plain coding agent — so `run_cli_turn(identity=…)`
+is False on every turn today. The machinery stays wired to the kit
+(`kit.brain_runner and kit.cli_seats`) rather than to a surface name, so a
+surface that wants both works without a rebuild. How it works, when reached:
+a subscription CLI keeps its own loop (that is what the subscription pays
+for; only the vendor's official binary spends it) but runs with Jarvis' head: `BrainManager.render_surface_prompt` renders the
 voice turn's prompt layers read-only, `jarvis_harness.build_identity` adds the
 chat's transcript on a fresh conversation and the surface addendum, and each
 CLI takes it the way it can (Claude Code: `--append-system-prompt-file`; Codex

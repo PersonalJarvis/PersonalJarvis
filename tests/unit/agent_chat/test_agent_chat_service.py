@@ -207,6 +207,46 @@ def _app(tmp_path: Path) -> FastAPI:
     return app
 
 
+def test_the_jarvis_catalog_is_api_seats_only(tmp_path: Path):
+    """What the front page's composer is handed: endpoints behind a key.
+
+    No CLI row, and the dual Claude row resolved to the brain runner with a
+    live model list — whether or not Claude Code is on this machine, which is
+    exactly what the previous behaviour turned on.
+    """
+    with TestClient(_app(tmp_path)) as client:
+        cat = client.get("/api/agent-chat/catalog?surface=jarvis").json()
+        rows = {p["id"]: p for p in cat["providers"]}
+        assert not ({"openai-codex", "antigravity", "grok-build"} & set(rows))
+        assert {"claude-api", "openai", "gemini", "ollama"} <= set(rows)
+        assert all(p["runner"] == "brain" for p in rows.values()), rows
+        assert rows["claude-api"]["models_source"] == "live"
+        # No row claims a CLI either way, so the picker greys nothing for a
+        # missing binary here.
+        assert all(p["cli_installed"] is None for p in rows.values())
+
+        # The IDE's chat is untouched: its CLI rows are still there.
+        agent_rows = {
+            p["id"]: p for p in client.get("/api/agent-chat/catalog?surface=agent").json()["providers"]
+        }
+        assert {"openai-codex", "antigravity", "grok-build"} <= set(agent_rows)
+
+        # And a CLI seat cannot be talked onto the front page by hand.
+        refused = client.post(
+            "/api/agent-chat/sessions", json={"provider": "openai-codex", "surface": "jarvis"}
+        )
+        assert refused.status_code == 400, refused.text
+        made = client.post(
+            "/api/agent-chat/sessions", json={"provider": "openai", "surface": "jarvis"}
+        )
+        assert made.status_code == 201, made.text
+        moved = client.patch(
+            f"/api/agent-chat/sessions/{made.json()['session_id']}",
+            json={"provider": "antigravity"},
+        )
+        assert moved.status_code == 400, moved.text
+
+
 def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, scripted):
     ScriptedBrain.script = [[BrainDelta(content="hello from fake")]]
     # One portal for the whole test: a bare TestClient opens a fresh event
@@ -274,3 +314,43 @@ def test_routes_answer_503_without_a_service(tmp_path: Path):
     app.include_router(router)
     client = TestClient(app)
     assert client.get("/api/agent-chat/sessions").status_code == 503
+
+
+def test_the_jarvis_chat_starts_in_its_own_folder_not_the_whole_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The front page's chat brings a workspace; the IDE's keeps the fallback.
+
+    The Jarvis surface merges the folder tools into the turn, and the
+    read-only four (``Read``/``Ls``/``Glob``/``Grep``) are tier ``safe`` — they
+    run without an approval card. Defaulting that to the home directory made
+    the person's whole profile readable unprompted, and the composer showed its
+    leaf ("Administrator" on Windows) as if it were a setting somebody chose.
+    The IDE's chat is the opposite case: a coding agent is pointed at a
+    checkout, so it keeps the service fallback and its folder chip.
+    """
+    workspace = tmp_path / "chat-workspace"
+    home = tmp_path / "home"
+    monkeypatch.setattr("jarvis.core.paths.chat_workspace_dir", lambda: workspace)
+    svc = AgentChatService(AgentChatStore(tmp_path / "db.sqlite"), default_cwd=lambda: str(home))
+
+    assert svc.default_cwd("jarvis") == str(workspace)
+    # Created on first use: a CLI seat cannot start in a folder that is not there.
+    assert workspace.is_dir()
+    assert svc.default_cwd("agent") == str(home)
+
+    session = svc.create_session(provider="claude-api", surface="jarvis")
+    assert session.cwd == str(workspace)
+
+
+def test_an_uncreatable_workspace_falls_back_instead_of_failing_the_chat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read-only install still gets a chat, just with the old wider folder."""
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setattr("jarvis.core.paths.chat_workspace_dir", lambda: blocker / "chat-workspace")
+    svc = AgentChatService(AgentChatStore(tmp_path / "db.sqlite"), default_cwd=lambda: str(home))
+
+    assert svc.default_cwd("jarvis") == str(home)

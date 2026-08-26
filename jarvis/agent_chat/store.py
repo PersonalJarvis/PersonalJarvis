@@ -227,6 +227,49 @@ class AgentChatStore:
             self._conn.commit()
         return self.get_session(session_id)
 
+    def data_version(self) -> int:
+        """How many one-shot data migrations this file has already had.
+
+        Schema changes are idempotent (``_migrate`` adds missing columns);
+        a DATA migration is not — it rewrites what someone picked, so it has
+        to run exactly once. SQLite's own ``user_version`` is the marker.
+        """
+        with self._lock:
+            row = self._conn.execute("PRAGMA user_version").fetchone()
+        return int(row[0]) if row else 0
+
+    def set_data_version(self, version: int) -> None:
+        with self._lock:
+            # PRAGMA takes no bound parameter; the value is an int by signature.
+            self._conn.execute(f"PRAGMA user_version = {int(version)}")
+            self._conn.commit()
+
+    def sessions_on(self, surface: str, provider: str) -> list[AgentChatSession]:
+        """Every session of ``surface`` currently seated on ``provider``."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_chat_sessions WHERE surface = ? AND provider = ?",
+                (surface, provider),
+            ).fetchall()
+        return [self._row_to_session(row) for row in rows]
+
+    def reseat_session(self, session_id: str, *, provider: str, model: str) -> None:
+        """Move a session onto another provider, leaving ``updated_ms`` alone.
+
+        For migrations, not for the composer: the chat list is ordered by
+        that timestamp, and re-seating everyone's history because the runner
+        behind a surface changed would shuffle it to the top for no reason
+        the person did. The vendor session id goes with it — it belongs to
+        the CLI conversation this session is leaving.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE agent_chat_sessions SET provider = ?, model = ?, vendor_session = '' "
+                "WHERE session_id = ?",
+                (provider, model, session_id),
+            )
+            self._conn.commit()
+
     def delete_session(self, session_id: str) -> bool:
         with self._lock:
             cur = self._conn.execute(

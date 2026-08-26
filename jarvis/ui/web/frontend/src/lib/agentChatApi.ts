@@ -86,6 +86,16 @@ export interface AgentChatEvent {
 }
 
 /** One row of `GET /api/jarvis-agent/status` — the Agents tab's truth about credentials. */
+/**
+ * Runners that call a provider's own HTTP endpoint: the coding-agent tool
+ * loop (`api`) and Jarvis' own harness (`brain`). Both need an API key for
+ * that provider; the vendor CLIs are the other case, where a subscription
+ * login is the credential and no key exists at all.
+ */
+export function isApiRunner(runner: string): boolean {
+  return runner === "api" || runner === "brain";
+}
+
 export interface AgentConnectionRow {
   jarvis: string;
   label?: string;

@@ -20,7 +20,7 @@ import { useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatS
 import type { ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { folderLeaf } from "@/lib/folderPath";
-import { pickAgentChatFolder } from "@/lib/agentChatApi";
+import { isApiRunner, pickAgentChatFolder } from "@/lib/agentChatApi";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
@@ -43,7 +43,7 @@ import { cn } from "@/lib/utils";
  *
  * — then dictation and Send on the right. The picks are the backend's
  * catalog for this surface, never a list typed here: the provider column is
- * every sub-agent the Agents tab knows (connected ones pickable, the rest
+ * what that surface may be seated on (connected ones pickable, the rest
  * greyed with a "connect" hint), the model column is the provider's own list
  * (live from its catalog route, or the curated list for a CLI), the effort
  * ladder and the permission ladder are whatever the catalog delivers for
@@ -52,6 +52,13 @@ import { cn } from "@/lib/utils";
  * bypass), each step wearing its stance's glyph (permissionIcons.ts).
  * Build | Plan is the permission ladder's `plan` entry drawn as a switch,
  * shown only when the ladder has one.
+ *
+ * Which providers a surface offers is the backend's call, not a filter here
+ * (jarvis/agent_chat/catalog.py — `rows_for`): the front page's chat lists
+ * only providers whose own API Jarvis' harness drives, so a turn there is
+ * one `TurnOverride` on one endpoint behind one key (maintainer,
+ * 2026-08-26). The vendor CLIs stay where a vendor CLI is the point — the
+ * IDE's chat mode, a coding agent in a folder.
  *
  * The provider list is grouped the way the Agents tab groups its cards — by
  * what stands behind a row, never by whether it is connected: a coding CLI
@@ -653,13 +660,18 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
  * no account. Decided from the catalog's own facts (runner, keyless) — the
  * same split the Agents tab draws, so the two never disagree. Claude's dual
  * row lands where its resolved runner says: the CLI group when Claude Code
- * answers, the API-key group when only an Anthropic key is saved.
+ * answers, the API-key group when the Anthropic endpoint does.
+ *
+ * `brain` counts as an API seat, not a CLI one: it is Jarvis' own harness
+ * calling that provider's endpoint with that provider's key, which is what
+ * every row on the front page's chat resolves to. Reading it as a CLI put
+ * the whole list under the wrong heading there.
  */
 export type ProviderKind = "cli" | "api" | "local";
 export const PROVIDER_KINDS: readonly ProviderKind[] = ["cli", "api", "local"];
 export function providerKind(p: { runner: string; keyless: boolean }): ProviderKind {
   if (p.keyless) return "local";
-  return p.runner === "api" ? "api" : "cli";
+  return isApiRunner(p.runner) ? "api" : "cli";
 }
 
 /** One compact pick on the composer's bottom row — a pill-sized Combobox. */

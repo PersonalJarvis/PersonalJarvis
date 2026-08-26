@@ -44,6 +44,11 @@ class SurfaceKit:
     ``brain_runner``
         Whether an API provider is driven by Jarvis' own brain (``brain``)
         instead of the coding agent's loop (``api``).
+    ``cli_seats``
+        Whether a vendor CLI may run a turn here. ``False`` means every seat
+        on this surface is an API endpoint behind a key: the picker lists
+        only providers with a brain plugin, and the CLI rows (Claude Code,
+        Codex, Antigravity, Grok Build) are not offered at all.
     ``ladder``
         The permission ladder the composer shows, or ``None`` for the
         runner's own ladder.
@@ -65,6 +70,7 @@ class SurfaceKit:
 
     surface: str
     brain_runner: bool = False
+    cli_seats: bool = True
     ladder: str | None = None
     uses_stance: bool = False
     tools: ToolsBuilder | None = None
@@ -97,6 +103,12 @@ _KITS: Final[dict[str, SurfaceKit]] = {
     "jarvis": SurfaceKit(
         surface="jarvis",
         brain_runner=True,
+        # No vendor CLI here (maintainer, 2026-08-26). What answers on the
+        # front page is Jarvis' own harness on a provider API behind a key —
+        # one pipeline, one place the model is picked, one usage ledger. A
+        # subscription CLI seat is a coding agent and belongs to the IDE's
+        # chat, where its own loop and its own tools are the point.
+        cli_seats=False,
         ladder=_JARVIS_LADDER,
         uses_stance=True,
         # Not the home directory: this surface hands out the folder tools, and

@@ -9,6 +9,7 @@ import {
   fetchAgentChatSessions,
   fetchAgentConnections,
   fetchProviderModels,
+  isApiRunner,
   patchAgentChatSession,
   resolveAgentChatApproval,
   sendAgentChatMessage,
@@ -398,7 +399,16 @@ export function createAgentChatStore(surface: AgentChatSurface) {
         if (!catalog) return [];
         return catalog.providers.map((p) => {
           const row = connectionFor(p, connections);
-          const credentialed = p.keyless || Boolean(row?.key_set);
+          // An API seat needs an API KEY, not just any credential. The Agents
+          // tab counts a subscription login as connected — right for a row a
+          // CLI runs — but the brain runner calls the provider's endpoint,
+          // where a Claude Code login buys nothing. `key_set` stands in when
+          // an older backend does not report the finer field.
+          const credentialed = p.keyless
+            ? true
+            : isApiRunner(p.runner)
+              ? Boolean(row?.api_key_set ?? row?.key_set)
+              : Boolean(row?.key_set);
           const installed = p.cli_installed === null ? true : p.cli_installed;
           return {
             ...p,

@@ -44,7 +44,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from jarvis.agent_chat import attachments as chat_attachments
-from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, PROVIDER_ROWS
+from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, offers, rows_for
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import (
@@ -61,6 +61,7 @@ from jarvis.agent_chat.service import (
     SessionBusy,
     resolve_runner,
 )
+from jarvis.agent_chat.surface_kits import kit_for
 from jarvis.agent_chat.tools import shell_label
 
 log = logging.getLogger(__name__)
@@ -217,11 +218,16 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
     — the picker reads it from ``/api/jarvis-agent/status`` like the Agents
     tab, so the two never disagree. On the Jarvis surface every row shows the
     one Jarvis ladder (``permissions.JARVIS_LADDER``).
+
+    Which rows a surface gets is ``catalog.rows_for``: the front page's chat
+    has no CLI seats, so it is offered only the providers whose own API a
+    brain plugin drives — and no CLI is probed for its model list either.
     """
     svc = _service(request)
     rows: list[dict[str, Any]] = []
-    live_models = await _live_cli_models()
-    for row in PROVIDER_ROWS:
+    cli_seats = kit_for(surface).cli_seats
+    live_models = await _live_cli_models() if cli_seats else {}
+    for row in rows_for(surface):
         d = row.to_dict()
         runner = resolve_runner(row.id, surface=surface)
         d["runner"] = runner
@@ -231,7 +237,8 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
         if d["cli_installed"] and runner in live_models and live_models[runner]:
             d["curated_models"] = live_models[runner]
         # The dual row: Claude Code takes its own ids and aliases; with only
-        # an API key the Anthropic catalog route lists the models live.
+        # an API key — and on a surface with no CLI seats, always — the
+        # Anthropic catalog route lists the models live.
         if row.id == "claude-api":
             if runner == "claude-cli":
                 d["curated_models"] = [m.to_dict() for m in CLAUDE_CODE_MODELS]
@@ -317,13 +324,20 @@ async def patch_session(
     session_id: str, body: PatchSessionBody, request: Request
 ) -> dict[str, Any]:
     svc = _service(request)
-    if svc.store.get_session(session_id) is None:
+    existing = svc.store.get_session(session_id)
+    if existing is None:
         raise HTTPException(status_code=404, detail="session not found")
     fields: dict[str, Any] = {}
     if body.title is not None:
         fields["title"] = body.title.strip()[:120]
     if body.provider is not None:
-        fields["provider"] = body.provider.strip().lower()
+        picked = body.provider.strip().lower()
+        if not offers(existing.surface, picked):
+            raise HTTPException(
+                status_code=400,
+                detail=f"provider {picked!r} is not offered on the {existing.surface!r} chat",
+            )
+        fields["provider"] = picked
         # A provider change resets the vendor conversation: the new CLI cannot
         # resume the old one's id.
         fields["vendor_session"] = ""
