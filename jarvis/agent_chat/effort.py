@@ -35,9 +35,13 @@ ORDER: Final[tuple[str, ...]] = (
 # "Default" in the picker; it is only used for providers whose models vary
 # too much to pick one honest default (OpenRouter, NVIDIA NIM, local servers).
 _LADDERS: Final[dict[str, tuple[tuple[str, ...], str]]] = {
-    # Anthropic: the Claude Code CLI ladder (low/medium/high/xhigh/max). The
-    # API path has no effort knob today; the CLI is the preferred runner for
-    # a subscription login, so the ladder shown is the CLI's.
+    # Anthropic low/medium/high/xhigh/max — one ladder for both runners.
+    # Claude Code takes it as ``--effort``; the API takes it as
+    # ``output_config.effort`` plus adaptive thinking on the models that
+    # have it (``_anthropic_base.reasoning_kwargs``, which snaps a level a
+    # model does not offer down to its nearest one). So the pick means the
+    # same thing on the front page's chat, where the API always answers, as
+    # it does on a Claude Code seat in the IDE's.
     "claude-api": (("low", "medium", "high", "xhigh", "max"), "high"),
     # OpenAI reasoning.effort for the GPT-5 family (``max`` since GPT-5.6;
     # ``minimal`` only on the older 5.x — the plugin retries without a level
