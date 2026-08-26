@@ -61,6 +61,7 @@ import {
   Check,
   Loader2,
   Maximize2,
+  MessageSquare,
   Minimize2,
   Paperclip,
   Pencil,
@@ -471,6 +472,12 @@ interface AgenticTerminalProps {
   /** Called when the user asks a dead pane to start a fresh agent. */
   onRestart?: () => void;
   /**
+   * Read this pane as a chat: the workspace's chat stage, this pane on it,
+   * drawn with the agent chat's timeline (see ./PaneChat). Absent on a plain
+   * shell pane, which has no conversation to read.
+   */
+  onOpenChat?: () => void;
+  /**
    * Press on the pane's header — the grip that picks this pane up.
    *
    * The header rather than the whole pane, because the rest of the pane is a
@@ -535,6 +542,7 @@ export function AgenticTerminal({
   splitDisabled = false,
   onAttachError,
   onRestart,
+  onOpenChat,
   restartToken = 0,
   onArrangeStart,
   arranging = false,
@@ -549,6 +557,8 @@ export function AgenticTerminal({
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
   const claimResizeRef = useRef<(() => void) | null>(null);
+  /** The claim a gesture inside the pane makes — see `takeOwnership`. */
+  const takeOwnershipRef = useRef<(() => void) | null>(null);
   const visibilityRef = useRef<{
     show: (afterFlush?: () => void) => void;
     park: () => void;
@@ -1290,10 +1300,41 @@ export function AgenticTerminal({
      * socket is told unconditionally.
      */
     let sentSize: { cols: number; rows: number } | null = null;
+    /*
+     * Does this pane believe it holds the one shared PTY geometry?
+     *
+     * A pseudo-terminal has exactly one size and a pane may be open in more
+     * than one place — the desktop app, a browser tab beside it, a window a
+     * tool opened to take a look — so the server hands the size to ONE viewer
+     * and answers every other viewer's request with the geometry the owner
+     * chose (see `onGeometry`). This flag is what tells a claim apart from a
+     * repeat: a pane that owns the size and measures the same tile again has
+     * nothing to say, while a pane that was displaced must speak up even
+     * though its own measurement never changed. Set when a claim goes out,
+     * cleared whenever the agent is reported to be in a size this pane did
+     * not ask for.
+     */
+    let owned = false;
 
+    /*
+     * May this pane take the shared size without being asked to?
+     *
+     * The passive test, for the moments the browser reports on its own — the
+     * window regaining focus, a pane becoming the active stage, the grid
+     * settling after a maximize. A window that does not hold focus is not the
+     * one the user is reading, so it must not pull the agent's screen over to
+     * its own dimensions.
+     *
+     * `document.hidden` is deliberately NOT consulted. The desktop shell can
+     * report a window that is plainly on screen as hidden for minutes at a
+     * time (2026-08-23), and gating ownership on it left the app unable to
+     * take its own terminals back: a tab some tool had opened took the size,
+     * and every click and every maximize in the app was answered with that
+     * tab's geometry — the agent drawing into the top-left corner of a pane
+     * that had just been made to fill the window (2026-08-25).
+     */
     const viewerMayOwn = () =>
       activeRef.current &&
-      !documentHidden() &&
       (typeof document === "undefined" ||
         typeof document.hasFocus !== "function" ||
         document.hasFocus());
@@ -1382,16 +1423,20 @@ export function AgenticTerminal({
       // Already delivered and unchanged: the fit above was the whole job.
       // Re-announcing a size makes the agent on the other end redraw its
       // entire screen, and a pane refits several times per settling layout.
+      // A claim is exempt only while the pane does not hold the size — once
+      // it does, a claim for the same measurement is the same repeat.
       if (
-        !claimOwner &&
+        (!claimOwner || owned) &&
         sentSize &&
         sentSize.cols === size.cols &&
         sentSize.rows === size.rows
       ) {
         return;
       }
-      if (socket?.send({ t: claimOwner ? "claim" : "r", ...size }))
+      if (socket?.send({ t: claimOwner ? "claim" : "r", ...size })) {
         sentSize = size;
+        if (claimOwner) owned = true;
+      }
     };
 
     /** A fit this pane is holding back until its parser reaches a gap. */
@@ -1466,11 +1511,35 @@ export function AgenticTerminal({
       applyResize(claimOwner);
     };
     resizeRef.current = sendResize;
-    const claimResize = () => {
-      if (viewerMayOwn()) sendResize(true);
-    };
+    /**
+     * Take the shared size if this window may, and refit either way.
+     *
+     * A refit that merely ASKS is answered, when another viewer holds the
+     * pane, with that viewer's geometry — so a pane maximized in this window
+     * would be fitted to its full tile and then resized straight back to the
+     * strip some other window is showing. Every size change the user causes
+     * here therefore claims rather than asks. The fallback matters just as
+     * much: a pane that may not own (inactive, or in a window without focus)
+     * still has to follow its tile, or the effects that route through this
+     * would stop refitting exactly the panes that are not in front.
+     */
+    const claimResize = () => sendResize(viewerMayOwn());
     claimResizeRef.current = claimResize;
+    /**
+     * The same, on the strength of a gesture INSIDE this pane.
+     *
+     * A pointer pressed on the pane is proof enough that this is the window in
+     * front of the user, whatever `document.hasFocus()` has to say — the
+     * desktop shell's answer to that question can lag the truth, and a click
+     * that is not allowed to take the pane back leaves the user with no way
+     * to do so at all.
+     */
+    const takeOwnership = () => {
+      if (activeRef.current) sendResize(true);
+    };
+    takeOwnershipRef.current = takeOwnership;
 
+    const openedWithClaim = viewerMayOwn();
     socket = openPaneSocket(
       {
         name,
@@ -1486,7 +1555,7 @@ export function AgenticTerminal({
         cols: term.cols >= MIN_REAL_COLS ? term.cols : 80,
         rows: term.rows >= MIN_REAL_ROWS ? term.rows : 24,
         appearance: appearanceRef.current,
-        claimOwner: viewerMayOwn(),
+        claimOwner: openedWithClaim,
       },
       {
         onOpen: () => {
@@ -1496,6 +1565,10 @@ export function AgenticTerminal({
           // This is also what hands over a size that was measured while the
           // pane was unreachable.
           sentSize = null;
+          // Ownership is settled by the handshake: a socket opened with a
+          // claim holds the size from its first byte, one opened without is a
+          // watcher until something in this window takes the pane.
+          owned = openedWithClaim;
           // The spawn used a best-effort size (the mount-time fit usually runs
           // before the grid cell is measured), and resizes sent while the socket
           // was connecting were dropped — without this the agent's full-screen
@@ -1527,6 +1600,10 @@ export function AgenticTerminal({
          */
         onGeometry: ({ cols, rows }) => {
           if (disposed) return;
+          // Whatever the numbers, the agent is in a size this pane did not
+          // ask for — refused, or chosen by another window. The next gesture
+          // here claims instead of repeating a request that was turned down.
+          owned = false;
           if (term.cols === cols && term.rows === rows) return;
           try {
             term.resize(cols, rows);
@@ -1803,6 +1880,7 @@ export function AgenticTerminal({
       fitRef.current = null;
       resizeRef.current = null;
       claimResizeRef.current = null;
+      takeOwnershipRef.current = null;
       if (visibilityRef.current === visibility) visibilityRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
@@ -1936,8 +2014,9 @@ export function AgenticTerminal({
     // telling the terminal process leaves the agent formatting for the old
     // width — it keeps wrapping at 100 columns in a pane that now holds 80, and
     // every line breaks in the wrong place. The two must move together, so this
-    // goes through the same resize path the observer uses.
-    resizeRef.current?.();
+    // goes through the same resize path the observer uses — claiming, because
+    // a text size is chosen in THIS window (see `claimResize`).
+    (claimResizeRef.current ?? resizeRef.current)?.();
   }, [fontSize, terminalEpoch]);
 
   /*
@@ -1956,9 +2035,15 @@ export function AgenticTerminal({
    * knowledge instead of waited for. Three passes because the grid settles over
    * a frame or two — and they are nearly free: a fit that lands on the size the
    * terminal already has sends nothing at all.
+   *
+   * Claimed, not merely requested (see `claimResize`): maximizing is the user
+   * opening a pane up to READ it, and a request from a window that had lost
+   * the pane to another viewer was being answered with that viewer's size —
+   * the pane filled the window and its agent kept drawing into the top-left
+   * corner of it (2026-08-25).
    */
   useEffect(() => {
-    const refit = () => resizeRef.current?.();
+    const refit = () => (claimResizeRef.current ?? resizeRef.current)?.();
     const frame = requestAnimationFrame(refit);
     const timers = [
       window.setTimeout(refit, 120),
@@ -1985,8 +2070,12 @@ export function AgenticTerminal({
    */
   useEffect(() => {
     if (layoutBusy) return;
-    resizeRef.current?.();
-    const frame = requestAnimationFrame(() => resizeRef.current?.());
+    // A seam was dragged in this window: the size it lands on is claimed, so
+    // a pane another viewer had taken cannot snap back the moment it is let
+    // go of (see `claimResize`).
+    const refit = () => (claimResizeRef.current ?? resizeRef.current)?.();
+    refit();
+    const frame = requestAnimationFrame(refit);
     return () => cancelAnimationFrame(frame);
   }, [layoutBusy]);
 
@@ -2067,7 +2156,7 @@ export function AgenticTerminal({
     <div
       onMouseDown={() => {
         onFocus?.();
-        claimResizeRef.current?.();
+        takeOwnershipRef.current?.();
       }}
       {...dragHandlers}
       className={cn(
@@ -2147,6 +2236,7 @@ export function AgenticTerminal({
         onClose={onClose}
         splitDisabled={splitDisabled}
         onOpenConversation={() => setHistoryOpen(true)}
+        onOpenChat={onOpenChat}
       />
       {/*
         What went wrong, kept on screen for as long as it is true — and the one
@@ -2295,6 +2385,7 @@ function PaneHeader({
   onArrangeStart,
   arranging = false,
   onOpenConversation,
+  onOpenChat,
 }: {
   workspaceId?: string;
   name: string;
@@ -2324,6 +2415,8 @@ function PaneHeader({
   arranging?: boolean;
   /** Opens the pane's recorded conversation — the mode-proof scroll history. */
   onOpenConversation?: () => void;
+  /** Puts this pane on the chat stage, read with the agent chat's timeline. */
+  onOpenChat?: () => void;
 }) {
   const t = useT();
   const light = appearance === "light";
@@ -2803,6 +2896,19 @@ function PaneHeader({
           count={promptCount}
           light={light}
         />
+        {/* One click from a terminal to the same conversation read as a chat
+            — the timeline the front page's chat draws, with this pane's
+            thinking, tool calls and answers in it (maintainer, 2026-08-26). */}
+        {onOpenChat && (
+          <PaneAction
+            label={t("agentic_grid.pane_chat.open").replace("{0}", name)}
+            testId={`pane-open-chat-${name}`}
+            light={light}
+            onClick={onOpenChat}
+          >
+            <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+          </PaneAction>
+        )}
         {/* The one scroll-history entry point that cannot flicker away: the
             CLI may flip its scroll-owner mode mid-session (Claude Code does),
             but the pane's recorded conversation is always openable. */}

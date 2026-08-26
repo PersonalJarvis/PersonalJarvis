@@ -42,6 +42,17 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   closeTerminals: vi.fn(),
   moveTerminal: vi.fn(),
   renameTerminal: vi.fn(),
+  // The chat stage's poll: a readable pane with nothing said yet, so the stage
+  // renders its empty state and no test has to wait on a transcript.
+  fetchTerminalTimeline: vi.fn(async (name: string) => ({
+    terminal: name,
+    agent: "claude",
+    readable: true,
+    available: true,
+    live: false,
+    activity: "",
+    events: [],
+  })),
   saveLayoutWeights: vi.fn(),
   // Polled by the grid so the pane headers keep saying what their agents are
   // doing. Resolves empty by default; the recap tests give it real rows.
@@ -246,6 +257,7 @@ vi.mock("./AgenticTerminal", () => ({
 import { AgenticGrid } from "./AgenticGrid";
 import * as api from "@/lib/agenticIdeApi";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
+import { useIdeChatStore } from "@/store/ideChat";
 import type { LayoutNode } from "./treeLayout";
 
 /** One pane at (column, slot) — the workspace is columns of stacked panes. */
@@ -339,6 +351,10 @@ beforeEach(() => {
   // the order the tests happen to run in.
   window.localStorage.clear();
   paneActiveHistory.clear();
+  // Grid-or-chat lives in a module-level store since 2026-08-25, so a test
+  // that ends in chat view would start the next one there too. Every case
+  // begins in the grid, the way a fresh window does.
+  useIdeChatStore.setState({ view: "grid", stagedPane: null, paneRequest: null });
   // Seam drags post their result fire-and-forget; an auto-mock returning
   // undefined would crash the `.catch` chain rather than fail an assertion.
   vi.mocked(api.saveLayoutWeights).mockResolvedValue(sessionWith([]));
@@ -2417,7 +2433,12 @@ describe("chat view", () => {
     renderGrid(FOUR);
     toChat();
     expect(screen.getByTestId("agentic-chat-rail").className).not.toContain("hidden");
-    // Mika is the prompt target, so it takes the stage; the others hide.
+    // Mika is the prompt target, so it takes the stage — read as a chat by
+    // default, its terminal cell hidden like the others' and one click away.
+    expect(screen.getByTestId("pane-chat-Mika")).toBeTruthy();
+    expect(cellClass("Mika")).toContain("hidden");
+    fireEvent.click(screen.getByTestId("pane-chat-show-terminal"));
+    expect(screen.queryByTestId("pane-chat-Mika")).toBeNull();
     expect(cellClass("Mika")).not.toContain("hidden");
     for (const name of ["Nova", "Aria", "Kai"]) {
       expect(cellClass(name)).toContain("hidden");
@@ -2499,13 +2520,25 @@ describe("chat view", () => {
     renderGrid(FOUR);
     toChat();
     fireEvent.click(screen.getByTestId("chat-rail-Aria"));
+    expect(screen.getByTestId("pane-chat-Aria")).toBeTruthy();
+    expect(screen.queryByTestId("pane-chat-Mika")).toBeNull();
+    // The reading sticks: once the terminal is what is on stage, the next
+    // rail click shows the next pane's terminal, not its chat.
+    fireEvent.click(screen.getByTestId("pane-chat-show-terminal"));
     expect(cellClass("Aria")).not.toContain("hidden");
     expect(cellClass("Mika")).toContain("hidden");
+    fireEvent.click(screen.getByTestId("chat-rail-Mika"));
+    expect(screen.queryByTestId("pane-chat-Mika")).toBeNull();
+    expect(cellClass("Mika")).not.toContain("hidden");
+    expect(cellClass("Aria")).toContain("hidden");
   });
 
   it("activates an externally added pane on its first chat-stage render", () => {
     const { rerender } = renderGrid(FOUR);
     toChat();
+    // The terminal is what is on stage here: behind the chat every pane is
+    // hidden alike, and this contract is about the pane that is SHOWN.
+    fireEvent.click(screen.getByTestId("pane-chat-show-terminal"));
     paneActiveHistory.clear();
 
     rerender({
@@ -2567,8 +2600,8 @@ describe("chat view", () => {
     // Chromium follows a drag release with a compatibility click on the row
     // below it. That click belongs to the drag and must not switch the stage.
     fireEvent.click(screen.getByTestId("chat-rail-Aria"));
-    expect(cellClass("Mika")).not.toContain("hidden");
-    expect(cellClass("Aria")).toContain("hidden");
+    expect(screen.getByTestId("pane-chat-Mika")).toBeTruthy();
+    expect(screen.queryByTestId("pane-chat-Aria")).toBeNull();
     await waitFor(() =>
       expect(
         JSON.parse(

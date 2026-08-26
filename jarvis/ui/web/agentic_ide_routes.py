@@ -1201,6 +1201,32 @@ async def get_state() -> dict:
     return get_registry().state()
 
 
+@router.get("/panes", summary="Every coding session running in any open workspace")
+async def get_panes() -> dict:
+    """One row per pane, across ALL open workspaces — not just the front one.
+
+    ``/state`` describes the workspace being drawn. This answers the other
+    question, the one a session list asks: what do I have running anywhere? A
+    workspace sitting in a background tab is still running its agents, and a
+    list that showed only the front tab would tell someone with three tabs open
+    that two of them are empty.
+
+    Each row is a line, not a workspace state: who the pane is, what it was
+    last asked, and whether it is still working (see
+    :mod:`jarvis.agentic_ide.activity` — the same reading the grid's badge
+    shows, so the two can never disagree). ``readable`` says whether this
+    pane's conversation can be opened as a page; the transcript itself is
+    ``GET /terminals/{name}/conversation``.
+    """
+    registry = get_registry()
+    rows = registry.panes()
+    for row in rows:
+        row["readable"] = bool(row.get("has_resume")) and agent_transcript.can_read(
+            str(row.get("agent", ""))
+        )
+    return {"panes": rows, "active_id": registry.active_id}
+
+
 @router.get("/state/brief", summary="Agentic-IDE workspace state, briefly")
 async def get_state_brief() -> dict:
     """The workspace as a language model needs it to steer the panes.
@@ -2827,7 +2853,7 @@ async def terminal_report(name: str, lines: int = 40) -> dict:
     "/terminals/{name}/conversation",
     summary="One terminal's conversation, as the CLI itself recorded it",
 )
-async def terminal_conversation(name: str) -> dict:
+async def terminal_conversation(name: str, workspace: str | None = None) -> dict:
     """The turns of a pane's conversation — roles, prose and the steps between.
 
     Read from the coding CLI's OWN record rather than from the pane's screen. A
@@ -2849,8 +2875,13 @@ async def terminal_conversation(name: str) -> dict:
     Collapsing the two is a real bug: a pane whose id has not been discovered
     yet would be treated as a CLI that can never be read, and a conversation
     that was seconds away would never be shown.
+
+    ``workspace`` names the tab the pane belongs to. Without it the front
+    workspace answers first, which is right for a spoken "show me T2" and wrong
+    for a list: every workspace numbers its panes from T1, so a row clicked in a
+    background tab would open the front tab's conversation instead.
     """
-    found = get_registry().find_terminal(name)
+    found = get_registry().find_terminal(name, workspace)
     if found is None:
         raise HTTPException(status_code=404, detail=f"No terminal called {name}")
     _session, term = found
@@ -2892,6 +2923,55 @@ async def terminal_conversation(name: str) -> dict:
         "available": True,
         "turns": [t.to_dict() for t in turns],
     }
+
+
+@router.get(
+    "/terminals/{name}/timeline",
+    summary="One terminal's conversation as agent-chat events",
+)
+async def terminal_timeline(name: str, workspace: str | None = None) -> dict:
+    """The pane's conversation in the agent chat's own event vocabulary.
+
+    The chat stage of the Agentic IDE shows a running coding CLI the way the
+    front page shows a chat — the thinking where it happened, every tool call
+    with its result, the tokens a turn cost — and it does so with the SAME
+    timeline component. That component folds the event log of
+    :mod:`jarvis.agent_chat.events`; this answers in that log's shape, read
+    from the CLI's own transcript (:func:`agent_transcript.read_events`), so
+    one renderer serves both and neither can drift from the other.
+
+    Same two "no" as the conversation endpoint (``readable`` / ``available``),
+    for the same reasons. ``live`` is what the file cannot know and the stage
+    needs: whether the pane is still working — it decides whether the last
+    turn is drawn as running or as done, and how eagerly a client polls.
+    """
+    found = get_registry().find_terminal(name, workspace)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"No terminal called {name}")
+    _session, term = found
+    readable = agent_transcript.can_read(term.agent)
+    reading = term.reading()
+    live = reading.activity in ("working", "starting")
+    base = {
+        "terminal": term.name,
+        "agent": term.agent,
+        "readable": readable,
+        "live": live,
+        "activity": reading.activity,
+    }
+    handle = term.resume
+    if handle is None or not readable:
+        return {**base, "available": False, "events": []}
+    events = await asyncio.to_thread(
+        agent_transcript.read_events,
+        term.agent,
+        handle.id,
+        home=account_home(term.agent, term.account),
+        live=live,
+    )
+    if events is None:
+        return {**base, "available": False, "events": []}
+    return {**base, "available": True, "events": events}
 
 
 @router.get(
@@ -3736,13 +3816,38 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         granted = registry.pty_geometry(term.key, pane_workspace)
         if granted is None or granted == requested:
             return
+        await send_size(*granted)
+
+    async def send_size(cols: int, rows: int) -> None:
         async with send_lock:
             try:
-                await ws.send_json(
-                    {"t": "size", "cols": granted[0], "rows": granted[1]}
-                )
+                await ws.send_json({"t": "size", "cols": cols, "rows": rows})
             except Exception:  # noqa: BLE001, S110 - viewer gone
                 pass
+
+    # The size reports this socket still owes — kept so the loop cannot drop a
+    # pending one, and forgotten as each goes out.
+    geometry_reports: set[asyncio.Task[None]] = set()
+
+    def on_geometry(cols: int, rows: int) -> None:
+        """The PTY moved under this viewer — say so, out of the caller's way.
+
+        The other half of ``report_geometry``. That one answers this socket's
+        OWN request; this is called by the registry when ANOTHER viewer moved
+        the pane's size, or when this viewer was promoted back to a size it
+        had asked for earlier (``Registry._announce_geometry``). Synchronous
+        because ``Registry.resize`` is, and scheduled rather than awaited so a
+        slow or dead socket cannot hold up the resize that already happened.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Outside the event loop nothing can be sent — and nothing calls
+            # this from there but a test driving the registry by hand.
+            return
+        task = loop.create_task(send_size(cols, rows))
+        geometry_reports.add(task)
+        task.add_done_callback(geometry_reports.discard)
 
     async def on_prompt(notice: dict) -> None:
         """This pane was just handed a prompt — tell the viewer outright.
@@ -3814,6 +3919,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             appearance=appearance,
             on_replay=on_replay,
             claim_owner=claim_owner,
+            on_geometry=on_geometry,
         )
     except SessionNotReady as exc:
         # "Not yet", not "not here": this pane connected while its workspace was

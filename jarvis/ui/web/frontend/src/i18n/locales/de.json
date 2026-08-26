@@ -4831,6 +4831,11 @@
     "new_session": "Neue Session",
     "no_workspace": "Kein Workspace geöffnet.",
     "no_sessions_here": "Noch keine Coding-Sessions in diesem Workspace",
+    "other_folders": "Andere Ordner",
+    "new_chat_here": "Neuer Chat hier",
+    "no_chats_here": "Noch keine Chats hier",
+    "running_sessions": "Coding-Sessions",
+    "session_here": "Läuft in diesem Workspace",
     "show_more": "Mehr anzeigen"
   },
   "agentic_grid": {
@@ -4947,6 +4952,26 @@
       "steps_one": "1 Arbeitsschritt",
       "steps_many": "{0} Arbeitsschritte",
       "grip_hint": "Klicken: Verlauf öffnen · Ziehen: scrollen"
+    },
+    "pane_chat": {
+      "open": "{0} als Chat lesen",
+      "show_terminal": "Terminal zeigen",
+      "show_chat": "Chat zeigen",
+      "asking_title": "Der Agent fragt dich etwas",
+      "asking_detail": "Rückfragen und Berechtigungsanfragen beantwortest du im Terminal selbst.",
+      "not_readable_title": "Keine lesbare Aufzeichnung",
+      "not_readable_detail": "Dieses CLI führt keine Gesprächsdatei — es lässt sich nur als Terminal beobachten.",
+      "waiting_title": "Warten auf den ersten Austausch",
+      "waiting_detail": "Das Gespräch erscheint hier, sobald der Agent es aufgezeichnet hat.",
+      "load_failed": "Das Gespräch konnte nicht geladen werden.",
+      "retry": "Erneut versuchen",
+      "reload": "Gespräch neu laden",
+      "placeholder": "Nachricht an {0} — wird wörtlich ins Terminal getippt",
+      "send": "An {0} senden",
+      "sending": "Wird gesendet…",
+      "send_failed": "Senden an {0} fehlgeschlagen: {1}",
+      "not_taken": "{0} hat die Nachricht nicht angenommen: {1}",
+      "not_promptable": "Dieses Fenster nimmt keine getippten Nachrichten an."
     },
     "selection": {
       "start": "Terminals auswählen",

@@ -5,6 +5,9 @@
 // Type-only: the split tree's wire form is defined next to the code that lays
 // it out, and the session state simply carries it.
 import type { LayoutNode } from "../components/agentic/treeLayout";
+// Type-only: a pane's transcript is served in the agent chat's event shape so
+// the chat's own reducer can fold it (see `fetchTerminalTimeline`).
+import type { AgentChatEvent } from "./agentChatApi";
 
 export interface AgentStatus {
   name: string;
@@ -703,10 +706,97 @@ export interface ConversationResponse {
  */
 export function fetchTerminalConversation(
   name: string,
+  workspaceId?: string,
 ): Promise<ConversationResponse> {
+  // The workspace is not optional detail when the caller came from a LIST:
+  // every workspace numbers its panes from T1, so without it a row from a
+  // background tab would open the front tab's conversation.
+  const query = workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : "";
   return getJson<ConversationResponse>(
-    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/conversation`,
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/conversation${query}`,
   );
+}
+
+/**
+ * The pane's conversation in the agent chat's own event vocabulary.
+ *
+ * `events` fold through `components/agentchat/reduce` exactly like a chat
+ * session's log, which is how the IDE's chat stage draws a running CLI with
+ * the front page's timeline. `readable` / `available` mean what they mean on
+ * the conversation endpoint; `live` is whether the pane is still working —
+ * the file alone cannot tell, so the backend reads it off the pane.
+ */
+export interface TerminalTimelineResponse {
+  terminal: string;
+  agent: string;
+  readable: boolean;
+  available: boolean;
+  live: boolean;
+  activity: PaneActivity;
+  events: AgentChatEvent[];
+}
+
+export function fetchTerminalTimeline(
+  name: string,
+  workspaceId?: string,
+): Promise<TerminalTimelineResponse> {
+  const query = workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : "";
+  return getJson<TerminalTimelineResponse>(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/timeline${query}`,
+  );
+}
+
+/**
+ * One coding session running in a workspace — a line, not a workspace state.
+ *
+ * The rows behind the chat sidebar's session list. Every open workspace is in
+ * here, not only the tab at the front: a workspace in a background tab keeps
+ * running its agents, and a list that skipped it would tell someone with three
+ * tabs open that two of them are empty.
+ */
+export interface WorkspacePaneRow {
+  /** The workspace tab this pane belongs to. */
+  workspace_id: string;
+  workspace_name: string;
+  /** Its project folder — what the sidebar groups by. */
+  folder: string;
+  /** Is that workspace the one at the front right now? */
+  workspace_active: boolean;
+  /** The call-sign (T1, or a name the user gave it) — reusable after a close. */
+  key: string;
+  /** The pane's own lifetime id: stable where the call-sign is not. */
+  history_id: string;
+  name: string;
+  agent: string;
+  display_name: string;
+  accepts_prompts: boolean;
+  status: "pending" | "live" | "exited" | "error";
+  exit_code: number | null;
+  /** Working, waiting, asking… — the same reading the grid's badge shows. */
+  activity: PaneActivity;
+  activity_since: number;
+  /** Has anything ever been asked of this pane? Separates "done" from "idle". */
+  worked: boolean;
+  started_at: number | null;
+  last_output_at: number | null;
+  /** The opening of the last prompt — a terminal's closest thing to a title. */
+  last_prompt: string;
+  last_prompt_at: number | null;
+  has_resume: boolean;
+  /** Can this pane's conversation be opened as a page? */
+  readable: boolean;
+  account: string | null;
+  account_label: string | null;
+}
+
+export interface WorkspacePanesResponse {
+  panes: WorkspacePaneRow[];
+  active_id: string | null;
+}
+
+/** Every pane of every OPEN workspace, for the session list. */
+export function fetchWorkspacePanes(): Promise<WorkspacePanesResponse> {
+  return getJson<WorkspacePanesResponse>("/api/agentic-ide/panes");
 }
 
 function recapUrl(name: string, workspaceId?: string, suffix = ""): string {

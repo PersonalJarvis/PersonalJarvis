@@ -4831,6 +4831,11 @@
     "new_session": "Nueva sesión",
     "no_workspace": "No hay ningún espacio de trabajo abierto.",
     "no_sessions_here": "Aún no hay sesiones de programación en este espacio de trabajo",
+    "other_folders": "Otras carpetas",
+    "new_chat_here": "Nuevo chat aquí",
+    "no_chats_here": "Aún no hay chats aquí",
+    "running_sessions": "Sesiones de código",
+    "session_here": "En ejecución en este workspace",
     "show_more": "Mostrar más"
   },
   "agentic_grid": {
@@ -4947,6 +4952,26 @@
       "steps_one": "1 paso de herramienta",
       "steps_many": "{0} pasos de herramienta",
       "grip_hint": "Clic: abrir historial · arrastrar: desplazar"
+    },
+    "pane_chat": {
+      "open": "Leer {0} como chat",
+      "show_terminal": "Mostrar terminal",
+      "show_chat": "Mostrar chat",
+      "asking_title": "El agente te está preguntando algo",
+      "asking_detail": "Las preguntas y solicitudes de permiso se responden en el propio terminal.",
+      "not_readable_title": "Sin registro legible",
+      "not_readable_detail": "Esta CLI no guarda un archivo de conversación, así que solo puede verse como terminal.",
+      "waiting_title": "Esperando el primer intercambio",
+      "waiting_detail": "La conversación aparece aquí en cuanto el agente la haya registrado.",
+      "load_failed": "No se pudo cargar la conversación.",
+      "retry": "Reintentar",
+      "reload": "Recargar la conversación",
+      "placeholder": "Mensaje para {0} — se escribe en el terminal tal cual",
+      "send": "Enviar a {0}",
+      "sending": "Enviando…",
+      "send_failed": "No se pudo enviar a {0}: {1}",
+      "not_taken": "{0} no aceptó el mensaje: {1}",
+      "not_promptable": "Este panel no acepta mensajes escritos."
     },
     "selection": {
       "start": "Seleccionar terminales",

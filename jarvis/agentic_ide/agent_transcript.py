@@ -44,6 +44,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -436,6 +437,532 @@ def read(agent: str, session_id: str, *, home: Path | None = None) -> list[Turn]
     return live[-MAX_TURNS:]
 
 
+# --------------------------------------------------------------------------- #
+# the conversation as agent-chat events
+# --------------------------------------------------------------------------- #
+#
+# The turns above are a summary: prose and the names of the steps. The agent
+# CHAT renders more than that — the thinking where it happened (or how long it
+# took where the vendor redacts it), every tool call with its result, the
+# tokens a turn cost — and it renders all of it from ONE vocabulary, the event
+# log of :mod:`jarvis.agent_chat.events`. So a pane's transcript is offered in
+# that vocabulary too: the same reducer that folds a chat session's log then
+# folds a terminal's, and the Agentic IDE can put a running CLI on the chat
+# stage without a second renderer that would drift from the first.
+#
+# The cut between turns is the person's own message, exactly as the chat's
+# runners cut them: everything the agent did after one and before the next is
+# one turn. Timestamps come from the records, so a thought's duration is the
+# gap to whatever the agent wrote next, and a tool result is timed from its
+# call. Nothing here guesses at a clock the file does not carry.
+
+
+def _ts_ms(value: Any) -> int | None:
+    """A record's ``timestamp`` as epoch milliseconds, or ``None``.
+
+    Both shapes the CLIs write: ISO-8601 text (Claude Code, Codex) and a plain
+    epoch number, in seconds or milliseconds. Anything else is not a time.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return int(value * 1000) if value < 1e12 else int(value)
+    if isinstance(value, str) and value.strip():
+        raw = value.strip()
+        if raw.endswith(("Z", "z")):
+            raw = raw[:-1] + "+00:00"
+        try:
+            return int(datetime.fromisoformat(raw).timestamp() * 1000)
+        except ValueError:
+            return None
+    return None
+
+
+def _summary(name: str, args: Any) -> str:
+    """The one argument a tool call is read by — the same pick `_headline` makes."""
+    target, _detail = _headline(args)
+    return target or name
+
+
+class _EventLog:
+    """The agent-chat event log of one transcript, built in file order.
+
+    ``live`` is what the caller knows and the file does not: whether the pane
+    is still working. A file ends the same way whether the agent finished an
+    hour ago or is thinking right now, so the last turn is closed as ``done``
+    when the pane is idle and left running — its last thought announced as a
+    live one — when it is not. The timeline then says "thinking…" for a pane
+    that is, and "Done" for one that stopped, from the same file.
+    """
+
+    def __init__(self, *, provider: str, live: bool) -> None:
+        self.events: list[dict[str, Any]] = []
+        self.provider = provider
+        self.live = live
+        self.model = ""
+        self.effort = ""
+        self.turn_id: str | None = None
+        self.turns = 0
+        self.turn_started_ms = 0
+        self.last_ms = 0
+        self.error: str | None = None
+        self._usage_by_message: dict[str, dict[str, int]] = {}
+        self._usage: dict[str, int] = {}
+        self._call_started: dict[str, int] = {}
+        #: A finished thought waits for the NEXT record's timestamp, which is
+        #: the only place its duration can be read from.
+        self._thought: tuple[str, str, int] | None = None
+
+    # ----------------------------------------------------------------- core
+    def _emit(self, kind: str, payload: dict[str, Any], ts: int) -> None:
+        self.last_ms = max(self.last_ms, ts)
+        self.events.append(
+            {"seq": len(self.events) + 1, "ts_ms": ts, "kind": kind, "payload": payload}
+        )
+
+    def _ensure_turn(self, ts: int) -> str:
+        if self.turn_id is None:
+            self.turns += 1
+            self.turn_id = f"turn-{self.turns}"
+            self.turn_started_ms = ts
+            self._usage_by_message = {}
+            self._usage = {}
+            self.error = None
+            self._emit(
+                "turn_started",
+                {
+                    "turn_id": self.turn_id,
+                    "provider": self.provider,
+                    "model": self.model,
+                    "effort": self.effort,
+                    "runner": "cli",
+                },
+                ts,
+            )
+        return self.turn_id
+
+    def _flush_thought(self, now: int) -> None:
+        if self._thought is None:
+            return
+        text, message_id, started = self._thought
+        self._thought = None
+        self._emit(
+            "reasoning",
+            {
+                "turn_id": self.turn_id,
+                "message_id": message_id,
+                "text": text,
+                "duration_ms": max(0, now - started),
+            },
+            started,
+        )
+
+    def close_turn(self, ts: int, status: str = "done") -> None:
+        """End the open turn, if any — a boundary reached or the agent stopped."""
+        if self.turn_id is None:
+            return
+        self._flush_thought(ts)
+        self._emit(
+            "turn_finished",
+            {
+                "turn_id": self.turn_id,
+                "status": status,
+                "duration_ms": max(0, max(ts, self.last_ms) - self.turn_started_ms),
+                "usage": dict(self._usage),
+                "error": self.error,
+                "cost_usd": None,
+            },
+            max(ts, self.last_ms),
+        )
+        self.turn_id = None
+
+    # -------------------------------------------------------------- records
+    def user(self, text: str, ts: int) -> None:
+        body = _clip(text)
+        if not body:
+            return
+        self.close_turn(ts)
+        self._emit("user_message", {"text": body}, ts)
+
+    def thinking(self, text: str, message_id: str, ts: int) -> None:
+        self._ensure_turn(ts)
+        self._flush_thought(ts)
+        self._thought = (_clip(text), message_id, ts)
+
+    def text(self, text: str, message_id: str, ts: int) -> None:
+        body = _clip(text)
+        if not body:
+            return
+        turn_id = self._ensure_turn(ts)
+        self._flush_thought(ts)
+        self._emit(
+            "assistant_text",
+            {"turn_id": turn_id, "message_id": message_id, "text": body},
+            ts,
+        )
+
+    def tool_call(self, call_id: str, name: str, args: Any, ts: int) -> None:
+        turn_id = self._ensure_turn(ts)
+        self._flush_thought(ts)
+        self._call_started[call_id] = ts
+        payload = args if isinstance(args, dict) else {"input": args}
+        self._emit(
+            "tool_call",
+            {
+                "turn_id": turn_id,
+                "call_id": call_id,
+                "name": name,
+                "input": payload,
+                "summary": _summary(name, args),
+            },
+            ts,
+        )
+
+    def tool_result(self, call_id: str, output: Any, is_error: bool, ts: int) -> None:
+        turn_id = self._ensure_turn(ts)
+        self._flush_thought(ts)
+        started = self._call_started.get(call_id)
+        self._emit(
+            "tool_result",
+            {
+                "turn_id": turn_id,
+                "call_id": call_id,
+                "output": _clip(_result_text(output)),
+                "is_error": bool(is_error),
+                "duration_ms": max(0, ts - started) if started is not None else None,
+            },
+            ts,
+        )
+
+    def usage(self, message_id: str, usage: Any, ts: int) -> None:
+        """One message's token report, folded into the turn's running total.
+
+        A message id repeats across the records of one reply (a thought, a
+        sentence, a tool call each carry the same usage), so the report is kept
+        once per id — and at its LARGEST, because the first copy is the
+        message-start snapshot whose output count is a placeholder (BUG-173).
+        """
+        if not isinstance(usage, dict) or self.turn_id is None:
+            return
+        counted = {
+            key: int(usage[key])
+            for key in _USAGE_KEYS
+            if isinstance(usage.get(key), int | float) and not isinstance(usage.get(key), bool)
+        }
+        details = usage.get("output_tokens_details")
+        if isinstance(details, dict) and isinstance(details.get("thinking_tokens"), int | float):
+            counted["thinking_tokens"] = int(details["thinking_tokens"])
+        if not counted:
+            return
+        previous = self._usage_by_message.get(message_id)
+        if previous:
+            counted = {k: max(counted.get(k, 0), previous.get(k, 0)) for k in (*counted, *previous)}
+        if counted == previous:
+            return
+        self._usage_by_message[message_id] = counted
+        totals: dict[str, int] = {}
+        for per_message in self._usage_by_message.values():
+            for key, value in per_message.items():
+                totals[key] = totals.get(key, 0) + value
+        self._usage = totals
+        self._emit("usage_delta", {"turn_id": self.turn_id, "usage": totals}, ts)
+
+    def usage_total(self, usage: dict[str, int], ts: int) -> None:
+        """A turn-level total, from a CLI that reports one instead of per message."""
+        if not usage or self.turn_id is None:
+            return
+        self._usage = dict(usage)
+        self._emit("usage_delta", {"turn_id": self.turn_id, "usage": dict(usage)}, ts)
+
+    # ---------------------------------------------------------------- close
+    def finish(self) -> list[dict[str, Any]]:
+        """The log, ended the way the pane's state says it ended."""
+        if self.turn_id is not None:
+            if self.live:
+                # Still working: the last thought is the one happening now.
+                if self._thought is not None:
+                    text, message_id, started = self._thought
+                    self._thought = None
+                    self._emit(
+                        "reasoning_started",
+                        {"turn_id": self.turn_id, "message_id": message_id},
+                        started,
+                    )
+                    if text:
+                        self._emit(
+                            "reasoning_delta",
+                            {"turn_id": self.turn_id, "message_id": message_id, "text": text},
+                            started,
+                        )
+            else:
+                self.close_turn(self.last_ms)
+        elif self.live and self.events and self.events[-1]["kind"] == "user_message":
+            # Asked and not yet answered, on a pane that is working: open the
+            # turn so the timeline says so instead of ending on the question.
+            self._ensure_turn(self.events[-1]["ts_ms"])
+        return _last_turns(self.events, MAX_TURNS)
+
+
+#: The token counts worth carrying — the chat shows output only, but the rest
+#: is what a later cost line would read (jarvis/agent_chat/runner_cli.py).
+_USAGE_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+
+
+def _result_text(content: Any) -> str:
+    """A tool result's text, whatever shape the CLI stored it in."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text" or "text" in block:
+                    parts.append(str(block.get("text") or ""))
+                elif block.get("type") == "image":
+                    parts.append("[image]")
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(p for p in parts if p)
+    if isinstance(content, dict):
+        for key in ("output", "content", "text"):
+            if isinstance(content.get(key), str | list):
+                return _result_text(content[key])
+        try:
+            return json.dumps(content, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(content)
+    return "" if content is None else str(content)
+
+
+def _last_turns(events: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """The events of the last ``limit`` exchanges — cut at a person's message.
+
+    Every turn starts at a ``user_message``, so cutting there drops whole
+    turns and never the head of one; the previous turn's ``turn_finished``
+    comes right before the message and goes with its turn.
+    """
+    starts = [i for i, ev in enumerate(events) if ev["kind"] == "user_message"]
+    if len(starts) <= limit:
+        return events
+    return events[starts[-limit] :]
+
+
+def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[str, Any]] | None:
+    path = _claude_file(session_id, home)
+    if path is None:
+        return None
+    log = _EventLog(provider="claude", live=live)
+    for row in _rows(path):
+        # A sidechain is a sub-agent's own conversation, filed in the same
+        # record; it is not what this pane said.
+        if row.get("isSidechain"):
+            continue
+        kind = str(row.get("type") or "")
+        if kind not in ("user", "assistant"):
+            continue
+        message = row.get("message")
+        if not isinstance(message, dict):
+            continue
+        ts = _ts_ms(row.get("timestamp")) or log.last_ms
+        content = message.get("content")
+        if kind == "user":
+            # `isMeta` marks the harness writing in the user's name — command
+            # caveats, session notes — which no person typed.
+            if row.get("isMeta"):
+                continue
+            if isinstance(content, str):
+                log.user(_spoken(content), ts)
+                continue
+            if not isinstance(content, list):
+                continue
+            spoken: list[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = str(block.get("type") or "")
+                if btype == "tool_result":
+                    log.tool_result(
+                        str(block.get("tool_use_id") or ""),
+                        block.get("content"),
+                        bool(block.get("is_error")),
+                        ts,
+                    )
+                elif btype == "text":
+                    spoken.append(str(block.get("text") or ""))
+            if spoken:
+                log.user(_spoken("\n\n".join(spoken)), ts)
+            continue
+
+        # assistant
+        model = message.get("model")
+        if isinstance(model, str) and model:
+            log.model = model
+        effort = row.get("effort")
+        if isinstance(effort, str) and effort:
+            log.effort = effort
+        mid = str(message.get("id") or row.get("uuid") or "")
+        row_id = str(row.get("uuid") or mid)
+        if isinstance(content, str):
+            log.text(content, row_id, ts)
+            log.usage(mid, message.get("usage"), ts)
+            continue
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = str(block.get("type") or "")
+            if btype == "thinking":
+                log.thinking(str(block.get("thinking") or ""), mid, ts)
+            elif btype == "text":
+                log.text(str(block.get("text") or ""), row_id, ts)
+            elif btype == "tool_use":
+                log.tool_call(
+                    str(block.get("id") or row_id),
+                    str(block.get("name") or "tool"),
+                    block.get("input"),
+                    ts,
+                )
+        log.usage(mid, message.get("usage"), ts)
+    return log.finish()
+
+
+def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[str, Any]] | None:
+    path = _codex_file(session_id, home)
+    if path is None:
+        return None
+    log = _EventLog(provider="codex", live=live)
+    for row in _rows(path):
+        kind = str(row.get("type") or "")
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        ts = _ts_ms(row.get("timestamp")) or log.last_ms
+        if kind == "turn_context":
+            model = payload.get("model")
+            if isinstance(model, str) and model:
+                log.model = model
+            continue
+        if kind == "event_msg":
+            ptype = str(payload.get("type") or "")
+            if ptype == "task_complete":
+                error = payload.get("error")
+                if isinstance(error, dict) and error.get("message"):
+                    log.error = str(error["message"])
+                    log.close_turn(ts, "error")
+                else:
+                    log.close_turn(ts)
+            elif ptype == "turn_aborted":
+                log.close_turn(ts, "cancelled")
+            elif ptype == "token_count":
+                info = payload.get("info")
+                usage = (
+                    info.get("last_token_usage") or info.get("total_token_usage")
+                    if isinstance(info, dict)
+                    else None
+                )
+                if isinstance(usage, dict):
+                    counted = {
+                        key: int(usage[key])
+                        for key in _USAGE_KEYS
+                        if isinstance(usage.get(key), int | float)
+                        and not isinstance(usage.get(key), bool)
+                    }
+                    log.usage_total(counted, ts)
+            continue
+        if kind != "response_item":
+            continue
+        ptype = str(payload.get("type") or "")
+        item_id = str(payload.get("id") or payload.get("call_id") or f"row-{len(log.events)}")
+        if ptype == "message":
+            role = str(payload.get("role") or "")
+            content = payload.get("content")
+            texts: list[str] = []
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                texts.extend(
+                    str(block.get("text") or "")
+                    for block in content
+                    if isinstance(block, dict) and str(block.get("type") or "").endswith("text")
+                )
+            joined = "\n\n".join(t for t in texts if t)
+            if role == "user":
+                log.user(_spoken(joined), ts)
+            elif role == "assistant":
+                log.text(joined, item_id, ts)
+            # `developer` is the harness briefing the model — not conversation.
+        elif ptype in ("function_call", "local_shell_call", "custom_tool_call"):
+            arguments = payload.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (ValueError, TypeError):
+                    # Keep the raw string — the timeline prints either shape.
+                    pass
+            log.tool_call(
+                item_id,
+                str(payload.get("name") or payload.get("type") or "tool"),
+                arguments,
+                ts,
+            )
+        elif ptype in ("function_call_output", "custom_tool_call_output"):
+            output = payload.get("output")
+            is_error = False
+            if isinstance(output, dict):
+                is_error = bool(output.get("is_error") or output.get("error"))
+            log.tool_result(item_id, output, is_error, ts)
+        elif ptype == "reasoning":
+            parts: list[str] = []
+            for key in ("summary", "content"):
+                blocks = payload.get(key)
+                if isinstance(blocks, list):
+                    parts.extend(
+                        str(block.get("text") or "")
+                        for block in blocks
+                        if isinstance(block, dict) and block.get("text")
+                    )
+            log.thinking("\n\n".join(p for p in parts if p), item_id, ts)
+    return log.finish()
+
+
+_EVENT_READERS: dict[str, Callable[[str, Path | None, bool], list[dict[str, Any]] | None]] = {
+    "claude": _claude_events,
+    "codex": _codex_events,
+}
+
+
+def read_events(
+    agent: str,
+    session_id: str,
+    *,
+    home: Path | None = None,
+    live: bool = False,
+) -> list[dict[str, Any]] | None:
+    """The recent conversation of one session as agent-chat events, oldest first.
+
+    The same ``None`` contract as :func:`read`: no readable record, no file yet,
+    or a file that cannot be read — the caller shows the live pane. ``live``
+    says whether the pane is still working, which decides how the last turn
+    ends (see :class:`_EventLog`).
+    """
+    reader = _EVENT_READERS.get(str(agent or "").strip().lower())
+    if reader is None or not str(session_id or "").strip():
+        return None
+    try:
+        return reader(session_id.strip(), home, live)
+    except OSError as exc:
+        logger.warning(
+            "Agent transcript: {} session {} unreadable as events: {}", agent, session_id, exc
+        )
+        return None
+
+
 __all__ = [
     "MAX_TEXT",
     "MAX_TURNS",
@@ -443,4 +970,5 @@ __all__ = [
     "Turn",
     "can_read",
     "read",
+    "read_events",
 ]

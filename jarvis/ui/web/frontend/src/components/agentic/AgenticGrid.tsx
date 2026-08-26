@@ -81,6 +81,9 @@ import { isVoiceActive } from "./useVoiceCall";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkspaceExplorer } from "./WorkspaceExplorer";
 import { WorkspaceFileViewer } from "./WorkspaceFileViewer";
+import { PaneChat } from "./PaneChat";
+import { useIdeChatStore } from "@/store/ideChat";
+import type { WorkspaceView } from "@/components/agentic/workspaceView";
 import {
   chatTerminalIdentity,
   initialChatOrder,
@@ -515,33 +518,24 @@ const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
  * Layer 4 of the enum contract; `jarvis/agentic_ide/workspace_view.py` is the
  * source of truth and the backend asserts the two agree at import.
  */
-export type WorkspaceView = "grid" | "chat";
-
-/** Every value, in the order the toolbar and the wizard offer them. */
-export const WORKSPACE_VIEWS: readonly WorkspaceView[] = ["grid", "chat"];
-
-function isWorkspaceView(raw: string): raw is WorkspaceView {
-  return (WORKSPACE_VIEWS as readonly string[]).includes(raw);
-}
-
-const VIEW_KEY = "jarvis.agenticIde.workspaceView";
-const CHAT_ORDER_KEY_PREFIX = "jarvis.agenticIde.chatOrder.v1";
-
-export function storedViewMode(): WorkspaceView | null {
-  return readStored(VIEW_KEY, (raw) => (isWorkspaceView(raw) ? raw : null));
-}
-
-/**
- * Record which way the workspace should be read, ahead of the grid mounting.
+/*
+ * The enum, its storage and the wizard's entry point live in
+ * `workspaceView.ts` and are re-exported here for the callers that have always
+ * imported them from the grid.
  *
- * Exported for the workspace wizard: its last step asks grid-or-chat before
- * anything opens, and the grid then simply reads the answer on mount — the
- * same stored preference the toolbar toggle below keeps, so the wizard's
- * choice and a later toggle can never disagree about where the answer lives.
+ * They were DEFINED here as well until 2026-08-25 — a second copy of the type,
+ * the value list and the localStorage key, agreeing with the first only by
+ * coincidence. One of them is now a re-export, which is the only arrangement
+ * in which they cannot drift.
  */
-export function rememberViewMode(next: WorkspaceView): void {
-  writeStored(VIEW_KEY, next);
-}
+export {
+  WORKSPACE_VIEWS,
+  rememberViewMode,
+  storedViewMode,
+  type WorkspaceView,
+} from "@/components/agentic/workspaceView";
+
+const CHAT_ORDER_KEY_PREFIX = "jarvis.agenticIde.chatOrder.v1";
 
 function storedChatOrder(workspaceId: string): readonly string[] | null {
   return readStored(`${CHAT_ORDER_KEY_PREFIX}.${workspaceId}`, (raw) => {
@@ -775,20 +769,26 @@ export function AgenticGrid({
    * which way someone reads their agents is a display preference of this
    * screen, not workspace state worth a round-trip.
    */
-  const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
+  const viewMode = useIdeChatStore((s) => s.view);
+  const setStoreView = useIdeChatStore((s) => s.setView);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [openedWorkspaceFile, setOpenedWorkspaceFile] = useState<string | null>(null);
   const openedWorkspaceFileTrigger = useRef<HTMLElement | null>(null);
-  const setViewMode = useCallback((next: WorkspaceView) => {
-    setViewModeState(next);
-    rememberViewMode(next);
-    // Chat shows one pane at most; a leftover maximize from the grid would
-    // silently pin the stage to a pane the chat rail does not highlight.
-    if (next !== "grid") setMaximized(null);
-    // An open CLI picker belongs to the button that opened it, and that button
-    // just left the screen — it must not be waiting there on the way back.
-    setPicking(null);
-  }, []);
+  const setViewMode = useCallback(
+    (next: WorkspaceView) => {
+      // The store writes the preference through as well, so the grid, the bar
+      // and the sidebar all turn on the same answer instead of three copies of
+      // it (maintainer, 2026-08-25: switching view left the sessions behind).
+      setStoreView(next);
+      // Chat shows one pane at most; a leftover maximize from the grid would
+      // silently pin the stage to a pane the chat rail does not highlight.
+      if (next !== "grid") setMaximized(null);
+      // An open CLI picker belongs to the button that opened it, and that button
+      // just left the screen — it must not be waiting there on the way back.
+      setPicking(null);
+    },
+    [setStoreView],
+  );
   const chatView = viewMode === "chat";
 
   useEffect(() => {
@@ -815,6 +815,17 @@ export function AgenticGrid({
    * effects, so a pane closed by another client simply falls back.
    */
   const [chatPane, setChatPane] = useState<string | null>(null);
+  /*
+   * How the staged pane is drawn: as the chat (its transcript through the
+   * agent chat's timeline — ./PaneChat) or as the terminal itself. Chat is the
+   * default, because that is what the stage is FOR; the terminal is one click
+   * away for the things only it can do — a permission prompt, a question the
+   * CLI asks in its own TUI. The choice sticks across stage changes: a rail
+   * click shows the next pane the way the person was reading the last one,
+   * and each reading has the other one click away (the stage's "Show
+   * terminal", the pane header's "Read as a chat"). No silent resets.
+   */
+  const [stageMode, setStageMode] = useState<"chat" | "terminal">("chat");
   // Null until the first render has been seen: on mount every pane is "new",
   // and announcing a restored workspace's eight panes would be a light show.
   // Kept beside the stage selection because a newly arrived pane must be
@@ -1477,6 +1488,30 @@ export function AgenticGrid({
     return names[0] ?? null;
   }, [arrivingChatPane, chatPane, target, session.terminals]);
 
+  /** The pane on the stage, as the workspace knows it — null off the stage. */
+  const stagedTerm = useMemo(
+    () => (chatView ? (session.terminals.find((term) => term.name === chatSelected) ?? null) : null),
+    [chatView, chatSelected, session.terminals],
+  );
+  // The chat is on: the staged pane's cell is hidden like every other pane's,
+  // and its conversation is drawn over the canvas instead.
+  const chatStage = stagedTerm !== null && stageMode === "chat";
+
+  /**
+   * One click from any pane to its conversation: the chat view, this pane on
+   * the stage, the stage in chat mode. From the grid's header buttons and
+   * from the stage's own "show terminal" detour alike.
+   */
+  const openAsChat = useCallback(
+    (term: TerminalState) => {
+      setChatPane(term.name);
+      if (takesPrompts(term)) setTarget(term.name);
+      setStageMode("chat");
+      setViewMode("chat");
+    },
+    [setViewMode],
+  );
+
   /*
    * The browser is the only layer that knows what is actually on screen. Hand
    * that fact to the backend so voice and chat can resolve "this terminal"
@@ -1487,6 +1522,11 @@ export function AgenticGrid({
    * visible terminals would be less honest than making the user name one.
    */
   const stagedPane = chatView ? chatSelected : null;
+  const publishStagedPane = useIdeChatStore((s) => s.setStagedPane);
+  useEffect(() => {
+    // The app sidebar's session list marks the row being read from this.
+    publishStagedPane(stagedPane);
+  }, [publishStagedPane, stagedPane]);
   useEffect(() => {
     void syncAgenticIdeSurface({
       workspaceId: session.id,
@@ -2745,8 +2785,15 @@ export function AgenticGrid({
                        *
                        * The lift stays: a staged pane genuinely IS raised above
                        * the rail beside it.
+                       *
+                       * While the stage shows the CHAT the staged pane hides
+                       * like the rest — its conversation is drawn over the
+                       * canvas (PaneChat below) and the terminal waits one
+                       * click away, alive.
                        */
-                      "shadow-lg"
+                      chatStage
+                        ? "hidden"
+                        : "shadow-lg"
                         : "hidden"
                       : maximized !== null && !isMaximized && "hidden",
                   )}
@@ -2784,7 +2831,7 @@ export function AgenticGrid({
                     fontSize={fontSize}
                     geometryReady={gridMeasured}
                     focused={target === term.name}
-                    active={!chatView || onStage}
+                    active={!chatView || (onStage && !chatStage)}
                     maximized={isMaximized}
                     layoutBusy={layoutBusy}
                     splitDisabled={atLimit || busy || working}
@@ -2819,6 +2866,10 @@ export function AgenticGrid({
                     arranging={arrange.held === term.name}
                     restartToken={restartTokens[term.name] ?? 0}
                 onRestart={() => restartPane(term.name)}
+                // A plain shell has no conversation to read; every coding CLI
+                // gets the button, and a CLI without a readable record says
+                // so on the stage rather than hiding the way there.
+                onOpenChat={takesPrompts(term) ? () => openAsChat(term) : undefined}
               />
               {/* Where a drop on THIS pane would put the pane in hand. Every
                   other pane is outlined the moment a drag starts, so the grid
@@ -2891,6 +2942,26 @@ export function AgenticGrid({
             </div>
           );
         })}
+        {/*
+          The stage in chat mode: the staged pane's conversation, drawn with
+          the agent chat's timeline over the canvas. Keyed by workspace AND
+          pane so a stage change starts from an empty column instead of
+          showing the last pane's turns under the new pane's name.
+        */}
+        {chatStage && stagedTerm && (
+          <PaneChat
+            key={`${session.id}:${stagedTerm.name}`}
+            terminal={stagedTerm.name}
+            workspaceId={session.id}
+            agentLabel={
+              agents?.find((choice) => choice.name === stagedTerm.agent)?.displayName ??
+              stagedTerm.agent
+            }
+            activity={activityOf(stagedTerm).activity}
+            promptable={takesPrompts(stagedTerm)}
+            onShowTerminal={() => setStageMode("terminal")}
+          />
+        )}
         {/*
           The boundaries, and the whole reason they are their own elements.
 
