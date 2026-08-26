@@ -62,7 +62,7 @@ Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own conf
 and it runs on a headless server just as well as on a desktop with a microphone.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-chat.webp" alt="The desktop app's home view: every section in the sidebar, a live voice conversation in the main pane, and the realtime voice bar waiting for a wake word" width="900" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-voice.webp" alt="The desktop app's home view: every section in the sidebar, a live voice conversation in the main pane, and the realtime voice bar waiting for a wake word" width="900" />
 </p>
 
 <p align="center">
