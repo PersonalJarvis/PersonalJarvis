@@ -12987,3 +12987,61 @@ profiles, recap/prompt composers — spent on the configured primary brain
 **Lesson.** A report that depends on every caller remembering to report is a
 report of the callers that remembered. Meter where the object is made, not
 where it is used.
+
+## BUG-185: a dictation ended in "IDE, Agentic IDE, Agentic IDE, …, Claude, Agentic IDE, Claude, Agentic" — Whisper recited its bias prompt, and the dictionary rewrote nearby common words toward the user's terms (HIGH, FIXED 2026-08-26)
+
+**Symptom.** A 40-second German dictation (2026-08-26 17:24 UTC, Groq
+`whisper-large-v3`) landed in the chat with a tail nobody said:
+`… der bebeamtlich ist. IDE, Agentic IDE, Agentic IDE, Agentic IDE, Agentic IDE, Claude, Agentic IDE, Claude, Agentic`.
+The maintainer read it as the STT dictionary replacing far too much.
+Separately, the live dictionary held `GitHuib` (a typo), and every correctly
+heard "GitHub" was being rewritten INTO the typo.
+
+**Root cause.** Two independent things.
+
+1. The recitation is not a replacement. `build_stt_from_config` hands the
+   dictionary's canonical words to prompt-capable providers as a
+   comma-separated Whisper `prompt` — here
+   `GitHuib, Grok, Claude, Agentic IDE, Agentic`. Whisper treats the prompt
+   as the previous segment and, given a stretch with no speech in it,
+   continues the list. The dictation lane's truncation repair
+   (`stt_audit: truncation_repairs:1`, four STT calls for two windows)
+   re-read a near-silent piece and accepted the result because the merged
+   text had MORE tokens than before — the one acceptance rule a hallucinated
+   list always passes. The repo already withholds the prompt from the local
+   engine for exactly this reason (Bug #8) and never guarded the cloud lane.
+2. The fuzzy repair rewrote any token within raw edit distance 1 (2 from
+   eight characters) of a dictionary word that shared its first letter. That
+   is a spelling neighbourhood, not a sound: "grob" → "Grok",
+   "Clause" → "Claude", and "GitHub" → "GitHuib".
+
+**Fix.**
+
+* `jarvis/speech/stt_dictionary.py` — `TranscriptCorrector.strip_prompt_echo()`
+  drops a run of dictionary items that closes a finished transcript when it
+  holds three or more items, repeats one, or is the whole transcript (two
+  items suffice there: a silent piece comes back as the list alone).
+  Fragments of multi-word entries ("IDE") may start the run but never count.
+  `DictionaryCorrectingSTT._apply` runs it before correction on `text` and
+  `raw_text`, skips partials, and logs what it dropped at INFO.
+* Same file — the fuzzy repair now compares phonetic folds (`_phonetic_fold`:
+  c/k, v/f, ph/f, th/t, ie/i, ei/ai/ey/ay, ou/au, doubled letters, silent h)
+  and rewrites only an identical fold, or one edit apart on the fold for
+  tokens of eight letters or more. "Veltrok" → "Veltroc", "Klaude" and
+  "Cloude" → "Claude" still repair; "grob", "Cloud", "Clause" stay.
+* The maintainer's live sidecar: `GitHuib` → `GitHub` through
+  `DictionaryStore.update`, so the corrector reloaded on the next utterance.
+
+**Guard.** `tests/unit/speech/test_stt_dictionary.py` — `TestPromptEcho`
+(the verbatim tail from the history, a whole-window recitation, a repeat,
+and five sentences ending in dictionary words that must survive),
+`TestWrapper::test_recited_prompt_is_dropped_before_correction`,
+`::test_partial_transcripts_keep_their_tail`,
+`TestVocabularyWords::test_fuzzy_repairs_only_what_sounds_the_same`,
+`::test_fuzzy_long_tokens_allow_one_sound_apart`,
+`::test_fuzzy_never_rewrites_toward_a_misspelt_entry`.
+
+**Lesson.** A decoder bias is text the model will happily read back to you;
+whatever goes into a Whisper prompt needs a guard on the way out. And "one
+letter apart" is a property of spelling — the person who registers a word is
+describing how it sounds.

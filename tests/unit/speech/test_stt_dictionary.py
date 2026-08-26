@@ -171,10 +171,31 @@ class TestVocabularyWords:
     def test_fuzzy_leaves_distant_words_alone(self) -> None:
         c = corrector_for(("Fable", []))
         # "Farbe" (a common German word, the real-world STT garble of "Fable"
-        # from the AP-27 forensics) is distance 2 at length 5 — beyond the
-        # ≤7-char budget of 1, so it is NOT auto-rewritten (explicit pairs are
-        # the tool for that).
+        # from the AP-27 forensics) does not SOUND like "Fable", so it is NOT
+        # auto-rewritten (explicit pairs are the tool for that).
         assert c.correct("welche Farbe hat das") == "welche Farbe hat das"  # i18n-allow: German STT-garble token under test
+
+    def test_fuzzy_repairs_only_what_sounds_the_same(self) -> None:
+        # BUG-185: a raw edit distance of 1 rewrote common words toward the
+        # user's terms. Spelling twins are repaired; neighbours by spelling
+        # that sound different are not.
+        c = corrector_for(("Claude", []), ("Grok", []), ("Anthropic", []))
+        assert c.correct("one Klaude terminal") == "one Claude terminal"
+        assert c.correct("one Cloude terminal") == "one Claude terminal"
+        assert c.correct("ask Anthropik") == "ask Anthropic"
+        neighbours = ("Clause", "Cloud", "grob", "Gros", "Grad")  # i18n-allow: German words
+        for untouched in neighbours:
+            assert c.correct(f"say {untouched} now") == f"say {untouched} now"
+
+    def test_fuzzy_long_tokens_allow_one_sound_apart(self) -> None:
+        c = corrector_for(("Kubernetes", []))
+        assert c.correct("deploy on Kubernetis") == "deploy on Kubernetes"
+
+    def test_fuzzy_never_rewrites_toward_a_misspelt_entry(self) -> None:
+        # The live dictionary held "GitHuib" (a typo); the raw distance rule
+        # then rewrote every correctly heard "GitHub" INTO the typo.
+        c = corrector_for(("GitHuib", []))
+        assert c.correct("open GitHub now") == "open GitHub now"
 
     def test_fuzzy_ambiguous_between_entries_is_left_alone(self) -> None:
         # "Nicko" is within distance 1 of BOTH entries — ambiguous, so the
@@ -197,6 +218,61 @@ class TestVocabularyWords:
     def test_empty_dictionary_is_noop(self) -> None:
         c = corrector_for()
         assert c.correct("nothing to do here") == "nothing to do here"
+
+
+# ----------------------------------------------------------------------
+# Prompt echo (BUG-185)
+# ----------------------------------------------------------------------
+
+
+def _live_corrector() -> TranscriptCorrector:
+    """The maintainer's dictionary on the evening the recitation landed."""
+    return corrector_for(
+        ("GitHub", ["Gitter"]),
+        ("Grok", ["Grog"]),
+        ("Claude", []),
+        ("Agentic IDE", ["Genetic-ID"]),
+        ("Agentic", ["Genetic"]),
+    )
+
+
+class TestPromptEcho:
+    def test_recited_prompt_is_dropped_from_the_tail(self) -> None:
+        # Verbatim from dictation history 2026-08-26 17:24 UTC: Groq Whisper
+        # answered the silent tail of a window by continuing its bias prompt,
+        # "…, Claude, Agentic IDE, Agentic", starting mid-phrase.
+        c = _live_corrector()
+        spoken = "It has to be a smooth transition that looks professional."
+        recited = (
+            " IDE, Agentic IDE, Agentic IDE, Agentic IDE, Agentic IDE, Claude, "
+            "Agentic IDE, Claude, Agentic"
+        )
+        assert c.strip_prompt_echo(spoken + recited) == spoken
+
+    def test_whole_window_of_recitation_becomes_empty(self) -> None:
+        # A window with no speech in it comes back as the list alone.
+        assert _live_corrector().strip_prompt_echo("Claude, Agentic IDE") == ""
+
+    def test_a_repeated_item_is_enough(self) -> None:
+        c = _live_corrector()
+        assert c.strip_prompt_echo("And then Agentic IDE, Agentic IDE") == "And then"
+
+    def test_a_sentence_ending_in_dictionary_words_stays(self) -> None:
+        c = _live_corrector()
+        for sentence in (
+            "Claude",
+            "open Claude.",
+            "I use Claude, Agentic IDE.",
+            "do it with Claude Agentic IDE.",
+            "Claude, Agentic IDE, Grok are the three sections.",
+        ):
+            assert c.strip_prompt_echo(sentence) == sentence
+
+    def test_empty_dictionary_never_strips(self) -> None:
+        c = corrector_for()
+        assert c.strip_prompt_echo("Claude, Agentic IDE, Claude") == (
+            "Claude, Agentic IDE, Claude"
+        )
 
 
 # ----------------------------------------------------------------------
@@ -290,6 +366,31 @@ class TestWrapper:
         wrapped = DictionaryCorrectingSTT(_FakeSTT(""), store=store)
         result = await wrapped.transcribe_pcm(b"")
         assert result.text == ""
+
+    async def test_recited_prompt_is_dropped_before_correction(
+        self, store: DictionaryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sd, "_RELOAD_CHECK_INTERVAL_S", 0.0)
+        store.add("Claude")
+        store.add("Agentic IDE", ["Genetic-ID"])
+        heard = "open Gitter. Claude, Agentic IDE, Claude, Agentic IDE"
+        store.add("GitHub", ["Gitter"])
+        wrapped = DictionaryCorrectingSTT(_FakeSTT(heard), store=store)
+        result = await wrapped.transcribe_pcm(b"\x00\x00")
+        assert result.text == "open GitHub."
+
+    async def test_partial_transcripts_keep_their_tail(
+        self, store: DictionaryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A partial is still growing: an enumeration cut off mid-list is not a
+        # recitation, so only the finished transcript loses the run.
+        monkeypatch.setattr(sd, "_RELOAD_CHECK_INTERVAL_S", 0.0)
+        store.add("Claude")
+        store.add("Agentic IDE")
+        heard = "Claude, Agentic IDE, Claude"
+        wrapped = DictionaryCorrectingSTT(_FakeSTT(heard), store=store)
+        texts = [t.text async for t in wrapped.stream_transcribe(None)]
+        assert texts == [heard, ""]
 
     def test_delegates_unknown_attributes(
         self, wrapped: DictionaryCorrectingSTT

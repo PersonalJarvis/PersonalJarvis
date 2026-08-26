@@ -5,10 +5,16 @@ Dictation-tool-style feature: the user registers words the STT keeps getting wro
 ``word`` plus optional ``misheard`` variants:
 
 - ``misheard`` empty → plain vocabulary word. The corrector canonicalizes the
-  casing of exact (case-insensitive) hits and repairs conservative near-misses
-  of single tokens ("Veltrok" → "Veltroc").
+  casing of exact (case-insensitive) hits and repairs single tokens that
+  SOUND like the word ("Veltrok" → "Veltroc", "Klaude" → "Claude") — never a
+  common word that merely sits one letter away ("grob" stays "grob").
 - ``misheard`` non-empty → explicit replacement pairs ("Gitter" → "GitHub"),
   word-boundary + case-insensitive, multi-word capable.
+
+The canonical words are also handed to prompt-capable Whisper providers as a
+decoder bias, and Whisper answers silence by reciting that list back
+("…, Claude, Agentic IDE, Claude, Agentic"). The provider wrapper drops such a
+run from the end of a transcript before correcting it (BUG-185).
 
 Design constraints (see the plan file and CLAUDE.md):
 
@@ -50,12 +56,51 @@ MAX_ENTRIES = 2_000
 MAX_WORD_LEN = 100
 MAX_MISHEARD_PER_ENTRY = 20
 
-# Conservative fuzzy-repair gates (plain vocabulary words only). A token is
-# rewritten toward a dictionary word only when ALL hold: same first letter,
-# minimum length, and edit distance within the length-scaled budget below.
-# This keeps "table" from becoming "Fable" while still fixing "Veltrok".
+# Fuzzy-repair gates (plain vocabulary words only). A token is rewritten
+# toward a dictionary word only when the two SOUND the same: both fold to the
+# same phonetic key (``_phonetic_fold``), or — for long tokens only — the
+# folded forms are one edit apart. A raw edit distance used to be enough,
+# which turned "grob" into "Grok" and "Clause" into "Claude": a person who
+# registers a word wants it fixed when they SAID it, not whenever they say a
+# common word that happens to be spelled nearby (BUG-185).
 _FUZZY_MIN_TOKEN_LEN = 4
-_FUZZY_DISTANCE_BUDGET = ((8, 2), (_FUZZY_MIN_TOKEN_LEN, 1))
+_FUZZY_LONG_TOKEN_LEN = 8
+_FUZZY_LONG_TOKEN_BUDGET = 1
+
+# Spelling variants that sound alike in German and English, applied in order
+# on the casefolded token. Deliberately a short list: every rule makes MORE
+# tokens equal, and the whole point of the fold is to stay strict. The two
+# placeholders protect "sch"/"ch" from the c- and h-rules that follow.
+_FOLD_RULES: tuple[tuple[str, str], ...] = (
+    ("ä", "e"),
+    ("ae", "e"),
+    ("sch", "\x01"),
+    ("ch", "\x02"),
+    ("ph", "f"),
+    ("th", "t"),
+    ("ck", "k"),
+    ("dt", "t"),
+    ("tz", "ts"),
+    ("z", "ts"),
+    ("qu", "kv"),
+    ("x", "ks"),
+    ("c", "k"),
+    ("v", "f"),
+    ("w", "v"),
+    ("y", "i"),
+    ("ie", "i"),
+    ("ei", "ai"),
+    ("ou", "au"),  # English "ou" is German "au": "Cloude" is how STT spells "Claude"
+)
+_FOLD_SILENT_H_RE = re.compile(r"(?<!^)h")
+_FOLD_REPEAT_RE = re.compile(r"(.)\1+")
+
+# Prompt-echo guard. A run of dictionary items at the END of a transcript is
+# Whisper reciting its bias prompt, never speech, when it is long enough or
+# repeats itself; a whole transcript made of nothing else needs fewer items,
+# because a stretch of silence is exactly where the recitation happens.
+_ECHO_MIN_TAIL_ITEMS = 3
+_ECHO_MIN_WHOLE_ITEMS = 2
 
 # Re-stat the sidecar at most this often — the corrector is consulted per
 # STT call (including the live-preview probe at a few calls/second).
@@ -305,11 +350,67 @@ def _edit_distance_within(a: str, b: str, budget: int) -> bool:
     return prev[-1] <= budget
 
 
-def _fuzzy_budget(length: int) -> int:
-    for min_len, budget in _FUZZY_DISTANCE_BUDGET:
-        if length >= min_len:
-            return budget
-    return 0
+def _phonetic_fold(token: str) -> str:
+    """Collapse a token to how it sounds, so spelling twins compare equal.
+
+    "Veltrok"/"Veltroc", "Klaude"/"Claude", "Meier"/"Mayer" and
+    "Anthropik"/"Anthropic" fold to one key each; "grob"/"Grok" and
+    "Clause"/"Claude" do not. Only ever compared with another fold — the
+    result is a key, not a spelling.
+    """
+    folded = token.casefold()
+    for source, target in _FOLD_RULES:
+        folded = folded.replace(source, target)
+    folded = _FOLD_SILENT_H_RE.sub("", folded)
+    folded = folded.replace("\x01", "sh").replace("\x02", "ch")
+    return _FOLD_REPEAT_RE.sub(r"\1", folded)
+
+
+def _sounds_like(token: str, token_fold: str, word: str, word_fold: str) -> bool:
+    """True iff ``token`` may be repaired to ``word`` — they sound the same."""
+    if token_fold == word_fold:
+        return True
+    if len(token) < _FUZZY_LONG_TOKEN_LEN or len(word) < _FUZZY_LONG_TOKEN_LEN:
+        return False
+    return _edit_distance_within(token_fold, word_fold, _FUZZY_LONG_TOKEN_BUDGET)
+
+
+def _compile_echo_patterns(
+    entries: list[DictionaryEntry],
+) -> tuple[re.Pattern[str] | None, re.Pattern[str] | None]:
+    """Patterns behind :meth:`TranscriptCorrector.strip_prompt_echo`.
+
+    ``tail`` matches a run of dictionary items that closes the text —
+    whole entries, plus the single tokens of multi-word entries, because a
+    recitation may start mid-phrase ("IDE, Agentic IDE, …"). ``item`` finds
+    the WHOLE entries inside such a run; fragments never count as items.
+    """
+    phrases = sorted({e.word for e in entries}, key=len, reverse=True)
+    if not phrases:
+        return None, None
+    whole = [r"\s+".join(re.escape(tok) for tok in p.split()) for p in phrases]
+    known = {p.casefold() for p in phrases}
+    fragments = sorted(
+        {
+            tok
+            for p in phrases
+            if " " in p
+            for tok in p.split()
+            if len(tok) >= 2 and tok.casefold() not in known
+        },
+        key=len,
+        reverse=True,
+    )
+    item_alt = "|".join(whole)
+    run_alt = "|".join(whole + [re.escape(f) for f in fragments])
+    separator = r"(?:\s*[,;:]\s*|\s*\.\s+|\s+)"
+    tail = re.compile(
+        rf"(?<!\w)(?P<run>(?:{run_alt})(?:{separator}(?:{run_alt}))+)(?!\w)"
+        r"[\s,.;:!?]*$",
+        re.IGNORECASE | re.UNICODE,
+    )
+    item = re.compile(rf"(?<!\w)(?:{item_alt})(?!\w)", re.IGNORECASE | re.UNICODE)
+    return tail, item
 
 
 class TranscriptCorrector:
@@ -334,9 +435,9 @@ class TranscriptCorrector:
         ]
 
         # Fuzzy-repair index for SINGLE-token canonical words, keyed by the
-        # casefolded first letter. Multi-token phrases are excluded — near-miss
-        # repair across token splits is what explicit pairs are for.
-        self._fuzzy_index: dict[str, list[str]] = {}
+        # first letter of the phonetic fold. Multi-token phrases are excluded —
+        # near-miss repair across token splits is what explicit pairs are for.
+        self._fuzzy_index: dict[str, list[tuple[str, str]]] = {}
         self._canonical_tokens: set[str] = set()
         for entry in entries:
             word = entry.word
@@ -345,10 +446,40 @@ class TranscriptCorrector:
                 continue
             if not word[0].isalpha():
                 continue
-            self._fuzzy_index.setdefault(word[0].casefold(), []).append(word)
+            fold = _phonetic_fold(word)
+            self._fuzzy_index.setdefault(fold[:1], []).append((word, fold))
 
         self._token_re = re.compile(r"[^\W\d_][\w''\-]*", re.UNICODE)
+        self._echo_tail_re, self._echo_item_re = _compile_echo_patterns(entries)
         self.rule_count = len(self._replacements) + len(self._casing)
+
+    def strip_prompt_echo(self, text: str) -> str:
+        """Drop a recited bias prompt from the end of ``text``.
+
+        Prompt-capable Whisper providers receive the canonical words as a
+        comma-separated decoder bias, and Whisper answers a stretch of silence
+        by continuing that list — "…, Claude, Agentic IDE, Claude, Agentic".
+        A run of dictionary items closing the transcript is that recitation
+        when it holds at least ``_ECHO_MIN_TAIL_ITEMS`` items or repeats one;
+        a transcript made of nothing else needs ``_ECHO_MIN_WHOLE_ITEMS``.
+        One trailing word, or two different ones, is a sentence and stays:
+        "…nutze Claude, Agentic IDE." is something a person says.
+        """
+        if not text or self._echo_tail_re is None or self._echo_item_re is None:
+            return text
+        match = self._echo_tail_re.search(text)
+        if match is None:
+            return text
+        run = match.group("run")
+        items = [
+            " ".join(m.group(0).casefold().split())
+            for m in self._echo_item_re.finditer(run)
+        ]
+        whole = match.start("run") == 0 or not text[: match.start("run")].strip()
+        needed = _ECHO_MIN_WHOLE_ITEMS if whole else _ECHO_MIN_TAIL_ITEMS
+        if len(items) < needed and len(items) == len(set(items)):
+            return text
+        return text[: match.start("run")].rstrip()
 
     def correct(self, text: str) -> str:
         if not text or self.rule_count == 0:
@@ -371,15 +502,13 @@ class TranscriptCorrector:
         folded = token.casefold()
         if len(token) < _FUZZY_MIN_TOKEN_LEN or folded in self._canonical_tokens:
             return token
-        candidates = self._fuzzy_index.get(token[0].casefold())
+        token_fold = _phonetic_fold(token)
+        candidates = self._fuzzy_index.get(token_fold[:1])
         if not candidates:
             return token
         best: str | None = None
-        for word in candidates:
-            allowed = min(_fuzzy_budget(len(token)), _fuzzy_budget(len(word)))
-            if allowed <= 0:
-                continue
-            if _edit_distance_within(folded, word.casefold(), allowed):
+        for word, word_fold in candidates:
+            if _sounds_like(token, token_fold, word, word_fold):
                 if best is not None and best != word:
                     return token  # ambiguous between two entries — leave it
                 best = word
@@ -508,21 +637,36 @@ class DictionaryCorrectingSTT:
             if not text:
                 return transcript
             corrector = get_corrector(self._store)
-            corrected = corrector.correct(text)
             # A provider may also carry the pre-cleanup string on ``raw_text``,
             # and the dictation lane transcribes from THAT. The user's spelling
             # corrections are not part of the cleanup they opted out of — they
             # are words a person registered by name — so they have to reach both
             # fields or dictation silently stops honouring the dictionary.
             raw = getattr(transcript, "raw_text", "") or ""
+            # A finished transcript that ends in a recited bias prompt loses
+            # that tail BEFORE correction. Partials are still growing — an
+            # enumeration cut off mid-list is not evidence of anything.
+            if not getattr(transcript, "is_partial", False):
+                kept = corrector.strip_prompt_echo(text)
+                if kept != text:
+                    log.info(
+                        "STT dictionary dropped a recited bias prompt from the "
+                        "transcript tail: %r",
+                        text[len(kept) :].strip(),
+                    )
+                    text = kept
+                    raw = corrector.strip_prompt_echo(raw) if raw else raw
+            corrected = corrector.correct(text)
             corrected_raw = corrector.correct(raw) if raw else raw
-            if corrected == text and corrected_raw == raw:
+            original_text = getattr(transcript, "text", "")
+            original_raw = getattr(transcript, "raw_text", "") or ""
+            if corrected == original_text and corrected_raw == original_raw:
                 return transcript
-            log.debug("STT dictionary corrected: %r -> %r", text, corrected)
+            log.debug("STT dictionary corrected: %r -> %r", original_text, corrected)
             updates: dict[str, Any] = {"text": corrected}
             # Only when the provider actually has the field: passing it to a
             # provider that does not would raise instead of correcting.
-            if raw:
+            if original_raw:
                 updates["raw_text"] = corrected_raw
             if dataclasses.is_dataclass(transcript):
                 return dataclasses.replace(transcript, **updates)

@@ -20,6 +20,16 @@ versioning per [SemVer](https://semver.org/).
   else: the overview, the catalogue, the server tab, the Tune sheet, and the
   quiet six-hourly self-check behind the sidebar badge.
 
+### Fixed
+
+- **Dictation no longer ends in a recited word list.** Whisper answered a
+  silent stretch by reading the STT dictionary's own words back
+  ("…, Claude, Agentic IDE, Claude, Agentic"); such a run is now dropped from
+  the end of a transcript before the dictionary applies. The dictionary's
+  near-miss repair also became strict: a word is rewritten only when it
+  SOUNDS like the registered one ("Klaude" → "Claude"), never because a
+  common word is one letter away ("grob" stays "grob"). (BUG-185)
+
 ---
 
 ## [1.6.0] — 2026-08-25
