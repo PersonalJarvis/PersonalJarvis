@@ -28,6 +28,9 @@ versioning per [SemVer](https://semver.org/).
 
 ### Changed
 
+- **README: the hero screenshot is the current home view.** The old
+  wallpaper-and-mascot capture is replaced with a live voice conversation
+  in the desktop app.
 - **Local models: recommendations are installed-first.** A role's pick is the
   best qualifying download already on the server — the largest one that fits
   this machine's graphics memory, preferring the role's capability (tools for
