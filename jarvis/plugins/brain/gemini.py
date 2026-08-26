@@ -19,6 +19,7 @@ import logging
 import os
 import re
 from collections.abc import AsyncIterator
+from functools import lru_cache
 from typing import Any
 from uuid import uuid4
 
@@ -399,35 +400,97 @@ def _convert_exclusive_bounds(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
-    """Recursively removes OpenAI-specific fields from a JSON schema.
+# The documented Gemini schema subset, used when the installed google-genai
+# cannot be introspected. Field names AND their JSON aliases, because a tool
+# schema arrives in either spelling.
+_GEMINI_SCHEMA_KEYS_FALLBACK: frozenset[str] = frozenset({
+    "additionalProperties", "additional_properties", "anyOf", "any_of",
+    "default", "defs", "description", "enum", "example", "format", "items",
+    "maxItems", "max_items", "maxLength", "max_length", "maxProperties",
+    "max_properties", "maximum", "minItems", "min_items", "minLength",
+    "min_length", "minProperties", "min_properties", "minimum", "nullable",
+    "pattern", "properties", "propertyOrdering", "property_ordering", "ref",
+    "required", "title", "type",
+})
 
-    Gemini's google-genai SDK validates Tool.functionDeclarations.parameters
-    via Pydantic with `extra="forbid"`. Fields like `strict`/`input_examples`
-    are OpenAI tool-use conventions and not allowed in Gemini's schema
-    subset. Instead of delivering a tool call without tools, we strip those
-    fields out — the tools themselves keep working unchanged, only the
-    OpenAI-specific hints are gone.
+
+@lru_cache(maxsize=1)
+def _gemini_schema_keys() -> frozenset[str]:
+    """Every key google-genai's ``types.Schema`` accepts, names and aliases.
+
+    Read off the installed library rather than spelled out here, because that
+    model IS the validator that rejects the request (``extra="forbid"``): its
+    own field set is the only honest answer, and a library version that gains
+    a keyword gains it here in the same step. A library that cannot be
+    introspected falls back to the documented subset above — never to "allow
+    everything", which is the failure this exists to prevent.
+    """
+    try:
+        from google.genai import types
+
+        fields = types.Schema.model_fields
+        keys = set(fields)
+        keys.update(f.alias for f in fields.values() if f.alias)
+        if keys:
+            return frozenset(keys)
+    except Exception as exc:  # noqa: BLE001 — the fallback list is the answer
+        log.debug("gemini: schema field set not introspectable (%s) — using the fallback", exc)
+    return _GEMINI_SCHEMA_KEYS_FALLBACK
+
+
+#: Keys whose value is one nested schema.
+_GEMINI_SCHEMA_VALUED: frozenset[str] = frozenset({"items"})
+#: Keys whose value maps FREE names to schemas. Their keys are property names
+#: chosen by whoever wrote the tool ("owner", "repo") and must never be judged
+#: against the allow-list — only their values are schemas.
+_GEMINI_SCHEMA_MAP_VALUED: frozenset[str] = frozenset({"properties", "defs"})
+#: Keys whose value is a list of schemas.
+_GEMINI_SCHEMA_LIST_VALUED: frozenset[str] = frozenset({"anyOf", "any_of"})
+
+
+def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a JSON schema to the subset google-genai's Schema model accepts.
+
+    Gemini validates ``Tool.functionDeclarations.parameters`` through Pydantic
+    with ``extra="forbid"``: ONE unknown key anywhere in ONE tool's schema
+    fails the WHOLE GenerateContent request, so the brain dies and the turn
+    falls through the entire provider chain. This has now happened four times
+    with a different key each time — OpenAI's ``strict``, Pydantic's ``$defs``,
+    an MCP tool's ``propertyNames``, and the GitHub MCP server's
+    ``x-mcp-header`` (live 2026-08-26: 81 validation errors, gemini down,
+    the front page's chat answered "I can't reach my provider").
+
+    So this keeps an ALLOW-list, not a block-list: a key the library does not
+    know is dropped whatever it is called. A block-list can never be complete
+    — any connected MCP server may ship any extension key it likes — and
+    every one of those four outages was a block-list that was.
+
+    The walk is schema-aware, which the allow-list makes mandatory: under
+    ``properties`` the keys are property NAMES a tool author chose, and
+    judging those against the allow-list would delete the parameters
+    themselves. Values that are data rather than schemas (``example``,
+    ``default``, ``enum``) are passed through untouched.
 
     Exclusive numeric bounds (``exclusiveMinimum``/``exclusiveMaximum`` from
     Pydantic ``Field(gt=...)``/``Field(lt=...)``) are first converted to the
-    inclusive ``minimum``/``maximum`` Gemini accepts, then the exclusive key is
-    stripped via ``_GEMINI_FORBIDDEN_SCHEMA_KEYS``.
+    inclusive ``minimum``/``maximum`` Gemini accepts, then dropped.
+    ``_GEMINI_FORBIDDEN_SCHEMA_KEYS`` still runs in front of the allow-list,
+    for the keys the model accepts but the API does not.
     """
     if not isinstance(schema, dict):
         return schema
     schema = _convert_exclusive_bounds(schema)
+    allowed = _gemini_schema_keys()
     out: dict[str, Any] = {}
     for k, v in schema.items():
-        if k in _GEMINI_FORBIDDEN_SCHEMA_KEYS:
+        if k in _GEMINI_FORBIDDEN_SCHEMA_KEYS or k not in allowed:
             continue
-        if isinstance(v, dict):
+        if k in _GEMINI_SCHEMA_MAP_VALUED and isinstance(v, dict):
+            out[k] = {name: _sanitize_for_gemini(sub) for name, sub in v.items()}
+        elif k in _GEMINI_SCHEMA_LIST_VALUED and isinstance(v, list):
+            out[k] = [_sanitize_for_gemini(sub) if isinstance(sub, dict) else sub for sub in v]
+        elif k in _GEMINI_SCHEMA_VALUED and isinstance(v, dict):
             out[k] = _sanitize_for_gemini(v)
-        elif isinstance(v, list):
-            out[k] = [
-                _sanitize_for_gemini(item) if isinstance(item, dict) else item
-                for item in v
-            ]
         else:
             out[k] = v
     return out
