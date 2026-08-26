@@ -25,6 +25,22 @@ versioning per [SemVer](https://semver.org/).
   use it, which role it is the pick for, whether it sits in memory — with
   "Manage" opening the full ledger. Nothing hides behind the Advanced switch
   any more.
+- **Local models: the set-up is proven, then saved for next time.** "Set up
+  everything" ends with three real round trips — the server answers, the
+  chat pick answers, the embedding pick embeds — shown one line each with
+  how long they took (`POST …/local-models/verify`, also the sidebar badge's
+  new source), and then switches "Start with Jarvis" on. The Server tab
+  carries both: the switch, with the backend's own sentence on what the next
+  start would do, and "Run a check". From a terminal:
+  `jarvis local-models server verify` and `… server autostart on|off`.
+- **Local models: the server starts with Jarvis.** A few seconds after the
+  web server is ready, an installed-but-stopped local server is started and
+  the chat pick is loaded into memory, so the first answer does not pay the
+  load time — only while local models are actually in use (the active brain,
+  or a configured role), and only while `[brain.providers.ollama].autostart`
+  (on by default) says so. Switching the brain to the local server readies
+  it the same way at once, from every switch path (REST, voice, CLI, brain
+  tool). Nothing is ever installed without the click that names the install.
 
 ### Changed
 

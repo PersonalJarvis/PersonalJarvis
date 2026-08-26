@@ -619,6 +619,7 @@ async def _switch_brain(
             persisted = _persist_brain_primary(provider)
 
     _set_in_memory(cfg, ["brain", "primary"], provider)
+    _ready_local_server(provider, cfg)
     return {
         "ok": True,
         "tier": "brain",
@@ -628,6 +629,24 @@ async def _switch_brain(
         "applied_live": applied_live,
         "requires_restart": not applied_live,
     }
+
+
+def _ready_local_server(provider: str, cfg: Any) -> None:
+    """After a switch to the local model server: start it and warm the chat pick.
+
+    Fire-and-forget through :func:`jarvis.local_models.autostart.kick`, so
+    "choose local models" is followed by local models answering — not by a
+    two-second connect failure and the fallback on the first turn. Every
+    switch path (REST, voice gate, CLI, brain tool) lands here.
+    """
+    try:
+        from jarvis.local_models.autostart import SERVER_PROVIDER_ID, kick  # lazy (AP-26)
+
+        if provider != SERVER_PROVIDER_ID:
+            return
+        kick(cfg)
+    except Exception:  # noqa: BLE001 — the switch already landed; only the first answer is slower
+        log.debug("local server ready-up after the switch was not scheduled", exc_info=True)
 
 
 def _switch_tts(provider: str, *, cfg: Any, persist: bool, old: str | None) -> dict[str, Any]:

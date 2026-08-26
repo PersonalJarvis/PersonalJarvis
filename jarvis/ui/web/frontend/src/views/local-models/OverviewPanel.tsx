@@ -37,6 +37,7 @@ import { formatExpiry } from "./localModelsFormat";
 import type { SetupStep, SetupSummary } from "./localSetup";
 import { RolesPanel, type RolesPanelProps } from "./RolesPanel";
 import { useLocalSetup } from "./useLocalSetup";
+import { verifyLines } from "./verifyLines";
 
 export interface OverviewPanelProps extends RolesPanelProps {
   /** Opens the catalogue ("Browse models"); the button hides without it. */
@@ -438,25 +439,39 @@ function SetupProgress({
     case "tuning":
       text = fill(k("setup_tuning"), { model: step.model });
       break;
+    case "verifying":
+      text = k("setup_verifying");
+      break;
+    case "saving":
+      text = k("setup_saving");
+      break;
     case "error":
       tone = "error";
       text = fill(k("setup_error"), { message: step.message });
       summary = step.summary;
       break;
-    case "done":
-      tone = "ok";
+    case "done": {
       summary = step.summary;
-      text =
-        summary.assigned.length === 0 &&
-        summary.pulled.length === 0 &&
-        !summary.serverStarted
-          ? k("setup_done_nothing")
-          : k("setup_done");
+      const changed =
+        summary.assigned.length > 0 ||
+        summary.pulled.length > 0 ||
+        summary.serverStarted;
+      if (summary.verify && !summary.verify.ok) {
+        // Set up, yes — but the proof failed, and that is the headline.
+        tone = "error";
+        text = fill(k("setup_done_problem"), { reason: summary.verify.reason });
+      } else {
+        tone = "ok";
+        text = changed ? k("setup_done") : k("setup_done_nothing");
+      }
       break;
+    }
   }
 
   const lines: string[] = [];
   if (summary) {
+    for (const line of verifyLines(summary.verify, t)) lines.push(line);
+    if (summary.autostart) lines.push(k("setup_autostart_on"));
     if (summary.assigned.length > 0)
       lines.push(
         summary.assigned

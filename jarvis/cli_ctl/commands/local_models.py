@@ -385,6 +385,34 @@ def server_test(
     )
 
 
+@server_app.command("verify")
+def server_verify(provider: str = _PROVIDER) -> None:
+    """Prove the setup works: the server, one real chat answer, one real embedding."""
+    invoke.run("POST", f"{_base(provider)}/verify", dangerous=False, request_timeout_s=120.0)
+
+
+@server_app.command("autostart")
+def server_autostart(
+    state: str = typer.Argument("", help="on | off; empty shows the current switch."),
+    provider: str = _PROVIDER,
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Show or flip "start the server with Jarvis" (fires only while local models are in use)."""
+    choice = state.strip().lower()
+    if not choice:
+        invoke.run("GET", f"{_base(provider)}/runtime/autostart")
+        return
+    if choice not in {"on", "off"}:
+        raise typer.BadParameter("expected 'on' or 'off'")
+    invoke.run(
+        "PUT",
+        f"{_base(provider)}/runtime/autostart",
+        body={"enabled": choice == "on"},
+        dangerous=False,
+        dry_run=dry_run,
+    )
+
+
 @server_app.command("log")
 def server_log(
     lines: int = typer.Option(40, "--lines", min=1, max=500),

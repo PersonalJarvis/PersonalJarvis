@@ -157,6 +157,33 @@ export interface RolesResponse {
   error: string | null;
 }
 
+/** Mirror of `AutostartResponse` (`GET/PUT …/runtime/autostart`). */
+export interface AutostartResponse {
+  /** `[brain.providers.ollama].autostart` — start the server with Jarvis. */
+  enabled: boolean;
+  /** Something in this install runs on the local server right now. */
+  in_use: boolean;
+  /** One backend sentence: what the boot task would do and why. */
+  reason: string;
+}
+
+/** One step of `POST …/verify`; `ok: null` = not run (role unset / server down). */
+export interface VerifyStep {
+  id: "server" | "chat" | "embedding" | string;
+  ok: boolean | null;
+  model: string;
+  detail: string;
+  ms: number;
+}
+
+/** Mirror of `VerifyResponse` (`POST …/verify`). */
+export interface VerifyResponse {
+  ok: boolean;
+  status: "ok" | "needs_setup" | "error" | string;
+  reason: string;
+  steps: VerifyStep[];
+}
+
 export interface RoleSetBody {
   /** "" = back to discovery (brain roles only). */
   model: string;
@@ -492,6 +519,34 @@ export async function setIdleRelease(
   );
 }
 
+export async function getAutostart(
+  providerId: string,
+): Promise<AutostartResponse> {
+  return request(`${base(providerId)}/runtime/autostart`);
+}
+
+export async function setAutostart(
+  providerId: string,
+  enabled: boolean,
+): Promise<AutostartResponse> {
+  return request(
+    `${base(providerId)}/runtime/autostart`,
+    json("PUT", { enabled }),
+    WRITE_TIMEOUT_MS,
+  );
+}
+
+/** Three real round trips: the server, a chat answer, an embedding. */
+const VERIFY_TIMEOUT_MS = 120_000;
+
+export async function verifySetup(providerId: string): Promise<VerifyResponse> {
+  return request(
+    `${base(providerId)}/verify`,
+    { method: "POST" },
+    VERIFY_TIMEOUT_MS,
+  );
+}
+
 export async function setRole(
   providerId: string,
   role: LocalModelRole,
@@ -731,6 +786,7 @@ export const localModelsKeys = {
     ["local-models", p, "inventory", name] as const,
   roles: (p: string) => ["local-models", p, "roles"] as const,
   idleRelease: (p: string) => ["local-models", p, "idle-release"] as const,
+  autostart: (p: string) => ["local-models", p, "autostart"] as const,
   options: (p: string, name: string) =>
     ["local-models", p, "options", name] as const,
   suggested: (p: string, name: string) =>
@@ -1188,6 +1244,33 @@ export function useSetIdleRelease(providerId: string | undefined) {
         queryKey: localModelsKeys.idleRelease(providerId ?? ""),
       });
     },
+  });
+}
+
+export function useAutostart(providerId: string | undefined) {
+  return useQuery({
+    queryKey: localModelsKeys.autostart(providerId ?? ""),
+    queryFn: () => getAutostart(providerId as string),
+    enabled: !!providerId,
+    gcTime: SECTION_GC_MS,
+  });
+}
+
+export function useSetAutostart(providerId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      setAutostart(providerId as string, enabled),
+    onSuccess: (data) => {
+      qc.setQueryData(localModelsKeys.autostart(providerId ?? ""), data);
+    },
+  });
+}
+
+/** The on-demand proof; the sidebar badge follows the health record it writes. */
+export function useVerifySetup(providerId: string | undefined) {
+  return useMutation({
+    mutationFn: () => verifySetup(providerId as string),
   });
 }
 

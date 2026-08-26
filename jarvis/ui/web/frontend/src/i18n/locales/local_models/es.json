@@ -215,8 +215,12 @@
       "setup_pulling": "Descargando {model}",
       "setup_assigning": "Asignando {role}: {model}…",
       "setup_tuning": "Eligiendo los ajustes para {model}…",
-      "setup_done": "Todo está configurado.",
-      "setup_done_nothing": "Todo ya estaba configurado; nada cambió.",
+      "setup_verifying": "Probando la configuración: el servidor, una respuesta de chat, una incrustación…",
+      "setup_saving": "Guardando: el servidor arrancará con Jarvis a partir de ahora…",
+      "setup_done": "Todo está configurado y probado.",
+      "setup_done_nothing": "Todo ya estaba configurado; la comprobación pasó.",
+      "setup_done_problem": "Configurado, pero la comprobación encontró un problema: {reason}",
+      "setup_autostart_on": "El servidor arranca con Jarvis a partir de ahora; se desactiva en la pestaña Servidor.",
       "setup_assigned": "{role} → {model}",
       "setup_kept_one": "1 rol mantiene su elección.",
       "setup_kept": "{count} roles mantienen su elección.",
@@ -239,6 +243,22 @@
       "loaded": "en memoria",
       "unknown_caps": "capacidades desconocidas",
       "recommended_for": "Recomendado para {role}"
+    },
+    "verify": {
+      "eyebrow": "Comprobación",
+      "title": "Comprobar la configuración",
+      "subtitle": "Una llamada real de cada: el servidor responde, el modelo de chat responde, el modelo de incrustaciones incrusta. También actualiza la insignia de la barra lateral.",
+      "run": "Ejecutar una comprobación",
+      "running": "Comprobando…",
+      "server": "Servidor",
+      "chat": "Chat",
+      "embedding": "Incrustaciones",
+      "ok": "OK",
+      "failed": "falló",
+      "skipped": "sin probar",
+      "result_ok": "Todo respondió.",
+      "result_problem": "Problema: {reason}",
+      "ms": "{ms} ms"
     },
     "roles": {
       "title": "Roles",
@@ -338,7 +358,13 @@
       "idle_never": "= mantener todo cargado",
       "idle_save": "Guardar",
       "idle_saving": "Guardando…",
-      "idle_hint": "0 mantiene los modelos cargados mientras Jarvis funciona. Se aplica en la siguiente comprobación, sin reiniciar."
+      "idle_hint": "0 mantiene los modelos cargados mientras Jarvis funciona. Se aplica en la siguiente comprobación, sin reiniciar.",
+      "autostart_eyebrow": "Arranque",
+      "autostart_title": "Arrancar con Jarvis",
+      "autostart_subtitle": "Al iniciar Jarvis, el servidor local arranca y se carga el modelo de chat para que la primera respuesta sea rápida, solo mientras los modelos locales estén en uso (el cerebro activo o un rol).",
+      "autostart_label": "Arrancar el servidor con Jarvis",
+      "autostart_now": "Ahora mismo: {reason}.",
+      "autostart_saving": "Guardando…"
     },
     "tune": {
       "aria": "Ajustar {model}",

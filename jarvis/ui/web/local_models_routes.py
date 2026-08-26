@@ -823,6 +823,84 @@ async def put_idle_release(
     return IdleReleaseResponse(minutes=int(body.minutes))
 
 
+class AutostartResponse(BaseModel):
+    #: ``[brain.providers.ollama].autostart`` — start the server with Jarvis.
+    enabled: bool
+    #: Whether anything in this install runs on the local server right now
+    #: (the active brain, or a configured role); the boot task starts
+    #: nothing while this is false, whatever ``enabled`` says.
+    in_use: bool
+    #: One sentence: what the boot task would do and why.
+    reason: str
+
+
+class AutostartBody(BaseModel):
+    enabled: bool
+
+
+@router.get("/runtime/autostart", response_model=AutostartResponse)
+async def get_autostart(provider_id: str, request: Request) -> AutostartResponse:
+    """Whether the local server starts with Jarvis, and whether that would fire."""
+    _require_pull_capable(provider_id)
+    from jarvis.core.config import ollama_autostart
+    from jarvis.local_models import autostart
+
+    cfg = _resolve_cfg(request)
+    used, _why = autostart.in_use(cfg)
+    _start, reason = autostart.should_autostart(cfg)
+    return AutostartResponse(enabled=ollama_autostart(cfg), in_use=used, reason=reason)
+
+
+@router.put("/runtime/autostart", response_model=AutostartResponse)
+async def put_autostart(
+    provider_id: str, body: AutostartBody, request: Request
+) -> AutostartResponse:
+    """Switch "start the server with Jarvis" on or off (persisted)."""
+    _require_pull_capable(provider_id)
+    from jarvis.local_models import autostart
+
+    cfg = _resolve_cfg(request)
+    config_writer.set_ollama_autostart(body.enabled)
+    provider = _ollama_provider_cfg(cfg)
+    if provider is not None:
+        try:
+            provider.autostart = bool(body.enabled)
+        except Exception:  # noqa: BLE001 — a frozen config object still has the TOML write
+            log.debug("local-models: in-memory autostart update skipped", exc_info=True)
+    used, _why = autostart.in_use(cfg)
+    _start, reason = autostart.should_autostart(cfg)
+    return AutostartResponse(enabled=bool(body.enabled), in_use=used, reason=reason)
+
+
+class VerifyStep(BaseModel):
+    #: ``server`` | ``chat`` | ``embedding``.
+    id: str
+    #: ``None`` = not run (the role is not configured, or the server is down).
+    ok: bool | None
+    model: str = ""
+    detail: str = ""
+    ms: int = 0
+
+
+class VerifyResponse(BaseModel):
+    ok: bool
+    #: The badge's vocabulary: ``ok`` | ``needs_setup`` | ``error``.
+    status: str
+    reason: str
+    steps: list[VerifyStep]
+
+
+@router.post("/verify", response_model=VerifyResponse)
+async def post_verify(provider_id: str, request: Request) -> VerifyResponse:
+    """Prove the setup works — the server, one real chat answer, one real
+    embedding — and refresh the sidebar's health badge with the result."""
+    _require_pull_capable(provider_id)
+    from jarvis.local_models import health_monitor
+
+    result = await health_monitor.verify_setup(_resolve_cfg(request))
+    return VerifyResponse(**result)
+
+
 @router.post("/server/test", response_model=ServerProbeResponse)
 async def post_server_test(provider_id: str, body: ServerTestBody) -> ServerProbeResponse:
     """Probe a host before saving it: version and latency, or the reason it failed."""

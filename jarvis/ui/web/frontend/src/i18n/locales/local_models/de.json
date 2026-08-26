@@ -215,8 +215,12 @@
       "setup_pulling": "{model} wird heruntergeladen",
       "setup_assigning": "{role} wird zugewiesen: {model}…",
       "setup_tuning": "Einstellungen für {model} werden gewählt…",
-      "setup_done": "Alles ist eingerichtet.",
-      "setup_done_nothing": "Alles war schon eingerichtet; nichts geändert.",
+      "setup_verifying": "Prüft die Einrichtung — Server, eine Chat-Antwort, eine Einbettung…",
+      "setup_saving": "Speichert — der Server startet ab jetzt mit Jarvis…",
+      "setup_done": "Alles ist eingerichtet und getestet.",
+      "setup_done_nothing": "Alles war schon eingerichtet; die Prüfung ist bestanden.",
+      "setup_done_problem": "Eingerichtet, aber die Prüfung fand ein Problem: {reason}",
+      "setup_autostart_on": "Der Server startet ab jetzt mit Jarvis; im Reiter „Server“ lässt sich das abschalten.",
       "setup_assigned": "{role} → {model}",
       "setup_kept_one": "1 Rolle behält ihre Wahl.",
       "setup_kept": "{count} Rollen behalten ihre Wahl.",
@@ -239,6 +243,22 @@
       "loaded": "im Speicher",
       "unknown_caps": "Fähigkeiten unbekannt",
       "recommended_for": "Empfohlen für {role}"
+    },
+    "verify": {
+      "eyebrow": "Prüfung",
+      "title": "Einrichtung prüfen",
+      "subtitle": "Je ein echter Aufruf: der Server antwortet, das Chat-Modell antwortet, das Einbettungsmodell bettet ein. Aktualisiert auch das Abzeichen in der Seitenleiste.",
+      "run": "Prüfung starten",
+      "running": "Prüft…",
+      "server": "Server",
+      "chat": "Chat",
+      "embedding": "Einbettungen",
+      "ok": "OK",
+      "failed": "fehlgeschlagen",
+      "skipped": "nicht geprüft",
+      "result_ok": "Alles hat geantwortet.",
+      "result_problem": "Problem: {reason}",
+      "ms": "{ms} ms"
     },
     "roles": {
       "title": "Rollen",
@@ -338,7 +358,13 @@
       "idle_never": "= alles geladen lassen",
       "idle_save": "Speichern",
       "idle_saving": "Speichern…",
-      "idle_hint": "0 lässt die Modelle geladen, solange Jarvis läuft. Gilt ab der nächsten Prüfung, kein Neustart nötig."
+      "idle_hint": "0 lässt die Modelle geladen, solange Jarvis läuft. Gilt ab der nächsten Prüfung, kein Neustart nötig.",
+      "autostart_eyebrow": "Start",
+      "autostart_title": "Mit Jarvis starten",
+      "autostart_subtitle": "Beim Start von Jarvis kommt der lokale Server hoch und das Chat-Modell wird geladen, damit die erste Antwort schnell kommt — nur solange lokale Modelle in Gebrauch sind (das aktive Gehirn oder eine Rolle).",
+      "autostart_label": "Server mit Jarvis starten",
+      "autostart_now": "Aktuell: {reason}.",
+      "autostart_saving": "Speichert…"
     },
     "tune": {
       "aria": "{model} feinjustieren",

@@ -180,6 +180,19 @@ function installFetch(script: Script) {
       return ok({ state: "running", model: "", message: "" });
     if (url.startsWith("/api/providers/ollama/pull/status"))
       return ok({ state: "done", model: "", message: "", percent: 100 });
+    if (url === `${BASE}/verify` && method === "POST")
+      return ok({
+        ok: true,
+        status: "ok",
+        reason: "",
+        steps: [
+          { id: "server", ok: true, model: "", detail: "Ollama 0.32.15", ms: 12 },
+          { id: "chat", ok: true, model: "gemma4:12b-it-qat", detail: "Answered.", ms: 1800 },
+          { id: "embedding", ok: null, model: "", detail: "No embedding role is configured.", ms: 0 },
+        ],
+      });
+    if (url === `${BASE}/runtime/autostart` && method === "PUT")
+      return ok({ enabled: true, in_use: true, reason: "local models serve the chat role" });
     throw new Error(`unexpected fetch: ${method} ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -218,14 +231,15 @@ describe("runLocalSetup", () => {
       "ornith:9b": "ornith:9b tuned",
       "qwen3.5:4b": "qwen3.5:4b tuned",
     });
-    expect(calls.filter((c) => c.startsWith("PUT"))).toEqual([
+    expect(calls.filter((c) => c.startsWith(`PUT ${BASE}/roles/`))).toEqual([
       `PUT ${BASE}/roles/voice`,
       `PUT ${BASE}/roles/tools_screen`,
       `PUT ${BASE}/roles/deep`,
     ]);
     expect(calls).not.toContain("POST /api/providers/ollama/ollama-runtime/start");
     expect(steps.at(-1)?.phase).toBe("done");
-    // One download, three writes, two tunes (ornith:9b serves two roles).
+    // One download, three writes, two tunes (ornith:9b serves two roles),
+    // then the proof and the boot switch.
     expect(steps.map((s) => s.phase)).toEqual([
       "planning",
       "pulling",
@@ -234,8 +248,36 @@ describe("runLocalSetup", () => {
       "assigning",
       "tuning",
       "assigning",
+      "verifying",
+      "saving",
       "done",
     ]);
+    expect(calls).toContain(`POST ${BASE}/verify`);
+    expect(calls).toContain(`PUT ${BASE}/runtime/autostart`);
+    expect(summary.verify?.ok).toBe(true);
+    expect(summary.verify?.steps.map((s) => s.id)).toEqual(["server", "chat", "embedding"]);
+    expect(summary.autostart).toBe(true);
+  });
+
+  it("proves the setup even when nothing changed, and never saves autostart for a remote server", async () => {
+    const remote = overview(
+      [role({ id: "chat", current: "qwen3.5:4b", installed: true, recommended: "qwen3.5:4b" })],
+      ["qwen3.5:4b"],
+      { host_kind: "remote", base_url: "http://box.lan:11434" },
+    );
+    const { calls } = installFetch({ overviews: [remote] });
+    const summary = await runLocalSetup({
+      providerId: "ollama",
+      report: () => undefined,
+      alive: () => true,
+      tune: async () => "",
+      pollMs: 0,
+    });
+    expect(summary.kept).toEqual([{ role: "chat", model: "qwen3.5:4b" }]);
+    expect(summary.verify?.ok).toBe(true);
+    expect(summary.autostart).toBeUndefined();
+    expect(calls).toContain(`POST ${BASE}/verify`);
+    expect(calls).not.toContain(`PUT ${BASE}/runtime/autostart`);
   });
 
   it("starts a stopped local server first and reads the plan from the server that answers", async () => {

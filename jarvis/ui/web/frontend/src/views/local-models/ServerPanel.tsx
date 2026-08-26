@@ -18,7 +18,9 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Loader2,
   RefreshCw,
+  ShieldCheck,
   Square,
 } from "lucide-react";
 import {
@@ -41,14 +43,17 @@ import {
   OllamaRuntimePanel,
 } from "@/components/providers/ProviderTierSection";
 import {
+  useAutostart,
   useEnvGuide,
   useIdleRelease,
   useServer,
+  useSetAutostart,
   useSetIdleRelease,
   useServerLog,
   useStopServer,
   useTestServer,
   useUnloadModel,
+  useVerifySetup,
   type EnvGuideOs,
   type RunningModelRow,
   type ServerProbeResponse,
@@ -58,6 +63,8 @@ import { robustCopy } from "@/lib/clipboard";
 import { useEventStore } from "@/store/events";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+
+import { verifyLines } from "./verifyLines";
 
 /** Ollama's shipped default when OLLAMA_KEEP_ALIVE is not set. */
 const KEEP_ALIVE_DEFAULT = "5m";
@@ -99,6 +106,106 @@ function guessOs(): EnvGuideOs | undefined {
   if (ua.includes("mac")) return "macos";
   if (ua.includes("linux")) return "linux";
   return undefined;
+}
+
+/**
+ * "Start with Jarvis" as one checkbox, with the backend's own sentence on
+ * what the next start would do ("local models serve the chat role" / "no
+ * role uses local models …"), so the switch never promises more than the
+ * boot task will keep.
+ */
+function AutostartControl({ providerId }: { providerId: string }) {
+  const t = useT();
+  const current = useAutostart(providerId);
+  const save = useSetAutostart(providerId);
+  const enabled = current.data?.enabled ?? true;
+  return (
+    <div className="space-y-2" data-testid="autostart">
+      <label className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={current.isLoading || save.isPending}
+          onChange={(e) => save.mutate(e.target.checked)}
+          aria-label={t("local_models.server.autostart_label")}
+          className="h-4 w-4 rounded border-border accent-primary"
+        />
+        {t("local_models.server.autostart_label")}
+        {save.isPending && (
+          <span className="text-xs text-muted-foreground">
+            {t("local_models.server.autostart_saving")}
+          </span>
+        )}
+      </label>
+      {current.data && (
+        <p className="text-xs text-muted-foreground" data-testid="autostart-now">
+          {fill(t("local_models.server.autostart_now"), {
+            reason: current.data.reason,
+          })}
+        </p>
+      )}
+      {save.isError && (
+        <p className="text-sm text-destructive" role="alert">
+          {save.error instanceof Error ? save.error.message : String(save.error)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Run a check" — the same proof the set-up flow ends with (the server, one
+ * real chat answer, one real embedding), on demand, one line per step.
+ */
+function VerifyControl({ providerId }: { providerId: string }) {
+  const t = useT();
+  const verify = useVerifySetup(providerId);
+  const result = verify.data;
+  return (
+    <div className="space-y-2" data-testid="verify">
+      <SoftButton
+        primary
+        onClick={() => verify.mutate()}
+        disabled={verify.isPending}
+        ariaLabel={t("local_models.verify.run")}
+      >
+        {verify.isPending ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <ShieldCheck className="h-3.5 w-3.5" />
+        )}
+        {verify.isPending
+          ? t("local_models.verify.running")
+          : t("local_models.verify.run")}
+      </SoftButton>
+      {result && (
+        <div className="space-y-1 text-xs" data-testid="verify-result">
+          <StatusDot
+            tone={result.ok ? "ok" : "error"}
+            label={
+              result.ok
+                ? t("local_models.verify.result_ok")
+                : fill(t("local_models.verify.result_problem"), {
+                    reason: result.reason,
+                  })
+            }
+          />
+          {verifyLines(result, t).map((line, i) => (
+            <p key={i} className="ml-4 text-muted-foreground">
+              {line}
+            </p>
+          ))}
+        </div>
+      )}
+      {verify.isError && (
+        <p className="text-sm text-destructive" role="alert">
+          {verify.error instanceof Error
+            ? verify.error.message
+            : String(verify.error)}
+        </p>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -430,6 +537,32 @@ export function ServerPanel({
           </div>
         </Panel>
       )}
+
+      {/* Start with Jarvis ----------------------------------------------------- */}
+      {!remote && (
+        <Panel>
+          <div className="space-y-3 p-4">
+            <p className={EYEBROW}>{t("local_models.server.autostart_eyebrow")}</p>
+            <PanelHeader
+              title={t("local_models.server.autostart_title")}
+              subtitle={t("local_models.server.autostart_subtitle")}
+            />
+            <AutostartControl providerId={providerId} />
+          </div>
+        </Panel>
+      )}
+
+      {/* Check the setup -------------------------------------------------------- */}
+      <Panel>
+        <div className="space-y-3 p-4">
+          <p className={EYEBROW}>{t("local_models.verify.eyebrow")}</p>
+          <PanelHeader
+            title={t("local_models.verify.title")}
+            subtitle={t("local_models.verify.subtitle")}
+          />
+          <VerifyControl providerId={providerId} />
+        </div>
+      </Panel>
 
       {/* Loaded now ------------------------------------------------------------ */}
       <Panel>

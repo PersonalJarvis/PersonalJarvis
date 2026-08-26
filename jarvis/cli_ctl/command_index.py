@@ -153,6 +153,8 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "server status",
         "server stop --yes",
         "server test <url>",
+        "server verify",
+        "server autostart [on|off]",
         "server log [--lines]",
         "server env-guide [--os]",
     ),

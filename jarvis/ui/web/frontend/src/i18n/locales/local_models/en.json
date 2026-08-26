@@ -215,8 +215,12 @@
       "setup_pulling": "Downloading {model}",
       "setup_assigning": "Assigning {role}: {model}…",
       "setup_tuning": "Choosing the settings for {model}…",
-      "setup_done": "Everything is set up.",
-      "setup_done_nothing": "Everything was already set up; nothing changed.",
+      "setup_verifying": "Testing the setup — the server, one chat answer, one embedding…",
+      "setup_saving": "Saving — the server will start with Jarvis from now on…",
+      "setup_done": "Everything is set up and tested.",
+      "setup_done_nothing": "Everything was already set up; the check passed.",
+      "setup_done_problem": "Set up, but the check found a problem: {reason}",
+      "setup_autostart_on": "The server starts with Jarvis from now on; switch that off on the Server tab.",
       "setup_assigned": "{role} → {model}",
       "setup_kept_one": "1 role kept its pick.",
       "setup_kept": "{count} roles kept their pick.",
@@ -239,6 +243,22 @@
       "loaded": "in memory",
       "unknown_caps": "capabilities unknown",
       "recommended_for": "Recommended for {role}"
+    },
+    "verify": {
+      "eyebrow": "Check",
+      "title": "Check the setup",
+      "subtitle": "One real round trip each: the server answers, the chat model answers, the embedding model embeds. Also refreshes the badge in the sidebar.",
+      "run": "Run a check",
+      "running": "Checking…",
+      "server": "Server",
+      "chat": "Chat",
+      "embedding": "Embeddings",
+      "ok": "OK",
+      "failed": "failed",
+      "skipped": "not tested",
+      "result_ok": "Everything answered.",
+      "result_problem": "Problem: {reason}",
+      "ms": "{ms} ms"
     },
     "roles": {
       "title": "Roles",
@@ -338,7 +358,13 @@
       "idle_never": "= keep everything loaded",
       "idle_save": "Save",
       "idle_saving": "Saving…",
-      "idle_hint": "0 keeps the models loaded while Jarvis runs. Applies on the next check, no restart needed."
+      "idle_hint": "0 keeps the models loaded while Jarvis runs. Applies on the next check, no restart needed.",
+      "autostart_eyebrow": "Start-up",
+      "autostart_title": "Start with Jarvis",
+      "autostart_subtitle": "When Jarvis starts, the local server comes up and the chat model is loaded, so the first answer is quick — only while local models are in use (the active brain, or a role).",
+      "autostart_label": "Start the server with Jarvis",
+      "autostart_now": "Right now: {reason}.",
+      "autostart_saving": "Saving…"
     },
     "tune": {
       "aria": "Tune {model}",

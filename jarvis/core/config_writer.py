@@ -2289,7 +2289,7 @@ def set_provider_base_url(
 #: Closed list of per-provider boolean flags :func:`set_provider_flag` may
 #: write. Each entry is a real field on ``BrainProviderConfig`` with a reader;
 #: adding one here without a reader is the AP-31 shape.
-PROVIDER_FLAG_KEYS: tuple[str, ...] = ("hf_enabled",)
+PROVIDER_FLAG_KEYS: tuple[str, ...] = ("hf_enabled", "autostart")
 
 
 def _provider_block(doc: TOMLDocument, provider: str) -> tomlkit.items.Table:
@@ -2443,6 +2443,15 @@ def set_ollama_hf_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) ->
     :func:`jarvis.core.config.ollama_hf_enabled`.
     """
     set_provider_flag("ollama", "hf_enabled", bool(enabled), path=path)
+
+
+def set_ollama_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Switch "start the local server with Jarvis" on or off.
+
+    Thin wrapper over :func:`set_provider_flag`; read by
+    :func:`jarvis.core.config.ollama_autostart`.
+    """
+    set_provider_flag("ollama", "autostart", bool(enabled), path=path)
 
 
 def set_local_realtime_launch_command(

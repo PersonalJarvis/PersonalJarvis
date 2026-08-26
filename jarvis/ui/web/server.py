@@ -143,6 +143,9 @@ class WebServer:
         # Local models self-check (badge only): started next to the refresh
         # scheduler, i.e. after the serving path returned — never on boot.
         self._local_models_health_monitor: Any | None = None
+        # Local server autostart: one task a few seconds after the serving
+        # path returned; starts nothing unless local models are in use.
+        self._local_models_autostart_task: asyncio.Task[None] | None = None
         self._refresh_registry_tasks: set[asyncio.Task[Any]] = set()
         self._refresh_scheduler_stopping = False
         # Realtime transport pre-warm — scheduled at the end of start() so the
@@ -2154,6 +2157,35 @@ class WebServer:
             except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
                 logger.opt(exception=exc).debug("Local models health monitor stop failed.")
 
+    def _schedule_local_models_autostart(self) -> None:
+        """Start the local model server with Jarvis when it is wanted and in use.
+
+        Best-effort, exactly once, off the boot path: the task sleeps a few
+        seconds first, then decides from the config (autostart on AND a role
+        or the active brain uses the server) and starts/warms accordingly.
+        """
+        if self._local_models_autostart_task is not None:
+            return
+        try:
+            from jarvis.local_models.autostart import schedule
+
+            self._local_models_autostart_task = schedule(lambda: self.cfg)
+        except Exception as exc:  # noqa: BLE001 -- a convenience must never block boot
+            logger.opt(exception=exc).warning("Local models autostart did not schedule.")
+
+    async def _stop_local_models_autostart(self) -> None:
+        task = self._local_models_autostart_task
+        self._local_models_autostart_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+            logger.opt(exception=exc).debug("Local models autostart stop failed.")
+
     def _start_marketplace_refresh_scheduler(self) -> None:
         """Create the periodic OAuth refresh task (best-effort, exactly once)."""
         self._refresh_scheduler_start_handle = None
@@ -2655,6 +2687,7 @@ class WebServer:
         # hook covers normal desktop, headless, and direct WebServer starts.
         self._schedule_marketplace_refresh_scheduler()
         self._start_local_models_health_monitor()
+        self._schedule_local_models_autostart()
         # Same reasoning, and the same three boot paths: a headless or
         # browser-only install has no desktop shell to warm the realtime
         # transport for it.
@@ -3477,6 +3510,7 @@ class WebServer:
         # cannot enqueue a live-session rebuild while that registry is closing.
         await self._stop_marketplace_refresh_scheduler()
         await self._stop_local_models_health_monitor()
+        await self._stop_local_models_autostart()
 
         # Stop the skill watcher, otherwise the watchdog thread stays behind
         # as a zombie and prevents the process from exiting.

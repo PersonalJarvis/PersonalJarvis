@@ -866,6 +866,12 @@ class BrainProviderConfig(BaseModel):
     # Cadence of the Local models self-check (badge only, no toasts), in
     # hours; read by :func:`jarvis.local_models.health_monitor.interval_hours`.
     health_check_hours: float = 6.0
+    # Start the local server with Jarvis and warm the chat pick — only while
+    # local models are actually in use (the active brain, or a configured
+    # role). ON by default so "choose local models" survives a restart; the
+    # Server tab switches it off. Read via :func:`ollama_autostart` by
+    # :mod:`jarvis.local_models.autostart`.
+    autostart: bool = True
 
     @field_validator("models", mode="before")
     @classmethod
@@ -5541,6 +5547,17 @@ def ollama_hf_enabled(config: JarvisConfig | None = None) -> bool:
     conf = config or load_config()
     provider = conf.brain.providers.get("ollama")
     return bool(provider is not None and provider.hf_enabled)
+def ollama_autostart(config: JarvisConfig | None = None) -> bool:
+    """Whether the local server starts with Jarvis when local models are in use.
+
+    The ONE reader of ``[brain.providers.ollama].autostart`` (AP-31), for
+    :func:`jarvis.local_models.autostart.should_autostart`. A card that was
+    never configured answers the default (on): the boot task still starts
+    nothing unless a role or the active brain actually uses the server.
+    """
+    conf = config or load_config()
+    provider = conf.brain.providers.get("ollama")
+    return True if provider is None else bool(provider.autostart)
 
 
 def resolve_provider_endpoint(

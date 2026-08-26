@@ -18,6 +18,10 @@
  *  3. pull     — every recommended model that is missing is downloaded once.
  *  4. assign   — each writable role that is not already on its pick is set.
  *  5. tune     — the suggested options are written for every model assigned.
+ *  6. verify   — three real round trips (`POST …/verify`): the server, one
+ *                chat answer, one embedding — so "set up" is a tested sentence.
+ *  7. save     — "start the server with Jarvis" is switched on for a local
+ *                server, so the next start needs no click at all.
  *
  * A role that is served elsewhere (the wiki embedding on a cloud provider,
  * the voice server not installed) or has no pick is skipped and named in
@@ -35,11 +39,14 @@ import {
 import {
   getOverview,
   modelPullStatus,
+  setAutostart,
   setRole,
   startModelPull,
+  verifySetup,
   type LocalModelRole,
   type OverviewResponse,
   type RoleRow,
+  type VerifyResponse,
 } from "@/hooks/useLocalModels";
 
 /** The five slots the flow writes, in the order the rows show them. */
@@ -62,6 +69,8 @@ export type SetupStep =
   | { phase: "pulling"; model: string; percent?: number; message?: string }
   | { phase: "assigning"; role: LocalModelRole; model: string }
   | { phase: "tuning"; model: string }
+  | { phase: "verifying" }
+  | { phase: "saving" }
   | { phase: "done"; summary: SetupSummary }
   | { phase: "error"; message: string; summary?: SetupSummary };
 
@@ -78,6 +87,10 @@ export interface SetupSummary {
   readbacks: Record<string, string>;
   /** The server was started (or installed and started) by this run. */
   serverStarted: boolean;
+  /** The proof: the server, one chat answer, one embedding. */
+  verify?: VerifyResponse;
+  /** "Start with Jarvis" was switched on (local servers only). */
+  autostart?: boolean;
 }
 
 export interface RunLocalSetupOptions {
@@ -294,6 +307,26 @@ export async function runLocalSetup({
     tuned.add(model);
     report({ phase: "tuning", model });
     summary.readbacks[model] = await tune(model);
+    if (!alive()) return summary;
+  }
+
+  // The proof — always, even when nothing changed: "set up" must be a
+  // sentence that was tested this very minute.
+  report({ phase: "verifying" });
+  summary.verify = await verifySetup(providerId);
+  if (!alive()) return summary;
+
+  // Saved for next time: a local server comes up with Jarvis from now on.
+  if (overview.server.host_kind !== "remote") {
+    report({ phase: "saving" });
+    try {
+      await setAutostart(providerId, true);
+      summary.autostart = true;
+    } catch (err) {
+      // The roles and the proof stand; only the boot convenience is unsaved.
+      console.warn("[local-models] autostart not saved", err);
+      summary.autostart = false;
+    }
     if (!alive()) return summary;
   }
   report({ phase: "done", summary });

@@ -215,6 +215,29 @@ function installFetchMock(fx: Fixture = {}) {
         });
       if (url === "/api/brain/switch" && method === "POST")
         return ok({ ok: true, active: "ollama" });
+      if (url === `${BASE}/verify` && method === "POST")
+        return ok({
+          ok: true,
+          status: "ok",
+          reason: "",
+          steps: [
+            { id: "server", ok: true, model: "", detail: "Ollama 0.32.15", ms: 12 },
+            { id: "chat", ok: true, model: "qwen3.8:27b", detail: "Answered.", ms: 1800 },
+            {
+              id: "embedding",
+              ok: null,
+              model: "",
+              detail: "No embedding role is configured.",
+              ms: 0,
+            },
+          ],
+        });
+      if (url === `${BASE}/runtime/autostart`)
+        return ok({
+          enabled: true,
+          in_use: true,
+          reason: "local models serve the chat role",
+        });
       if (url === "/api/providers/ollama/pull" && method === "POST")
         return ok({
           state: "running",
@@ -660,6 +683,19 @@ describe("OverviewPanel", () => {
     );
     expect(progress.textContent).toContain(
       "local_models.overview.setup_kept_one",
+    );
+    // The proof and the boot switch are part of "done".
+    expect(progress.textContent).toContain(
+      "local_models.verify.server — local_models.verify.ok · local_models.verify.ms12",
+    );
+    expect(progress.textContent).toContain(
+      "local_models.verify.chat — local_models.verify.ok · qwen3.8:27b · 1.8 s",
+    );
+    expect(progress.textContent).toContain(
+      "local_models.verify.embedding — local_models.verify.skipped · No embedding role is configured.",
+    );
+    expect(progress.textContent).toContain(
+      "local_models.overview.setup_autostart_on",
     );
     const puts = fetchMock.mock.calls
       .filter(

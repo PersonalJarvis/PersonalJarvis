@@ -130,11 +130,13 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis local-models options suggest <name> --provider` — An advisory profile for this machine, with one reason per knob.
 - `jarvis local-models roles list --provider` — Every role with its pick, what qualifies, and the recommendation.
 - `jarvis local-models roles set <role> <model> --provider --dry-run` — Assign a model to a role (written through the config writers).
+- `jarvis local-models server autostart <state> --provider --dry-run` — Show or flip "start the server with Jarvis" (fires only while local models are in use).
 - `jarvis local-models server env-guide --os --provider` — Copyable per-OS commands for the server's environment variables.
 - `jarvis local-models server log --lines --provider` — The last lines of the server log Jarvis writes when it starts the server.
 - `jarvis local-models server status --provider` — Runtime picture plus what is loaded and how much disk the downloads take.
 - `jarvis local-models server stop --provider --yes --dry-run` — Stop the server Jarvis itself started (never one started elsewhere).
 - `jarvis local-models server test <base_url> --provider` — Probe a host before saving it: version and latency, or why it failed.
+- `jarvis local-models server verify --provider` — Prove the setup works: the server, one real chat answer, one real embedding.
 
 ## marketplace
 

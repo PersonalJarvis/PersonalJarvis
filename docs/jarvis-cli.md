@@ -139,6 +139,8 @@ jarvis local-models hf files bartowski Llama-3.1-8B-Instruct-GGUF
 jarvis local-models hf pull bartowski Llama-3.1-8B-Instruct-GGUF --quant Q4_K_M
 jarvis local-models server status
 jarvis local-models server test http://127.0.0.1:11434
+jarvis local-models server verify                  # the server, one real chat answer, one real embedding
+jarvis local-models server autostart off           # on by default; fires only while local models are in use
 jarvis local-models server log --lines 80
 jarvis local-models server env-guide --os linux
 jarvis local-models server stop --yes              # only a server Jarvis itself started

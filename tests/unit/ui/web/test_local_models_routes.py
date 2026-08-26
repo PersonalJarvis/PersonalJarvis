@@ -622,6 +622,56 @@ def test_server_stop_carries_the_danger_flag() -> None:
 # -- Idle release + the user's own choice --
 
 
+def test_autostart_round_trip(server: WebServer, fake, monkeypatch) -> None:
+    flags: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr(
+        config_writer,
+        "set_provider_flag",
+        lambda provider, key, value, **_kw: flags.append((provider, key, value)),
+    )
+    with TestClient(server.app) as client:
+        before = client.get(f"{BASE}/runtime/autostart").json()
+        # The default is on, and the fixture's chat role puts the server in use.
+        assert before == {"enabled": True, "in_use": True, "reason": before["reason"]}
+        assert "chat" in before["reason"]
+        off = client.put(f"{BASE}/runtime/autostart", json={"enabled": False}).json()
+        assert off["enabled"] is False and "switched off" in off["reason"]
+        assert client.get(f"{BASE}/runtime/autostart").json()["enabled"] is False
+    assert flags == [("ollama", "autostart", False)]
+    assert server.app.state.config.brain.providers["ollama"].autostart is False
+
+
+def test_verify_runs_the_three_steps_and_refreshes_the_badge(
+    server: WebServer, fake, monkeypatch, tmp_path
+) -> None:
+    from jarvis.local_models import health_monitor
+
+    async def _probe(_root: str) -> dict:
+        return {"ok": True, "version": "0.32.15", "latency_ms": 7, "detail": ""}
+
+    class _Result:
+        status = "ok"
+        detail = ""
+
+    async def _generate(_cfg, _model: str) -> _Result:
+        return _Result()
+
+    async def _embed(_root: str, _model: str) -> int:
+        return 1024
+
+    monkeypatch.setattr(health_monitor, "_default_probe", _probe)
+    monkeypatch.setattr(health_monitor, "_default_generate", _generate)
+    monkeypatch.setattr(health_monitor, "_default_embed", _embed)
+    with TestClient(server.app) as client:
+        body = client.post(f"{BASE}/verify").json()
+    assert body["ok"] is True and body["status"] == "ok"
+    assert [s["id"] for s in body["steps"]] == ["server", "chat", "embedding"]
+    assert body["steps"][0]["ms"] == 7
+    assert body["steps"][1]["model"] == "qwen3.5:4b"
+    assert body["steps"][2]["detail"] == "1024 dimensions."
+    assert health_monitor.read_health_record()["status"] == "ok"
+
+
 def test_idle_release_round_trip(server: WebServer, fake, monkeypatch) -> None:
     written: list[int] = []
     monkeypatch.setattr(

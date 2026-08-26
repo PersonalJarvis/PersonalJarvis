@@ -147,6 +147,39 @@ function installFetch(server: Json, extra: Record<string, Json> = {}) {
           message: "Unloaded qwen3.5:4b.",
         });
       }
+      if (url.endsWith("/runtime/autostart")) {
+        const enabled =
+          method === "PUT"
+            ? Boolean(JSON.parse(String(init?.body)).enabled)
+            : true;
+        return respond({
+          enabled,
+          in_use: true,
+          reason: enabled
+            ? "local models serve the chat role"
+            : "autostart is switched off in the Server tab",
+        });
+      }
+      if (url.endsWith("/verify") && method === "POST") {
+        return respond(
+          extra.verify ?? {
+            ok: false,
+            status: "error",
+            reason: "embeddinggemma: /api/embed failed",
+            steps: [
+              { id: "server", ok: true, model: "", detail: "Ollama 0.32.15", ms: 9 },
+              { id: "chat", ok: true, model: "qwen3.5:4b", detail: "Answered.", ms: 2400 },
+              {
+                id: "embedding",
+                ok: false,
+                model: "embeddinggemma",
+                detail: "/api/embed failed",
+                ms: 30,
+              },
+            ],
+          },
+        );
+      }
       return respond({ detail: `unexpected ${method} ${url}` }, 404);
     }),
   );
@@ -292,6 +325,57 @@ describe("ServerPanel", () => {
     ).toBeNull();
     expect(screen.queryByText("local_models.server.log_title")).toBeNull();
     expect(screen.getByText("local_models.server.host_remote")).toBeDefined();
+    // Nothing can be started on a remote host; the check still can run.
+    expect(screen.queryByTestId("autostart")).toBeNull();
+    expect(screen.getByTestId("verify")).toBeDefined();
+  });
+
+  it("flips 'start with Jarvis' and says what the next start would do", async () => {
+    installFetch(serverBody());
+    renderPanel();
+
+    const box = (await screen.findByRole("checkbox", {
+      name: "local_models.server.autostart_label",
+    })) as HTMLInputElement;
+    await waitFor(() => expect(box.checked).toBe(true));
+    expect(screen.getByTestId("autostart-now").textContent).toContain(
+      "local_models.server.autostart_now:local models serve the chat role",
+    );
+
+    fireEvent.click(box);
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.url.endsWith("/runtime/autostart") &&
+            c.method === "PUT" &&
+            (c.body as { enabled?: boolean } | null)?.enabled === false,
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(box.checked).toBe(false));
+    expect(screen.getByTestId("autostart-now").textContent).toContain(
+      "switched off",
+    );
+  });
+
+  it("runs the check on demand and names the failing step", async () => {
+    installFetch(serverBody());
+    renderPanel();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "local_models.verify.run" }),
+    );
+    const result = await screen.findByTestId("verify-result");
+    expect(result.textContent).toContain(
+      "local_models.verify.result_problem:embeddinggemma: /api/embed failed",
+    );
+    expect(result.textContent).toContain(
+      "local_models.verify.chat — local_models.verify.ok · qwen3.5:4b · 2.4 s",
+    );
+    expect(result.textContent).toContain(
+      "local_models.verify.embedding — local_models.verify.failed · embeddinggemma · /api/embed failed",
+    );
   });
 
   it("switches the environment guide per OS and copies a command", async () => {

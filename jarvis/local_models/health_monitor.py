@@ -40,6 +40,8 @@ __all__ = [
     "interval_hours",
     "load_last_report",
     "read_health_record",
+    "server_root",
+    "verify_setup",
     "write_health_record",
 ]
 
@@ -148,6 +150,11 @@ def write_health_record(status: str, reason: str, *, checked_at: str | None = No
 # ── one check ─────────────────────────────────────────────────────────────
 
 
+def server_root(cfg: Any) -> str:
+    """The local server's root: the card's ``base_url`` override, else the default."""
+    return _server_root(cfg)
+
+
 def _server_root(cfg: Any) -> str:
     providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
     ollama = providers.get("ollama") if isinstance(providers, dict) else None
@@ -235,6 +242,154 @@ async def check_once(
     if persist:
         write_health_record(status, reason)
     return record
+
+
+# ── the on-demand proof ───────────────────────────────────────────────────
+
+EmbedFn = Callable[[str, str], Awaitable[int]]
+
+
+async def _default_embed(root: str, model: str) -> int:
+    from jarvis.brain.ollama_inventory import embed_probe
+
+    return await embed_probe(root, model)
+
+
+def _step(
+    step_id: str, ok: bool | None, *, model: str = "", detail: str = "", ms: int = 0
+) -> dict[str, Any]:
+    return {"id": step_id, "ok": ok, "model": model, "detail": detail, "ms": ms}
+
+
+async def verify_setup(
+    cfg: Any,
+    *,
+    root: str | None = None,
+    probe: ProbeFn | None = None,
+    generate: GenerateFn | None = None,
+    embed: EmbedFn | None = None,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Prove the setup works, step by step, and write the health record.
+
+    :func:`check_once` is the quiet schedule; this is the answer to a click
+    ("Set up everything", "Run a check"). Three steps, each with how long it
+    took: the server answers, the chat pick produces one real answer, the
+    embedding pick produces one real vector. A step whose role is not
+    configured is reported as not run (``ok: None``) rather than as a pass,
+    so "it is set up" is a sentence that was tested, not assumed. Returns
+    ``{"ok", "status", "reason", "steps"}``; ``status`` uses the badge's
+    vocabulary (``ok`` / ``needs_setup`` / ``error``).
+    """
+    import time
+
+    root = root or _server_root(cfg)
+    roles = _configured_roles(cfg)
+    steps: list[dict[str, Any]] = []
+
+    server = await (probe or _default_probe)(root)
+    server_ok = bool(server.get("ok"))
+    steps.append(
+        _step(
+            "server",
+            server_ok,
+            detail=str(server.get("detail") or "")
+            if not server_ok
+            else f"Ollama {server.get('version') or 'unknown'}",
+            ms=int(server.get("latency_ms") or 0),
+        )
+    )
+
+    chat_model = roles.get("chat") or roles.get("deep") or roles.get("tools_screen") or ""
+    embed_model = roles.get("embedding") or ""
+    not_run = "Not tested — the server did not answer."
+    if not server_ok:
+        steps.append(_step("chat", None, model=chat_model, detail=not_run))
+        steps.append(_step("embedding", None, model=embed_model, detail=not_run))
+    else:
+        if chat_model:
+            started = time.monotonic()
+            try:
+                result = await asyncio.wait_for(
+                    (generate or _default_generate)(cfg, chat_model), timeout=GENERATION_CAP_S
+                )
+                ms = int((time.monotonic() - started) * 1000)
+                if getattr(result, "status", "") == "ok":
+                    steps.append(_step("chat", True, model=chat_model, detail="Answered.", ms=ms))
+                else:
+                    detail = getattr(result, "detail", "") or getattr(result, "status", "error")
+                    steps.append(_step("chat", False, model=chat_model, detail=str(detail), ms=ms))
+            except TimeoutError:
+                steps.append(
+                    _step(
+                        "chat",
+                        False,
+                        model=chat_model,
+                        detail=f"No answer within {GENERATION_CAP_S:.0f} s.",
+                        ms=int(GENERATION_CAP_S * 1000),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 — the step says so, the log keeps it
+                log.info("verify: generation on %s failed", chat_model, exc_info=True)
+                steps.append(
+                    _step("chat", False, model=chat_model, detail=f"{type(exc).__name__}: {exc}")
+                )
+        else:
+            steps.append(_step("chat", None, detail="No chat role is configured."))
+        if embed_model:
+            started = time.monotonic()
+            try:
+                dims = await asyncio.wait_for(
+                    (embed or _default_embed)(root, embed_model), timeout=GENERATION_CAP_S
+                )
+                ms = int((time.monotonic() - started) * 1000)
+                if dims > 0:
+                    steps.append(
+                        _step(
+                            "embedding",
+                            True,
+                            model=embed_model,
+                            detail=f"{dims} dimensions.",
+                            ms=ms,
+                        )
+                    )
+                else:
+                    steps.append(
+                        _step(
+                            "embedding",
+                            False,
+                            model=embed_model,
+                            detail="The server answered without a vector.",
+                            ms=ms,
+                        )
+                    )
+            except TimeoutError:
+                steps.append(
+                    _step(
+                        "embedding",
+                        False,
+                        model=embed_model,
+                        detail=f"No vector within {GENERATION_CAP_S:.0f} s.",
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 — same as the chat step
+                log.info("verify: embedding on %s failed", embed_model, exc_info=True)
+                steps.append(_step("embedding", False, model=embed_model, detail=str(exc)))
+        else:
+            steps.append(_step("embedding", None, detail="No embedding role is configured."))
+
+    failed = next((s for s in steps if s["ok"] is False), None)
+    if failed is not None:
+        status = "error"
+        who = failed["model"] or "The server"
+        reason = f"{who}: {failed['detail']}" if failed["detail"] else f"{who} failed."
+    elif not roles:
+        status, reason = "needs_setup", "Ollama runs, but no role is configured."
+    else:
+        status, reason = "ok", ""
+    if persist:
+        write_health_record(status, reason)
+    return {"ok": status == "ok", "status": status, "reason": reason, "steps": steps}
 
 
 # ── the schedule ──────────────────────────────────────────────────────────
