@@ -859,9 +859,40 @@ export function refreshTerminalRecap(
   return recapCall(recapUrl(name, workspaceId, "/refresh"), { method: "POST" });
 }
 
-export function fetchFolders(path?: string | null): Promise<FoldersResponse> {
-  const query = path ? `?path=${encodeURIComponent(path)}` : "";
-  return getJson<FoldersResponse>(`/api/agentic-ide/folders${query}`);
+export function fetchFolders(
+  path?: string | null,
+  includeHidden = false,
+): Promise<FoldersResponse> {
+  const qs = new URLSearchParams();
+  if (path) qs.set("path", path);
+  if (includeHidden) qs.set("include_hidden", "true");
+  const query = qs.toString();
+  return getJson<FoldersResponse>(
+    `/api/agentic-ide/folders${query ? `?${query}` : ""}`,
+  );
+}
+
+export interface CreateFolderResponse {
+  folder: FolderItem | null;
+  error: string | null;
+}
+
+/**
+ * Make one new folder inside an existing one (the home folder when `parent`
+ * is null). A refusal — bad name, missing parent, no permission — comes back
+ * as `error`, never as a thrown exception, so the picker can show it in place.
+ */
+export async function createFolder(payload: {
+  parent: string | null;
+  name: string;
+}): Promise<CreateFolderResponse> {
+  const res = await fetch("/api/agentic-ide/folders/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as CreateFolderResponse;
 }
 
 /** Load one level of an open workspace's file tree. */

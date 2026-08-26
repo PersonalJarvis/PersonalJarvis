@@ -11,6 +11,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /folders``                    → browse folders (no path = start points)
 * ``GET    /folders/native``             → can this machine show the OS folder window?
 * ``POST   /folders/native``             → open it and return what was picked
+* ``POST   /folders/create``             → make one new folder inside an existing one
 * ``POST   /terminal-target/open``       → open a path printed by one terminal
 * ``GET    /workspaces``                 → every open workspace, in tab order
 * ``GET    /workspaces/{id}/files``      → browse that workspace's file tree
@@ -98,6 +99,7 @@ from jarvis.agentic_ide.fleet_actions import (
     wait_for_prompt_ready,
 )
 from jarvis.agentic_ide.folders import (
+    create_folder,
     list_dir,
     list_workspace_dir,
     search_folders,
@@ -690,6 +692,25 @@ class SearchResponse(BaseModel):
     query: str
     entries: list[FolderItem]
     truncated: bool = False
+
+
+class CreateFolderRequest(BaseModel):
+    parent: str | None = Field(
+        default=None,
+        description="Folder to create it in; the home folder when omitted.",
+    )
+    name: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Name of the new folder — one segment, no slashes.",
+    )
+
+
+class CreateFolderResponse(BaseModel):
+    folder: FolderItem | None = Field(
+        default=None, description="The folder, whether made just now or already there."
+    )
+    error: str | None = Field(default=None, description="Why nothing was created.")
 
 
 class RecentItem(BaseModel):
@@ -1346,6 +1367,27 @@ async def search(q: str, limit: int = 40) -> SearchResponse:
         query=q,
         entries=[FolderItem(**asdict(e)) for e in hits],
         truncated=len(hits) >= capped,
+    )
+
+
+@router.post(
+    "/folders/create", response_model=CreateFolderResponse, summary="Create a new folder"
+)
+async def create_new_folder(req: CreateFolderRequest) -> CreateFolderResponse:
+    """Make one folder so a workspace can start in a place that did not exist yet.
+
+    A new project has no folder to pick; before this route the wizard could only
+    open what was already on disk, and "make it in Explorer first, then come
+    back" is the kind of detour nobody should need. One segment inside an
+    existing parent, never a whole tree — see ``folders.create_folder``. A
+    refusal comes back as ``error`` with the reason, not as a status code: the
+    picker shows it next to the name field the same way it shows a path that
+    does not exist.
+    """
+    entry, error = await asyncio.to_thread(create_folder, req.parent, req.name)
+    return CreateFolderResponse(
+        folder=FolderItem(**asdict(entry)) if entry else None,
+        error=error,
     )
 
 

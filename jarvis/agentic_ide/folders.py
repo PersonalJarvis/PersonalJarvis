@@ -426,7 +426,14 @@ def search_folders(
                     if budget <= 0:
                         break
                     name = item.name
-                    if name in _SKIP_DIRS or _is_hidden(name):
+                    if name in _SKIP_DIRS:
+                        continue
+                    # Hidden folders are matched only when the query itself
+                    # starts with a dot (".claude", ".config") — that is the
+                    # one time a person means one — and are never walked into:
+                    # ".cache" alone can hold more entries than the budget.
+                    hidden = _is_hidden(name)
+                    if hidden and not needle.startswith("."):
                         continue
                     try:
                         if not item.is_dir(follow_symlinks=False):
@@ -452,13 +459,57 @@ def search_folders(
                                 ),
                             )
                         )
-                    if depth < max_depth:
+                    if depth < max_depth and not hidden:
                         queue.append((child, depth + 1))
         except (PermissionError, OSError):
             continue
 
     hits.sort(key=lambda h: (h[0], h[1], h[2]))
     return [entry for _t, _k, _n, entry in hits[:limit]]
+
+
+def create_folder(parent: str | Path | None, name: str) -> tuple[FolderEntry | None, str | None]:
+    """Make one new folder called ``name`` inside ``parent``.
+
+    Returns ``(entry, error_message)``. Without a parent the folder goes into
+    the home directory — the one place that exists on every machine.
+
+    One segment only: a name carrying a separator would silently create a tree
+    the person never saw, so it is refused rather than honoured. The parent must
+    already exist for the same reason. A folder that is already there is handed
+    back as it is — the person wanted that folder, and it now exists; whether
+    it was made just now is not something they need to be told twice.
+    """
+    cleaned = name.strip()
+    if not cleaned or cleaned in {".", ".."}:
+        return None, "Give the new folder a name first."
+    if any(sep in cleaned for sep in ("/", "\\", "\x00")):
+        return None, "A folder name cannot contain slashes. Type just the name."
+
+    base = Path(parent).expanduser() if parent else Path.home()
+    try:
+        if not base.is_dir():
+            return None, (f"There is no folder called {base}, so nothing can be created inside it.")
+    except OSError as exc:
+        return None, f"Could not open {base}: {exc}"
+
+    target = base / cleaned
+    try:
+        if target.is_dir():
+            is_project, is_repo = _looks_like_project(target)
+            return (
+                FolderEntry(name=cleaned, path=str(target), is_project=is_project, is_repo=is_repo),
+                None,
+            )
+        if target.exists():
+            return None, f"{target} already exists and is a file, not a folder."
+        target.mkdir()
+    except PermissionError:
+        return None, f"Jarvis is not allowed to create folders inside {base}."
+    except OSError as exc:
+        return None, f"Could not create {target}: {exc}"
+
+    return FolderEntry(name=cleaned, path=str(target), is_project=False, is_repo=False), None
 
 
 def _git_branch(root: Path) -> str | None:
@@ -581,6 +632,7 @@ __all__ = [
     "ProjectProfile",
     "WorkspaceEntry",
     "WorkspaceListing",
+    "create_folder",
     "list_dir",
     "list_workspace_dir",
     "probe_project",

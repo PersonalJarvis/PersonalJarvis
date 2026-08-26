@@ -9,6 +9,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   resolveDroppedFolder: vi.fn(),
   fetchNativePickerSupport: vi.fn(),
   openNativePicker: vi.fn(),
+  createFolder: vi.fn(),
 }));
 
 import {
@@ -16,6 +17,7 @@ import {
   extractDropPayload,
   isAbsolutePath,
   joinPath,
+  looksLikePath,
   normalizeTypedPath,
   resolveTypedPath,
   separatorOf,
@@ -300,7 +302,7 @@ describe("the system folder window", () => {
 
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith("C:\\work\\shop"));
     // And the in-page browser follows it there, so both views agree.
-    expect(api.fetchFolders).toHaveBeenCalledWith("C:\\work\\shop");
+    expect(api.fetchFolders).toHaveBeenCalledWith("C:\\work\\shop", false);
   });
 
   it("says a window is waiting, because it can open behind the app", async () => {
@@ -496,5 +498,145 @@ describe("typing a path", () => {
 
     expect(await screen.findByText(/no folder called/)).toBeTruthy();
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("a path in the search field", () => {
+  it("opens that folder instead of searching the machine for its name", async () => {
+    // Reported: `C:\Users\me\.claude` typed into the search found nothing —
+    // no folder is CALLED that — and the wizard looked broken.
+    vi.mocked(api.fetchFolders).mockImplementation(async (target) =>
+      target === "C:\\Users\\me\\.claude"
+        ? {
+            path: "C:\\Users\\me\\.claude",
+            parent: "C:\\Users\\me",
+            entries: [
+              {
+                name: "skills",
+                path: "C:\\Users\\me\\.claude\\skills",
+                is_project: false,
+                is_repo: false,
+              },
+            ],
+            device_name: "Box",
+          }
+        : LISTING,
+    );
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    fireEvent.change(screen.getByTestId("folder-search"), {
+      target: { value: "C:\\Users\\me\\.claude" },
+    });
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("C:\\Users\\me\\.claude"), {
+      timeout: 2000,
+    });
+    expect(api.searchFolders).not.toHaveBeenCalled();
+    // A dot-name asks for hidden folders by itself; nobody has to find the switch.
+    expect(api.fetchFolders).toHaveBeenCalledWith("C:\\Users\\me\\.claude", true);
+    expect(await screen.findByText("skills")).toBeTruthy();
+  });
+
+  it("reads a pasted prompt as the path inside it", () => {
+    expect(normalizeTypedPath("PS C:\\Users\\me\\.claude>")).toBe("C:\\Users\\me\\.claude");
+    expect(normalizeTypedPath("C:\\Users\\me\\.claude> ")).toBe("C:\\Users\\me\\.claude");
+    expect(looksLikePath("C:\\Users\\me")).toBe(true);
+    expect(looksLikePath("Desktop/shop")).toBe(true);
+    expect(looksLikePath("~")).toBe(true);
+    expect(looksLikePath("shop")).toBe(false);
+  });
+
+  it("offers to create the folder when the last segment does not exist yet", async () => {
+    vi.mocked(api.fetchFolders).mockImplementation(async (target) =>
+      target === "/home/ruben/newshop"
+        ? {
+            path: "/home/ruben/newshop",
+            parent: "/home/ruben",
+            entries: [],
+            error: "There is no folder called /home/ruben/newshop.",
+            device_name: "Box",
+          }
+        : { ...LISTING, path: "/home/ruben", parent: "/home" },
+    );
+    vi.mocked(api.createFolder).mockResolvedValue({
+      folder: { name: "newshop", path: "/home/ruben/newshop", is_project: false, is_repo: false },
+      error: null,
+    });
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    fireEvent.change(screen.getByTestId("folder-search"), {
+      target: { value: "/home/ruben/newshop" },
+    });
+
+    const offer = await screen.findByTestId("create-offer", {}, { timeout: 2000 });
+    expect(offer.textContent).toContain("newshop");
+    // Nothing is chosen until the folder exists.
+    expect(onSelect).not.toHaveBeenCalled();
+
+    fireEvent.click(offer);
+    await waitFor(() =>
+      expect(api.createFolder).toHaveBeenCalledWith({ parent: "/home/ruben", name: "newshop" }),
+    );
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("/home/ruben/newshop"));
+  });
+});
+
+describe("a new folder", () => {
+  it("is made in the folder on screen and becomes the selection", async () => {
+    vi.mocked(api.fetchFolders).mockResolvedValue({
+      ...LISTING,
+      path: "/home/ruben",
+      parent: "/home",
+    });
+    vi.mocked(api.createFolder).mockResolvedValue({
+      folder: { name: "shop2", path: "/home/ruben/shop2", is_project: false, is_repo: false },
+      error: null,
+    });
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    fireEvent.click(screen.getByTestId("new-folder"));
+    fireEvent.change(screen.getByTestId("new-folder-name"), { target: { value: "shop2" } });
+    fireEvent.submit(screen.getByTestId("new-folder-form"));
+
+    await waitFor(() =>
+      expect(api.createFolder).toHaveBeenCalledWith({ parent: "/home/ruben", name: "shop2" }),
+    );
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("/home/ruben/shop2"));
+  });
+
+  it("shows why it could not be made and keeps the name for correcting", async () => {
+    vi.mocked(api.createFolder).mockResolvedValue({
+      folder: null,
+      error: "A folder name cannot contain slashes. Type just the name.",
+    });
+    const onSelect = vi.fn();
+    render(<FolderPicker selected={null} onSelect={onSelect} />);
+    await screen.findByText("webshop");
+
+    fireEvent.click(screen.getByTestId("new-folder"));
+    fireEvent.change(screen.getByTestId("new-folder-name"), { target: { value: "a/b" } });
+    fireEvent.submit(screen.getByTestId("new-folder-form"));
+
+    expect(await screen.findByText(/cannot contain slashes/)).toBeTruthy();
+    expect((screen.getByTestId("new-folder-name") as HTMLInputElement).value).toBe("a/b");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("hidden folders", () => {
+  it("are listed only once the switch is on", async () => {
+    render(<FolderPicker selected={null} onSelect={vi.fn()} />);
+    await screen.findByText("webshop");
+    expect(api.fetchFolders).toHaveBeenLastCalledWith(null, false);
+
+    fireEvent.click(screen.getByTestId("toggle-hidden"));
+
+    await waitFor(() => expect(api.fetchFolders).toHaveBeenLastCalledWith(null, true));
   });
 });
