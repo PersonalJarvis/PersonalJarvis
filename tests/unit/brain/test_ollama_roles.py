@@ -1,6 +1,7 @@
 """Roles: the four Ollama slots read from the config, judged against the
-installed downloads, pointed at the shortlist's pick, and written through
-the existing config writers only.
+installed downloads, recommended installed-first (the shortlist only when
+nothing installed qualifies), and written through the existing config
+writers only.
 """
 
 from __future__ import annotations
@@ -35,11 +36,33 @@ def _cfg() -> JarvisConfig:
 def fake() -> FakeOllamaServer:
     ollama_inventory._reset_for_tests()
     server = FakeOllamaServer()
-    server.add("qwen3.5:4b", capabilities=("completion", "tools", "vision"))
-    server.add("gemma4:12b-it-qat", capabilities=("completion", "tools", "thinking"))
-    server.add("qwen3-embedding:4b", capabilities=("embedding",))
+    server.add("qwen3.5:4b", size=3_400_000_000, capabilities=("completion", "tools", "vision"))
+    server.add(
+        "gemma4:12b-it-qat",
+        size=7_200_000_000,
+        capabilities=("completion", "tools", "thinking"),
+    )
+    server.add("qwen3-embedding:4b", size=2_500_000_000, capabilities=("embedding",))
     server.add("broken:1b", show_fails=True)
     return server
+
+
+def _info(
+    name: str, size_gb: float, *caps: str, probed: bool = True
+) -> ollama_inventory.OllamaModelInfo:
+    return ollama_inventory.OllamaModelInfo(
+        name=name,
+        size_bytes=int(size_gb * 1024**3),
+        digest="",
+        modified_at="",
+        family="",
+        parameter_size="",
+        quantization_level="",
+        context_length=None,
+        capabilities=tuple(caps),
+        license="",
+        probed=probed,
+    )
 
 
 @pytest.fixture
@@ -160,18 +183,109 @@ async def test_list_roles_judges_qualifying_models_by_capability(fake, shortlist
 
 
 @pytest.mark.asyncio
-async def test_list_roles_points_at_the_shortlists_pick_or_the_largest_installed_one(
+async def test_list_roles_recommends_installed_models_before_the_shortlist(
     fake, shortlist
 ) -> None:
+    """Eleven models on disk must not end in "download qwen3.8:27b"."""
     states, _ = await ollama_roles.list_roles(ROOT, _cfg(), transport=fake.transport())
     by_id = {s.spec.id: s for s in states}
-    assert by_id["chat"].recommended == "qwen3.8:27b"
-    # The multimodal chat pick serves the screen role too.
-    assert by_id["tools_screen"].recommended == "qwen3.8:27b"
-    assert by_id["deep"].recommended == "ornith:9b"
-    # The picker marks nothing once the role has a curated model installed;
-    # the largest installed one is named so the button still has an answer.
+    # The shortlist answered no memory figures, so every fit is "unknown"
+    # and the largest installed model with the preferred capability wins.
+    assert by_id["chat"].recommended == "gemma4:12b-it-qat"
+    assert "installed" in by_id["chat"].recommended_reason
+    # Screen reading needs vision: only the 4B declares it.
+    assert by_id["tools_screen"].recommended == "qwen3.5:4b"
+    # Deep work prefers thinking; the 12B declares it.
+    assert by_id["deep"].recommended == "gemma4:12b-it-qat"
     assert by_id["embedding"].recommended == "qwen3-embedding:4b"
+    # A call wants the fast class: the 12B is over the voice size cap.
+    assert by_id["voice"].recommended == "qwen3.5:4b"
+    assert "fast" in by_id["voice"].recommended_reason
+    # The shortlist's downloads are never named while something installed qualifies.
+    assert all(s.recommended != "qwen3.8:27b" for s in states)
+
+
+@pytest.mark.asyncio
+async def test_list_roles_judges_installed_picks_against_this_machines_memory(
+    fake, shortlist
+) -> None:
+    machine = ollama_roles.Machine(memory_gb=32.0, accelerator_gb=8.0)
+    states, _ = await ollama_roles.list_roles(
+        ROOT, _cfg(), transport=fake.transport(), machine=machine
+    )
+    by_id = {s.spec.id: s for s in states}
+    # 7.2 GB + overhead is over the 8 GB card (tight); 3.4 GB fits — it wins
+    # although the 12B is bigger and thinks.
+    assert by_id["chat"].recommended == "qwen3.5:4b"
+    assert "8 GB of graphics memory" in by_id["chat"].recommended_reason
+    assert by_id["deep"].recommended == "qwen3.5:4b"
+
+
+@pytest.mark.asyncio
+async def test_list_roles_falls_back_to_the_shortlist_when_nothing_installed_qualifies(
+    shortlist,
+) -> None:
+    ollama_inventory._reset_for_tests()
+    server = FakeOllamaServer()
+    server.add("qwen3-embedding:4b", capabilities=("embedding",))
+    states, _ = await ollama_roles.list_roles(ROOT, _cfg(), transport=server.transport())
+    by_id = {s.spec.id: s for s in states}
+    assert by_id["chat"].recommended == "qwen3.8:27b"
+    assert "download" in by_id["chat"].recommended_reason
+    assert by_id["deep"].recommended == "ornith:9b"
+    # The embedder is installed and qualifies: no download named there.
+    assert by_id["embedding"].recommended == "qwen3-embedding:4b"
+
+
+def test_pick_installed_prefers_the_roles_capability_over_raw_size() -> None:
+    chat = ollama_roles.role_spec("chat")
+    machine = ollama_roles.Machine(memory_gb=64.0, accelerator_gb=24.0)
+    models = [
+        _info("big-no-tools:14b", 9.0, "completion"),
+        _info("mid-tools:12b", 7.2, "completion", "tools"),
+        _info("small-tools:4b", 3.4, "completion", "tools"),
+        _info("unprobed:30b", 18.0, probed=False),
+    ]
+    tag, reason = ollama_roles.pick_installed(chat, models, machine)
+    assert tag == "mid-tools:12b"
+    assert reason == "Largest installed model with tools that fits in the 24 GB of graphics memory."
+
+
+def test_pick_installed_names_the_smallest_when_everything_is_tight() -> None:
+    chat = ollama_roles.role_spec("chat")
+    machine = ollama_roles.Machine(memory_gb=16.0, accelerator_gb=4.0)
+    models = [
+        _info("a:14b", 9.0, "completion", "tools"),
+        _info("b:8b", 5.0, "completion", "tools"),
+    ]
+    tag, reason = ollama_roles.pick_installed(chat, models, machine)
+    assert tag == "b:8b"
+    assert "tight" in reason
+
+
+def test_pick_installed_keeps_the_voice_pick_in_the_fast_class() -> None:
+    voice = ollama_roles.role_spec("voice")
+    machine = ollama_roles.Machine(memory_gb=64.0, accelerator_gb=24.0)
+    models = [
+        _info("deep:27b", 17.0, "completion", "tools"),
+        _info("mid:9b", 5.6, "completion", "tools"),
+        _info("tiny:1b", 0.8, "completion"),
+    ]
+    tag, reason = ollama_roles.pick_installed(voice, models, machine)
+    assert tag == "mid:9b"
+    assert "under 6 GB" in reason
+    # Nothing under the cap: the smallest one, with the reason saying so.
+    tag, reason = ollama_roles.pick_installed(voice, [models[0]], machine)
+    assert tag == "deep:27b" and "nothing under 6 GB" in reason
+    assert ollama_roles.pick_installed(voice, [], machine) == ("", "")
+
+
+def test_machine_from_reads_the_shortlists_figures() -> None:
+    assert ollama_roles.machine_from({"memory_gb": 32, "accelerator_gb": 15.9}) == (
+        ollama_roles.Machine(memory_gb=32.0, accelerator_gb=15.9)
+    )
+    assert ollama_roles.machine_from({"models": []}) == ollama_roles.Machine()
+    assert ollama_roles.machine_from(None) == ollama_roles.Machine()
 
 
 @pytest.mark.asyncio
@@ -192,7 +306,11 @@ async def test_list_roles_survives_a_failing_shortlist(fake, monkeypatch) -> Non
     monkeypatch.setattr(ollama_pull, "recommendations", _boom)
     states, error = await ollama_roles.list_roles(ROOT, _cfg(), transport=fake.transport())
     assert error is None
-    assert all(s.recommended == "" for s in states)
+    # The installed picks do not need the registry; only a download would.
+    by_id = {s.spec.id: s for s in states}
+    assert by_id["chat"].recommended == "gemma4:12b-it-qat"
+    assert by_id["embedding"].recommended == "qwen3-embedding:4b"
+    assert all("download" not in s.recommended_reason for s in states)
 
 
 def test_set_role_writes_through_the_provider_card_writers(writes) -> None:

@@ -260,11 +260,15 @@ def test_roles_list_every_slot_with_pick_qualifying_and_recommendation(
     assert list(roles) == ["chat", "voice", "tools_screen", "deep", "embedding", "ack", "polish"]
     assert roles["chat"]["current"] == "qwen3.5:4b"
     assert roles["chat"]["installed"] is True
-    assert roles["chat"]["recommended"] == "qwen3.8:27b"
+    # Installed first: the largest download with tools, not the shortlist's.
+    assert roles["chat"]["recommended"] == "gemma4:12b-it-qat"
+    assert roles["chat"]["recommended_reason"].startswith("Largest installed model with tools")
     assert roles["chat"]["qualifying"] == ["qwen3.5:4b", "gemma4:12b-it-qat"]
     assert roles["tools_screen"]["required"] == ["tools", "vision"]
     assert roles["tools_screen"]["qualifying"] == ["qwen3.5:4b"]
-    assert roles["deep"]["recommended"] == "ornith:9b"
+    assert roles["tools_screen"]["recommended"] == "qwen3.5:4b"
+    assert roles["deep"]["recommended"] == "gemma4:12b-it-qat"
+    assert roles["voice"]["recommended"] == "qwen3.5:4b"
     assert roles["embedding"]["qualifying"] == ["qwen3-embedding:4b"]
     assert roles["voice"]["writable"] is True and roles["voice"]["advanced"] is False
     assert roles["ack"]["writable"] is False and roles["ack"]["advanced"] is True
@@ -295,6 +299,39 @@ def test_put_role_writes_through_the_config_writer(server, fake, writes) -> None
     provider = server.app.state.config.brain.providers["ollama"]
     assert provider.tool_model == "qwen3.5:4b"
     assert provider.deep_model == ""
+
+
+def test_put_role_drops_the_memoised_overview(server, fake, writes, monkeypatch) -> None:
+    """The row the user just changed must not sit on its old pick for 15 s."""
+    from jarvis.brain import ollama_overview, ollama_runtime
+
+    ollama_overview._reset_for_tests()
+    monkeypatch.setattr(
+        ollama_runtime,
+        "runtime_status",
+        lambda: {
+            "installed": True,
+            "binary": "ollama",
+            "running": True,
+            "version": "0.32.15",
+            "detail": "",
+            "base_url": ROOT,
+            "host_kind": "local",
+            "models_dir": "",
+        },
+    )
+    with TestClient(server.app) as client:
+        first = client.get(f"{BASE}/overview").json()
+        assert first["source"] == "live"
+        assert client.put(f"{BASE}/roles/deep", json={"model": "qwen3.5:4b"}).status_code == 200
+        # The memo is gone: a plain read is no longer a stale "live" answer,
+        # and a fresh read carries the new pick.
+        after = client.get(f"{BASE}/overview").json()
+        assert after["source"] == "cache"
+        fresh = client.get(f"{BASE}/overview", params={"fresh": 1}).json()
+        deep = next(r for r in fresh["roles"]["roles"] if r["id"] == "deep")
+        assert deep["current"] == "qwen3.5:4b"
+    ollama_overview._reset_for_tests()
 
 
 def test_put_role_refuses_read_only_and_unknown_roles(server, fake, writes) -> None:

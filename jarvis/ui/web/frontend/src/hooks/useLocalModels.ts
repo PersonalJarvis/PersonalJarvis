@@ -11,6 +11,7 @@
  */
 import {
   keepPreviousData,
+  type QueryClient,
   useMutation,
   useQuery,
   useQueryClient,
@@ -126,8 +127,14 @@ export interface RoleRow {
   recommended_capabilities: string[];
   /** Installed tags declaring every required capability. */
   qualifying: string[];
-  /** The shortlist's pick for this machine; "" when it has none. */
+  /**
+   * The pick for this machine: the best qualifying INSTALLED download, or
+   * the shortlist's download when nothing installed qualifies; "" when
+   * neither has one.
+   */
   recommended: string;
+  /** One backend sentence saying why `recommended` is the pick; "" when none. */
+  recommended_reason?: string;
   writable: boolean;
   advanced: boolean;
   /** Sentence when the slot is served by something other than Ollama. */
@@ -1009,10 +1016,46 @@ export function useEnvGuide(providerId: string | undefined, os?: EnvGuideOs) {
 // ---------------------------------------------------------------------------
 
 /** Invalidate every query of the section for one provider. */
+/**
+ * Refetch the overview LIVE after a change this section made itself.
+ *
+ * A plain invalidation would re-read `GET …/overview`, which answers the
+ * disk snapshot first (`source: "cache"`) and refreshes in the background —
+ * so the row the user just changed would sit on its old value until the
+ * next poll. `?fresh=1` skips the cache; the answer replaces the cached
+ * payload under the same key, so every panel repaints from it.
+ */
+export function refetchOverviewFresh(
+  qc: QueryClient,
+  providerId: string,
+): Promise<OverviewResponse | undefined> {
+  return qc
+    .fetchQuery({
+      queryKey: localModelsKeys.overview(providerId),
+      queryFn: () => getOverview(providerId, true),
+      staleTime: 0,
+    })
+    .catch((err: unknown) => {
+      // The write already landed; a failed re-read only delays the repaint
+      // until the next poll, so it is logged rather than surfaced.
+      console.warn("[local-models] fresh overview failed", err);
+      return undefined;
+    });
+}
+
 export function useInvalidateLocalModels(providerId: string | undefined) {
   const qc = useQueryClient();
-  return () =>
-    qc.invalidateQueries({ queryKey: ["local-models", providerId ?? ""] });
+  return () => {
+    const id = providerId ?? "";
+    void refetchOverviewFresh(qc, id);
+    return qc.invalidateQueries({
+      queryKey: ["local-models", id],
+      // The overview is being fetched fresh above; refetching it again
+      // here would race that answer with a cache-first one.
+      predicate: (q) =>
+        !(q.queryKey.length === 3 && q.queryKey[2] === "overview"),
+    });
+  };
 }
 
 export function useSetRole(providerId: string | undefined) {
@@ -1021,15 +1064,10 @@ export function useSetRole(providerId: string | undefined) {
     mutationFn: ({ role, model }: { role: LocalModelRole; model: string }) =>
       setRole(providerId as string, role, model),
     onSuccess: () => {
-      void qc.invalidateQueries({
-        queryKey: localModelsKeys.roles(providerId ?? ""),
-      });
-      void qc.invalidateQueries({
-        queryKey: localModelsKeys.inventory(providerId ?? ""),
-      });
-      void qc.invalidateQueries({
-        queryKey: localModelsKeys.overview(providerId ?? ""),
-      });
+      const id = providerId ?? "";
+      void qc.invalidateQueries({ queryKey: localModelsKeys.roles(id) });
+      void qc.invalidateQueries({ queryKey: localModelsKeys.inventory(id) });
+      void refetchOverviewFresh(qc, id);
     },
   });
 }

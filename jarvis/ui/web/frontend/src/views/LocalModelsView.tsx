@@ -153,6 +153,12 @@ export function LocalModelsView() {
     setMode(next);
     storeMode(next);
   }, []);
+  // "Manage" on the overview's installed list: the full ledger lives on the
+  // Advanced-only Models tab, so the switch flips along with the tab.
+  const openManage = useCallback(() => {
+    changeMode("advanced");
+    setTab("models");
+  }, [changeMode]);
 
   // Leaving Advanced while on an Advanced-only tab must not strand the user on
   // a tab the rail no longer shows.
@@ -235,6 +241,7 @@ export function LocalModelsView() {
                 onTune={setTuneModel}
                 onOpenApiKeys={openApiKeys}
                 onBrowse={openBrowse}
+                onManage={openManage}
                 advanced={mode === "advanced"}
               />
               {tuneModel && (

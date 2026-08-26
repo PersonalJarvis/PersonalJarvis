@@ -9,6 +9,40 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Local models: one click sets everything up.** "Set up everything" on the
+  overview starts the local server when it is stopped (and names the install
+  on the button when it is not installed), then fills every role — chat,
+  voice, tools & screen, deep & coding, embeddings — with the best download
+  already on the server, fetches only what is missing, writes the suggested
+  settings and reads back what it did, role by role. A slot served elsewhere
+  is left alone and named; a refused slot does not stop the others. When
+  another brain answers, the one decision left — making the local server
+  the active brain — is offered right under the summary.
+- **Local models: the installed models are on the overview.** Every download
+  as one line — name, size, the capabilities a role cares about, which roles
+  use it, which role it is the pick for, whether it sits in memory — with
+  "Manage" opening the full ledger. Nothing hides behind the Advanced switch
+  any more.
+
+### Changed
+
+- **Local models: recommendations are installed-first.** A role's pick is the
+  best qualifying download already on the server — the largest one that fits
+  this machine's graphics memory, preferring the role's capability (tools for
+  a chat, thinking for deep work; voice stays in the fast class under 6 GB) —
+  and the curated catalogue only stands in when nothing installed qualifies.
+  Each row says why in one sentence. Eleven models on disk no longer end in
+  "download qwen3.8:27b".
+
+### Fixed
+
+- **Local models: a changed role showed its old pick for up to 15 s.** The
+  overview's in-memory memo was not dropped on a write, and the section never
+  asked for a live rebuild after its own change. Every write now forgets the
+  memo, and the section re-reads the overview live right after.
+
 ### Removed
 
 - **The Local models setup helper.** The "Setup helper" tab — a chat that

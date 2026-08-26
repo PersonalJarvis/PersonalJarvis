@@ -50,6 +50,7 @@ __all__ = [
     "DEFAULT_MAX_AGE_S",
     "STALE_AFTER_S",
     "build_overview",
+    "forget",
     "get_overview",
     "inventory_payload",
     "load_snapshot",
@@ -116,6 +117,7 @@ def role_row(state: ollama_roles.RoleState) -> dict[str, Any]:
         "recommended_capabilities": list(spec.recommended),
         "qualifying": list(state.qualifying),
         "recommended": state.recommended,
+        "recommended_reason": state.recommended_reason,
         "writable": spec.writable,
         "advanced": spec.advanced,
         "note": state.note,
@@ -181,9 +183,12 @@ async def _roles_from(
     snapshot: inventory.InventorySnapshot | None,
     error: str | None,
     shortlist: list[dict[str, Any]] | None,
+    machine: ollama_roles.Machine | None = None,
 ) -> dict[str, Any]:
     models = list(snapshot.models) if snapshot is not None else []
-    states, _unused = await ollama_roles.list_roles(root, cfg, models=models, shortlist=shortlist)
+    states, _unused = await ollama_roles.list_roles(
+        root, cfg, models=models, shortlist=shortlist, machine=machine
+    )
     return {
         "provider": provider_id,
         "server": root,
@@ -257,7 +262,13 @@ async def build_overview(root: str, cfg: Any, *, provider_id: str = "ollama") ->
     )
     shortlist = recommended.get("models") if isinstance(recommended, dict) else None
     roles = await _roles_from(
-        provider_id, root, cfg, snapshot, error, shortlist if isinstance(shortlist, list) else []
+        provider_id,
+        root,
+        cfg,
+        snapshot,
+        error,
+        shortlist if isinstance(shortlist, list) else [],
+        machine=ollama_roles.machine_from(recommended),
     )
     server = await _server_from(status, root)
     return {
@@ -349,6 +360,18 @@ def _reset_for_tests() -> None:
     """Drop the in-memory overview memo and refresh bookkeeping (tests only)."""
     _memo.clear()
     _refresh_tasks.clear()
+
+
+def forget(root: str) -> None:
+    """Drop the memoised overview for ``root`` after a write.
+
+    A role pick, a tune, an unload or a delete changes what the next open
+    must show; without this the memo answered the OLD payload for up to
+    :data:`DEFAULT_MAX_AGE_S` after the write and the row the user had just
+    changed stayed where it was. The disk snapshot is left alone — the next
+    live build overwrites it.
+    """
+    _memo.pop(normalize_server_root(root), None)
 
 
 def _fresh(root: str, max_age_s: float) -> dict[str, Any] | None:

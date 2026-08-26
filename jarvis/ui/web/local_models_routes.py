@@ -125,6 +125,11 @@ class DeleteResponse(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
+def _forget_overview() -> None:
+    """Drop the memoised overview after a write, so the next paint is honest."""
+    ollama_overview.forget(_server_root())
+
+
 def _server_root() -> str:
     from jarvis.brain.ollama_pull import server_root
 
@@ -221,6 +226,7 @@ async def unload_inventory_model(provider_id: str, name: str) -> UnloadResponse:
         await inventory.unload_model(root, name)
     except OllamaServerError as exc:
         raise _http_error(exc) from exc
+    _forget_overview()
     return UnloadResponse(
         ok=True,
         model=name,
@@ -285,6 +291,7 @@ async def delete_inventory_model(
         await inventory.delete_model(root, name)
     except OllamaServerError as exc:
         raise _http_error(exc) from exc
+    _forget_overview()
     message = f"{name} was deleted from the server."
     if reassigned:
         message += f" {', '.join(reassigned)} now use {target}."
@@ -336,8 +343,12 @@ class RoleRow(BaseModel):
     recommended_capabilities: list[str]
     #: Installed tags declaring every required capability.
     qualifying: list[str]
-    #: The shortlist's pick for this machine (``""`` when it has none).
+    #: The pick for this machine — the best qualifying INSTALLED download,
+    #: or the shortlist's download when nothing installed qualifies (``""``
+    #: when neither has one).
     recommended: str
+    #: One sentence saying why ``recommended`` is the pick (``""`` when none).
+    recommended_reason: str = ""
     writable: bool
     advanced: bool
     #: One sentence when the slot is served by something other than Ollama.
@@ -393,6 +404,7 @@ async def set_role(
     except Exception as exc:  # noqa: BLE001 — a failed TOML write is a 500 with the reason
         log.warning("local-models: role %s -> %s failed: %s", role, body.model, exc)
         raise HTTPException(status_code=500, detail=f"Could not save the role: {exc}") from exc
+    _forget_overview()
     tag = written["model"]
     message = (
         f"{role} now uses {tag}."
@@ -518,6 +530,7 @@ async def put_model_options(
             provider.models.pop(stored_key, None)
         if opts is not None:
             provider.models[tag] = opts
+    _forget_overview()
     return _options_response(tag, opts)
 
 
@@ -539,6 +552,7 @@ async def delete_model_options(
     provider = _ollama_provider_cfg(cfg)
     if stored_key is not None and provider is not None:
         provider.models.pop(stored_key, None)
+    _forget_overview()
     return _options_response(name, None)
 
 

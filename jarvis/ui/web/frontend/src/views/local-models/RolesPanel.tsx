@@ -8,8 +8,9 @@
  * models that qualify, and "Use recommended" — which downloads the pick when
  * it is missing, assigns it, then writes the suggested options silently and
  * reads back one sentence. The read-only advanced roles hide under
- * "More roles". When nothing is installed at all, the ledger collapses into a
- * single "Set up the recommended models" button.
+ * "More roles". When nothing is installed at all, the ledger shows one
+ * "Set up the recommended models" button that runs the overview's set-up
+ * flow (`useLocalSetup`).
  *
  * Two variants: `ledger` (the full rows: picker, badges, Tune) and
  * `checklist` — one compact line per writable role (dot, label, model or
@@ -37,21 +38,19 @@ import {
   StatusDot,
 } from "@/components/extensions/primitives";
 import {
-  getSuggestedOptions,
-  modelPullStatus,
-  saveModelOptions,
   setRole,
-  startModelPull,
   useInvalidateLocalModels,
   useOverview,
   useSetRole,
   type LocalModelRole,
   type RoleRow,
-  type SuggestedOptionsResponse,
 } from "@/hooks/useLocalModels";
 import { useProviders } from "@/hooks/useProviders";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+
+import { canonical, waitForPull } from "./localSetup";
+import { useSilentTune } from "./useLocalSetup";
 
 export interface RolesPanelProps {
   /** Id of the pull-capable provider card (found via `supports_model_pull`). */
@@ -62,6 +61,10 @@ export interface RolesPanelProps {
   onOpenApiKeys?: () => void;
   /** `ledger` = full rows (default); `checklist` = compact rows that expand. */
   variant?: "ledger" | "checklist";
+  /** Runs the overview's "Set up everything" flow (the empty state's button). */
+  onSetup?: () => void;
+  /** That flow is underway: the empty state's button waits. */
+  setupBusy?: boolean;
 }
 
 type Phase = "idle" | "pulling" | "assigning" | "tuning" | "done" | "error";
@@ -81,31 +84,6 @@ const WRITABLE: readonly LocalModelRole[] = [
   "deep",
   "embedding",
 ];
-const POLL_MS = 2000;
-
-/** "qwen3.5" and "qwen3.5:latest" are the same download. */
-function canonical(name: string): string {
-  return name.endsWith(":latest") ? name.slice(0, -":latest".length) : name;
-}
-
-/** Poll one download until the server reports it done; throws on error. */
-async function waitForPull(
-  providerId: string,
-  model: string,
-  onProgress: (p: { percent?: number; message: string }) => void,
-  alive: () => boolean,
-): Promise<void> {
-  await startModelPull(providerId, model);
-  for (;;) {
-    if (!alive()) return;
-    const pull = await modelPullStatus(providerId, model);
-    if (pull.state === "done") return;
-    if (pull.state === "error")
-      throw new Error(pull.message || "download failed");
-    onProgress({ percent: pull.percent, message: pull.message });
-    await new Promise((resolve) => window.setTimeout(resolve, POLL_MS));
-  }
-}
 
 /** Human window size: 16384 -> "16k". */
 function contextLabel(numCtx: number): string {
@@ -117,6 +95,8 @@ export function RolesPanel({
   onTune,
   onOpenApiKeys,
   variant = "ledger",
+  onSetup,
+  setupBusy = false,
 }: RolesPanelProps) {
   const t = useT();
   // Roles and inventory come from the one overview round-trip (painted
@@ -135,7 +115,6 @@ export function RolesPanel({
   const invalidate = useInvalidateLocalModels(providerId);
 
   const [progress, setProgress] = useState<Record<string, Progress>>({});
-  const [setup, setSetup] = useState<Progress>({ phase: "idle" });
   const [moreOpen, setMoreOpen] = useState(false);
   // Checklist rows the user expanded into the full ledger row.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -178,45 +157,13 @@ export function RolesPanel({
   const otherBrainActive =
     activeBrain !== null && activeBrain.id !== providerId;
 
-  const readbackFor = useCallback(
-    (s: SuggestedOptionsResponse): string => {
-      const ctx = s.options.num_ctx;
-      if (typeof ctx === "number") {
-        const key =
-          s.options.num_gpu != null
-            ? "local_models.roles.readback_gpu"
-            : "local_models.roles.readback_ctx";
-        return fill(t(key), { ctx: contextLabel(ctx) });
-      }
-      return s.reasons[0] ?? t("local_models.roles.readback_defaults");
-    },
-    [t],
-  );
-
   const patch = useCallback((roleId: string, next: Progress) => {
     if (!mounted.current) return;
     setProgress((prev) => ({ ...prev, [roleId]: next }));
   }, []);
 
   /** Suggested options in, one sentence out. Never fails the flow. */
-  const tuneSilently = useCallback(
-    async (model: string): Promise<string> => {
-      try {
-        const suggested = await getSuggestedOptions(providerId, model);
-        await saveModelOptions(providerId, model, suggested.options);
-        return readbackFor(suggested);
-      } catch (err) {
-        // The slot is already assigned; a failed tune only loses the readback.
-        console.warn(
-          "[local-models] suggested options not applied",
-          model,
-          err,
-        );
-        return t("local_models.roles.tune_skipped");
-      }
-    },
-    [providerId, readbackFor, t],
-  );
+  const tuneSilently = useSilentTune(providerId);
 
   const useRecommended = useCallback(
     async (row: RoleRow) => {
@@ -250,68 +197,10 @@ export function RolesPanel({
     [alive, invalidate, isInstalled, patch, providerId, tuneSilently],
   );
 
-  /** Empty state: the chat pick and the embedding pick, then all four rows. */
-  const setupRecommended = useCallback(async () => {
-    const byId = new Map(primary.map((r) => [r.id, r]));
-    const chatPick = byId.get("chat")?.recommended ?? "";
-    const embedPick = byId.get("embedding")?.recommended ?? "";
-    const pulls = Array.from(new Set([chatPick, embedPick].filter(Boolean)));
-    if (pulls.length === 0) return;
-    const setSafe = (next: Progress) => {
-      if (mounted.current) setSetup(next);
-    };
-    try {
-      for (const model of pulls) {
-        if (isInstalled(model)) continue;
-        setSafe({ phase: "pulling", percent: 0, message: model });
-        await waitForPull(
-          providerId,
-          model,
-          (p) =>
-            setSafe({
-              phase: "pulling",
-              percent: p.percent,
-              message: `${model} ${p.message}`.trim(),
-            }),
-          alive,
-        );
-        if (!alive()) return;
-      }
-      setSafe({ phase: "assigning" });
-      const readbacks: string[] = [];
-      for (const roleId of WRITABLE) {
-        const row = byId.get(roleId);
-        if (!row) continue;
-        const fallback = roleId === "embedding" ? embedPick : chatPick;
-        const model =
-          row.recommended && pulls.includes(row.recommended)
-            ? row.recommended
-            : fallback;
-        if (!model) continue;
-        await setRole(providerId, roleId, model);
-      }
-      setSafe({ phase: "tuning" });
-      for (const model of pulls)
-        readbacks.push(`${model}: ${await tuneSilently(model)}`);
-      setSafe({ phase: "done", readback: readbacks.join(" ") });
-    } catch (err) {
-      setSafe({
-        phase: "error",
-        message: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      invalidate();
-    }
-  }, [alive, invalidate, isInstalled, primary, providerId, tuneSilently]);
-
   const nothingInstalled =
     inventory.data !== undefined &&
     !inventory.data.error &&
     inventory.data.models.length === 0;
-  const busy =
-    setup.phase === "pulling" ||
-    setup.phase === "assigning" ||
-    setup.phase === "tuning";
 
   return (
     <Panel className="p-4">
@@ -359,7 +248,7 @@ export function RolesPanel({
           </p>
         )}
 
-        {nothingInstalled && rows.length > 0 && (
+        {nothingInstalled && rows.length > 0 && onSetup && (
           <div
             className="rounded-lg border border-dashed border-border px-6 py-8 text-center"
             data-testid="roles-empty"
@@ -368,12 +257,8 @@ export function RolesPanel({
               {t("local_models.roles.empty_body")}
             </p>
             <div className="mt-4 flex justify-center">
-              <SoftButton
-                primary
-                onClick={() => void setupRecommended()}
-                disabled={busy}
-              >
-                {busy ? (
+              <SoftButton primary onClick={onSetup} disabled={setupBusy}>
+                {setupBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <Sparkles className="h-3.5 w-3.5" />
@@ -381,11 +266,6 @@ export function RolesPanel({
                 {t("local_models.roles.setup_button")}
               </SoftButton>
             </div>
-            <ProgressLine
-              progress={setup}
-              t={t}
-              className="mt-3 justify-center"
-            />
           </div>
         )}
 
@@ -622,6 +502,18 @@ function RoleLedgerRow({
           <span className="text-xs text-muted-foreground">
             {t("local_models.roles.read_only")}
           </span>
+        )}
+        {canUseRecommended && row.recommended_reason && (
+          <p
+            className="mt-1 text-xs text-muted-foreground"
+            data-testid="role-recommended-reason"
+          >
+            <span className="font-mono text-foreground/85">
+              {row.recommended}
+            </span>
+            {" — "}
+            {row.recommended_reason}
+          </p>
         )}
       </div>
 

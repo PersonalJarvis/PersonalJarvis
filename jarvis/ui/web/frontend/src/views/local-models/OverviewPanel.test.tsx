@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -212,6 +213,8 @@ function installFetchMock(fx: Fixture = {}) {
           config_key: "",
           message: "",
         });
+      if (url === "/api/brain/switch" && method === "POST")
+        return ok({ ok: true, active: "ollama" });
       if (url === "/api/providers/ollama/pull" && method === "POST")
         return ok({
           state: "running",
@@ -428,11 +431,29 @@ describe("OverviewPanel", () => {
     expect(advanced.getAttribute("data-variant")).not.toBe("checklist");
   });
 
-  it("hides the action row when no handler is wired", async () => {
+  it("keeps 'Set up everything' even when no browse handler is wired", async () => {
     installFetchMock();
     renderPanel();
     await screen.findByTestId("overview-status");
-    expect(screen.queryByTestId("overview-actions")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "local_models.overview.action_browse",
+      }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "local_models.overview.action_setup" }),
+    ).toBeDefined();
+  });
+
+  it("names the install on the setup button when the server is not installed", async () => {
+    installFetchMock({ server: { ...SERVER, installed: false, running: false } });
+    renderPanel();
+    // The label follows the server facts, so it settles with the data.
+    expect(
+      await screen.findByRole("button", {
+        name: "local_models.overview.action_setup_installOllama",
+      }),
+    ).toBeDefined();
   });
 
   it("shows the three tiles: downloads on disk, graphics memory in use, loaded now", async () => {
@@ -488,7 +509,12 @@ describe("OverviewPanel", () => {
     expect(screen.getByTestId("role-row-embedding")).toBeDefined();
     expect(screen.queryByText("local_models.role_voice")).toBeNull();
     // Compact rows: the model, "not set", no badges, no picker, no Tune.
-    expect(screen.getByText("qwen3.5:4b", { selector: "span" })).toBeDefined();
+    // (Scoped to the ledger: the installed list below names the model too.)
+    expect(
+      within(screen.getByTestId("roles-ledger")).getByText("qwen3.5:4b", {
+        selector: "span",
+      }),
+    ).toBeDefined();
     expect(
       screen.getAllByText("local_models.roles.checklist_not_set").length,
     ).toBe(3);
@@ -598,7 +624,97 @@ describe("OverviewPanel", () => {
           (i as RequestInit)?.method === "POST",
       )
       .map(([, i]) => JSON.parse(String((i as RequestInit).body)).model);
-    expect(pulls.sort()).toEqual(["qwen3-embedding:4b", "qwen3.8:27b"]);
+    // Every role's own pick is fetched — nothing falls back to the chat pick.
+    expect(pulls.sort()).toEqual([
+      "qwen3-embedding:4b",
+      "qwen3.5:4b",
+      "qwen3.8:27b",
+    ]);
+    await screen.findByText("local_models.overview.setup_done");
+  });
+
+  it("'Set up everything' keeps a role on its pick, writes the rest, then offers the brain switch", async () => {
+    const fetchMock = installFetchMock({
+      roles: ROLES.map((r) =>
+        r.id === "tools_screen"
+          ? { ...r, current: "qwen3.5:4b", installed: true }
+          : r,
+      ),
+    });
+    mockProviders.providers = [
+      { id: "ollama", label: "Ollama", tier: "brain", active: false },
+      { id: "openrouter", label: "OpenRouter", tier: "brain", active: true },
+    ];
+    renderPanel();
+
+    await screen.findByTestId("overview-actions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "local_models.overview.action_setup" }),
+    );
+
+    const progress = await screen.findByTestId("setup-progress");
+    await screen.findByText("local_models.overview.setup_done");
+    // Chat moved to the recommended download, tools & screen kept its pick.
+    expect(progress.textContent).toContain(
+      "local_models.overview.setup_assignedlocal_models.role_chat|qwen3.8:27b",
+    );
+    expect(progress.textContent).toContain(
+      "local_models.overview.setup_kept_one",
+    );
+    const puts = fetchMock.mock.calls
+      .filter(
+        ([u, i]) =>
+          String(u).startsWith(`${BASE}/roles/`) &&
+          (i as RequestInit)?.method === "PUT",
+      )
+      .map(([u]) => String(u).split("/").pop());
+    expect(puts.sort()).toEqual(["chat", "deep", "embedding"]);
+
+    // Another brain answers: the one decision left is offered in place.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "local_models.overview.setup_brain_buttonOllama",
+      }),
+    );
+    await screen.findByTestId("setup-brain-done");
+    expect(
+      fetchMock.mock.calls.some(
+        ([u, i]) =>
+          String(u) === "/api/brain/switch" &&
+          (i as RequestInit)?.method === "POST",
+      ),
+    ).toBe(true);
+    expect(mockProviders.refetch).toHaveBeenCalled();
+  });
+
+  it("lists every installed model with what uses it and what it is recommended for", async () => {
+    installFetchMock({
+      models: [{ name: "qwen3.5:4b" }, { name: "qwen3-embedding:4b" }],
+      roles: ROLES.map((r) =>
+        r.id === "embedding"
+          ? { ...r, recommended: "qwen3-embedding:4b" }
+          : r,
+      ),
+    });
+    const onManage = vi.fn();
+    renderPanel({ onManage });
+
+    const list = await screen.findByTestId("local-models-installed");
+    await screen.findByTestId("installed-qwen3.5:4b");
+    expect(list.textContent).toContain("local_models.installed.subtitle2|");
+    // Each line says which roles it is the pick for (the fixture's rows
+    // carry no used_by, so the markers are the recommendations).
+    expect(
+      screen.getByTestId("installed-recommended-qwen3.5:4b").textContent,
+    ).toContain("local_models.role_tools_screen, local_models.role_deep");
+    expect(
+      screen.getByTestId("installed-recommended-qwen3-embedding:4b").textContent,
+    ).toContain("local_models.role_embedding");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "local_models.installed.manage" }),
+    );
+    expect(onManage).toHaveBeenCalledTimes(1);
   });
 
   it("names the active brain when it is not the local server", async () => {

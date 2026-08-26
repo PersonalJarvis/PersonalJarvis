@@ -7,9 +7,15 @@ and the wiki's embedding model — plus two read-only consumers (the quick ack,
 dictation polish) that pin their own tag.
 This module names every slot as a :class:`RoleSpec`, reads its current pick
 from a loaded config, judges which INSTALLED downloads qualify for it (by the
-capabilities ``/api/show`` declares) and points at the shortlist's pick for
-this machine, so the "Local models" section can show the four rows with one
-button each instead of four different pickers in four different views.
+capabilities ``/api/show`` declares) and recommends one, so the "Local
+models" section can show the four rows with one button each instead of four
+different pickers in four different views.
+
+The recommendation is INSTALLED FIRST: the best qualifying download already
+on the server — the largest one that fits this machine's memory, with the
+role's preferred capabilities — and only when nothing installed qualifies
+does the curated shortlist's pick (a download) stand in. A user with eleven
+models on disk is told which of them to use, not sent to the catalogue.
 
 Writing goes through the existing config writers only
 (``config_writer.set_brain_provider_model`` / ``set_ultrawiki_slot``), so a
@@ -34,15 +40,20 @@ log = logging.getLogger(__name__)
 __all__ = [
     "ROLES",
     "WRITABLE_ROLE_IDS",
+    "Machine",
     "RoleSpec",
     "RoleState",
     "current_pick",
     "list_roles",
+    "machine_from",
+    "pick_installed",
     "qualifying_models",
     "role_spec",
     "roles_using",
     "set_role",
 ]
+
+_GIB = 1024**3
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +77,10 @@ class RoleSpec:
     writable: bool = True
     #: Hidden in the Simple view.
     advanced: bool = False
+    #: Installed picks at or under this size (GiB) are preferred — the roles
+    #: where speed beats depth (a call must answer within a breath). ``None``
+    #: = the largest model that fits wins.
+    max_size_gb: float | None = None
 
 
 ROLES: tuple[RoleSpec, ...] = (
@@ -84,6 +99,10 @@ ROLES: tuple[RoleSpec, ...] = (
         required=("completion",),
         recommended=("tools",),
         pull_role="chat",
+        # A call is judged by its first word, not its best one: the pick stays
+        # in the class that answers within a breath, the chat slot takes the
+        # depth.
+        max_size_gb=6.0,
     ),
     RoleSpec(
         id="tools_screen",
@@ -147,8 +166,12 @@ class RoleState:
     installed: bool
     #: Installed tags that declare every required capability.
     qualifying: tuple[str, ...]
-    #: The shortlist's pick for this machine (``""`` when it has none).
+    #: The pick for this machine: the best qualifying INSTALLED download, or
+    #: the shortlist's download when nothing installed qualifies (``""`` when
+    #: neither has one).
     recommended: str
+    #: One sentence saying why ``recommended`` is the pick (``""`` when none).
+    recommended_reason: str = ""
     #: One sentence when the slot is not Ollama-backed right now.
     note: str = ""
     #: The voice brain's effective ``num_ctx`` on this machine (voice role only).
@@ -263,8 +286,97 @@ def qualifying_models(spec: RoleSpec, models: list[OllamaModelInfo]) -> tuple[st
     return tuple(out)
 
 
+@dataclass(frozen=True, slots=True)
+class Machine:
+    """The memory an installed pick is judged against.
+
+    ``memory_gb`` is ``None`` when the host would not say; ``accelerator_gb``
+    is ``0.0`` for "no graphics memory I can vouch for" — the same two
+    answers :func:`ollama_pull.fit_verdict` already reads.
+    """
+
+    memory_gb: float | None = None
+    accelerator_gb: float = 0.0
+
+
+def _size_gb(info: OllamaModelInfo) -> float:
+    return info.size_bytes / _GIB
+
+
+def _has_preferred(spec: RoleSpec, info: OllamaModelInfo) -> bool:
+    return all(cap in info.capabilities for cap in spec.recommended)
+
+
+def _preferred_clause(spec: RoleSpec) -> str:
+    return f" with {' and '.join(spec.recommended)}" if spec.recommended else ""
+
+
+def pick_installed(
+    spec: RoleSpec, models: list[OllamaModelInfo], machine: Machine
+) -> tuple[str, str]:
+    """``(tag, reason)`` — the best INSTALLED download for ``spec``, or ``("", "")``.
+
+    Bigger is better right up to the point where it stops fitting, so the
+    pick is the largest qualifying model this machine runs comfortably; a
+    model that also declares the role's preferred capabilities (tools for a
+    chat, thinking for deep work) beats a larger one without them, because
+    a chat model that cannot call tools is the wrong model however smart.
+    When nothing fits comfortably the SMALLEST one is named (a starting
+    point rather than four rows flagged "tight"); when the memory could not
+    be read at all the largest is — the user installed it, the box presumably
+    runs it. A role with ``max_size_gb`` prefers the class under that size.
+    The reason is one English sentence the row shows beside the button.
+    """
+    candidates = [
+        info
+        for info in models
+        if info.probed and all(c in info.capabilities for c in spec.required)
+    ]
+    if not candidates:
+        return "", ""
+    preferred = _preferred_clause(spec)
+
+    if spec.max_size_gb is not None:
+        fast = [m for m in candidates if _size_gb(m) <= spec.max_size_gb]
+        if fast:
+            best = max(fast, key=lambda m: (_has_preferred(spec, m), _size_gb(m)))
+            return best.name, (
+                f"Largest installed model{preferred} under {spec.max_size_gb:g} GB — "
+                "this job needs fast answers more than depth."
+            )
+        best = min(candidates, key=lambda m: (not _has_preferred(spec, m), _size_gb(m)))
+        return best.name, (
+            f"Smallest installed model{preferred}; nothing under {spec.max_size_gb:g} GB "
+            "is installed, and this job needs fast answers."
+        )
+
+    verdicts = {
+        m.name: ollama_pull.fit_verdict(_size_gb(m), machine.memory_gb, machine.accelerator_gb)[0]
+        for m in candidates
+    }
+    comfortable = [m for m in candidates if verdicts[m.name] == "comfortable"]
+    if comfortable:
+        best = max(comfortable, key=lambda m: (_has_preferred(spec, m), _size_gb(m)))
+        where = (
+            f"the {machine.accelerator_gb:.0f} GB of graphics memory"
+            if machine.accelerator_gb > 0 and _size_gb(best) + 2.0 <= machine.accelerator_gb
+            else f"{machine.memory_gb:g} GB of memory"
+        )
+        return best.name, f"Largest installed model{preferred} that fits in {where}."
+    if all(v == "unknown" for v in verdicts.values()):
+        best = max(candidates, key=lambda m: (_has_preferred(spec, m), _size_gb(m)))
+        return best.name, (
+            f"Largest installed model{preferred}; this machine's memory could not be read."
+        )
+    best = min(candidates, key=lambda m: (not _has_preferred(spec, m), _size_gb(m)))
+    return best.name, (
+        f"Smallest installed model{preferred} — every option is tight on this machine."
+    )
+
+
 def _recommended_for(spec: RoleSpec, rows: list[dict[str, Any]]) -> str:
-    """The shortlist's pick for ``spec`` on this machine.
+    """The shortlist's pick for ``spec`` on this machine — the fallback when
+    :func:`pick_installed` found nothing installed that qualifies.
 
     :func:`ollama_pull._pick_recommended` marks nothing for a role that has
     a curated model installed already — the user has chosen. Then the
@@ -285,6 +397,18 @@ def _recommended_for(spec: RoleSpec, rows: list[dict[str, Any]]) -> str:
     return ""
 
 
+def machine_from(recommended: dict[str, Any] | None) -> Machine:
+    """The :class:`Machine` a shortlist payload was judged against."""
+    if not isinstance(recommended, dict):
+        return Machine()
+    memory = recommended.get("memory_gb")
+    accel = recommended.get("accelerator_gb")
+    return Machine(
+        memory_gb=float(memory) if isinstance(memory, (int, float)) else None,
+        accelerator_gb=float(accel) if isinstance(accel, (int, float)) else 0.0,
+    )
+
+
 async def list_roles(
     root: str,
     cfg: Any,
@@ -292,6 +416,7 @@ async def list_roles(
     transport: Any = None,
     models: list[OllamaModelInfo] | None = None,
     shortlist: list[dict[str, Any]] | None = None,
+    machine: Machine | None = None,
 ) -> tuple[list[RoleState], str | None]:
     """Every role with its pick, what qualifies, and the recommendation.
 
@@ -299,10 +424,10 @@ async def list_roles(
     when ``/api/tags`` did not answer — the states are still complete (with
     empty ``qualifying`` and ``installed=False``) so the rows render.
 
-    ``models`` and ``shortlist`` let a caller that already holds the shared
-    inventory snapshot and the recommendations pass them in; either one left
-    ``None`` is fetched here (the snapshot is shared, so this costs no extra
-    sweep within its window).
+    ``models``, ``shortlist`` and ``machine`` let a caller that already holds
+    the shared inventory snapshot and the recommendations pass them in; any
+    left ``None`` is fetched here (the snapshot is shared, so this costs no
+    extra sweep within its window; the shortlist answers the machine too).
     """
     error: str | None = None
     if models is None:
@@ -315,10 +440,15 @@ async def list_roles(
             error = str(exc)
     if shortlist is None:
         try:
-            shortlist = (await ollama_pull.recommendations()).get("models") or []
+            recommended = await ollama_pull.recommendations()
+            shortlist = recommended.get("models") or []
+            if machine is None:
+                machine = machine_from(recommended)
         except Exception as exc:  # noqa: BLE001 — the shortlist is advisory, the rows are not
             log.warning("ollama-roles: shortlist unavailable: %s", exc)
             shortlist = []
+    if machine is None:
+        machine = Machine()
 
     states: list[RoleState] = []
     for spec in ROLES:
@@ -328,13 +458,19 @@ async def list_roles(
         context_source = ""
         if spec.id == "voice" and current and error is None:
             context_tokens, context_source = await voice_context(cfg, current)
+        recommended_tag, reason = pick_installed(spec, models, machine)
+        if not recommended_tag:
+            recommended_tag = _recommended_for(spec, shortlist)
+            if recommended_tag:
+                reason = "Nothing installed fits this job yet; this download is the pick."
         states.append(
             RoleState(
                 spec=spec,
                 current=current,
                 installed=bool(current) and any(same_model(m.name, current) for m in models),
                 qualifying=qualifying,
-                recommended=_recommended_for(spec, shortlist),
+                recommended=recommended_tag,
+                recommended_reason=reason,
                 note=note,
                 context_tokens=context_tokens,
                 context_source=context_source,
