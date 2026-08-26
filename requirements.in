@@ -27,14 +27,21 @@ google-genai>=1.0
 # every fresh install (found 2026-07-18, was never declared).
 json-repair>=0.30
 # Keep transitive auth/JWT crypto wheel-installable where the newest release
-# stopped publishing the architecture. KNOWN, ACCEPTED EXPOSURE: no
-# cryptography release after 46.0.3 publishes a Windows-ARM64 wheel, so that
-# one target stays on 46.0.3 and remains affected by the advisories fixed in
-# 46.0.5-48.0.1 (Dependabot #44-#47) and by PYSEC-2026-3552 — installability
-# wins over an unfixable pin; Intel macOS likewise stays on 48.0.1 (last
-# release with an x86_64 darwin wheel). Every other platform resolves >=50
-# (clean). Re-check the wheel matrix on each bump and lift the pins the
-# moment the missing architectures return.
+# stopped publishing the architecture. KNOWN, ACCEPTED EXPOSURE, re-verified
+# against PyPI on 2026-08-26 (latest 50.0.1): 46.0.3 is the last release with a
+# win_arm64 wheel and 48.0.1 the last with a macosx universal2 wheel covering
+# Intel x86_64, so those two targets stay pinned there and remain affected by
+# the advisories fixed in 46.0.5-50.0.0 - installability wins over a fix that
+# ships no wheel. Both are supported cells of check_portable_install_matrix.py;
+# lifting either pin turns that gate red and breaks the install outright.
+# Exposure is narrow: the only direct use under jarvis/ is Ed25519 keygen and
+# raw serialization in jarvis/friends/identity.py, which none of the advisories
+# touch - they land in PKCS#7 decrypt, X.509 path building and name
+# constraints, SECT binary curves, and non-contiguous buffer handling.
+# Dependabot alerts #32, #124, #129, #131, #167-#169 are dismissed against this
+# note (superseding the identical #44-#47, #125, #130, #132). Every other
+# platform resolves >=50 (clean). Re-check the wheel matrix on each bump and
+# lift the pins the moment the missing architectures return.
 cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'
 cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'
 # Every OTHER platform must stay >=50: PYSEC-2026-3552 (PKCS#7 decrypt

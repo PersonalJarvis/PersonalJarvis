@@ -60,9 +60,13 @@ dependencies = [
     # malformed vision JSON; without it the repair path silently degrades on
     # every fresh install (found 2026-07-18, was never declared).
     "json-repair>=0.30",
-    # cryptography 49 stopped publishing Windows ARM64 and Intel macOS wheels.
-    # Keep MCP/JWT and Google auth binary-installable on those targets with the
-    # newest tested releases that still publish the required architecture.
+    # cryptography stopped publishing the wheels these two targets need, and
+    # not at the same release: win_arm64 ends at 46.0.3, and the macosx
+    # universal2 wheel that covers Intel macOS ends at 48.0.1. Re-verified
+    # against PyPI on 2026-08-26 (latest 50.0.1) - neither architecture has
+    # returned. Both are supported cells of the installer matrix, so each keeps
+    # the newest release that still ships its architecture; a fix no wheel
+    # delivers would only trade a dormant advisory for a broken install.
     # Every OTHER platform must stay >=50: PYSEC-2026-3552 (PKCS#7 decrypt
     # Bleichenbacher oracle) affects 44.0.0-49.x and is fixed only in 50.0.0,
     # and without an explicit floor the universal resolver widens the Intel-mac
