@@ -447,6 +447,61 @@ async def test_control_with_nothing_registered_is_an_error():
     assert "Nothing is registered" in out["error"]
 
 
+# -- blind media keys (a machine that cannot read its media session) ---------
+#
+# Live 2026-08-26 19:50: "play some cool music" arrived as play without a
+# title, the machine had no winrt, the tool pressed the play/pause toggle
+# blindly and answered ``ok: true, resumed: true`` — the voice said "I've
+# just started some cool music on YouTube Music" over a silent machine.
+
+
+def _blind() -> FakeMedia:
+    return FakeMedia(now=None, can_read=False, backend="media-keys", note="install X")
+
+
+async def test_blind_play_with_nothing_known_paused_presses_nothing_and_says_so():
+    media = _blind()
+    out = await _tool(_search_handler, media=media).play(query="")
+    assert media.calls == []
+    assert "say what to play" in out["error"]
+
+
+async def test_blind_pause_is_an_attempt_not_a_result():
+    media = _blind()
+    out = await _tool(_search_handler, media=media).pause()
+    assert media.calls == ["pause"]
+    assert out["ok"] is True and out["verified"] is False
+    assert "cannot confirm" in out["note"] and "install X" in out["note"]
+    assert "track" not in out
+
+
+async def test_blind_play_after_a_blind_pause_is_a_resume_attempt():
+    media = _blind()
+    tool = _tool(_search_handler, media=media)
+    await tool.pause()
+    out = await tool.play(query="")
+    assert media.calls == ["pause", "play"]
+    assert out["ok"] is True and out["resumed"] is True and out["verified"] is False
+    # The resume spent the pause: a second bare play is a guess again.
+    out = await tool.play(query="")
+    assert media.calls == ["pause", "play"] and "say what to play" in out["error"]
+
+
+async def test_readable_session_control_is_verified():
+    media = FakeMedia(now=_playing())
+    out = await _tool(_search_handler, media=media).pause()
+    assert out["ok"] is True and out["verified"] is True and out["track"] == "Karma Police"
+
+
+async def test_blind_play_of_a_song_opens_the_link_but_never_claims_playback():
+    media = _blind()
+    opener = Opener(media=media)
+    out = await _tool(_search_handler, media=media, opener=opener).play(query="Karma Police")
+    assert opener.urls == [song_url("vid123")]
+    assert out["ok"] is True and out["playback_confirmed"] is False
+    assert out["verified"] is False and "cannot confirm" in out["note"]
+
+
 # -- library writes -----------------------------------------------------------
 
 

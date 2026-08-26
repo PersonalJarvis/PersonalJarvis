@@ -13045,3 +13045,82 @@ and five sentences ending in dictionary words that must survive),
 whatever goes into a Whisper prompt needs a guard on the way out. And "one
 letter apart" is a property of spelling — the person who registers a word is
 describing how it sounds.
+
+## BUG-186: "There you go, I've just started some cool music on YouTube Music" — over a silent machine. The tool pressed a media key blindly, called that a resume, and the voice sold it as done (HIGH, FIXED 2026-08-26)
+
+**Symptom.** Gemini Live, 2026-08-26 19:50, "just use like the Google Music
+plugin and play some cool music." The trace shows `youtube_music · play` in
+0.0 s, then the voice: "One moment, let's get that music playing for you.
+There you go, I've just started some cool music on YouTube Music. Just so
+you know, that just toggles play or pause …". No browser opened, nothing
+played. The maintainer's reading: the assistant confirms things it did not
+do.
+
+**Root cause.** Three layers agreed on a lie, and the model was the most
+honest of them.
+
+1. The model called `play` without a title (`{"action": "play", "type":
+   "song"}`) — the schema says a bare `play` resumes what is paused, which is
+   a fair reading of "play some music" when nothing names a song.
+2. `youtube_music_rest._control("play")` on this box: the Windows media
+   session cannot READ (`winrt-*` was added to the `[desktop]` extras after
+   the app's interpreter was last installed — `pywebview`, `pystray`, `pycaw`
+   present, `winrt` absent), so `cap.can_read` was false, no "is anything
+   paused" check ran, the play/pause TOGGLE key went to whatever the OS
+   considered current, and the result was
+   `{'ok': True, 'action': 'play', 'note': 'Sent as a media key: this toggles
+   play/pause blindly.', 'resumed': True}` in 17 ms.
+3. The system prompt forbids claiming an outcome "unless a successful
+   function result explicitly supports that claim" — and this one did. The
+   realtime honesty guard (`action_honesty.py`, `_has_execution_evidence`)
+   only fires when NO tool ran; a tool that ran and said `ok` is evidence by
+   construction. The model read the note, added its "just toggles" caveat,
+   and still opened with "There you go, I've just started".
+
+**Fix.** Truth comes from the tool; the bridge makes it audible.
+
+* `jarvis/plugins/tool/youtube_music_rest.py` — `_control` splits at
+  `cap.can_read`. A readable session (background player, WinRT, MPRIS,
+  nowplaying-cli) answers `verified: true` as before. A blind machine goes
+  through `_control_blind`: `play` is REFUSED unless this tool itself sent a
+  blind pause just before (the key is a toggle; with nothing known paused it
+  starts a random tab or stops a running one), and `play()` then answers its
+  existing "say what to play" error without pressing anything. Pause, next
+  and previous still go out as best effort but come back
+  `verified: false` with a note that nothing on this machine can confirm the
+  effect. `_open_and_confirm` and the background-player path carry
+  `verified` = `playback_confirmed`; a browser opened on a machine that
+  cannot read the session is `verified: false` too.
+* `jarvis/realtime/tools.py` — `_bounded_result` sees
+  `output["verified"] is False` on a successful call and adds
+  `unverified: true` plus an `instruction` ("This result is an ATTEMPT, not a
+  confirmed outcome … never say it is done, playing, running, or started.
+  Offer the next step in the same breath") — the same field the model
+  already obeys for confirmation questions. It survives truncation.
+* `jarvis/realtime/session.py` — the tool-use system prompt names the
+  contract: a result marked unverified is an attempt, not a confirmation.
+* This box: the four `winrt-*` packages installed into the app's Python
+  (needs an app restart to take effect); with them the plugin reads what
+  plays and resumes only a real pause.
+
+**Why not gate it in the honesty guard.** Withholding the tool from
+`_executed_tool_names` would make `_recover_unbacked_action_claim` replace
+the whole answer with "I did not start an action for that" — false the other
+way (a key WAS sent) and a dead stop in the conversation. An unverified
+result is data the model can speak honestly at full speed; the fix keeps the
+turn's timing untouched (the tool still answers in milliseconds) and changes
+only what is true in it.
+
+**Regression tests.**
+`tests/unit/plugins/tool/test_youtube_music_rest.py::test_blind_play_with_nothing_known_paused_presses_nothing_and_says_so`,
+`::test_blind_pause_is_an_attempt_not_a_result`,
+`::test_blind_play_after_a_blind_pause_is_a_resume_attempt`,
+`::test_readable_session_control_is_verified`,
+`::test_blind_play_of_a_song_opens_the_link_but_never_claims_playback`;
+`tests/unit/realtime/test_tools.py::test_unverified_outcome_carries_the_attempt_not_outcome_instruction`,
+`::test_verified_outcome_carries_no_instruction`.
+
+**Lesson.** `ok: true` is a claim about the ACTION, and the voice speaks
+about the OUTCOME. Every tool that acts without being able to look owes the
+model the difference in a field it cannot miss — a note in prose is a caveat
+the model will politely paraphrase after the good news.
