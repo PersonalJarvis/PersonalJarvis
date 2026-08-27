@@ -15,7 +15,7 @@
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/pulls"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><img alt="Good first issues" src="https://img.shields.io/badge/good%20first%20issues-open-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-FFD60A?style=flat-square&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
 </p>
 
 ---
@@ -123,8 +123,7 @@ Unsure which row you're in? Open the PR and ask. We'd rather tell you in review 
 you guess high and waste an evening.
 
 Describe what changed and why, link the issue it closes. By contributing you agree your work
-is licensed under the [MIT License](LICENSE) for the 1.x line, and under the
-[Apache License 2.0](LICENSE-APACHE-2.0) from version 2.0 on — see
+is licensed under the [Apache License 2.0](LICENSE) — see
 [`docs/licensing.md`](docs/licensing.md).
 
 ---

@@ -44,13 +44,14 @@ versioning per [SemVer](https://semver.org/).
 
 ### Changed
 
-- **License: Apache 2.0 from version 2.0 on.** Personal Jarvis stays MIT for
-  the whole 1.x line; **2.0.0** switches to the Apache License 2.0 — the same
-  freedoms, plus an explicit patent grant and a written trademark carve-out.
-  The full text is already in the repository as `LICENSE-APACHE-2.0` so the
-  terms can be read before they apply, and `docs/licensing.md` says what
-  changes for users, forks, and contributors. Nothing already published
-  changes: a copy obtained under MIT stays MIT.
+- **License: Apache 2.0.** `LICENSE` is the Apache License 2.0 and `NOTICE`
+  sits beside it — the same freedoms MIT gave, plus an explicit patent grant
+  from every contributor and a written trademark carve-out. It takes effect
+  with the next release, **2.0.0**; a license change is a breaking change, so
+  there is no further 1.x. Every release up to and including 1.6.0 stays MIT
+  permanently — that cannot be revoked, and a copy taken under MIT keeps
+  those rights. `docs/licensing.md` says why, what it changes for users,
+  forks, and contributors, and what nobody has to go back and correct.
 - **README: the hero screenshot is the current home view.** The old
   wallpaper-and-mascot capture is replaced with a live voice conversation
   in the desktop app.

@@ -3,7 +3,7 @@ name = "skillbook"
 version = "0.1.0"
 description = "Recursive, decentralized learning and memory layer for AI agents (ACE + LATS + CRDT)."
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Skillbook contributors" }]
 dependencies = [
     "numpy>=1.26",

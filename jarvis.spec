@@ -312,7 +312,7 @@ if sys.platform == "win32":
                             StringStruct("InternalName", GUI_EXE_NAME),
                             StringStruct(
                                 "LegalCopyright",
-                                "Personal Jarvis contributors. MIT licensed.",
+                                "Personal Jarvis contributors. Apache 2.0 licensed.",
                             ),
                             StringStruct("OriginalFilename", f"{GUI_EXE_NAME}.exe"),
                             StringStruct("ProductName", "Personal Jarvis"),

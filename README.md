@@ -40,7 +40,7 @@ walks you through language, wake word, and keys once. [Full install notes below]
 
 <p align="center">
   <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI: personal-jarvis" src="https://img.shields.io/pypi/v/personal-jarvis?style=for-the-badge&labelColor=242424&color=e7c46e" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
   <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
 </p>
@@ -198,8 +198,8 @@ installer checks for both and stops with a download link if one is missing. It a
 in the terminal. It launches the app, and the app walks you through a one-time setup for
 language, wake word, and API keys.
 
-**What it costs: nothing to us.** Personal Jarvis is MIT-licensed software you run on your
-own machine. There is no subscription for it, no paid tier, no marketplace cut, and no
+**What it costs: nothing to us.** Personal Jarvis is open-source software (Apache 2.0) you run
+on your own machine. There is no subscription for it, no paid tier, no marketplace cut, and no
 referral link behind any provider named on this page. What you do need is access to a
 model, and that is billed by whoever provides it, straight to you. An AI subscription you
 already pay for works, and so does a pay-per-token API key. The same goes for the optional
@@ -639,14 +639,14 @@ the same day on [Discord](https://discord.gg/x7USduHxbc).
 
 ## License
 
-MIT. Free to use, modify, and distribute, including commercially; see
-[`LICENSE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE).
+Apache 2.0. Free to use, modify, and distribute, including commercially, with an
+explicit patent grant from every contributor; see
+[`LICENSE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE) and [`NOTICE`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/NOTICE).
 
-**From version 2.0 on, Personal Jarvis moves to the Apache License 2.0** — the same
-freedoms, plus an explicit patent grant and a written trademark carve-out. The text
-is already in the repository as [`LICENSE-APACHE-2.0`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE-APACHE-2.0)
-and [`docs/licensing.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/licensing.md) says what changes for users,
-forks, and contributors. Every 1.x release stays MIT, permanently.
+Personal Jarvis was MIT-licensed through version 1.6.0, and **every one of those
+releases stays MIT, permanently** — the switch applies from 2.0 on.
+[`docs/licensing.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/licensing.md) says why, and what it changes for
+users, forks, and contributors.
 
 Third-party names and logos belong to their owners,
 see [`TRADEMARK.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/TRADEMARK.md).
@@ -654,6 +654,6 @@ see [`TRADEMARK.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/
 <br/>
 
 <p align="center">
-  <sub>Created by <b>Ruben Lütke</b> · <a href="https://x.com/Ruben_Luetke">@Ruben_Luetke</a> · © 2026 · MIT</sub><br/> <!-- i18n-allow: maintainer's name, not German prose -->
+  <sub>Created by <b>Ruben Lütke</b> · <a href="https://x.com/Ruben_Luetke">@Ruben_Luetke</a> · © 2026 · Apache 2.0</sub><br/> <!-- i18n-allow: maintainer's name, not German prose -->
   <sub><a href="https://discord.gg/x7USduHxbc">Discord</a> · <a href="https://x.com/Ruben_Luetke">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
 </p>

@@ -1,0 +1,13 @@
+Personal Jarvis
+Copyright 2026 Ruben Lütke
+
+This product includes software developed by the Personal Jarvis contributors
+(https://github.com/PersonalJarvis/PersonalJarvis).
+
+Releases up to and including 1.6.0 were published under the MIT License and
+remain MIT. From version 2.0.0 on, this product is licensed under the Apache
+License, Version 2.0.
+
+Bundled third-party components keep their own licenses and notices - see
+docs/licensing.md and the license files shipped beside them, for example
+jarvis/assets/vad/LICENSE for the Silero VAD model.
