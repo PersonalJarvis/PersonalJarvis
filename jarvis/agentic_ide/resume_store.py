@@ -85,6 +85,14 @@ class SnapshotTerminal:
     # a conversation existing does not mean its last turn was interrupted.
     # Missing on older snapshots deliberately means False (fail closed).
     continuation_needed: bool = False
+    # What the pane was OPENED on — the model, the effort level and the
+    # permission stance chosen for it (jarvis.workspace.launch_picks). Kept so
+    # a restored pane comes back on the same three picks instead of quietly
+    # dropping to the CLI's defaults; empty on an older snapshot, which is
+    # exactly what "the CLI's own default" already meant.
+    model: str = ""
+    effort: str = ""
+    permission_mode: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -99,6 +107,9 @@ class SnapshotTerminal:
             "account": self.account,
             "account_pinned": self.account_pinned,
             "continuation_needed": self.continuation_needed,
+            "model": self.model,
+            "effort": self.effort,
+            "permission_mode": self.permission_mode,
         }
 
     @staticmethod
@@ -125,6 +136,9 @@ class SnapshotTerminal:
             ),
             account_pinned=data.get("account_pinned") is True,
             continuation_needed=data.get("continuation_needed") is True,
+            model=str(data.get("model") or "").strip(),
+            effort=str(data.get("effort") or "").strip(),
+            permission_mode=str(data.get("permission_mode") or "").strip(),
         )
 
 

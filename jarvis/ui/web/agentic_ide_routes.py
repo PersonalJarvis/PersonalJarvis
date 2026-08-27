@@ -62,7 +62,7 @@ import re
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 from fastapi import (
     APIRouter,
@@ -227,6 +227,28 @@ class TerminalRequest(BaseModel):
         description="Call-sign for this terminal; auto-assigned when omitted.",
     )
     account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Model to run this pane on, from the entry's own list in "
+            "GET /agents. Omitted (or a model this CLI does not offer) opens "
+            "the pane on the CLI's own default."
+        ),
+    )
+    effort: str | None = Field(
+        default=None,
+        description=(
+            "Reasoning effort for this pane, from the entry's ladder in "
+            "GET /agents. Omitted leaves it to the CLI."
+        ),
+    )
+    permission_mode: str | None = Field(
+        default=None,
+        description=(
+            "How often the agent asks before it acts, from the entry's ladder "
+            "in GET /agents. Omitted opens the pane in the CLI's own stance."
+        ),
+    )
 
 
 class StartSessionRequest(BaseModel):
@@ -262,6 +284,28 @@ class AddTerminalRequest(BaseModel):
         description=(
             "Which stored subscription to run on; defaults to the anchor pane's, "
             "then to the active account."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Model to run this pane on, from the entry's own list in "
+            "GET /agents. Omitted (or a model this CLI does not offer) opens "
+            "the pane on the CLI's own default."
+        ),
+    )
+    effort: str | None = Field(
+        default=None,
+        description=(
+            "Reasoning effort for this pane, from the entry's ladder in "
+            "GET /agents. Omitted leaves it to the CLI."
+        ),
+    )
+    permission_mode: str | None = Field(
+        default=None,
+        description=(
+            "How often the agent asks before it acts, from the entry's ladder "
+            "in GET /agents. Omitted opens the pane in the CLI's own stance."
         ),
     )
 
@@ -628,6 +672,47 @@ class AgentStatus(BaseModel):
             "logo is a local asset the client already has, and for a custom one "
             "with no logo, which falls back to a monogram."
         ),
+    )
+    # --- What a pane of this entry can be OPENED on -------------------------
+    #
+    # Deliberately the agent chat's own catalog shape (``AgentChatProvider`` in
+    # the frontend): the IDE's chat surface draws its picks with the front
+    # page's composer, so an entry answering in the shape that composer already
+    # reads is what keeps one model picker in the app instead of two. Empty
+    # lists are an honest "this CLI takes no such pick", and the picker then
+    # shows nothing to choose rather than a control that does nothing.
+    models: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Models a new pane of this entry may run on, curated or read live "
+            "from the CLI itself. Empty when the CLI publishes no list — the "
+            "pane then opens on whatever it defaults to."
+        ),
+    )
+    default_model: str = Field(
+        default="",
+        description=(
+            "The model a pane opens on when nobody picks one; empty means the "
+            "CLI's own default, which is what every entry currently answers."
+        ),
+    )
+    effort_levels: list[str] = Field(
+        default_factory=list,
+        description="Reasoning-effort ladder, ascending. Empty = no effort pick.",
+    )
+    default_effort: str = Field(
+        default="", description="The level a pane opens on when nobody picks one."
+    )
+    permission_modes: list[dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "How often the agent asks before it acts: id, label and one "
+            "sentence each. Only the stances this CLI can be LAUNCHED into."
+        ),
+    )
+    default_permission_mode: str = Field(
+        default="",
+        description="The stance a pane opens in; empty means the CLI's own default.",
     )
 
 
@@ -1272,9 +1357,14 @@ async def get_agents() -> AgentsResponse:
     minimal PATH, so "installed" and "launchable from here" are not the same
     question.
     """
+    from jarvis.workspace import launch_picks
     from jarvis.workspace.agents import detect_agents, pty_available
 
     infos = await detect_agents()
+    # Asked once for the whole list rather than per entry: two of these lists
+    # come from the CLI itself (a subprocess and a file read), and an entry
+    # asking for its own would run them once per row.
+    live = await launch_picks.live_models()
     agents = [
         AgentStatus(
             name=info.name,
@@ -1286,6 +1376,7 @@ async def get_agents() -> AgentsResponse:
             description=info.description,
             custom=info.custom,
             logo_url=info.logo_url,
+            **launch_picks.offered(info.name, live),
         )
         for info in infos
     ]
@@ -2377,6 +2468,9 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
             anchor=req.anchor,
             direction=req.direction,
             account=req.account,
+            model=req.model,
+            effort=req.effort,
+            permission_mode=req.permission_mode,
         )
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -3017,22 +3111,65 @@ async def terminal_timeline(name: str, workspace: str | None = None) -> dict:
         "activity": reading.activity,
     }
     handle = term.resume
+    # What the pane was OPENED on. The transcript is the better witness — it
+    # reports what the CLI actually used — but it only speaks once a turn has
+    # finished, and a CLI that records none of the three never speaks at all.
+    # Until then these are the honest answer, and they are why a pane opened
+    # on Opus stops reporting itself as "Default" while it is still thinking.
+    empty = {
+        **base,
+        "available": False,
+        "events": [],
+        "model": term.model,
+        "effort": term.effort,
+        "permission_mode": term.permission_mode,
+    }
     if handle is None or not readable:
-        return {**base, "available": False, "events": []}
-    events = await asyncio.to_thread(
-        agent_transcript.read_events,
+        return empty
+    read_result = await asyncio.to_thread(
+        agent_transcript.read_timeline,
         term.agent,
         handle.id,
         home=account_home(term.agent, term.account),
         live=live,
     )
-    if events is None:
-        return {**base, "available": False, "events": []}
+    if read_result is None:
+        return empty
     return {
         **base,
         "available": True,
-        "events": await _with_prompt_receipts(term, _session, events),
+        "events": await _with_prompt_receipts(term, _session, read_result.events),
+        # What the pane runs on, by its own account — the composer's pills —
+        # falling back to what it was opened on for whatever the CLI's record
+        # leaves out (see ``empty`` above).
+        "model": read_result.model or term.model,
+        "effort": read_result.effort or term.effort,
+        "permission_mode": read_result.permission_mode or term.permission_mode,
     }
+
+
+@router.post(
+    "/terminals/{name}/interrupt",
+    summary="Interrupt what one terminal's agent is doing (Escape)",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def terminal_interrupt(name: str, workspace: str | None = None) -> dict:
+    """Press Escape in the pane — the chat stage's Stop button.
+
+    The coding CLIs stop their current turn on Escape (Claude Code says so in
+    its own status line: "esc to interrupt"), and the pane's keyboard path is
+    the one that sends it (`Registry.write`): the pane treats it exactly like
+    the person pressing the key, activity bookkeeping included. Nothing is
+    closed — the prompt comes back and the conversation goes on.
+    """
+    registry = get_registry()
+    found = registry.find_terminal(name, workspace)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"No terminal called {name}")
+    session, term = found
+    if not registry.write(term.name, "\x1b", session.id):
+        raise HTTPException(status_code=409, detail=f"{term.name} is not running.")
+    return {"terminal": term.name, "sent": "escape"}
 
 
 @router.get(

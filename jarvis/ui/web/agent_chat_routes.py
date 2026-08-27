@@ -17,6 +17,8 @@ Prefix ``/api/agent-chat``:
     POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
     GET    /check-folder?path=               does the folder exist / is it a directory
+    GET    /typeahead?trigger=&surface=&provider=&cwd=&q=
+                                             what the composer lists after "/", "@" or "$"
 
 The service lives on ``app.state.agent_chat`` (built in ``server.py``); a
 missing service answers 503 like every other optional subsystem.
@@ -174,27 +176,14 @@ def _cli_installed(runner: str) -> bool:
 async def _live_cli_models() -> dict[str, list[dict[str, Any]]]:
     """The model lists the installed CLIs publish, keyed by runner.
 
-    agy answers ``agy models`` (a ~2 s subprocess, cached 10 min in the
-    runner module); Codex keeps ``models_cache.json`` in its home. Both are
-    read off the event loop; a failure just keeps the curated fallback.
+    One reader, shared with the workspace panes that offer the same CLIs
+    (:func:`jarvis.workspace.launch_picks.live_models`) — two readers would be
+    two answers to one question, and they would drift the first time an
+    account gained a model.
     """
-    from jarvis.agent_chat.runner_cli import read_agy_models, read_codex_models
+    from jarvis.workspace.launch_picks import live_models
 
-    out: dict[str, list[dict[str, Any]]] = {}
-    if _cli_installed("agy-cli"):
-        try:
-            out["agy-cli"] = await asyncio.wait_for(asyncio.to_thread(read_agy_models), 10.0)
-        except (TimeoutError, Exception) as exc:  # noqa: BLE001 — the fallback list stands in
-            log.debug("agent chat: agy model list unavailable: %s", exc)
-    if _cli_installed("codex-cli"):
-        try:
-            rows = await asyncio.to_thread(read_codex_models)
-        except Exception as exc:  # noqa: BLE001 — the fallback list stands in
-            log.debug("agent chat: codex model list unavailable: %s", exc)
-            rows = None
-        if rows:
-            out["codex-cli"] = rows
-    return out
+    return await live_models()
 
 
 def _validate_cwd(raw: str | None) -> str | None:

@@ -77,6 +77,7 @@ from uuid import uuid4
 from loguru import logger
 
 from jarvis.workspace import agents as workspace_agents
+from jarvis.workspace import launch_picks
 
 from . import layout_tree, prompt_history, recap_engine, resume_store
 from .activity import NO_READING, Reading, has_work_behind_it, observed
@@ -909,6 +910,21 @@ class Terminal:
     # the 2026-08-12 report: "I changed my subscriptions twice and it doesn't
     # change", with every split resurrecting the seat the user had just left.
     account_pinned: bool = False
+    # What this pane was OPENED on: the model, the effort level and the
+    # permission stance picked for it before it started
+    # (:mod:`jarvis.workspace.launch_picks`). Empty means "whatever the CLI
+    # itself defaults to", which is what every pane opened before these
+    # existed still gets.
+    #
+    # Held for the pane's whole life rather than spent at spawn, because a
+    # resume rebuilds the launch argv from scratch: without them a pane that
+    # came back from a restart would quietly drop to the CLI's defaults while
+    # its header still claimed the picks it was opened on. A running CLI owns
+    # these three from the moment it starts — changing one here would be a
+    # label the process never sees, so nothing writes them after the spawn.
+    model: str = ""
+    effort: str = ""
+    permission_mode: str = ""
     status: Status = "pending"
     pty_id: str | None = None
     # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
@@ -1342,6 +1358,9 @@ class Terminal:
             account=self.account,
             account_pinned=self.account_pinned,
             continuation_needed=self.resume_continuation_needed,
+            model=self.model,
+            effort=self.effort,
+            permission_mode=self.permission_mode,
         )
 
 
@@ -1992,6 +2011,13 @@ class Registry:
                         # is not, and vouches for nothing.
                         account_pinned=requested_account is not None
                         and resolved_account == requested_account,
+                        # Picked per pane in the wizard, checked against what
+                        # this CLI offers (jarvis.workspace.launch_picks).
+                        model=launch_picks.normalize_model(agent, entry.get("model")),
+                        effort=launch_picks.normalize_effort(agent, entry.get("effort")),
+                        permission_mode=launch_picks.normalize_permission(
+                            agent, entry.get("permission_mode")
+                        ),
                     )
                 )
 
@@ -2273,6 +2299,12 @@ class Registry:
                 # for does — a fallback onto the active account is not the
                 # choice the snapshot remembered.
                 account_pinned=entry.account_pinned and account == entry.account,
+                # The picks the pane was opened on, rebuilt into its argv by
+                # the spawn — a restored pane runs on the model, effort and
+                # permission stance it left on, not on the CLI's defaults.
+                model=entry.model,
+                effort=entry.effort,
+                permission_mode=entry.permission_mode,
             )
 
         terminals = [_restored(index, entry) for index, entry in enumerate(space.terminals)]
@@ -3031,6 +3063,22 @@ class Registry:
             )
             term.resume = None
             continuing = None
+        # What the pane was OPENED on, put back on the command line. A resume
+        # gets them too: the CLI reads a conversation back, never the model or
+        # the permission stance it ran under, so a restored pane without these
+        # would silently drop to the vendor's defaults. Every value is checked
+        # against what this CLI actually offers before it becomes an argument
+        # (:func:`jarvis.workspace.launch_picks.launch_argv`) — a pick it
+        # cannot express costs nothing but itself.
+        argv = (
+            *argv,
+            *launch_picks.launch_argv(
+                term.agent,
+                model=term.model,
+                effort=term.effort,
+                permission_mode=term.permission_mode,
+            ),
+        )
         if continuing is not None:
             argv = (*argv, *continuing)
             term.resumed = True
@@ -3983,6 +4031,9 @@ class Registry:
         anchor: str | None = None,
         direction: str = "right",
         account: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        permission_mode: str | None = None,
     ) -> Terminal:
         """Open one more terminal in the running workspace.
 
@@ -4006,6 +4057,17 @@ class Registry:
         multiplying a second-plan pane cannot quietly move the work onto a
         different bill. An anchor that merely followed the default vouches for
         nothing, and its splits follow the switch like every other new pane.
+
+        ``model``, ``effort`` and ``permission_mode`` are what the pane RUNS
+        ON — the picks a chat surface makes before the first message. Each is
+        checked against what the chosen CLI actually offers
+        (:mod:`jarvis.workspace.launch_picks`) and one it cannot express is
+        dropped, so a stale pick costs the CLI's own default rather than a
+        pane that will not start. Unlike the account they are never inherited
+        from an anchor: splitting a pane means "another one of these CLI", not
+        "another one of these settings", and a model quietly carried onto a
+        pane somebody opened to try something else is the confusing kind of
+        helpful.
         """
         async with self._lock:
             session = self.session
@@ -4094,6 +4156,9 @@ class Registry:
                 # must not be pinned as one.
                 account_pinned=requested_account is not None
                 and resolved_account == requested_account,
+                model=launch_picks.normalize_model(chosen, model),
+                effort=launch_picks.normalize_effort(chosen, effort),
+                permission_mode=launch_picks.normalize_permission(chosen, permission_mode),
             )
             session.terminals.append(term)
             # Where it goes is the tree's business, and the distinction is the
