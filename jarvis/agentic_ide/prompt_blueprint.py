@@ -106,11 +106,16 @@ _SKELETON = """\
 - <an observable outcome the user actually stated>\
 """
 
-# The two rules every prompt-writing surface shares — the Agentic IDE composer
-# here and the dictation Prompt Mode (``jarvis.dictation.prompt_mode``). ONE
-# text each, imported by both: a rule spelled twice is how "goal, not route"
-# ends up meaning something subtly different depending on whether the prompt
-# was spoken at a pane or dictated into a field.
+# The two rules the composer states once each, so "goal, not route" cannot
+# come to mean two subtly different things across the kinds below.
+#
+# The dictation Prompt Mode used to import both. It no longer does (v5,
+# 2026-08-27), and the difference is what each surface writes FOR: the
+# composer briefs an agent already running in the user's repository, where a
+# guessed implementation gets built; Prompt Mode writes a prompt the user
+# pastes wherever they like, and its instruction is deliberately one paragraph
+# — the rules it had accumulated were making its prompts worse, not better.
+# Both still refuse to invent what was not said; only this one says it here.
 GOAL_NOT_IMPLEMENTATION_RULE = """\
 Give the agent the GOAL, the CONTEXT and the CONSTRAINTS - never the \
 implementation. Which approach, which mechanism, which order are its decisions, \

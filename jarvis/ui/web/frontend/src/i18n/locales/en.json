@@ -422,8 +422,8 @@
     },
     "prompt_mode": {
       "title": "Prompt Mode",
-      "description": "Say what you want done, in your own words and in any language. What lands in the field is a finished prompt for an AI coding agent, written the way you would say it: the goal you described, the context and limits you stated, and every task you mentioned — nothing made up, nothing dropped, and your own wording left standing wherever it already said the thing.",
-      "sends_text": "Your transcript goes to the same fast model as the wording clean-up above. That model first works through what you said in writing — every task, every file and name, the situation you described, the limits you drew — and only then writes the prompt. That is why this one takes a few seconds instead of an instant, and it is what the extra wait buys. It comes back as plain text in the language you spoke, and your raw text is always kept in your history.",
+      "description": "Say what you want done, in your own words and in any language. What lands in the field is the finished prompt: your goal, the context and limits you stated and every task you mentioned, written up the way a good prompt is written — a role, the task, the guardrails, the output format. Nothing made up, nothing dropped, and in the language you spoke.",
+      "sends_text": "Your transcript goes to the same fast model as the wording clean-up above and comes back as the written-out prompt, usually within a few seconds. Your raw text is always kept in your history.",
       "outranks": "While this is on, the wording clean-up and the translation step back: the prompt is already restructured. If no model answers in time, this dictation is delivered as it would be with Prompt Mode off.",
       "writer_hint": "Which model writes it: the provider picked under \"Clean up my wording\" above."
     },
@@ -573,7 +573,7 @@
     "composer_hint": "Enter to send · Shift+Enter for a new line",
     "model_hint": "Model in use — click to change it",
     "prompt_mode_pill": "Prompt",
-    "prompt_mode_on": "Prompt Mode is on — every dictation comes out as a finished prompt for a coding agent, in your own words. The writer reads your transcript through before it answers, so this takes a few seconds. Click to switch it off.",
+    "prompt_mode_on": "Prompt Mode is on — every dictation comes out as a written-out prompt for an AI model, in the language you spoke. Click to switch it off.",
     "prompt_mode_off": "Prompt Mode is off — dictations arrive as spoken. Click to turn every dictation into a finished prompt for a coding agent.",
     "prompt_mode_failed": "Prompt Mode could not be switched.",
     "theme_to_light": "Switch to light mode",

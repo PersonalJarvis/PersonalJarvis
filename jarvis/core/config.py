@@ -3592,19 +3592,18 @@ class DictationConfig(BaseModel):
     # Prompt Mode — a dictation comes out as the prompt for a coding agent
     # ------------------------------------------------------------------
 
-    #: Rewrite every dictation into a finished prompt for an AI coding agent:
-    #: plain text, in the language it was spoken, sounding like a person
-    #: talking — the goal, the stated context and constraints, every task
-    #: that was dictated, nothing invented. The Agentic IDE's own prompt
-    #: doctrine (``jarvis/agentic_ide/prompt_blueprint.py``) applied to a
-    #: transcript. It runs on the polish pass's own fast model chain
-    #: (``polish_provider``), asking for the family's stronger fast model,
-    #: and makes that model work through a written analysis of the transcript
-    #: before it composes anything — the ``<analysis>``/``<prompt>`` answer in
-    #: ``jarvis/dictation/prompt_mode.py``. That analysis is what the bar of
-    #: "about 5-7 s of thinking" actually buys: a model spends time by
-    #: emitting tokens, and one asked for the message directly writes a first
-    #: draft in under a second.
+    #: Turn every dictation into the finished prompt it is asking for: the
+    #: goal, the stated context and constraints and every dictated task,
+    #: written up the way a good prompt is written — a role, the task, the
+    #: guardrails, the output format — in the language it was spoken, with
+    #: nothing invented. It runs on the polish pass's own fast model chain
+    #: (``polish_provider``), asking for the family's stronger fast model.
+    #:
+    #: One call, one instruction, one worked example
+    #: (``jarvis/dictation/prompt_mode.py``). Earlier revisions grew a rule
+    #: per defect until they mostly told a capable model what it was not
+    #: allowed to write — including markdown and headings, which is what a
+    #: good prompt is made of. That is deliberately gone.
     #:
     #: Outranks the polish and translate passes while on — a prompt is
     #: already restructured, so neither has anything left to do. When no
@@ -3616,13 +3615,12 @@ class DictationConfig(BaseModel):
     prompt_mode: bool = False
 
     #: Wall-clock ceiling for one Prompt Mode call, from the finished
-    #: transcript. Far longer than the polish pass's 1.2 s: the call carries a
-    #: written analysis of the transcript in front of the message, which is
-    #: where the thinking happens, and a real dictation spends 6-9 s on the
-    #: pair. 12 s leaves room for that without cutting the answer off as it
-    #: starts writing; below 4 s the analysis cannot finish and the pass only
-    #: ever times out, and 20 s is as far as it may be pushed before this
-    #: stops being dictation. Clamped, never rejected (AP-16).
+    #: transcript. A safety net, not a target: the fast chain answers in 2-6 s
+    #: depending on the provider's hardware, and 12 s only has to keep a long
+    #: prompt on a slower family from being cut off (a truncated one is
+    #: rejected and costs the whole pass). Below 4 s the pass only ever times
+    #: out, which is worse than being off; 20 s is as far as it may be pushed
+    #: before this stops being dictation. Clamped, never rejected (AP-16).
     prompt_mode_timeout_ms: int = Field(default=12_000, ge=4_000, le=20_000)
 
     @field_validator("paste_chord", mode="before")

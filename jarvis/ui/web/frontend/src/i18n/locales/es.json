@@ -422,8 +422,8 @@
     },
     "prompt_mode": {
       "title": "Modo prompt",
-      "description": "Di con tus palabras y en cualquier idioma qué quieres que se haga. En el campo aparece un prompt terminado para un agente de programación con IA, redactado como tú lo dirías: el objetivo que describiste, el contexto y los límites que mencionaste, y cada tarea que nombraste, sin nada inventado ni omitido, y con tus propias palabras intactas allí donde ya decían la cosa.",
-      "sends_text": "Tu transcripción va al mismo modelo rápido que la limpieza de redacción de arriba. Ese modelo repasa primero por escrito lo que dijiste — cada tarea, cada archivo y nombre, la situación que describiste, los límites que pusiste — y solo después escribe el prompt. Por eso este tarda unos segundos en lugar de un instante, y eso es lo que compra la espera. Vuelve como texto sin formato en el idioma en que hablaste; tu texto original siempre se guarda en tu historial.",
+      "description": "Di con tus palabras y en cualquier idioma qué quieres que se haga. En el campo aparece el prompt terminado: tu objetivo, el contexto y los límites que mencionaste y cada tarea que nombraste, redactados como se redacta un buen prompt — un rol, la tarea, las restricciones, el formato de salida. Sin nada inventado ni omitido, y en el idioma en que hablaste.",
+      "sends_text": "Tu transcripción va al mismo modelo rápido que la limpieza de redacción de arriba y vuelve como el prompt ya redactado, normalmente en pocos segundos. Tu texto original siempre se guarda en tu historial.",
       "outranks": "Mientras esté activo, la limpieza de redacción y la traducción pasan a segundo plano: el prompt ya viene reestructurado. Si ningún modelo responde a tiempo, este dictado llega como si el modo prompt estuviera apagado.",
       "writer_hint": "Qué modelo lo escribe: el proveedor elegido arriba en «Limpiar mi redacción»."
     },
@@ -573,7 +573,7 @@
     "composer_hint": "Enter envía · Shift+Enter para una nueva línea",
     "model_hint": "Modelo en uso — haz clic para cambiarlo",
     "prompt_mode_pill": "Prompt",
-    "prompt_mode_on": "El modo Prompt está activado: cada dictado llega como un prompt terminado para un agente de código, con tus propias palabras. El modelo lee tu transcripción entera antes de responder, así que tarda unos segundos. Haz clic para desactivarlo.",
+    "prompt_mode_on": "El modo Prompt está activado: cada dictado llega como un prompt ya redactado para un modelo de IA, en el idioma en que hablaste. Haz clic para desactivarlo.",
     "prompt_mode_off": "El modo Prompt está desactivado: los dictados llegan tal como se dijeron. Haz clic para convertir cada dictado en un prompt terminado para un agente de código.",
     "prompt_mode_failed": "No se pudo cambiar el modo Prompt.",
     "theme_to_light": "Cambiar al modo claro",
