@@ -377,6 +377,11 @@ class _PaneState:
     pinned_headline: str = ""
     pinned_detail: str = ""
     pinned_at: float = 0.0
+    #: The deterministic headline the header last read off this pane's screen.
+    #: Kept so a reader that must NOT walk the scrollback — the session list,
+    #: which polls every pane of every open workspace — can still say what the
+    #: pane's header says (:func:`known_headline`).
+    floor_headline: str = ""
 
 
 _panes: dict[str, _PaneState] = {}
@@ -559,13 +564,40 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
             writer=entry.writer,
         )
     plain = recap.summarize(term, lines=None if lines is None else list(lines))
+    reason = _why_no_summary(term, entry, None if lines is None else len(lines))
+    # Remember what the header is about to show, so a reader that cannot afford
+    # this read (see known_headline) can still repeat it.
+    key = str(getattr(term, "key", "") or "")
+    if key and plain.headline:
+        _state(key).floor_headline = plain.headline
     return SmartRecap(
         headline=plain.headline,
         detail=plain.detail,
         source=BY_RULES,
-        reason=_why_no_summary(term, entry, None if lines is None else len(lines)),
+        reason=reason,
         note=entry.note if entry is not None else "",
     )
+
+
+def known_headline(term: Any) -> str:
+    """The pane's title as its header LAST showed it, without reading the pane.
+
+    :func:`recap_for` is the header's answer, and for the deterministic floor
+    it walks the pane's screen. The session list cannot afford that: it polls
+    every pane of every open workspace on a clock (``Terminal.to_row``), and
+    a dozen scrollback walks per tick is the difference between a list and a
+    stutter. But the list wants the SAME title the header shows, or one pane
+    is "Fix the login test" in the grid and "Claude Code" in the sidebar — two
+    names for one conversation. So this answers from memory alone, in the
+    header's own order: what the user pinned, else what the model wrote, else
+    the floor the header last computed. Empty for a pane no header has
+    described yet; the list then falls back to the pane's last prompt, and
+    only after that to the CLI's name.
+    """
+    entry = _panes.get(str(getattr(term, "key", "") or ""))
+    if entry is None:
+        return ""
+    return entry.pinned_headline or entry.headline or entry.floor_headline
 
 
 def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:

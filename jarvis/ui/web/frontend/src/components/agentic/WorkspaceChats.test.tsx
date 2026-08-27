@@ -19,6 +19,7 @@ function pane(
   displayName: string,
   workspaceId: string,
   status: WorkspacePaneRow["status"] = "live",
+  overrides: Partial<WorkspacePaneRow> = {},
 ): WorkspacePaneRow {
   return {
     workspace_id: workspaceId,
@@ -40,10 +41,12 @@ function pane(
     last_output_at: 2,
     last_prompt: "",
     last_prompt_at: null,
+    recap: "",
     has_resume: false,
     readable: true,
     account: null,
     account_label: null,
+    ...overrides,
   };
 }
 
@@ -117,6 +120,31 @@ describe("the sidebar's chat face", () => {
     // T1 is the pane on stage.
     expect(rowsOf(bands[0])[0].className).toContain("bg-card");
     expect(rowsOf(bands[1])[0].className).not.toContain("bg-card");
+  });
+
+  it("labels a session by what it is about, and names the CLI only when it was asked nothing", () => {
+    useWorkspacePanesStore.setState({
+      panes: [
+        pane("T1", "Claude Code", "w1", "live", { recap: "Fixing the login test" }),
+        pane("T2", "Claude Code", "w1", "live", {
+          last_prompt: "Refactor the parser so it streams.\nStart with config.py.",
+        }),
+        pane("T3", "Claude Code", "w1"),
+      ],
+      activeId: "w1",
+      loaded: true,
+    });
+    render(<WorkspaceChats />);
+
+    const titles = screen.getAllByTestId("workspace-session-title").map((el) => el.textContent);
+    expect(titles).toEqual([
+      "Fixing the login test",
+      "Refactor the parser so it streams.",
+      "Claude Code",
+    ]);
+    // The CLI's name is still one hover away, with the pane it runs in.
+    const row = screen.getAllByTestId("workspace-session-row")[0];
+    expect(row.getAttribute("title")).toBe("Fixing the login test · Claude Code · T1");
   });
 
   it("asks the view to bring the clicked session to the front, workspace and all", () => {

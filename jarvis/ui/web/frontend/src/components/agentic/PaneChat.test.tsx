@@ -177,6 +177,24 @@ describe("PaneChat", () => {
     expect(onShowTerminal).toHaveBeenCalledTimes(1);
   });
 
+  it("wears the pane's title in its header, with the CLI's name beside it", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    renderStage({ title: "Fixing the login test" });
+    await screen.findByTestId("agent-turn");
+    const header = screen.getByTestId("pane-chat-T7").querySelector("header")!;
+    expect(screen.getByTestId("pane-chat-title").textContent).toBe("Fixing the login test");
+    expect(header.textContent).toContain("Claude Code");
+  });
+
+  it("names the CLI alone while no header has described the pane", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    renderStage({ title: "  " });
+    await screen.findByTestId("agent-turn");
+    expect(screen.queryByTestId("pane-chat-title")).toBeNull();
+    const header = screen.getByTestId("pane-chat-T7").querySelector("header")!;
+    expect(header.textContent).toContain("Claude Code");
+  });
+
   it("flags a pane that is asking something only the terminal can answer", async () => {
     vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
     renderStage({ activity: "asking" });

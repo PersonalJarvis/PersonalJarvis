@@ -1286,6 +1286,13 @@ class Terminal:
             # terminal has to a chat's title. Capped like the full state's copy.
             "last_prompt": self.last_prompt[:200],
             "last_prompt_at": self.last_prompt_at,
+            # The pane's title as its header last showed it — pinned, written by
+            # the model, or the floor read off the screen on the last header
+            # poll — from the recap engine's memory alone. Never computed here:
+            # this list must not walk a scrollback (see above). Empty for a pane
+            # no header has described yet; the list then shows the last
+            # prompt's opening, and only after that the CLI's name.
+            "recap": recap_engine.known_headline(self),
             # Whether a readable conversation could exist for this pane at all.
             # Whether one is actually on disk is the transcript endpoint's
             # answer; this only says the pane holds a handle to look up.

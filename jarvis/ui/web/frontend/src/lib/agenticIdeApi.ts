@@ -799,6 +799,12 @@ export interface WorkspacePaneRow {
   /** The opening of the last prompt — a terminal's closest thing to a title. */
   last_prompt: string;
   last_prompt_at: number | null;
+  /**
+   * The pane's title as its grid header last showed it — pinned, model-written,
+   * or read off the screen. Empty for a pane no header has described yet; see
+   * `sessionTitle` for what a list shows then.
+   */
+  recap: string;
   has_resume: boolean;
   /** Can this pane's conversation be opened as a page? */
   readable: boolean;

@@ -8,6 +8,7 @@ import {
 } from "@/components/agentic/AgentPicker";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { folderColor } from "@/components/agentic/folderColor";
+import { sessionTitle } from "@/components/agentic/sessionTitle";
 import { useIdeChatStore, type IdeWorkspaceRow } from "@/store/ideChat";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
@@ -276,8 +277,12 @@ function WorkspaceBand({
  *
  * Same height and indent as a chat row anywhere else in the app, because from
  * where the user sits these are the same kind of thing: a conversation with
- * an agent. The mark is a terminal, and the dot carries the state the grid's
- * badge shows: running, waiting to start, or finished.
+ * an agent. The mark is the CLI's logo, the label is what the conversation is
+ * ABOUT — the pane's title, the same sentence its grid header wears (see
+ * `sessionTitle`) — the call-sign says which pane, and the dot carries the
+ * state the grid's badge shows: running, waiting to start, or finished. The
+ * CLI's name moved into the tooltip: nine rows all reading "Claude Code" under
+ * nine Claude logos said the same thing twice and the useful thing never.
  */
 function SessionRow({
   pane,
@@ -290,13 +295,14 @@ function SessionRow({
   logoUrl?: string;
   onOpen: () => void;
 }) {
-  const label = pane.display_name || pane.name;
+  const label = sessionTitle(pane);
+  const cli = pane.display_name || pane.agent;
   return (
     <li className="group relative">
       <button
         type="button"
         onClick={onOpen}
-        title={`${label} · ${pane.agent}`}
+        title={`${label} · ${cli} · ${pane.name}`}
         data-testid="workspace-session-row"
         data-pane={pane.name}
         data-status={pane.status}
@@ -306,8 +312,13 @@ function SessionRow({
           active ? "bg-card text-foreground shadow-sm" : "hover:bg-background/60",
         )}
       >
-        <AgentMark agent={pane.agent} label={label} logoUrl={logoUrl} variant="plain" size="sm" />
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground">{label}</span>
+        <AgentMark agent={pane.agent} label={cli} logoUrl={logoUrl} variant="plain" size="sm" />
+        <span
+          className="min-w-0 flex-1 truncate text-xs text-foreground"
+          data-testid="workspace-session-title"
+        >
+          {label}
+        </span>
         <span className="shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
           {pane.name}
         </span>

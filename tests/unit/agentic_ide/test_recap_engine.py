@@ -82,6 +82,42 @@ def test_a_closed_pane_forgets_its_recap() -> None:
     assert recap_engine.recap_for(term, lines=[]).source == recap_engine.BY_RULES
 
 
+# ------------------------------------------------------ the title from memory
+
+
+def test_a_pane_no_header_has_described_has_no_known_headline() -> None:
+    """The list falls back on its own; this must not walk the pane to answer."""
+    assert recap_engine.known_headline(_pane(lines=3)) == ""
+
+
+def test_the_known_headline_is_what_the_header_last_showed() -> None:
+    """One pane, one title: the list repeats the header's floor, then the model's."""
+    term = _pane(lines=3, last_prompt="Fix the failing login test")
+
+    shown = recap_engine.recap_for(term, lines=term.transcript.lines())
+    assert recap_engine.known_headline(term) == shown.headline
+    assert "Fix the failing login test" in recap_engine.known_headline(term)
+
+    state = recap_engine._state(term.key)  # noqa: SLF001 - the cache under test
+    state.headline = "Wrote the login fix, tests green"
+    state.generated_at = time.time()
+    assert recap_engine.known_headline(term) == "Wrote the login fix, tests green"
+
+    recap_engine.pin(term.key, "Login rework")
+    assert recap_engine.known_headline(term) == "Login rework"
+
+
+def test_the_session_row_carries_the_known_headline_without_a_walk() -> None:
+    """``to_row`` is the list's payload: it repeats the title, it never computes one."""
+    term = _pane(lines=3, last_prompt="Fix the failing login test")
+    assert term.to_row()["recap"] == ""
+
+    recap_engine.recap_for(term, lines=term.transcript.lines())
+
+    assert term.to_row()["recap"] == recap_engine.known_headline(term)
+    assert term.to_row()["recap"] != ""
+
+
 # ------------------------------------------------------------- when it refreshes
 
 

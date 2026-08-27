@@ -2511,6 +2511,10 @@ export function AgenticGrid({
               agents?.find((choice) => choice.name === stagedTerm.agent)?.displayName ??
               stagedTerm.agent
             }
+            // The same recap the pane's own header wears (polled, else the one
+            // the workspace state carried), so the stage and the terminal
+            // behind it never name one pane two ways.
+            title={recaps[stagedTerm.name]?.recap ?? stagedTerm.recap}
             activity={activityOf(stagedTerm).activity}
             onShowTerminal={() => setStageMode("terminal")}
           />

@@ -35,6 +35,12 @@ export interface PaneChatProps {
   agent: string;
   /** What the CLI is called — "Claude Code", "Codex". */
   agentLabel: string;
+  /**
+   * What the pane is about — its recap, the sentence the grid draws in the
+   * pane's own header. Empty until a header has described the pane; the
+   * CLI's name then carries the header alone, as it always did.
+   */
+  title?: string;
   /** The workspace folder — the composer's chip and the empty page's headline. */
   folder: string;
   /** The grid's own reading of the pane: working, waiting, asking… */
@@ -49,6 +55,7 @@ export function PaneChat({
   historyId,
   agent,
   agentLabel,
+  title = "",
   folder,
   activity,
   onShowTerminal,
@@ -91,7 +98,25 @@ export function PaneChat({
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
         <MessageSquare className="h-4 w-4 shrink-0 text-primary" aria-hidden />
         <span className="font-mono text-xs font-semibold text-foreground">{terminal}</span>
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{agentLabel}</span>
+        {/* The pane's title where the sidebar row showed it too, so the header
+            and the row that opened it agree on what this conversation is; the
+            CLI's name steps aside to the right, the logo-sized fact it is. */}
+        {title.trim() ? (
+          <>
+            <span
+              className="min-w-0 flex-1 truncate text-sm text-foreground"
+              data-testid="pane-chat-title"
+              title={title}
+            >
+              {title}
+            </span>
+            <span className="max-w-[10rem] shrink-0 truncate text-xs text-muted-foreground">
+              {agentLabel}
+            </span>
+          </>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{agentLabel}</span>
+        )}
         {pane.pollError && (
           <span
             role="status"
