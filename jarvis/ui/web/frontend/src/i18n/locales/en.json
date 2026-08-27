@@ -4974,7 +4974,21 @@
       "load_failed": "The conversation could not be loaded.",
       "reload": "Reload the conversation",
       "not_taken": "{0} did not take the message: {1}",
-      "pick_in_terminal": "{0}: the CLI in the pane decides this — change it in the terminal."
+      "pick_in_terminal": "{0}: the CLI in the pane decides this — change it in the terminal.",
+      "for_seconds": "for {n}s",
+      "for_minutes": "for {n} min",
+      "for_hours": "for {n} h",
+      "state": {
+        "working": "Working",
+        "starting": "Starting",
+        "asking": "Needs you",
+        "done": "Done",
+        "idle": "Idle",
+        "live": "Connected",
+        "exited": "Exited",
+        "failed": "Failed",
+        "error": "Unreachable"
+      }
     },
     "selection": {
       "start": "Select terminals",

@@ -227,4 +227,44 @@ describe("the sidebar's chat face", () => {
     expect(screen.queryAllByTestId("workspace-chats-band")).toHaveLength(0);
     expect(screen.getByTestId("workspace-chats").textContent).toContain("No workspace is open");
   });
+
+  it("tells a session still working from one that has finished, by shape", () => {
+    // The row used to draw one amber dot for every live pane, pulsing for a
+    // working one — the same six-pixel silhouette twelve times over. The
+    // badge is now the grid's own pill: a spinner while the agent works, a
+    // still dot once it stopped, a hollow ring for a pane never asked
+    // anything, a beacon for one holding a question (maintainer, 2026-08-27).
+    useWorkspacePanesStore.setState({
+      panes: [
+        pane("T1", "Claude Code", "w1", "live", { activity: "working", worked: true }),
+        pane("T2", "Claude Code", "w1", "live", { activity: "waiting", worked: true }),
+        pane("T3", "Claude Code", "w1", "live", { activity: "waiting", worked: false }),
+        pane("T4", "Claude Code", "w1", "live", { activity: "asking", worked: true }),
+        pane("T5", "Codex", "w1", "exited", { activity: "exited", worked: true }),
+      ],
+      activeId: "w1",
+      loaded: true,
+    });
+    render(<WorkspaceChats />);
+
+    const badges = screen.getAllByTestId("pane-activity");
+    expect(badges.map((b) => b.getAttribute("data-icon"))).toEqual([
+      "spinner",
+      "dot",
+      "ring",
+      "beacon",
+      "dot",
+    ]);
+    // The word is one hover away — "working", "done", "idle", "needs you".
+    expect(badges.map((b) => b.getAttribute("aria-label")?.split(".")[0])).toEqual([
+      "working",
+      "done",
+      "idle",
+      "needs you",
+      "exited",
+    ]);
+    // A finished job glows; a dead process does not.
+    expect(badges[1].querySelector("[class*='shadow']")).not.toBeNull();
+    expect(badges[4].querySelector("[class*='shadow']")).toBeNull();
+  });
 });

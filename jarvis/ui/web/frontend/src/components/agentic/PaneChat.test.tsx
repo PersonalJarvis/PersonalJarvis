@@ -204,3 +204,59 @@ describe("PaneChat", () => {
     );
   });
 });
+
+describe("the header's state", () => {
+  // The one question the stage is opened to answer — is the agent still
+  // building, or is it done? — spelled out beside the title, with how long
+  // it has been so (maintainer, 2026-08-27).
+  const since = Math.round(Date.now() / 1000) - 200;
+
+  it("says the agent is still working, and for how long", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer({ live: true, activity: "working" }));
+    renderStage({ activity: "working", activitySince: since, worked: true });
+    await screen.findByTestId("agent-turn");
+    const chip = screen.getByTestId("pane-chat-state");
+    expect(chip.dataset.state).toBe("working");
+    expect(chip.textContent).toContain("Working");
+    expect(screen.getByTestId("pane-chat-state-for").textContent).toBe("for 3 min");
+    expect(chip.querySelector("[data-icon='spinner']")).not.toBeNull();
+  });
+
+  it("says it is done once the pane has stopped after a job", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    renderStage({ activity: "waiting", activitySince: since, worked: true });
+    await screen.findByTestId("agent-turn");
+    const chip = screen.getByTestId("pane-chat-state");
+    expect(chip.dataset.state).toBe("done");
+    expect(chip.textContent).toContain("Done");
+    expect(chip.querySelector("[data-icon='dot']")).not.toBeNull();
+  });
+
+  it("does not call a pane that was never asked anything done", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    renderStage({ activity: "waiting", activitySince: since, worked: false });
+    await screen.findByTestId("agent-turn");
+    const chip = screen.getByTestId("pane-chat-state");
+    expect(chip.dataset.state).toBe("idle");
+    expect(chip.textContent).toContain("Idle");
+    expect(chip.textContent).not.toContain("Done");
+  });
+
+  it("says the pane needs you when it stopped on a question", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    renderStage({ activity: "asking", worked: true });
+    await screen.findByTestId("agent-turn");
+    const chip = screen.getByTestId("pane-chat-state");
+    expect(chip.dataset.state).toBe("asking");
+    expect(chip.textContent).toContain("Needs you");
+    // No stamp, no duration: the header never invents a number.
+    expect(screen.queryByTestId("pane-chat-state-for")).toBeNull();
+  });
+
+  it("falls back to the poll's reading while the grid has none", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer({ live: true, activity: "working" }));
+    renderStage({ activity: "" });
+    await screen.findByTestId("agent-turn");
+    expect(screen.getByTestId("pane-chat-state").dataset.state).toBe("working");
+  });
+});

@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { PaneActivityPill, durationLabel } from "./PaneActivityPill";
+import { PaneActivityPill, durationLabel, paneActivityState } from "./PaneActivityPill";
 
 /** The clock the tests read, so nothing here races the wall. */
 const NOW_MS = 1_700_000_000_000;
@@ -135,5 +135,20 @@ describe("what a screen reader hears", () => {
     const badge = pill({ status: "live", activity: "working" });
     expect(badge.getAttribute("aria-label")).toContain("working");
     expect(badge.getAttribute("aria-label")).toContain("screen is still");
+  });
+});
+
+describe("the state behind the word", () => {
+  // A header that translates the state itself keys off this, so "done" and
+  // "idle" must stay two answers here exactly as they are two looks.
+  it("keys every look, telling done from idle by whether the pane was ever asked", () => {
+    expect(paneActivityState("live", "working")).toBe("working");
+    expect(paneActivityState("live", "waiting", true)).toBe("done");
+    expect(paneActivityState("live", "waiting", false)).toBe("idle");
+    expect(paneActivityState("live", "asking")).toBe("asking");
+    expect(paneActivityState("live", "")).toBe("live");
+    expect(paneActivityState("exited", "exited")).toBe("exited");
+    expect(paneActivityState("error", "")).toBe("error");
+    expect(paneActivityState("pending", "")).toBe("starting");
   });
 });

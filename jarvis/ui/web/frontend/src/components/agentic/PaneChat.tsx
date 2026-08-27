@@ -16,15 +16,83 @@
  * the TUI and answered there, so the stage keeps one button back to the pane
  * itself, and says so out loud the moment the pane's activity reads "asking".
  */
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, MessageSquare, RefreshCw, SquareTerminal } from "lucide-react";
 
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
+import {
+  PaneActivityPill,
+  paneActivityState,
+  type PaneActivityState,
+} from "@/components/agentic/PaneActivityPill";
 import { ChatStage } from "@/components/home/ChatStage";
 import { createPaneChatStore, type PaneChatStoreHook } from "@/store/paneChat";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+
+/**
+ * How often the header's "for 3 min" re-reads the clock.
+ *
+ * Coarse on purpose: the label is rounded to seconds under a minute and to
+ * minutes above, so a faster tick would redraw the header for a number that
+ * mostly does not change. Ten seconds keeps "for 40s" honest to within a
+ * quarter of what it says.
+ */
+const CLOCK_TICK_MS = 10_000;
+
+/** A clock that ticks while something is worth timing, and stands still otherwise. */
+function useClock(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+    return () => window.clearInterval(id);
+  }, [ticking]);
+  return now;
+}
+
+/**
+ * The header's own word for a pane's state, and how it is coloured.
+ *
+ * The pill beside it carries the shape (spinner, dot, ring, beacon); this is
+ * the text a header has room for and a list row does not. Two states are
+ * lifted into the foreground ink — a working pane and one holding a
+ * question — because those are the two the user opened the chat to find out
+ * about; the rest sit in muted ink, which is what "nothing to report" looks
+ * like. The i18n key is the state itself, so a state added to the pill fails
+ * to compile here until every locale has a word for it.
+ */
+const STATE_INK: Record<PaneActivityState, string> = {
+  working: "text-foreground",
+  starting: "text-muted-foreground",
+  asking: "text-foreground",
+  done: "text-foreground",
+  idle: "text-muted-foreground",
+  live: "text-muted-foreground",
+  exited: "text-muted-foreground",
+  failed: "text-destructive",
+  error: "text-destructive",
+};
+
+/**
+ * "for 40s", "for 3 min", "for 2 h" — how long the pane has been in this state.
+ *
+ * A duration rather than a clock time, as on the pill's tooltip: the reader
+ * wants to know how long they have been waiting, not do the subtraction.
+ */
+function elapsedLabel(
+  since: number,
+  now: number,
+  t: (key: string) => string,
+): string {
+  const seconds = Math.max(0, Math.round(now / 1000 - since));
+  if (seconds < 60) return fill(t("agentic_grid.pane_chat.for_seconds"), { n: seconds });
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return fill(t("agentic_grid.pane_chat.for_minutes"), { n: minutes });
+  return fill(t("agentic_grid.pane_chat.for_hours"), { n: Math.round(minutes / 60) });
+}
 
 export interface PaneChatProps {
   /** The pane's call-sign — T1, or a name the user gave it. */
@@ -45,6 +113,12 @@ export interface PaneChatProps {
   folder: string;
   /** The grid's own reading of the pane: working, waiting, asking… */
   activity: PaneActivity;
+  /** When the pane entered that state (epoch seconds); 0 when unknown. */
+  activitySince?: number;
+  /** Has anything ever been asked of this pane? Separates "done" from "idle". */
+  worked?: boolean;
+  /** The pane's process status, as the grid reads it off the socket. */
+  status?: string;
   /** Back to the terminal itself — the question it is asking lives there. */
   onShowTerminal: () => void;
 }
@@ -58,6 +132,9 @@ export function PaneChat({
   title = "",
   folder,
   activity,
+  activitySince = 0,
+  worked = false,
+  status = "live",
   onShowTerminal,
 }: PaneChatProps) {
   const t = useT();
@@ -87,6 +164,19 @@ export function PaneChat({
   // poll's is the fallback for a pane the grid has not read yet.
   const paneActivity = activity || pane.activity;
   const asking = paneActivity === "asking";
+  /*
+   * The one question this stage is opened to answer: is the agent still at
+   * it, or is it done? The timeline below says so too, but only at the
+   * bottom of a long transcript and only once it has loaded; the header says
+   * it at a glance, in words, for the whole time the stage is open. `worked`
+   * is what keeps a pane that was never asked anything from claiming a
+   * finished job. The clock ticks only while the duration is worth watching
+   * — a working pane, or one that has stopped and is now waiting on you.
+   */
+  const state = paneActivityState(status, paneActivity, worked);
+  const timed = activitySince > 0 && state !== "live" && state !== "starting";
+  const now = useClock(timed);
+  const elapsed = timed ? elapsedLabel(activitySince, now, t) : "";
 
   return (
     <div
@@ -117,6 +207,30 @@ export function PaneChat({
         ) : (
           <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{agentLabel}</span>
         )}
+        {/* The state, spelled out: the pill's shape and a word for it, with
+            how long it has been so. A chip rather than loose text so it reads
+            as ONE fact beside the title, and never wraps into it. */}
+        <span
+          data-testid="pane-chat-state"
+          data-state={state}
+          className={cn(
+            "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-border bg-card/60 pl-2 pr-2.5 text-xs font-medium transition-colors",
+            STATE_INK[state],
+          )}
+        >
+          <PaneActivityPill
+            status={status}
+            activity={paneActivity}
+            since={activitySince}
+            worked={worked}
+          />
+          <span>{t(`agentic_grid.pane_chat.state.${state}`)}</span>
+          {elapsed && (
+            <span className="font-normal text-muted-foreground" data-testid="pane-chat-state-for">
+              {elapsed}
+            </span>
+          )}
+        </span>
         {pane.pollError && (
           <span
             role="status"

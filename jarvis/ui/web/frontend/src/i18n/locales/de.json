@@ -4974,7 +4974,21 @@
       "load_failed": "Das Gespräch konnte nicht geladen werden.",
       "reload": "Gespräch neu laden",
       "not_taken": "{0} hat die Nachricht nicht angenommen: {1}",
-      "pick_in_terminal": "{0}: Das entscheidet das CLI im Fenster — ändere es im Terminal."
+      "pick_in_terminal": "{0}: Das entscheidet das CLI im Fenster — ändere es im Terminal.",
+      "for_seconds": "seit {n} s",
+      "for_minutes": "seit {n} min",
+      "for_hours": "seit {n} h",
+      "state": {
+        "working": "Arbeitet",
+        "starting": "Startet",
+        "asking": "Braucht dich",
+        "done": "Fertig",
+        "idle": "Bereit",
+        "live": "Verbunden",
+        "exited": "Beendet",
+        "failed": "Fehlgeschlagen",
+        "error": "Nicht erreichbar"
+      }
     },
     "selection": {
       "start": "Terminals auswählen",

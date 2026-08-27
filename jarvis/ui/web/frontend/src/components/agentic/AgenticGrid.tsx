@@ -2515,7 +2515,14 @@ export function AgenticGrid({
             // the workspace state carried), so the stage and the terminal
             // behind it never name one pane two ways.
             title={recaps[stagedTerm.name]?.recap ?? stagedTerm.recap}
+            // The whole reading, not just the word: the header spells the
+            // state out with how long it has held, and tells a finished pane
+            // from one nobody has spoken to — the same three facts the
+            // pane's own badge is drawn from.
             activity={activityOf(stagedTerm).activity}
+            activitySince={activityOf(stagedTerm).since}
+            worked={activityOf(stagedTerm).worked}
+            status={stagedTerm.status}
             onShowTerminal={() => setStageMode("terminal")}
           />
         )}

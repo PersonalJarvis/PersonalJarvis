@@ -63,8 +63,28 @@ import type { PaneActivity } from "@/lib/agenticIdeApi";
  * broken one.
  */
 
+/**
+ * The badge's vocabulary, as a key rather than a word.
+ *
+ * What a surface with room for a WORD asks for: the chat stage's header spells
+ * the state out in the user's language, and it wants the state, not the
+ * English label the tooltip carries. One key per look, so "done" and "idle"
+ * stay two states there exactly as they are two looks here.
+ */
+export type PaneActivityState =
+  | "working"
+  | "starting"
+  | "asking"
+  | "done"
+  | "idle"
+  | "live"
+  | "exited"
+  | "failed"
+  | "error";
+
 /** The accessible meaning of each activity, and how its icon is drawn. */
 type Look = {
+  state: PaneActivityState;
   label: string;
   className: string;
   icon: "spinner" | "dot" | "ring" | "alert" | "beacon";
@@ -89,18 +109,21 @@ type Look = {
  */
 const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   working: {
+    state: "working",
     label: "working",
     className: "text-amber-400",
     icon: "spinner",
     hint: "Working — its screen is still changing.",
   },
   starting: {
+    state: "starting",
     label: "starting",
     className: "text-muted-foreground",
     icon: "spinner",
     hint: "Starting up. Its agent has not taken the pane yet.",
   },
   asking: {
+    state: "asking",
     label: "needs you",
     className: "text-sky-400",
     /*
@@ -114,12 +137,14 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
     hint: "Stopped with a question on screen. It is waiting for your answer.",
   },
   exited: {
+    state: "exited",
     label: "exited",
     className: "text-muted-foreground",
     icon: "dot",
     hint: "Its process is gone.",
   },
   failed: {
+    state: "failed",
     label: "failed",
     className: "text-destructive",
     icon: "alert",
@@ -128,6 +153,7 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
 };
 
 const DONE: Look = {
+  state: "done",
   label: "done",
   className: "text-amber-400",
   icon: "dot",
@@ -144,6 +170,7 @@ const DONE: Look = {
  * what a fuel gauge does, and it keeps the accent colour meaning one thing.
  */
 const IDLE: Look = {
+  state: "idle",
   label: "idle",
   className: "text-amber-400/60",
   icon: "ring",
@@ -152,6 +179,7 @@ const IDLE: Look = {
 
 /** The pipe, for the three cases where the pipe is the news. */
 const CONNECTING: Look = {
+  state: "starting",
   label: "starting",
   className: "text-muted-foreground",
   icon: "spinner",
@@ -159,6 +187,7 @@ const CONNECTING: Look = {
 };
 
 const EXITED: Look = {
+  state: "exited",
   label: "exited",
   className: "text-muted-foreground",
   icon: "dot",
@@ -166,6 +195,7 @@ const EXITED: Look = {
 };
 
 const BROKEN: Look = {
+  state: "error",
   label: "error",
   className: "text-destructive",
   icon: "alert",
@@ -183,6 +213,7 @@ const BROKEN: Look = {
  * earned the accent colour that means "something here is yours".
  */
 const CONNECTED: Look = {
+  state: "live",
   label: "live",
   className: "text-muted-foreground",
   icon: "ring",
@@ -221,6 +252,22 @@ export function paneActivityLabel(
   worked = false,
 ): string {
   return lookFor(status, activity, worked).label;
+}
+
+/**
+ * The same answer as a key — for a surface that translates the word itself.
+ *
+ * `paneActivityLabel` hands back English, which is right for a tooltip and an
+ * accessible name and wrong for a header the user reads in their own
+ * language. This is the state behind that label, and the i18n table keys off
+ * it (`agentic_grid.pane_chat.state.*`).
+ */
+export function paneActivityState(
+  status: string,
+  activity: PaneActivity = "",
+  worked = false,
+): PaneActivityState {
+  return lookFor(status, activity, worked).state;
 }
 
 /**

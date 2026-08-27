@@ -8,6 +8,7 @@ import {
 } from "@/components/agentic/AgentPicker";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { folderColor } from "@/components/agentic/folderColor";
+import { PaneActivityPill } from "@/components/agentic/PaneActivityPill";
 import { sessionTitle } from "@/components/agentic/sessionTitle";
 import { useIdeChatStore, type IdeWorkspaceRow } from "@/store/ideChat";
 import { useWorkspacePanes } from "@/store/workspacePanes";
@@ -279,10 +280,11 @@ function WorkspaceBand({
  * where the user sits these are the same kind of thing: a conversation with
  * an agent. The mark is the CLI's logo, the label is what the conversation is
  * ABOUT — the pane's title, the same sentence its grid header wears (see
- * `sessionTitle`) — the call-sign says which pane, and the dot carries the
- * state the grid's badge shows: running, waiting to start, or finished. The
- * CLI's name moved into the tooltip: nine rows all reading "Claude Code" under
- * nine Claude logos said the same thing twice and the useful thing never.
+ * `sessionTitle`) — the call-sign says which pane, and the badge at the end
+ * is the grid's own activity pill: still working, finished, never asked, or
+ * holding a question for you. The CLI's name moved into the tooltip: nine
+ * rows all reading "Claude Code" under nine Claude logos said the same thing
+ * twice and the useful thing never.
  */
 function SessionRow({
   pane,
@@ -306,6 +308,7 @@ function SessionRow({
         data-testid="workspace-session-row"
         data-pane={pane.name}
         data-status={pane.status}
+        data-activity={pane.activity}
         className={cn(
           "flex w-full items-center gap-2 rounded-lg py-1.5 pl-8 pr-2 text-left transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -322,20 +325,21 @@ function SessionRow({
         <span className="shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
           {pane.name}
         </span>
-        <span
-          aria-hidden
-          className={cn(
-            "h-1.5 w-1.5 shrink-0 rounded-full",
-            pane.status === "live"
-              ? pane.activity === "working" || pane.activity === "starting"
-                ? "bg-primary motion-safe:animate-pulse"
-                : "bg-primary"
-              : pane.status === "pending"
-                ? "bg-muted-foreground/50"
-                : pane.status === "error"
-                  ? "bg-destructive"
-                  : "bg-muted-foreground/30",
-          )}
+        {/* The grid's own badge, not a second reading of the same facts.
+            The dot this row used to draw was amber for every live pane and
+            pulsed for a working one — and at six pixels a slow pulse and a
+            still dot are the same silhouette, so twelve sessions in twelve
+            states read as twelve identical dots (maintainer report
+            2026-08-27). The pill tells busy from finished by SHAPE: a turning
+            spinner while the agent works, a still dot once it has stopped, a
+            hollow ring for a pane nobody has asked anything, a beacon for one
+            holding a question. Same component as the pane's header, so the
+            list and the grid can never disagree about one pane. */}
+        <PaneActivityPill
+          status={pane.status}
+          activity={pane.activity}
+          since={pane.activity_since}
+          worked={pane.worked}
         />
       </button>
     </li>
