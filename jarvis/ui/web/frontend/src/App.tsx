@@ -226,7 +226,7 @@ export default function App() {
    * Stopping at 200 px meant a workspace of a dozen terminals still gave a fifth
    * of the window to a nav list nobody was reading; the sidebar now collapses to
    * its icons instead (see `SIDEBAR_RAIL_AT_WIDTH`), and a double-click on the
-   * seam brings the full 280 px back.
+   * seam brings the designed width back (`SIDEBAR_DEFAULT_WIDTH`).
    */
   const sidebar = useResizablePane({
     storageKey: SIDEBAR_WIDTH_STORAGE_KEY,

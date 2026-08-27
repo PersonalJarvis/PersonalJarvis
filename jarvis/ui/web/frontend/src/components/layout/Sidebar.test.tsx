@@ -757,10 +757,10 @@ describe("Sidebar collapse toggle", () => {
 
 describe("the Agentic IDE's chat face", () => {
   /*
-   * Chat mode in the IDE puts the workspace's chats at the TOP of this column
-   * and leaves the sections underneath them. What these pin is that the two
-   * are never alternatives — the sessions and the section list are on screen
-   * together — and that the chats appear only on that section.
+   * Chat mode in the IDE turns this column into the workspace's session
+   * list and nothing else. The sections are one button away, and a row at
+   * the top of them brings the chats back; every entry into chat mode
+   * opens on the chats again (maintainer, 2026-08-27).
    */
   beforeEach(() => {
     useIdeChatStore.setState({
@@ -778,30 +778,69 @@ describe("the Agentic IDE's chat face", () => {
     });
   });
 
-  test("shows the workspace's chats AND the sections at once", () => {
-    // The regression this replaces: the column swapped between the two, so
-    // reaching a section threw the session list away and reaching the
-    // sessions threw the navigation away (maintainer report 2026-08-27).
+  test("shows only the workspace's chats by default", () => {
     useEventStore.setState({ activeSection: "agentic-ide" });
 
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
+    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
+    expect(screen.getByTestId("sidebar-show-sections")).toBeTruthy();
   });
 
-  test("keeps the chats while a section row is pressed", () => {
-    // Pressing a section that the IDE itself answers to (the row is the IDE's
-    // own) must not fold the session list away underneath the click.
+  test("reaches the sections behind one button and comes back", () => {
     useEventStore.setState({ activeSection: "agentic-ide" });
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
+    act(() => {
+      screen.getByTestId("sidebar-show-sections").click();
+    });
+    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
+    expect(screen.queryByTestId("workspace-chats")).toBeNull();
+
+    act(() => {
+      screen.getByTestId("sidebar-show-chats").click();
+    });
+    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
+    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
+  });
+
+  test("the IDE's own row is a request for its chats", () => {
+    // From the sections, pressing the row the IDE itself answers to must not
+    // leave the sections standing: it is the way back as much as the button.
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    act(() => {
+      screen.getByTestId("sidebar-show-sections").click();
+    });
     act(() => {
       screen.getByTestId("nav-row-agentic-ide").click();
     });
 
     expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
+    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
+  });
+
+  test("opens on the chats again after the IDE was left and returned to", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    act(() => {
+      screen.getByTestId("sidebar-show-sections").click();
+    });
+    act(() => {
+      screen.getByTestId("nav-row-settings").click();
+    });
+    // Another section: plain navigation, no way "back" to offer.
+    expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.queryByTestId("sidebar-show-chats")).toBeNull();
+
+    act(() => {
+      useEventStore.setState({ activeSection: "agentic-ide" });
+    });
+    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
+    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
   });
 
   /*
@@ -819,24 +858,26 @@ describe("the Agentic IDE's chat face", () => {
     expect(screen.getByTestId("workspace-chats")).toBeTruthy();
   });
 
-  test("drops the chat block once nothing is open at all", () => {
+  test("drops the chat face once nothing is open at all", () => {
     useEventStore.setState({ activeSection: "agentic-ide" });
     useIdeChatStore.setState({ workspace: null, workspaces: [] });
 
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.queryByTestId("sidebar-show-chats")).toBeNull();
     expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
   });
 
   test("leaves every other section its plain navigation", () => {
     // The IDE is in chat mode, but the user is reading another section: its
-    // workspace list has no business standing on top of that column.
+    // workspace list has no business standing in that column.
     useEventStore.setState({ activeSection: "settings" });
 
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.queryByTestId("sidebar-show-chats")).toBeNull();
     expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
   });
 });
@@ -907,45 +948,5 @@ describe("the Chat row's history", () => {
     // Chat row is opened.
     expect(screen.queryByTestId("recent-chats")).toBeNull();
     expect(screen.getByTestId("nav-row-chats")).toBeTruthy();
-  });
-});
-
-describe("the two areas of the chat face", () => {
-  beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) =>
-        String(url).startsWith("/api/chats")
-          ? new Response(JSON.stringify([]), { status: 200 })
-          : new Response(JSON.stringify({ sessions: [] }), { status: 200 }),
-      ),
-    );
-    useIdeChatStore.setState({
-      view: "chat",
-      workspace: { id: "w1", name: "Personal Jarvis", path: "/work/jarvis" },
-      workspaces: [{ id: "w1", name: "Personal Jarvis", folder: "/work/jarvis", active: true }],
-    });
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    useIdeChatStore.setState({ view: "grid", workspace: null, workspaces: [] });
-  });
-
-  test("heads the sections while the workspace panel stands above them", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-sections-heading")).toBeTruthy();
-  });
-
-  test("drops the heading with the panel", () => {
-    useEventStore.setState({ activeSection: "settings" });
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
-
-    expect(screen.queryByTestId("workspace-chats")).toBeNull();
-    expect(screen.queryByTestId("sidebar-sections-heading")).toBeNull();
   });
 });

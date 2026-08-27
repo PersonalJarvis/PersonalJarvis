@@ -1,7 +1,9 @@
 import {
   Loader2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  LayoutList,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -20,7 +22,7 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { cn } from "@/lib/utils";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
@@ -108,8 +110,12 @@ export interface SidebarProps {
 
 /** Width the sidebar was designed at, and the one a double-click restores.
  *  320 since 2026-08-23: the front page's controls live in this column now
- *  and the maintainer dragged it wider on first use — that is the default. */
-export const SIDEBAR_DEFAULT_WIDTH = 320;
+ *  and the maintainer dragged it wider on first use — that is the default.
+ *  400 since 2026-08-27: the Agentic IDE's chat mode lists the workspace's
+ *  sessions by their titles, and at 320 a title was an ellipsis after four
+ *  words. The maintainer dragged the column to about 400 to read them and
+ *  asked for that to be where it starts. */
+export const SIDEBAR_DEFAULT_WIDTH = 400;
 
 /**
  * localStorage key the dragged width is remembered under.
@@ -122,8 +128,11 @@ export const SIDEBAR_DEFAULT_WIDTH = 320;
  * row holds twelve characters a line, so nothing about the redesign reached
  * the one box it was asked for. A new key seeds every column at the designed
  * width once; a dragged width is remembered again from there.
+ *
+ * `v3` with the 400 px default (same day): the wider column is the point of
+ * the change, so every existing column is re-seeded at it once more.
  */
-export const SIDEBAR_WIDTH_STORAGE_KEY = "jarvis.sidebar.width.v2";
+export const SIDEBAR_WIDTH_STORAGE_KEY = "jarvis.sidebar.width.v3";
 
 /**
  * Narrowest the sidebar goes: the nav icons, and nothing else.
@@ -227,6 +236,23 @@ export function Sidebar({
       return next;
     });
   }, []);
+  /*
+   * Which face the chat mode's column wears: the chats, or the sections.
+   *
+   * The chats, by default and on every entry into chat mode — the column is
+   * the workspace's session list then and nothing else, because that is
+   * what chat mode is for (maintainer, 2026-08-27: "only the chats, with a
+   * button for the rest, and a way back"). The sections stand behind one
+   * button at the foot of the list, and a "back" row at the top of the
+   * sections brings the chats back. Pressing any section row leaves the
+   * sections face too: a section outside the IDE takes the chat face away
+   * with it, and the IDE's own row is a request for the IDE — its chats.
+   * Not remembered on purpose: chat mode always opens on the chats.
+   */
+  const [sectionsShown, setSectionsShown] = useState(false);
+  useEffect(() => {
+    if (chatFace) setSectionsShown(false);
+  }, [chatFace]);
   const resetTranscript = useHomeStore((s) => s.resetTranscript);
   // On the voice stage: clear the lane, drop the open voice thread and let the
   // backend forget the one it was seeded with. We stay on Voice and the mic
@@ -487,32 +513,57 @@ export function Sidebar({
         // shortcut) from its own sources, so nothing here has to be threaded in.
         <DockRail className="min-h-0 flex-1" />
       ) : (
-        // ONE scrolling body, whatever is in it. While the IDE's chat mode is
-        // on, the workspace's sessions lead it and the sections follow; the
-        // two used to be alternatives and the maintainer could reach only one
-        // of them at a time. Both lists scroll together on purpose: two
-        // scrollbars three pixels apart in a 320 px column read as a fault,
-        // and a fixed session list with its own scrollbar would put a hard
-        // ceiling on how many sessions a workspace may show.
+        // ONE scrolling body, whatever is in it. In the IDE's chat mode it is
+        // the workspace's session list, with the sections one button away and
+        // one button back (see `sectionsShown`); everywhere else it is the
+        // navigation. One face at a time: the two stacked in one column read
+        // as one long list with no seam (maintainer report 2026-08-27), and
+        // the sessions are what chat mode is for.
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
-          {/* Two areas with an edge between them, not one run of rows. The
-              workspace block is its own framed panel (see WorkspaceChats) and
-              the navigation under it gets a heading of its own for as long as
-              the panel is there — with the workspaces, their sessions and the
-              sections all drawn as the same kind of row, the column read as one
-              long list with no seam (maintainer report 2026-08-27). */}
-          {chatFace && (
+          {chatFace && !sectionsShown ? (
             <>
               <WorkspaceChats />
-              <div
-                data-testid="sidebar-sections-heading"
-                className="px-4 pb-0.5 pt-3 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60"
+              <button
+                type="button"
+                onClick={() => setSectionsShown(true)}
+                data-testid="sidebar-show-sections"
+                className={cn(
+                  "group mx-2 mb-2 mt-3 flex shrink-0 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                  "text-muted-foreground hover:bg-background/20 hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                )}
               >
-                {t("sidebar.sections")}
-              </div>
+                <LayoutList
+                  aria-hidden
+                  className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
+                />
+                <span className="flex-1 text-left">{t("sidebar.sections")}</span>
+                <ChevronRight
+                  aria-hidden
+                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                />
+              </button>
             </>
-          )}
+          ) : (
           <nav className="p-2">
+            {chatFace && (
+              <button
+                type="button"
+                onClick={() => setSectionsShown(false)}
+                data-testid="sidebar-show-chats"
+                className={cn(
+                  "group mb-2 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                  "text-muted-foreground hover:bg-background/20 hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                )}
+              >
+                <ChevronLeft
+                  aria-hidden
+                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:-translate-x-0.5 group-hover:text-primary"
+                />
+                <span className="flex-1 text-left">{t("sidebar.back_to_chats")}</span>
+              </button>
+            )}
             {NAV_GROUPS.map((group, groupIndex) => (
               <ul
                 key={groupIndex}
@@ -568,11 +619,12 @@ export function Sidebar({
                       // A plugin problem sends the "Skills & Tools" row straight into
                       // the Plugins tab (where the banner + jump button are), so one
                       // click lands on the fix instead of the default Skills tab.
-                      onClick={() =>
+                      onClick={() => {
+                        setSectionsShown(false);
                         setActive(
                           item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
-                        )
-                      }
+                        );
+                      }}
                     >
                       {item.id === "chats" && chatsOpen ? <RecentChats /> : null}
                     </NavRow>
@@ -581,6 +633,7 @@ export function Sidebar({
               </ul>
             ))}
           </nav>
+          )}
         </div>
       )}
 
