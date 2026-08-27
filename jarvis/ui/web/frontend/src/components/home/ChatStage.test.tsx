@@ -112,6 +112,55 @@ function ev(kind: string, payload: Record<string, unknown>): AgentChatEvent {
   return { seq, ts_ms: 1_000 + seq, kind, payload };
 }
 
+/**
+ * jsdom has no ResizeObserver, and the stage only follows a growing answer
+ * where the platform has one. This one records every observer's callback
+ * and is fired by hand — "the column just grew" — from the test.
+ */
+class FakeResizeObserver {
+  static callbacks: ResizeObserverCallback[] = [];
+  constructor(callback: ResizeObserverCallback) {
+    FakeResizeObserver.callbacks.push(callback);
+  }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  static fire() {
+    for (const callback of FakeResizeObserver.callbacks) {
+      callback([], this as unknown as ResizeObserver);
+    }
+  }
+}
+function withResizeObserver() {
+  FakeResizeObserver.callbacks = [];
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+}
+
+/** jsdom lays nothing out, so the scroller is told how tall it "is". */
+function measure(el: HTMLElement, scrollTop: number, scrollHeight: number, clientHeight: number) {
+  Object.defineProperty(el, "scrollHeight", { value: scrollHeight, configurable: true });
+  Object.defineProperty(el, "clientHeight", { value: clientHeight, configurable: true });
+  el.scrollTop = scrollTop;
+}
+
+/** The Radix viewport the stage scrolls — the element the follow rule listens on. */
+function stageViewport(): HTMLElement {
+  const viewport = screen
+    .getByTestId("chat-stage")
+    .querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
+  if (!viewport) throw new Error("the chat stage rendered no scroll viewport");
+  return viewport;
+}
+
+/** A turn that is under way: the person asked, the agent is answering. */
+function runningTurn() {
+  return reduceEvents(EMPTY_TIMELINE, [
+    ev("user_message", { text: "run the tests" }),
+    ev("turn_started", { turn_id: "t1", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" }),
+    ev("assistant_text", { turn_id: "t1", message_id: "m1", text: "Running them now." }),
+  ]);
+}
+
 describe("ChatStage (agent chat)", () => {
   let scrollTo: ReturnType<typeof vi.fn>;
 
@@ -134,6 +183,7 @@ describe("ChatStage (agent chat)", () => {
   });
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   it("shows the greeting and the composer with the four picks when there is nothing yet", () => {
@@ -174,6 +224,27 @@ describe("ChatStage (agent chat)", () => {
     // No "Good afternoon" from a coding agent — the folder it works in instead.
     expect(screen.queryByTestId("home-greeting")).toBeNull();
     expect(screen.getByTestId("chat-folder-headline").textContent).toContain("work");
+  });
+
+  it("keeps the folder chip out of the Jarvis chat and leaves it in the IDE's", () => {
+    // The chip belongs to the IDE: a coding agent is pointed at a checkout and
+    // has to be movable. On the front page it only showed the leaf of the
+    // default path — on Windows the account name, which read like a setting
+    // nobody chose (maintainer, 2026-08-25). The folder itself did not go
+    // away; a CLI seat still starts in one. It is just no longer a control.
+    const { unmount } = render(<ChatStage />);
+    expect(screen.getByTestId("composer-surface").getAttribute("data-surface")).toBe("jarvis");
+    expect(screen.queryByTestId("composer-folder")).toBeNull();
+    unmount();
+
+    useAgentSessionStore.setState(seedState());
+    render(
+      <AgentChatStoreProvider store={useAgentSessionStore}>
+        <ChatStage />
+      </AgentChatStoreProvider>,
+    );
+    expect(screen.getByTestId("composer-surface").getAttribute("data-surface")).toBe("agent");
+    expect(screen.getByTestId("composer-folder")).toBeTruthy();
   });
 
   it("bylines a turn with the assistant on the front page and with the coding agent in the IDE", () => {
@@ -392,8 +463,78 @@ describe("ChatStage (agent chat)", () => {
     fireEvent.click(within(tool).getByRole("button"));
     expect(tool.textContent).toContain("a.py");
     expect(within(turn).getByTestId("agent-text").querySelector("strong")?.textContent).toBe("a.py");
-    // The person's message was pinned to the top of the scroll area.
-    expect(scrollTo).toHaveBeenCalled();
+  });
+
+  it("pins the person's message to the top when it is the newest thing, and keeps it there while the answer fits", () => {
+    withResizeObserver();
+    useAgentChatStore.setState({
+      activeSessionId: "s1",
+      timeline: reduceEvents(EMPTY_TIMELINE, [ev("user_message", { text: "run the tests" })]),
+    });
+    render(<ChatStage />);
+    // Sent: the message is brought to the top of the scroll area.
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }));
+
+    const viewport = stageViewport();
+    measure(viewport, 950, 1000, 100);
+    act(() => {
+      fireEvent.scroll(viewport);
+    });
+    // The answer starts under it but still fits the window: the spacer gives
+    // way (100 px window − 24 px breath = 76 px left) and the view does not
+    // move — the message stays on its line.
+    act(() => {
+      FakeResizeObserver.fire();
+    });
+    expect(screen.getByTestId("chat-bottom-spacer").style.minHeight).toBe("76px");
+    expect(viewport.scrollTop).toBe(950);
+    expect(screen.queryByTestId("chat-scroll-end")).toBeNull();
+  });
+
+  it("follows an answer that grows past the window while the view is at the end", () => {
+    withResizeObserver();
+    useAgentChatStore.setState({ activeSessionId: "s1", timeline: runningTurn() });
+    render(<ChatStage />);
+    const viewport = stageViewport();
+    measure(viewport, 950, 1000, 50);
+    act(() => {
+      fireEvent.scroll(viewport);
+    });
+
+    // The reasoning trace grows without a new item — the column gets taller.
+    measure(viewport, 950, 2000, 50);
+    act(() => {
+      FakeResizeObserver.fire();
+    });
+    expect(viewport.scrollTop).toBe(2000);
+    expect(screen.queryByTestId("chat-scroll-end")).toBeNull();
+  });
+
+  it("leaves a reader who scrolled up where they are, and offers the way back over the composer", () => {
+    withResizeObserver();
+    useAgentChatStore.setState({ activeSessionId: "s1", timeline: runningTurn() });
+    render(<ChatStage />);
+    const viewport = stageViewport();
+    measure(viewport, 100, 1000, 50);
+    act(() => {
+      fireEvent.scroll(viewport);
+    });
+    expect(screen.getByTestId("chat-scroll-end")).toBeTruthy();
+
+    // The answer keeps growing below; the reader's place is not touched.
+    measure(viewport, 100, 2000, 50);
+    act(() => {
+      FakeResizeObserver.fire();
+    });
+    expect(viewport.scrollTop).toBe(100);
+
+    // Taking the way back goes to the end and retires the button.
+    scrollTo.mockClear();
+    act(() => {
+      fireEvent.click(screen.getByTestId("chat-scroll-end"));
+    });
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 2000 }));
+    expect(screen.queryByTestId("chat-scroll-end")).toBeNull();
   });
 
   it("shows the approval card while the runner waits and routes the click to the store", () => {
@@ -415,7 +556,7 @@ describe("ChatStage (agent chat)", () => {
     expect(screen.getByTestId("composer-stop")).toBeTruthy();
   });
 
-  it("always shows that the turn is alive: glyph, a word, the clock and the tokens", () => {
+  it("always shows that the turn is alive: the core, a word, the clock and the tokens", () => {
     vi.useFakeTimers();
     try {
       const started = Date.now();
@@ -428,26 +569,110 @@ describe("ChatStage (agent chat)", () => {
       useAgentChatStore.setState({ activeSessionId: "s1", timeline });
       render(<ChatStage />);
 
-      // The redacted thought is a row of its own — thinking you cannot read
-      // is still thinking you can see.
-      const reasoning = screen.getByTestId("agent-reasoning");
-      expect(reasoning.getAttribute("data-live")).toBe("true");
+      // A thought still running draws NO row of its own: the live line below
+      // already says the turn is thinking, and two lines saying it at once is
+      // the duplication the maintainer objected to (2026-08-25).
+      expect(screen.queryByTestId("agent-reasoning")).toBeNull();
 
       const live = screen.getByTestId("agent-turn-live");
-      expect(within(live).getByTestId("agent-glyph")).toBeTruthy();
+      expect(within(live).getByTestId("live-core")).toBeTruthy();
       expect(live.textContent).toMatch(/4\.8k/);
+      // Output only: the input side of a CLI re-counts the whole conversation
+      // on every step, so it reads as an absurd number for one question.
+      expect(live.textContent).not.toMatch(/\b12\b/);
       // The clock moves on its own.
       act(() => {
         vi.advanceTimersByTime(12_000);
       });
       expect(live.textContent).toMatch(/1[0-9]s|12s/);
-      // The rail marks the whole block as running.
-      expect(screen.getByTestId("agent-turn-rail").className).toContain("agent-rail-live");
+      // No hairline rail runs down the turn any more.
+      expect(screen.queryByTestId("agent-turn-rail")).toBeNull();
       // A running turn shows no receipt yet.
       expect(screen.queryByTestId("agent-turn-footer")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reads each stretch of thinking where it happened, with its words in view", () => {
+    // The complaint this guards (maintainer, 2026-08-25): the model's
+    // intermediate steps had stopped showing — every thought was merged
+    // into one folded row on top of the turn. Each stretch now sits before
+    // the step it explains; the scratchpad itself is covered in
+    // agentchat/AgentTimeline.test.tsx.
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "look into it" }),
+      ev("turn_started", { turn_id: "t4", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" }),
+      ev("reasoning", { turn_id: "t4", text: "First the port.", duration_ms: 1000 }),
+      ev("tool_call", { turn_id: "t4", call_id: "c1", name: "PowerShell", input: { command: "Get-NetTCPConnection" } }),
+      ev("tool_result", { turn_id: "t4", call_id: "c1", output: "ok", is_error: false }),
+      ev("reasoning", { turn_id: "t4", text: "It is listening.", duration_ms: 4000 }),
+      ev("assistant_text", { turn_id: "t4", message_id: "m1", text: "Running." }),
+      ev("turn_finished", { turn_id: "t4", status: "done", duration_ms: 6000, usage: {} }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: "s4", timeline });
+    render(<ChatStage />);
+
+    const rows = screen.getAllByTestId("agent-reasoning");
+    expect(rows).toHaveLength(2);
+    // Each thought keeps its own time and shows its words without a click.
+    expect(rows[0].textContent).toMatch(/1s/);
+    expect(rows[0].textContent).toContain("First the port.");
+    expect(rows[1].textContent).toMatch(/4s/);
+    expect(rows[1].textContent).toContain("It is listening.");
+    // Thought, command, thought — the order they happened in.
+    const order = Array.from(
+      document.querySelectorAll("[data-testid='agent-reasoning'],[data-testid='agent-tool']"),
+    ).map((el) => el.getAttribute("data-testid"));
+    expect(order).toEqual(["agent-reasoning", "agent-tool", "agent-reasoning"]);
+  });
+
+  it("says how a turn ended — including one that answered nothing at all", () => {
+    // The complaint this guards (maintainer, 2026-08-25): a turn whose only
+    // step was a denied command simply stopped drawing, and there was no way
+    // to tell a finished turn from one still thinking.
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("user_message", { text: "what is on my list?" }),
+      ev("turn_started", { turn_id: "t4", provider: "google", model: "gemini-3-flash", effort: "medium", runner: "agy" }),
+      ev("tool_call", { turn_id: "t4", call_id: "c1", name: "run_command", input: { CommandLine: "gws tasks list" } }),
+      ev("tool_result", { turn_id: "t4", call_id: "c1", output: "permission check failed for command\nuser denied permission", is_error: true }),
+      ev("turn_finished", { turn_id: "t4", status: "done", duration_ms: 28_000, usage: { input_tokens: 35_400, output_tokens: 448 } }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: "s4", timeline });
+    render(<ChatStage />);
+
+    const outcome = screen.getByTestId("agent-turn-footer");
+    expect(outcome.getAttribute("data-outcome")).toBe("no-answer");
+    expect(outcome.textContent).toContain("448");
+    // Only the output side reaches the receipt.
+    expect(outcome.textContent).not.toContain("35.4k");
+    // The failure reads on the row itself, without opening anything.
+    expect(screen.getByTestId("agent-tool-gist").textContent).toContain("permission check failed");
+    // Nothing claims to still be working.
+    expect(screen.queryByTestId("agent-turn-live")).toBeNull();
+  });
+
+  it("does not print a tool's input twice when the row already says it", () => {
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "t5", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "claude-cli" }),
+      ev("tool_call", { turn_id: "t5", call_id: "c1", name: "Bash", input: { command: "ls -la" } }),
+      ev("tool_result", { turn_id: "t5", call_id: "c1", output: "a.py", is_error: false }),
+      ev("tool_call", { turn_id: "t5", call_id: "c2", name: "Grep", input: { pattern: "TODO", path: "src", "-n": true } }),
+      ev("tool_result", { turn_id: "t5", call_id: "c2", output: "src/a.py:3", is_error: false }),
+      ev("turn_finished", { turn_id: "t5", status: "done", duration_ms: 900, usage: {} }),
+    ]);
+    useAgentChatStore.setState({ activeSessionId: "s5", timeline });
+    render(<ChatStage />);
+
+    const [shell, grep] = screen.getAllByTestId("agent-tool");
+    fireEvent.click(within(shell).getByRole("button"));
+    // One field, and the row's summary already carries it — no INPUT block.
+    expect(within(shell).queryByText("Input")).toBeNull();
+    expect(shell.textContent).toContain("a.py");
+
+    fireEvent.click(within(grep).getByRole("button"));
+    // More than the summary could say, so the whole input is worth printing.
+    expect(within(grep).getByText("Input")).toBeTruthy();
   });
 
   it("names tools the way the agent's log does and closes with time and tokens", () => {
