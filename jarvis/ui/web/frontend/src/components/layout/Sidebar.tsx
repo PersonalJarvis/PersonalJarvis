@@ -139,18 +139,23 @@ export function Sidebar({
   // see `presentNavItem`.
   const surface = useHomeStore((s) => s.surface);
   /*
-   * The Agentic IDE in chat mode borrows this column for ITS chats.
+   * The Agentic IDE in chat mode puts ITS chats at the top of this column.
    *
    * Chat mode is a surface, not a layout — the conversations you are having in
    * the workspace you opened, grouped by folder — and a chat surface with its
    * history two clicks away is a chat surface nobody uses. So while it is on,
-   * the sections step aside and `WorkspaceChats` takes the column, with its own
-   * button back (`sidebarFace`). Only while the IDE is the section on screen:
-   * leaving it must give the navigation straight back.
+   * `WorkspaceChats` leads the column and the sections follow underneath.
+   *
+   * It used to TAKE the column instead, with a "Sections" button swapping the
+   * two faces. That made the two halves of the navigation mutually exclusive:
+   * asking for a section threw the sessions away, and there was no state that
+   * showed both (maintainer report 2026-08-27). Stacked, nothing is ever a
+   * click away from being lost — the sessions stay put while a section is
+   * picked, and the sections stay reachable while the sessions are read.
+   * Only while the IDE is the section on screen: every other section gets the
+   * plain navigation, with no workspace list bolted on top of it.
    */
   const ideView = useIdeChatStore((s) => s.view);
-  const ideSidebarFace = useIdeChatStore((s) => s.sidebarFace);
-  const setIdeSidebarFace = useIdeChatStore((s) => s.setSidebarFace);
   /*
    * Is there anything for this column to list?
    *
@@ -169,8 +174,7 @@ export function Sidebar({
    */
   const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
-  const chatFace =
-    onIdeSection && ideWorkspaceOpen && ideView === "chat" && ideSidebarFace === "chats";
+  const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
   const resetTranscript = useHomeStore((s) => s.resetTranscript);
   // On the voice stage: clear the lane, drop the open voice thread and let the
   // backend forget the one it was seeded with. We stay on Voice and the mic
@@ -428,68 +432,78 @@ export function Sidebar({
         // API-Keys error pip, the plugin reconnect pip, the Skills → Plugins
         // shortcut) from its own sources, so nothing here has to be threaded in.
         <DockRail className="min-h-0 flex-1" />
-      ) : chatFace ? (
-        <WorkspaceChats />
       ) : (
-        <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
-          {/* One list, not two: a voice session IS a run, and showing it as
-              "recent run" and "recent chat" read as a duplicate (maintainer,
-              2026-08-23). The Run Inspector keeps the run view. */}
-          <RecentChats />
-          <div className="mx-1 mb-1 mt-2 border-t border-border/60" aria-hidden />
-          {NAV_GROUPS.map((group, groupIndex) => (
-            <ul
-              key={groupIndex}
-              className={cn(
-                "space-y-0.5",
-                // Thin divider + breathing room above every group after the first.
-                groupIndex > 0 && "mt-2 border-t border-border/40 pt-2",
-              )}
-            >
-              {group.map((raw) => {
-                const item = presentNavItem(raw, surface);
-                return (
-                  <NavRow
-                    key={item.id}
-                    item={item}
-                    label={resolveNavLabel(t, item)}
-                    active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
-                    badge={item.id === "agents" ? agentsCount : undefined}
-                    betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
-                    alert={item.id === "apikeys" ? apikeysHasError : false}
-                    alertTitle={t("sidebar.apikeys_alert")}
-                    warn={
-                      item.id === "skills"
-                        ? pluginsNeedReconnect
-                        : item.id === "local-models"
-                          ? localModelsNeedAttention
-                          : false
-                    }
-                    warnTitle={
-                      item.id === "local-models"
-                        ? localModelsHealth?.detail || localModelsHealth?.reason || undefined
-                        : pluginWarnTitle
-                    }
-                    // A plugin problem sends the "Skills & Tools" row straight into
-                    // the Plugins tab (where the banner + jump button are), so one
-                    // click lands on the fix instead of the default Skills tab.
-                    onClick={() => {
-                      // Pressing the IDE row while its chat surface is already
-                      // open is the way BACK to the chats — otherwise the
-                      // "Sections" button would be a one-way door.
-                      if (IDE_SECTIONS.includes(item.id) && ideView === "chat") {
-                        setIdeSidebarFace("chats");
+        // ONE scrolling body, whatever is in it. While the IDE's chat mode is
+        // on, the workspace's sessions lead it and the sections follow; the
+        // two used to be alternatives and the maintainer could reach only one
+        // of them at a time. Both lists scroll together on purpose: two
+        // scrollbars three pixels apart in a 320 px column read as a fault,
+        // and a fixed session list with its own scrollbar would put a hard
+        // ceiling on how many sessions a workspace may show.
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
+          {chatFace && (
+            <>
+              <WorkspaceChats />
+              <div className="mx-3 border-t border-border/60" aria-hidden />
+            </>
+          )}
+          <nav className="p-2">
+            {/* One list, not two: a voice session IS a run, and showing it as
+                "recent run" and "recent chat" read as a duplicate (maintainer,
+                2026-08-23). The Run Inspector keeps the run view.
+                Safe to stand under the workspace bands: this lists the front
+                page's own conversations, never the IDE's coding sessions (see
+                RecentChats) — the two never name the same thing twice. */}
+            <RecentChats />
+            <div className="mx-1 mb-1 mt-2 border-t border-border/60" aria-hidden />
+            {NAV_GROUPS.map((group, groupIndex) => (
+              <ul
+                key={groupIndex}
+                className={cn(
+                  "space-y-0.5",
+                  // Thin divider + breathing room above every group after the first.
+                  groupIndex > 0 && "mt-2 border-t border-border/40 pt-2",
+                )}
+              >
+                {group.map((raw) => {
+                  const item = presentNavItem(raw, surface);
+                  return (
+                    <NavRow
+                      key={item.id}
+                      item={item}
+                      label={resolveNavLabel(t, item)}
+                      active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
+                      badge={item.id === "agents" ? agentsCount : undefined}
+                      betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
+                      alert={item.id === "apikeys" ? apikeysHasError : false}
+                      alertTitle={t("sidebar.apikeys_alert")}
+                      warn={
+                        item.id === "skills"
+                          ? pluginsNeedReconnect
+                          : item.id === "local-models"
+                            ? localModelsNeedAttention
+                            : false
                       }
-                      setActive(
-                        item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
-                      );
-                    }}
-                  />
-                );
-              })}
-            </ul>
-          ))}
-        </nav>
+                      warnTitle={
+                        item.id === "local-models"
+                          ? localModelsHealth?.detail || localModelsHealth?.reason || undefined
+                          : pluginWarnTitle
+                      }
+                      // A plugin problem sends the "Skills & Tools" row straight into
+                      // the Plugins tab (where the banner + jump button are), so one
+                      // click lands on the fix instead of the default Skills tab.
+                      onClick={() =>
+                        setActive(
+                          item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
+                        )
+                      }
+                    />
+                  );
+                })}
+              </ul>
+            ))}
+          </nav>
+        </div>
       )}
 
       <div className={cn("border-t border-border", railed ? "p-1.5" : "p-3")}>

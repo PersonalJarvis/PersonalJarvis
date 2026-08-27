@@ -4837,7 +4837,6 @@
     }
   },
   "ide_chats": {
-    "back_to_sections": "Bereiche",
     "workspace_band": "Workspace {n}",
     "active": "Aktiv",
     "no_folder": "Kein Ordner",

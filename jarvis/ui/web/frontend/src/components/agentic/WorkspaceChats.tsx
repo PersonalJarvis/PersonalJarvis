@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ChevronLeft, Folder, FolderPlus, Plus } from "lucide-react";
+import { Folder, FolderPlus, Plus } from "lucide-react";
 
 import {
   AgentPickerMenu,
@@ -34,15 +34,20 @@ import { fill, useT } from "@/i18n";
  * workspace to the front. Opening a terminal asks WHICH CLI first when the
  * machine offers more than one, exactly like the grid's own split menus.
  *
- * The way back is the first thing in the column, not a hidden gesture: a
- * sidebar that swallows the navigation with no visible exit is a trap, so the
- * "Sections" button sits at the top where a back button belongs.
+ * This block does NOT own the column — it sits at the top of it and the
+ * sections follow underneath (see `Sidebar`). It used to REPLACE them, with a
+ * "Sections" button as the way back, and that button was a one-way door in
+ * both directions: pressing it took the sessions away, and there was no state
+ * in which the maintainer could see a section and a session at once
+ * (maintainer report 2026-08-27). So there is no back button any more, and
+ * nothing to go back from. The list scrolls with the sections rather than
+ * inside its own frame — two scrollbars in one 320 px column read as a
+ * rendering fault.
  */
 export function WorkspaceChats() {
   const t = useT();
   const workspaces = useIdeChatStore((s) => s.workspaces);
   const agents = useIdeChatStore((s) => s.agents);
-  const setSidebarFace = useIdeChatStore((s) => s.setSidebarFace);
   const requestPane = useIdeChatStore((s) => s.requestPane);
   const requestTerminal = useIdeChatStore((s) => s.requestTerminal);
   const requestWorkspace = useIdeChatStore((s) => s.requestWorkspace);
@@ -53,20 +58,8 @@ export function WorkspaceChats() {
   const panes = useWorkspacePanes();
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="workspace-chats">
-      <div className="shrink-0 px-2 pb-2 pt-2">
-        <button
-          type="button"
-          data-testid="workspace-chats-back"
-          onClick={() => setSidebarFace("sections")}
-          className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        >
-          <ChevronLeft aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
-          {t("ide_chats.back_to_sections")}
-        </button>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-1 pb-3">
+    <div data-testid="workspace-chats">
+      <div className="px-1 pb-3 pt-2">
         {workspaces.length === 0 ? (
           <p className="px-3 py-2 text-[11px] text-muted-foreground/70">
             {t("ide_chats.no_workspaces")}

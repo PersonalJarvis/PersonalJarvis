@@ -757,14 +757,14 @@ describe("Sidebar collapse toggle", () => {
 
 describe("the Agentic IDE's chat face", () => {
   /*
-   * Chat mode in the IDE borrows this column for the workspace's chats. What
-   * these pin is that the takeover is BOUNDED: it only happens on that
-   * section, and there is always a way back to the sections.
+   * Chat mode in the IDE puts the workspace's chats at the TOP of this column
+   * and leaves the sections underneath them. What these pin is that the two
+   * are never alternatives — the sessions and the section list are on screen
+   * together — and that the chats appear only on that section.
    */
   beforeEach(() => {
     useIdeChatStore.setState({
       view: "chat",
-      sidebarFace: "chats",
       workspace: { id: "w1", name: "Personal Jarvis", path: "/work/jarvis" },
       workspaces: [{ id: "w1", name: "Personal Jarvis", folder: "/work/jarvis", active: true }],
     });
@@ -773,30 +773,34 @@ describe("the Agentic IDE's chat face", () => {
   afterEach(() => {
     useIdeChatStore.setState({
       view: "grid",
-      sidebarFace: "chats",
       workspace: null,
       workspaces: [],
     });
   });
 
-  test("shows the workspace's chats instead of the sections", () => {
+  test("shows the workspace's chats AND the sections at once", () => {
+    // The regression this replaces: the column swapped between the two, so
+    // reaching a section threw the session list away and reaching the
+    // sessions threw the navigation away (maintainer report 2026-08-27).
     useEventStore.setState({ activeSection: "agentic-ide" });
 
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.getByTestId("workspace-chats")).toBeTruthy();
-    expect(screen.queryByTestId("nav-row-settings")).toBeNull();
+    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
   });
 
-  test("hands the sections back when the back button is pressed", () => {
+  test("keeps the chats while a section row is pressed", () => {
+    // Pressing a section that the IDE itself answers to (the row is the IDE's
+    // own) must not fold the session list away underneath the click.
     useEventStore.setState({ activeSection: "agentic-ide" });
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     act(() => {
-      screen.getByTestId("workspace-chats-back").click();
+      screen.getByTestId("nav-row-agentic-ide").click();
     });
 
-    expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
     expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
   });
 
@@ -815,7 +819,7 @@ describe("the Agentic IDE's chat face", () => {
     expect(screen.getByTestId("workspace-chats")).toBeTruthy();
   });
 
-  test("gives the navigation back once nothing is open at all", () => {
+  test("drops the chat block once nothing is open at all", () => {
     useEventStore.setState({ activeSection: "agentic-ide" });
     useIdeChatStore.setState({ workspace: null, workspaces: [] });
 
@@ -825,9 +829,9 @@ describe("the Agentic IDE's chat face", () => {
     expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
   });
 
-  test("leaves every other section its navigation", () => {
-    // The IDE is in chat mode, but the user is reading another section:
-    // taking the navigation away there would be a takeover nobody asked for.
+  test("leaves every other section its plain navigation", () => {
+    // The IDE is in chat mode, but the user is reading another section: its
+    // workspace list has no business standing on top of that column.
     useEventStore.setState({ activeSection: "settings" });
 
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);

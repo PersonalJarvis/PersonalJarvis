@@ -78,7 +78,6 @@ describe("the sidebar's chat face", () => {
       addWorkspaceRequest: null,
       stagedPane: "T1",
       view: "chat",
-      sidebarFace: "chats",
       workspace: { id: "w1", name: "Personal Jarvis", path: HERE },
       workspaces: [
         { id: "w1", name: "Personal Jarvis", folder: HERE, active: true },
@@ -215,10 +214,13 @@ describe("the sidebar's chat face", () => {
     expect(useIdeChatStore.getState().sessionRequest).toMatchObject({ nonce: 1 });
   });
 
-  it("hands the navigation back through a button that says so", () => {
+  it("keeps no way out of its own, because it never took the column", () => {
+    // The block used to REPLACE the sections and offer a "Sections" button
+    // back — a swap that cost the sessions whenever a section was wanted
+    // (maintainer report 2026-08-27). It leads the column now and the
+    // sections follow underneath it, so there is nothing to go back from.
     render(<WorkspaceChats />);
-    fireEvent.click(screen.getByTestId("workspace-chats-back"));
-    expect(useIdeChatStore.getState().sidebarFace).toBe("sections");
+    expect(screen.queryByTestId("workspace-chats-back")).toBeNull();
   });
 
   it("says so when nothing is open", () => {
