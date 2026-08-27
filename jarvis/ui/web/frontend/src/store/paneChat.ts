@@ -8,10 +8,13 @@ import {
   type TimelineItem,
 } from "@/components/agentchat/reduce";
 import {
+  applyTerminalPicks,
   fetchTerminalTimeline,
   interruptTerminal,
   promptTerminal,
   type PaneActivity,
+  type PaneRuntimePick,
+  type RuntimePickOffers,
   type TerminalTimelineResponse,
 } from "@/lib/agenticIdeApi";
 import type {
@@ -196,6 +199,27 @@ export function echoEvents(
   ];
 }
 
+/** The three picks a pane runs on, as the draft names them. */
+type PickKey = "model" | "effort" | "permissionMode";
+
+/** The same three, as the picks route spells them beside the draft's names. */
+const PICK_KEYS: readonly (readonly [PaneRuntimePick, PickKey])[] = [
+  ["model", "model"],
+  ["effort", "effort"],
+  ["permission_mode", "permissionMode"],
+];
+
+/** The composer's own name for a pick, for the sentences about it. */
+function pickWord(key: PickKey): string {
+  return translate(
+    key === "model"
+      ? "agent_chat.pick_model"
+      : key === "effort"
+        ? "agent_chat.pick_effort"
+        : "agent_chat.pick_permission",
+  );
+}
+
 export interface PaneChatStoreOptions {
   terminal: string;
   workspaceId: string;
@@ -258,7 +282,13 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
   let timer: number | null = null;
   let running = false;
   let signature = "";
-  const lastReported = { model: "" };
+  /**
+   * What the record last said each pick was, so a pick typed in HERE holds on
+   * the pill until the record says something NEW — the CLI writes the change
+   * down only with its next reply, and a poll in between would otherwise
+   * flip the pill back to the old value for no reason.
+   */
+  const lastReported: Record<PickKey, string> = { model: "", effort: "", permissionMode: "" };
   let unsubscribe: (() => void) | null = null;
 
   const mirror = () => {
@@ -322,14 +352,48 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
       return withProvider(echoed, pid);
     };
 
+    /**
+     * The sentence on each pill the pane cannot change, from what the backend
+     * says its CLI takes while it runs. The provider is always the pane's: the
+     * CLI chose it when it started, and a new chat is where another is picked
+     * (maintainer, 2026-08-27). A backend from before the picks route answers
+     * nothing here; then the model pick goes the way it always did on Claude
+     * Code, and the other two say where they change.
+     */
+    const locksFor = (offers?: RuntimePickOffers): PaneChatState["locks"] => {
+      const live = offers ?? {
+        model: options.agent === "claude",
+        effort: false,
+        permission_mode: false,
+      };
+      const lock = (pick: string) =>
+        translate("agentic_grid.pane_chat.lock_pick")
+          .replace("{0}", options.displayName)
+          .replace("{1}", pick);
+      return {
+        provider: translate("agentic_grid.pane_chat.lock_provider").replace(
+          "{0}",
+          options.displayName,
+        ),
+        ...(live.model ? {} : { model: lock(pickWord("model")) }),
+        ...(live.effort ? {} : { effort: lock(pickWord("effort")) }),
+        ...(live.permission_mode ? {} : { permissionMode: lock(pickWord("permissionMode")) }),
+      };
+    };
+
     const apply = (res: TerminalTimelineResponse) => {
       const pid = providerId();
-      // A model picked here is typed into the pane and shows up in the record
-      // only with the CLI's next reply; until the record SAYS something new,
-      // the pill keeps the pick rather than flipping back for a poll or two.
-      const reportedBefore = lastReported.model;
-      lastReported.model = res.model;
-      const model = res.model !== reportedBefore ? res.model : get().draft.model || res.model;
+      // A pick typed in here shows up in the record only with the CLI's next
+      // reply; until the record SAYS something new, the pill keeps the pick
+      // rather than flipping back for a poll or two.
+      const hold = (key: PickKey, reported: string): string => {
+        const before = lastReported[key];
+        lastReported[key] = reported;
+        return reported !== before ? reported : get().draft[key] || reported;
+      };
+      const model = hold("model", res.model);
+      const effort = hold("effort", res.effort);
+      const permissionMode = hold("permissionMode", res.permission_mode);
       const next: Partial<PaneChatState> = {
         pane: {
           ...get().pane,
@@ -344,17 +408,18 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
           ...get().draft,
           provider: pid,
           model,
-          effort: res.effort,
-          permissionMode: res.permission_mode,
-          buildMode: res.permission_mode === "plan" ? get().draft.buildMode : res.permission_mode,
+          effort,
+          permissionMode,
+          buildMode: permissionMode === "plan" ? get().draft.buildMode : permissionMode,
         },
         activeSession: session({
           provider: pid,
           model,
-          effort: res.effort,
-          permission_mode: res.permission_mode,
+          effort,
+          permission_mode: permissionMode,
           running: res.live,
         }),
+        locks: locksFor(res.runtime_picks),
       };
       const sig = eventsSignature(res.events, res.live);
       if (sig !== signature) {
@@ -411,6 +476,7 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
     };
 
     return {
+      locks: locksFor(undefined),
       surface: "agent",
       ...mirror(),
       sessions: [],
@@ -468,47 +534,92 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
       providerById: (id) => agentStore.getState().providerById(id),
 
       setDraft: async (patch: Partial<ComposerDraft>) => {
-        // What the pane runs on is the CLI's to change. A model pick is typed
-        // in where the CLI takes it as a command; everything else says where
-        // to go rather than showing a pick the pane never received.
-        if (patch.provider !== undefined && patch.provider !== get().draft.provider) {
-          cannotPick(translate("agent_chat.pick_provider"));
-          return;
-        }
-        if (patch.model !== undefined && patch.model !== get().draft.model) {
-          if (options.agent === "claude" && patch.model) {
-            try {
-              await promptTerminal(options.terminal, `/model ${patch.model}`, { compose: false });
-              set({ draft: { ...get().draft, model: patch.model } });
-              get().reload();
-            } catch (reason: unknown) {
-              set({ lastError: reason instanceof Error ? reason.message : String(reason) });
-            }
-          } else {
-            cannotPick(translate("agent_chat.pick_model"));
-          }
-          return;
-        }
-        if (patch.effort !== undefined && patch.effort !== get().draft.effort) {
-          // The composer snaps an off-ladder effort to the nearest level on
-          // its own; that is bookkeeping, not a pick, and gets no toast.
-          const ladder = get().providerById(get().draft.provider)?.effort_levels ?? [];
-          if (get().draft.effort && ladder.includes(get().draft.effort)) {
-            cannotPick(translate("agent_chat.pick_effort"));
-          }
-          return;
-        }
-        if (
-          patch.permissionMode !== undefined &&
-          patch.permissionMode !== get().draft.permissionMode
-        ) {
-          cannotPick(translate("agent_chat.pick_permission"));
+        // What the pane runs on is the CLI's to change, and it changes it on
+        // its own command line: every pick the CLI has a typed command for is
+        // sent there (`POST /terminals/{name}/picks`), the pill takes the
+        // pick at once, and a pick the pane would not take goes back with
+        // the backend's sentence about why. A pick the CLI has no command for
+        // is locked on the pill (`locks`) — the sentence there says where it
+        // changes — so a click never lands here for it; a stale bundle's
+        // click is answered with the same sentence. The provider is the
+        // pane's own from the moment it started (maintainer, 2026-08-27).
+        const draft = get().draft;
+        const locks = get().locks ?? {};
+        if (patch.provider !== undefined && patch.provider !== draft.provider) {
+          if (locks.provider) toast("info", locks.provider);
+          else cannotPick(translate("agent_chat.pick_provider"));
           return;
         }
         // `cwd` is the workspace's folder; a pane does not move.
+        const wanted: Partial<Record<PaneRuntimePick, string>> = {};
+        for (const [wire, key] of PICK_KEYS) {
+          const value = patch[key];
+          if (value === undefined || value === draft[key]) continue;
+          if (key === "effort") {
+            // The composer snaps an off-ladder effort to the nearest level on
+            // its own; that is bookkeeping, not a pick, and is not typed in.
+            const ladder = get().providerById(draft.provider)?.effort_levels ?? [];
+            if (draft.effort && !ladder.includes(draft.effort)) continue;
+          }
+          const locked = locks[key];
+          if (locked) {
+            toast("info", locked);
+            continue;
+          }
+          wanted[wire] = value;
+        }
+        if (!Object.keys(wanted).length) return;
+
+        // The pill reads the pick the moment it is made, as the front page's
+        // does; what the pane declines is put back below, with the reason.
+        const before = { ...draft };
+        const optimistic = { ...draft };
+        for (const [wire, key] of PICK_KEYS) {
+          const value = wanted[wire];
+          if (value !== undefined) optimistic[key] = value;
+        }
+        if (wanted.permission_mode !== undefined && wanted.permission_mode !== "plan") {
+          optimistic.buildMode = wanted.permission_mode;
+        }
+        set({ draft: optimistic, lastError: null });
+        try {
+          const result = await applyTerminalPicks(options.terminal, wanted, options.workspaceId);
+          const settled = { ...get().draft };
+          for (const [wire, key] of PICK_KEYS) {
+            const why = result.declined[wire];
+            if (!why) continue;
+            settled[key] = before[key];
+            if (key === "permissionMode") settled.buildMode = before.buildMode;
+            toast(
+              "warning",
+              translate("agentic_grid.pane_chat.pick_not_taken")
+                .replace("{0}", pickWord(key))
+                .replace("{1}", why),
+            );
+          }
+          set({ draft: settled });
+          // The record catches up with the CLI's next reply; read again now so
+          // the timeline shows the command having gone in.
+          get().reload();
+        } catch (reason: unknown) {
+          const back = { ...get().draft };
+          for (const [wire, key] of PICK_KEYS) if (wanted[wire] !== undefined) back[key] = before[key];
+          back.buildMode = before.buildMode;
+          set({ draft: back, lastError: reason instanceof Error ? reason.message : String(reason) });
+        }
       },
-      setPlan: async () => {
-        cannotPick(translate("agent_chat.plan"));
+      setPlan: async (on) => {
+        const st = get();
+        const locked = st.locks?.permissionMode;
+        if (locked) {
+          toast("info", locked);
+          return;
+        }
+        const back =
+          st.draft.buildMode && st.draft.buildMode !== "plan"
+            ? st.draft.buildMode
+            : (st.providerById(st.draft.provider)?.default_permission_mode ?? "");
+        await st.setDraft({ permissionMode: on ? "plan" : back });
       },
       newChat: () => undefined,
       openSession: () => undefined,

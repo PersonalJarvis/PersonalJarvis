@@ -103,6 +103,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const timeline = useAgentChat((s) => s.timeline);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
+  // The picks this chat cannot take, with the sentence that says why (a pane's
+  // CLI chose its provider when it started; a pick it has no typed command
+  // for waits for a new chat). A disabled pill that says so is the honest
+  // control; one that swallows the click was the reported bug (2026-08-27).
+  const locks = useAgentChat((s) => s.locks);
   const setDraft = useAgentChat((s) => s.setDraft);
   const setPlan = useAgentChat((s) => s.setPlan);
   const send = useAgentChat((s) => s.send);
@@ -525,7 +530,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           fallbackLabel={catalogError ? t("agent_chat.catalog_unavailable") : t("agent_chat.pick_provider")}
           searchPlaceholder={t("agent_chat.search_providers")}
           icon={provider ? undefined : <Bot className="h-3.5 w-3.5" aria-hidden />}
-          disabled={!catalog}
+          disabled={!catalog || Boolean(locks?.provider)}
+          title={locks?.provider}
         />
         <Pick
           testId="composer-model"
@@ -536,7 +542,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           fallbackLabel={draft.model || t("agent_chat.model_default")}
           searchPlaceholder={t("agent_chat.search_models")}
           icon={<Brain className="h-3.5 w-3.5" aria-hidden />}
-          disabled={!provider}
+          disabled={!provider || Boolean(locks?.model)}
+          title={locks?.model}
           className="max-w-[220px]"
         />
         {provider && effortLevels.length > 1 && (
@@ -548,6 +555,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             onChange={(v) => void setDraft({ effort: v })}
             fallbackLabel={effortLabel(draft.effort, t)}
             icon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
+            disabled={Boolean(locks?.effort)}
+            title={locks?.effort}
           />
         )}
         {provider && permissionModes.length > 0 && (
@@ -561,7 +570,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               onChange={(v) => void setDraft({ permissionMode: v })}
               fallbackLabel={t("agent_chat.pick_permission")}
               icon={<ShieldCheck className="h-3.5 w-3.5" aria-hidden />}
-              title={permissionDescription}
+              disabled={Boolean(locks?.permissionMode)}
+              title={locks?.permissionMode ?? permissionDescription}
               className="max-w-[220px]"
             />
           </>
@@ -573,9 +583,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             aria-checked={planOn}
             data-testid="composer-plan"
             onClick={() => void setPlan(!planOn)}
-            title={planOn ? t("agent_chat.plan_hint") : t("agent_chat.build_hint")}
+            disabled={Boolean(locks?.permissionMode)}
+            title={
+              locks?.permissionMode ?? (planOn ? t("agent_chat.plan_hint") : t("agent_chat.build_hint"))
+            }
             className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors",
+              "inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors disabled:opacity-50",
               planOn
                 ? "bg-primary/15 text-primary hover:bg-primary/20"
                 : "text-muted-foreground hover:bg-secondary hover:text-foreground",

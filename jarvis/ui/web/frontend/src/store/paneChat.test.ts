@@ -29,6 +29,7 @@ vi.mock("@/lib/agenticIdeApi", async (importOriginal) => ({
   fetchTerminalTimeline: vi.fn(),
   promptTerminal: vi.fn(),
   interruptTerminal: vi.fn(),
+  applyTerminalPicks: vi.fn(),
 }));
 
 const T0 = 1_787_800_000_000;
@@ -82,6 +83,7 @@ function answer(overrides: Partial<TerminalTimelineResponse> = {}): TerminalTime
     model: "claude-opus-5",
     effort: "xhigh",
     permission_mode: "auto",
+    runtime_picks: { model: true, effort: true, permission_mode: false },
     ...overrides,
   };
 }
@@ -108,6 +110,7 @@ beforeEach(() => {
   vi.mocked(api.fetchTerminalTimeline).mockReset();
   vi.mocked(api.promptTerminal).mockReset();
   vi.mocked(api.interruptTerminal).mockReset();
+  vi.mocked(api.applyTerminalPicks).mockReset();
   useAgentSessionStore.setState({
     providerOptions: () => [CLAUDE_CLI],
     providerById: (id: string) => (id === CLAUDE_CLI.id ? CLAUDE_CLI : null),
@@ -371,27 +374,87 @@ describe("createPaneChatStore", () => {
     expect(api.interruptTerminal).toHaveBeenCalledWith("T7", "ide_test");
   });
 
-  it("a model pick is typed in as the CLI's own command; the other picks say where to go", async () => {
+  it("a pick the CLI takes while it runs goes to the pane and stays on the pill", async () => {
     vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
-    vi.mocked(api.promptTerminal).mockResolvedValue({
+    vi.mocked(api.applyTerminalPicks).mockImplementation(async (_name, picks) => ({
       terminal: "T7",
-      sent: "/model claude-sonnet-5",
-      composed_by: "raw",
-      files: [],
-      submitted: true,
+      applied: { ...picks },
+      declined: {},
+    }));
+    const store = makeStore();
+    store.getState().start();
+    await flush();
+
+    await store.getState().setDraft({ effort: "max" });
+    expect(api.applyTerminalPicks).toHaveBeenCalledWith("T7", { effort: "max" }, "ide_test");
+    expect(store.getState().draft.effort).toBe("max");
+
+    // The record still says "xhigh" until the CLI's next reply; the pill
+    // keeps the pick rather than flipping back on the next poll.
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer({ effort: "xhigh" }));
+    store.getState().reload();
+    await flush();
+    expect(store.getState().draft.effort).toBe("max");
+
+    // Once the record says something NEW, that is what the pill reads.
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer({ effort: "high" }));
+    store.getState().reload();
+    await flush();
+    expect(store.getState().draft.effort).toBe("high");
+
+    await store.getState().setDraft({ model: "claude-sonnet-5" });
+    expect(api.applyTerminalPicks).toHaveBeenLastCalledWith(
+      "T7",
+      { model: "claude-sonnet-5" },
+      "ide_test",
+    );
+    expect(store.getState().draft.model).toBe("claude-sonnet-5");
+    store.getState().stop();
+  });
+
+  it("a pick the CLI only takes at launch is locked on the pill, and the provider always is", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    const store = makeStore();
+    store.getState().start();
+    await flush();
+
+    const locks = store.getState().locks ?? {};
+    expect(locks.provider).toContain("Claude Code");
+    expect(locks.permissionMode).toContain("only when it starts");
+    expect(locks.effort).toBeUndefined();
+    expect(locks.model).toBeUndefined();
+
+    // A stale bundle's click on a locked pill is answered with the same sentence.
+    await store.getState().setDraft({ permissionMode: "default" });
+    expect(api.applyTerminalPicks).not.toHaveBeenCalled();
+    expect(store.getState().draft.permissionMode).toBe("auto");
+    expect(useEventStore.getState().toasts.at(-1)?.message).toContain("only when it starts");
+
+    await store.getState().setDraft({ provider: "openai-codex" });
+    expect(store.getState().draft.provider).toBe("claude-api");
+    expect(useEventStore.getState().toasts.at(-1)?.message).toContain("This chat runs on Claude Code");
+    store.getState().stop();
+  });
+
+  it("a pick the pane declines goes back on the pill, with the pane's reason", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    vi.mocked(api.applyTerminalPicks).mockResolvedValue({
+      terminal: "T7",
+      applied: {},
+      declined: { effort: "T7 kept `/effort max` in its input box instead of taking it." },
     });
     const store = makeStore();
     store.getState().start();
     await flush();
 
-    await store.getState().setDraft({ model: "claude-sonnet-5" });
-    expect(api.promptTerminal).toHaveBeenCalledWith("T7", "/model claude-sonnet-5", { compose: false });
-    expect(store.getState().draft.model).toBe("claude-sonnet-5");
+    await store.getState().setDraft({ effort: "max" });
+    expect(store.getState().draft.effort).toBe("xhigh");
+    expect(useEventStore.getState().toasts.at(-1)?.message).toContain("kept `/effort max`");
 
-    await store.getState().setDraft({ permissionMode: "default" });
-    expect(store.getState().draft.permissionMode).toBe("auto");
-    const toasts = useEventStore.getState().toasts;
-    expect(toasts.at(-1)?.message).toContain("change it in the terminal");
+    vi.mocked(api.applyTerminalPicks).mockRejectedValue(new Error("T7 is not running right now"));
+    await store.getState().setDraft({ effort: "low" });
+    expect(store.getState().draft.effort).toBe("xhigh");
+    expect(store.getState().lastError).toContain("not running");
     store.getState().stop();
   });
 

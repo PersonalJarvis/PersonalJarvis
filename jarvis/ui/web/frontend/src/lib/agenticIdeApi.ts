@@ -780,6 +780,48 @@ export interface TerminalTimelineResponse {
   model: string;
   effort: string;
   permission_mode: string;
+  /**
+   * Which of the three the CLI takes as a typed command while it runs
+   * (`applyTerminalPicks`). Absent on a backend that predates the picks route.
+   */
+  runtime_picks?: RuntimePickOffers;
+}
+
+/** Per pick: can a RUNNING pane of this CLI take it (`/effort max`), or only a launch? */
+export interface RuntimePickOffers {
+  model: boolean;
+  effort: boolean;
+  permission_mode: boolean;
+}
+
+export type PaneRuntimePick = "model" | "effort" | "permission_mode";
+
+/** What `POST /terminals/{name}/picks` answers: the picks taken, and why the rest were not. */
+export interface PaneRuntimePicksResult {
+  terminal: string;
+  applied: Partial<Record<PaneRuntimePick, string>>;
+  declined: Partial<Record<PaneRuntimePick, string>>;
+}
+
+/**
+ * Change what a running pane's agent runs on — the chat stage's pills.
+ *
+ * Typed into the pane as the CLI's own command for each pick it has one for;
+ * the answer says which were taken. Rejects (409) when none could be.
+ */
+export async function applyTerminalPicks(
+  name: string,
+  picks: Partial<Record<PaneRuntimePick, string>>,
+  workspaceId?: string,
+): Promise<PaneRuntimePicksResult> {
+  const query = workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : "";
+  const res = await fetch(`/api/agentic-ide/terminals/${encodeURIComponent(name)}/picks${query}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(picks),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as PaneRuntimePicksResult;
 }
 
 export function fetchTerminalTimeline(

@@ -41,7 +41,7 @@ from jarvis.clis.prober import CliStatusProber
 from jarvis.clis.spec import AuthConfig, CliSpec, InstallMethods, RiskConfig
 from jarvis.terminal.shells import default_shell
 from jarvis.workspace.launch_picks import VALUE as picks_value
-from jarvis.workspace.launch_picks import LaunchPicks, flag_modes
+from jarvis.workspace.launch_picks import LaunchPicks, RuntimePicks, flag_modes
 
 log = logging.getLogger(__name__)
 
@@ -235,6 +235,11 @@ class WorkspaceAgent:
     #: nothing. Declaring it is what makes those three picks work for an entry —
     #: no layer above knows any CLI's flag spelling (AP-21).
     launch_picks: LaunchPicks | None = None
+    #: How a RUNNING pane of this CLI takes the same picks — as its own typed
+    #: commands (``/effort max``), one template per pick. ``None`` means the
+    #: process owns them from the moment it starts: the chat's composer then
+    #: locks those pills for a pane and says a new chat is where they change.
+    runtime_picks: RuntimePicks | None = None
 
     # --- How it behaves once it is running ----------------------------------
     trust: TrustSpec | None = None
@@ -629,6 +634,14 @@ _CLAUDE_PICKS = LaunchPicks(
 #: neither is what keeps a picker from listing choices the endpoint refuses.
 _GLM_PICKS = LaunchPicks(provider="claude-api", permission_args=_CLAUDE_PICKS.permission_args)
 
+#: What Claude Code takes while it runs, read off the installed binary
+#: (2.1.247): ``/model <id>`` and ``/effort <level>`` are typed commands that
+#: apply at once — its changelog names them among the commands that "run
+#: immediately instead of queueing until the turn ends". The permission stance
+#: is not a command: Shift+Tab cycles it, and a cycle cannot be aimed at a
+#: mode, so it stays with the terminal.
+_CLAUDE_RUNTIME = RuntimePicks(model=f"/model {picks_value}", effort=f"/effort {picks_value}")
+
 _CODEX_PICKS = LaunchPicks(
     provider="openai-codex",
     model_args=("--model", picks_value),
@@ -697,6 +710,7 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         "claude",
         "Claude Code",
         launch_picks=_CLAUDE_PICKS,
+        runtime_picks=_CLAUDE_RUNTIME,
         binary="claude",
         npm_package="@anthropic-ai/claude-code",
         homepage="https://claude.com/claude-code",

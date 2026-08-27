@@ -171,6 +171,14 @@ def is_runnable(agent: str) -> bool:
     return workspace_agents.get_agent(agent) is not None
 
 
+#: The three picks a pane runs on, as the sentences about them name them.
+_PICK_WORDS: dict[str, str] = {
+    "model": "model",
+    "effort": "reasoning effort",
+    "permission_mode": "permission stance",
+}
+
+
 def accepts_prompts(agent: str) -> bool:
     """May Jarvis type into this pane from the outside (prompt bar, voice, CLI)?
 
@@ -925,10 +933,17 @@ class Terminal:
     # came back from a restart would quietly drop to the CLI's defaults while
     # its header still claimed the picks it was opened on. A running CLI owns
     # these three from the moment it starts — changing one here would be a
-    # label the process never sees, so nothing writes them after the spawn.
+    # label the process never sees, so nothing writes them after the spawn
+    # EXCEPT `Registry.apply_picks`, which writes one only after the CLI's own
+    # command for it was typed into the pane and left the input line: then the
+    # process has seen it, and the field says what the pane runs on now.
     model: str = ""
     effort: str = ""
     permission_mode: str = ""
+    #: When `apply_picks` last changed each of the three (epoch seconds), so
+    #: the timeline can tell a pick the chat just typed in from the older
+    #: value the CLI's record still carries until its next reply.
+    picked_at: dict[str, float] = field(default_factory=dict)
     status: Status = "pending"
     pty_id: str | None = None
     # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
@@ -2364,9 +2379,7 @@ class Registry:
                 # side by side draws the same picture with one full-height
                 # seam welding its bands together, and a reopen is the moment
                 # to hand it back its per-band seams (see `rows_outermost`).
-                session.layout = layout_tree.rows_outermost(
-                    layout_tree.from_dict(space.layout)
-                )
+                session.layout = layout_tree.rows_outermost(layout_tree.from_dict(space.layout))
             except ValueError as exc:
                 logger.warning(
                     "Agentic IDE: the remembered layout of {} is unreadable, "
@@ -2767,8 +2780,7 @@ class Registry:
                     except Exception:  # noqa: BLE001 — a probe that cannot read
                         # the screen must not keep a slot; log, release.
                         logger.debug(
-                            "Agentic IDE: cold-start readiness check failed; "
-                            "releasing the slot",
+                            "Agentic IDE: cold-start readiness check failed; releasing the slot",
                             exc_info=True,
                         )
             finally:
@@ -4809,6 +4821,107 @@ class Registry:
         # the only one who can push it over the line.
         await announce_prompt(term)
         return term
+
+    async def apply_picks(
+        self,
+        wanted: str,
+        *,
+        workspace_id: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Change what a RUNNING pane runs on, through the CLI's own commands.
+
+        The chat stage's composer shows a pane's model, effort and permission
+        pills, and a pick there used to do nothing but toast (maintainer
+        report, 2026-08-27: "I switched effort to Max, it snapped back to
+        Extra high, and a little error appeared"). A running process cannot be
+        re-flagged, but every CLI that has a typed command for a pick takes it
+        that way — Claude Code's ``/effort max`` — so this types exactly that
+        command and presses Enter, the same keystroke path a prompt takes
+        (``_write_and_confirm``), minus the receipt: a command is not a
+        message and must not appear in the conversation as one.
+
+        Returns, per pick asked for::
+
+            {"applied": {"effort": "max"}, "declined": {"permission_mode": "..."}}
+
+        A pick is applied once its command has left the input line (or was
+        never seen to sit there — the pane took it or dropped it, and the
+        field follows the optimistic reading the prompt path uses too). A
+        pick the CLI has no command for, a value off its ladder, or a pane
+        that would not submit the line is declined with the sentence that
+        says why, so the composer can show it instead of guessing.
+
+        Raises ``SessionError`` when the pane is unknown, not an agent, or not
+        running — the same reasons a prompt cannot be typed.
+        """
+        found = (
+            self._locate(wanted, workspace_id)
+            if workspace_id is not None
+            else self.find_terminal(wanted)
+        )
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        owner, term = found
+        if not accepts_prompts(term.agent):
+            raise SessionError(
+                f"{term.name} is a {agent_display(term.agent).lower()}, not a coding agent — "
+                "there is no model, effort or permission stance to change."
+            )
+        if term.status != "live" or not term.pty_id:
+            raise SessionError(
+                f"{term.name} is not running right now (status: {term.status}) — "
+                "nothing was changed."
+            )
+        asked = {
+            "model": model,
+            "effort": effort,
+            "permission_mode": permission_mode,
+        }
+        display = agent_display(term.agent)
+        applied: dict[str, str] = {}
+        declined: dict[str, str] = {}
+        offers = launch_picks.runtime_picks_for(term.agent).offers()
+        for pick, value in asked.items():
+            if value is None:
+                continue
+            if not offers.get(pick):
+                declined[pick] = (
+                    f"{display} takes its {_PICK_WORDS[pick]} only when it starts — "
+                    "a new chat is where it changes."
+                )
+                continue
+            line = launch_picks.runtime_command(term.agent, pick, value)
+            if not line:
+                declined[pick] = f"{display} does not offer {value!r} as a {_PICK_WORDS[pick]}."
+                continue
+            from . import fleet_actions
+
+            ready = await fleet_actions.wait_for_prompt_ready(
+                owner, [term.name], timeout_s=fleet_actions.READY_TIMEOUT_S
+            )
+            if term.name not in ready:
+                declined[pick] = f"{term.name} is still starting — its input line never appeared."
+                continue
+            submitted = await self._write_and_confirm(term, line, self._manager(), False)
+            if submitted is False:
+                declined[pick] = f"{term.name} kept `{line}` in its input box instead of taking it."
+                continue
+            checked = line.rsplit(" ", 1)[-1]
+            setattr(term, pick, checked)
+            term.picked_at[pick] = time.time()
+            applied[pick] = checked
+            logger.info(
+                "Agentic IDE picks -> {} ({}): {} = {} ({})",
+                term.name,
+                term.agent,
+                pick,
+                checked,
+                "submitted" if submitted else "unconfirmed",
+            )
+        return {"terminal": term.name, "applied": applied, "declined": declined}
 
     async def _write_and_confirm(
         self,

@@ -397,9 +397,81 @@ def offered(agent: str, live: Mapping[str, list[dict[str, Any]]] | None = None) 
     }
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimePicks:
+    """The picks a RUNNING CLI takes as a typed command, in its own spelling.
+
+    The launch flags above are spent the moment a pane opens; from then on the
+    process owns its model, effort and permission stance, and the only way in
+    is the CLI's own command line — ``/effort max`` typed into Claude Code and
+    submitted, which its 2.1 builds apply at once rather than queueing until
+    the turn ends (their changelog says so). Each field is a TEMPLATE like the
+    launch ones, ``""`` where the CLI has no typed command for that pick:
+    Codex opens a picker on ``/model`` and takes no argument, Claude Code's
+    permission stance cycles on Shift+Tab, and a cycle is not a pick. An entry
+    that declares nothing offers nothing at runtime, and the chat's composer
+    then locks that pill and says where the pick is taken instead — never a
+    control that swallows a click (maintainer report, 2026-08-27).
+    """
+
+    model: str = ""
+    effort: str = ""
+    permission_mode: str = ""
+
+    def command(self, pick: str, value: str) -> str:
+        """The line to type for ``pick`` = ``value``, or ``""`` when there is none."""
+        template = getattr(self, pick, "")
+        return template.replace(VALUE, value) if template and value else ""
+
+    def offers(self) -> dict[str, bool]:
+        """Which of the three picks this CLI takes while it runs."""
+        return {
+            "model": bool(self.model),
+            "effort": bool(self.effort),
+            "permission_mode": bool(self.permission_mode),
+        }
+
+
+#: What an entry with no runtime declaration offers: nothing, said plainly.
+_NO_RUNTIME_PICKS: Final[RuntimePicks] = RuntimePicks()
+
+
+def runtime_picks_for(agent: str) -> RuntimePicks:
+    """What ``agent`` takes as a typed command once it runs; empty for none."""
+    from jarvis.workspace import agents as workspace_agents
+
+    spec = workspace_agents.get_agent(agent)
+    picks = None if spec is None else spec.runtime_picks
+    return picks if picks is not None else _NO_RUNTIME_PICKS
+
+
+def runtime_command(agent: str, pick: str, value: str) -> str:
+    """The command that sets ``pick`` on a running ``agent`` — ``""`` when it has none.
+
+    ``value`` is checked the way a launch value is: an effort level has to be
+    on this entry's ladder and a model one it could be launched on. The string
+    ends up on a PTY as keystrokes, which is exactly one place a stray line
+    must not reach.
+    """
+    if pick == "effort":
+        checked = normalize_effort(agent, value)
+    elif pick == "model":
+        checked = normalize_model(agent, value)
+    elif pick == "permission_mode":
+        checked = normalize_permission(agent, value)
+    else:
+        return ""
+    if not checked:
+        return ""
+    return runtime_picks_for(agent).command(pick, checked)
+
+
 __all__ = [
     "VALUE",
     "LaunchPicks",
+    "RuntimePicks",
+    "runtime_command",
+    "runtime_picks_for",
     "default_effort",
     "default_permission",
     "effort_levels",

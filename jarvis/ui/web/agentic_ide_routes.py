@@ -627,6 +627,14 @@ class PromptAttachment(BaseModel):
     )
 
 
+class PicksRequest(BaseModel):
+    """What a running pane should run on from now — any subset of the three."""
+
+    model: str | None = Field(default=None, max_length=120)
+    effort: str | None = Field(default=None, max_length=32)
+    permission_mode: str | None = Field(default=None, max_length=32)
+
+
 class PromptRequest(BaseModel):
     prompt: str = Field(
         max_length=MAX_PROMPT_CHARS,
@@ -3165,6 +3173,12 @@ async def terminal_timeline(name: str, workspace: str | None = None) -> dict:
         "activity": reading.activity,
     }
     handle = term.resume
+    from jarvis.workspace import launch_picks
+
+    # Which of the three the CLI takes as a typed command while it runs
+    # (`POST /terminals/{name}/picks`). The composer locks the pills it does
+    # not, and says a new chat is where those change.
+    base["runtime_picks"] = launch_picks.runtime_picks_for(term.agent).offers()
     # What the pane was OPENED on. The transcript is the better witness — it
     # reports what the CLI actually used — but it only speaks once a turn has
     # finished, and a CLI that records none of the three never speaks at all.
@@ -3196,10 +3210,28 @@ async def terminal_timeline(name: str, workspace: str | None = None) -> dict:
         # What the pane runs on, by its own account — the composer's pills —
         # falling back to what it was opened on for whatever the CLI's record
         # leaves out (see ``empty`` above).
-        "model": read_result.model or term.model,
-        "effort": read_result.effort or term.effort,
-        "permission_mode": read_result.permission_mode or term.permission_mode,
+        # ...except for a pick the pane took THROUGH the chat: `apply_picks`
+        # wrote it once the CLI's command left the input line, and the record
+        # only catches up with the next reply. Until the record has written
+        # anything newer than that pick, the pane's own field is the newer
+        # witness — which is what keeps a pill from flipping back for a poll
+        # or two after a pick. A change typed in the terminal by hand is the
+        # record's to report, as before.
+        **_picks_now(term, read_result),
     }
+
+
+def _picks_now(term: Any, read_result: Any) -> dict[str, str]:
+    """The pane's model / effort / permission stance, by the newest witness."""
+    events = read_result.events or []
+    newest_ms = max((int(e.get("ts_ms") or 0) for e in events), default=0)
+    out: dict[str, str] = {}
+    for pick in ("model", "effort", "permission_mode"):
+        recorded = getattr(read_result, pick, "") or ""
+        own = getattr(term, pick, "") or ""
+        picked_ms = term.picked_at.get(pick, 0.0) * 1000
+        out[pick] = own if own and picked_ms > newest_ms else (recorded or own)
+    return out
 
 
 @router.post(
@@ -3224,6 +3256,45 @@ async def terminal_interrupt(name: str, workspace: str | None = None) -> dict:
     if not registry.write(term.name, "\x1b", session.id):
         raise HTTPException(status_code=409, detail=f"{term.name} is not running.")
     return {"terminal": term.name, "sent": "escape"}
+
+
+@router.post(
+    "/terminals/{name}/picks",
+    summary="Change what one running terminal's agent runs on (model, effort, permissions)",
+)
+async def terminal_picks(name: str, req: PicksRequest, workspace: str | None = None) -> dict:
+    """Type the CLI's own command for each pick into the pane — the chat stage's pills.
+
+    A running process keeps the model, effort and permission stance it was
+    launched with; what changes them is the CLI's own command line, and only
+    for the picks the CLI has a command for (``jarvis.workspace.launch_picks
+    .RuntimePicks``). The answer says which picks were taken and, for each
+    that was not, why — the composer shows that sentence beside the pill
+    instead of a pick that quietly did nothing.
+
+    409 when the pane is not running or NO pick could be taken; 200 with the
+    per-pick verdicts otherwise.
+    """
+    registry = get_registry()
+    if req.model is None and req.effort is None and req.permission_mode is None:
+        raise HTTPException(status_code=422, detail="Nothing to change: no pick was given.")
+    try:
+        result = await registry.apply_picks(
+            name,
+            workspace_id=workspace,
+            model=req.model,
+            effort=req.effort,
+            permission_mode=req.permission_mode,
+        )
+    except SessionError as exc:
+        status = 404 if "no terminal" in str(exc).lower() else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    if not result["applied"]:
+        raise HTTPException(
+            status_code=409,
+            detail=" ".join(result["declined"].values()) or "The pane took none of the picks.",
+        )
+    return result
 
 
 @router.get(

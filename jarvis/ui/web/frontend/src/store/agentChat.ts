@@ -126,6 +126,15 @@ export interface AgentChatStore {
   draft: ComposerDraft;
   busy: boolean;
   lastError: string | null;
+  /**
+   * The picks this chat cannot take, each with the sentence that says why —
+   * the composer disables that pill and shows the sentence on it. Absent (a
+   * session the chat runs itself) means every pick is live. A pane's store
+   * sets these: its CLI chose its provider the moment it started, and takes
+   * the other three only where it has a typed command for them
+   * (`store/paneChat`, `RuntimePickOffers`).
+   */
+  locks?: Partial<Record<"provider" | "model" | "effort" | "permissionMode", string>>;
 
   loadCatalog: () => Promise<void>;
   loadSessions: () => Promise<void>;
