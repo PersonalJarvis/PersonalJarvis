@@ -36,6 +36,34 @@ describe("agentToolView", () => {
     expect(agentToolView("Task", { prompt: "go" }).family).toBe("agent");
   });
 
+  it("reads the other CLIs' tool names and argument spellings the same way", () => {
+    // Grok Build
+    expect(agentToolView("read_file", { target_file: "a.py" })).toMatchObject({
+      family: "read",
+      summary: "a.py",
+    });
+    expect(agentToolView("search_replace", { target_file: "a.py" }).family).toBe("edit");
+    expect(agentToolView("list_dir", { target_directory: "src" }).summary).toBe("src");
+    // OpenCode
+    expect(agentToolView("read", { filePath: "run.bat" }).summary).toBe("run.bat");
+    // Antigravity
+    expect(agentToolView("find_by_name", { Pattern: "*.png", SearchDirectory: "src" })).toMatchObject({
+      family: "search",
+      summary: "*.png",
+    });
+    expect(agentToolView("run_command", { CommandLine: "npm test" })).toMatchObject({
+      family: "shell",
+      summary: "npm test",
+    });
+    expect(agentToolView("write_to_file", { TargetFile: "x.md" }).family).toBe("write");
+    expect(agentToolView("view_file", { AbsolutePath: "C:/w/a.png" }).family).toBe("read");
+    // Kimi
+    expect(agentToolView("ReadFile", { path: "NOTES.md" })).toMatchObject({
+      family: "read",
+      summary: "NOTES.md",
+    });
+  });
+
   it("names an MCP call after its server and wears the vendor mark when there is one", () => {
     const gh = agentToolView("mcp__github__create_issue", { title: "Bug" });
     expect(gh.family).toBe("mcp");

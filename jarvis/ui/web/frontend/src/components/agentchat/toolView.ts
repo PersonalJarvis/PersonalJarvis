@@ -47,14 +47,22 @@ export interface AgentToolView {
   family: "shell" | "edit" | "write" | "read" | "search" | "web" | "agent" | "plan" | "ask" | "skill" | "tools" | "mcp" | "jarvis" | "other";
 }
 
-/** Claude Code, Codex and agy tool names — the agent's own vocabulary. */
+/**
+ * Claude Code, Codex, Grok Build, OpenCode, Kimi and agy tool names — the
+ * agent's own vocabulary, one regex per family. A name none of them match
+ * still gets its row; it just wears the plain wrench.
+ */
 const CLI_TOOLS: Array<[RegExp, AgentToolView["family"], LucideIcon]> = [
   [/^(bash|powershell|shell|run_?command|command|exec|terminal|cmd)$/i, "shell", TerminalSquare],
-  [/^(edit|multi_?edit|apply_?patch|str_replace(_based_edit_tool)?|notebook_?edit)$/i, "edit", FileDiff],
-  [/^(write|create_?file|write_?file)$/i, "write", FilePen],
-  [/^(read|cat|view|open_?file|read_?file)$/i, "read", FileText],
-  [/^(glob|ls|list_?dir(ectory)?)$/i, "search", FolderSearch],
-  [/^(grep|search|find|rg|code_?search)$/i, "search", Search],
+  [
+    /^(edit|multi_?edit|apply_?patch|str_replace(_based_edit_tool)?|notebook_?edit|search_?replace|(multi_?)?replace_?file_?content|edit_?file)$/i,
+    "edit",
+    FileDiff,
+  ],
+  [/^(write|create_?file|write_?file|write_?to_?file)$/i, "write", FilePen],
+  [/^(read|cat|view|open_?file|read_?file|view_?file|read_?media_?file|view_?code_?item)$/i, "read", FileText],
+  [/^(glob|ls|list_?dir(ectory)?|find_?by_?name)$/i, "search", FolderSearch],
+  [/^(grep|search|find|rg|code_?search|grep_?search|search_?web)$/i, "search", Search],
   [/^tool_?search$/i, "tools", PackageSearch],
   [/^(web_?fetch|web_?search|fetch|browse|http)$/i, "web", Globe],
   [/^(agent|task|sub_?agent|spawn(_?agents?)?|delegate)$/i, "agent", Bot],
@@ -74,11 +82,11 @@ const CLI_TOOLS: Array<[RegExp, AgentToolView["family"], LucideIcon]> = [
  * first and falls through to the generic list after.
  */
 const SUMMARY_KEYS: Record<string, string[]> = {
-  shell: ["command", "cmd", "script"],
-  search: ["pattern", "query", "glob", "path", "file_path"],
-  read: ["file_path", "path", "notebook_path", "url"],
-  write: ["file_path", "path"],
-  edit: ["file_path", "path", "notebook_path"],
+  shell: ["command", "CommandLine", "cmd", "script"],
+  search: ["pattern", "Pattern", "query", "Query", "glob", "path", "target_directory", "SearchDirectory", "file_path"],
+  read: ["file_path", "path", "target_file", "filePath", "AbsolutePath", "absolute_path", "notebook_path", "url"],
+  write: ["file_path", "path", "target_file", "filePath", "TargetFile", "AbsolutePath"],
+  edit: ["file_path", "path", "target_file", "filePath", "TargetFile", "AbsolutePath", "notebook_path"],
   web: ["url", "query", "prompt"],
   agent: ["description", "prompt", "task"],
   plan: ["description", "plan", "todos"],
@@ -89,11 +97,17 @@ const SUMMARY_KEYS: Record<string, string[]> = {
 
 const GENERIC_SUMMARY_KEYS = [
   "command",
+  "CommandLine",
   "cmd",
   "pattern",
+  "Pattern",
   "query",
+  "Query",
   "file_path",
   "path",
+  "target_file",
+  "filePath",
+  "AbsolutePath",
   "url",
   "prompt",
   "description",
