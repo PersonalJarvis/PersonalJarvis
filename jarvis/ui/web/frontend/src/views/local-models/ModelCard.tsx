@@ -129,13 +129,16 @@ export function ModelCard({
           </div>
         )}
       </div>
-      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+      {/* Two lines reserved: a sentence that wraps on a narrow card must
+          not push this card's picker below its neighbours'. */}
+      <p className="mt-1 min-h-[2.5rem] text-xs leading-relaxed text-muted-foreground">
         {t(`local_models.jobs.${row.id}_purpose`)}
       </p>
 
       {/* The model. The largest thing on the card, because it is the answer
-          the card exists to give. */}
-      <div className="mt-3.5 min-h-[3.25rem]">
+          the card exists to give. Fixed height: the pickers below are scanned
+          as a column and must line up across cards that carry a fact more. */}
+      <div className="mt-3.5 min-h-[4.5rem]">
         {row.current ? (
           <>
             <p
@@ -160,22 +163,24 @@ export function ModelCard({
               : t("local_models.jobs.empty")}
           </p>
         )}
+        {/* Speech runs with a window sized for this machine; a call is
+            judged by its first word, so that number belongs on the card. */}
+        {row.id === "voice" && row.context_tokens ? (
+          <p
+            className="mt-1 text-[11px] leading-snug text-muted-foreground"
+            data-testid="voice-context"
+          >
+            {fill(
+              t(
+                row.context_source === "manual"
+                  ? "local_models.roles.voice_context_manual"
+                  : "local_models.roles.voice_context_auto",
+              ),
+              { context: contextLabel(row.context_tokens) },
+            )}
+          </p>
+        ) : null}
       </div>
-
-      {/* Speech runs with a window sized for this machine; a call is judged
-          by its first word, so that number belongs on the card. */}
-      {row.id === "voice" && row.context_tokens ? (
-        <p className="mt-1.5 text-[11px] text-muted-foreground" data-testid="voice-context">
-          {fill(
-            t(
-              row.context_source === "manual"
-                ? "local_models.roles.voice_context_manual"
-                : "local_models.roles.voice_context_auto",
-            ),
-            { context: contextLabel(row.context_tokens) },
-          )}
-        </p>
-      ) : null}
 
       {/* The memory bar: this model against this machine's graphics memory. */}
       {state !== "blocked" && (
