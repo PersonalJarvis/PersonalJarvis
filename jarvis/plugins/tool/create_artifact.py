@@ -27,12 +27,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import Any, Final
+from uuid import UUID
 
 from jarvis.artifacts.brand_marks import find_brand_marks
-from jarvis.artifacts.brief import build_artifact_brief
+from jarvis.artifacts.brief import ArtifactBrief, build_artifact_brief
 from jarvis.artifacts.locate import locate_artifact
+from jarvis.artifacts.source_data import (
+    SourceNeed,
+    fetch_source_data,
+    plan_source_data,
+    render_source_data,
+    unavailable_source_data,
+    wants_sample_data,
+)
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     JarvisAgentAnnouncement,
@@ -53,6 +63,9 @@ ARTIFACTS_SECTION: Final = "visualization"
 #: pattern ``spawn_worker`` uses).
 ManagerResolver = Callable[[], Any | None]
 KontrolliererResolver = Callable[[], Any | None]
+#: The router's built tool set by name — read at fetch time, so the dict the
+#: factory is still filling when this tool is constructed is seen complete.
+ToolsResolver = Callable[[], Mapping[str, Any]]
 
 #: The brief carries the user's request verbatim; this caps a runaway model
 #: summary, not a real request. Anything longer is still a request — clipped.
@@ -156,7 +169,18 @@ class CreateArtifactTool:
         manager_resolver: ManagerResolver | None = None,
         kontrollierer: Any | None = None,
         kontrollierer_resolver: KontrolliererResolver | None = None,
+        executor: Any | None = None,
+        tools_resolver: ToolsResolver | None = None,
     ) -> None:
+        """
+        ``executor`` (the ``ToolExecutor``) and ``tools_resolver`` (the router's
+        built tool set, read lazily because the set is still being filled when
+        this tool is constructed) are what lets a page about the user's own
+        mail or calendar be built from FACTS: the tool reads those plugins
+        itself before the brief is composed (:mod:`jarvis.artifacts.source_data`).
+        Without them the brief still names every such source as unavailable,
+        so the worker says so on the page instead of inventing an inbox.
+        """
         if manager is None and manager_resolver is None:
             raise ValueError("CreateArtifactTool requires 'manager' or 'manager_resolver'")
         self._bus = bus
@@ -164,6 +188,8 @@ class CreateArtifactTool:
         self._manager_resolver = manager_resolver
         self._kontrollierer = kontrollierer
         self._kontrollierer_resolver = kontrollierer_resolver
+        self._executor = executor
+        self._tools_resolver = tools_resolver
 
     # -- resolvers ----------------------------------------------------------
 
@@ -227,16 +253,34 @@ class CreateArtifactTool:
         # The original marks for the brands the request names ride along in the
         # brief (the worker's workspace holds no repo); a request that names
         # none adds one rule: text, never a lettered tile in a logo's place.
-        brief = build_artifact_brief(
-            request,
-            title=previous.title if previous else title,
-            language=language,
-            previous_html=previous.html if previous else None,
-            previous_filename=previous.file.name if previous else None,
-            brand_marks=find_brand_marks(f"{title} {request}"),
-        )
+        brand_marks = find_brand_marks(f"{title} {request}")
+
+        def build(source_data: str | None) -> ArtifactBrief:
+            return build_artifact_brief(
+                request,
+                title=previous.title if previous else title,
+                language=language,
+                previous_html=previous.html if previous else None,
+                previous_filename=previous.file.name if previous else None,
+                brand_marks=brand_marks,
+                source_data=source_data,
+            )
+
+        # The brief without facts names the file and the title now; the one
+        # the worker reads is composed in the background, after the facts.
+        brief = build(None)
         kontrollierer = self._resolve_kontrollierer()
         utterance = _utterance(ctx) or request
+        # A page about the user's own mail or calendar is built from what
+        # Jarvis reads there — fetched in the background, past the voice
+        # budget, before the mission is composed. A request for a sample /
+        # mock-up wants made-up items and gets none fetched (the brief tells
+        # the worker to label them).
+        needs = (
+            ()
+            if wants_sample_data(f"{utterance}\n{request}")
+            else plan_source_data(f"{utterance}\n{request}")
+        )
         # The mission dispatch contract is de/en; an "es" turn keeps the German
         # mission readback (the same cap spawn_worker applies).
         mission_language = language if language in ("de", "en") else "de"
@@ -260,10 +304,12 @@ class CreateArtifactTool:
         # ``_cancel_all_background_tasks`` cancels by it.
         asyncio.create_task(
             self._background_dispatch(
-                brief.prompt,
+                build,
+                needs,
                 utterance,
                 manager,
                 kontrollierer,
+                trace_id=ctx.trace_id,
                 mission_language=mission_language,
                 readback_language=language,
             ),
@@ -303,24 +349,65 @@ class CreateArtifactTool:
             ),
         )
 
+    async def _source_data(
+        self, needs: tuple[SourceNeed, ...], *, trace_id: UUID, utterance: str
+    ) -> str | None:
+        """The brief's ``## Source data`` section for *needs* — the facts read
+        through the executor, or every source marked unavailable when the tool
+        was built without one. None when the request names no such data."""
+        if not needs:
+            return None
+        tools: Mapping[str, Any] = {}
+        if self._tools_resolver is not None:
+            try:
+                tools = self._tools_resolver() or {}
+            except Exception as exc:  # noqa: BLE001 — a broken resolver reads as "no tools"
+                log.warning("create_artifact: tools resolver failed: %s", exc)
+                tools = {}
+        if self._executor is None or not tools:
+            log.warning(
+                "create_artifact: no executor/tools wired — %s stay unavailable in the brief",
+                ", ".join(n.key for n in needs),
+            )
+            data = unavailable_source_data(needs)
+        else:
+            data = await fetch_source_data(
+                needs,
+                tools=tools,
+                executor=self._executor,
+                trace_id=trace_id,
+                utterance=utterance,
+                now=datetime.now().astimezone(),
+            )
+        log.info(
+            "create_artifact: source data %s",
+            ", ".join(f"{s.need.key}={s.status}({len(s.items)})" for s in data.sections),
+        )
+        return render_source_data(data)
+
     async def _background_dispatch(
         self,
-        prompt: str,
+        build: Callable[[str | None], ArtifactBrief],
+        needs: tuple[SourceNeed, ...],
         utterance: str,
         manager: Any,
         kontrollierer: Any | None,
         *,
+        trace_id: UUID,
         mission_language: str,
         readback_language: str,
     ) -> None:
-        """Persist the mission and run it — the two-step contract spawn_worker
-        documents (dispatch → PENDING, run_mission → APPROVED/FAILED).
+        """Read the facts, compose the brief, persist the mission and run it —
+        the two-step contract spawn_worker documents (dispatch → PENDING,
+        run_mission → APPROVED/FAILED).
 
         Every dead end becomes a spoken failure through the same completion
         event a finished mission uses, never a log line alone (AU-11): the
         user already heard a promise.
         """
         try:
+            source_data = await self._source_data(needs, trace_id=trace_id, utterance=utterance)
+            prompt = build(source_data).prompt
             mission_id = await manager.dispatch(
                 prompt=prompt,
                 language=mission_language,

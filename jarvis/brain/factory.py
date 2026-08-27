@@ -515,11 +515,20 @@ def _load_tools_for_tier(
                 # spawn-worker (AD-OC1: the stack bootstraps after the brain).
                 # Publishes NavigateSidebar("visualization") on dispatch so the
                 # Artifacts section shows the build as it happens.
+                #
+                # The executor and the router's tool set (read lazily — the
+                # dict is still being filled here) let the tool read the user's
+                # mail / calendar plugins itself before it composes the brief,
+                # so a page about the user's own data is built from facts the
+                # harness fetched, not from what a worker with no account
+                # access imagines (forensic 2026-08-27, mission 01a0426e-8d79).
                 inst = cls(
                     bus=bus,
                     manager=mission_manager,
                     manager_resolver=_resolve_mission_manager,
                     kontrollierer_resolver=_resolve_kontrollierer,
+                    executor=executor,
+                    tools_resolver=lambda: tools,
                 )
             elif ep.name == "whoami":
                 inst = cls(profile=user_profile, people=people)

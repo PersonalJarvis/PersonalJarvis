@@ -104,6 +104,145 @@ async def test_dispatches_the_brief_and_runs_the_mission() -> None:
     assert nav.section == "visualization"
 
 
+class _Tool:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _FakeExecutor:
+    """Answers reads from a script and records that every call came through
+    it — the tool never touches ``Tool.execute`` itself (AP-3)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def execute(self, tool: Any, args: dict[str, Any], **_: Any) -> Any:
+        from jarvis.core.protocols import ToolResult
+
+        self.calls.append((tool.name, dict(args)))
+        if tool.name == "google_calendar":
+            event = {"summary": "Zahnarzt", "start": "2026-08-27T11:30:00+02:00"}  # i18n-allow
+            return ToolResult(success=True, output={"events": [event]})
+        if args.get("action") == "list_messages":
+            return ToolResult(success=True, output={"messages": [{"id": "m1"}]})
+        return ToolResult(
+            success=True,
+            output={
+                "from": "Real Person <real@example.com>",
+                "subject": "Rechnung 4711",  # i18n-allow
+                "date": "Thu, 27 Aug 2026 08:42:00 +0200",
+                "labelIds": ["INBOX"],
+                "snippet": "Anbei",  # i18n-allow
+                "body": "Die Rechnung.",  # i18n-allow
+            },
+        )
+
+
+async def _settle_fetch() -> None:
+    """The background task now reads two plugins before it dispatches."""
+    for _ in range(40):
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_a_page_about_the_users_mail_and_calendar_is_built_from_fetched_facts() -> None:
+    """Forensic 2026-08-27: the briefing was invented because the worker had
+    no data. Now the tool reads the plugins through the executor first and
+    the brief carries the items — and the rule that nothing else may appear."""
+    bus, manager, kontrollierer = _FakeBus(), _FakeManager(), _FakeKontrollierer()
+    executor = _FakeExecutor()
+    tools = {"gmail": _Tool("gmail"), "google_calendar": _Tool("google_calendar")}
+    tool = CreateArtifactTool(
+        bus,
+        manager=manager,
+        kontrollierer=kontrollierer,
+        executor=executor,
+        tools_resolver=lambda: tools,
+    )
+    result = await tool.execute(
+        {
+            "title": "Morning Briefing",
+            "request": (
+                "Die heutigen Termine aus dem Kalender "  # i18n-allow
+                "und wichtige Mails aus Gmail."  # i18n-allow
+            ),
+        },
+        _ctx(utterance="mach mir ein morning briefing als artefakt"),  # i18n-allow
+    )
+    await _settle_fetch()
+
+    assert result.success is True
+    # Nothing was read on the voice path: the ack returned before the fetch.
+    assert len(manager.dispatched) == 1
+    prompt = manager.dispatched[0]["prompt"]
+    assert "## Facts, never inventions" in prompt
+    assert "## Source data — the only facts about the user's own data" in prompt
+    assert "### Google Calendar — available" in prompt
+    assert '"summary": "Zahnarzt"' in prompt  # i18n-allow
+    assert "### Gmail inbox — available" in prompt
+    assert '"subject": "Rechnung 4711"' in prompt  # i18n-allow
+    assert [c[1]["action"] for c in executor.calls] == [
+        "list_events",
+        "list_messages",
+        "get_message",
+    ]
+    assert kontrollierer.ran == ["mission-1"]
+
+
+@pytest.mark.asyncio
+async def test_without_data_access_the_brief_names_every_source_unavailable() -> None:
+    manager = _FakeManager()
+    tool = CreateArtifactTool(_FakeBus(), manager=manager, kontrollierer=_FakeKontrollierer())
+    await tool.execute(
+        {"title": "Inbox", "request": "Show my inbox as a page."}, _ctx(language="en")
+    )
+    await _settle_fetch()
+    prompt = manager.dispatched[0]["prompt"]
+    assert "### Gmail inbox — UNAVAILABLE" in prompt
+    assert "no access to the user's accounts" in prompt
+    assert "### Google Calendar" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_request_without_personal_data_fetches_nothing() -> None:
+    manager = _FakeManager()
+    executor = _FakeExecutor()
+    tool = CreateArtifactTool(
+        _FakeBus(),
+        manager=manager,
+        kontrollierer=_FakeKontrollierer(),
+        executor=executor,
+        tools_resolver=lambda: {"gmail": _Tool("gmail")},
+    )
+    await tool.execute(
+        {"title": "Plans", "request": "Compare the three plans by price."}, _ctx(language="en")
+    )
+    await _settle_fetch()
+    assert executor.calls == []
+    assert "## Source data" not in manager.dispatched[0]["prompt"]
+    assert "## Facts, never inventions" in manager.dispatched[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_a_sample_request_fetches_nothing_either() -> None:
+    manager = _FakeManager()
+    executor = _FakeExecutor()
+    tool = CreateArtifactTool(
+        _FakeBus(),
+        manager=manager,
+        kontrollierer=_FakeKontrollierer(),
+        executor=executor,
+        tools_resolver=lambda: {"gmail": _Tool("gmail")},
+    )
+    await tool.execute(
+        {"title": "Demo", "request": "A demo inbox dashboard with sample mails."},
+        _ctx(language="en"),
+    )
+    await _settle_fetch()
+    assert executor.calls == []
+    assert "## Source data" not in manager.dispatched[0]["prompt"]
+
+
 @pytest.mark.asyncio
 async def test_a_brain_supplied_ack_is_spoken_verbatim() -> None:
     tool = CreateArtifactTool(

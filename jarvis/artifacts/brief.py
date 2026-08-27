@@ -62,9 +62,37 @@ _NON_SLUG_RE: Final = re.compile(r"[^a-z0-9]+")
 _QUALITY_LEAD: Final = (
     "Deliver a complete, polished, production-quality artifact that fully "
     "satisfies the request below. A skeleton, stub, placeholder or "
-    '"content follows" shell is a FAILURE — never ship one. If a detail is '
-    "unspecified, pick a rich, sensible default and build the finished page."
+    '"content follows" shell is a FAILURE — never ship one. If a detail of the '
+    "DESIGN is unspecified — layout, order, colour, the wording of a label — "
+    "pick a rich, sensible default and build the finished page. A FACT is "
+    "never defaulted: see 'Facts, never inventions' below."
 )
+
+# The rule the forensic of 2026-08-27 was missing (mission 01a0426e-8d79: a
+# "morning briefing from my calendar and mail" built by a worker with no
+# data access came back full of invented senders, subjects and meetings —
+# the old quality lead's "pick a rich default" read as permission). A
+# worker sees no account of the user's; what it may state about that user
+# is exactly what the brief carries, and an honest empty section beats a
+# plausible fiction every time.
+FACTS_RULE: Final = """\
+## Facts, never inventions
+The page is a factual document about THIS user. Every name, sender, subject, \
+appointment, contact, amount, date, quote and number on it comes from the request \
+or from the "Source data" section — nothing else.
+- Never invent personal data: no made-up emails, senders, meetings, colleagues, \
+companies, deadlines, balances or figures — not as an "example", not to fill a \
+column, not to make the page look complete.
+- Where the request asks for the user's own data (inbox, calendar, contacts, \
+files, spending, messages …) and the Source data section carries nothing for it \
+— missing, "nothing there", or "UNAVAILABLE" — the page says exactly that in \
+that section, in one plain sentence (e.g. "Gmail is not connected — no inbox \
+data was available to this build"), and leaves the section otherwise empty. A \
+page that is honest and half-empty is CORRECT; a page full of plausible fiction \
+is a FAILURE.
+- Sample data is allowed only when the request itself asks for a sample, demo, \
+mock-up or template — and then every sample element is visibly labelled as \
+sample data on the page itself."""
 
 _LANGUAGE_NAMES: Final[dict[str, str]] = {
     "de": "German",
@@ -120,6 +148,7 @@ def build_artifact_brief(
     previous_html: str | None = None,
     previous_filename: str | None = None,
     brand_marks: Sequence[BrandMark] = (),
+    source_data: str | None = None,
 ) -> ArtifactBrief:
     """Compose the worker instruction for one artifact.
 
@@ -127,6 +156,12 @@ def build_artifact_brief(
         request: what the user wants on the page — the content, the data,
             the style wishes — in the user's own words or the brain's faithful
             summary of them. Never empty; the caller validates.
+        source_data: the rendered ``## Source data`` section
+            (:func:`jarvis.artifacts.source_data.render_source_data`) — the
+            facts Jarvis read from the user's accounts for a page about their
+            own mail or calendar, or the honest "unavailable" notes when it
+            could not. Empty/None when the request names no such data. The
+            caller fetches; this function stays free of I/O.
         title: the artifact's title; names the file and the ``<title>``.
         language: the turn's output language code (de / en / es). The page's
             visible text is written in it.
@@ -176,10 +211,14 @@ def build_artifact_brief(
                 "label, caption and note. Code identifiers and comments stay English.",
                 "- Responsive from 360 px to 1600 px; the page never scrolls sideways.",
                 "- Real content, never filler: the numbers, facts and data the request "
-                "names go into the page; a missing fact becomes a clearly labelled "
-                "assumption — never lorem ipsum, never 'TODO'.",
+                "names go into the page; a missing GENERAL fact (a rate, a definition) "
+                "becomes a clearly labelled assumption — never lorem ipsum, never "
+                "'TODO'. A missing fact about the USER is never assumed: see "
+                "'Facts, never inventions'.",
             ]
         ),
+        FACTS_RULE,
+        *([source_data.strip()] if source_data and source_data.strip() else []),
         READ_THE_REQUEST,
         DESIGN_SYSTEM,
         "\n".join(
@@ -227,6 +266,7 @@ def build_artifact_brief(
 
 
 __all__ = [
+    "FACTS_RULE",
     "MAX_PREVIOUS_HTML_CHARS",
     "ArtifactBrief",
     "artifact_filename",

@@ -118,3 +118,43 @@ def test_brief_is_deterministic() -> None:
     a = build_artifact_brief("Same.", title="Same", language="es")
     b = build_artifact_brief("Same.", title="Same", language="es")
     assert a == b
+
+
+def test_facts_rule_forbids_invented_personal_data_and_defaults_only_design() -> None:
+    """The forensic of 2026-08-27: a briefing built with no data came back
+    full of invented senders and meetings. The lead now defaults DESIGN only,
+    and the facts rule names the honest empty section as the correct page."""
+    prompt = build_artifact_brief("A morning briefing.", title="Briefing", language="en").prompt
+    lead = prompt.split("\n\n", 1)[0]
+    assert "production-quality" in lead  # the rail still strips it by this phrase
+    assert "detail of the DESIGN is unspecified" in lead
+    assert "A FACT is never defaulted" in lead
+    assert "## Facts, never inventions" in prompt
+    assert "Never invent personal data" in prompt
+    assert "no inbox data was available to this build" in prompt
+    assert "honest and half-empty is CORRECT" in prompt
+    assert "labelled as sample data" in prompt
+    # The rule sits with the build rules, before the design guide.
+    assert prompt.index("## Facts, never inventions") < prompt.index("## Read the request first")
+
+
+def test_source_data_rides_between_the_facts_rule_and_the_design_guide() -> None:
+    section = (
+        "## Source data — the only facts about the user's own data\n"
+        "### Gmail inbox — available"
+    )
+    with_data = build_artifact_brief(
+        "My mail as a page.", title="Mail", language="en", source_data=section
+    ).prompt
+    assert section in with_data
+    assert (
+        with_data.index("## Facts, never inventions")
+        < with_data.index(section)
+        < with_data.index("## Read the request first")
+    )
+    # Empty / whitespace source data adds nothing — the brief stays byte-identical.
+    plain = build_artifact_brief("My mail as a page.", title="Mail", language="en").prompt
+    assert build_artifact_brief(
+        "My mail as a page.", title="Mail", language="en", source_data="  \n"
+    ).prompt == plain
+    assert "## Source data" not in plain
