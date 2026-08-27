@@ -2,13 +2,16 @@
  * Local models, front page: a grid of jobs, then the server that runs them.
  *
  * The page answers one question — "which model does what on my machine" —
- * and it answers it the way the machine is actually shaped. Chat, tools &
- * screen, deep & coding and embeddings are four PEERS, not four steps: you
- * can fill them in any order, and a number beside each would claim a
- * sequence that does not exist. So they are a grid of equal cards
- * (`ModelCard`), each carrying its own model, its own memory bar and its own
- * picker. Speech sits below them, on its own, because it is the one job
- * served by a different server and cannot be filled from here.
+ * and it answers it the way the machine is actually shaped. Chat, speech,
+ * tools & screen and deep & coding are four PEERS, not four steps: you can
+ * fill them in any order, and a number beside each would claim a sequence
+ * that does not exist. So they are a grid of equal cards (`ModelCard`), each
+ * carrying its own model, its own memory bar and its own picker.
+ *
+ * All four answer the user directly, which is what earns a card. Embeddings
+ * does not — it indexes the wiki in the background, is picked once and then
+ * forgotten — so it keeps its picker in the side row below instead of taking
+ * a quarter of the page.
  *
  * Under the grid, `ServerLaunch` adds up what the picks cost and offers the
  * one button that puts a working server behind them.
@@ -27,6 +30,7 @@ import { SoftButton, StatusDot } from "@/components/extensions/primitives";
 import {
   useOverview,
   type LocalModelRole,
+  type LocalModelRow,
   type RoleRow,
 } from "@/hooks/useLocalModels";
 import { switchBrainProvider, useProviders } from "@/hooks/useProviders";
@@ -41,6 +45,7 @@ import { InstalledPanel } from "./InstalledPanel";
 import { canonical } from "./localSetup";
 import type { SetupStep, SetupSummary } from "./localSetup";
 import { ModelCard } from "./ModelCard";
+import { RolePicker } from "./RolePicker";
 import { ServerLaunch } from "./ServerLaunch";
 import { useLocalSetup } from "./useLocalSetup";
 import { useRoleActions, IDLE } from "./useRoleActions";
@@ -62,16 +67,23 @@ export interface OverviewPanelProps {
 }
 
 /**
- * The jobs the grid shows, in reading order. Four, because these are the
- * four a local server can fill on its own — speech needs the managed voice
- * server and is handled apart, and `ack`/`polish` follow other cards.
+ * The jobs the grid shows, in the order you meet them: type, talk, let it
+ * work the screen, hand it something long.
+ *
+ * All four answer YOU. Embeddings does not — it indexes the wiki in the
+ * background, is picked once and then forgotten — so it sits in the side row
+ * below with its own picker rather than taking a quarter of the page.
+ * `ack`/`polish` follow other cards and are read-only.
  */
 export const GRID_JOBS: readonly LocalModelRole[] = [
   "chat",
+  "voice",
   "tools_screen",
   "deep",
-  "embedding",
 ];
+
+/** The jobs below the grid: set here too, just not part of the conversation. */
+export const SIDE_JOBS: readonly LocalModelRole[] = ["embedding"];
 
 /** Bytes to a short gigabyte figure ("12.4 GB"); "0 GB" below a megabyte. */
 export function formatGigabytes(bytes: number): string {
@@ -124,10 +136,13 @@ export function OverviewPanel({
     () => GRID_JOBS.map((id) => byId.get(id)).filter((r): r is RoleRow => !!r),
     [byId],
   );
-  const voiceRow = byId.get("voice") ?? null;
-  // Speech has its own row above; whatever else is advanced follows another
-  // card's pick and belongs in the quiet list at the bottom.
-  const followerRows = allRows.filter((r) => r.advanced && r.id !== "voice");
+  const sideRows = useMemo(
+    () => SIDE_JOBS.map((id) => byId.get(id)).filter((r): r is RoleRow => !!r),
+    [byId],
+  );
+  // Whatever is advanced follows another card's pick and belongs in the quiet
+  // list at the bottom.
+  const followerRows = allRows.filter((r) => r.advanced);
 
   const serverLabel =
     providers.find((p) => p.id === providerId)?.label ||
@@ -223,14 +238,18 @@ export function OverviewPanel({
         <p className="text-sm text-destructive">{actions.writeError}</p>
       )}
 
-      {/* Speech: its own row, because it is served by its own server. */}
-      {voiceRow && (
-        <VoiceRow
-          row={voiceRow}
+      {/* Set here, but not part of the conversation. */}
+      {sideRows.map((row) => (
+        <SideJobRow
+          key={row.id}
+          row={row}
+          models={models}
+          busy={actions.isBusy(row.id)}
+          onPick={(model) => actions.pick(row.id, model)}
           onTune={advanced ? onTune : undefined}
           t={t}
         />
-      )}
+      ))}
 
       <ServerLaunch
         rows={gridRows}
@@ -283,55 +302,63 @@ function CardSkeleton() {
 }
 
 /**
- * Speech. Read-only from here: the model is baked into the voice server's
- * launch command, so the row says what answers a call and where to change it
- * rather than offering a picker that would fail.
+ * A job that is set here but is not part of the conversation — today just
+ * embeddings, which indexes the wiki in the background.
+ *
+ * One line, not a card: it carries the same picker (dropping it would take a
+ * setting away with nowhere else to reach it) but none of the card's weight,
+ * because it is picked once and then forgotten.
  */
-function VoiceRow({
+function SideJobRow({
   row,
+  models,
+  busy,
+  onPick,
   onTune,
   t,
 }: {
   row: RoleRow;
+  models: LocalModelRow[];
+  busy: boolean;
+  onPick: (model: string) => void;
   onTune?: (model: string) => void;
   t: (key: string) => string;
 }) {
   const missing = row.current !== "" && !row.installed;
+  const blocked = !row.writable || (row.note !== "" && row.current === "");
   return (
     <div
-      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-border/70 bg-card/40 px-4 py-3"
-      data-testid="voice-row"
+      className="grid gap-3 rounded-xl border border-border/70 bg-card/40 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)_auto] lg:items-center"
+      data-testid={`side-job-${row.id}`}
     >
       <div className="min-w-0">
         <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
           {t(row.label_key)}
         </p>
-        <div className="mt-1">
-          {row.current ? (
-            <StatusDot
-              tone={missing ? "warn" : "ok"}
-              label={
-                <span className="font-mono text-xs text-foreground/85">
-                  {row.current}
-                  {missing && (
-                    <span className="ml-2 font-sans text-muted-foreground">
-                      {t("local_models.roles.not_installed")}
-                    </span>
-                  )}
-                </span>
-              }
-            />
-          ) : (
-            <span className="text-sm text-muted-foreground">
-              {row.note || t("local_models.jobs.voice_absent")}
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <p className="text-xs text-muted-foreground">
-          {t("local_models.jobs.voice_purpose")}
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {row.note || t(`local_models.jobs.${row.id}_purpose`)}
         </p>
+      </div>
+      <div className="min-w-0">
+        {blocked ? (
+          <span className="text-xs text-muted-foreground">
+            {t("local_models.roles.read_only")}
+          </span>
+        ) : (
+          <RolePicker
+            row={row}
+            models={models}
+            disabled={busy}
+            onPick={onPick}
+          />
+        )}
+      </div>
+      <div className="flex items-center gap-2 lg:justify-end">
+        {missing && (
+          <span className="text-xs text-amber-700 dark:text-amber-400">
+            {t("local_models.jobs.not_on_disk")}
+          </span>
+        )}
         {onTune && row.current && row.installed && (
           <SoftButton onClick={() => onTune(row.current)} className="h-8">
             {t("local_models.roles.tune")}

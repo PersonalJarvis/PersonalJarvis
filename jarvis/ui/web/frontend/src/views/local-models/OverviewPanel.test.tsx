@@ -431,11 +431,12 @@ describe("OverviewPanel grid", () => {
     );
     expect(cards.map((c) => c.getAttribute("data-testid"))).toEqual([
       "model-card-chat",
+      "model-card-voice",
       "model-card-tools_screen",
       "model-card-deep",
-      "model-card-embedding",
     ]);
-    for (const job of ["chat", "tools_screen", "deep", "embedding"])
+    // Every job on the page can be changed, side row included.
+    for (const job of ["chat", "voice", "tools_screen", "deep", "embedding"])
       expect(screen.getByTestId(`role-picker-${job}`)).toBeDefined();
   });
 
@@ -450,7 +451,7 @@ describe("OverviewPanel grid", () => {
     await screen.findByTestId("model-card-chat");
     expect(screen.getByTestId("model-card-chat").dataset.state).toBe("ready");
     expect(screen.getByTestId("model-card-deep").dataset.state).toBe("missing");
-    expect(screen.getByTestId("model-card-embedding").dataset.state).toBe(
+    expect(screen.getByTestId("model-card-tools_screen").dataset.state).toBe(
       "empty",
     );
     expect(screen.getByTestId("model-card-deep").textContent).toContain(
@@ -535,15 +536,58 @@ describe("OverviewPanel grid", () => {
     expect(urls).toContain(`PUT ${BASE}/models/qwen3.8%3A27b/options`);
   });
 
-  it("keeps speech out of the grid and says where it is set", async () => {
+  it("gives speech a card of its own, with the window it runs on", async () => {
+    installFetchMock({
+      roles: ROLES.map((r) =>
+        r.id === "voice"
+          ? { ...r, context_tokens: 32768, context_source: "automatic" }
+          : r,
+      ),
+    });
+    renderPanel();
+
+    const card = await screen.findByTestId("model-card-voice");
+    expect(card.textContent).toContain("local_models.jobs.voice_purpose");
+    expect(screen.getByTestId("role-picker-voice")).toBeDefined();
+    expect(screen.getByTestId("voice-context").textContent).toContain(
+      "local_models.roles.voice_context_auto32k",
+    );
+  });
+
+  it("blocks the card, rather than offering a doomed picker, when a job has no server", async () => {
+    installFetchMock({
+      roles: ROLES.map((r) =>
+        r.id === "voice"
+          ? {
+              ...r,
+              current: "",
+              installed: false,
+              note: "The managed voice server is not installed.",
+            }
+          : r,
+      ),
+    });
+    renderPanel();
+
+    const card = await screen.findByTestId("model-card-voice");
+    expect(card.dataset.state).toBe("blocked");
+    expect(card.textContent).toContain(
+      "The managed voice server is not installed.",
+    );
+    expect(screen.queryByTestId("role-picker-voice")).toBeNull();
+  });
+
+  it("keeps embeddings settable in the side row instead of the grid", async () => {
     installFetchMock();
     renderPanel();
 
     await screen.findByTestId("model-card-chat");
-    expect(screen.queryByTestId("model-card-voice")).toBeNull();
-    const voice = await screen.findByTestId("voice-row");
-    expect(voice.textContent).toContain("local_models.role_voice");
-    expect(voice.textContent).toContain("local_models.jobs.voice_purpose");
+    expect(screen.queryByTestId("model-card-embedding")).toBeNull();
+    const side = await screen.findByTestId("side-job-embedding");
+    expect(side.textContent).toContain("local_models.role_embedding");
+    expect(side.textContent).toContain("local_models.jobs.embedding_purpose");
+    // The setting has nowhere else to live, so the row keeps the picker.
+    expect(within(side).getByTestId("role-picker-embedding")).toBeDefined();
   });
 
   it("the detail level adds detail, never takes the picker away", async () => {
@@ -580,7 +624,7 @@ describe("OverviewPanel launch bar", () => {
       ],
       accelerator_gb: 16,
       roles: ROLES.map((r) =>
-        r.id === "embedding"
+        r.id === "voice"
           ? { ...r, current: "qwen3-embedding:4b", installed: true }
           : r.id === "tools_screen" || r.id === "deep"
             ? { ...r, current: "qwen3.5:4b", installed: true }
@@ -590,7 +634,7 @@ describe("OverviewPanel launch bar", () => {
     renderPanel();
 
     const facts = await screen.findByTestId("launch-facts");
-    // chat + tools + deep share qwen3.5:4b, embedding adds 2 GB -> 5 GB.
+    // chat + tools + deep share qwen3.5:4b, voice adds 2 GB -> 5 GB.
     await waitFor(() =>
       expect(facts.textContent).toContain(
         "local_models.launch.total_on_disk5.0 GB",
@@ -609,10 +653,10 @@ describe("OverviewPanel launch bar", () => {
     renderPanel();
 
     const launch = await screen.findByTestId("server-launch");
-    // Only chat is set in the fixture: 1 of 4.
+    // chat and voice are set in the fixture, tools & deep are not: 2 of 4.
     await waitFor(() =>
       expect(launch.textContent).toContain(
-        "local_models.launch.partly_picked1|4",
+        "local_models.launch.partly_picked2|4",
       ),
     );
     const button = within(screen.getByTestId("launch-run")).getByRole("button");

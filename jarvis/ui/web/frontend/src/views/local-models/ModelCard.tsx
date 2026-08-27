@@ -47,6 +47,11 @@ export interface ModelCardProps {
   advanced?: boolean;
 }
 
+/** Human window size: 16384 -> "16k". */
+function contextLabel(numCtx: number): string {
+  return numCtx >= 1024 ? `${Math.round(numCtx / 1024)}k` : String(numCtx);
+}
+
 /** The capabilities a job is gated on, as one short phrase. */
 function capabilityLine(row: LocalModelRow | null): string {
   if (!row || !row.probed) return "";
@@ -54,8 +59,10 @@ function capabilityLine(row: LocalModelRow | null): string {
 }
 
 export function cardState(row: RoleRow): ModelCardState {
-  // A job served by something other than Ollama says so and offers nothing.
-  if (!row.writable) return "blocked";
+  // A job served by something other than Ollama, or whose own server is not
+  // installed yet, says so and offers nothing: a picker whose write is going
+  // to be refused is worse than a sentence naming what is missing.
+  if (!row.writable || (row.note !== "" && row.current === "")) return "blocked";
   if (!row.current) return "empty";
   return row.installed ? "ready" : "missing";
 }
@@ -148,15 +155,30 @@ export function ModelCard({
           </>
         ) : (
           <p className="text-sm text-muted-foreground">
-            {row.writable
-              ? t("local_models.jobs.empty")
-              : row.note || t("local_models.roles.read_only")}
+            {state === "blocked"
+              ? row.note || t("local_models.roles.read_only")
+              : t("local_models.jobs.empty")}
           </p>
         )}
       </div>
 
+      {/* Speech runs with a window sized for this machine; a call is judged
+          by its first word, so that number belongs on the card. */}
+      {row.id === "voice" && row.context_tokens ? (
+        <p className="mt-1.5 text-[11px] text-muted-foreground" data-testid="voice-context">
+          {fill(
+            t(
+              row.context_source === "manual"
+                ? "local_models.roles.voice_context_manual"
+                : "local_models.roles.voice_context_auto",
+            ),
+            { context: contextLabel(row.context_tokens) },
+          )}
+        </p>
+      ) : null}
+
       {/* The memory bar: this model against this machine's graphics memory. */}
-      {row.writable && (
+      {state !== "blocked" && (
         <div className="mt-2.5" data-testid={`model-card-memory-${row.id}`}>
           <div
             className="h-1.5 overflow-hidden rounded-full bg-sheen/[0.08]"
@@ -195,7 +217,7 @@ export function ModelCard({
 
       {/* The control. Always present, always the same shape. */}
       <div className="mt-3.5 space-y-2">
-        {row.writable ? (
+        {state !== "blocked" ? (
           <RolePicker
             row={row}
             models={models}
