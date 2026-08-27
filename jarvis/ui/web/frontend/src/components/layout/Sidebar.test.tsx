@@ -766,11 +766,17 @@ describe("the Agentic IDE's chat face", () => {
       view: "chat",
       sidebarFace: "chats",
       workspace: { id: "w1", name: "Personal Jarvis", path: "/work/jarvis" },
+      workspaces: [{ id: "w1", name: "Personal Jarvis", folder: "/work/jarvis", active: true }],
     });
   });
 
   afterEach(() => {
-    useIdeChatStore.setState({ view: "grid", sidebarFace: "chats", workspace: null });
+    useIdeChatStore.setState({
+      view: "grid",
+      sidebarFace: "chats",
+      workspace: null,
+      workspaces: [],
+    });
   });
 
   test("shows the workspace's chats instead of the sections", () => {
@@ -789,6 +795,31 @@ describe("the Agentic IDE's chat face", () => {
     act(() => {
       screen.getByTestId("workspace-chats-back").click();
     });
+
+    expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
+  });
+
+  /*
+   * The launcher for one more workspace deactivates the front tab while it
+   * asks for a folder — and that must not take the list of running
+   * workspaces away with it, which is what a takeover gated on the ACTIVE
+   * workspace did.
+   */
+  test("keeps the chats while another workspace is being opened", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeChatStore.setState({ workspace: null });
+
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
+  });
+
+  test("gives the navigation back once nothing is open at all", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeChatStore.setState({ workspace: null, workspaces: [] });
+
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.queryByTestId("workspace-chats")).toBeNull();
     expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
