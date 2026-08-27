@@ -1220,6 +1220,14 @@ class Terminal:
             # the voice path both have to know, or they would offer a target
             # that refuses every instruction sent to it.
             "accepts_prompts": accepts_prompts(self.agent),
+            # What this pane was OPENED on. Empty means "the CLI's own
+            # default", which is every pane opened before these existed. Read
+            # by the surfaces that SAY what a session runs on — otherwise the
+            # picks would be visible only on the command line, and a list of
+            # panes could not tell an Opus session from a Sonnet one.
+            "model": self.model,
+            "effort": self.effort,
+            "permission_mode": self.permission_mode,
             "index": self.index,
             "column": self.column,
             "slot": self.slot,

@@ -189,6 +189,15 @@ export interface TerminalState {
   /** Coarse position within that column, top to bottom — same caveat. */
   slot: number;
   status: "pending" | "live" | "exited" | "error";
+  /**
+   * What this pane was OPENED on — the model, the effort level and the
+   * permission stance its CLI was started under
+   * (`jarvis/workspace/launch_picks.py`). "" means the CLI's own default,
+   * which is what every pane opened before these existed still reports.
+   */
+  model?: string;
+  effort?: string;
+  permission_mode?: string;
   exit_code: number | null;
   error: string;
   started_at: number | null;

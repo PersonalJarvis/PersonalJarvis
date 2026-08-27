@@ -140,6 +140,28 @@ async def test_the_picks_survive_a_restart(
     assert restored.permission_mode == "plan"
 
 
+async def test_the_workspace_says_what_a_pane_runs_on(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A list of panes has to tell an Opus session from a Sonnet one.
+
+    Without this the picks would be visible only on a command line nobody can
+    read, and every surface that names what a session runs on would be back to
+    guessing — which is where the pill saying "Default" over an Opus pane came
+    from in the first place.
+    """
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    pane = await registry.add_terminal(
+        agent="claude", model="claude-opus-5", effort="max", permission_mode="plan"
+    )
+    row = pane.to_dict()
+    assert row["model"] == "claude-opus-5"
+    assert row["effort"] == "max"
+    assert row["permission_mode"] == "plan"
+    # A pane nobody picked for reports the CLI's own default, as it always did.
+    assert registry.session.terminals[0].to_dict()["model"] == ""
+
+
 async def test_an_older_snapshot_reopens_on_the_cli_default(tmp_path: Path) -> None:
     """A snapshot written before the picks existed still restores."""
     from jarvis.agentic_ide.resume_store import SnapshotTerminal
