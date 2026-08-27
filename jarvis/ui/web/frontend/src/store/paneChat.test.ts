@@ -230,9 +230,120 @@ describe("createPaneChatStore", () => {
       detail: "still in the input box",
     });
     const store = makeStore();
+    store.getState().start();
+    await flush();
     await store.getState().send("hi");
+    store.getState().stop();
     const toasts = useEventStore.getState().toasts;
     expect(toasts.at(-1)?.message).toContain("T7 did not take the message: still in the input box");
+    // The sentence sits in the pane's input box, not in its conversation —
+    // so the echo drawn at Send is taken back, and only the record remains.
+    const texts = store.getState().timeline.items.map((it) => (it.type === "user" ? it.text : it.type));
+    expect(texts).toEqual(["Fix the login bug", "turn"]);
+  });
+
+  it("draws the sentence the moment Send is pressed, and hands it to the record once that holds it", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    let deliver!: (result: Awaited<ReturnType<typeof api.promptTerminal>>) => void;
+    vi.mocked(api.promptTerminal).mockReturnValue(
+      new Promise((resolve) => {
+        deliver = resolve;
+      }),
+    );
+    const store = makeStore();
+    store.getState().start();
+    await flush();
+    expect(store.getState().timeline.items).toHaveLength(2);
+
+    // Not awaited: the pane has not even typed the sentence yet.
+    const sending = store.getState().send("Now the tests");
+    const drawn = store.getState().timeline.items;
+    expect(drawn).toHaveLength(4);
+    expect(drawn[2]).toMatchObject({ type: "user", text: "Now the tests" });
+    expect(drawn[3]).toMatchObject({ type: "turn", status: "running", provider: CLAUDE_CLI.id });
+    expect(drawn[3].id).toMatch(/^echo-/);
+    expect(store.getState().timeline.lastSeq).toBe(8); // an echo never moves the cursor
+
+    // The pane took it; the record has not caught up: the echo stays.
+    deliver({ terminal: "T7", sent: "Now the tests", composed_by: "raw", files: [], submitted: true });
+    await sending;
+    await flush();
+    expect(store.getState().timeline.items).toHaveLength(4);
+    expect(store.getState().timeline.items[3].id).toMatch(/^echo-/);
+
+    // The record holds a message newer than before the send: its copy takes
+    // over, the echo goes, and nothing is shown twice.
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(
+      answer({
+        live: true,
+        activity: "working",
+        events: [
+          ...EXCHANGE,
+          ev(9, "user_message", { text: "Now the tests" }, 20_000),
+          ev(10, "turn_started", { turn_id: "turn-2", provider: "claude", model: "claude-opus-5", effort: "xhigh", runner: "cli" }, 20_000),
+        ],
+      }),
+    );
+    store.getState().reload();
+    await flush();
+    store.getState().stop();
+    const items = store.getState().timeline.items;
+    expect(items).toHaveLength(4);
+    expect(items.filter((it) => it.type === "user" && it.text === "Now the tests")).toHaveLength(1);
+    expect(items[2].id).toBe("u-9");
+    expect(items[3].id).toBe("turn-2");
+    expect(store.getState().timeline.lastSeq).toBe(10);
+  });
+
+  it("two messages sent back to back settle one at a time, oldest first", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    vi.mocked(api.promptTerminal).mockResolvedValue({
+      terminal: "T7",
+      sent: "",
+      composed_by: "raw",
+      files: [],
+      submitted: true,
+    });
+    const store = makeStore();
+    store.getState().start();
+    await flush();
+    await store.getState().send("First");
+    await store.getState().send("Second");
+    await flush();
+    const userTexts = () =>
+      store.getState().timeline.items.flatMap((it) => (it.type === "user" ? [it.text] : []));
+    expect(userTexts()).toEqual(["Fix the login bug", "First", "Second"]);
+
+    // The record has the first message and its turn; the second is still an echo.
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(
+      answer({
+        events: [
+          ...EXCHANGE,
+          ev(9, "user_message", { text: "First" }, 20_000),
+          ev(10, "turn_started", { turn_id: "turn-2", provider: "claude", model: "", effort: "", runner: "cli" }, 20_000),
+          ev(11, "turn_finished", { turn_id: "turn-2", status: "done", duration_ms: 10, usage: null, error: null, cost_usd: null }, 21_000),
+        ],
+      }),
+    );
+    store.getState().reload();
+    await flush();
+    store.getState().stop();
+    expect(userTexts()).toEqual(["Fix the login bug", "First", "Second"]);
+    const items = store.getState().timeline.items;
+    expect(items.filter((it) => it.id.startsWith("echo-"))).toHaveLength(1);
+    expect(items.filter((it) => it.type === "user" && it.id === "u-9")).toHaveLength(1);
+  });
+
+  it("withdraws the echo when the send itself fails", async () => {
+    vi.mocked(api.fetchTerminalTimeline).mockResolvedValue(answer());
+    vi.mocked(api.promptTerminal).mockRejectedValue(new Error("pane is gone"));
+    const store = makeStore();
+    store.getState().start();
+    await flush();
+    await store.getState().send("hello?");
+    store.getState().stop();
+    expect(store.getState().lastError).toBe("pane is gone");
+    expect(store.getState().timeline.items).toHaveLength(2);
   });
 
   it("Stop presses Escape in the pane", async () => {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUp, Mic, Square } from "lucide-react";
 import { getWSClient } from "@/hooks/useWebSocket";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
+import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -22,6 +23,7 @@ const THINKING_TIMEOUT_MS = 60_000;
 export function ChatInput() {
   const t = useT();
   const [value, setValue] = useState("");
+  const textareaRef = useAutoGrowTextarea(value);
   const connected = useEventStore((s) => s.connected);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   // What will answer: the classic brain, or the realtime engine when voice
@@ -188,6 +190,7 @@ export function ChatInput() {
         // it hands a transcript to a component that may be unmounted — see
         // lib/dictationTarget.ts.
         data-jarvis-chat-input=""
+        ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKeyDown}
@@ -200,7 +203,9 @@ export function ChatInput() {
         }
         disabled={!connected}
         rows={2}
-        className="max-h-48 w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
+        // Grows with the text up to half the window (useAutoGrowTextarea);
+        // past the cap the box scrolls rather than pushing Send out of reach.
+        className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground scrollbar-jarvis placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
       />
       <div className="flex items-center gap-1.5">
         <button

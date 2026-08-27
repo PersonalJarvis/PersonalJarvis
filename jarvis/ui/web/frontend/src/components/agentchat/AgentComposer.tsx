@@ -27,6 +27,7 @@ import { useComposerDictation } from "@/components/agentchat/useComposerDictatio
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { usePasteRescue } from "@/components/agentchat/usePasteRescue";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
+import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +75,7 @@ import { cn } from "@/lib/utils";
 export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const t = useT();
   const [value, setValueState] = useState("");
+  const textareaRef = useAutoGrowTextarea(value);
   const setValue = useCallback(
     (next: string | ((current: string) => string)) => setValueState(next),
     [],
@@ -414,6 +416,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         onRemove={files.remove}
       />
       <textarea
+        ref={textareaRef}
         data-jarvis-chat-input=""
         autoFocus={autoFocus}
         value={value}
@@ -426,7 +429,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         placeholder={placeholder}
         disabled={!connected}
         rows={2}
-        className="max-h-48 w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
+        // Grows with the text up to half the window (useAutoGrowTextarea), so
+        // a message is read whole while it is written; past the cap the box
+        // scrolls rather than pushing the picks and Send out of reach.
+        className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-relaxed text-foreground scrollbar-jarvis placeholder:text-muted-foreground focus-visible:outline-none disabled:opacity-50"
       />
       <div className="flex flex-wrap items-center gap-1">
         {/*

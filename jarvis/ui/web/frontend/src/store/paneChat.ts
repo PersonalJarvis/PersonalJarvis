@@ -119,6 +119,79 @@ function withProvider(timeline: Timeline, providerId: string): Timeline {
   return { ...timeline, items };
 }
 
+/**
+ * A message typed here that the CLI's record does not hold yet.
+ *
+ * The record is the CLI's own transcript, read by polling: the sentence shows
+ * up there only once the CLI has taken it, and the next read follows seconds
+ * later. The front page's chat hears its own message back over the socket at
+ * once; a pane gets the same immediacy from this — the sentence is drawn the
+ * moment Send is pressed, exactly as the record will draw it (the message,
+ * then an open turn, which is what `agent_transcript` itself writes for an
+ * unanswered question on a working pane), and it stays drawn until the record
+ * holds a newer message than it did before the send. Then the record's copy
+ * takes over and the echo is dropped, so nothing is shown twice.
+ */
+export interface PendingEcho {
+  text: string;
+  attachments: ChatAttachment[];
+  /** When Send was pressed — the echo's timestamp and its turn's start. */
+  atMs: number;
+  /** The newest user message the record held before the send; the echo settles once that grows. */
+  lastUserTsBefore: number;
+}
+
+/** The timestamp of the newest user message in a read, 0 when it holds none. */
+export function lastUserMessageTs(events: readonly AgentChatEvent[]): number {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    if (events[i].kind === "user_message") return events[i].ts_ms;
+  }
+  return 0;
+}
+
+/** How many user messages a read holds that are newer than `ts`. */
+export function countUserMessagesAfter(events: readonly AgentChatEvent[], ts: number): number {
+  let n = 0;
+  for (const ev of events) if (ev.kind === "user_message" && ev.ts_ms > ts) n += 1;
+  return n;
+}
+
+/** The two events a pending echo folds through the chat's reducer as. */
+export function echoEvents(
+  echo: PendingEcho,
+  turn: { provider: string; model: string; effort: string },
+): AgentChatEvent[] {
+  // `seq` 0: an echo never advances the timeline's cursor — the record's own
+  // sequence does that once it holds the message.
+  return [
+    {
+      seq: 0,
+      ts_ms: echo.atMs,
+      kind: "user_message",
+      payload: {
+        text: echo.text,
+        attachments: echo.attachments.map((a) => ({
+          name: a.name,
+          kind: a.kind,
+          described_by: a.described_by,
+        })),
+      },
+    },
+    {
+      seq: 0,
+      ts_ms: echo.atMs,
+      kind: "turn_started",
+      payload: {
+        turn_id: `echo-${echo.atMs}`,
+        provider: turn.provider,
+        model: turn.model,
+        effort: turn.effort,
+        runner: "cli",
+      },
+    },
+  ];
+}
+
 export interface PaneChatStoreOptions {
   terminal: string;
   workspaceId: string;
@@ -202,9 +275,25 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
     ...patch,
   });
 
+  /** The record as the last read returned it — what the timeline is rebuilt from. */
+  let lastEvents: AgentChatEvent[] = [];
+  /** Messages typed here that the record does not hold yet, oldest first. */
+  let echoes: PendingEcho[] = [];
+
   const store = create<PaneChatState>((set, get) => {
     const providerId = () =>
       providerForAgent(options.agent, agentStore.getState().providerOptions())?.id ?? "";
+
+    /** The record's timeline, with every pending echo drawn after it. */
+    const rebuild = (pid: string): Timeline => {
+      const { model, effort } = get().draft;
+      const recorded = reduceEvents(EMPTY_TIMELINE, lastEvents);
+      const echoed = echoes.reduce(
+        (tl, echo) => reduceEvents(tl, echoEvents(echo, { provider: pid, model, effort })),
+        recorded,
+      );
+      return withProvider(echoed, pid);
+    };
 
     const apply = (res: TerminalTimelineResponse) => {
       const pid = providerId();
@@ -243,7 +332,20 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
       const sig = eventsSignature(res.events, res.live);
       if (sig !== signature) {
         signature = sig;
-        next.timeline = withProvider(reduceEvents(EMPTY_TIMELINE, res.events), pid);
+        lastEvents = res.events;
+        // The record has caught up with a send when it holds a user message
+        // newer than the one it held before that send: the oldest echo is now
+        // the record's, and the record draws it from here on. By timestamp,
+        // not by count — the read keeps only the last N turns, so a count
+        // stands still exactly when the conversation is long.
+        // Every pending echo was sent against the same read (the read only
+        // moves here), so one base serves them all: each message the record
+        // gained past it settles one echo, oldest first.
+        if (echoes.length > 0) {
+          const gained = countUserMessagesAfter(res.events, echoes[0].lastUserTsBefore);
+          echoes = echoes.slice(Math.min(gained, echoes.length));
+        }
+        next.timeline = rebuild(pid);
       }
       set(next);
       return pollIntervalFor(res.live, res.activity);
@@ -380,7 +482,22 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
 
       send: async (text: string, attachments: ChatAttachment[] = []) => {
         if (get().busy) return;
-        set({ busy: true, lastError: null });
+        // Drawn before anything is sent: the person just pressed Send and the
+        // sentence is theirs to see now, not after the pane has typed it, the
+        // CLI has taken it, written it down, and a poll has read it back
+        // (measured at five seconds, 2026-08-27). See `PendingEcho`.
+        const echo: PendingEcho = {
+          text,
+          attachments,
+          atMs: Date.now(),
+          lastUserTsBefore: lastUserMessageTs(lastEvents),
+        };
+        echoes = [...echoes, echo];
+        set({ busy: true, lastError: null, timeline: rebuild(providerId()) });
+        const withdraw = () => {
+          echoes = echoes.filter((e) => e !== echo);
+          set({ timeline: rebuild(providerId()) });
+        };
         try {
           // Verbatim: `compose` off. A brief written FOR the person belongs to
           // the voice path; here the person is talking to the agent themselves.
@@ -389,6 +506,9 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
             attachments,
           });
           if (result.submitted === false) {
+            // The text sits in the pane's input box, not in its conversation;
+            // a bubble saying otherwise would be the lie the toast corrects.
+            withdraw();
             toast(
               "warning",
               translate("agentic_grid.pane_chat.not_taken")
@@ -400,6 +520,7 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
           // starts at once so the answer is seen forming.
           get().reload();
         } catch (reason: unknown) {
+          withdraw();
           set({ lastError: reason instanceof Error ? reason.message : String(reason) });
         } finally {
           set({ busy: false });
