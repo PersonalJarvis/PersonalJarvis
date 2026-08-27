@@ -14125,3 +14125,56 @@ publishing the wrong one. The grid was corrected within a second — but the
 column count had already left the pane, and on Windows a size the agent has
 heard cannot be unheard. Anything that goes to the PTY on the strength of a
 measurement has to wait for the thing being measured to exist.
+
+## BUG-200: dictation "feels broken lately" — words misheard, sentences that carry no context (MEDIUM, OBSERVED 2026-08-27, OPEN)
+
+**Report (maintainer, 2026-08-27, dictated in German).** "I have the
+feeling that lately the transcriptions are all over the place and simply
+buggy — some words are not recognized correctly, and completely context-less
+sentences come out." Filed as an observation, not a diagnosis: the shape is
+"worse than it was", and nothing below proves a regression yet.
+
+**What the history shows (2026-08-25 → 27, 166 dictations of 8+ words, all
+`groq-api` / `whisper-large-v3`, polish off for 144 of them, Prompt Mode
+for 20).**
+
+- Misheard names and phrases, verbatim: `Chemica` (Kimi), `DeepSeq`
+  (DeepSeek), `Mlocals Models` (local models), `Idee, das ganze Pulte
+  ausführlich zu verhandeln` <!-- i18n-allow: verbatim transcript -->,
+  `der bebeamtlich ist` <!-- i18n-allow: verbatim transcript -->. None of
+  these is in the STT dictionary, and the dictionary cannot repair a phrase
+  it has never been told about.
+- 18 of the 166 went through the **truncation repair** (`truncation_repairs`
+  ≥ 1): the final window came back with too few tokens for its voiced
+  seconds, was cut at its pauses or halved, and each piece was re-read on
+  its own — short clips with no sentence context, merged back on word
+  overlap. Every "context-less" transcript the maintainer named on this
+  day is one of those 18 (16:38, 09:33, 17:34 with 15.9 s of pause
+  trimmed). BUG-185 (both landings) is the same mechanism's worst output.
+- The dictionary's five words ride along as Groq's decoder bias prompt.
+  A bias prompt steers the decoder toward its own vocabulary and its own
+  language; with the dictionary now holding two overlapping entries
+  ("Agentic IDE" and "Agentic"), the recitation it provokes is documented,
+  and its effect on ordinary words next to it is not measured.
+- `audio_preprocessing:raw_pcm`, `noise_suppression:unavailable`,
+  `automatic_gain_control:unavailable` on every entry: the mic feed reaches
+  Groq unprocessed.
+- The history holds three days; nothing older survives to compare against,
+  so "recently" cannot be checked against a baseline from here.
+
+**Where to look first (in order of how much evidence points there).**
+
+1. The truncation repair's re-read pieces: log each piece's text next to
+   the window's own, and see whether the repair replaces a whole readable
+   window with fragments more often than it rescues a dropped tail. A
+   repair that only wins on token count (`transcript_token_count(merged) >
+   tokens`) wins whenever Whisper recites, hallucinates, or stutters.
+2. An A/B over the same audio (`dictation_audio/*.wav` is kept for
+   `partial` outcomes): Groq with and without the dictionary bias prompt;
+   Groq vs. local `faster-whisper large-v3`.
+3. Prompt Mode / polish: whether the LLM pass is what the maintainer
+   remembers as "it used to read well", and why it is off for most
+   dictations today.
+
+**Related.** BUG-185 (bias-prompt recitation), the composer seam fix of the
+same day (two dictations joined without a space, `lib/dictationTarget.ts`).

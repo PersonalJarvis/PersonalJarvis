@@ -68,6 +68,43 @@ describe("deliverDictationText", () => {
     expect(field.value).toBe("before dictated after");
   });
 
+  it("puts a space between the field's last word and the next dictation", () => {
+    // 2026-08-27: two dictations four seconds apart, the caret still at the
+    // end of the first — the field read "…Agentic IDEDas war zum Beispiel…".
+    const field = mountField("Agentic IDE");
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+
+    expect(deliverDictationText("Das war zum Beispiel heute auch so.")).toBe("field"); // i18n-allow: verbatim transcript
+    expect(field.value).toBe("Agentic IDE Das war zum Beispiel heute auch so."); // i18n-allow: verbatim transcript
+  });
+
+  it("adds no space where the seam already has one, or opens a bracket", () => {
+    for (const [value, expected] of [
+      ["", "hello world"],
+      ["hello ", "hello world"],
+      ["hello\n", "hello\nworld"],
+      ["(", "(world"],
+      ['"', '"world'],
+    ] as const) {
+      document.body.replaceChildren();
+      const field = mountField(value);
+      field.focus();
+      field.setSelectionRange(value.length, value.length);
+      expect(deliverDictationText(value ? "world" : "hello world")).toBe("field");
+      expect(field.value).toBe(expected);
+    }
+  });
+
+  it("spaces both sides when the caret sits inside a word joint", () => {
+    const field = mountField("hello world");
+    field.focus();
+    field.setSelectionRange(5, 5);
+
+    expect(deliverDictationText("dear")).toBe("field");
+    expect(field.value).toBe("hello dear world");
+  });
+
   it("pastes through the terminal bridge, not into its hidden textarea", () => {
     const { host, pasted } = mountTerminal();
     (host.firstElementChild as HTMLTextAreaElement).focus();

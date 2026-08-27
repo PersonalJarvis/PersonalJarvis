@@ -47,7 +47,7 @@
  * module reuses it rather than growing a second one that could drift from it.
  */
 
-import { captureEditSnapshot, pasteInto } from "./editActions";
+import { captureEditSnapshot, pasteInto, type EditSnapshot } from "./editActions";
 
 /**
  * What became of one transcript.
@@ -153,6 +153,45 @@ export function isForThisWindow(
   return !composerIsRecording;
 }
 
+/** A character a spoken sentence may follow directly, without a space. */
+const OPENS_A_SEAM = /[\s([{"'`\u00AB\u201A\u201E]/;
+/** Where a word begins or ends — what a space belongs between. */
+const WORD_EDGE = /^[\p{L}\p{N}]/u;
+const WORD_OR_MARK_END = /[\p{L}\p{N}.,!?\u2026]$/u;
+
+/**
+ * `text` with the space a spoken sentence needs at the seam.
+ *
+ * Two dictations four seconds apart land in the same field with the caret
+ * still right after the first, and the insertion primitive writes exactly
+ * what it is given — "…Agentic IDEDas war zum Beispiel…" (2026-08-27). A
+ * person typing the second sentence would have pressed the space bar first;
+ * this presses it for the dictation. Only at a word joint: after a space, an
+ * opening bracket or quote, or in an empty field nothing is added, and a
+ * transcript that starts with punctuation keeps its own start. The same
+ * before a word that follows the caret. Terminals and contenteditable
+ * targets are written as-is — their caret context cannot be read this way.
+ */
+function spacedAtSeam(snapshot: EditSnapshot, text: string): string {
+  const element = snapshot.element;
+  if (snapshot.kind !== "field" || snapshot.selectionStart === null) return text;
+  if (
+    !(element instanceof HTMLTextAreaElement) &&
+    !(element instanceof HTMLInputElement)
+  ) {
+    return text;
+  }
+  const value = element.value;
+  const start = snapshot.selectionStart;
+  const end = snapshot.selectionEnd ?? start;
+  const before = start > 0 ? value.charAt(start - 1) : "";
+  const after = value.charAt(end);
+  let out = text;
+  if (before && !OPENS_A_SEAM.test(before) && WORD_EDGE.test(out)) out = " " + out;
+  if (after && WORD_EDGE.test(after) && WORD_OR_MARK_END.test(out)) out = out + " ";
+  return out;
+}
+
 /**
  * Write `text` wherever the user was typing. Never throws.
  *
@@ -178,7 +217,7 @@ export function deliverDictationText(text: string): DictationDelivery {
     const snapshot = captureEditSnapshot(element);
     let written = false;
     try {
-      written = pasteInto(snapshot, text);
+      written = pasteInto(snapshot, spacedAtSeam(snapshot, text));
     } catch {
       // A refused insertion is not a lost dictation: try the next candidate,
       // and let the caller report "none" if none of them takes it.

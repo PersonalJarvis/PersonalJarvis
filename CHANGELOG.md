@@ -92,6 +92,12 @@ versioning per [SemVer](https://semver.org/).
   catching up the section says so — "{n} of {m} transcripts read, {x} MB to
   go" — and reads again every few seconds instead of once a minute.
   (BUG-198)
+- **Dictation: a second dictation into the same field starts with a space.**
+  Inside Jarvis's own window a finished dictation is written at the caret
+  exactly as transcribed, so two dictations a few seconds apart read
+  "…Agentic IDEDas war…". The seam now gets the space a person would have
+  typed — after a word, not after a space, an opening bracket or in an empty
+  field, and on both sides when the caret sits inside a word joint.
 - **Dictation: "Agentic IDE, Agentic IDE, Agentic IDE" no longer lands in the
   text — from the middle of a dictation either.** Whisper recites the
   dictionary's bias prompt over a pause and then carries on with the speech
