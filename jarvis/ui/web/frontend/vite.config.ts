@@ -5,6 +5,8 @@ import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
+import { missingNameGate } from "./vite-plugins/missingNameGate";
+
 const MATERIAL_ICON_ROUTE = "/assets/material-file-icons";
 const materialIconSource = path.resolve(
   __dirname,
@@ -65,7 +67,7 @@ function materialIconAssets(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), materialIconAssets()],
+  plugins: [react(), materialIconAssets(), missingNameGate(__dirname)],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

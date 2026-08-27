@@ -13879,3 +13879,52 @@ backend has the old module loaded; a restart picks the fix up.
 opens on garbage — and a cut taken only when a limit is EXCEEDED protects
 nothing when the input is short. Measure a bound before keeping it: this one
 was defended by a cost that was never there.
+
+## BUG-197: the Agentic IDE crashed to "View could not be loaded — PANE_ACTIVITY_EVENT is not defined" although the source defined and imported that name (MEDIUM, FIXED 2026-08-27)
+
+**Symptom.** Opening the Agentic IDE in the desktop app showed the view's
+error boundary — "agentic-ide crashed. George stays usable." — with
+`PANE_ACTIVITY_EVENT is not defined` (maintainer screenshot 2026-08-27 11:53).
+`grep` over the source found the constant exported from
+`store/workspacePanes.ts` and imported by `AgenticGrid.tsx`; `grep` over the
+current `dist/` found no such identifier at all — a minified bundle never
+carries one.
+
+**Root cause.** A sibling session was building the shared working tree while
+its own edit to `AgenticGrid.tsx` was half done: the `addEventListener` call
+existed, the import line did not. `npm run build` runs `tsc -b` first and
+would have refused, but `tsconfig.json` includes every test file, and one
+foreign half-written test fails `tsc -b` for everyone — so sessions build
+with a bare `vite build` (the recipe in the maintainer's memory since
+2026-08-27). Rollup treats an identifier with no declaration as a browser
+global and emits it verbatim into the chunk. The desktop window reloads
+itself onto every fresh bundle (`bundleWatch.ts`), so the maintainer got the
+broken chunk within a minute of the build. The next build, two minutes later
+with the import in place, was clean — the crash was gone before anyone
+looked, and nothing in the tree explained it.
+
+**Fix.** `jarvis/ui/web/frontend/vite-plugins/missingNameGate.ts`, wired into
+`vite.config.ts` for `build` only. It starts `tsc -b` beside the bundling
+and, in `buildEnd` — before Vite empties the output directory, so a refused
+build leaves the previous bundle in place — fails the build on exactly the
+diagnostics that ARE a runtime crash: `TS2304`/`TS2552` "Cannot find name"
+whose position is a value position. A missing name inside a type annotation,
+a generic argument, an interface or `implements` is erased by the compiler
+and passes, as does every other type error, the way a bare build always
+let them through. Under `npm run build` the tree has just passed `tsc -b`
+and the gate skips its second run. `tsconfig.node.json` gained `noEmit`, so
+type-checking the config project no longer drops `.js`/`.d.ts` files beside
+the sources.
+
+Tests: `vite-plugins/missingNameGate.test.ts` (diagnostic parsing; value vs
+type positions — bare use, generic argument, annotation, cast, interface,
+`typeof` in both worlds, `extends` vs `implements`, JSX tag, a vanished line).
+Proven on the tree of the day: a probe file with an undeclared name refused
+the build and kept the old output; the same tree without it built despite a
+foreign `TS2345` and a foreign type-only "Cannot find name".
+
+**Lesson.** A type check that fails for foreign reasons gets skipped, and a
+skipped check protects nothing. The gate that survives a shared tree is the
+one that fails only on what is certainly broken — here, the one class of
+type error that is a `ReferenceError` in disguise — and lets everything
+merely disputed pass.
