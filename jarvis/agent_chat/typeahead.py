@@ -56,12 +56,22 @@ SKILL_REF: Final[str] = "$"
 #: runner id -> the trigger characters that seat honours (see module doc).
 TRIGGERS_BY_RUNNER: Final[dict[str, tuple[str, ...]]] = {
     "claude-cli": (SLASH, MENTION),
+    # Claude Code under Z.ai's endpoint: the same commands and agents.
+    "glm-cli": (SLASH, MENTION),
     "codex-cli": (MENTION, SKILL_REF),
     "agy-cli": (MENTION,),
     "grok-cli": (MENTION,),
+    "opencode-cli": (MENTION,),
+    "kimi-cli": (MENTION,),
+    # One task in, one answer out — nothing to complete against.
+    "dsh-cli": (),
     "api": (MENTION,),
     "brain": (SLASH,),
 }
+
+#: The runners that read Claude Code's ``.claude/agents`` — Claude Code, and
+#: the launch profile that IS Claude Code (GLM Coding Plan).
+_CLAUDE_SHAPED: Final[frozenset[str]] = frozenset({"claude-cli", "glm-cli"})
 
 #: Group ids the composer turns into headings (i18n keys ``agent_chat.typeahead_group_*``).
 GROUP_PROJECT: Final[str] = "project"
@@ -138,7 +148,7 @@ def suggest(
     elif trigger == SKILL_REF:
         rows = _filter_definitions(codex_skills(folder), q)
     else:
-        rows = claude_agents(folder) if runner == "claude-cli" else []
+        rows = claude_agents(folder) if runner in _CLAUDE_SHAPED else []
         rows = _filter_definitions(rows, q) if q else rows
         rows = rows + file_suggestions(folder, q, limit=limit)
     truncated = len(rows) > limit

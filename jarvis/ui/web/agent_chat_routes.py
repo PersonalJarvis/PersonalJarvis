@@ -19,8 +19,6 @@ Prefix ``/api/agent-chat``:
     GET    /check-folder?path=               does the folder exist / is it a directory
     GET    /typeahead?trigger=&surface=&provider=&cwd=&q=
                                              what the composer lists after "/", "@" or "$"
-    GET    /typeahead?trigger=&surface=&provider=&cwd=&q=
-                                             what the composer lists after "/", "@" or "$"
 
 The service lives on ``app.state.agent_chat`` (built in ``server.py``); a
 missing service answers 503 like every other optional subsystem.
@@ -50,7 +48,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from jarvis.agent_chat import attachments as chat_attachments
-from jarvis.agent_chat import typeahead
+from jarvis.agent_chat import runner_cli, typeahead
 from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, offers, rows_for
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
@@ -164,15 +162,9 @@ def _ws_service(ws: WebSocket) -> AgentChatService | None:
 
 
 def _cli_installed(runner: str) -> bool:
-    import shutil
+    from jarvis.agent_chat.runner_cli import cli_installed
 
-    names = {
-        "claude-cli": ("claude", "claude.cmd", "claude.exe"),
-        "codex-cli": ("codex", "codex.cmd", "codex.exe"),
-        "agy-cli": ("agy", "agy.exe"),
-        "grok-cli": ("grok", "grok.exe", "grok.cmd"),
-    }.get(runner, ())
-    return any(shutil.which(n) for n in names)
+    return cli_installed(runner)
 
 
 async def _live_cli_models() -> dict[str, list[dict[str, Any]]]:
@@ -333,11 +325,27 @@ _health_cache: dict[str, tuple[float, list[ProviderHealthRow]]] = {}
 #: so the API-Keys one-token probe is the wrong check: the dual Claude row
 #: is catalogued as ``claude-api``, and that probe hits Anthropic's endpoint
 #: and paints "Key rejected" on a Claude Code seat that is signed in.
-_CLI_RUNNERS: Final[frozenset[str]] = frozenset({"claude-cli", "codex-cli", "agy-cli", "grok-cli"})
+_CLI_RUNNERS: Final[frozenset[str]] = runner_cli.CLI_RUNNERS
 
 
 def _cli_auth_status(runner: str) -> Any | None:
-    """The vendor CLI's own login snapshot. ``None`` if ``runner`` is not a CLI."""
+    """The vendor CLI's own login snapshot. ``None`` if ``runner`` is not a CLI
+    this app can read the login of (OpenCode, Kimi and the DeepSeek harness
+    keep theirs where no reader has been verified — see the registry)."""
+    if runner == "glm-cli":
+        # GLM Coding Plan is Claude Code plus a Z.ai key: the key IS the login.
+        from types import SimpleNamespace
+
+        from jarvis.workspace.agents import glm_spawn_env
+
+        configured = glm_spawn_env() is not None
+        return SimpleNamespace(
+            connected=configured,
+            mode="subscription",
+            message="GLM Coding Plan: Z.ai key saved"
+            if configured
+            else "GLM Coding Plan: no Z.ai key — add one under API Keys",
+        )
     if runner == "claude-cli":
         from jarvis.claude_auth import ClaudeAuthService
 
@@ -394,7 +402,10 @@ def _cli_login_snapshot(runner: str) -> tuple[str, str, str]:
             f"The check itself failed ({type(exc).__name__})",
         )
     if st is None:
-        return "unknown", "unknown_provider", f"{runner}: not a CLI seat"
+        # The CLI keeps its own login and this app has no verified reader for
+        # it: no dot rather than a guessed one (the turn itself says if the
+        # CLI is signed out).
+        return "unknown", "self_managed", f"{runner}: keeps its own login"
     connected = _cli_subscription_connected(runner, st)
     detail = (getattr(st, "message", None) or "").strip() or (
         f"{runner}: signed in" if connected else f"{runner}: not signed in"

@@ -1,26 +1,44 @@
 """CLI-backed turns — a vendor agent binary drives the session.
 
-Four binaries, three wire shapes:
+Every coding CLI the Agentic IDE registers (``jarvis.workspace.agents``)
+has a planner here, so the chat's picker offers the same CLIs a pane does
+(maintainer, 2026-08-27: the CLIs connected in the Agentic IDE, and each
+one drawn as a chat, never as a terminal). Eight entries, six wire shapes:
 
-* **Claude-shaped NDJSON** — ``claude`` (Claude Code) and ``grok`` (Grok
+* **Claude-shaped NDJSON** — ``claude`` (Claude Code), ``grok`` (Grok
   Build, whose ``--output-format streaming-messages-json`` is the Anthropic
-  Messages wire shape on purpose). One translator turns their ``system`` /
-  ``stream_event`` / ``assistant`` / ``user`` / ``result`` lines into
-  agent-chat events.
+  Messages wire shape on purpose) and GLM Coding Plan, which IS Claude Code
+  pointed at Z.ai's endpoint through the registry's environment factory.
+  One translator turns their ``system`` / ``stream_event`` / ``assistant`` /
+  ``user`` / ``result`` lines into agent-chat events.
 * **Codex NDJSON** — ``codex exec --json`` with ``thread.*`` / ``turn.*`` /
   ``item.*`` lines.
 * **Antigravity NDJSON** — ``agy --output-format stream-json`` with
   ``event: init | step_update | result`` lines (``step_update`` carries text
   deltas and tool steps keyed by ``step_index``; verified against agy 1.1.19).
+* **OpenCode NDJSON** — ``opencode run --format json`` with ``step_start`` /
+  ``text`` / ``reasoning`` / ``tool_use`` / ``step_finish`` / ``error``
+  lines, each wrapping one ``part`` of the session record and naming the
+  session on every line (verified against opencode 1.18.23).
+* **Kimi NDJSON** — ``kimi -p --output-format stream-json`` writes chat
+  messages by ``role``: an ``assistant`` line with its text and
+  ``tool_calls`` (OpenAI's function-call shape, arguments as a JSON string)
+  and a ``tool`` line per result. Nothing streams and nothing names the
+  session, so the id is found afterwards in Kimi's own session store
+  (``agentic_ide.agent_sessions``), the way a pane finds its own
+  (verified against kimi-code 0.29.2).
+* **Plain text** — ``dsh --profile headless`` (DeepSeek Harness) prints the
+  final message and exits: no tool stream, no session, one answer.
 
-Every CLI resumes its own conversation natively (``claude --resume``,
-``codex exec resume``, ``grok -r``, ``agy --conversation``), so the session
-row keeps the vendor's id in ``vendor_session`` and a later turn continues
-the same conversation — the tools, skills, MCP servers and permissions are
-the CLI's own, exactly as in a terminal. The person's permission mode maps
-onto the closest stance each CLI offers; a print-mode CLI cannot ask back,
-so ``ask`` means "edits yes, anything riskier is declined by the CLI and
-reported to the model", and ``auto`` bypasses.
+Every CLI that keeps a conversation resumes it natively (``claude --resume``,
+``codex exec resume``, ``grok -r``, ``agy --conversation``, ``opencode run
+--session``, ``kimi --session``), so the session row keeps the vendor's id
+in ``vendor_session`` and a later turn continues the same conversation — the
+tools, skills, MCP servers and permissions are the CLI's own, exactly as in
+a terminal. The person's permission mode maps onto the closest stance each
+CLI offers; a print-mode CLI cannot ask back, so ``ask`` means "edits yes,
+anything riskier is declined by the CLI and reported to the model", and
+``auto`` bypasses.
 
 Spawning follows the mission workers: shell-free argv, the prompt on stdin
 where the binary accepts it, ``NO_WINDOW_CREATIONFLAGS``, UTF-8 decoding,
@@ -37,6 +55,7 @@ import os
 import shutil
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -62,7 +81,34 @@ class CliUnavailable(RuntimeError):
 # ------------------------------------------------------------ binaries
 
 
+#: The binaries behind each CLI runner, in the order tried. One table for the
+#: planners below, the catalog route's "installed" flag and the workspace
+#: panes' launch picks — three readers of one fact, so a CLI added here is
+#: offerable everywhere at once.
+CLI_BINARIES: Final[dict[str, tuple[str, ...]]] = {
+    "claude-cli": ("claude", "claude.cmd", "claude.exe"),
+    "codex-cli": ("codex", "codex.cmd", "codex.exe"),
+    "agy-cli": ("agy", "agy.exe"),
+    "grok-cli": ("grok", "grok.exe", "grok.cmd"),
+    "opencode-cli": ("opencode", "opencode.cmd", "opencode.exe"),
+    "kimi-cli": ("kimi", "kimi.cmd", "kimi.exe"),
+    # GLM Coding Plan IS Claude Code — Z.ai ships no binary of its own
+    # (``jarvis.workspace.agents``), so its seat stands on Claude Code's.
+    "glm-cli": ("claude", "claude.cmd", "claude.exe"),
+    "dsh-cli": ("dsh", "dsh.cmd", "dsh.exe"),
+}
+
+
 def _which(*names: str) -> str | None:
+    # The well-known install dirs a GUI-launched process does not inherit
+    # (``~/.local/bin``, ``~/.grok/bin``, npm's prefix) — best-effort, and the
+    # same augmentation a pane runs before it resolves its CLI.
+    try:
+        from jarvis.core.path_augment import ensure_cli_paths
+
+        ensure_cli_paths()
+    except Exception:  # noqa: BLE001, S110 — PATH augmentation is best-effort
+        pass
     for name in names:
         found = shutil.which(name)
         if found:
@@ -70,8 +116,13 @@ def _which(*names: str) -> str | None:
     return None
 
 
+def cli_installed(runner: str) -> bool:
+    """Whether ``runner``'s binary resolves from here (False for an unknown runner)."""
+    return _which(*CLI_BINARIES.get(runner, ())) is not None
+
+
 def claude_argv_prefix() -> list[str]:
-    binary = _which("claude", "claude.cmd", "claude.exe")
+    binary = _which(*CLI_BINARIES["claude-cli"])
     if not binary:
         raise CliUnavailable("Claude Code (claude) is not installed or not on PATH.")
     from jarvis.claude_auth import claude_cli_argv_prefix
@@ -88,7 +139,7 @@ def codex_argv_prefix() -> list[str]:
         prefix = []
     if prefix:
         return list(prefix)
-    binary = _which("codex", "codex.cmd", "codex.exe")
+    binary = _which(*CLI_BINARIES["codex-cli"])
     if not binary:
         raise CliUnavailable("Codex CLI (codex) is not installed or not on PATH.")
     return [binary]
@@ -103,16 +154,37 @@ def agy_argv_prefix() -> list[str]:
         cli = None
     if cli is not None and cli.kind == "agy":
         return list(cli.argv_prefix)
-    binary = _which("agy", "agy.exe")
+    binary = _which(*CLI_BINARIES["agy-cli"])
     if not binary:
         raise CliUnavailable("Antigravity CLI (agy) is not installed or not on PATH.")
     return [binary]
 
 
 def grok_argv_prefix() -> list[str]:
-    binary = _which("grok", "grok.exe", "grok.cmd")
+    binary = _which(*CLI_BINARIES["grok-cli"])
     if not binary:
         raise CliUnavailable("Grok Build (grok) is not installed or not on PATH.")
+    return [binary]
+
+
+def opencode_argv_prefix() -> list[str]:
+    binary = _which(*CLI_BINARIES["opencode-cli"])
+    if not binary:
+        raise CliUnavailable("OpenCode (opencode) is not installed or not on PATH.")
+    return [binary]
+
+
+def kimi_argv_prefix() -> list[str]:
+    binary = _which(*CLI_BINARIES["kimi-cli"])
+    if not binary:
+        raise CliUnavailable("Kimi Code (kimi) is not installed or not on PATH.")
+    return [binary]
+
+
+def dsh_argv_prefix() -> list[str]:
+    binary = _which(*CLI_BINARIES["dsh-cli"])
+    if not binary:
+        raise CliUnavailable("DeepSeek Harness (dsh) is not installed or not on PATH.")
     return [binary]
 
 
@@ -126,6 +198,45 @@ def _account_env(platform: str) -> dict[str, str]:
     except Exception:  # noqa: BLE001 — no account layer for this platform → plain env
         env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def _registry_env(agent: str, base: dict[str, str]) -> dict[str, str]:
+    """``base`` with the Agentic IDE registry's per-CLI environment on top.
+
+    The same overlay a pane of ``agent`` gets (``jarvis.agentic_ide.session.
+    agent_spawn_overlay``): the entry's fixed variables — an auto-updater
+    switched off so the binary is not swapped under a running turn — and, for
+    an entry whose environment is user configuration, its factory's answer.
+    A factory that answers ``None`` says the CLI is not configured (GLM
+    without a Z.ai key), and that stops the turn here rather than letting
+    Claude Code answer from — and bill — the wrong vendor. An empty value
+    removes the variable from the child, as it does for a pane.
+    """
+    env = dict(base)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        spec = workspace_agents.get_agent(agent)
+    except Exception:  # noqa: BLE001 — no registry, no overlay
+        spec = None
+    if spec is None:
+        return env
+    overlay = dict(spec.spawn_env)
+    if spec.spawn_env_factory is not None:
+        resolved = spec.spawn_env_factory()
+        if resolved is None:
+            raise CliUnavailable(
+                f"{spec.display_name} is not configured yet — add its API key on "
+                "the API Keys page, then send again."
+            )
+        overlay.update(resolved)
+    for key, value in overlay.items():
+        if value:
+            env[key] = value
+        else:
+            env.pop(key, None)
     return env
 
 
@@ -146,7 +257,7 @@ class CliPlan:
     argv: list[str]
     env: dict[str, str]
     stdin_text: str | None
-    shape: str  # "claude" | "codex" | "agy"
+    shape: str  # a key of ``_SHAPES``: claude | codex | agy | opencode | kimi | text
     #: Vendor session id we chose up front (claude/grok --session-id), or None
     #: when the CLI assigns one (agy, codex) and we read it from the stream.
     vendor_session: str | None
@@ -157,6 +268,10 @@ class CliPlan:
     #: The control-protocol handshake, written before the prompt. Claude Code
     #: only asks about tool calls once a client has announced itself this way.
     control_init: str | None = None
+    #: For a CLI whose stream never names its session: called once the turn
+    #: is over with the working folder and the wall-clock start, and answers
+    #: the id the CLI's own store gave the conversation (or None).
+    discover: Callable[[Path, float], str | None] | None = None
 
 
 def claude_control_init() -> str:
@@ -207,6 +322,62 @@ def plan_claude(
     resume: str | None,
     identity: jarvis_harness.Identity | None = None,
 ) -> CliPlan:
+    return _plan_claude_code(
+        prompt=prompt,
+        cwd=cwd,
+        model=model,
+        effort=effort,
+        permission_mode=permission_mode,
+        resume=resume,
+        identity=identity,
+        env=jarvis_harness.apply_env(_account_env("claude")),
+    )
+
+
+def plan_glm(
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
+) -> CliPlan:
+    """GLM Coding Plan: Claude Code's own plan, pointed at Z.ai by the registry.
+
+    Z.ai ships no CLI; its documentation says to run Anthropic's binary
+    against its endpoint, so everything — the control protocol that answers
+    permission prompts from the chat, ``--resume``, the MCP tools — is
+    inherited rather than re-implemented. Two things differ: the environment
+    is ``glm_spawn_env``'s (and its ``None`` refuses the turn instead of
+    letting Claude Code answer from, and bill, the wrong vendor), and no
+    ``--effort`` is sent, because that flag belongs to Anthropic's endpoint
+    (``_GLM_PICKS`` in ``jarvis.workspace.agents``).
+    """
+    return _plan_claude_code(
+        prompt=prompt,
+        cwd=cwd,
+        model=model,
+        effort="",
+        permission_mode=permission_mode,
+        resume=resume,
+        identity=identity,
+        env=jarvis_harness.apply_env(_registry_env("glm", dict(os.environ))),
+    )
+
+
+def _plan_claude_code(
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None,
+    env: dict[str, str],
+) -> CliPlan:
     mode = normalize_permission("claude-cli", permission_mode)
     argv = [
         *claude_argv_prefix(),
@@ -249,7 +420,7 @@ def plan_claude(
         argv += ["--session-id", sid]
     return CliPlan(
         argv,
-        jarvis_harness.apply_env(_account_env("claude")),
+        env,
         claude_stream_input(prompt),
         "claude",
         sid,
@@ -618,6 +789,158 @@ def plan_codex(
     return CliPlan(argv, jarvis_harness.apply_env(_account_env("codex")), text, "codex", resume)
 
 
+_OPENCODE_CATALOG: dict[str, Any] = {"at": 0.0, "rows": None}
+_OPENCODE_CATALOG_TTL_S: Final[float] = 600.0
+
+
+def read_opencode_models(timeout_s: float = 20.0) -> list[dict[str, Any]]:
+    """``opencode models`` -> the ids this install can run (cached 10 min).
+
+    OpenCode's ids are ``provider/model`` and the list is whatever providers
+    the person configured — nothing to curate, only to ask. The label is the
+    model half and the note the provider, so ``anthropic/claude-opus-5`` and
+    ``cloudflare-ai-gateway/anthropic/claude-opus-5`` read apart in the picker.
+    Blocking (a ~2 s subprocess) — call it off the event loop. Any failure
+    yields an empty list, and the cache keeps a failure out of the next
+    request for the TTL too.
+    """
+    import subprocess
+
+    now = time.monotonic()
+    if (
+        _OPENCODE_CATALOG["rows"] is not None
+        and now - _OPENCODE_CATALOG["at"] < _OPENCODE_CATALOG_TTL_S
+    ):
+        return list(_OPENCODE_CATALOG["rows"])
+    rows: list[dict[str, Any]] = []
+    try:
+        argv = [*opencode_argv_prefix(), "models"]
+        env = _registry_env("opencode", dict(os.environ))
+        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            argv,
+            capture_output=True,
+            timeout=timeout_s,
+            env=env,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+        for line in proc.stdout.decode("utf-8", errors="replace").splitlines():
+            mid = line.strip()
+            if not mid or "/" not in mid or " " in mid:
+                continue
+            provider, _, model = mid.partition("/")
+            rows.append({"id": mid, "label": model, "note": provider})
+    except (CliUnavailable, OSError, ValueError, subprocess.SubprocessError) as exc:
+        log.debug("agent chat: opencode models unavailable: %s", exc)
+    _OPENCODE_CATALOG["rows"] = rows
+    _OPENCODE_CATALOG["at"] = now
+    return list(rows)
+
+
+def plan_opencode(
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
+) -> CliPlan:
+    mode = normalize_permission("opencode-cli", permission_mode)
+    # The prompt is a positional of ``run`` (no stdin mode), behind ``--`` so
+    # a sentence that starts with a dash is a sentence and not a flag; the
+    # identity rides in front of it on a fresh conversation.
+    prompt = _with_identity(prompt, identity, resume)
+    argv = [*opencode_argv_prefix(), "run", "--format", "json", "--thinking"]
+    if mode == "auto":
+        argv += ["--auto"]
+    elif mode == "plan":
+        # OpenCode's own plan agent: read-only by its definition.
+        argv += ["--agent", "plan"]
+    if model:
+        argv += ["--model", model]
+    if effort:
+        argv += ["--variant", effort]
+    if resume:
+        argv += ["--session", resume]
+    argv += ["--", prompt]
+    env = _registry_env("opencode", _account_env("opencode"))
+    return CliPlan(argv, env, None, "opencode", resume)
+
+
+def _kimi_session_after(cwd: Path, started_at: float) -> str | None:
+    """The session Kimi's print run in ``cwd`` created after ``started_at``.
+
+    Kimi's stream names no session; its store does. The same search a pane
+    runs for its own conversation — the newest session under this folder's
+    bucket, created after the start, with content — through
+    ``agent_sessions.discover``, so the two never disagree about where Kimi
+    keeps a conversation.
+    """
+    try:
+        from jarvis.agentic_ide import agent_sessions
+
+        handle = agent_sessions.discover("kimi", str(cwd), started_at)
+    except Exception as exc:  # noqa: BLE001 — a lost id costs one resume, not the turn
+        log.debug("agent chat: kimi session discovery failed: %s", exc)
+        return None
+    return handle.id if handle is not None else None
+
+
+def plan_kimi(
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
+) -> CliPlan:
+    mode = normalize_permission("kimi-cli", permission_mode)
+    prompt = _with_identity(prompt, identity, resume)
+    argv = [*kimi_argv_prefix(), "--output-format", "stream-json"]
+    if model:
+        argv += ["--model", model]
+    # Print mode is autonomous by Kimi's own design (a headless run has nobody
+    # to ask); the flag only says so out loud. Plan is an instruction, not a
+    # sandbox — the ladder's sentence says as much.
+    if mode == "auto":
+        argv += ["--auto"]
+    if resume:
+        # Long form on purpose: the two Kimi generations disagree on the short
+        # flag (``agent_sessions``).
+        argv += ["--session", resume]
+    text = _PLAN_PREAMBLE + prompt if mode == "plan" else prompt
+    argv += ["--prompt", text]
+    env = _registry_env("kimi", _account_env("kimi"))
+    return CliPlan(
+        argv, env, None, "kimi", resume, discover=None if resume else _kimi_session_after
+    )
+
+
+def plan_dsh(
+    *,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    effort: str,
+    permission_mode: str,
+    resume: str | None,
+    identity: jarvis_harness.Identity | None = None,
+) -> CliPlan:
+    """DeepSeek Harness's headless profile: one task in, the final message out.
+
+    No model flag, no session, no tool stream — the harness keeps its key and
+    its policy in its own settings (``jarvis.workspace.agents``). What comes
+    back is text, and the chat shows it as the answer.
+    """
+    prompt = _with_identity(prompt, identity, None, compact=True)
+    argv = [*dsh_argv_prefix(), "--profile", "headless", prompt]
+    env = _registry_env("deepseek-harness", _account_env("deepseek-harness"))
+    return CliPlan(argv, env, None, "text", None)
+
+
 def _with_identity(
     prompt: str,
     identity: jarvis_harness.Identity | None,
@@ -643,7 +966,19 @@ _PLANNERS: Final[dict[str, Any]] = {
     "grok-cli": plan_grok,
     "agy-cli": plan_agy,
     "codex-cli": plan_codex,
+    "opencode-cli": plan_opencode,
+    "kimi-cli": plan_kimi,
+    "glm-cli": plan_glm,
+    "dsh-cli": plan_dsh,
 }
+
+#: Every runner this module drives — the catalog route's "is this a CLI
+#: seat" question, answered from the planners rather than a second list.
+CLI_RUNNERS: Final[frozenset[str]] = frozenset(_PLANNERS)
+
+#: The runners that are Claude Code under the hood, and so take its identity
+#: file and its control protocol.
+_CLAUDE_CODE_RUNNERS: Final[frozenset[str]] = frozenset({"claude-cli", "glm-cli"})
 
 
 def supports_cli_runner(runner: str) -> bool:
@@ -924,7 +1259,17 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
 def _cli_tool_summary(name: str, args: Any) -> str:
     if not isinstance(args, dict):
         return ""
-    for key in ("command", "file_path", "path", "pattern", "query", "url", "description"):
+    for key in (
+        "command",
+        "file_path",
+        "filePath",
+        "target_file",
+        "path",
+        "pattern",
+        "query",
+        "url",
+        "description",
+    ):
         val = args.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip().splitlines()[0][:200]
@@ -1294,6 +1639,311 @@ def translate_agy_line(obj: dict[str, Any], st: _AgyState) -> list[dict[str, Any
     return out
 
 
+# ------------------------------------------------------ opencode translation
+
+
+@dataclass(slots=True)
+class _OpenCodeState:
+    turn_id: str
+    vendor_session: str | None = None
+    status: str = "done"
+    error: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+    cost_usd: float | None = None
+    emitted_text: bool = False
+    result_text: str = ""
+    #: callIDs already announced as tool rows
+    tool_calls: set[str] = field(default_factory=set)
+    started_at: dict[str, float] = field(default_factory=dict)
+
+
+#: ``step_finish.part.tokens`` -> the usage keys the timeline sums. OpenCode
+#: follows the OpenAI convention: ``input`` INCLUDES the cache read.
+_OPENCODE_TOKEN_KEYS: Final[tuple[tuple[str, str], ...]] = (
+    ("input", "input_tokens"),
+    ("output", "output_tokens"),
+    ("reasoning", "reasoning_output_tokens"),
+)
+
+
+def _part_duration_ms(part: dict[str, Any]) -> int | None:
+    span = part.get("time")
+    if not isinstance(span, dict):
+        return None
+    start, end = span.get("start"), span.get("end")
+    if isinstance(start, int | float) and isinstance(end, int | float) and end >= start:
+        return int(end - start)
+    return None
+
+
+def translate_opencode_line(obj: dict[str, Any], st: _OpenCodeState) -> list[dict[str, Any]]:
+    """One ``opencode run --format json`` object -> agent-chat events.
+
+    Shape (opencode 1.18.23): ``{"type", "timestamp", "sessionID", "part"}``
+    where ``type`` is ``step_start`` / ``text`` / ``reasoning`` / ``tool_use``
+    / ``step_finish``, and ``part`` is the session record's part of that
+    kind — a finished ``text`` part with its ``text``, a ``tool`` part with
+    ``tool``, ``callID`` and ``state{status, input, output, title, time}``,
+    a ``step-finish`` part with ``tokens{input, output, reasoning,
+    cache{read, write}}`` and ``cost``. An ``error`` line carries
+    ``error{name, data{message}}`` instead of a part.
+    """
+    out: list[dict[str, Any]] = []
+    kind = str(obj.get("type") or "")
+    sid = obj.get("sessionID")
+    if sid and not st.vendor_session:
+        st.vendor_session = str(sid)
+    part = obj.get("part") if isinstance(obj.get("part"), dict) else {}
+
+    if kind == "text":
+        text = str(part.get("text") or "")
+        mid = str(part.get("id") or part.get("messageID") or uuid.uuid4().hex)
+        if text.strip():
+            st.emitted_text = True
+            st.result_text = text
+            # An answer after a retryable error means the retry worked.
+            st.status, st.error = "done", None
+            out.append(
+                make_event(
+                    "assistant_text",
+                    {"turn_id": st.turn_id, "message_id": mid, "text": text},
+                )
+            )
+        return out
+
+    if kind == "reasoning":
+        text = str(part.get("text") or "")
+        mid = str(part.get("id") or part.get("messageID") or uuid.uuid4().hex)
+        if text.strip():
+            out.append(
+                make_event(
+                    "reasoning",
+                    {
+                        "turn_id": st.turn_id,
+                        "message_id": mid,
+                        "text": text,
+                        "duration_ms": _part_duration_ms(part),
+                    },
+                )
+            )
+        return out
+
+    if kind == "tool_use":
+        name = str(part.get("tool") or "tool")
+        call_id = str(part.get("callID") or part.get("id") or uuid.uuid4().hex)
+        state = part.get("state") if isinstance(part.get("state"), dict) else {}
+        args = state.get("input") if isinstance(state.get("input"), dict) else {}
+        if call_id not in st.tool_calls:
+            st.tool_calls.add(call_id)
+            st.started_at[call_id] = time.perf_counter()
+            out.append(
+                make_event(
+                    "tool_call",
+                    {
+                        "turn_id": st.turn_id,
+                        "call_id": call_id,
+                        "name": name,
+                        "input": args,
+                        "summary": _cli_tool_summary(name, args)
+                        or str(state.get("title") or "")[:200],
+                    },
+                )
+            )
+        status = str(state.get("status") or "")
+        if status in {"completed", "error"}:
+            is_error = status == "error"
+            output = str(state.get("output") or "")
+            err = state.get("error")
+            if is_error and err:
+                output = (output.rstrip() + ("\n" if output else "") + str(err)).strip()
+            started = st.started_at.get(call_id)
+            duration_ms = _part_duration_ms(state) or (
+                int((time.perf_counter() - started) * 1000) if started else None
+            )
+            out.append(
+                make_event(
+                    "tool_result",
+                    {
+                        "turn_id": st.turn_id,
+                        "call_id": call_id,
+                        "output": output or ("failed" if is_error else "done"),
+                        "is_error": is_error,
+                        "duration_ms": duration_ms,
+                    },
+                )
+            )
+        return out
+
+    if kind == "step_finish":
+        tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
+        for theirs, ours in _OPENCODE_TOKEN_KEYS:
+            val = tokens.get(theirs)
+            if isinstance(val, int | float):
+                st.usage[ours] = st.usage.get(ours, 0) + int(val)
+        cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+        for theirs, ours in (
+            ("read", "cached_input_tokens"),
+            ("write", "cache_write_input_tokens"),
+        ):
+            val = cache.get(theirs)
+            if isinstance(val, int | float):
+                st.usage[ours] = st.usage.get(ours, 0) + int(val)
+        cost = part.get("cost")
+        if isinstance(cost, int | float):
+            st.cost_usd = (st.cost_usd or 0.0) + float(cost)
+        if str(part.get("reason") or "") == "stop":
+            st.status, st.error = "done", None
+        return out
+
+    if kind == "error":
+        err = obj.get("error") if isinstance(obj.get("error"), dict) else {}
+        data = err.get("data") if isinstance(err.get("data"), dict) else {}
+        message = data.get("message") or err.get("message") or err.get("name") or "error"
+        # Terminal unless a later part shows the CLI retried and got through.
+        st.status = "error"
+        st.error = str(message)
+        return out
+
+    return out
+
+
+# ---------------------------------------------------------- kimi translation
+
+
+@dataclass(slots=True)
+class _KimiState:
+    turn_id: str
+    vendor_session: str | None = None
+    status: str = "done"
+    error: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+    emitted_text: bool = False
+    result_text: str = ""
+    #: assistant lines seen — each is one message on the timeline
+    messages: int = 0
+    started_at: dict[str, float] = field(default_factory=dict)
+
+
+def _kimi_arguments(raw: Any) -> dict[str, Any]:
+    """The call's arguments as a dict — Kimi writes them as a JSON string."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return {"arguments": raw}
+        return parsed if isinstance(parsed, dict) else {"arguments": parsed}
+    return {}
+
+
+def translate_kimi_line(obj: dict[str, Any], st: _KimiState) -> list[dict[str, Any]]:
+    """One ``kimi --output-format stream-json`` object -> agent-chat events.
+
+    Shape (kimi-code 0.29.2, ``PromptJsonWriter``): chat messages by
+    ``role``. ``assistant`` carries ``content`` (the step's whole text) and
+    ``tool_calls`` — OpenAI's function-call shape, ``function.arguments`` a
+    JSON string; ``tool`` carries ``tool_call_id`` and ``content``; ``meta``
+    lines (``turn.step.retrying``) and a goal's ``goal.summary`` are noise.
+    """
+    out: list[dict[str, Any]] = []
+    role = str(obj.get("role") or "")
+
+    if role == "assistant":
+        st.messages += 1
+        mid = f"kimi-{st.messages}"
+        content = obj.get("content")
+        if isinstance(content, str) and content.strip():
+            st.emitted_text = True
+            st.result_text = content
+            out.append(
+                make_event(
+                    "assistant_text",
+                    {"turn_id": st.turn_id, "message_id": mid, "text": content},
+                )
+            )
+        calls = obj.get("tool_calls") if isinstance(obj.get("tool_calls"), list) else []
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+            name = str(fn.get("name") or "tool")
+            args = _kimi_arguments(fn.get("arguments"))
+            call_id = str(call.get("id") or uuid.uuid4().hex)
+            st.started_at[call_id] = time.perf_counter()
+            out.append(
+                make_event(
+                    "tool_call",
+                    {
+                        "turn_id": st.turn_id,
+                        "call_id": call_id,
+                        "name": name,
+                        "input": args,
+                        "summary": _cli_tool_summary(name, args),
+                    },
+                )
+            )
+        return out
+
+    if role == "tool":
+        call_id = str(obj.get("tool_call_id") or "")
+        content = obj.get("content")
+        output = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        started = st.started_at.get(call_id)
+        out.append(
+            make_event(
+                "tool_result",
+                {
+                    "turn_id": st.turn_id,
+                    "call_id": call_id,
+                    "output": output,
+                    # Kimi's record does not say; a failure reads in the text.
+                    "is_error": False,
+                    "duration_ms": int((time.perf_counter() - started) * 1000) if started else None,
+                },
+            )
+        )
+        return out
+
+    return out
+
+
+# ---------------------------------------------------------- plain-text shape
+
+
+@dataclass(slots=True)
+class _TextState:
+    """A CLI that prints its answer and nothing else — every line is the answer."""
+
+    turn_id: str
+    vendor_session: str | None = None
+    status: str = "done"
+    error: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+    emitted_text: bool = False
+    result_text: str = ""
+
+
+def _translate_nothing(obj: dict[str, Any], st: Any) -> list[dict[str, Any]]:
+    return []
+
+
+#: shape -> (a fresh state for a turn, the line translator). The pump below
+#: knows nothing about any CLI: it decodes a line, hands it here, and emits
+#: what comes back. A new wire shape is one row.
+_SHAPES: Final[dict[str, tuple[Callable[[str, str | None], Any], Callable[..., Any]]]] = {
+    "claude": (lambda tid, vs: _ClaudeState(turn_id=tid, vendor_session=vs), translate_claude_line),
+    "codex": (lambda tid, vs: _CodexState(turn_id=tid, vendor_session=vs), translate_codex_line),
+    "agy": (lambda tid, vs: _AgyState(turn_id=tid, vendor_session=vs), translate_agy_line),
+    "opencode": (
+        lambda tid, vs: _OpenCodeState(turn_id=tid, vendor_session=vs),
+        translate_opencode_line,
+    ),
+    "kimi": (lambda tid, vs: _KimiState(turn_id=tid, vendor_session=vs), translate_kimi_line),
+    "text": (lambda tid, vs: _TextState(turn_id=tid, vendor_session=vs), _translate_nothing),
+}
+
+
 # ------------------------------------------------------------ the turn
 
 
@@ -1358,7 +2008,7 @@ async def run_cli_turn(
             user_text=user_text,
             history=handle.history,
             resume=resume,
-            with_file=(runner == "claude-cli"),
+            with_file=(runner in _CLAUDE_CODE_RUNNERS),
         )
         if bridge is not None:
             from jarvis.agent_chat.approval_bridge import ChatGrant
@@ -1397,7 +2047,7 @@ async def run_cli_turn(
                     user_text=user_text,
                     history=handle.history,
                     resume=None,
-                    with_file=(runner == "claude-cli"),
+                    with_file=(runner in _CLAUDE_CODE_RUNNERS),
                 )
             outcome = await _run_cli_once(
                 handle, user_text, runner, None, identity=ident, bridge=bridge
@@ -1458,6 +2108,7 @@ async def _run_cli_once(
 
     vendor_session = plan.vendor_session
     log.info("agent chat %s: %s argv=%s", handle.turn_id, runner, plan.argv[:6])
+    started_at = time.time()
     try:
         proc = await asyncio.create_subprocess_exec(
             *plan.argv,
@@ -1474,9 +2125,13 @@ async def _run_cli_once(
     except (OSError, ValueError) as exc:
         return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
 
-    claude_state = _ClaudeState(turn_id=handle.turn_id, vendor_session=vendor_session)
-    codex_state = _CodexState(turn_id=handle.turn_id, vendor_session=vendor_session)
-    agy_state = _AgyState(turn_id=handle.turn_id, vendor_session=vendor_session)
+    make_state, translate = _SHAPES[plan.shape]
+    state: Any = make_state(handle.turn_id, vendor_session)
+    # Lines that are not the CLI's JSON — a banner, a warning, the whole
+    # answer of a plain-text CLI — shown as they come, and kept as the answer
+    # of last resort when the stream said nothing else.
+    plain: list[str] = []
+    plain_id = f"plain-{handle.turn_id}"
     stderr_tail: list[str] = []
 
     async def _drain_stderr() -> None:
@@ -1490,6 +2145,15 @@ async def _run_cli_once(
                 stderr_tail.append(text)
                 del stderr_tail[:-40]
 
+    async def _say_plain(line: str) -> None:
+        plain.append(line + "\n")
+        await handle.emit(
+            make_event(
+                "text_delta",
+                {"turn_id": handle.turn_id, "message_id": plain_id, "text": line + "\n"},
+            )
+        )
+
     async def _pump_stdout() -> None:
         assert proc.stdout is not None
         while True:
@@ -1499,31 +2163,17 @@ async def _run_cli_once(
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
+            if plan.shape == "text":
+                await _say_plain(line)
+                continue
             try:
                 obj = json.loads(line)
             except ValueError:
-                # A plain-text line (agy without JSON, a banner): show it.
-                await handle.emit(
-                    make_event(
-                        "text_delta",
-                        {
-                            "turn_id": handle.turn_id,
-                            "message_id": f"plain-{handle.turn_id}",
-                            "text": line + "\n",
-                        },
-                    )
-                )
-                claude_state.text_acc[f"plain-{handle.turn_id}"] = (
-                    claude_state.text_acc.get(f"plain-{handle.turn_id}", "") + line + "\n"
-                )
+                await _say_plain(line)
                 continue
             if not isinstance(obj, dict):
                 continue
-            if plan.shape == "codex":
-                events = translate_codex_line(obj, codex_state)
-            elif plan.shape == "agy":
-                events = translate_agy_line(obj, agy_state)
-            else:
+            if plan.control_init is not None:
                 if obj.get("type") == "control_request":
                     await _answer_control_request(obj)
                     continue
@@ -1531,10 +2181,9 @@ async def _run_cli_once(
                     # The CLI's answer to our handshake (its command list).
                     # Nothing the timeline shows, and not a line to translate.
                     continue
-                events = translate_claude_line(obj, claude_state)
-            for ev in events:
+            for ev in translate(obj, state):
                 await handle.emit(ev)
-            if plan.keep_stdin and claude_state.saw_result:
+            if plan.keep_stdin and getattr(state, "saw_result", False):
                 # The turn is over; closing stdin lets the CLI exit.
                 _close_stdin()
 
@@ -1573,8 +2222,9 @@ async def _run_cli_once(
             )
             # The card sits on the tool row the assistant line announced; a
             # plan's ExitPlanMode has no row yet, so it gets one here.
-            if tool_name == "ExitPlanMode" and call_id not in claude_state.emitted_tool_ids:
-                claude_state.emitted_tool_ids.add(call_id)
+            announced: set[str] = getattr(state, "emitted_tool_ids", set())
+            if tool_name == "ExitPlanMode" and call_id not in announced:
+                announced.add(call_id)
                 await handle.emit(
                     make_event(
                         "tool_call",
@@ -1654,72 +2304,46 @@ async def _run_cli_once(
             if not task.done():
                 task.cancel()
 
-    shape_state: Any = (
-        codex_state if plan.shape == "codex" else agy_state if plan.shape == "agy" else claude_state
-    )
     if handle.cancel.is_set():
         status = "cancelled"
     elif status == "done":
-        st_status = shape_state.status
-        st_error = shape_state.error
-        if st_status == "error":
-            status, error_text = "error", st_error
+        if state.status == "error":
+            status, error_text = "error", state.error
         elif proc.returncode not in (0, None):
             status = "error"
             error_text = (
-                st_error
-                or getattr(shape_state, "last_error", None)
+                state.error
+                or getattr(state, "last_error", None)
                 or "\n".join(stderr_tail[-8:]).strip()
                 or f"{runner} exited with code {proc.returncode}."
             )
 
-    if plan.shape == "codex":
-        usage = codex_state.usage
-        vendor_session = codex_state.vendor_session or vendor_session
-        emitted_text = codex_state.emitted_text
-        plain_tail = ""
-    elif plan.shape == "agy":
-        usage = agy_state.usage
-        vendor_session = agy_state.vendor_session or vendor_session
-        emitted_text = agy_state.emitted_text
-        plain_tail = claude_state.text_acc.get(f"plain-{handle.turn_id}", "")
-        if not emitted_text and agy_state.result_text.strip():
-            emitted_text = True
-            await handle.emit(
-                make_event(
-                    "assistant_text",
-                    {
-                        "turn_id": handle.turn_id,
-                        "message_id": f"result-{handle.turn_id}",
-                        "text": agy_state.result_text,
-                    },
-                )
-            )
-    else:
-        usage = claude_state.usage
-        cost_usd = claude_state.cost_usd
-        vendor_session = claude_state.vendor_session or vendor_session
-        emitted_text = claude_state.emitted_text
-        plain_tail = claude_state.text_acc.get(f"plain-{handle.turn_id}", "")
-        if not emitted_text and claude_state.result_text.strip():
-            emitted_text = True
-            await handle.emit(
-                make_event(
-                    "assistant_text",
-                    {
-                        "turn_id": handle.turn_id,
-                        "message_id": f"result-{handle.turn_id}",
-                        "text": claude_state.result_text,
-                    },
-                )
-            )
-    if not emitted_text and plain_tail.strip():
+    usage = dict(state.usage)
+    cost_usd = getattr(state, "cost_usd", None)
+    vendor_session = state.vendor_session or vendor_session
+    if vendor_session is None and plan.discover is not None and status == "done":
+        # A CLI that never said which conversation it opened: ask its store.
+        vendor_session = await asyncio.to_thread(plan.discover, cwd, started_at)
+    result_text = str(getattr(state, "result_text", "") or "")
+    plain_tail = "".join(plain)
+    if not state.emitted_text and result_text.strip():
         await handle.emit(
             make_event(
                 "assistant_text",
                 {
                     "turn_id": handle.turn_id,
-                    "message_id": f"plain-{handle.turn_id}",
+                    "message_id": f"result-{handle.turn_id}",
+                    "text": result_text,
+                },
+            )
+        )
+    elif not state.emitted_text and plain_tail.strip():
+        await handle.emit(
+            make_event(
+                "assistant_text",
+                {
+                    "turn_id": handle.turn_id,
+                    "message_id": plain_id,
                     "text": plain_tail.strip(),
                 },
             )

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentChatSession } from "@/lib/agentChatApi";
+import { providerKind } from "@/components/agentchat/AgentComposer";
 import { createAgentChatStore, draftKey } from "@/store/agentChat";
 
 /**
@@ -133,6 +134,87 @@ describe("agent-chat store surfaces", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("counts a brain seat as connected only when an API KEY is saved", () => {
+    // The Agents tab calls a Claude Code login "connected" — right for a row
+    // a CLI runs. On the front page's chat the same row is the Anthropic
+    // endpoint, where that login buys nothing, so it must read as unconnected
+    // until a key is there.
+    const row = (runner: string, keyless = false) => ({
+      id: "claude-api",
+      label: "Anthropic Claude",
+      family: "claude",
+      runner,
+      models_source: "live" as const,
+      curated_models: [],
+      default_model: "",
+      keyless,
+      native_resume: true,
+      effort_levels: ["low", "high"],
+      default_effort: "high",
+      permission_modes: [{ id: "ask", label: "ask", description: "" }],
+      default_permission_mode: "ask",
+      cli_installed: null,
+    });
+    const seat = (runner: string, conn: Record<string, unknown>) => {
+      const store = createAgentChatStore("jarvis");
+      store.setState({
+        catalog: { providers: [row(runner)], default_cwd: "C:\work", shell: "pwsh" },
+        connections: [{ jarvis: "claude-api", is_active_brain: false, ...conn }],
+      } as never);
+      return store.getState().providerOptions()[0].connected;
+    };
+    const subscriptionOnly = { key_set: true, api_key_set: false, oauth_connected: true };
+    expect(seat("brain", subscriptionOnly)).toBe(false);
+    expect(seat("api", subscriptionOnly)).toBe(false);
+    // The CLI seat itself is exactly what that login is for.
+    expect(seat("claude-cli", subscriptionOnly)).toBe(true);
+    expect(seat("brain", { key_set: true, api_key_set: true })).toBe(true);
+    // A backend too old to report the finer field still answers as before.
+    expect(seat("brain", { key_set: true })).toBe(true);
+  });
+
+  it("counts a coding CLI the Agents tab has no card for as connected once installed", () => {
+    // OpenCode, Kimi, GLM Coding Plan and the DeepSeek harness keep their own
+    // login; the Agents tab has no card for them, and "no card" must not read
+    // as "not connected" — installed is what this app can know. The row also
+    // wears the IDE's mark for that CLI, so both pickers draw it alike.
+    const row = (cli_installed: boolean) => ({
+      id: "opencode",
+      label: "OpenCode",
+      family: "opencode",
+      runner: "opencode-cli",
+      models_source: "curated" as const,
+      curated_models: [],
+      default_model: "",
+      keyless: false,
+      native_resume: true,
+      effort_levels: [""],
+      default_effort: "",
+      permission_modes: [{ id: "auto", label: "auto", description: "" }],
+      default_permission_mode: "auto",
+      cli_installed,
+      agent: "opencode",
+    });
+    const seat = (cli_installed: boolean) => {
+      const store = createAgentChatStore("agent");
+      store.setState({
+        catalog: { providers: [row(cli_installed)], default_cwd: "C:\\work", shell: "pwsh" },
+        connections: [],
+      } as never);
+      return store.getState().providerOptions()[0];
+    };
+    expect(seat(true).connected).toBe(true);
+    expect(seat(true).agentMark).toBe("opencode");
+    expect(seat(false).connected).toBe(false);
+  });
+
+  it("groups a brain seat with the API keys, never with the CLIs", () => {
+    expect(providerKind({ runner: "brain", keyless: false })).toBe("api");
+    expect(providerKind({ runner: "api", keyless: false })).toBe("api");
+    expect(providerKind({ runner: "claude-cli", keyless: false })).toBe("cli");
+    expect(providerKind({ runner: "brain", keyless: true })).toBe("local");
   });
 
   it("names the front page's draft key as it always was, and gives the IDE its own", () => {

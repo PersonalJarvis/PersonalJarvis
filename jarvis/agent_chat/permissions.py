@@ -6,7 +6,10 @@ bypassPermissions / dontAsk), the Codex CLI pairs a sandbox with an approval
 policy (the TUI's Read-only / Auto / Full-access presets, plus headless
 ``--approve-for-me`` where its own reviewer model answers the prompts),
 Antigravity's ``agy`` knows accept-edits, plan and a skip-permissions
-switch, and the in-process API runner gates its own tools. The composer
+switch, OpenCode's ``run`` has its own rules plus ``--auto`` and a read-only
+plan agent, Kimi's print mode is autonomous by design, the DeepSeek harness
+keeps its policy in its own settings, and the in-process API runner gates
+its own tools. The composer
 shows exactly the ladder of the runner in use — the same words the vendor's
 own CLI uses, so a person who knows Claude Code's "Auto-accept edits" finds
 it here — and
@@ -164,6 +167,50 @@ _GROK: Final[tuple[PermissionMode, ...]] = (
     ),
 )
 
+_OPENCODE: Final[tuple[PermissionMode, ...]] = (
+    PermissionMode(
+        "default",
+        "Ask before acting",
+        "OpenCode's own permission rules decide; a headless run cannot ask "
+        "back, so anything they would have asked about is declined and "
+        "reported to the model.",
+    ),
+    PermissionMode(
+        "plan",
+        "Plan",
+        "OpenCode's plan agent — read and plan only; nothing is changed.",
+    ),
+    PermissionMode(
+        "auto",
+        "Full access",
+        "Every permission OpenCode's rules do not deny outright is granted "
+        "without asking (`--auto`).",
+    ),
+)
+
+_KIMI: Final[tuple[PermissionMode, ...]] = (
+    PermissionMode(
+        "auto",
+        "Full access",
+        "Kimi's print mode runs fully autonomous: tools run without asking.",
+    ),
+    PermissionMode(
+        "plan",
+        "Plan",
+        "The agent is asked to investigate and answer with a plan instead of "
+        "acting. Kimi enforces nothing here — read the plan before building.",
+    ),
+)
+
+_DSH: Final[tuple[PermissionMode, ...]] = (
+    PermissionMode(
+        "auto",
+        "Harness policy",
+        "The headless profile never asks; DeepSeek Harness's own permission "
+        "policy, set in its own settings, decides what runs.",
+    ),
+)
+
 _API: Final[tuple[PermissionMode, ...]] = (
     PermissionMode(
         "ask",
@@ -223,6 +270,12 @@ _LADDERS: Final[dict[str, tuple[tuple[PermissionMode, ...], str]]] = {
     "codex-cli": (_CODEX, "auto"),
     "agy-cli": (_AGY, "accept-edits"),
     "grok-cli": (_GROK, "acceptEdits"),
+    "opencode-cli": (_OPENCODE, "default"),
+    "kimi-cli": (_KIMI, "auto"),
+    # GLM Coding Plan drives the Claude Code binary, so it takes Claude
+    # Code's own words.
+    "glm-cli": (_CLAUDE, "acceptEdits"),
+    "dsh-cli": (_DSH, "auto"),
     "api": (_API, "ask"),
     JARVIS_LADDER: (_JARVIS, "ask"),
 }
@@ -254,7 +307,7 @@ def _stance(runner: str, mode: str) -> int:
     # Claude Code's "auto" is its classifier (routine yes, risky asks).
     if runner == "codex-cli" and mode == "auto":
         return _STANCE["auto_codex"]
-    if runner == "claude-cli" and mode == "auto":
+    if runner in ("claude-cli", "glm-cli") and mode == "auto":
         return _STANCE["auto_claude"]
     return _STANCE.get(mode, 1)
 

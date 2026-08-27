@@ -26,7 +26,11 @@ export interface AgentChatProvider {
   label: string;
   /** Brand family for ProviderLogo. */
   family: string;
-  /** "api" | "claude-cli" | "codex-cli" | "agy-cli" | "grok-cli" — resolved for this machine. */
+  /**
+   * Which runner answers on this machine: "api" / "brain", or a vendor CLI —
+   * "claude-cli" | "codex-cli" | "agy-cli" | "grok-cli" | "opencode-cli" |
+   * "kimi-cli" | "glm-cli" | "dsh-cli" (jarvis/agent_chat/runner_cli.py).
+   */
   runner: string;
   models_source: "live" | "curated";
   curated_models: CuratedModel[];
@@ -42,6 +46,13 @@ export interface AgentChatProvider {
   default_permission_mode: string;
   /** null for the API runner; else whether the vendor binary is on PATH. */
   cli_installed: boolean | null;
+  /**
+   * The Agentic IDE's registry key for the CLI this row runs ("claude",
+   * "opencode", "glm", …) — "" on an API row, absent on an older backend.
+   * The mark the row wears is that entry's (`AgentMark`), so the chat's
+   * picker and the IDE's pane picker draw one CLI the same way.
+   */
+  agent?: string;
   /**
    * The characters that open the composer's typeahead on this seat — a
    * subset of "/", "@", "$" decided by the runner (jarvis/agent_chat/typeahead.py).

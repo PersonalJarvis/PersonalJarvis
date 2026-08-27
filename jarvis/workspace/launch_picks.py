@@ -226,10 +226,10 @@ def normalize_model(agent: str, model: str | None) -> str:
 async def live_models() -> dict[str, list[dict[str, Any]]]:
     """The model lists the installed CLIs publish, keyed by runner.
 
-    ``agy`` answers ``agy models`` (a ~2 s subprocess, cached ten minutes in
-    the runner module); Codex keeps ``models_cache.json`` in its home. Both are
-    read off the event loop, and a failure simply leaves the curated fallback
-    standing.
+    ``agy`` answers ``agy models`` and OpenCode ``opencode models`` (each a
+    ~2 s subprocess, cached ten minutes in the runner module); Codex keeps
+    ``models_cache.json`` in its home. All are read off the event loop, and a
+    failure simply leaves the curated fallback standing.
 
     One reader for both surfaces on purpose: the chat composer and a workspace
     pane offer the same CLI, so a list either of them read alone would be a
@@ -238,7 +238,11 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
     """
     import asyncio
 
-    from jarvis.agent_chat.runner_cli import read_agy_models, read_codex_models
+    from jarvis.agent_chat.runner_cli import (
+        read_agy_models,
+        read_codex_models,
+        read_opencode_models,
+    )
 
     out: dict[str, list[dict[str, Any]]] = {}
     if _installed("agy-cli"):
@@ -254,20 +258,23 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
             rows = None
         if rows:
             out["codex-cli"] = rows
+    if _installed("opencode-cli"):
+        # ``opencode models`` — the providers this install configured.
+        try:
+            rows = await asyncio.wait_for(asyncio.to_thread(read_opencode_models), 25.0)
+        except Exception as exc:  # noqa: BLE001 — no list is an empty picker, not an error
+            _log.debug("launch picks: opencode model list unavailable: %s", exc)
+            rows = []
+        if rows:
+            out["opencode-cli"] = rows
     return out
 
 
 def _installed(runner: str) -> bool:
     """Is the binary behind ``runner`` resolvable from here?"""
-    import shutil
+    from jarvis.agent_chat.runner_cli import cli_installed
 
-    names = {
-        "claude-cli": ("claude", "claude.cmd", "claude.exe"),
-        "codex-cli": ("codex", "codex.cmd", "codex.exe"),
-        "agy-cli": ("agy", "agy.exe"),
-        "grok-cli": ("grok", "grok.exe", "grok.cmd"),
-    }.get(runner, ())
-    return any(shutil.which(name) for name in names)
+    return cli_installed(runner)
 
 
 def runner_of(agent: str) -> str:

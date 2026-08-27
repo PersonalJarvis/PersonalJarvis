@@ -91,10 +91,12 @@ export function eventsSignature(events: AgentChatEvent[], live: boolean): string
 /**
  * Which catalog provider a pane's CLI is.
  *
- * By the RUNNER, not by a table of names: the catalog's CLI rows name the
- * binary they run (`claude-cli`, `codex-cli`, `agy-cli`, `grok-cli`), and a
- * pane names its agent the same way (`claude`, `codex`, `agy`, `grok`). A CLI
- * added later matches on the same rule.
+ * By the row's registry key first: a catalog CLI row names the Agentic IDE
+ * entry it runs (`agent`), which is exactly what a pane calls its agent. The
+ * runner rule stays for an older backend that does not send it — the catalog's
+ * CLI rows name the binary they run (`claude-cli`, `codex-cli`, `agy-cli`,
+ * `grok-cli`), and a pane names its agent the same way (`claude`, `codex`,
+ * `agy`, `grok`). A CLI added later matches on either.
  */
 export function providerForAgent(
   agent: string,
@@ -105,7 +107,9 @@ export function providerForAgent(
   const aliases = key === "antigravity" ? ["agy", "antigravity"] : [key];
   return (
     providers.find((p) =>
-      aliases.some((a) => p.runner === `${a}-cli` || p.runner === a || p.id === a),
+      aliases.some(
+        (a) => p.agent === a || p.runner === `${a}-cli` || p.runner === a || p.id === a,
+      ),
     ) ?? null
   );
 }

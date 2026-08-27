@@ -442,16 +442,25 @@ export function createAgentChatStore(surface: AgentChatSurface) {
           // CLI runs — but the brain runner calls the provider's endpoint,
           // where a Claude Code login buys nothing. `key_set` stands in when
           // an older backend does not report the finer field.
+          // A coding CLI the Agents tab has no card for — OpenCode, Kimi,
+          // GLM Coding Plan, the DeepSeek harness — keeps its own login where
+          // this app has no verified reader; installed is all it can know,
+          // and the live sweep says the rest.
           const credentialed = p.keyless
             ? true
             : isApiRunner(p.runner)
               ? Boolean(row?.api_key_set ?? row?.key_set)
-              : Boolean(row?.key_set);
+              : row
+                ? Boolean(row.key_set)
+                : true;
           const installed = p.cli_installed === null ? true : p.cli_installed;
           return {
             ...p,
             connected: credentialed && installed,
             active: Boolean(row?.is_active_brain),
+            // The IDE's mark for the CLI behind a CLI row; an API row keeps
+            // its provider-family logo.
+            agentMark: p.agent || undefined,
           };
         });
       },

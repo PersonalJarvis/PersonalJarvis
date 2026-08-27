@@ -1,12 +1,18 @@
 """The provider rows the agent-chat composer can pick from.
 
-The picker lists every provider of the AGENT tier — the same families the
-API-Keys "Agents" section shows (``MAPPINGS`` in
-``jarvis.missions.worker_runtime.provider_map`` plus the three direct CLI
-workers) — whether or not a credential is saved: a provider without one is
-shown disabled with a "connect" hint that leads to the API-Keys page, so the
-person sees what they *could* use (maintainer, 2026-08-23: all agents, not
-only the active one).
+Two kinds of row. The **coding CLIs** are the Agentic IDE's own registry
+(``jarvis.workspace.agents`` — Claude Code, Codex, OpenCode, Kimi Code, GLM
+Coding Plan, Grok Build, Antigravity, DeepSeek Harness), one row per entry
+that :mod:`jarvis.agent_chat.runner_cli` drives without a terminal. Each row
+names its registry key in ``agent``, and :func:`rows_for` drops a row whose
+entry the IDE no longer has, so the chat's picker and the IDE's pane picker
+offer the same CLIs (maintainer, 2026-08-27: the CLIs connected in the
+Agentic IDE, not the sub-agent missions' provider map — and every one of
+them drawn as a chat). The **API rows** are the provider families the
+API-Keys "Agents" section shows. Every row is listed whether or not a
+credential is saved: a provider without one is shown disabled with a
+"connect" hint that leads to the API-Keys page, so the person sees what they
+*could* use (maintainer, 2026-08-23: all agents, not only the active one).
 
 Two kinds of runner sit behind the rows:
 
@@ -15,12 +21,12 @@ Two kinds of runner sit behind the rows:
     (:mod:`jarvis.agent_chat.runner_api`). Model lists come live from the
     provider catalog (``GET /api/providers/{id}/models``).
 
-``claude-cli`` / ``codex-cli`` / ``agy-cli`` / ``grok-cli``
+``claude-cli`` … ``dsh-cli`` — one runner per coding CLI (``runner_cli._PLANNERS``)
     A vendor CLI driven non-interactively (:mod:`jarvis.agent_chat.runner_cli`).
     The CLI brings its own tools and permissions; the model list is the
     CLI's own — read live where the CLI publishes one (``agy models``,
-    Codex's ``models_cache.json``), else the curated fallback here — and
-    ``""`` means "the CLI's default".
+    ``opencode models``, Codex's ``models_cache.json``), else the curated
+    fallback here — and ``""`` means "the CLI's default".
 
 ``brain``
     Jarvis' own harness — ``BrainManager.generate`` with a per-turn pick of
@@ -29,14 +35,21 @@ Two kinds of runner sit behind the rows:
     the Jarvis surface (the front page's chat), where the typed turn is
     Jarvis rather than a coding agent.
 
-``claude-api`` is the one dual row: with a Claude subscription login the
-``claude`` CLI runs the session (Claude Code proper — tools, skills, the
-Max plan's included usage); with only an Anthropic API key the API runner
-does (the brain runner on the Jarvis surface). The route decides per request
-by probing; this module only carries the static shape.
+``claude-api`` is the one dual row: on a surface with CLI seats, a Claude
+subscription login makes the ``claude`` CLI run the session (Claude Code
+proper — tools, skills, the Max plan's included usage); otherwise the
+Anthropic API answers, through the API runner or the brain one. The route
+decides per request by probing; this module only carries the static shape.
+
+Not every row reaches every surface: a surface whose kit has no CLI seats
+(``SurfaceKit.cli_seats``, the front page's chat) is offered only the rows
+with a brain plugin behind them — :func:`rows_for` is the one place that
+narrowing happens, and it gates on the capability, never on a provider name
+(AP-21).
 
 Presentation data only — nothing here decides behaviour (AP-21); the rows
 exist so the picker can show a provider before a key is typed.
+
 """
 
 from __future__ import annotations
@@ -47,7 +60,18 @@ from typing import Any, Final, Literal
 from jarvis.agent_chat.effort import default_effort, effort_levels
 from jarvis.brain.model_catalog import CURATED_MODELS
 
-Runner = Literal["api", "brain", "claude-cli", "codex-cli", "agy-cli", "grok-cli"]
+Runner = Literal[
+    "api",
+    "brain",
+    "claude-cli",
+    "codex-cli",
+    "agy-cli",
+    "grok-cli",
+    "opencode-cli",
+    "kimi-cli",
+    "glm-cli",
+    "dsh-cli",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +114,12 @@ class ProviderRow:
     #: True when the CLI runner supports resuming a conversation natively
     #: (claude --resume, codex exec resume). Others get the transcript replayed.
     native_resume: bool = False
+    #: The Agentic IDE's registry key for the CLI this row runs
+    #: (``jarvis.workspace.agents``) — ``""`` on an API row. The one link
+    #: between the chat's picker and the IDE's: :func:`rows_for` offers a CLI
+    #: row only while the IDE still has that entry, and the UI draws the row
+    #: with the same mark the IDE's pane picker uses.
+    agent: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +132,7 @@ class ProviderRow:
             "default_model": self.default_model,
             "keyless": self.keyless,
             "native_resume": self.native_resume,
+            "agent": self.agent,
             "effort_levels": list(effort_levels(self.id)),
             "default_effort": default_effort(self.id),
         }
@@ -153,9 +184,9 @@ CODEX_FALLBACK_MODELS: Final[tuple[CuratedModel, ...]] = (
 )
 
 
-# Order = the order the picker shows. Subscription CLIs first (they are what
-# "our own Claude Code" means for most people), then the API families, then
-# the local servers.
+# Order = the order the picker shows. The coding CLIs first, in the Agentic
+# IDE registry's own order (``jarvis.workspace.agents._AGENTS``) so the two
+# pickers read alike, then the API families, then the local servers.
 PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
     ProviderRow(
         id="claude-api",
@@ -166,6 +197,7 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         curated_models=_curated("claude-api"),
         default_model="",
         native_resume=True,
+        agent="claude",
     ),
     ProviderRow(
         id="openai-codex",
@@ -178,6 +210,56 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         curated_models=CODEX_FALLBACK_MODELS,
         default_model="",
         native_resume=True,
+        agent="codex",
+    ),
+    ProviderRow(
+        id="opencode",
+        label="OpenCode",
+        family="opencode",
+        runner="opencode-cli",
+        models_source="curated",
+        # OpenCode's ids are ``provider/model`` and depend on which providers
+        # the person configured, so nothing is shipped: the route replaces
+        # this with the live ``opencode models`` list.
+        default_model="",
+        native_resume=True,
+        agent="opencode",
+    ),
+    ProviderRow(
+        id="kimi",
+        label="Kimi Code",
+        family="kimi",
+        runner="kimi-cli",
+        models_source="curated",
+        # Model aliases live in the person's own config.toml and the CLI
+        # publishes no list — the pick is whatever they named there.
+        default_model="",
+        native_resume=True,
+        agent="kimi",
+    ),
+    ProviderRow(
+        id="glm",
+        label="GLM Coding Plan",
+        family="glm",
+        runner="glm-cli",
+        models_source="curated",
+        # Claude Code against Z.ai's endpoint, which maps Claude Code's model
+        # aliases onto GLM models itself (``glm_spawn_env`` in
+        # ``jarvis.workspace.agents``); this app ships no list of Z.ai's ids
+        # on purpose — see ``_GLM_PICKS`` there.
+        default_model="",
+        native_resume=True,
+        agent="glm",
+    ),
+    ProviderRow(
+        id="grok-build",
+        label="Grok Build",
+        family="xai",
+        runner="grok-cli",
+        models_source="curated",
+        curated_models=_curated("grok"),
+        default_model="",
+        agent="grok-build",
     ),
     ProviderRow(
         id="antigravity",
@@ -192,15 +274,18 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         ),
         default_model="",
         native_resume=True,
+        agent="antigravity",
     ),
     ProviderRow(
-        id="grok-build",
-        label="Grok Build",
-        family="xai",
-        runner="grok-cli",
+        id="deepseek-harness",
+        label="DeepSeek Harness",
+        family="deepseek",
+        runner="dsh-cli",
         models_source="curated",
-        curated_models=_curated("grok"),
+        # The headless profile answers with its final message only — no
+        # model flag, no session to resume, no tool stream.
         default_model="",
+        agent="deepseek-harness",
     ),
     ProviderRow(id="openai", label="OpenAI", family="openai", runner="api", models_source="live"),
     ProviderRow(
@@ -252,3 +337,78 @@ def provider_row(provider_id: str) -> ProviderRow | None:
 
 def known_provider_ids() -> tuple[str, ...]:
     return tuple(row.id for row in PROVIDER_ROWS)
+
+
+def rows_for(surface: str) -> tuple[ProviderRow, ...]:
+    """The rows ``surface`` may pick from.
+
+    A surface with CLI seats sees every API row and every CLI row whose entry
+    the Agentic IDE still registers — the registry is open, so the chat asks
+    it rather than assuming the table above is the whole truth. One without
+    CLI seats (the front page's chat) sees only the rows a brain plugin can
+    drive — the providers whose own API answers behind a key, so the turn
+    runs through Jarvis' harness and its model pick is one ``TurnOverride``
+    rather than a vendor process. Decided by asking the runner whether it can
+    drive the provider at all, never from a list of names (AP-21).
+    """
+    from jarvis.agent_chat.surface_kits import kit_for
+
+    if kit_for(surface).cli_seats:
+        return tuple(row for row in PROVIDER_ROWS if not row.agent or _ide_has(row.agent))
+    from jarvis.agent_chat.runner_api import supports_api_runner
+
+    return tuple(row for row in PROVIDER_ROWS if supports_api_runner(row.id))
+
+
+def cli_rows() -> tuple[ProviderRow, ...]:
+    """The rows that run a coding CLI — the chat's half of the IDE's registry."""
+    return tuple(row for row in PROVIDER_ROWS if row.agent)
+
+
+def _ide_has(agent: str) -> bool:
+    """Whether the Agentic IDE registers ``agent`` right now.
+
+    A registry that cannot be imported or asked (a stripped install, a broken
+    custom-CLI store) answers yes: the row then says what is wrong the moment
+    a turn tries to run, which beats a picker that silently lost a CLI.
+    """
+    try:
+        from jarvis.workspace.agents import get_agent
+
+        return get_agent(agent) is not None
+    except Exception:  # noqa: BLE001 — see docstring
+        return True
+
+
+def offers(surface: str, provider_id: str) -> bool:
+    """Whether ``provider_id`` is one of ``surface``'s rows."""
+    pid = (provider_id or "").strip().lower()
+    return any(row.id == pid for row in rows_for(surface))
+
+
+#: A CLI-only row and the API row of the same brand. A chat that was seated
+#: on a vendor CLI before the front page dropped its CLI seats moves across
+#: this map instead of being stranded on a provider its picker no longer
+#: lists — same brand, same key page, now the provider's own endpoint.
+API_TWIN: Final[dict[str, str]] = {
+    "openai-codex": "openai",
+    "antigravity": "gemini",
+    "grok-build": "grok",
+}
+
+
+def api_seat(provider: str, model: str) -> tuple[str, str]:
+    """Where a CLI-seated ``(provider, model)`` lands on an API-only surface.
+
+    The provider moves to its API twin; the model is kept only when the
+    provider's own catalog knows it. A CLI's model ids are the CLI's own —
+    ``opusplan``, ``best``, ``claude-opus-5[1m]``, ``gpt-5.6-sol`` as Codex
+    spells it — and sending one to the provider's endpoint is an error, not
+    a near miss. An unknown id therefore becomes ``""``: the provider's
+    default, which the picker shows as "Default" and the person can change
+    in one click.
+    """
+    pid = (provider or "").strip().lower()
+    seat = API_TWIN.get(pid, pid)
+    known = {m.id for m in CURATED_MODELS.get(seat, ())}
+    return seat, (model if model in known else "")

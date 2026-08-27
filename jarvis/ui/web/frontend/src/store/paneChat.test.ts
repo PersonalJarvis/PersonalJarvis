@@ -150,6 +150,23 @@ describe("providerForAgent", () => {
     expect(providerForAgent("codex", [CLAUDE_CLI])).toBeNull();
     expect(providerForAgent("", [CLAUDE_CLI])).toBeNull();
   });
+
+  it("matches on the row's registry key, which a runner name cannot spell", () => {
+    // GLM Coding Plan runs the Claude binary and the DeepSeek harness runs
+    // `dsh`: neither runner name is the agent's, so the row says whose it is.
+    const glm = { ...CLAUDE_CLI, id: "glm", runner: "glm-cli", agent: "glm" } as ProviderOption;
+    const dsh = {
+      ...CLAUDE_CLI,
+      id: "deepseek-harness",
+      runner: "dsh-cli",
+      agent: "deepseek-harness",
+    } as ProviderOption;
+    expect(providerForAgent("glm", [CLAUDE_CLI, glm, dsh])?.id).toBe("glm");
+    expect(providerForAgent("deepseek-harness", [CLAUDE_CLI, glm, dsh])?.id).toBe(
+      "deepseek-harness",
+    );
+    expect(providerForAgent("claude", [glm, CLAUDE_CLI])?.id).toBe("claude-api");
+  });
 });
 
 describe("createPaneChatStore", () => {
