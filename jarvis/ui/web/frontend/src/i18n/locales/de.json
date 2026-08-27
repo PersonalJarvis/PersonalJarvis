@@ -472,6 +472,9 @@
     "show_less": "Weniger anzeigen",
     "no_chats": "Noch keine Unterhaltungen",
     "see_all_chats": "Alle Chats ansehen",
+    "chats_expand": "Letzte Chats anzeigen",
+    "chats_collapse": "Letzte Chats ausblenden",
+    "sections": "Bereiche",
     "collapse": "Navigation einklappen",
     "expand": "Navigation ausklappen",
     "wake_hint": "Sag dein Wake-Word…",
@@ -4851,6 +4854,7 @@
   },
   "ide_chats": {
     "workspace_band": "Workspace {n}",
+    "heading": "Offene Workspaces",
     "active": "Aktiv",
     "no_folder": "Kein Ordner",
     "no_workspaces": "Kein Workspace ist geöffnet.",

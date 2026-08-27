@@ -119,8 +119,30 @@ export function WorkspaceChats() {
   }, [pendingClose, pushToast]);
 
   return (
-    <div data-testid="workspace-chats">
-      <div className="px-1 pb-3 pt-2">
+    <div
+      data-testid="workspace-chats"
+      // A framed panel with a heading, not the first rows of the column: the
+      // workspaces are one area and the sections under them are another, and
+      // the frame is the edge between the two. `shrink-0` because the panel
+      // is a child of the sidebar's flex scroll body: an `overflow-hidden`
+      // flex item may shrink to nothing when the column is taller than the
+      // window, and this one did — a two-pixel line where the list should be.
+      className="mx-2 mt-2 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-card/40"
+    >
+      <div className="flex items-center justify-between px-3 pb-1 pt-2">
+        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+          {t("ide_chats.heading")}
+        </span>
+        {workspaces.length > 0 && (
+          <span
+            data-testid="workspace-chats-count"
+            className="font-mono text-[10px] tabular-nums text-muted-foreground/60"
+          >
+            {workspaces.length}
+          </span>
+        )}
+      </div>
+      <div className="px-1 pb-2">
         {workspaces.length === 0 ? (
           <p className="px-3 py-2 text-[11px] text-muted-foreground/70">
             {t("ide_chats.no_workspaces")}
@@ -145,6 +167,10 @@ export function WorkspaceChats() {
             );
           })
         )}
+      </div>
+      {/* The panel's foot: the two ways to add a workspace, on their own
+          shelf under a rule so they are not read as rows of the last band. */}
+      <div className="border-t border-border/50 px-1 py-1">
         {/* One more project.
             First of the two closing rows and in reading ink rather than muted,
             because opening a second folder is the ordinary next thing to want
@@ -159,7 +185,7 @@ export function WorkspaceChats() {
           type="button"
           onClick={requestAddWorkspace}
           data-testid="workspace-chats-new-workspace"
-          className="mt-3 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-background/60"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-background/60"
         >
           <FolderPlus aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           {t("ide_chats.new_workspace")}
@@ -313,7 +339,10 @@ function WorkspaceBand({
       {panes.length === 0 && archived.length === 0 ? (
         <p className="pl-8 pr-2 text-[11px] text-muted-foreground/50">{t("ide_chats.no_sessions")}</p>
       ) : (
-        <ul className="space-y-px">
+        // The rows hang off the folder on a thin guide line drawn at the
+        // centre of the folder's icon, so "this folder, these sessions"
+        // is visible as a tree and not inferred from an indent.
+        <ul className="relative space-y-px before:pointer-events-none before:absolute before:bottom-1 before:left-[15px] before:top-0 before:w-px before:bg-border/70 before:content-['']">
           {panes.map((pane) => (
             <SessionRow
               key={pane.history_id}
@@ -390,7 +419,11 @@ function SessionRow({
         className={cn(
           "flex w-full items-start gap-2 rounded-lg py-1.5 pl-8 pr-2 text-left transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-          active ? "bg-card text-foreground shadow-sm" : "hover:bg-background/60",
+          // The staged one wears the same yellow edge as the active nav row —
+          // one way of saying "this is where you are" for the whole column.
+          active
+            ? "bg-card text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
+            : "hover:bg-background/60",
         )}
       >
         <AgentMark

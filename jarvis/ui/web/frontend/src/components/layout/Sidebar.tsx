@@ -1,5 +1,6 @@
 import {
   Loader2,
+  ChevronDown,
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
@@ -19,7 +20,7 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { cn } from "@/lib/utils";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 import { SurfaceSwitch } from "@/components/home/SurfaceSwitch";
@@ -37,6 +38,26 @@ import { useAppInstance } from "@/hooks/useAppInstance";
 // retries on its own. Bounded cache-busted retries let it heal itself.
 const LOGO_RETRY_MAX = 5;
 const LOGO_RETRY_BASE_MS = 1500;
+
+/** Where the Chat row remembers whether its history is folded out. */
+const CHATS_OPEN_KEY = "jarvis.sidebar.recent-chats-open";
+
+function readChatsOpen(): boolean {
+  try {
+    return window.localStorage.getItem(CHATS_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeChatsOpen(open: boolean): void {
+  try {
+    window.localStorage.setItem(CHATS_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // Storage denied (private window, quota): the fold still works for
+    // this visit, it just starts closed next time.
+  }
+}
 
 /**
  * The section ids the Agentic IDE answers to.
@@ -189,6 +210,23 @@ export function Sidebar({
   const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
   const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
+  /*
+   * Is the Chat row's history folded out?
+   *
+   * Opened by the chevron on the row, never by the row itself: pressing
+   * "Chat" goes to the chat, and the list stays the way it was left. It is a
+   * preference rather than a per-visit state — a sidebar that forgets which
+   * rows were open every time the window reloads is one the user keeps
+   * re-opening — so it survives a reload the way the sidebar's width does.
+   */
+  const [chatsOpen, setChatsOpen] = useState(readChatsOpen);
+  const toggleChats = useCallback(() => {
+    setChatsOpen((current) => {
+      const next = !current;
+      writeChatsOpen(next);
+      return next;
+    });
+  }, []);
   const resetTranscript = useHomeStore((s) => s.resetTranscript);
   // On the voice stage: clear the lane, drop the open voice thread and let the
   // backend forget the one it was seeded with. We stay on Voice and the mic
@@ -457,21 +495,24 @@ export function Sidebar({
         // and a fixed session list with its own scrollbar would put a hard
         // ceiling on how many sessions a workspace may show.
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
+          {/* Two areas with an edge between them, not one run of rows. The
+              workspace block is its own framed panel (see WorkspaceChats) and
+              the navigation under it gets a heading of its own for as long as
+              the panel is there — with the workspaces, their sessions and the
+              sections all drawn as the same kind of row, the column read as one
+              long list with no seam (maintainer report 2026-08-27). */}
           {chatFace && (
             <>
               <WorkspaceChats />
-              <div className="mx-3 border-t border-border/60" aria-hidden />
+              <div
+                data-testid="sidebar-sections-heading"
+                className="px-4 pb-0.5 pt-3 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60"
+              >
+                {t("sidebar.sections")}
+              </div>
             </>
           )}
           <nav className="p-2">
-            {/* One list, not two: a voice session IS a run, and showing it as
-                "recent run" and "recent chat" read as a duplicate (maintainer,
-                2026-08-23). The Run Inspector keeps the run view.
-                Safe to stand under the workspace bands: this lists the front
-                page's own conversations, never the IDE's coding sessions (see
-                RecentChats) — the two never name the same thing twice. */}
-            <RecentChats />
-            <div className="mx-1 mb-1 mt-2 border-t border-border/60" aria-hidden />
             {NAV_GROUPS.map((group, groupIndex) => (
               <ul
                 key={groupIndex}
@@ -489,6 +530,25 @@ export function Sidebar({
                       item={item}
                       label={resolveNavLabel(t, item)}
                       active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
+                      // The Chat row carries its own history: a chevron at
+                      // its end folds the recent conversations out under it.
+                      // One list, not two: a voice session IS a run, and
+                      // showing it as "recent run" and "recent chat" read as
+                      // a duplicate (maintainer, 2026-08-23). These are the
+                      // front page's own conversations, never the IDE's
+                      // coding sessions (see RecentChats) — the two never
+                      // name the same thing twice.
+                      expand={
+                        item.id === "chats"
+                          ? {
+                              open: chatsOpen,
+                              onToggle: toggleChats,
+                              label: chatsOpen
+                                ? t("sidebar.chats_collapse")
+                                : t("sidebar.chats_expand"),
+                            }
+                          : undefined
+                      }
                       badge={item.id === "agents" ? agentsCount : undefined}
                       betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
                       alert={item.id === "apikeys" ? apikeysHasError : false}
@@ -513,7 +573,9 @@ export function Sidebar({
                           item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
                         )
                       }
-                    />
+                    >
+                      {item.id === "chats" && chatsOpen ? <RecentChats /> : null}
+                    </NavRow>
                   );
                 })}
               </ul>
@@ -582,12 +644,20 @@ function NavRow({
   alertTitle,
   warn = false,
   warnTitle,
+  expand,
   onClick,
+  children,
 }: {
   item: NavItem;
   label: string;
   active: boolean;
   badge?: number;
+  /** A chevron at the row's end that folds `children` out under the row.
+   *  It is a second button beside the row, not a part of it: the row keeps
+   *  opening its section, the chevron only opens the list. */
+  expand?: { open: boolean; onToggle: () => void; label: string };
+  /** What hangs under the row while `expand.open` — the Chat row's history. */
+  children?: ReactNode;
   /** Small pill rendered right after the label (e.g. "Beta") — set from
    *  `item.beta`, translated by the caller so this component stays i18n-free. */
   betaLabel?: string;
@@ -606,7 +676,7 @@ function NavRow({
   const Icon = item.icon;
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
   return (
-    <li>
+    <li className={cn(expand && "relative")}>
       <button
         type="button"
         data-testid={`nav-row-${item.id}`}
@@ -615,6 +685,8 @@ function NavRow({
         className={cn(
           "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
           "hover:bg-background/20",
+          // Leave the chevron its own column so the two buttons never overlap.
+          expand && "pr-9",
           active
             ? "jarvis-message-surface text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
             : "text-muted-foreground hover:text-foreground",
@@ -659,6 +731,27 @@ function NavRow({
           </span>
         )}
       </button>
+      {expand && (
+        <button
+          type="button"
+          onClick={expand.onToggle}
+          aria-expanded={expand.open}
+          aria-label={expand.label}
+          title={expand.label}
+          data-testid={`nav-expand-${item.id}`}
+          className={cn(
+            "absolute right-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-md transition-colors",
+            "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          )}
+        >
+          <ChevronDown
+            aria-hidden
+            className={cn("h-3.5 w-3.5 transition-transform", expand.open && "rotate-180")}
+          />
+        </button>
+      )}
+      {expand?.open && children}
     </li>
   );
 }

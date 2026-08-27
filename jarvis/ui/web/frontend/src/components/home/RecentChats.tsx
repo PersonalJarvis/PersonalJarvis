@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { Archive, MessageSquare, Mic, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, MessageSquare, Mic, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { SidebarGroup } from "@/components/home/SidebarGroup";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
 import { formatChatWhen, useChatRows, type ChatRow } from "@/components/home/chatRows";
 import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
@@ -14,9 +13,18 @@ export const RECENT_CHATS_UNFOLDED = 15;
 
 /**
  * The last conversations — agent chats and voice sessions in one list —
- * from the sidebar. This block is the one long-lived poller of both
- * histories (`useConversations({ poll: true })` for the voice sessions,
- * the agent-chat store's session list for the typed ones).
+ * folded under the sidebar's "Chat" row. This block is the one long-lived
+ * poller of both histories (`useConversations({ poll: true })` for the voice
+ * sessions, the agent-chat store's session list for the typed ones).
+ *
+ * It hangs off the nav row rather than standing above the navigation as its
+ * own titled group. Standing free it was one more list in a column that, in
+ * the Agentic IDE's chat mode, already opened with the workspaces and their
+ * sessions — three lists of rows in a row, no edge between them (maintainer
+ * report 2026-08-27). Under the row it is what it is: the Chat section's own
+ * history, shown when the chevron on that row is opened and folded away
+ * otherwise. The row itself still opens the chat; only the chevron opens the
+ * list, so reaching the section never unfolds thirty rows nobody asked for.
  *
  * It is a shortcut, not the archive: it shows the handful you touched last
  * and hands everything else to "All chats" (components/home/AllChatsDialog),
@@ -57,23 +65,13 @@ export function RecentChats() {
 
   return (
     <>
-      <SidebarGroup
-        title={t("sidebar.recent_chats")}
-        action={
-          canExpand
-            ? {
-                label: open ? t("sidebar.show_less") : t("sidebar.show_all"),
-                onClick: () => setOpen((v) => !v),
-                expanded: open,
-              }
-            : undefined
-        }
-        testId="recent-chats"
-      >
+      <div data-testid="recent-chats" className="pb-1 pt-0.5">
         {shown.length === 0 ? (
-          <p className="px-2 py-1 text-[11px] text-muted-foreground/70">{t("sidebar.no_chats")}</p>
+          <p className="py-1 pl-9 pr-2 text-[11px] text-muted-foreground/70">
+            {t("sidebar.no_chats")}
+          </p>
         ) : (
-          <ul className="space-y-px">
+          <ul className={cn("relative space-y-px", TREE_GUIDE)}>
             {shown.map((row) => (
               <ChatRowItem
                 key={`${row.kind}-${row.id}`}
@@ -85,29 +83,63 @@ export function RecentChats() {
             ))}
           </ul>
         )}
+        {canExpand && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            data-testid="recent-chats-more"
+            className={TAIL_ROW}
+          >
+            <ChevronDown
+              aria-hidden
+              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
+            />
+            <span className="min-w-0 flex-1 truncate text-xs">
+              {open ? t("sidebar.show_less") : t("sidebar.show_all")}
+            </span>
+            {!open && hidden > 0 && <Count n={hidden} />}
+          </button>
+        )}
         {rows.length > 0 && (
           <button
             type="button"
             onClick={() => setArchiveOpen(true)}
             data-testid="see-all-chats"
-            className={cn(
-              "mt-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-              "text-muted-foreground hover:bg-background/60 hover:text-foreground",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-            )}
+            className={TAIL_ROW}
           >
             <Archive aria-hidden className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate text-xs">{t("sidebar.see_all_chats")}</span>
-            {hidden > 0 && (
-              <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
-                +{hidden}
-              </span>
-            )}
+            {open && hidden > 0 && <Count n={hidden} />}
           </button>
         )}
-      </SidebarGroup>
+      </div>
       <AllChatsDialog open={archiveOpen} onOpenChange={setArchiveOpen} />
     </>
+  );
+}
+
+/**
+ * The thin line that ties the rows to the row they hang under — drawn at the
+ * centre of the nav row's icon (12 px padding + half of 16 px), so the list
+ * reads as the Chat row's branch and not as a second list that happens to
+ * follow it.
+ */
+const TREE_GUIDE =
+  "before:pointer-events-none before:absolute before:bottom-1 before:left-5 before:top-1 before:w-px before:bg-border/70 before:content-['']";
+
+/** "Show all" and "See all chats": the two quiet rows that close the list. */
+const TAIL_ROW = cn(
+  "flex w-full items-center gap-2 rounded-lg py-1.5 pl-9 pr-2 text-left transition-colors",
+  "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+);
+
+function Count({ n }: { n: number }) {
+  return (
+    <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
+      +{n}
+    </span>
   );
 }
 
@@ -135,9 +167,13 @@ function ChatRowItem({
         data-testid="recent-chat-row"
         data-kind={row.kind}
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+          "flex w-full items-center gap-2 rounded-lg py-1.5 pl-9 pr-2 text-left transition-colors",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-          active ? "bg-card text-foreground shadow-sm" : "hover:bg-background/60",
+          // The open one wears the same yellow edge as the active nav row, so
+          // "where am I" is said in one voice all the way down the column.
+          active
+            ? "bg-card text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
+            : "hover:bg-background/60",
         )}
       >
         <Icon

@@ -840,3 +840,112 @@ describe("the Agentic IDE's chat face", () => {
     expect(screen.getByTestId("nav-row-settings")).toBeTruthy();
   });
 });
+
+describe("the Chat row's history", () => {
+  /*
+   * The recent conversations hang under the Chat row and fold out on the
+   * row's chevron. The row itself keeps opening the chat: reaching the
+   * section must not unfold the list, and the fold is remembered.
+   */
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).startsWith("/api/chats")
+          ? new Response(JSON.stringify([]), { status: 200 })
+          : new Response(JSON.stringify({ sessions: [] }), { status: 200 }),
+      ),
+    );
+    window.localStorage.clear();
+    useEventStore.setState({ connected: true, activeSection: "board", conversations: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    window.localStorage.clear();
+  });
+
+  test("folds out on the chevron, not on the row", () => {
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    expect(screen.queryByTestId("recent-chats")).toBeNull();
+
+    act(() => {
+      screen.getByTestId("nav-row-chats").click();
+    });
+    // The row went to the chat and left the list alone.
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    expect(screen.queryByTestId("recent-chats")).toBeNull();
+
+    act(() => {
+      screen.getByTestId("nav-expand-chats").click();
+    });
+    expect(screen.getByTestId("nav-expand-chats").getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("recent-chats")).toBeTruthy();
+
+    act(() => {
+      screen.getByTestId("nav-expand-chats").click();
+    });
+    expect(screen.queryByTestId("recent-chats")).toBeNull();
+  });
+
+  test("remembers the fold across a reload", () => {
+    const first = renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+    act(() => {
+      screen.getByTestId("nav-expand-chats").click();
+    });
+    first.unmount();
+
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+    expect(screen.getByTestId("recent-chats")).toBeTruthy();
+  });
+
+  test("no longer stands above the navigation as its own block", () => {
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+    // The old free-standing group is gone: nothing lists chats until the
+    // Chat row is opened.
+    expect(screen.queryByTestId("recent-chats")).toBeNull();
+    expect(screen.getByTestId("nav-row-chats")).toBeTruthy();
+  });
+});
+
+describe("the two areas of the chat face", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).startsWith("/api/chats")
+          ? new Response(JSON.stringify([]), { status: 200 })
+          : new Response(JSON.stringify({ sessions: [] }), { status: 200 }),
+      ),
+    );
+    useIdeChatStore.setState({
+      view: "chat",
+      workspace: { id: "w1", name: "Personal Jarvis", path: "/work/jarvis" },
+      workspaces: [{ id: "w1", name: "Personal Jarvis", folder: "/work/jarvis", active: true }],
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    useIdeChatStore.setState({ view: "grid", workspace: null, workspaces: [] });
+  });
+
+  test("heads the sections while the workspace panel stands above them", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    expect(screen.getByTestId("workspace-chats")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-sections-heading")).toBeTruthy();
+  });
+
+  test("drops the heading with the panel", () => {
+    useEventStore.setState({ activeSection: "settings" });
+    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+    expect(screen.queryByTestId("workspace-chats")).toBeNull();
+    expect(screen.queryByTestId("sidebar-sections-heading")).toBeNull();
+  });
+});
