@@ -195,46 +195,30 @@ describe("the sidebar's chat face", () => {
     expect(useIdeChatStore.getState().workspaceRequest).toMatchObject({ workspaceId: "w2" });
   });
 
-  it("opens a terminal straight away when only one CLI is installed", () => {
+  /*
+   * One click, and no question before the chat exists.
+   *
+   * This button used to open a menu asking WHICH CLI, and that menu was the
+   * whole problem (maintainer report, 2026-08-27): it asked the smallest of
+   * the four questions a coding session actually has — agent, model, effort,
+   * permission stance — asked it first, alone, and left it unchangeable once
+   * the pane was running. A new chat is now an EMPTY chat window where all
+   * four are picked in the composer, so this button only has to open it.
+   */
+  it("opens an empty chat rather than asking which CLI", () => {
+    useIdeChatStore.setState({ agents: [CLAUDE, CODEX] });
+    render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-new-terminal-w1"));
+    expect(useIdeChatStore.getState().newChatRequest).toMatchObject({ workspaceId: "w1" });
+    // Nothing is spawned by the click, and nothing is asked.
+    expect(useIdeChatStore.getState().terminalRequest).toBeNull();
+    expect(screen.queryByTestId("workspace-chats-agent-menu-w1")).toBeNull();
+  });
+
+  it("asks for the new chat in the workspace whose row was clicked", () => {
     render(<WorkspaceChats />);
     fireEvent.click(screen.getByTestId("workspace-chats-new-terminal-w2"));
-    expect(screen.queryByTestId("workspace-chats-agent-menu-w2")).toBeNull();
-    expect(useIdeChatStore.getState().terminalRequest).toMatchObject({
-      workspaceId: "w2",
-      agent: undefined,
-    });
-  });
-
-  it("asks which CLI first when the machine offers more than one", () => {
-    useIdeChatStore.setState({ agents: [CLAUDE, CODEX] });
-    render(<WorkspaceChats />);
-    fireEvent.click(screen.getByTestId("workspace-chats-new-terminal-w1"));
-    expect(useIdeChatStore.getState().terminalRequest).toBeNull();
-    fireEvent.click(screen.getByTestId("workspace-chats-new-w1-codex"));
-    expect(useIdeChatStore.getState().terminalRequest).toMatchObject({
-      workspaceId: "w1",
-      agent: "codex",
-    });
-  });
-
-  /*
-   * The menu must leave the column it was opened from.
-   *
-   * It used to hang INSIDE the list with a z-index of its own, which put the
-   * picker's full-window dismiss layer on top of it: the entries were on
-   * screen, every click on one hit that layer, and the menu closed without
-   * opening anything. jsdom has no layout and so cannot see an overlap — what
-   * it can check is the fact that rules it out, which is that the menu is
-   * detached into a portal and owns its own stacking. The same detachment is
-   * what keeps it from being clipped by the column's scroll box.
-   */
-  it("hangs the CLI menu outside the scrolling column", () => {
-    useIdeChatStore.setState({ agents: [CLAUDE, CODEX] });
-    render(<WorkspaceChats />);
-    fireEvent.click(screen.getByTestId("workspace-chats-new-terminal-w1"));
-    const menu = screen.getByTestId("workspace-chats-agent-menu-w1");
-    expect(menu.dataset.detached).toBe("true");
-    expect(screen.getByTestId("workspace-chats").contains(menu)).toBe(false);
+    expect(useIdeChatStore.getState().newChatRequest).toMatchObject({ workspaceId: "w2" });
   });
 
   it("opens the launcher for one more workspace, folder and all", () => {

@@ -177,6 +177,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const terminalRequest = useIdeChatStore((s) => s.terminalRequest);
   const workspaceRequest = useIdeChatStore((s) => s.workspaceRequest);
   const sessionRequest = useIdeChatStore((s) => s.sessionRequest);
+  const newChatRequest = useIdeChatStore((s) => s.newChatRequest);
   const addWorkspaceRequest = useIdeChatStore((s) => s.addWorkspaceRequest);
   const publishWorkspaces = useIdeChatStore((s) => s.setWorkspaces);
   const publishAgents = useIdeChatStore((s) => s.setAgents);
@@ -482,6 +483,20 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         kind: a.kind ?? "cli",
         logoUrl: a.logo_url || undefined,
         installCommand: a.install_command || undefined,
+        // Whether a chat can be STARTED here at all, and what it could run on.
+        // Both are the backend's answer (`jarvis/workspace/launch_picks.py`),
+        // carried through unchanged: the split menus ignore them, and the chat
+        // surface — which opens a conversation rather than just a pane — reads
+        // them to decide what to offer and what to pass back at spawn.
+        acceptsPrompts: a.accepts_prompts ?? true,
+        picks: {
+          models: a.models ?? [],
+          defaultModel: a.default_model ?? "",
+          effortLevels: a.effort_levels ?? [],
+          defaultEffort: a.default_effort ?? "",
+          permissionModes: a.permission_modes ?? [],
+          defaultPermissionMode: a.default_permission_mode ?? "",
+        },
         // For a plain terminal the useful second line is WHICH shell opens; a
         // CLI's name already says what it is, so it gets no line of its own.
         description:
@@ -745,6 +760,18 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     // `session` and `switchTo` are read at the moment of the ask, on purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminalRequest]);
+  /*
+   * A new chat asked for in another workspace: bring that tab to the front and
+   * let its own grid open the draft. The grid is where the stage lives, so the
+   * request is answered there — this only makes sure the right one sees it.
+   */
+  const lastNewChatSwitch = useRef(0);
+  useEffect(() => {
+    if (!newChatRequest || newChatRequest.nonce === lastNewChatSwitch.current) return;
+    lastNewChatSwitch.current = newChatRequest.nonce;
+    if (newChatRequest.workspaceId !== session?.id) void switchTo(newChatRequest.workspaceId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newChatRequest]);
   const lastWorkspaceRequest = useRef(0);
   useEffect(() => {
     if (!workspaceRequest || workspaceRequest.nonce === lastWorkspaceRequest.current) return;

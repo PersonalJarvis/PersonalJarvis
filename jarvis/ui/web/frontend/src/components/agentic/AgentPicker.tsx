@@ -28,9 +28,33 @@
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+
+import type { CuratedModel, PermissionModeOption } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
 import { AgentInstallDialog } from "./AgentInstallDialog";
 import { AgentMark } from "./AgentMark";
+
+/**
+ * What a NEW pane of one CLI may be opened on — its models, its effort ladder
+ * and the permission stances it can be launched into.
+ *
+ * The backend's answer (`jarvis/workspace/launch_picks.py`), carried in the
+ * agent chat's own catalog vocabulary so the IDE's chat composer can draw
+ * these with the picker it already has. Absent for an entry that takes no
+ * picks, and for a backend older than the field — both of which mean the same
+ * thing to a picker: nothing to choose, so nothing is shown.
+ */
+export interface AgentLaunchPicks {
+  models: CuratedModel[];
+  /** "" = the CLI's own default. */
+  defaultModel: string;
+  /** Ascending; empty when this CLI takes no effort pick. */
+  effortLevels: string[];
+  defaultEffort: string;
+  permissionModes: PermissionModeOption[];
+  /** "" = whatever stance the CLI itself opens in. */
+  defaultPermissionMode: string;
+}
 
 /** A coding CLI an "open a terminal" action may start. */
 export interface SplitAgentChoice {
@@ -61,6 +85,14 @@ export interface SplitAgentChoice {
    * fixes) and for a user-added CLI, whose command is theirs to run.
    */
   installCommand?: string;
+  /**
+   * False for an entry that cannot be typed into (its interface is elsewhere).
+   * A menu that only OPENS a pane ignores this; a surface that opens a CHAT
+   * leaves such an entry out, because there would be nowhere to say anything.
+   */
+  acceptsPrompts?: boolean;
+  /** What a new pane of this CLI may run on; absent = nothing to pick. */
+  picks?: AgentLaunchPicks;
 }
 
 /**

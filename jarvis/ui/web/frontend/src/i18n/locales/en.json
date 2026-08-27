@@ -4855,6 +4855,7 @@
     "no_folder": "No folder",
     "no_workspaces": "No workspace is open.",
     "no_sessions": "No coding sessions here yet",
+    "new_chat": "New chat — pick the agent and its model in the chat",
     "new_terminal": "New terminal here",
     "pick_cli_title": "Open a terminal — what?",
     "new_session": "New session — a workspace with no project folder",
@@ -4989,6 +4990,14 @@
       "steps_one": "1 tool step",
       "steps_many": "{0} tool steps",
       "grip_hint": "Click: open history · drag: scroll"
+    },
+    "new_chat": {
+      "title": "New chat",
+      "cancel": "Cancel",
+      "pick_an_agent": "Pick a coding agent first.",
+      "no_pane": "The workspace did not report the new session.",
+      "never_started": "{pane} did not start — nothing was sent.",
+      "not_taken": "{pane} did not accept the message; it is waiting in its input line."
     },
     "pane_chat": {
       "open": "Read {0} as a chat",

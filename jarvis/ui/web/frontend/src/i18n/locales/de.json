@@ -4855,6 +4855,7 @@
     "no_folder": "Kein Ordner",
     "no_workspaces": "Kein Workspace ist geöffnet.",
     "no_sessions": "Noch keine Coding-Sitzungen hier",
+    "new_chat": "Neuer Chat — Agent und Modell im Chat wählen",
     "new_terminal": "Neues Terminal hier",
     "pick_cli_title": "Terminal öffnen — womit?",
     "new_session": "Neue Sitzung — ein Workspace ohne Projektordner",
@@ -4989,6 +4990,14 @@
       "steps_one": "1 Arbeitsschritt",
       "steps_many": "{0} Arbeitsschritte",
       "grip_hint": "Klicken: Verlauf öffnen · Ziehen: scrollen"
+    },
+    "new_chat": {
+      "title": "Neuer Chat",
+      "cancel": "Abbrechen",
+      "pick_an_agent": "Wähle zuerst einen Coding-Agenten.",
+      "no_pane": "Der Workspace hat die neue Sitzung nicht gemeldet.",
+      "never_started": "{pane} ist nicht gestartet — es wurde nichts gesendet.",
+      "not_taken": "{pane} hat die Nachricht nicht übernommen; sie steht in der Eingabezeile."
     },
     "pane_chat": {
       "open": "{0} als Chat lesen",

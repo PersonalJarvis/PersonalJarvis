@@ -85,6 +85,18 @@ interface IdeChatStore {
   /** The sidebar asking for a workspace with no project folder (a scratch session). */
   sessionRequest: { nonce: number } | null;
   /**
+   * The sidebar asking for a NEW CHAT in one workspace — an empty chat window
+   * rather than a spawned pane.
+   *
+   * The distinction chat mode is built on (maintainer report, 2026-08-27): a
+   * new conversation starts with nothing running, and the coding agent, its
+   * model, its effort and its permission stance are chosen in the composer
+   * before the first message opens the pane on them. `terminalRequest` stays
+   * what it always was — "open a pane of this CLI now" — and is what the grid
+   * mode's own menus keep using.
+   */
+  newChatRequest: { workspaceId: string; nonce: number } | null;
+  /**
    * The sidebar asking to open ANOTHER workspace — folder and all.
    *
    * The session list is the whole navigation while chat mode is on, and it
@@ -114,6 +126,8 @@ interface IdeChatStore {
   setAgents: (agents: SplitAgentChoice[]) => void;
   /** Open a new terminal in `workspaceId`, running `agent` when one was picked. */
   requestTerminal: (workspaceId: string, agent?: string) => void;
+  /** Open an empty chat in `workspaceId`; its first message starts the pane. */
+  requestNewChat: (workspaceId: string) => void;
   /** Bring `workspaceId`'s tab to the front. */
   requestWorkspace: (workspaceId: string) => void;
   requestSession: () => void;
@@ -129,6 +143,7 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
   workspaces: [],
   agents: [],
   terminalRequest: null,
+  newChatRequest: null,
   workspaceRequest: null,
   sessionRequest: null,
   addWorkspaceRequest: null,
@@ -157,6 +172,10 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
         agent,
         nonce: (state.terminalRequest?.nonce ?? 0) + 1,
       },
+    })),
+  requestNewChat: (workspaceId) =>
+    set((state) => ({
+      newChatRequest: { workspaceId, nonce: (state.newChatRequest?.nonce ?? 0) + 1 },
     })),
   requestWorkspace: (workspaceId) =>
     set((state) => ({

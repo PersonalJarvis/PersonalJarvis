@@ -9,11 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import { Archive, Folder, FolderPlus, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 
-import {
-  AgentPickerMenu,
-  offersAgentChoice,
-  type SplitAgentChoice,
-} from "@/components/agentic/AgentPicker";
+import type { SplitAgentChoice } from "@/components/agentic/AgentPicker";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { folderColor } from "@/components/agentic/folderColor";
 import { PaneActivityPill } from "@/components/agentic/PaneActivityPill";
@@ -79,7 +75,7 @@ export function WorkspaceChats() {
   const workspaces = useIdeChatStore((s) => s.workspaces);
   const agents = useIdeChatStore((s) => s.agents);
   const requestPane = useIdeChatStore((s) => s.requestPane);
-  const requestTerminal = useIdeChatStore((s) => s.requestTerminal);
+  const requestNewChat = useIdeChatStore((s) => s.requestNewChat);
   const requestWorkspace = useIdeChatStore((s) => s.requestWorkspace);
   const requestSession = useIdeChatStore((s) => s.requestSession);
   const requestAddWorkspace = useIdeChatStore((s) => s.requestAddWorkspace);
@@ -143,7 +139,7 @@ export function WorkspaceChats() {
                 agents={agents}
                 onOpenPane={(pane) => requestPane(workspace.id, pane)}
                 onOpenWorkspace={() => requestWorkspace(workspace.id)}
-                onNewTerminal={(agent) => requestTerminal(workspace.id, agent)}
+                onNewChat={() => requestNewChat(workspace.id)}
                 onMenu={openMenu}
               />
             );
@@ -228,7 +224,7 @@ function WorkspaceBand({
   agents,
   onOpenPane,
   onOpenWorkspace,
-  onNewTerminal,
+  onNewChat,
   onMenu,
 }: {
   index: number;
@@ -239,32 +235,11 @@ function WorkspaceBand({
   agents: SplitAgentChoice[];
   onOpenPane: (pane: string) => void;
   onOpenWorkspace: () => void;
-  onNewTerminal: (agent?: string) => void;
+  onNewChat: () => void;
   onMenu: (pane: WorkspacePaneRow, x: number, y: number) => void;
 }) {
   const t = useT();
-  const [picking, setPicking] = useState(false);
-  /*
-   * The "+" the menu hangs off.
-   *
-   * Handing the picker an anchor is what detaches it into a portal, and this
-   * surface needs that for two separate reasons. The list scrolls
-   * (`overflow-y-auto`), so a menu drawn inside it is CLIPPED at the column's
-   * edge — a workspace near the bottom would show a sliver of the first entry
-   * and nothing else. And a menu placed inside its caller has to be given a
-   * z-index by that caller, which is exactly how this menu became unclickable:
-   * the class said `z-30`, tailwind-merge replaced the picker's own `z-50`
-   * with it, and the picker's full-window dismiss layer (`z-40`) ended up ON
-   * TOP of the list. Every click on a CLI hit that layer instead — the menu
-   * closed and no terminal opened (maintainer report 2026-08-27). Detached,
-   * the picker owns its own stacking and there is no number here to get wrong.
-   */
-  const plusRef = useRef<HTMLButtonElement | null>(null);
   const label = workspace.name || folderLeaf(workspace.folder) || t("ide_chats.no_folder");
-  const openTerminal = () => {
-    if (offersAgentChoice(agents)) setPicking((current) => !current);
-    else onNewTerminal();
-  };
 
   return (
     <section
@@ -313,39 +288,26 @@ function WorkspaceBand({
           />
           <span className="min-w-0 flex-1 truncate text-xs font-medium">{label}</span>
         </button>
+        {/*
+            One click, no menu: a new chat here opens an EMPTY chat window and
+            the coding agent is chosen in its composer, beside the model, the
+            effort and the permission stance (maintainer report, 2026-08-27).
+            The menu that used to hang off this button asked the same question
+            in a worse place — first, alone, and unchangeable afterwards — so
+            it is gone from this surface. The grid's split menus keep it:
+            there a pane is a pane, and asking four questions before placing a
+            terminal would be four too many.
+        */}
         <button
           type="button"
-          onClick={openTerminal}
-          title={t("ide_chats.new_terminal")}
-          aria-label={t("ide_chats.new_terminal")}
-          aria-expanded={picking}
+          onClick={onNewChat}
+          title={t("ide_chats.new_chat")}
+          aria-label={t("ide_chats.new_chat")}
           data-testid={`workspace-chats-new-terminal-${workspace.id}`}
-          ref={plusRef}
-          className={cn(
-            "absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-background/60 hover:text-foreground focus-visible:opacity-100 group-hover/folder:opacity-100",
-            // Stays lit while its own menu is open: the pointer leaves the row
-            // to reach the list, and a button that faded out under it would
-            // leave the menu hanging off nothing.
-            picking ? "text-foreground opacity-100" : "opacity-0",
-          )}
+          className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground focus-visible:opacity-100 group-hover/folder:opacity-100"
         >
           <Plus className="h-3 w-3" />
         </button>
-        {picking && (
-          <AgentPickerMenu
-            title={t("ide_chats.pick_cli_title")}
-            ariaLabel={t("ide_chats.pick_cli_aria")}
-            agents={agents}
-            testId={`workspace-chats-agent-menu-${workspace.id}`}
-            itemTestId={(agent) => `workspace-chats-new-${workspace.id}-${agent}`}
-            anchorTo={plusRef.current}
-            onDismiss={() => setPicking(false)}
-            onPick={(agent) => {
-              setPicking(false);
-              onNewTerminal(agent);
-            }}
-          />
-        )}
       </div>
 
       {panes.length === 0 && archived.length === 0 ? (

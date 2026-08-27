@@ -206,6 +206,18 @@ export interface PaneChatStoreOptions {
   displayName: string;
   /** The workspace folder: the composer's folder chip and the empty page's headline. */
   folder: string;
+  /**
+   * A message that was sent to this pane before its chat existed.
+   *
+   * The Agentic IDE's new chat opens the pane and delivers the first sentence
+   * itself (`components/agentic/NewPaneChat`), so by the time this store is
+   * built the message is on its way to a CLI that has not written it down yet.
+   * Seeding it as a pending echo is what keeps the handover from showing an
+   * empty conversation for the five seconds that takes — the same mechanism a
+   * message typed HERE uses, and it settles the same way, as soon as the
+   * record holds a user message.
+   */
+  firstMessage?: { text: string; attachments: ChatAttachment[]; atMs: number };
 }
 
 export interface PaneChatState extends AgentChatStore {
@@ -278,7 +290,18 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
   /** The record as the last read returned it — what the timeline is rebuilt from. */
   let lastEvents: AgentChatEvent[] = [];
   /** Messages typed here that the record does not hold yet, oldest first. */
-  let echoes: PendingEcho[] = [];
+  let echoes: PendingEcho[] = options.firstMessage
+    ? [
+        {
+          text: options.firstMessage.text,
+          attachments: options.firstMessage.attachments,
+          atMs: options.firstMessage.atMs,
+          // A pane this fresh has no record at all, so ANY user message in the
+          // first read is this one arriving.
+          lastUserTsBefore: 0,
+        },
+      ]
+    : [];
 
   const store = create<PaneChatState>((set, get) => {
     const providerId = () =>
@@ -396,7 +419,14 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
       // the pane for the stage.
       activeSessionId: null,
       activeSession: session(),
-      timeline: EMPTY_TIMELINE,
+      // A handover message is drawn from the first frame; without it the
+      // stage would open empty under a sentence the person just sent.
+      timeline: options.firstMessage
+        ? reduceEvents(
+            EMPTY_TIMELINE,
+            echoEvents(echoes[0], { provider: providerId(), model: "", effort: "" }),
+          )
+        : EMPTY_TIMELINE,
       socketState: "open",
       draft: {
         provider: providerId(),

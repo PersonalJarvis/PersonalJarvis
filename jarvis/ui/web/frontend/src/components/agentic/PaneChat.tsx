@@ -31,6 +31,7 @@ import { ChatStage } from "@/components/home/ChatStage";
 import { useThemeValue } from "@/hooks/useTheme";
 import { createPaneChatStore, type PaneChatStoreHook } from "@/store/paneChat";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
+import type { ChatAttachment } from "@/lib/agentChatApi";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -135,6 +136,14 @@ export interface PaneChatProps {
   status?: string;
   /** Back to the terminal itself — the question it is asking lives there. */
   onShowTerminal: () => void;
+  /**
+   * The sentence this pane was opened WITH, when it came from a new chat.
+   *
+   * Drawn from the first frame rather than waited for: the pane was opened by
+   * the message, and a stage that showed nothing until the CLI had written it
+   * down would read as a message that went nowhere. See `PaneChatStoreOptions`.
+   */
+  firstMessage?: { text: string; attachments: ChatAttachment[]; atMs: number };
 }
 
 export function PaneChat({
@@ -153,6 +162,7 @@ export function PaneChat({
   worked = false,
   status = "live",
   onShowTerminal,
+  firstMessage,
 }: PaneChatProps) {
   const t = useT();
   // One store per staged pane. The stage is keyed by workspace and pane, so a
@@ -167,7 +177,12 @@ export function PaneChat({
         agent,
         displayName: agentLabel,
         folder,
+        firstMessage,
       }),
+    // The handover message belongs to THIS mount: it is seeded once and then
+    // settles from the record. Re-reading it would rebuild the store — and
+    // the conversation — every time the grid re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [terminal, workspaceId, historyId, agent, agentLabel, folder],
   );
   useEffect(() => {

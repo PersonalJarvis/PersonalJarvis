@@ -85,6 +85,20 @@ export interface ProviderOption extends AgentChatProvider {
   connected: boolean;
   /** The sub-agent marked active on the Agents tab. */
   active: boolean;
+  /**
+   * Draw this row with a CODING AGENT's mark rather than a provider-family
+   * logo, naming the workspace entry whose mark it is ("opencode", "kimi").
+   *
+   * The catalog's rows are brands the provider table knows; the Agentic IDE's
+   * rows are the CLIs installed on this machine, and several of them —
+   * OpenCode, Kimi, GLM — are marks only `AgentMark` carries. Without this the
+   * IDE's picker would fall back to a letter in a box, which is the one thing
+   * a logo must never be here. Absent for every catalog row, which keeps the
+   * front page's picker exactly as it was.
+   */
+  agentMark?: string;
+  /** A mark the entry brings itself — the file a user uploaded for their own CLI. */
+  logoUrl?: string;
 }
 
 export interface AgentChatStore {

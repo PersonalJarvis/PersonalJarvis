@@ -1273,6 +1273,40 @@ export async function addTerminal(payload: {
  * drag that raced a voice-opened pane is quietly declined, and the returned
  * state carries the authoritative tree either way.
  */
+/**
+ * Wait until a just-opened pane's process is actually running.
+ *
+ * Opening a pane and typing into it are two different moments: `POST
+ * /terminals` records the pane, and the PTY starts when a viewer attaches to
+ * it — so a prompt sent in the same breath is refused with "not running right
+ * now (status: pending)". The backend already waits for the CLI's INPUT LINE
+ * once the process exists (`fleet_actions.wait_for_prompt_ready`); this is the
+ * step before that one.
+ *
+ * Resolves true when the pane reports `live`, false when the wait runs out or
+ * the pane is gone — the caller says so rather than sending into the dark.
+ */
+export async function waitForTerminalLive(
+  name: string,
+  { timeoutMs = 20_000, pollMs = 250 }: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const state = await fetchIdeState();
+      const term = state.session?.terminals.find((t) => t.name === name);
+      const status = term?.status;
+      if (status === "live") return true;
+      // Gone, exited or failed are settled answers: waiting cannot help.
+      if (status !== "pending") return false;
+    } catch {
+      // A failed poll is not an answer either way; try again until the clock runs out.
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
 export async function saveLayoutWeights(layout: LayoutNode): Promise<SessionState> {
   const res = await fetch("/api/agentic-ide/layout/weights", {
     method: "POST",

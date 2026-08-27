@@ -36,7 +36,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useResizablePane } from "@/hooks/useResizablePane";
@@ -76,6 +76,9 @@ import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkspaceExplorer } from "./WorkspaceExplorer";
 import { WorkspaceFileViewer } from "./WorkspaceFileViewer";
 import { PaneChat } from "./PaneChat";
+import { NewPaneChat } from "./NewPaneChat";
+import type { NewPaneRequest } from "@/store/newPaneChat";
+import type { ChatAttachment } from "@/lib/agentChatApi";
 import { useIdeChatStore } from "@/store/ideChat";
 import { PANE_ACTIVITY_EVENT, readPaneActivityChange } from "@/store/workspacePanes";
 import type { WorkspaceView } from "@/components/agentic/workspaceView";
@@ -86,6 +89,8 @@ import {
   closeTerminal,
   closeTerminals,
   moveTerminal,
+  promptTerminal,
+  waitForTerminalLive,
   clearTerminalRecap,
   fetchTerminalActivity,
   fetchTerminalRecaps,
@@ -764,6 +769,27 @@ export function AgenticGrid({
    */
   const [chatPane, setChatPane] = useState<string | null>(null);
   /*
+   * The new chat, before it has an agent behind it.
+   *
+   * In chat mode "open a session" no longer means "pick a CLI from a menu and
+   * spawn it": it opens an EMPTY chat window whose composer chooses the coding
+   * agent, its model, its effort and its permission stance, and the first
+   * message is what starts the pane on those picks (maintainer report,
+   * 2026-08-27). The grid mode keeps its menu — there you are placing a
+   * terminal in a layout, not starting a conversation.
+   *
+   * `handover` is the sentence that opened a pane, carried to that pane's own
+   * chat so it is drawn from the first frame instead of after the CLI has
+   * written it down (see `PaneChat.firstMessage`).
+   */
+  const [drafting, setDrafting] = useState(false);
+  const [handover, setHandover] = useState<{
+    pane: string;
+    text: string;
+    attachments: ChatAttachment[];
+    atMs: number;
+  } | null>(null);
+  /*
    * Which ONE pane is being read as its terminal instead of as its chat.
    *
    * The stage draws a pane as the chat — its transcript through the agent
@@ -1426,6 +1452,23 @@ export function AgenticGrid({
    */
   const stagedPane = chatView ? chatSelected : null;
   const publishStagedPane = useIdeChatStore((s) => s.setStagedPane);
+  /*
+   * The session list asked for a new chat in THIS workspace.
+   *
+   * Read here rather than in the view because the draft lives on the stage,
+   * which is the grid's. A request naming another tab is left alone: the view
+   * switches to it first, and that workspace's own grid — this component,
+   * remounted — is the one that answers.
+   */
+  const newChatRequest = useIdeChatStore((s) => s.newChatRequest);
+  const lastNewChat = useRef(0);
+  useEffect(() => {
+    if (!newChatRequest || newChatRequest.workspaceId !== session.id) return;
+    if (newChatRequest.nonce === lastNewChat.current) return;
+    lastNewChat.current = newChatRequest.nonce;
+    setViewMode("chat");
+    setDrafting(true);
+  }, [newChatRequest, session.id, setViewMode]);
   useEffect(() => {
     // The app sidebar's session list marks the row being read from this.
     publishStagedPane(stagedPane);
@@ -1478,11 +1521,83 @@ export function AgenticGrid({
    * Open a terminal at the end of the row — asking WHAT first when the machine
    * has more than one CLI installed. With a single one there is nothing to pick,
    * so the click opens it straight away rather than showing a one-entry menu.
+   *
+   * In chat mode neither happens: a new chat is an empty chat window, and the
+   * CLI is chosen in its composer beside the model and the rest. Asking in a
+   * menu first and again in the composer afterwards would be the same question
+   * twice, in two places, with the menu's answer unchangeable.
    */
   const openTerminal = (surface: "empty") => {
+    if (chatView) {
+      setDrafting(true);
+      return;
+    }
     if (offersChoice) setPicking((current) => (current === surface ? null : surface));
     else void split(null, "right");
   };
+
+  /**
+   * A new chat's first message: open the pane on its picks, then say it.
+   *
+   * The order matters and is the whole feature. The picks go on the CLI's
+   * command line (`POST /terminals`), so they are what the process actually
+   * starts under — not a label applied to something already running. Only then
+   * is the sentence delivered, and only after the pane's process is really up:
+   * a prompt sent while it is still `pending` is refused outright.
+   *
+   * The stage moves to the pane as soon as it exists, carrying the sentence
+   * with it, so the person sees their own message under the agent they picked
+   * while the CLI is still starting.
+   */
+  const startChat = useCallback(
+    async (request: NewPaneRequest) => {
+      const known = new Set(session.terminals.map((term) => term.name));
+      const next = await addTerminal({
+        agent: request.agent,
+        model: request.model || undefined,
+        effort: request.effort || undefined,
+        permission_mode: request.permissionMode || undefined,
+      });
+      onSessionChanged?.(next);
+      const added = next.terminals.find((term) => !known.has(term.name));
+      if (!added) throw new Error(t("agentic_grid.new_chat.no_pane"));
+      setHandover({
+        pane: added.name,
+        text: request.text,
+        attachments: request.attachments,
+        atMs: Date.now(),
+      });
+      setChatPane(added.name);
+      setTarget(added.name);
+      setTerminalPane(null);
+      setDrafting(false);
+      // Deliberately not awaited by the composer's send: the draft is already
+      // gone and the pane's own chat is on screen drawing the sentence. What
+      // is left is delivery, and a failure there is reported where the
+      // conversation now is.
+      void (async () => {
+        try {
+          if (!(await waitForTerminalLive(added.name))) {
+            throw new Error(fill(t("agentic_grid.new_chat.never_started"), { pane: added.name }));
+          }
+          const result = await promptTerminal(added.name, request.text, { compose: false });
+          if (result.submitted === false) {
+            setHandover(null);
+            pushToast(
+              "warning",
+              fill(t("agentic_grid.new_chat.not_taken"), { pane: added.name }),
+            );
+          }
+        } catch (error) {
+          setHandover(null);
+          pushToast("error", error instanceof Error ? error.message : String(error));
+        }
+      })();
+    },
+    // Read at the moment of the send, like every other pane-opening path here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [session.terminals, onSessionChanged, t],
+  );
 
   /*
    * A pane that MOVED has to be seen landing.
@@ -2592,6 +2707,27 @@ export function AgenticGrid({
             worked={activityOf(stagedTerm).worked}
             status={stagedTerm.status}
             onShowTerminal={() => setTerminalPane(stagedTerm.name)}
+            // The sentence that OPENED this pane, when it came from a new
+            // chat: drawn from the first frame, because the pane exists
+            // because of it (see PaneChat.firstMessage).
+            firstMessage={handover?.pane === stagedTerm.name ? handover : undefined}
+          />
+        )}
+        {/*
+          The new chat: an empty chat window, no agent behind it yet.
+
+          Over the stage rather than beside it, because it IS the stage while
+          it is open — there is one conversation in front of the user at a
+          time, and a draft is one of them. It draws nothing of its own except
+          a header: the column, the empty page and the composer with its picks
+          are the same `ChatStage` every other chat here uses.
+        */}
+        {chatView && drafting && (
+          <NewPaneChat
+            folder={session.folder}
+            agents={agents ?? []}
+            onOpen={startChat}
+            onDismiss={() => setDrafting(false)}
           />
         )}
         {/*
