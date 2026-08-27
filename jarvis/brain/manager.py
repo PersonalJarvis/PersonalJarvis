@@ -2491,6 +2491,23 @@ _PROVIDER_DOWN_CAUSE_PHRASES: dict[str, dict[str, str]] = {
             "proveedor. Revisa la selección de modelo en los ajustes."
         ),
     },
+    "context_overflow": {
+        "de": (
+            "Entschuldige — diese Anfrage ist für das eingestellte Modell zu "  # i18n-allow
+            "groß, sein Kontextfenster reicht dafür nicht. Wähle ein Modell "  # i18n-allow
+            "mit größerem Kontext oder starte einen neuen Chat."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — this request is too large for the configured model; its "
+            "context window is too small for it. Pick a model with a larger "
+            "context or start a new chat."
+        ),
+        "es": (
+            "Lo siento: esta solicitud es demasiado grande para el modelo "
+            "configurado; su ventana de contexto no alcanza. Elige un modelo "
+            "con más contexto o empieza un chat nuevo."
+        ),
+    },
     "unreachable": {
         "de": (
             "Entschuldige — ich erreiche meinen Anbieter gerade nicht, "  # i18n-allow
@@ -2519,6 +2536,7 @@ _PROVIDER_DOWN_CAUSE_PRIORITY: tuple[str, ...] = (
     "bad_key",
     "account_blocked",
     "invalid_model",
+    "context_overflow",
     "rate_limit",
     "unreachable",
 )
@@ -2538,6 +2556,7 @@ def _primary_provider_down_cause(
         "bad_key",
         "account_blocked",
         "invalid_model",
+        "context_overflow",
         "rate_limit",
         "skipped_cooldown",
         "empty_response",
@@ -3481,9 +3500,21 @@ class BrainManager:
         (``_DELEGATE_VOICE_DIRECTIVE``) — batch lookups, no repeats, answer
         as soon as evidence suffices — to the system prompt of delegated
         voice turns only, so classic chat prompts stay byte-identical.
+
+        The tool surface is then sized to the brain's context window
+        (2026-08-27, ``_fit_tools_to_brain``); the turn's message log counts
+        toward that — a delegated turn's from ``_TURN_HISTORY_OVERRIDE``, a
+        classic turn's from the live ``self._history`` (the same two sources
+        ``_cu_context_lines`` reads).
         """
         tools = tools_override if tools_override is not None else self._tools
         system_prompt = self._build_system_prompt()
+        history = _TURN_HISTORY_OVERRIDE.get()
+        if history is None:
+            history = tuple(getattr(self, "_history", None) or ())
+        tools = self._fit_tools_to_brain(
+            tools, brain, system_prompt=system_prompt, history=history
+        )
         # Per-plugin usage guidance for whichever plugins are active this turn
         # (the "MCP + thin skill" reliability layer). Appended last so it sits
         # closest to the turn; only present when a plugin tool is in scope.
@@ -6450,6 +6481,70 @@ class BrainManager:
             model,
         )
         return {n: t for n, t in tools.items() if n != "screenshot"}
+
+    def _fit_tools_to_brain(
+        self,
+        tools: dict[str, Tool],
+        brain: Any,
+        *,
+        system_prompt: str,
+        history: Sequence[BrainMessage] | None,
+    ) -> dict[str, Tool]:
+        """Size the turn's tool surface to the answering brain's context window.
+
+        Live 2026-08-27 10:11 (and 2026-08-26 20:32, 20:58): the front page's
+        chat ran on a local 32k model, the registry held 221 tools (78
+        built-in, 131 from three connected MCP servers, 12 CLIs) and a plain
+        "Hallo" went out as 67,852 tokens. The server refused it with a 400,
+        the one-provider chain was exhausted, and the user read "I can't
+        reach my provider — check the network". Nothing had ever read
+        ``Brain.context_window``: the Ollama plugin narrows it to the model's
+        ``num_ctx`` so the manager can budget, and the manager budgeted
+        nothing. Cloud brains declare 128k–1M and are never touched here; a
+        brain without a declared window is left alone as well.
+
+        The tool a deterministic gate mandated this turn and ``run-skill`` on
+        a skill match are never dropped. Everything else follows the order in
+        ``_fit_tools_to_context_window``. A tool the model cannot see is one
+        capability lost for one turn; a request the server refuses is the
+        whole turn lost.
+        """
+        if not isinstance(tools, dict) or not tools:
+            return tools
+        try:
+            window = int(getattr(brain, "context_window", 0) or 0)
+        except (TypeError, ValueError):
+            window = 0
+        if window <= 0:
+            return tools
+        used = (
+            _approx_tokens(system_prompt)
+            + _approx_history_tokens(history)
+            + _CONTEXT_FIT_RESERVE_TOKENS
+        )
+        keep: set[str] = set()
+        mandated = getattr(self, "_evidence_required_tool", None)
+        if mandated:
+            keep.add(str(mandated))
+        if getattr(self, "_skill_turn_match", None) is not None:
+            keep.add("run-skill")
+        fitted, dropped = _fit_tools_to_context_window(
+            tools, context_window=window, used_tokens=used, keep=keep
+        )
+        if dropped:
+            log.warning(
+                "Tool surface trimmed for %s: %d of %d tools hidden this turn so "
+                "the request fits the model's %d-token window (prompt+history "
+                "~%d tokens, budget for tools %d). First hidden: %s",
+                getattr(brain, "name", type(brain).__name__),
+                len(dropped),
+                len(tools),
+                window,
+                used,
+                max(window - used, 0),
+                ", ".join(dropped[:5]),
+            )
+        return fitted
 
     def _hide_spawn_on_knowledge_question(
         self, tools: dict[str, Tool], user_text: str
@@ -13232,6 +13327,127 @@ def _is_invalid_model_exc(msg: str) -> bool:
     ))
 
 
+#: Tokens held back from a brain's context window before its tool surface is
+#: sized: the user's turn text, the per-turn context block, the plugin usage
+#: cards and the first answer or tool round. Only a local brain has a window
+#: small enough for this to matter — see ``_fit_tools_to_context_window``.
+_CONTEXT_FIT_RESERVE_TOKENS = 4096
+
+#: Chars per token for the size estimate. Deliberately low: tool schemas are
+#: JSON, which tokenizes denser than prose, and over-estimating costs a few
+#: tools on a 32k window while under-estimating costs the whole turn.
+_CONTEXT_FIT_CHARS_PER_TOKEN = 3
+
+
+def _approx_tokens(text: str) -> int:
+    """A conservative token estimate for ``text`` — no tokenizer needed."""
+    return len(text) // _CONTEXT_FIT_CHARS_PER_TOKEN + 1
+
+
+def _approx_history_tokens(history: Sequence[BrainMessage] | None) -> int:
+    """What the message log costs on the wire, by the same estimate."""
+    if not history:
+        return 0
+    total = 0
+    for msg in history:
+        content = getattr(msg, "content", "")
+        if isinstance(content, str):
+            total += _approx_tokens(content)
+            continue
+        try:
+            total += _approx_tokens(json.dumps(content, ensure_ascii=False, default=str))
+        except (TypeError, ValueError):
+            total += _approx_tokens(str(content))
+    return total
+
+
+def _tool_surface_tokens(name: str, tool: Any) -> int:
+    """What ONE tool costs on the wire: name, description and schema."""
+    description = getattr(tool, "description", "") or ""
+    schema = getattr(tool, "schema", None) or {}
+    try:
+        wire = json.dumps(
+            {"name": name, "description": description, "input_schema": schema},
+            ensure_ascii=False,
+            default=str,
+        )
+    except (TypeError, ValueError):
+        wire = f"{name} {description} {schema}"
+    return _approx_tokens(wire)
+
+
+def _fit_tools_to_context_window(
+    tools: dict[str, Tool],
+    *,
+    context_window: int,
+    used_tokens: int,
+    keep: Iterable[str] = (),
+) -> tuple[dict[str, Tool], list[str]]:
+    """Shrink a tool surface until it fits ``context_window``.
+
+    Returns ``(surviving tools, dropped names in drop order)``. A window of
+    ``0`` or less means the brain declared none, and the surface comes back
+    untouched. ``used_tokens`` is everything else the request carries (system
+    prompt, history, reserve); what remains is the budget for tools.
+
+    Drop order, deliberately: connected-server tools first — they are
+    additions to Jarvis's own surface, each one a full JSON schema, and on a
+    small window they are what does not fit (live 2026-08-27: 131 of 221
+    tools came from three MCP servers). Within a group the largest go first,
+    so as many hands as possible stay. Names in ``keep`` are never dropped.
+    When even the prompt alone exceeds the window every droppable tool goes
+    and the caller's log says so; the request still fails, but honestly.
+    """
+    if context_window <= 0 or not tools:
+        return tools, []
+    costs = {name: _tool_surface_tokens(name, tool) for name, tool in tools.items()}
+    budget = context_window - used_tokens
+    total = sum(costs.values())
+    if total <= budget:
+        return tools, []
+    kept = set(keep)
+    droppable = [name for name in tools if name not in kept]
+    # A stable sort keeps the registry order inside each (group, size) tie.
+    droppable.sort(
+        key=lambda name: (
+            0 if getattr(tools[name], "is_mcp_tool", False) else 1,
+            -costs[name],
+        )
+    )
+    dropped: list[str] = []
+    for name in droppable:
+        if total <= budget:
+            break
+        total -= costs[name]
+        dropped.append(name)
+    gone = set(dropped)
+    return {name: tool for name, tool in tools.items() if name not in gone}, dropped
+
+
+#: Wordings with which providers refuse a request larger than the model's
+#: context window. Per request, never per credential — so NOT in
+#: ``_DEAD_LIST_KINDS`` and never a cooldown.
+_CONTEXT_OVERFLOW_MARKERS: tuple[str, ...] = (
+    "exceeds the available context size",  # llama.cpp / Ollama (live 2026-08-27)
+    "exceed_context_size",  # the same server's error type
+    "context_length_exceeded",  # OpenAI-compatible error code
+    "maximum context length",  # OpenAI / OpenRouter wording
+    "prompt is too long",  # Anthropic
+    "exceeds the maximum number of tokens",  # Gemini ("input token count …")
+)
+
+
+def _is_context_overflow_exc(msg: str) -> bool:
+    """True when the provider refused the request for its SIZE.
+
+    Until 2026-08-27 this fell through to the generic ``call_fail`` and the
+    user read "I can't reach my provider — check the network" for a request
+    the server had answered perfectly well, with a 400 that named the cause.
+    """
+    m = msg.lower()
+    return any(marker in m for marker in _CONTEXT_OVERFLOW_MARKERS)
+
+
 def _classify_provider_error(msg: str, *, default: str) -> str:
     """Central classifier for provider error strings.
 
@@ -13239,6 +13455,9 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
       1. missing_key (auth/config — important for the dead-list).
       2. account_blocked (credit/quota/tier/budget — also dead-list, by wording).
       3. invalid_model (config bug — different action: fix jarvis.toml).
+      3b. context_overflow (the request is larger than the model's window —
+          per request, so neither dead-list nor cooldown; the spoken cause
+          names the size, not the network).
       4. code-first terminal: a bare 401 -> bad_key, a bare 402 -> account_blocked
          (dead-list; catches a live invalid key / Payment-Required that carries the
          numeric code but no known wording).
@@ -13259,6 +13478,8 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
         return "account_blocked"
     if _is_invalid_model_exc(msg):
         return "invalid_model"
+    if _is_context_overflow_exc(msg):
+        return "context_overflow"
     m = msg.lower()
     # Code-first terminal fallback for a 401/402 that carries the numeric HTTP code
     # but NONE of the known wordings (a bare live "Error code: 401 - invalid x-api-key"
@@ -13343,6 +13564,7 @@ def _format_provider_chain_error(
     invalid_keys: list[str] = []
     account_blocked: list[str] = []
     invalid_models: list[str] = []
+    context_overflow: list[str] = []
     rate_limited: list[str] = []
     empty_responses: list[str] = []
     other_fails: list[str] = []
@@ -13355,6 +13577,8 @@ def _format_provider_chain_error(
             account_blocked.append(prov_name)
         elif kind == "invalid_model":
             invalid_models.append(prov_name)
+        elif kind == "context_overflow":
+            context_overflow.append(prov_name)
         elif kind in ("rate_limit", "skipped_cooldown"):
             rate_limited.append(prov_name)
         elif kind == "empty_response":
@@ -13376,6 +13600,7 @@ def _format_provider_chain_error(
     invalid_keys = _uniq(invalid_keys)
     account_blocked = _uniq(account_blocked)
     invalid_models = _uniq(invalid_models)
+    context_overflow = _uniq(context_overflow)
     rate_limited = _uniq(rate_limited)
     empty_responses = _uniq(empty_responses)
     other_fails = _uniq(other_fails)
@@ -13412,6 +13637,15 @@ def _format_provider_chain_error(
             f"Ungueltige Model-ID bei {', '.join(invalid_models)}. "
             "jarvis.toml und TIER_DEFAULTS_BY_PROVIDER pruefen."
         )
+    # 1c. The request was larger than the model's context window — a size
+    # problem of THIS request, not a network one (live 2026-08-27: a 32k
+    # local model, 221 tools, "check the network").
+    if context_overflow:
+        parts.append(
+            f"Anfrage zu gross fuer das Kontextfenster von {', '.join(context_overflow)}. "
+            "Modell mit groesserem Kontext waehlen, verbundene MCP-Server "
+            "reduzieren oder einen neuen Chat starten."
+        )
     # 2. Rate limits are listed as supplementary info
     if rate_limited:
         prefix = "Ausserdem rate" if parts else "Rate"
@@ -13427,8 +13661,8 @@ def _format_provider_chain_error(
             "Provider per UI aktivieren."
         )
     # 4. Other failures only mentioned when there is no clear root cause
-    if (not missing_keys and not invalid_models and not rate_limited
-            and not empty_responses and other_fails):
+    if (not missing_keys and not invalid_models and not context_overflow
+            and not rate_limited and not empty_responses and other_fails):
         parts.append(
             f"Provider {', '.join(other_fails)} unerreichbar. "
             "Netzwerk pruefen."

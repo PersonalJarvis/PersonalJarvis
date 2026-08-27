@@ -13342,3 +13342,76 @@ whether there was anything to measure. And when the backend goes to the
 trouble of reporting three states, no layer on the way to the user may fold
 two of them together: an honest "unconfirmed" turned into a confident "not
 sent" is a lie the user acts on.
+
+## BUG-187: a typed "Hallo" on a local 32k model answered "I can't reach my provider — check the network": 221 tool schemas went out with every turn, nothing read the model's context window, and the 400 that named the size was filed as a network failure (HIGH, FIXED 2026-08-27)
+
+**Symptom.** Front-page chat, 2026-08-27 10:11 (the same at 2026-08-26 20:32
+and 20:58). The session ran on `ollama / qwen3.8-16gb:latest`; the user typed
+"Hallo" and after 16 s read "Entschuldige — ich erreiche meinen Anbieter
+gerade nicht, vermutlich ein Netzwerk- oder Anbieterproblem." The log:
+`POST http://localhost:11434/v1/chat/completions "HTTP/1.1 400 Bad Request"`,
+`request (67852 tokens) exceeds the available context size (32768 tokens)`,
+then `Alle 1 Provider-Versuche fehlgeschlagen` and `Spoken fallback used
+instead of chain diagnostic: Provider ollama unerreichbar. Netzwerk pruefen.`
+The maintainer's reading: "typing into the chat does not work with any
+provider" — and the day before, Gemini and OpenRouter had indeed failed on
+the same surface for two unrelated reasons (see the note at the end).
+
+**Root cause.** Two defects in `jarvis/brain/manager.py`, one framing error.
+
+1. *No budget.* The tool registry held 221 tools — 78 built-in, 44 GitHub +
+   32 NotebookLM + 55 Linear from three connected MCP servers, 12 CLIs — and
+   a smalltalk turn hides only the spawn vehicles (`_smalltalk_tool_override`,
+   by design since 2026-08-17). So ~215 JSON schemas plus the system prompt
+   went out for "Hallo": ~68k tokens. `Brain.context_window` exists in the
+   protocol, and the Ollama plugin even narrows it to the model's `num_ctx`
+   "so the manager budgets against the real window" — but nothing in the
+   manager ever read it. Cloud brains declare 128k–1M, so the defect was
+   invisible until a local model answered the chat.
+2. *Wrong cause.* `_classify_provider_error` knew credentials, billing,
+   model ids and rate limits; a size refusal fell through to `call_fail`,
+   which `_primary_provider_down_cause` reads as "unreachable" — the one
+   category whose spoken phrase blames the network. The server had answered
+   promptly and said exactly what was wrong.
+3. *One-provider chain.* A chat session's pick is a `TurnOverride`, and an
+   override runs on exactly that provider — no fallback family (correct: the
+   user chose the model). So a per-request failure on it is the whole turn,
+   which makes an honest cause phrase the only recovery path.
+
+**Fix.**
+- `_fit_tools_to_context_window` (pure) + `BrainManager._fit_tools_to_brain`,
+  called from `_build_dispatcher` after the system prompt is built and before
+  the plugin usage cards: estimates prompt + history + a 4096-token reserve
+  against `brain.context_window`, and while the tool surface does not fit,
+  drops connected-server tools first (`MCPToolAdapter.is_mcp_tool`, new
+  flag), then the largest remaining tools. The tool a deterministic gate
+  mandated this turn and `run-skill` on a skill match are never dropped. A
+  brain without a declared window, and every cloud-sized window, is left
+  untouched. The attempt loop now hands `history` to `_build_dispatcher`.
+  One WARNING line per trimmed turn names the brain, the counts, the window
+  and the first hidden tools.
+- `_is_context_overflow_exc` → kind `context_overflow` (llama.cpp/Ollama,
+  OpenAI/OpenRouter, Anthropic and Gemini wordings). Not dead-listed, no
+  cooldown. Its own cause phrase in de/en/es ("this request is too large
+  for the configured model … pick a model with a larger context or start a
+  new chat") and its own line in the developer diagnostic; the "check the
+  network" fallback no longer fires for it.
+
+**Regression tests.** `tests/unit/brain/test_context_window_fit.py` — the
+drop order, the kept names, the cloud-window no-op, the live 221-tool shape
+on a 32k window, the live 400 string and four other provider wordings, the
+phrase and the diagnostic.
+
+**Not this bug, same afternoon.** Gemini on the same chat failed with
+`81 validation errors for GenerateContentConfig … x-mcp-header` — the GitHub
+MCP server's schema extension key, fixed by the allow-list in `c78a97345`
+(2026-08-26 20:27); the running app had started at 10:32 and still ran the
+old code. OpenRouter answered `402 Insufficient credits`. Three providers,
+three causes, one symptom on the surface.
+
+**Lesson.** A capability the protocol declares and a plugin fills in is not
+a feature until a caller reads it — `context_window` was documented as "so
+the manager budgets" for months while the manager budgeted nothing. And an
+error the provider spells out must reach the user in its own words: filing
+an unknown 4xx as "network" turns a one-line fix into a day of "nothing
+works".

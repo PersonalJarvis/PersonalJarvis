@@ -19,7 +19,10 @@ class FakeBrain:
     """Fake brain provider for tests."""
 
     name: str = "fake-brain"
-    context_window: int = 8192
+    # A hosted-provider window. The manager sizes the tool surface to this
+    # (BUG-187); a test that wants the small-local-model behaviour sets a
+    # small window explicitly on its own fake.
+    context_window: int = 200_000
     supports_tools: bool = True
     supports_vision: bool = False
 

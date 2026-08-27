@@ -237,6 +237,10 @@ class MCPToolAdapter:
         )
         # Flag for the tool-use-loop guard: MCP tools are always action-centric.
         self.is_action_tool: bool = True
+        # Flag for the context-window fit (BrainManager._fit_tools_to_brain):
+        # a connected server's tools are the first to leave a surface that
+        # does not fit a small local model's window.
+        self.is_mcp_tool: bool = True
         self.risk_tier: RiskTier = risk_tier
 
         # Register with the global CapabilityRegistry so the voice path
