@@ -72,6 +72,20 @@ class HotkeyBackend(Protocol):
         """True once at least one bound chord has actually fired (AD-8)."""
         ...
 
+    def chord_is_down(self, combo: str) -> bool | None:
+        """Is every key of the normalized ``combo`` down RIGHT NOW?
+
+        Three answers, and the third is load-bearing: ``True`` / ``False`` when
+        the backend can see the keyboard (Windows reads ``GetAsyncKeyState``;
+        the event-tap and listener backends consult their held-set), ``None``
+        when it cannot tell — not started, no package, an unnameable token. A
+        consumer that gets ``None`` keeps working from the press/release edges
+        alone; it must never treat ``None`` as "up". This is what lets a
+        hold-to-record lane notice a key-up edge that was lost in transit
+        (BUG-191) without inventing a release on a host that has no idea.
+        """
+        ...
+
 
 def make_hotkey_backend() -> HotkeyBackend:
     """Select the hotkey backend for this host (AD-8).

@@ -33,6 +33,12 @@ class FakeHotkeyBackend:
         self.stop_calls = 0
         self._started = False
         self._got_event = False
+        # Test knob for ``chord_is_down``: the physical key state per combo
+        # (whitespace-stripped), or the module-wide answer when the combo is
+        # not listed. ``None`` mirrors a backend that cannot see the keyboard.
+        self.key_state: dict[str, bool | None] = {}
+        self.key_state_default: bool | None = None
+        self.key_state_queries: list[str] = []
 
     # ------------------------------------------------------------------
     # HotkeyBackend protocol surface
@@ -59,6 +65,11 @@ class FakeHotkeyBackend:
 
     def received_any_event(self) -> bool:
         return self._got_event
+
+    def chord_is_down(self, combo: str) -> bool | None:
+        key = _norm(combo)
+        self.key_state_queries.append(key)
+        return self.key_state.get(key, self.key_state_default)
 
     # ------------------------------------------------------------------
     # Test helpers (not part of the protocol)

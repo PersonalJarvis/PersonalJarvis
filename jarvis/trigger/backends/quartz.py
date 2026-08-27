@@ -186,6 +186,24 @@ class QuartzHotkeyBackend:
             combo["tokens"] & MOUSE_BUTTON_TOKENS for combo in combos
         )
 
+    def chord_is_down(self, combo: str) -> bool | None:
+        """Is every token of ``combo`` in the held-set right now? ``None`` = unknown.
+
+        The tap re-syncs the modifier half of ``_held`` from every event's
+        flags word (``_handle_flags``), so for a modifier chord this tracks the
+        keyboard closely; plain keys are edge-fed like pynput. While the tap is
+        not running there is nothing to consult, and the answer is ``None`` so a
+        consumer degrades to "edges only" instead of trusting a stale view.
+        """
+        if not self._started or self._tap is None:
+            return None
+        tokens = frozenset(
+            "ctrl" if t == "ctrl_r" else t for t in _parse_combo_tokens(combo)
+        )
+        if not tokens:
+            return None
+        return tokens.issubset(self._held)
+
     def _permitted(self) -> bool:
         """The grant verdict, re-probed at most every ``_PERMISSION_TTL_S``.
 

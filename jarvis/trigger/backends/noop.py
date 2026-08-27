@@ -128,5 +128,9 @@ class NoopBackend:
     def received_any_event(self) -> bool:
         return False
 
+    def chord_is_down(self, combo: str) -> bool | None:
+        """No listener, no keyboard state to report — honestly unknown."""
+        return None
+
 
 __all__ = ["NoopBackend", "_reset_noop_log_flag_for_tests", "explain_unavailable"]

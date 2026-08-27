@@ -517,15 +517,57 @@ class HotkeyTrigger:
 
     def _make_handler(self, event_name: str):
         def _on_press() -> None:
-            if event_name in SELF_INPUT_SUPPRESSED_EVENTS and synthetic_input_recent():
-                log.debug(
-                    "Hotkey %r ignored: Jarvis is synthesizing input right now.",
-                    event_name,
-                )
-                return
-            if self._loop and not self._loop.is_closed():
-                self._loop.call_soon_threadsafe(self._push_nowait, event_name)
+            # Runs on the BACKEND's thread — the Windows poller calls it with
+            # no try/except around it (``HotkeyChecker.run``), so anything that
+            # escapes here kills that thread and, with it, every global
+            # shortcut in the process until a restart. Nothing may escape.
+            try:
+                if event_name in SELF_INPUT_SUPPRESSED_EVENTS and synthetic_input_recent():
+                    log.debug(
+                        "Hotkey %r ignored: Jarvis is synthesizing input right now.",
+                        event_name,
+                    )
+                    return
+                loop = self._loop
+                if loop is None or loop.is_closed():
+                    return
+                loop.call_soon_threadsafe(self._push_nowait, event_name)
+            except RuntimeError:
+                # The loop closed between the check and the call — shutdown.
+                log.debug("Hotkey %r dropped: the event loop is closing.", event_name)
+            except Exception:  # noqa: BLE001 — a dead poller is worse than any lost edge
+                log.exception("Hotkey %r handler failed (edge dropped).", event_name)
         return _on_press
+
+    def chord_is_down(self, event_name: str) -> bool | None:
+        """Is the chord bound to ``event_name`` physically down right now?
+
+        Asks the backend for every combo the binding carries (a binding may be
+        armed under two spellings — the AltGr compatibility chord). Any combo
+        down → ``True``; every combo answered "up" → ``False``; the backend
+        cannot tell, is missing, or the binding is unknown → ``None``. The
+        three-way answer is the whole contract: a consumer must never read
+        ``None`` as "up" (see ``HotkeyBackend.chord_is_down``).
+        """
+        backend = self._backend
+        probe = getattr(backend, "chord_is_down", None)
+        if backend is None or not callable(probe):
+            return None
+        combos = self._bindings_cfg.get(event_name) or []
+        if not combos:
+            return None
+        answered = False
+        for combo in combos:
+            try:
+                answer = probe(_normalize_combo(combo))
+            except Exception:  # noqa: BLE001 — a failed probe is "unknown", never a crash
+                log.debug("chord_is_down(%r) failed", combo, exc_info=True)
+                return None
+            if answer is True:
+                return True
+            if answer is False:
+                answered = True
+        return False if answered else None
 
     def _push_nowait(self, event_name: str) -> None:
         try:

@@ -201,6 +201,22 @@ class PynputBackend:
             combo["tokens"] & MOUSE_BUTTON_TOKENS for combo in combos
         )
 
+    def chord_is_down(self, combo: str) -> bool | None:
+        """Is every token of ``combo`` in the held-set right now? ``None`` = unknown.
+
+        pynput has no "ask the keyboard" primitive, so this is the listener's
+        own bookkeeping — the same edge-fed set the matcher reads. It is honest
+        about that: while the listener is not running there is no set to
+        consult and the answer is ``None``, so a consumer degrades to
+        "edges only" instead of trusting a stale view.
+        """
+        if not self._started or self._listener is None:
+            return None
+        tokens = frozenset(_parse_combo_tokens(combo))
+        if not tokens:
+            return None
+        return _combo_is_down(tokens, self._held)
+
     def _token_for(self, key) -> str | None:
         """Map a pynput key event to our canonical token, or ``None``."""
         # ``KeyCode`` for character keys exposes ``.char``; ``Key`` enum members

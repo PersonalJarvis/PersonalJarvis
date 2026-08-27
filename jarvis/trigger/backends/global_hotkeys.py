@@ -493,6 +493,87 @@ class GlobalHotkeysBackend:
         """
         return self._gh is not None and self._started
 
+    def chord_is_down(self, combo: str) -> bool | None:
+        """Is every key of ``combo`` physically down RIGHT NOW? ``None`` = unknown.
+
+        Ground truth, not bookkeeping: the same ``GetAsyncKeyState`` the poller
+        itself reads, asked directly. It exists because the press/release EDGES
+        can be lost between the poller thread and the consumer (a checker
+        restart mid-hold re-creates the binding's press state, a callback that
+        raises kills the thread, a registry re-arm starts from "not pressed"),
+        and a hold-to-record lane that only ever hears edges keeps recording
+        until its duration cap when the up edge goes missing (BUG-191). Asking
+        the keyboard is the one answer that cannot go stale.
+
+        ``combo`` is the normalized form the trigger registers (``control +
+        window``). ``window`` means either Win key, like the poller. Off Windows,
+        without the package, or for a token the library cannot name, the answer
+        is ``None`` so the caller degrades to "edges only" rather than guessing.
+        """
+        if self._gh is None:
+            return None
+        tokens = [p.strip() for p in _to_library_combo(combo).split("+") if p.strip()]
+        if not tokens:
+            return None
+        for token in tokens:
+            if token == "window":  # noqa: S105 — a key name, not a secret
+                down = _async_key_is_down(_VK_LWIN) or _async_key_is_down(_VK_RWIN)
+                if down is None:
+                    return None
+                if not down:
+                    return False
+                continue
+            vk = _virtual_key_for(token)
+            if vk is None:
+                return None
+            down = _async_key_is_down(vk)
+            if down is None:
+                return None
+            if not down:
+                return False
+        return True
+
+
+# Virtual-key codes for the two Win keys (``VK_LWIN`` / ``VK_RWIN``), spelled
+# out so the probe below needs no ``win32con`` import to name them.
+_VK_LWIN = 0x5B
+_VK_RWIN = 0x5C
+
+
+def _virtual_key_for(token: str) -> int | None:
+    """The Windows virtual-key code for a library token, or ``None``.
+
+    Delegates to the library's own table so the probe and the poller agree on
+    every spelling; a numeric token (the mouse buttons arrive as ``0x04``) is
+    parsed the same way the library parses it.
+    """
+    try:
+        from global_hotkeys.hotkey_checker import _to_virtualkey  # type: ignore[import-untyped]
+    except Exception:  # noqa: BLE001 — no package, no answer
+        return None
+    try:
+        vk = _to_virtualkey(token)
+    except Exception:  # noqa: BLE001 — an unnameable token is "unknown", never a crash
+        return None
+    return int(vk) if vk is not None else None
+
+
+def _async_key_is_down(vk: int) -> bool | None:
+    """``GetAsyncKeyState(vk) < 0`` — the key is down at this instant.
+
+    ``None`` when the Win32 binding is not importable (any host that is not
+    Windows), which the caller treats as "cannot tell".
+    """
+    try:
+        import win32api  # type: ignore[import-untyped]  # lazy (HN-7)
+    except Exception:  # noqa: BLE001 — not Windows / pywin32 missing
+        return None
+    try:
+        return int(win32api.GetAsyncKeyState(int(vk))) < 0
+    except Exception:  # noqa: BLE001 — a failed probe is "unknown", never a crash
+        log.debug("GetAsyncKeyState(%r) failed", vk, exc_info=True)
+        return None
+
 
 __all__ = [
     "MOUSE_BUTTON_TOKENS",
