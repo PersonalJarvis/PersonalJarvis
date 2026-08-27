@@ -45,6 +45,7 @@ import {
 } from "@/components/agentic/paneDrop";
 import {
   activateWorkspace,
+  addTerminal,
   attachToTerminal,
   closeWorkspace,
   endIdeSession,
@@ -173,6 +174,12 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const setView = useIdeChatStore((s) => s.setView);
   const publishWorkspace = useIdeChatStore((s) => s.setWorkspace);
   const paneRequest = useIdeChatStore((s) => s.paneRequest);
+  const terminalRequest = useIdeChatStore((s) => s.terminalRequest);
+  const workspaceRequest = useIdeChatStore((s) => s.workspaceRequest);
+  const sessionRequest = useIdeChatStore((s) => s.sessionRequest);
+  const addWorkspaceRequest = useIdeChatStore((s) => s.addWorkspaceRequest);
+  const publishWorkspaces = useIdeChatStore((s) => s.setWorkspaces);
+  const publishAgents = useIdeChatStore((s) => s.setAgents);
   // The registered subscriptions per CLI. Only ever used to OFFER a choice, so
   // a failed load costs the picker, never the wizard: with none loaded every
   // pane simply opens on the active account, exactly as before.
@@ -694,6 +701,84 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [jumpToPane, paneRequest]);
 
   /*
+   * The sidebar's session list draws every open workspace as a band — the
+   * same list the workspace bar draws, with the folder and which tab is at
+   * the front — and offers a new terminal under each, from the CLIs the
+   * grid's own split menus offer. Both are published from here because this
+   * view is the one place that holds them.
+   */
+  useEffect(() => {
+    publishWorkspaces(
+      onScreen
+        ? workspaces.map((w) => ({
+            id: w.id,
+            name: w.name,
+            folder: w.folder,
+            active: session ? w.id === session.id : w.active,
+          }))
+        : [],
+    );
+  }, [onScreen, publishWorkspaces, workspaces, session]);
+  useEffect(() => {
+    publishAgents(splitChoices);
+  }, [publishAgents, splitChoices]);
+
+  /*
+   * The sidebar asked for a new terminal in one workspace, or for one
+   * workspace's tab. Switching first when the ask names another tab, the
+   * way a pane request does; the grid then sees the new pane arrive and, in
+   * chat view, puts it on the stage.
+   */
+  const lastTerminalRequest = useRef(0);
+  useEffect(() => {
+    if (!terminalRequest || terminalRequest.nonce === lastTerminalRequest.current) return;
+    lastTerminalRequest.current = terminalRequest.nonce;
+    const { workspaceId, agent } = terminalRequest;
+    void (async () => {
+      try {
+        if (workspaceId !== session?.id) await switchTo(workspaceId);
+        setSession(await addTerminal({ agent }));
+      } catch (error) {
+        pushToast("error", error instanceof Error ? error.message : String(error));
+      }
+    })();
+    // `session` and `switchTo` are read at the moment of the ask, on purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminalRequest]);
+  const lastWorkspaceRequest = useRef(0);
+  useEffect(() => {
+    if (!workspaceRequest || workspaceRequest.nonce === lastWorkspaceRequest.current) return;
+    lastWorkspaceRequest.current = workspaceRequest.nonce;
+    if (workspaceRequest.workspaceId !== session?.id) void switchTo(workspaceRequest.workspaceId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceRequest]);
+  // A workspace with no project folder, asked for from the sidebar's last row.
+  const lastSessionRequest = useRef(0);
+  useEffect(() => {
+    if (!sessionRequest || sessionRequest.nonce === lastSessionRequest.current) return;
+    lastSessionRequest.current = sessionRequest.nonce;
+    void startSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionRequest]);
+  /*
+   * "Open one more workspace", asked for from the sidebar.
+   *
+   * The same act as the workspace bar's "+", performed by the same function,
+   * because it must be the same thing: chat mode hides the bar behind its own
+   * navigation, and a second, thinner "new workspace" reachable only from the
+   * sidebar would be one more flow to keep in step with this one. The launcher
+   * that comes up carries the folder picker, the pane count and the agents.
+   */
+  const lastAddWorkspaceRequest = useRef(0);
+  useEffect(() => {
+    if (!addWorkspaceRequest || addWorkspaceRequest.nonce === lastAddWorkspaceRequest.current)
+      return;
+    lastAddWorkspaceRequest.current = addWorkspaceRequest.nonce;
+    void startAdding();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addWorkspaceRequest]);
+
+  /*
    * A file dropped on a workspace TAB.
    *
    * It goes to that workspace's first pane, and the pane types the reference
@@ -934,8 +1019,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             session={session}
             workspaceBar={renderBar(true)}
             appActions={<TopBarActions />}
-            onAddProject={() => void startAdding()}
-            onNewSession={() => void startSession()}
             onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
             jumpTo={jumpTo}
             focusMode={focusMode}

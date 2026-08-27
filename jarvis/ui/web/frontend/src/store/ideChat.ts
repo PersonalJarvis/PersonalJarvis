@@ -5,6 +5,7 @@ import {
   storedViewMode,
   type WorkspaceView,
 } from "@/components/agentic/workspaceView";
+import type { SplitAgentChoice } from "@/components/agentic/AgentPicker";
 
 /**
  * Which face the Agentic IDE is wearing, for everyone who has to know.
@@ -52,11 +53,59 @@ export interface PaneRequest {
   nonce: number;
 }
 
+/**
+ * One open workspace, as the sidebar's session list draws it: a numbered
+ * band, its folder, and whether it is the tab at the front. Published by the
+ * IDE view from the same list the workspace bar draws, so the two agree.
+ */
+export interface IdeWorkspaceRow {
+  id: string;
+  name: string;
+  /** Absolute project folder; "" for a workspace with no folder. */
+  folder: string;
+  active: boolean;
+}
+
+/**
+ * The sidebar asking for a new terminal in one workspace.
+ *
+ * `agent` is the CLI picked from the menu, or undefined when the machine
+ * offers no choice; the IDE view opens it — switching workspace first when
+ * the ask names another tab — because the grid's own "open a pane" lives
+ * inside the view and the sidebar cannot reach it by props.
+ */
+export interface TerminalRequest {
+  workspaceId: string;
+  agent?: string;
+  nonce: number;
+}
+
 interface IdeChatStore {
   view: WorkspaceView;
   workspace: IdeWorkspace | null;
   sidebarFace: IdeSidebarFace;
   paneRequest: PaneRequest | null;
+  /** Every open workspace, in the bar's order — the sidebar's bands. */
+  workspaces: IdeWorkspaceRow[];
+  /** The CLIs a new terminal can run, as the grid's split menus offer them. */
+  agents: SplitAgentChoice[];
+  terminalRequest: TerminalRequest | null;
+  /** A workspace the sidebar asked to bring to the front (its folder row). */
+  workspaceRequest: { workspaceId: string; nonce: number } | null;
+  /** The sidebar asking for a workspace with no project folder (a scratch session). */
+  sessionRequest: { nonce: number } | null;
+  /**
+   * The sidebar asking to open ANOTHER workspace — folder and all.
+   *
+   * The session list is the whole navigation while chat mode is on, and it
+   * offered exactly two ways forward: another terminal inside a workspace
+   * that already exists, or a folderless scratch session. "Open a second
+   * project" was reachable only from the workspace bar above the grid, which
+   * is the surface chat mode replaces — so from where the user sits a new
+   * workspace could not be started at all (maintainer report 2026-08-27).
+   * The view answers this with the same launcher its own "+" opens.
+   */
+  addWorkspaceRequest: { nonce: number } | null;
   /**
    * The pane the chat view currently has on its stage, or null in grid view.
    *
@@ -72,6 +121,15 @@ interface IdeChatStore {
   /** Bring a pane to the front, switching workspace first when it lives elsewhere. */
   requestPane: (workspaceId: string, pane: string) => void;
   setStagedPane: (pane: string | null) => void;
+  setWorkspaces: (rows: IdeWorkspaceRow[]) => void;
+  setAgents: (agents: SplitAgentChoice[]) => void;
+  /** Open a new terminal in `workspaceId`, running `agent` when one was picked. */
+  requestTerminal: (workspaceId: string, agent?: string) => void;
+  /** Bring `workspaceId`'s tab to the front. */
+  requestWorkspace: (workspaceId: string) => void;
+  requestSession: () => void;
+  /** Open the launcher for one more workspace — the bar's "+", from the sidebar. */
+  requestAddWorkspace: () => void;
 }
 
 export const useIdeChatStore = create<IdeChatStore>((set) => ({
@@ -80,6 +138,12 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
   sidebarFace: "chats",
   paneRequest: null,
   stagedPane: null,
+  workspaces: [],
+  agents: [],
+  terminalRequest: null,
+  workspaceRequest: null,
+  sessionRequest: null,
+  addWorkspaceRequest: null,
 
   setView: (next) => {
     rememberViewMode(next);
@@ -99,4 +163,39 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
     // Guarded: the grid publishes this from an effect that runs on every poll,
     // and an unconditional set would wake every subscriber each time.
     set((state) => (state.stagedPane === pane ? state : { stagedPane: pane })),
+  setWorkspaces: (rows) =>
+    set((state) => (sameRows(state.workspaces, rows) ? state : { workspaces: rows })),
+  setAgents: (agents) => set({ agents }),
+  requestTerminal: (workspaceId, agent) =>
+    set((state) => ({
+      terminalRequest: {
+        workspaceId,
+        agent,
+        nonce: (state.terminalRequest?.nonce ?? 0) + 1,
+      },
+    })),
+  requestWorkspace: (workspaceId) =>
+    set((state) => ({
+      workspaceRequest: { workspaceId, nonce: (state.workspaceRequest?.nonce ?? 0) + 1 },
+    })),
+  requestSession: () =>
+    set((state) => ({ sessionRequest: { nonce: (state.sessionRequest?.nonce ?? 0) + 1 } })),
+  requestAddWorkspace: () =>
+    set((state) => ({
+      addWorkspaceRequest: { nonce: (state.addWorkspaceRequest?.nonce ?? 0) + 1 },
+    })),
 }));
+
+/** The IDE view republishes on every render of its list; equal rows are no change. */
+function sameRows(left: IdeWorkspaceRow[], right: IdeWorkspaceRow[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((row, i) => {
+    const other = right[i];
+    return (
+      row.id === other.id &&
+      row.name === other.name &&
+      row.folder === other.folder &&
+      row.active === other.active
+    );
+  });
+}

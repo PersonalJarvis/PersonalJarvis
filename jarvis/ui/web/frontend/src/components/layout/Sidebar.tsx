@@ -151,10 +151,23 @@ export function Sidebar({
   const ideView = useIdeChatStore((s) => s.view);
   const ideSidebarFace = useIdeChatStore((s) => s.sidebarFace);
   const setIdeSidebarFace = useIdeChatStore((s) => s.setSidebarFace);
-  // No open workspace means the IDE is showing its wizard, not a chat — and a
-  // column of chats headed "This workspace" would be naming one that is not
-  // there.
-  const ideWorkspaceOpen = useIdeChatStore((s) => s.workspace !== null);
+  /*
+   * Is there anything for this column to list?
+   *
+   * Measured on the OPEN WORKSPACES, not on the active one. The two differ in
+   * exactly one state and it is a state the user reaches on purpose: opening
+   * one more workspace deactivates the front tab while the launcher asks for
+   * a folder. Gated on the active workspace, the whole chat navigation
+   * vanished at that moment and came back when the new workspace started —
+   * so asking for a second project threw away the list of the first, which
+   * reads as the sidebar breaking rather than a wizard opening.
+   *
+   * The old reading ("no workspace open means the wizard, not a chat") was
+   * written when this column was headed "This workspace". It lists every open
+   * workspace as its own band now, so it has something true to say for as
+   * long as any of them is running.
+   */
+  const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
   const chatFace =
     onIdeSection && ideWorkspaceOpen && ideView === "chat" && ideSidebarFace === "chats";

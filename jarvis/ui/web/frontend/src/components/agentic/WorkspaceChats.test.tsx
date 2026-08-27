@@ -1,35 +1,18 @@
+/**
+ * The sidebar's chat face: every open workspace as a band — number, folder,
+ * sessions, a way to open one more — the active one marked, and every click
+ * travelling through the store to the view that performs it.
+ */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { WorkspaceChats, groupByFolder } from "@/components/agentic/WorkspaceChats";
-import { useAgentSessionStore } from "@/store/agentChat";
+import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
 import { useIdeChatStore } from "@/store/ideChat";
-import {
-  resetWorkspacePanesPoll,
-  useWorkspacePanesStore,
-} from "@/store/workspacePanes";
-import type { AgentChatSession } from "@/lib/agentChatApi";
+import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 
 const HERE = "C:\\Users\\dev\\Personal Jarvis";
-const THERE = "C:\\Users\\dev\\AiGrokAgents";
-
-function chat(id: string, title: string, cwd: string, updated: number): AgentChatSession {
-  return {
-    session_id: id,
-    title,
-    provider: "claude-cli",
-    model: "",
-    effort: "",
-    cwd,
-    permission_mode: "acceptEdits",
-    vendor_session: null,
-    created_ms: updated - 100,
-    updated_ms: updated,
-    message_count: 2,
-    preview: title,
-  };
-}
+const THERE = "C:\\Users\\dev\\Jarvis Web UI";
 
 function pane(
   name: string,
@@ -39,8 +22,8 @@ function pane(
 ): WorkspacePaneRow {
   return {
     workspace_id: workspaceId,
-    workspace_name: "Personal Jarvis",
-    folder: HERE,
+    workspace_name: workspaceId === "w1" ? "Personal Jarvis" : "Jarvis Web UI",
+    folder: workspaceId === "w1" ? HERE : THERE,
     workspace_active: workspaceId === "w1",
     key: name,
     history_id: `${name}@${workspaceId}`,
@@ -67,24 +50,14 @@ function pane(
 const PANES = [
   pane("T1", "Claude Code", "w1"),
   pane("T2", "Codex", "w1", "exited"),
-  // Another workspace's pane: it belongs to that tab's list, not this one.
-  pane("T9", "Elsewhere", "w2"),
+  pane("T1", "Claude Code", "w2"),
 ];
 
-const SESSIONS = [
-  chat("a", "Restore Command Deck", HERE, 9_000),
-  chat("b", "Plan the marketing", HERE, 8_000),
-  chat("c", "Find five leads", THERE, 7_000),
-];
-
-const openSession = vi.fn();
-const removeSession = vi.fn();
-const setDraft = vi.fn();
-const newChat = vi.fn();
+const CLAUDE = { name: "claude", displayName: "Claude Code", installed: true, kind: "cli" as const };
+const CODEX = { name: "codex", displayName: "Codex", installed: true, kind: "cli" as const };
 
 describe("the sidebar's chat face", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     resetWorkspacePanesPoll();
     useWorkspacePanesStore.setState({
       panes: PANES,
@@ -96,122 +69,134 @@ describe("the sidebar's chat face", () => {
     });
     useIdeChatStore.setState({
       paneRequest: null,
-      stagedPane: null,
+      terminalRequest: null,
+      workspaceRequest: null,
+      sessionRequest: null,
+      addWorkspaceRequest: null,
+      stagedPane: "T1",
       view: "chat",
       sidebarFace: "chats",
       workspace: { id: "w1", name: "Personal Jarvis", path: HERE },
-    });
-    useAgentSessionStore.setState({
-      sessions: SESSIONS,
-      activeSessionId: "a",
-      loadSessions: async () => {},
-      openSession,
-      removeSession: async (id: string) => {
-        removeSession(id);
-      },
-      newChat,
-      setDraft: async (patch) => {
-        setDraft(patch);
-      },
+      workspaces: [
+        { id: "w1", name: "Personal Jarvis", folder: HERE, active: true },
+        { id: "w2", name: "Jarvis Web UI", folder: THERE, active: false },
+      ],
+      agents: [CLAUDE],
     });
   });
 
   afterEach(cleanup);
 
-  it("lists the coding sessions running in the open workspace", () => {
-    // The complaint this guards (maintainer, 2026-08-25): switching from the
-    // terminal grid to chat left the workspace's sessions behind, because this
-    // column knew only about chat sessions.
+  it("draws every open workspace as a numbered band with its folder, the active one marked", () => {
     render(<WorkspaceChats />);
 
-    const rows = screen.getAllByTestId("workspace-session-row");
-    expect(rows.map((row) => row.dataset.pane)).toEqual(["T1", "T2"]);
-    expect(rows[0].textContent).toContain("Claude Code");
-    // Another workspace's pane belongs to that tab, not to this column.
-    expect(rows.map((row) => row.dataset.pane)).not.toContain("T9");
+    const bands = screen.getAllByTestId("workspace-chats-band");
+    expect(bands.map((b) => b.dataset.workspace)).toEqual(["w1", "w2"]);
+    expect(bands[0].textContent).toContain("Workspace 1");
+    expect(bands[1].textContent).toContain("Workspace 2");
+    expect(bands[0].dataset.active).toBe("true");
+    expect(bands[1].dataset.active).toBe("false");
+    // The folder under the band, its full path within reach.
+    const folders = screen.getAllByTestId("workspace-chats-folder");
+    expect(folders[0].textContent).toContain("Personal Jarvis");
+    expect(folders[0].getAttribute("title")).toBe(HERE);
+    expect(folders[1].textContent).toContain("Jarvis Web UI");
+    // One "Active" badge, on the tab at the front.
+    expect(screen.getAllByTestId("workspace-chats-active")).toHaveLength(1);
   });
 
-  it("asks the view to bring the session that was clicked to the front", () => {
+  it("lists each workspace's sessions under it, and marks the one on stage", () => {
     render(<WorkspaceChats />);
 
-    fireEvent.click(screen.getByText("Codex"));
-
-    const asked = useIdeChatStore.getState().paneRequest;
-    expect(asked?.workspaceId).toBe("w1");
-    expect(asked?.pane).toBe("T2");
+    const bands = screen.getAllByTestId("workspace-chats-band");
+    const rowsOf = (band: HTMLElement) =>
+      Array.from(band.querySelectorAll<HTMLElement>("[data-testid='workspace-session-row']"));
+    expect(rowsOf(bands[0]).map((r) => r.dataset.pane)).toEqual(["T1", "T2"]);
+    expect(rowsOf(bands[1]).map((r) => r.dataset.pane)).toEqual(["T1"]);
+    // Every workspace numbers its panes from T1; only the ACTIVE workspace's
+    // T1 is the pane on stage.
+    expect(rowsOf(bands[0])[0].className).toContain("bg-card");
+    expect(rowsOf(bands[1])[0].className).not.toContain("bg-card");
   });
 
-  it("marks the session the chat view has on stage", () => {
-    useIdeChatStore.setState({ stagedPane: "T2" });
+  it("asks the view to bring the clicked session to the front, workspace and all", () => {
     render(<WorkspaceChats />);
-
-    const rows = screen.getAllByTestId("workspace-session-row");
-    const staged = rows.find((row) => row.dataset.pane === "T2");
-    expect(staged?.className).toContain("bg-card");
-    expect(rows.find((row) => row.dataset.pane === "T1")?.className).not.toContain("bg-card");
+    const bands = screen.getAllByTestId("workspace-chats-band");
+    const row = bands[1].querySelector<HTMLElement>("[data-testid='workspace-session-row']")!;
+    fireEvent.click(row);
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w2", pane: "T1" });
   });
 
-  it("puts the open workspace's folder first, its chats under it", () => {
+  it("brings a workspace to the front from its folder row", () => {
     render(<WorkspaceChats />);
-
-    const folders = screen
-      .getAllByTestId("workspace-chats-folder")
-      .map((node) => node.dataset.folder);
-    expect(folders[0]).toBe(HERE);
-    expect(folders).toContain(THERE);
-    expect(screen.getByText("Restore Command Deck")).toBeTruthy();
-    expect(screen.getByText("Find five leads")).toBeTruthy();
+    fireEvent.click(screen.getAllByTestId("workspace-chats-folder")[1]);
+    expect(useIdeChatStore.getState().workspaceRequest).toMatchObject({ workspaceId: "w2" });
   });
 
-  it("opens the chat that was clicked", () => {
+  it("opens a terminal straight away when only one CLI is installed", () => {
     render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-new-terminal-w2"));
+    expect(screen.queryByTestId("workspace-chats-agent-menu-w2")).toBeNull();
+    expect(useIdeChatStore.getState().terminalRequest).toMatchObject({
+      workspaceId: "w2",
+      agent: undefined,
+    });
+  });
 
-    fireEvent.click(screen.getByText("Plan the marketing"));
+  it("asks which CLI first when the machine offers more than one", () => {
+    useIdeChatStore.setState({ agents: [CLAUDE, CODEX] });
+    render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-new-terminal-w1"));
+    expect(useIdeChatStore.getState().terminalRequest).toBeNull();
+    fireEvent.click(screen.getByTestId("workspace-chats-new-w1-codex"));
+    expect(useIdeChatStore.getState().terminalRequest).toMatchObject({
+      workspaceId: "w1",
+      agent: "codex",
+    });
+  });
 
-    expect(openSession).toHaveBeenCalledWith("b");
+  /*
+   * The menu must leave the column it was opened from.
+   *
+   * It used to hang INSIDE the list with a z-index of its own, which put the
+   * picker's full-window dismiss layer on top of it: the entries were on
+   * screen, every click on one hit that layer, and the menu closed without
+   * opening anything. jsdom has no layout and so cannot see an overlap — what
+   * it can check is the fact that rules it out, which is that the menu is
+   * detached into a portal and owns its own stacking. The same detachment is
+   * what keeps it from being clipped by the column's scroll box.
+   */
+  it("hangs the CLI menu outside the scrolling column", () => {
+    useIdeChatStore.setState({ agents: [CLAUDE, CODEX] });
+    render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-new-terminal-w1"));
+    const menu = screen.getByTestId("workspace-chats-agent-menu-w1");
+    expect(menu.dataset.detached).toBe("true");
+    expect(screen.getByTestId("workspace-chats").contains(menu)).toBe(false);
+  });
+
+  it("opens the launcher for one more workspace, folder and all", () => {
+    render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-new-workspace"));
+    expect(useIdeChatStore.getState().addWorkspaceRequest).toMatchObject({ nonce: 1 });
+  });
+
+  it("offers a session with no folder, last", () => {
+    render(<WorkspaceChats />);
+    fireEvent.click(screen.getByTestId("workspace-chats-new-session"));
+    expect(useIdeChatStore.getState().sessionRequest).toMatchObject({ nonce: 1 });
   });
 
   it("hands the navigation back through a button that says so", () => {
     render(<WorkspaceChats />);
-
     fireEvent.click(screen.getByTestId("workspace-chats-back"));
-
     expect(useIdeChatStore.getState().sidebarFace).toBe("sections");
   });
 
-  it("starts a new chat in the folder it was asked from", () => {
+  it("says so when nothing is open", () => {
+    useIdeChatStore.setState({ workspaces: [] });
     render(<WorkspaceChats />);
-
-    fireEvent.click(screen.getByTestId(`workspace-chats-new-in-${THERE}`));
-
-    expect(newChat).toHaveBeenCalled();
-    expect(setDraft).toHaveBeenCalledWith({ cwd: THERE });
-  });
-});
-
-describe("grouping chats by folder", () => {
-  it("names each group after the folder's last segment, on either platform", () => {
-    const groups = groupByFolder(SESSIONS, HERE);
-
-    expect(groups[0].label).toBe("Personal Jarvis");
-    expect(groups[1].label).toBe("AiGrokAgents");
-    expect(groupByFolder([chat("x", "t", "/home/dev/site", 1)], "")[0].label).toBe("site");
-  });
-
-  it("shows the open workspace even before it has a single chat", () => {
-    // The column has to say where a new chat would land. A folder that appears
-    // only once it has history leaves a fresh workspace looking folderless.
-    const groups = groupByFolder([chat("c", "elsewhere", THERE, 5)], HERE);
-
-    expect(groups[0].folder).toBe(HERE);
-    expect(groups[0].chats).toEqual([]);
-  });
-
-  it("orders the other folders by the chat touched last", () => {
-    const older = chat("old", "older", "/a", 10);
-    const newer = chat("new", "newer", "/b", 900);
-    const groups = groupByFolder([older, newer], "");
-
-    expect(groups.map((g) => g.folder)).toEqual(["/b", "/a"]);
+    expect(screen.queryAllByTestId("workspace-chats-band")).toHaveLength(0);
+    expect(screen.getByTestId("workspace-chats").textContent).toContain("No workspace is open");
   });
 });

@@ -42,6 +42,10 @@ const launcherEnglish = vi.hoisted<Record<string, string>>(() => ({
 }));
 vi.mock("@/i18n", () => ({
   useT: () => (key: string) => launcherEnglish[key] ?? key,
+  // The chat stage inside the grid reads these two as well.
+  translate: (key: string) => launcherEnglish[key] ?? key,
+  fill: (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (_m, name: string) => String(vars[name] ?? `{${name}}`)),
 }));
 
 // The workspace grid follows the app theme for its terminal colours; this test
@@ -512,9 +516,13 @@ describe("Agentic IDE launcher", () => {
     expect(
       window.localStorage.getItem("jarvis.agenticIde.workspaceView"),
     ).toBe("chat");
-    const rail = screen.getByTestId("agentic-chat-rail");
-    expect(rail.className).toContain("flex");
-    expect(rail.className).not.toContain("hidden");
+    // Chat is the reading mode the workspace comes up in. The list of
+    // sessions that used to sit in a rail beside the panes is the app
+    // sidebar's now, which this view does not draw — so the claim is carried
+    // by the switch itself.
+    expect(
+      screen.getByTestId("agentic-view-mode-toggle").getAttribute("aria-pressed"),
+    ).toBe("true");
   });
 
   it("keeps every reading-mode miniature visible on the dark workspace", async () => {

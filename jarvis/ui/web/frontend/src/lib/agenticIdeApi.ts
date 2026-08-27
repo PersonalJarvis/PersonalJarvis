@@ -734,6 +734,10 @@ export interface TerminalTimelineResponse {
   live: boolean;
   activity: PaneActivity;
   events: AgentChatEvent[];
+  /** What the pane runs on, by the CLI's own account — the composer's pills. */
+  model: string;
+  effort: string;
+  permission_mode: string;
 }
 
 export function fetchTerminalTimeline(
@@ -744,6 +748,19 @@ export function fetchTerminalTimeline(
   return getJson<TerminalTimelineResponse>(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/timeline${query}`,
   );
+}
+
+/**
+ * Press Escape in the pane — the chat stage's Stop. The CLI ends its turn and
+ * comes back to its prompt; nothing is closed.
+ */
+export async function interruptTerminal(name: string, workspaceId?: string): Promise<void> {
+  const query = workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : "";
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/interrupt${query}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
 }
 
 /**
