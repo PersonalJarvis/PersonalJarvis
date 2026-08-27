@@ -6,24 +6,39 @@ The user holds the dictation key, describes a task in their own words — half
 sentences, false starts, several small tasks in one breath — and what lands
 in the field is a finished prompt for an AI coding agent: the situation they
 described, the goal, the constraints that were stated, and nothing invented.
-Plain text, in the language they spoke, written the way a person would put
-it to a colleague, closing with a line of thanks. It is the Agentic IDE's
-prompt doctrine (:mod:`jarvis.agentic_ide.prompt_blueprint`) aimed at a
-transcript instead of a pane.
+Plain text, in the language they spoke, in the user's own words wherever
+those already carry the meaning. It is the Agentic IDE's prompt doctrine
+(:mod:`jarvis.agentic_ide.prompt_blueprint`) aimed at a transcript instead of
+a pane.
 
-Why it rides the polish pass's fast chain
------------------------------------------
-The maintainer's bar is 5-7 s at most from the moment the transcript is
-available to the prompt appearing, with quality and completeness ahead of
-speed inside that window (2026-08-24). That rules out the Agentic IDE's
-writer: a thinking-grade API model spends 3-15 s, a subscription CLI 10-20 s
-of cold start, and neither fits the window reliably. The polish
-pass already owns the only lane on this host that answers in well under a
-second — the key-aware family chain in :mod:`jarvis.dictation.polish_client`
-(a fast small model, with the family's stronger fast model when asked, the
-same one the translate pass uses). So Prompt Mode is that lane with a
-different system prompt, a slightly longer ceiling than the formatter's, and
-its own guards.
+Two phases, because thinking is the only thing that buys quality
+----------------------------------------------------------------
+The maintainer's bar is that the writer THINKS for about 5-7 s before it
+answers, and that the answer be worth the wait (2026-08-27). A language model
+does not think by waiting; it thinks by emitting tokens. v3 asked for the
+finished message directly, so a fast model wrote it in 0.4-0.9 s — measured
+live — and the quality was the quality of a first draft: concrete detail from
+the transcript dropped, the speaker's own wording replaced with a writer's
+wording, several dictated tasks folded into one.
+
+So the answer is now two blocks in one call. ``<analysis>`` is a working pass
+the model must complete first: count the tasks, inventory every literal the
+user said, name the situation, the limits and the wording that has to survive.
+``<prompt>`` is the message, written against that inventory. The analysis is
+thrown away — it never reaches the user — and its whole purpose is that the
+model has read the transcript properly by the time it writes. It also costs
+the seconds the bar asks for: an inventory of a real dictation is 300-900
+tokens, which is where the 5-7 s comes from, on any provider rather than only
+on the ones that expose a thinking budget.
+
+Why it still rides the polish pass's fast chain
+-----------------------------------------------
+The chain in :mod:`jarvis.dictation.polish_client` is the only lane on this
+host that reaches a model at all without a cold start, and Prompt Mode asks
+it for the family's STRONGER fast model — the one the translate pass uses
+(``gemini-3.7-flash`` on Google, ``gpt-oss-120b`` on Groq and Cerebras,
+``gpt-5.4-mini`` on OpenAI). A thinking-grade API model or a subscription CLI
+would spend 15-30 s and stop being dictation.
 
 What it keeps from the polish pass and what it does not
 -------------------------------------------------------
@@ -33,12 +48,14 @@ dictation shaped like an instruction from becoming one
 (:func:`jarvis.dictation.polish_prompt.build_polish_user_message`), the
 protected-terms block, the breaker.
 
-Not kept: the drift guards. They measure how far the words moved, and here
-they are supposed to move. Prompt Mode judges the SHAPE of the answer — not
-empty, not markdown, not cut off, protected spellings still present — and
-then finishes it deterministically: typographic debris a fast model leaves
-behind is normalised, and the closing line of thanks is guaranteed in code,
-never left to the model alone.
+Not kept: the polish pass's drift guards. They measure how far the words
+moved, and here they are allowed to move. Prompt Mode guards the two things
+that can still go wrong — the SHAPE of the answer (not empty, not markdown,
+not cut off) and its FIDELITY to the transcript (every literal the user
+spoke still present, and the message not collapsed to a fraction of what was
+said). Then it finishes deterministically: typographic debris a fast model
+leaves behind is normalised, and a courtesy sign-off the model tacked on is
+cut, because the message ends on its last piece of substance.
 
 Ships OFF. Unlike the formatter it changes WHAT the text says, on purpose,
 and sends the words to a cloud model on most installs (the polish pass's
@@ -89,99 +106,163 @@ log = logging.getLogger(__name__)
 #: is still working"), turned a broken existing indicator into "implement an
 #: indicator", padded with a "Stelle sicher" restatement of the sentence
 #: before, and wrote U+2011 non-breaking hyphens into identifiers.
-PROMPT_MODE_PROMPT_VERSION: Final[int] = 3
+#:
+#: v4: the two-phase answer (``<analysis>`` then ``<prompt>``), fidelity to
+#: the speaker's own words as the DEFAULT rather than one rule among many,
+#: and no closing line at all. Measured live 2026-08-27: v3 answered in under
+#: a second — no pass over the transcript worth the name — reworded phrasing
+#: the user had chosen deliberately, thinned the context they had given, and
+#: closed every message with a sign-off the receiving agent has no use for.
+PROMPT_MODE_PROMPT_VERSION: Final[int] = 4
 
 #: The status a successful Prompt Mode delivery reports on the history row.
 #: Lives in ``POLISH_STATUSES`` (the shared vocabulary) — restated here as a
 #: named constant so call sites compare against a name, not a string literal.
 STATUS_PROMPTED: Final[str] = "prompted"
 
-# The ceiling and its bounds. The maintainer's bar is 5-7 s from the finished
-# transcript; the fast chain answers a prompt of this size in 0.5-2 s, so 6 s
-# is the hard stop with room for a cross-family retry, and 10 s is as far as
-# anyone may push it before the feature stops being dictation.
-_DEFAULT_TIMEOUT_MS: Final[int] = 6_000
-_MIN_TIMEOUT_MS: Final[int] = 2_000
-_MAX_TIMEOUT_MS: Final[int] = 10_000
+# The ceiling and its bounds. The bar is that the writer spends about 5-7 s
+# thinking; the two-phase answer is what makes it spend them, and a ceiling
+# has to clear that plus the request itself. 12 s is the hard stop — a long
+# dictation with a full inventory lands at 6-9 s and must not be cut off at
+# the moment it starts writing the message. 4 s is as low as anyone may set
+# it before the analysis phase can no longer finish (below that the pass only
+# ever times out, which is worse than being off), and 20 s is as far as it
+# may be pushed before the feature stops being dictation.
+_DEFAULT_TIMEOUT_MS: Final[int] = 12_000
+_MIN_TIMEOUT_MS: Final[int] = 4_000
+_MAX_TIMEOUT_MS: Final[int] = 20_000
 
-# Generous on purpose: a long dictation with five tasks must come back whole,
-# and a cut-off answer is rejected as truncated and costs the whole pass. A
-# fast model emits 1500 tokens in about a second. Temperature 0: this is
+# The budget covers BOTH blocks: the analysis (300-900 tokens on a real
+# dictation) and the message itself. Generous on purpose — a cut-off answer
+# is rejected as truncated and costs the whole pass. Temperature 0: this is
 # rewriting, not writing.
-_MAX_OUTPUT_TOKENS: Final[int] = 1_500
+_MAX_OUTPUT_TOKENS: Final[int] = 3_000
 _TEMPERATURE: Final[float] = 0.0
 
-# The closing line, per language, for the case the model left it out. The
-# rule in the prompt asks for it; this table makes it a guarantee (the
-# maintainer's ask, 2026-08-27: every prompt ends with thanks). The code is
-# the resolved dictation language; anything not listed falls back to English,
-# the language every coding agent reads.
-_THANKS_BY_LANGUAGE: Final[dict[str, str]] = {
-    "en": "Thanks!",
-    "de": "Danke!",  # i18n-allow: closed product-output pool
-    "es": "¡Gracias!",
-    "fr": "Merci !",
-    "it": "Grazie!",
-    "pt": "Obrigado!",
-    "nl": "Bedankt!",
-}
-_DEFAULT_THANKS: Final[str] = _THANKS_BY_LANGUAGE["en"]
+# The two blocks of the answer. Parsed with a tolerant regex rather than an
+# XML parser: the content is prose the model wrote, it may contain a stray
+# angle bracket, and a strict parser would throw away a perfectly good
+# message over one. Case-insensitive and whitespace-tolerant for the same
+# reason — a fast model writes ``<Prompt>`` often enough to matter.
+_ANALYSIS_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
+    r"<\s*analysis\s*>(.*?)<\s*/\s*analysis\s*>", re.IGNORECASE | re.DOTALL
+)
+_PROMPT_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
+    r"<\s*prompt\s*>(.*?)(?:<\s*/\s*prompt\s*>|\Z)", re.IGNORECASE | re.DOTALL
+)
+_ANALYSIS_CLOSE_RE: Final[re.Pattern[str]] = re.compile(r"<\s*/\s*analysis\s*>", re.IGNORECASE)
+# Any leftover tag of ours the model echoed inside the message it wrote.
+_OUR_TAGS_RE: Final[re.Pattern[str]] = re.compile(
+    r"<\s*/?\s*(?:analysis|prompt)\s*>", re.IGNORECASE
+)
 
-# What a closing line of thanks looks like, across the languages above and
-# the ones a recognizer commonly reports. Anchored to the LAST line of the
-# prompt: "thanks" in the middle of the text is the user's own wording and
-# proves nothing about the ending. Matches a short line only — a paragraph
-# that merely contains the word is a paragraph, not a closing.
-_THANKS_LINE_RE: Final[re.Pattern[str]] = re.compile(
-    r"^\W{0,3}(?:\w+\s+){0,6}?"
-    r"(?:thank(?:s|\s+you)?|dank(?:e|esch[öo]n)?|gracias|merci|grazie|obrigad[oa]|bedankt|"
-    r"tak|tack|takk|kiitos|dzi[eę]kuj[eę]|d[ěe]kuji|спасибо|ありがとう|谢谢)"
-    r"[\w\s,!.]{0,40}$",
+# A courtesy sign-off on the last line. v3 guaranteed one in code; v4 removes
+# it, and this cuts the one a model adds on its own — the message ends on its
+# last piece of substance, because the reader is a coding agent that gains
+# nothing from being thanked. Anchored to the LAST line and matched short: a
+# paragraph that merely contains "thanks" is the user's own wording and stays.
+_SIGN_OFF_LINE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^\W{0,3}(?:\w+\s+){0,4}?"
+    r"(?:thanks?|thank\s+you|dank(?:e|esch[öo]n)?|gracias|merci|grazie|obrigad[oa]|"
+    r"bedankt|tak|tack|takk|kiitos|dzi[eę]kuj[eę]|d[ěe]kuji|спасибо|ありがとう|谢谢|"
+    r"regards|cheers|gr[üu][ßs]e)"
+    r"[\w\s,!.…]{0,40}$",
     re.IGNORECASE,
 )
 
 # The composer's two shared rules plus what a transcript-only, latency-bound
-# pass needs on top. No skeleton: the answer is prose, and a model handed a
-# skeleton reproduces it. The four parts of a good request are described as
-# paragraphs, not numbered, for the same reason.
+# pass needs on top. No skeleton for the message: the answer is prose, and a
+# model handed a skeleton reproduces it. The ANALYSIS does get a skeleton,
+# for the opposite reason — it exists to be worked through, item by item.
 _SYSTEM_PROMPT: Final[str] = f"""\
 You turn a spoken, dictated instruction into the message a person would type \
 to an AI coding agent. The user will paste what you write into that agent \
 themselves, so it has to read like a well-written request from a colleague: \
-complete, calm, courteous, and no longer than it needs to be.
+complete, calm, and no longer than it needs to be.
+
+ANSWER IN TWO BLOCKS, IN THIS ORDER, AND NEVER SKIP THE FIRST.
+
+<analysis>
+...your working pass over the transcript, worked through item by item...
+</analysis>
+<prompt>
+...the message, and nothing else...
+</prompt>
+
+PHASE 1 - THE ANALYSIS. Work through all six points below in writing before \
+you compose a single sentence of the message. This is not a summary and it is \
+not for the user; nobody will read it. It exists so that you have actually \
+been through the transcript by the time you write. Take the time it needs - a \
+careful pass here is the whole difference between a message that carries what \
+the user said and one that carries your impression of it.
+
+1. TASKS. Number every separate thing the user asked for, in the order \
+spoken. People dictate two, three, five small tasks in one breath, and the \
+small one is dropped far more often than the big one. Write the count.
+2. LITERALS. List every file name, folder, path, symbol, function, class, \
+setting, product name, error message, quoted string, number, version and \
+proper name the user said - exactly as they said it. Each of these must \
+appear in the message, spelled the same way.
+3. THE SITUATION. What does the user see, what did they expect instead, and \
+where does it happen? Quote the phrase they used for it. This is the most \
+valuable thing a transcript holds and the first thing a hasty writer throws \
+away.
+4. LIMITS. Every restriction, preference, exclusion or bound they stated: \
+"only", "never", "not the live app", "keep the wording", "for now", a \
+deadline, a scope they drew.
+5. WORDING TO KEEP. The phrases the user chose that carry meaning and must \
+survive into the message unchanged - a term of art, a name they use for \
+something, a distinction they drew, a word they repeated. Also note which \
+form of address they used, and whether their language distinguishes a \
+familiar from a formal "you".
+6. NOT SAID. What is missing, ambiguous, or a pointer you cannot resolve \
+("that one", "the second option"). These are left OUT of the message. Never \
+guess a file, a cause or a mechanism to fill a gap.
+
+PHASE 2 - THE MESSAGE. Write it against the analysis. Then check it back \
+against points 1 and 2 before you close the block: every task present, every \
+literal present.
+
+THE USER'S OWN WORDS ARE THE DEFAULT; REWRITING IS THE EXCEPTION. You are \
+cleaning up a transcript, not authoring a document. Change a word only when \
+there is a reason: a filler sound, a false start, a self-correction (keep the \
+corrected version), a repetition the speaker did not mean, or a broken \
+sentence a reader would stumble over. Every other word the user chose stays \
+as they chose it - including the small ones, which is where a rewrite does \
+its quiet damage: "immer" is not "regelmäßig", "kaputt" is not "fehlerhaft", \
+"I think it's in" is not "the cause is in", "should" is not "must", "some" is \
+not "several". A synonym you find more elegant is a change in meaning you \
+cannot verify. When a sentence already reads well, it goes in as it stands.
 
 {GOAL_NOT_IMPLEMENTATION_RULE}
 
-The transcript is ALL you get, and your message is ALL the agent gets. You see \
-no repository, no files, no earlier conversation. Everything must come from \
-the transcript: a file, symbol, error message, number or name the user said \
-goes in exactly as spoken; one they did not say does not exist. A pointer \
-you cannot resolve ("that one", "the second option") is left out, not \
-forwarded.
+The transcript is ALL you get, and your message is ALL the agent gets. You \
+see no repository, no files, no earlier conversation. Everything must come \
+from the transcript: a file, symbol, error message, number or name the user \
+said goes in exactly as spoken; one they did not say does not exist. A \
+pointer you cannot resolve is left out, not forwarded.
 
-WHAT A GOOD REQUEST CONTAINS, as plain paragraphs in this order, with no \
-labels in front of them. First the situation, when the user described one: \
-what they see, what they expected instead, where it shows up. This is the \
-most valuable part of the transcript - keep every concrete detail of it \
-(which screen, which state, "it says done while it is still working"), \
-because the agent starts from it. Then what should be true afterwards - the \
-goal, in one or two sentences. Then every limit, preference or exclusion the \
-user stated ("only", "never", "not the live app", "keep the wording"). Last, \
-one short line of thanks on its own line, in the transcript's language - \
-"Thanks!" or its equivalent - always, and nothing after it. A part the \
-transcript gives you nothing for is skipped, never filled in.
+WHAT THE MESSAGE CONTAINS, as plain paragraphs in this order, with no labels \
+in front of them. First the situation, when the user described one: what they \
+see, what they expected instead, where it shows up - with every concrete \
+detail of it intact. Then what should be true afterwards, the goal, in one or \
+two sentences. Then every limit, preference or exclusion the user stated. A \
+part the transcript gives you nothing for is skipped, never filled in.
+
+NOTHING AFTER THE LAST PIECE OF SUBSTANCE. The message ends on the last thing \
+the user actually asked for. No closing line of thanks, no "best regards", no \
+sign-off of any kind, no summary sentence, no offer to clarify. The reader is \
+a coding agent; a courtesy line is noise it has to step over.
 
 FIX WHAT EXISTS. When the user says a thing exists and is wrong ("the \
 indicators don't work", "the title is missing on some chats"), the request is \
 to repair that thing - never turn it into "implement" or "create" something \
 new. A second one built next to the broken one is the outcome to avoid.
 
-SEVERAL TASKS AT ONCE. People dictate two, three, five small tasks in one \
-breath. Every one of them survives, in the order spoken, each as its own \
-sentence or short paragraph. Never merge two tasks into one, never drop the \
-small one because the big one seemed to be the point, never summarise a list \
-of tasks into "and a few other things". Count them before you write and \
-count them after.
+SEVERAL TASKS AT ONCE. Every task from point 1 of the analysis survives, in \
+the order spoken, each as its own sentence or short paragraph. Never merge \
+two, never drop the small one because the big one seemed to be the point, \
+never summarise a list into "and a few other things".
 
 SAY EACH THING ONCE. A requirement stated twice in different words is \
 padding, not emphasis: no closing sentence that restates the goal, no "make \
@@ -195,68 +276,64 @@ Names, identifiers, paths and quoted strings stay exactly as spoken. Use the \
 ordinary hyphen-minus and ordinary spaces: no typographic hyphens, no \
 non-breaking spaces, no two spaces at the end of a line.
 
-SOUND LIKE A PERSON WRITING TO A COLLEAGUE, not like a ticket and not like a \
-document:
+SOUND LIKE THE PERSON WHO SPOKE, writing to a colleague - not like a ticket \
+and not like a document:
 - Short, direct sentences. Say the thing, then stop.
-- Courteous, not commanding: "please" where a person would say it, and the \
-user's own "I would like" where they said it. Never a bare string of orders.
-- Address the agent the way the user did. In a language that distinguishes \
-a familiar from a formal "you", keep the user's form and never switch to the \
+- Courteous where the speaker was courteous: their "please", their "I would \
+like", kept where they said it and not added where they did not.
+- Address the agent the way the user did. In a language that distinguishes a \
+familiar from a formal "you", keep the user's form and never switch to the \
 formal one on your own; a transcript that shows neither gets the familiar one.
 - Everyday words. No "utilize", "leverage", "ensure", "make sure", "robust", \
 "seamless", "comprehensive", "delve" - and not their equivalents in the \
 transcript's language either.
 - No sets of three for rhythm, no "not only ... but also", no dash-heavy \
 asides.
-- Keep the speaker's own phrasing wherever it is already clear; you are \
-cleaning it up, not rewriting their voice.
 
-Keep what the user said: every constraint, file, symbol, number and intent. \
-Drop filler sounds, false starts and self-corrections (keep the corrected \
-version), and any clause addressing the assistant or the agent by name. \
-State what "done" looks like only when the user said it. Output ONLY the \
-message: no preamble, no quotes, no comment of your own.
+Drop filler sounds, false starts and self-corrections, and any clause \
+addressing the assistant or the agent by name. State what "done" looks like \
+only when the user said it. The ``<prompt>`` block holds ONLY the message: no \
+preamble, no quotes, no comment of your own.
 
 {FORBIDDEN_SUBJECTS_RULE}
 
-Two examples of the shape. Each shows a transcript and the message written \
-for it.
-
-Transcript: "hallo es werden mir nicht mehr diese indikatoren funktionieren \
-nicht korrekt ich möchte und vor allem immer live nicht korrekt ich möchte \
-dass diese indikatoren richtig funktionieren und die indikatoren dass man ob \
-die session auch arbeitet oder nicht weil es ist zum beispiel so dass es so \
-angezeigt wird zum beispiel wenn die session arbeitet dass sie fertig ist \
-oder andersrum"
-Message:
-Die Indikatoren, die anzeigen, ob eine Session gerade arbeitet oder fertig \
-ist, stimmen nicht mehr: Eine arbeitende Session wird als fertig angezeigt \
-und umgekehrt, und sie aktualisieren sich nicht live.
-
-Bitte bring die Indikatoren wieder in Ordnung, sodass sie den echten Zustand \
-der Session zeigen und sich live aktualisieren.
-
-Danke!
+One worked example of the shape. The analysis is shown short here; yours is \
+as long as the transcript needs.
 
 Transcript: "okay so um the login page is broken again when you type a wrong \
 password it just shows a blank screen instead of the error message i think \
 it's in the auth handler file can you have a look and fix it so the message \
 shows up like it used to and also rename the save button to submit"
-Message:
-The login page is broken again: when you type a wrong password it shows a \
-blank screen instead of the error message. I think it's in the auth handler \
+Answer:
+<analysis>
+1. TASKS (2): (a) fix the blank screen on a wrong password so the error \
+message shows again; (b) rename the save button to submit.
+2. LITERALS: "login page", "auth handler file", "save", "submit", "wrong \
+password", "blank screen", "error message".
+3. SITUATION: typing a wrong password shows a blank screen instead of the \
+error message; the user says it is broken "again" and that it used to work.
+4. LIMITS: none stated.
+5. WORDING TO KEEP: "broken again", "I think it's in" (a guess, not a \
+finding - do not harden it into a cause), "like it used to". Informal, second \
+person.
+6. NOT SAID: which file exactly, what changed, no repro steps beyond the \
+wrong password.
+</analysis>
+<prompt>
+The login page is broken again: when you type a wrong password it just shows \
+a blank screen instead of the error message. I think it's in the auth handler \
 file.
 
 Please have a look and fix it so the error message shows up like it used to.
 
 Also, please rename the save button to submit.
-
-Thanks!\
+</prompt>\
 """
 
 # What a plain-text answer must not contain. Headings and fences are the v1
 # failure; bold and bullet marks are the shape a model slides back into when
-# it is told "structure" without "prose".
+# it is told "structure" without "prose". Checked against the MESSAGE only —
+# the analysis is a numbered list by design and never reaches this.
 _MARKDOWN_RE: Final[re.Pattern[str]] = re.compile(r"(?m)^\s*(#{1,6}\s|```|[-*]\s|\d+[.)]\s)|\*\*")
 
 # Typographic debris a fast model writes into identifiers and paths. Measured
@@ -265,26 +342,67 @@ _MARKDOWN_RE: Final[re.Pattern[str]] = re.compile(r"(?m)^\s*(#{1,6}\s|```|[-*]\s
 # in the receiving agent never matches. The whole hyphen block maps to the
 # hyphen-minus when it sits inside a word; a spaced dash stays a spaced dash
 # so an aside the model wrote as " – " is not turned into " - " by force.
-_TIGHT_HYPHEN_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?<=\w)[\u2010\u2011\u2012\u2013\u2014](?=\w)"
-)
-_LOOSE_HYPHEN_RE: Final[re.Pattern[str]] = re.compile(r"[\u2010\u2011]")
-_SPECIAL_SPACE_RE: Final[re.Pattern[str]] = re.compile(r"[\u00a0\u202f\u2007\u2009\u200b]")
+_TIGHT_HYPHEN_RE: Final[re.Pattern[str]] = re.compile(r"(?<=\w)[‐‑‒–—](?=\w)")
+_LOOSE_HYPHEN_RE: Final[re.Pattern[str]] = re.compile(r"[‐‑]")
+_SPECIAL_SPACE_RE: Final[re.Pattern[str]] = re.compile(r"[    ​]")
 _TRAILING_WS_RE: Final[re.Pattern[str]] = re.compile(r"[ \t]+$", re.MULTILINE)
 _BLANK_RUN_RE: Final[re.Pattern[str]] = re.compile(r"\n{3,}")
 
-# The words that hint at a language when the resolver left it open ("auto",
-# an empty tag). Only the languages the thanks table knows; a single hit is
-# enough because the alternative is a wrong-language closing line, and the
-# function words below are near-unique to their language.
-_LANGUAGE_HINTS: Final[tuple[tuple[str, frozenset[str]], ...]] = (
-    ("de", frozenset({"nicht", "und", "dass", "ich", "bitte", "wird", "auch", "soll"})),
-    ("es", frozenset({"que", "para", "los", "las", "pero", "también", "esto", "hacer"})),
-    ("fr", frozenset({"pas", "les", "pour", "avec", "dans", "cette", "faire"})),
-    ("it", frozenset({"che", "anche", "questo", "fare", "sono", "perché"})),
-    ("pt", frozenset({"não", "também", "isso", "fazer", "está", "para"})),
-    ("nl", frozenset({"niet", "het", "ook", "moet", "deze", "maken"})),
+# --- Fidelity guards -------------------------------------------------------
+#
+# The polish pass measures how far the words moved. Here they are allowed to
+# move, so what is measured instead is what got LOST. Two things, both
+# deterministic, both cheap, both fail-open:
+#
+#   * a literal the user spoke that the message does not carry, and
+#   * a message so much shorter than the transcript that context was thinned
+#     rather than tightened.
+#
+# Neither judges style. A rewrite that keeps every literal and most of the
+# substance passes, however differently it reads — that judgement is the
+# model's, and the prompt above is where it is made.
+
+# What counts as a literal worth carrying: an identifier or path
+# (``auth_handler``, ``src/app.ts``, ``JarvisBar``), a version or number of
+# two digits or more, and anything the user put in quotes. Deliberately NOT
+# ordinary words: the message is allowed to rephrase prose, and a guard over
+# every noun would reject every honest rewrite.
+_IDENTIFIER_RE: Final[re.Pattern[str]] = re.compile(
+    r"""
+    \b(?:
+        [A-Za-z0-9_]+(?:[./\\-][A-Za-z0-9_]+)+        # a.b, src/app.ts, foo-bar
+      | [A-Za-z]+_[A-Za-z0-9_]+                       # snake_case
+      | [a-z]+[A-Z][A-Za-z0-9]*                       # camelCase
+      | [A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*               # PascalCase
+    )\b
+    """,
+    re.VERBOSE,
 )
+_NUMBER_RE: Final[re.Pattern[str]] = re.compile(r"\b\d{2,}(?:[.,]\d+)*\b")
+# Double quotes only. A lone ``'`` is an apostrophe far more often than a
+# quotation mark in a transcript ("it's", "don't"), and treating one as an
+# opening quote turns the rest of the sentence into a "literal" that the
+# message is then required to reproduce word for word.
+_QUOTED_RE: Final[re.Pattern[str]] = re.compile("[\"“„«]([^\"“”„«»\n]{2,60})[\"”»]")
+
+#: How many of the transcript's literals may go missing before the message is
+#: rejected. Not zero: a recognizer writes the same spoken name two ways in
+#: one breath ("JarvisBar", "Jarvis Bar"), and rejecting on one of those costs
+#: a good message. One is a slip; a quarter of them is a writer that stopped
+#: reading.
+_MAX_LOST_LITERALS: Final[int] = 1
+_LOST_LITERAL_SHARE: Final[float] = 0.25
+
+#: How far the message may shrink against the transcript before it counts as
+#: thinned rather than tightened, and the shortest transcript this is measured
+#: on at all. A dictation is 25-40 % filler, so a healthy message lands around
+#: 60-80 % of the spoken word count; under 40 % something the user said is
+#: simply not in there. Short transcripts are exempt — "fix the typo on the
+#: login page" is a complete request at eight words and its message is allowed
+#: to be shorter still.
+_MIN_LENGTH_SHARE: Final[float] = 0.40
+_MIN_MEASURED_WORDS: Final[int] = 30
+
 _WORD_RE: Final[re.Pattern[str]] = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
@@ -302,6 +420,47 @@ def build_prompt_mode_prompt(protected_terms: Sequence[str] = ()) -> str:
     like to a model is one decision.
     """
     return f"{_SYSTEM_PROMPT}\n\n{build_protected_block(protected_terms)}"
+
+
+def extract_prompt_block(answer: str) -> str:
+    """The message out of a two-block answer, tolerant of a ragged one.
+
+    In order of preference: the content of ``<prompt>`` (closing tag optional,
+    because a model that ran out of budget still wrote a usable message up to
+    that point — the truncation guard is what decides whether it is usable);
+    otherwise everything after ``</analysis>``, which is the same message with
+    the opening tag forgotten; otherwise the whole answer, on the assumption
+    that the model ignored the two-block instruction and wrote the message
+    directly. That last case then faces the same guards as before, so a model
+    that answers with its analysis is caught by the markdown guard rather than
+    handing the user a numbered worksheet.
+
+    Whatever comes out is stripped of any of our own tags the model echoed
+    inside it.
+    """
+    body = str(answer or "").strip()
+    if not body:
+        return ""
+    match = _PROMPT_BLOCK_RE.search(body)
+    if match:
+        return _OUR_TAGS_RE.sub("", match.group(1)).strip()
+    close = _ANALYSIS_CLOSE_RE.search(body)
+    if close:
+        return _OUR_TAGS_RE.sub("", body[close.end() :]).strip()
+    return _OUR_TAGS_RE.sub("", body).strip()
+
+
+def analysis_word_count(answer: str) -> int:
+    """How many words the model spent on its working pass.
+
+    Not a guard — nothing is rejected for a thin analysis, because a short
+    transcript deserves a short one. It is logged, so "the writer answered in
+    400 ms again" is a question the log can answer without a live capture.
+    """
+    match = _ANALYSIS_BLOCK_RE.search(str(answer or ""))
+    if not match:
+        return 0
+    return len(_WORD_RE.findall(match.group(1)))
 
 
 def normalize_prompt_text(text: str) -> str:
@@ -324,70 +483,101 @@ def normalize_prompt_text(text: str) -> str:
     return body.strip()
 
 
-def ends_with_thanks(text: str) -> bool:
-    """Whether the LAST line of *text* is a short line of thanks."""
+def ends_with_sign_off(text: str) -> bool:
+    """Whether the LAST line of *text* is a short courtesy sign-off."""
     lines = [line.strip() for line in str(text or "").strip().splitlines() if line.strip()]
     if not lines:
         return False
-    return bool(_THANKS_LINE_RE.match(lines[-1]))
+    return bool(_SIGN_OFF_LINE_RE.match(lines[-1]))
 
 
-def guess_language(text: str, hint: str = "") -> str:
-    """The language code the closing line is written in.
+def strip_closing_sign_off(text: str) -> str:
+    """*text* with a trailing courtesy line removed.
 
-    The resolved dictation language wins when it names one; ``auto`` or an
-    empty tag falls back to a function-word sniff over the text, and English
-    when even that says nothing — the language every coding agent reads.
-    """
-    code = str(hint or "").strip().lower().split("-")[0]
-    if code and code != "auto":
-        return code
-    words = {match.group(0).casefold() for match in _WORD_RE.finditer(str(text or ""))}
-    if not words:
-        return "en"
-    best = ("en", 0)
-    for language, markers in _LANGUAGE_HINTS:
-        hits = len(words & markers)
-        if hits > best[1]:
-            best = (language, hits)
-    return best[0]
+    The prompt asks for a message that ends on its substance; this is the
+    guarantee, the way ``ensure_closing_thanks`` was the guarantee of the
+    opposite in v3. Repeated, because a model that writes "Danke!" under
+    "Viele Grüße" has written two. Never strips the whole message: a
+    transcript that IS a thank-you note keeps its only line.
 
-
-def closing_thanks(language: str) -> str:
-    """The thanks line for *language*, English when the table has no entry."""
-    return _THANKS_BY_LANGUAGE.get(str(language or "").strip().lower(), _DEFAULT_THANKS)
-
-
-def ensure_closing_thanks(text: str, *, language: str = "") -> str:
-    """*text* with exactly one closing line of thanks.
-
-    The prompt asks the model for it; this is the guarantee. A model that
-    already closed with thanks is left alone (never two), one that did not
-    gets the line for the resolved language appended as its own paragraph.
-    Runs AFTER the truncation guard on purpose: appending a full stop to a
-    prompt that stopped mid-sentence would hide exactly the damage that guard
-    exists to catch.
+    Runs AFTER the truncation guard, for the reason that guard exists — a
+    message that stopped mid-sentence must be caught as damage, not tidied.
     """
     body = str(text or "").strip()
-    if not body or ends_with_thanks(body):
-        return body
-    return f"{body}\n\n{closing_thanks(guess_language(body, language))}"
+    while True:
+        lines = body.splitlines()
+        kept = [line.strip() for line in lines if line.strip()]
+        if len(kept) < 2 or not _SIGN_OFF_LINE_RE.match(kept[-1]):
+            return body
+        cut = len(lines)
+        while cut > 0 and not lines[cut - 1].strip():
+            cut -= 1
+        body = "\n".join(lines[: cut - 1]).strip()
+
+
+def transcript_literals(text: str) -> list[str]:
+    """The literals in *text* a faithful message has to carry.
+
+    Identifiers and paths, numbers of two digits or more, and quoted spans.
+    Case is preserved in what comes back (the caller folds it) so a log line
+    can name the thing that went missing the way the user said it.
+    """
+    body = str(text or "")
+    found: dict[str, str] = {}
+    for pattern in (_IDENTIFIER_RE, _NUMBER_RE):
+        for match in pattern.finditer(body):
+            token = match.group(0)
+            found.setdefault(token.casefold(), token)
+    for match in _QUOTED_RE.finditer(body):
+        token = match.group(1).strip()
+        if token:
+            found.setdefault(token.casefold(), token)
+    return list(found.values())
+
+
+def lost_literals(raw: str, prompt: str) -> list[str]:
+    """Which of the transcript's literals the message does not carry."""
+    target = str(prompt or "").casefold()
+    return [token for token in transcript_literals(raw) if token.casefold() not in target]
+
+
+def looks_thinned(raw: str, prompt: str) -> bool:
+    """True when the message is too short to still hold what was dictated.
+
+    A word-count proxy, and only over transcripts long enough for the ratio to
+    mean anything. It catches the failure the maintainer reported — a message
+    that reads well and quietly leaves out half of what was said — without
+    having any opinion about wording.
+    """
+    spoken = len(_WORD_RE.findall(str(raw or "")))
+    if spoken < _MIN_MEASURED_WORDS:
+        return False
+    written = len(_WORD_RE.findall(str(prompt or "")))
+    return written < spoken * _MIN_LENGTH_SHARE
 
 
 def prompt_guard_reason(raw: str, prompt: str, *, protected: Sequence[str] = ()) -> str:
     """Why *prompt* must not be delivered, or ``""`` when it may.
 
-    Structural, never semantic. The drift guards of the polish pass measure
-    how far the words moved, and here they are SUPPOSED to move; what can
-    still go wrong is the shape of the answer:
+    Structural and factual, never stylistic. The drift guards of the polish
+    pass measure how far the words moved, and here they are ALLOWED to move;
+    what can still go wrong is the shape of the answer and its fidelity to
+    what was said:
 
     * ``empty`` — nothing came back worth pasting.
     * ``markdown`` — a heading, a fence, bold or a list mark. The answer is
-      pasted into a chat box as a message; markdown there is the v1 defect.
+      pasted into a chat box as a message; markdown there is the v1 defect,
+      and it is also what a leaked analysis looks like.
     * ``truncated`` — stopped mid-sentence. Reads as complete, is not.
     * ``lost_protected_term`` — a spelling the user protected was in the
       transcript and is not in the prompt. The dictionary exists because the
       recognizer gets these wrong; a writer that drops one has undone that.
+    * ``dropped_detail`` — file names, identifiers, numbers or quoted strings
+      the user spoke are missing from the message. The agent is sent looking
+      for something the user had already named.
+    * ``dropped_context`` — the message is under 40 % of the spoken word
+      count. A dictation is filler-heavy, but not that filler-heavy: what is
+      gone is context, not padding.
     """
     body = (prompt or "").strip()
     if not body:
@@ -402,6 +592,14 @@ def prompt_guard_reason(raw: str, prompt: str, *, protected: Sequence[str] = ())
         needle = str(term or "").strip().casefold()
         if needle and needle in source and needle not in target:
             return "lost_protected_term"
+    literals = transcript_literals(raw)
+    if literals:
+        missing = lost_literals(raw, body)
+        allowed = max(_MAX_LOST_LITERALS, int(len(literals) * _LOST_LITERAL_SHARE))
+        if len(missing) > allowed:
+            return "dropped_detail"
+    if looks_thinned(raw, body):
+        return "dropped_context"
     return ""
 
 
@@ -436,15 +634,16 @@ async def compose_prompt(
     status — the caller then falls through to whatever it would have done
     without this feature, which is the polish pass.
 
-    ``language`` is the resolved dictation language (the same code the polish
-    pass receives); it decides the language of the closing thanks when the
-    model left that line out. Empty or ``auto`` means "read it off the text".
+    ``language`` is the resolved dictation language. Since v4 the message
+    carries no generated closing line, so nothing here has to be written in
+    it; the parameter stays because every caller passes it and because the
+    language belongs in the log line when a delivery has to be explained.
 
     The model is the polish pass's own chain (``[dictation].polish_provider``
     and its ``auto`` order), asked for the family's stronger fast model — the
     one the translate pass uses — because turning speech into a brief asks
     more of a model than punctuating it, and that model still answers inside
-    the ceiling.
+    the ceiling with an analysis in front of it.
     """
     started = time.perf_counter()
     source = str(raw or "")
@@ -523,24 +722,37 @@ async def compose_prompt(
 
         await breaker.record_success()
 
-        prompt = normalize_prompt_text(answer)
+        # How long the writer spent thinking, in the only unit that measures
+        # it: words it wrote before it started answering. A run that reports 0
+        # here is a model that skipped the analysis, which is the v3 behaviour
+        # and the thing to watch for after a provider change.
+        thought_words = analysis_word_count(answer)
+        prompt = normalize_prompt_text(extract_prompt_block(answer))
         reason = prompt_guard_reason(source, prompt, protected=protected_terms)
         if reason:
             log.info(
-                "dictation prompt mode answer from %r rejected (%s); delivering the "
-                "transcript to the ordinary passes.",
+                "dictation prompt mode answer from %r rejected (%s, %d analysis words); "
+                "delivering the transcript to the ordinary passes.",
                 attempt.provider,
                 reason,
+                thought_words,
             )
             return _result(
                 "rejected_drift", provider=attempt.provider, model=attempt.model, reason=reason
             )
 
+        log.debug(
+            "dictation prompt mode composed a message from %r after %d analysis words "
+            "(language %r).",
+            attempt.provider,
+            thought_words,
+            language or "auto",
+        )
         return _result(
             STATUS_PROMPTED,
             provider=attempt.provider,
             model=attempt.model,
-            text=ensure_closing_thanks(prompt, language=language),
+            text=strip_closing_sign_off(prompt),
         )
     except Exception:
         # ``Exception``, not ``BaseException``, for the reason the polish pass
@@ -582,14 +794,17 @@ async def _call_chain(
 __all__ = [
     "PROMPT_MODE_PROMPT_VERSION",
     "STATUS_PROMPTED",
+    "analysis_word_count",
     "build_prompt_mode_prompt",
-    "closing_thanks",
     "compose_prompt",
-    "ends_with_thanks",
-    "ensure_closing_thanks",
-    "guess_language",
+    "ends_with_sign_off",
+    "extract_prompt_block",
+    "looks_thinned",
+    "lost_literals",
     "normalize_prompt_text",
     "prompt_guard_reason",
     "prompt_mode_enabled",
+    "strip_closing_sign_off",
     "timeout_budget_s",
+    "transcript_literals",
 ]

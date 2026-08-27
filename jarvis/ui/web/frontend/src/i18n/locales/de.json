@@ -422,8 +422,8 @@
     },
     "prompt_mode": {
       "title": "Prompt-Modus",
-      "description": "Sag in deinen Worten und in jeder Sprache, was erledigt werden soll. Im Feld landet ein fertiger Prompt für einen KI-Coding-Agenten, so formuliert, wie du es sagen würdest: das Ziel, das du beschrieben hast, der Kontext und die Grenzen, die du genannt hast, und jede Aufgabe, die du erwähnt hast — nichts erfunden, nichts weggelassen.",
-      "sends_text": "Dein Transkript geht an dasselbe schnelle Modell wie das Aufräumen der Formulierung oben und kommt als Klartext in der Sprache zurück, in der du gesprochen hast — meist innerhalb weniger Sekunden. Dein Rohtext bleibt immer in deinem Verlauf.",
+      "description": "Sag in deinen Worten und in jeder Sprache, was erledigt werden soll. Im Feld landet ein fertiger Prompt für einen KI-Coding-Agenten, so formuliert, wie du es sagen würdest: das Ziel, das du beschrieben hast, der Kontext und die Grenzen, die du genannt hast, und jede Aufgabe, die du erwähnt hast — nichts erfunden, nichts weggelassen, und deine eigene Wortwahl bleibt überall dort stehen, wo sie die Sache schon gesagt hat.",
+      "sends_text": "Dein Transkript geht an dasselbe schnelle Modell wie das Aufräumen der Formulierung oben. Dieses Modell arbeitet zuerst schriftlich durch, was du gesagt hast — jede Aufgabe, jeden Datei- und Eigennamen, die Situation, die du beschrieben hast, die Grenzen, die du gezogen hast — und schreibt erst danach den Prompt. Deshalb dauert das hier ein paar Sekunden statt eines Augenblicks, und genau das kaufst du dir mit der Wartezeit. Zurück kommt Klartext in der Sprache, in der du gesprochen hast; dein Rohtext bleibt immer in deinem Verlauf.",
       "outranks": "Solange das an ist, treten das Aufräumen der Formulierung und die Übersetzung zurück: Der Prompt ist bereits neu strukturiert. Antwortet kein Modell rechtzeitig, kommt dieses Diktat so an, als wäre der Prompt-Modus aus.",
       "writer_hint": "Welches Modell schreibt: der Anbieter, der oben unter „Formulierung aufräumen“ gewählt ist."
     },
@@ -573,7 +573,7 @@
     "composer_hint": "Enter sendet · Shift+Enter für eine neue Zeile",
     "model_hint": "Verwendetes Modell — zum Ändern klicken",
     "prompt_mode_pill": "Prompt",
-    "prompt_mode_on": "Prompt-Modus ist an — jedes Diktat kommt als fertiger Prompt für einen Coding-Agenten an, mit einem Dank am Schluss. Klicken zum Ausschalten.",
+    "prompt_mode_on": "Prompt-Modus ist an — jedes Diktat kommt als fertiger Prompt für einen Coding-Agenten an, in deinen eigenen Worten. Das Modell liest dein Transkript erst durch, bevor es antwortet; das dauert ein paar Sekunden. Klicken zum Ausschalten.",
     "prompt_mode_off": "Prompt-Modus ist aus — Diktate kommen so an, wie gesprochen. Klicken, damit jedes Diktat zu einem fertigen Prompt für einen Coding-Agenten wird.",
     "prompt_mode_failed": "Der Prompt-Modus konnte nicht umgeschaltet werden.",
     "theme_to_light": "Zum hellen Modus wechseln",

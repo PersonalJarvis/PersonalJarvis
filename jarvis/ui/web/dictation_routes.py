@@ -595,7 +595,8 @@ class SettingsBody(BaseModel):
         description=(
             "How long Prompt Mode may take from the finished transcript before "
             "the dictation falls back to the ordinary passes, in milliseconds "
-            "(2000-10000)"
+            "(4000-20000). It covers the model's written pass over the "
+            "transcript as well as the message it then writes"
         ),
     )
     persist: bool = Field(

@@ -3599,8 +3599,12 @@ class DictationConfig(BaseModel):
     #: doctrine (``jarvis/agentic_ide/prompt_blueprint.py``) applied to a
     #: transcript. It runs on the polish pass's own fast model chain
     #: (``polish_provider``), asking for the family's stronger fast model,
-    #: because the bar is 5-7 s from the finished transcript and nothing
-    #: slower fits that window.
+    #: and makes that model work through a written analysis of the transcript
+    #: before it composes anything — the ``<analysis>``/``<prompt>`` answer in
+    #: ``jarvis/dictation/prompt_mode.py``. That analysis is what the bar of
+    #: "about 5-7 s of thinking" actually buys: a model spends time by
+    #: emitting tokens, and one asked for the message directly writes a first
+    #: draft in under a second.
     #:
     #: Outranks the polish and translate passes while on — a prompt is
     #: already restructured, so neither has anything left to do. When no
@@ -3612,10 +3616,14 @@ class DictationConfig(BaseModel):
     prompt_mode: bool = False
 
     #: Wall-clock ceiling for one Prompt Mode call, from the finished
-    #: transcript. Longer than the polish pass's 1.2 s because a brief is a
-    #: rewrite and completeness outranks speed inside the window; bounded at
-    #: 10 s so it stays dictation. Clamped, never rejected (AP-16).
-    prompt_mode_timeout_ms: int = Field(default=6_000, ge=2_000, le=10_000)
+    #: transcript. Far longer than the polish pass's 1.2 s: the call carries a
+    #: written analysis of the transcript in front of the message, which is
+    #: where the thinking happens, and a real dictation spends 6-9 s on the
+    #: pair. 12 s leaves room for that without cutting the answer off as it
+    #: starts writing; below 4 s the analysis cannot finish and the pass only
+    #: ever times out, and 20 s is as far as it may be pushed before this
+    #: stops being dictation. Clamped, never rejected (AP-16).
+    prompt_mode_timeout_ms: int = Field(default=12_000, ge=4_000, le=20_000)
 
     @field_validator("paste_chord", mode="before")
     @classmethod
@@ -3756,7 +3764,7 @@ class DictationConfig(BaseModel):
     @field_validator("prompt_mode_timeout_ms", mode="before")
     @classmethod
     def _clamp_prompt_mode_timeout_ms(cls, value: object) -> int:
-        return _clamped_polish_int(value, default=6_000, low=2_000, high=10_000)
+        return _clamped_polish_int(value, default=12_000, low=4_000, high=20_000)
 
 
 class MarketplaceConfig(BaseModel):
