@@ -1556,6 +1556,31 @@ describe("pane refit", () => {
     expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
   });
 
+  /*
+   * A pane that mounts HIDDEN measures nothing — and must say nothing.
+   *
+   * The chat stage hides every cell and draws the staged pane's transcript
+   * over the canvas, so a pane opened there is display:none from its first
+   * frame. The fit addon answers a hidden box with its own minimum, and
+   * clamped to the floors that was a 10x4 terminal — which the handshake then
+   * spawned the agent at (T11, 2026-08-27). Unmeasured, the terminal keeps
+   * its constructed size and the agent starts in one it can draw in.
+   */
+  it("does not shrink a pane that mounts hidden to the floors", () => {
+    Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+    // What the fit addon proposes for a display:none tile.
+    terminalHarness.size = { cols: 2, rows: 1 };
+    render(pane(false, {}, false));
+    settle();
+
+    expect(terminalHarness.resize).not.toHaveBeenCalled();
+    expect(terminalHarness.fit).not.toHaveBeenCalled();
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ cols: 10, rows: 4 }),
+    );
+  });
+
   it("gives xterm and the agent the same number, always", () => {
     // The one thing that must never drift. An agent laying its lines out for a
     // width its xterm does not have re-wraps every one of them, and the TUI's

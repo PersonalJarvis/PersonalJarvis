@@ -3692,6 +3692,7 @@
     "jarvis_opened": "{name} opened",
     "prompt_sent": "Prompt sent to",
     "prompt_not_submitted": "the prompt is in its input box, not sent",
+    "prompt_unconfirmed": "the prompt was typed in, but the pane never showed it arriving — check that pane",
     "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history.",
     "realtime_provider_issue": "The realtime provider reported a problem."
   },

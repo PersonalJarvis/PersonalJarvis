@@ -122,7 +122,11 @@ function withProvider(timeline: Timeline, providerId: string): Timeline {
 export interface PaneChatStoreOptions {
   terminal: string;
   workspaceId: string;
-  /** The pane's lifetime id — the "session id" the chat components see. */
+  /**
+   * The pane's lifetime id — the id of the session OBJECT the chat components
+   * see. Never handed out as `activeSessionId`: that is an agent-chat session
+   * id, and a pane has none (see the store body).
+   */
   historyId: string;
   agent: string;
   /** What the CLI is called — "Claude Code" — the session's title. */
@@ -281,7 +285,14 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
       surface: "agent",
       ...mirror(),
       sessions: [],
-      activeSessionId: options.historyId,
+      // No agent-chat session stands behind a pane: the chat's session store
+      // has never heard of a pane's history id, and handing it out as one
+      // sent the composer's file attach to `/agent-chat/attachments` with a
+      // `session_id` the backend could only answer with 404 "session not
+      // found" (2026-08-27). Null means "attach by folder", which is where a
+      // pane's files belong anyway; the session object beside it still names
+      // the pane for the stage.
+      activeSessionId: null,
       activeSession: session(),
       timeline: EMPTY_TIMELINE,
       socketState: "open",

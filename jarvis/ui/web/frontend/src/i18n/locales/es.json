@@ -3692,6 +3692,7 @@
     "jarvis_opened": "{name} abrió",
     "prompt_sent": "Prompt enviado a",
     "prompt_not_submitted": "el prompt está en su campo de entrada, no se envió",
+    "prompt_unconfirmed": "el prompt se escribió, pero el panel no mostró que llegara: revisa ese panel",
     "dictation_nowhere": "Ningún campo de texto tenía el foco, así que el dictado no se insertó. Está en el historial de dictados.",
     "realtime_provider_issue": "El proveedor Realtime informó de un problema."
   },

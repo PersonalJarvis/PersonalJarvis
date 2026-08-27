@@ -880,11 +880,27 @@ export function AgenticTerminal({
       attachCustomKeyEventHandler: keys.add,
       input: (data) => term.input(data),
     });
+    /** Is this pane's tile something that can honestly be measured right now? */
+    const measurable = () =>
+      container.clientWidth >= 8 && container.clientHeight >= 8;
+
     try {
       // Taken BEFORE the handshake below reads the terminal's geometry — so
       // the grid this pane draws on and the size its agent is spawned at are
       // the same thing from the very first byte.
-      const proposed = fit.proposeDimensions();
+      //
+      // Only from a tile that HAS a size. A pane that mounts hidden — the
+      // chat stage hides every cell and draws the staged pane's transcript
+      // over the canvas — is a display:none box, and the fit addon answers
+      // that with its own minimum rather than with nothing. Clamped to the
+      // floors below, that became a 10x4 terminal, and the handshake then
+      // spawned the agent at exactly that (T11, 2026-08-27): a CLI drawing
+      // its input line ten columns wide, where a prompt written into it
+      // could never be seen arriving and every message was reported as
+      // unconfirmed. Unmeasured, the terminal keeps its constructed 80x24
+      // and the agent starts at a size it can draw in; the first real
+      // measurement follows from `sendResize` the moment the tile is shown.
+      const proposed = measurable() ? fit.proposeDimensions() : undefined;
       if (
         proposed &&
         Number.isFinite(proposed.cols) &&
@@ -1338,10 +1354,6 @@ export function AgenticTerminal({
       (typeof document === "undefined" ||
         typeof document.hasFocus !== "function" ||
         document.hasFocus());
-
-    /** Is this pane's tile something that can honestly be measured right now? */
-    const measurable = () =>
-      container.clientWidth >= 8 && container.clientHeight >= 8;
 
     /**
      * Fit this pane to its tile and tell the agent behind it — right now.

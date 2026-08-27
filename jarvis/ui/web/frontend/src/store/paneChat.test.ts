@@ -175,7 +175,12 @@ describe("createPaneChatStore", () => {
       permissionMode: "auto",
       cwd: "C:\\dev\\Personal Jarvis",
     });
-    expect(s.activeSessionId).toBe("t7@1");
+    // The stage sees a session object named after the pane, but NO agent-chat
+    // session id: the composer sends that id with every file attach, and the
+    // chat's session store has never heard of a pane (404 "session not
+    // found", 2026-08-27).
+    expect(s.activeSessionId).toBeNull();
+    expect(s.activeSession?.session_id).toBe("t7@1");
     expect(s.activeSession?.model).toBe("claude-opus-5");
   });
 

@@ -182,6 +182,28 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(toast.message).not.toContain("private content");
   });
 
+  it("tells the three states of a prompt typed into a pane apart", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+    const deliver = (submitted: boolean | null) =>
+      MockWebSocket.last!.deliver(
+        envelope("AgenticIdePromptSent", { terminal: "T11", submitted }),
+      );
+
+    deliver(true);
+    deliver(false);
+    deliver(null);
+
+    const toasts = useEventStore.getState().toasts;
+    expect(toasts.map((toast) => toast.kind)).toEqual(["success", "warning", "info"]);
+    expect(toasts[0].message).toContain("T11");
+    expect(toasts[1].message).toContain("input box");
+    // Unconfirmed is NOT "not sent": the agent may well be answering already
+    // (T11, 2026-08-27 — the pane had taken the prompt, the toast said no).
+    expect(toasts[2].message).not.toContain("not sent");
+    expect(toasts[2].message).toContain("never showed it arriving");
+  });
+
   it("routes native microphone levels outside React state and clears them after listening", async () => {
     render(<Harness />);
     await Promise.resolve();

@@ -495,11 +495,24 @@ export function useWebSocket(): void {
             submitted?: boolean | null;
           };
           if (typeof p.terminal === "string" && p.terminal.length > 0) {
+            // Three states, exactly as the backend reports them (see
+            // `terminal_prompt` in agentic_ide_routes.py): true — the agent
+            // took it; false — the text is provably still in its input box;
+            // null — the pane never visibly showed it arriving and no claim
+            // can be made either way. Null used to be read as false and told
+            // the user "not sent" about a prompt the agent was already
+            // answering (T11, 2026-08-27); it has its own, milder line now.
+            const submitted = p.submitted === true;
+            const unconfirmed = p.submitted !== true && p.submitted !== false;
             pushToast(
-              p.submitted === true ? "success" : "warning",
-              p.submitted === true
+              submitted ? "success" : unconfirmed ? "info" : "warning",
+              submitted
                 ? `${translate("use_web_socket.prompt_sent")} ${p.terminal}`
-                : `${p.terminal}: ${translate("use_web_socket.prompt_not_submitted")}`,
+                : `${p.terminal}: ${translate(
+                    unconfirmed
+                      ? "use_web_socket.prompt_unconfirmed"
+                      : "use_web_socket.prompt_not_submitted",
+                  )}`,
             );
             window.dispatchEvent(
               new CustomEvent("jarvis:agentic-ide-prompt", { detail: p }),

@@ -13288,3 +13288,57 @@ executor was fixed once; anyio's was the same bug one layer over. And a
 gate that releases on a timer gates only what fits in the timer: the honest
 end of a cold start is the CLI's own input line.
 
+
+## BUG-190: a message typed on the Agentic IDE's chat stage answered "T11: the prompt is in its input box, not sent" and a pasted screenshot "session not found" — the hidden tile spawned the agent at 10x4, an unconfirmed delivery was read as a refusal, and the pane's history id went out as a chat session id (MEDIUM, FIXED 2026-08-27)
+
+**Symptom.** With the Agentic IDE in chat view, a new pane (T11) was
+opened and "Hlallo" typed into the stage's composer. A warning toast said
+`T11: the prompt is in its input box, not sent` — while the agent in T11
+was already answering it. Pasting a screenshot into the same composer put
+`session not found` in red under the input. The log, eleven seconds apart:
+`PTY spawned: shell=agentic-ide:t11 … size=10x4`, then `never saw the
+prompt reach T11 — it may have been submitted or dropped; reporting it as
+unconfirmed`.
+
+**Cause.** Three, stacked.
+
+1. `AgenticTerminal` measures its tile once before the socket handshake, so
+   the agent is spawned at the size the grid shows. On the chat stage every
+   cell is `hidden` (display:none) and the staged pane's transcript is drawn
+   over the canvas instead — so the fit addon measured a box with no size
+   and answered with its own minimum (2x1), the floors clamped that to 10x4,
+   and the handshake spawned the CLI at exactly that. The later
+   `applyResize` path already refused an unmeasurable tile; the mount-time
+   fit did not.
+2. In a ten-column terminal the CLI never draws its input line the way
+   `_input_line_holds` reads it, so `_write_and_confirm` reported
+   `submitted: null` — "never seen arriving, no claim either way".
+   `useWebSocket.ts` folded that null into false and toasted the warning
+   meant for a prompt provably still sitting in its box.
+3. `store/paneChat.ts` handed the pane's history id out as
+   `activeSessionId`. The composer sends that id as `session_id` with every
+   file attach, and `/api/agent-chat/attachments` looks it up in the chat's
+   session store — where no pane has ever existed — and answers 404.
+
+**Fix.**
+
+1. The mount-time fit runs only for a tile that has a size (`measurable()`,
+   the same check `applyResize` uses); a pane that mounts hidden keeps its
+   constructed 80x24 until the tile is shown, and the first real measurement
+   follows from `sendResize` then. Test: "does not shrink a pane that mounts
+   hidden to the floors".
+2. The prompt toast has the event's three states: success for true, the
+   warning for false, and an info line for null that says the pane never
+   showed the prompt arriving (`use_web_socket.prompt_unconfirmed`,
+   en/de/es). Test: "tells the three states of a prompt typed into a pane
+   apart".
+3. A pane's store reports no `activeSessionId`; the attach goes by the
+   workspace folder, which is where a pane's files belong anyway. The
+   session object beside it still names the pane for the stage.
+
+**Lesson.** A measurement taken from something hidden is not a small
+number, it is no number — code that clamps to a floor must first ask
+whether there was anything to measure. And when the backend goes to the
+trouble of reporting three states, no layer on the way to the user may fold
+two of them together: an honest "unconfirmed" turned into a confident "not
+sent" is a lie the user acts on.
