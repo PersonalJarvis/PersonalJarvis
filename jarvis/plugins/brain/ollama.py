@@ -34,6 +34,7 @@ one raises an honest error instead of describing a screenshot blind.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -322,7 +323,11 @@ class OllamaBrain:
         return caps is not None and "vision" in caps
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        client = self._ensure_client()
+        client = self._client
+        if client is None:
+            # First use imports the SDK — seconds on a cold disk, and never on
+            # the event loop (BUG-189; see claude_api.py for the measurement).
+            client = await asyncio.to_thread(self._ensure_client)
         need_vision = _request_has_images(req)
         model = await self._resolve_model(need_tools=bool(req.tools), need_vision=need_vision)
         if need_vision and self._model and not await self._pinned_model_can_see(model):

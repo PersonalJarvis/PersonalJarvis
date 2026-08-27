@@ -4,6 +4,7 @@ Keyring/ENV: `anthropic_api_key` / `ANTHROPIC_API_KEY`.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -44,7 +45,14 @@ class ClaudeAPIBrain:
         return self._client
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        client = self._ensure_client()
+        client = self._client
+        if client is None:
+            # The first call imports the SDK (pydantic model generation for a
+            # few hundred types) and reads the credential store. Done ON the
+            # event loop, that import ran for 15 s on a cold disk and stopped
+            # every WebSocket, route and turn with it (2026-08-27, BUG-189) —
+            # so the one-time construction happens on a worker thread.
+            client = await asyncio.to_thread(self._ensure_client)
         async for delta in stream_complete(client, self._model, req):
             yield delta
 

@@ -35,6 +35,24 @@ def ready_for_prompt(term: Any) -> bool:
     spec = workspace_agents.get_agent(getattr(term, "agent", ""))
     if spec is not None and not spec.needs_input_line_wait:
         return True
+    return input_line_visible(term, spec)
+
+
+def input_line_visible(term: Any, spec: Any | None = None) -> bool:
+    """Does the bottom of this pane's screen show the CLI's input line?
+
+    The bare observation, without :func:`ready_for_prompt`'s opt-out. A CLI
+    that safely accepts typed text before it has painted its composer is
+    still LOADING until the composer is there — and "has it finished loading"
+    is the question a cold-start slot asks, whatever the CLI's typing policy
+    (BUG-189). ``spec`` may be passed in to save the registry lookup.
+    """
+    if getattr(term, "status", "") != "live" or not getattr(term, "pty_id", None):
+        return False
+    if spec is None:
+        from jarvis.workspace import agents as workspace_agents
+
+        spec = workspace_agents.get_agent(getattr(term, "agent", ""))
     transcript = getattr(term, "transcript", None)
     if transcript is None:
         return False
@@ -83,13 +101,34 @@ async def wait_for_prompt_ready(
     timeout_s: float = READY_TIMEOUT_S,
 ) -> tuple[str, ...]:
     """Wait for newly mounted panes to display their real input line."""
+    return await _wait_for_panes(session, names, ready_for_prompt, timeout_s=timeout_s)
+
+
+async def wait_for_input_line(
+    session: Any,
+    names: Sequence[str],
+    *,
+    timeout_s: float = READY_TIMEOUT_S,
+) -> tuple[str, ...]:
+    """Wait for panes to paint their input line — loading done, whatever the
+    CLI's typing policy (see :func:`input_line_visible`)."""
+    return await _wait_for_panes(session, names, input_line_visible, timeout_s=timeout_s)
+
+
+async def _wait_for_panes(
+    session: Any,
+    names: Sequence[str],
+    predicate: Any,
+    *,
+    timeout_s: float,
+) -> tuple[str, ...]:
     wanted = tuple(dict.fromkeys(name for name in names if name))
     deadline = time.monotonic() + max(0.0, timeout_s)
     while True:
         ready = tuple(
             name
             for name in wanted
-            if (term := session.find(name)) is not None and ready_for_prompt(term)
+            if (term := session.find(name)) is not None and predicate(term)
         )
         if len(ready) == len(wanted) or time.monotonic() >= deadline:
             return ready
@@ -138,7 +177,9 @@ __all__ = [
     "READY_POLL_S",
     "READY_TIMEOUT_S",
     "close_agent_terminals",
+    "input_line_visible",
     "ready_for_prompt",
     "terminals_closed_event",
+    "wait_for_input_line",
     "wait_for_prompt_ready",
 ]

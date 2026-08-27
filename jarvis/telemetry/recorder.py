@@ -118,9 +118,14 @@ class FlightRecorder:
 
     def _serialize_event(self, event: Event) -> str:
         data = dataclasses.asdict(event)
+        # The contract says UUID, but this is a wildcard observer of EVERY
+        # event, and a publisher that hands over a string trace id must cost
+        # telemetry one line, not the event: ``.hex`` on a str raised here on
+        # every dictation (2026-08-27) and the recorder dropped the event.
+        trace_id = event.trace_id
         top: dict[str, Any] = {
             "ts_ns": data.pop("timestamp_ns"),
-            "trace_id": event.trace_id.hex,
+            "trace_id": trace_id.hex if isinstance(trace_id, UUID) else str(trace_id),
             "event": type(event).__name__,
             "layer": data.pop("source_layer", ""),
         }

@@ -28,6 +28,7 @@ looked at is the failure mode worth being conservative about.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -151,7 +152,11 @@ class LocalOpenAIBrain:
         return self._model
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        client = self._ensure_client()
+        client = self._client
+        if client is None:
+            # First use imports the SDK — seconds on a cold disk, and never on
+            # the event loop (BUG-189; see claude_api.py for the measurement).
+            client = await asyncio.to_thread(self._ensure_client)
         model = await self._resolve_model()
         async for delta in stream_complete(
             client, model, req, supports_vision=self.supports_vision

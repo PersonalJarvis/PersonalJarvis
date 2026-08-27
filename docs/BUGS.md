@@ -13196,3 +13196,95 @@ picker lived behind a "Change" button, two clicks from the row.
 later, so it may be returned but never stored. And a control whose options
 come from a filtered list needs an answer for the empty case: offering one
 option is indistinguishable, to the person using it, from ignoring the click.
+
+## BUG-189: the desktop app hung in every section and sometimes did not paint at all for the first minutes after a cold Windows boot — the event loop was stopped for 15 s at a time behind an SDK import and a thread start (HIGH, FIXED 2026-08-27)
+
+**Symptom.** Windows booted at 09:57:21, Jarvis auto-started at 09:58:34.
+Every section hung, views did not render, clicks and keystrokes went
+nowhere, the machine felt stuck; the maintainer quit at 10:06 and relaunched,
+and the second boot was fine. The log of the first boot, side by side with
+the second: wake-word ready after 54.3 s (7.6 s), the German Vosk model
+loaded in 18.5 s (0.7 s), Vertex credentials in 26.6 s (2.1 s), the
+voice-ready watchdog fired at 45 s, 14 of 22 CLI probes were still running
+at the 44 s sweep ceiling, the mic capture thread starved (`Mic stall
+detected (6.4s without a frame)`, `5.0s of audio never reached the
+recording`), the WebView's own UI thread stalled for 3 s — and twice
+`Event loop STALLED for 15.0s — every WebSocket, HTTP route and brain turn
+is blocked behind this call`.
+
+**Root cause.** A cold OS boot (empty disk cache, Windows still starting
+its own autostart) met the app's own start storm: 22 CLI probes at once
+(up to 44 child processes), the agent chat's provider health sweep with a
+live one-token request per provider, Ollama plus a 9B model, three MCP
+servers, the wake models, Vertex ADC — and then the Agentic IDE resuming
+ten coding-CLI panes within two seconds (eight `claude.exe`, each reading a
+session transcript and starting its MCP servers), six more at 10:05. Under
+that load two things blocked the ONE thread that answers every click:
+
+1. `claude_api._ensure_client` ran `from anthropic import AsyncAnthropic` —
+   pydantic model generation for a few hundred types — synchronously inside
+   `complete()`, on the event loop, on a cold disk: 15 s. The same lazy
+   import sits in every OpenAI-shaped plugin, and `provider_registry._load`
+   (entry-point discovery that imports EVERY plugin) had the same shape in a
+   stall stack the day before. Reached from the agent chat's boot-time
+   health sweep and from the wiki extractor.
+2. A synchronous FastAPI route went through Starlette's
+   `run_in_threadpool` → `anyio.to_thread.run_sync` → `WorkerThread.start()`
+   → `Thread.start()` waits for the new thread to be scheduled: 15 s on a
+   starved box. anyio grows its pool on the calling thread — the loop —
+   exactly as CPython's default executor did before `loop_executor.py`
+   (2026-07-29), and its workers RETIRE after ten idle seconds, so the pool
+   was empty again by the time the user clicked.
+
+The second boot was warm: nothing to page in, no import to run, no thread
+to start — which is why "it works now" told nobody anything.
+
+**Fix.**
+
+* `jarvis/plugins/brain/{claude_api,openai,grok,openrouter,nvidia,ollama,local_openai}.py`
+  — `complete()` builds the client on a worker thread the first time
+  (`asyncio.to_thread(self._ensure_client)`); the SDK import and the
+  credential read never run on the loop.
+* `jarvis/brain/healthcheck.py` — `probe()` instantiates the provider off
+  the loop, which also moves the registry's plugin imports there.
+* `jarvis/core/loop_executor.py` — `keep_anyio_workers_alive()` stops
+  anyio's workers from retiring (guarded on the backend's shape; a no-op on
+  an unfamiliar anyio), `warm_anyio_worker_pool()` brings eight up at a
+  calm moment. `jarvis/ui/web/server.py` applies the keep-alive when the
+  app is built and warms the pool five seconds after voice reports ready
+  (or at the end of the deferred phase when voice is off).
+* `jarvis/clis/prober.py` — `probe_all` runs `PROBE_CONCURRENCY` (6) probes
+  at a time; the partial-result contract is unchanged.
+* `jarvis/agentic_ide/session.py` — a cold-start slot is held until the
+  pane paints its input line (`fleet_actions.wait_for_input_line`, the bare
+  observation without Claude Code's typing opt-out) or
+  `COLD_START_HOLD_MAX_S` (15 s), with `COLD_START_SETTLE_S` as the floor.
+  A fixed 1.2 s let eight resumes pile into two seconds.
+* `jarvis/ui/web/server.py` — the SPA index route decides between index
+  and holding page off the loop (it reads `index.html` and stats every
+  asset; it was in a stall stack on 2026-08-26).
+* Side find, same log: `jarvis/telemetry/recorder.py` serializes a string
+  `trace_id` instead of raising `'str' object has no attribute 'hex'` on
+  every dictation.
+
+**Regression tests.**
+`tests/unit/brain/test_healthcheck_off_loop.py`,
+`tests/unit/core/test_loop_executor_anyio.py`,
+`tests/unit/clis/test_prober_concurrency.py`,
+`tests/unit/agentic_ide/test_cold_start_gate.py::test_a_slot_is_held_until_the_pane_paints_its_input_line`,
+`::test_a_pane_that_never_paints_an_input_line_holds_its_slot_only_to_the_ceiling`,
+`tests/unit/telemetry/test_recorder_trace_id.py`.
+
+**Forensics.** `grep -n "Event loop STALLED" data/jarvis_desktop.log` and
+the stack under it name the blocking call; `wake-start=` in the "Warm-up
+Phase A" line is the boot-health number (3–8 s warm, 20–55 s means the box
+was starved); `Get-CimInstance Win32_OperatingSystem` `LastBootUpTime`
+tells whether it was a cold OS boot.
+
+**Lesson.** A lazy `import` inside an `async def` is a synchronous call on
+the event loop, and the first one in a process is not cheap. Every pool
+that grows by `Thread.start()` grows on the thread that asks — the asyncio
+executor was fixed once; anyio's was the same bug one layer over. And a
+gate that releases on a timer gates only what fits in the timer: the honest
+end of a cold start is the CLI's own input line.
+

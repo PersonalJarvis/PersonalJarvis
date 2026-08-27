@@ -66,7 +66,13 @@ class BrainHealthChecker:
         """Calls the provider with a 1-token prompt and measures latency."""
         start = time.perf_counter()
         try:
-            brain = self._registry.instantiate(provider, model=model)
+            # Off the loop. Instantiating means the registry's entry-point
+            # discovery — which IMPORTS every brain plugin the first time — and
+            # the plugin's constructor. On a cold disk that import ran for
+            # 15 s ON the event loop while a health sweep probed the providers
+            # at boot (2026-08-26 and 2026-08-27, BUG-189), and every WebSocket
+            # frame, HTTP route and brain turn stood still behind it.
+            brain = await asyncio.to_thread(self._registry.instantiate, provider, model=model)
         except Exception as exc:  # noqa: BLE001
             duration_ms = (time.perf_counter() - start) * 1000.0
             return HealthResult(

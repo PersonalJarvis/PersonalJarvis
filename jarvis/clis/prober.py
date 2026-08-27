@@ -45,6 +45,16 @@ KILL_WAIT_TIMEOUT_S = 2.0
 # normal operation instead of acting as a backstop (see BUG: the 30s registry
 # ceiling blanked all 22 CLIs on 2026-07-25).
 PROBE_ALL_TIMEOUT_S = CHECK_TIMEOUT_S + AUTH_TIMEOUT_S + 2 * KILL_WAIT_TIMEOUT_S + 15.0
+# How many catalog probes run at once. Every probe is up to two child
+# processes (the binary check, then the auth check), and most of the catalog
+# is a Node or Python CLI that spends a second of CPU just printing its
+# version. All 22 at once on a machine that had booted a minute earlier meant
+# forty interpreter starts inside a second, while the wake-word models were
+# still loading off a cold disk — 14 probes were still running at the sweep
+# ceiling and the app's own event loop stalled behind the load (2026-08-27,
+# BUG-189). Six lanes keep a calm sweep under ten seconds and turn the
+# cold-boot burst into a queue.
+PROBE_CONCURRENCY = 6
 
 
 class CliStatusProber:
@@ -82,7 +92,13 @@ class CliStatusProber:
         """
         if not specs:
             return {}
-        tasks = [asyncio.ensure_future(self.probe(spec)) for spec in specs]
+        lanes = asyncio.Semaphore(PROBE_CONCURRENCY)
+
+        async def _gated(spec: CliSpec) -> CliStatus:
+            async with lanes:
+                return await self.probe(spec)
+
+        tasks = [asyncio.ensure_future(_gated(spec)) for spec in specs]
         await asyncio.wait(tasks, timeout=PROBE_ALL_TIMEOUT_S)
 
         out: dict[str, CliStatus] = {}

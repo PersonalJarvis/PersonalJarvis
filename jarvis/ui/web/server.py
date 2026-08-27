@@ -647,10 +647,21 @@ class WebServer:
         )
         self._voice_ready = _voice_disabled
 
+        # Synchronous routes run on anyio's thread pool, which grows ON the
+        # loop and shrinks after ten idle seconds — a start that blocked the
+        # loop for 15 s on 2026-08-27 (BUG-189). Workers stay resident from
+        # here on; a handful is brought up once voice reports ready, below.
+        from jarvis.core.loop_executor import keep_anyio_workers_alive
+
+        keep_anyio_workers_alive()
+        self._anyio_pool_warmed = False
+
         async def _track_voice_ready(event: VoiceBootStatus) -> None:
             # A bus subscriber must never raise (AP-18); setting a plain
-            # instance bool cannot fail.
+            # instance bool cannot fail, and the warm-up below only schedules.
             self._voice_ready = bool(event.ready)
+            if event.ready:
+                self._schedule_anyio_pool_warm()
 
         self.bus.subscribe(VoiceBootStatus, _track_voice_ready)
 
@@ -664,6 +675,37 @@ class WebServer:
         runtime_refs.set_web_app(app)
 
         return app
+
+    #: Breathing room between "voice is ready" and bringing anyio's workers
+    #: up. Ready is the end of the heavy boot work, not of the box's — the
+    #: wake models have just loaded and the frontend is still mounting.
+    _ANYIO_WARM_DELAY_S = 5.0
+
+    def _schedule_anyio_pool_warm(self) -> None:
+        """Bring a few anyio workers up, once, at the first calm moment.
+
+        Every start happens on the loop (anyio leaves no other way), so the
+        one place to pay for it is right after boot, before the first click —
+        never on the boot path itself (AP-26). Idempotent: the ready event
+        can arrive more than once (warm-up, then the watchdog).
+        """
+        if self._anyio_pool_warmed:
+            return
+        self._anyio_pool_warmed = True
+
+        async def _warm() -> None:
+            from jarvis.core.loop_executor import warm_anyio_worker_pool
+
+            try:
+                await asyncio.sleep(self._ANYIO_WARM_DELAY_S)
+                resident = await warm_anyio_worker_pool()
+            except Exception as exc:  # noqa: BLE001 — a pool that grows lazily is
+                # yesterday's behaviour, not a boot failure
+                logger.opt(exception=exc).debug("anyio pool warm-up did not complete")
+                return
+            logger.info("anyio worker pool warmed: {} thread(s) resident", resident)
+
+        asyncio.create_task(_warm(), name="anyio-pool-warm")
 
     async def _voice_ready_watchdog(self, deadline_s: float = 45.0) -> None:
         """Guarantee the UI never hangs on "starting up" forever.
@@ -2044,7 +2086,11 @@ class WebServer:
 
         @app.get("/", include_in_schema=False, response_model=None)
         async def _spa_root() -> FileResponse | HTMLResponse:
-            return self._spa_index_response()
+            # Off the loop: deciding between the index and the holding page
+            # reads index.html and stats every asset it references. On a disk
+            # that is busy paging in a cold boot that took long enough to show
+            # up in a loop-stall stack (2026-08-26, BUG-189).
+            return await asyncio.to_thread(self._spa_index_response)
 
         @app.get("/{full_path:path}", include_in_schema=False, response_model=None)
         async def _spa_fallback(
@@ -2065,7 +2111,7 @@ class WebServer:
             # success and never retries (sidebar-logo regression, 2026-07-18).
             if PurePosixPath(full_path).suffix.lower() in ASSET_SUFFIXES:
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
-            return self._spa_index_response()
+            return await asyncio.to_thread(self._spa_index_response)
 
     def _spa_index_response(self) -> FileResponse | HTMLResponse:
         # An index.html whose own entry bundle is not on disk is worse than no
@@ -2439,6 +2485,10 @@ class WebServer:
             self._voice_ready_watchdog_task = asyncio.create_task(
                 self._voice_ready_watchdog(), name="voice-ready-watchdog"
             )
+        else:
+            # Voice is off, so no ready event will ever arrive to trigger
+            # this; the end of the deferred phase is the calm moment instead.
+            self._schedule_anyio_pool_warm()
 
         # Phase-6 mission stack — MissionManager with a DB path derived from
         # the config's memory data_dir (same folder as data/jarvis.db, its

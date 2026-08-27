@@ -5,6 +5,7 @@ Model names are namespaced ("anthropic/claude-opus-4.7", "openai/gpt-5").
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from typing import Any
@@ -73,7 +74,11 @@ class OpenRouterBrain:
         return self._client
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        client = self._ensure_client()
+        client = self._client
+        if client is None:
+            # First use imports the SDK — seconds on a cold disk, and never on
+            # the event loop (BUG-189; see claude_api.py for the measurement).
+            client = await asyncio.to_thread(self._ensure_client)
         extra_body: dict[str, Any] | None = None
         if getattr(req, "reasoning_effort", None) == "none":
             # OpenRouter's unified ``reasoning`` parameter: ask the gateway to

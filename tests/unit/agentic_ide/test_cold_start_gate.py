@@ -84,6 +84,7 @@ async def test_a_full_workspace_starts_in_waves(
     """The whole grid connecting at once must not become one starting storm."""
     monkeypatch.setattr(ide, "COLD_START_LIMIT", 3)
     monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(ide, "COLD_START_HOLD_MAX_S", 0.0)
     pool.hold_s = 0.05
     registry = ide.Registry(pty_manager=pool)
     session = await registry.start(
@@ -101,6 +102,7 @@ async def test_codex_shared_store_starts_are_serial_until_the_input_line(
 ) -> None:
     """A process existing does not release Codex's account-scoped boot slot."""
     monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(ide, "COLD_START_HOLD_MAX_S", 0.0)
     monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
     monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 1.0)
     registry = ide.Registry(pty_manager=pool)
@@ -152,6 +154,7 @@ async def test_rejoining_a_running_agent_never_waits_for_a_starting_one(
     """
     monkeypatch.setattr(ide, "COLD_START_LIMIT", 1)
     monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(ide, "COLD_START_HOLD_MAX_S", 0.0)
     registry = ide.Registry(pty_manager=pool)
     session = await registry.start(
         str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}]
@@ -207,3 +210,62 @@ async def test_a_failed_start_hands_its_slot_back_at_once(
                 registry.attach(term.key, 80, 24, sink, gone, workspace_id=session.id),
                 timeout=2.0,
             )
+
+
+async def _wait_for_spawns(pool: CountingPtyManager, count: int) -> None:
+    for _ in range(200):
+        if len(pool.spawns) >= count:
+            return
+        await asyncio.sleep(0.01)
+
+
+async def test_a_slot_is_held_until_the_pane_paints_its_input_line(
+    pool: CountingPtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process existing is not the end of a cold start; its input line is.
+
+    Eight resumed Claude Code panes went from spawned to loading within two
+    seconds of each other on a machine that had booted a minute earlier, and
+    the app stalled behind them (2026-08-27). Claude Code accepts typed text
+    before its composer is painted, so this is deliberately NOT the typing
+    wait — it is the composer itself.
+    """
+    monkeypatch.setattr(ide, "COLD_START_LIMIT", 1)
+    monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(ide, "COLD_START_HOLD_MAX_S", 5.0)
+    monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
+    registry = ide.Registry(pty_manager=pool)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}])
+
+    mounting = asyncio.create_task(_attach_all(registry, session))
+    await _wait_for_spawns(pool, 1)
+    await asyncio.sleep(0.1)
+    assert len(pool.spawns) == 1, "the second pane started before the first had loaded"
+
+    first = next(term for term in session.terminals if term.status == "live")
+    await pool.emit(first.pty_id, "\x1b[2J\x1b[H❯ \x1b[?25h")
+    await _wait_for_spawns(pool, 2)
+    assert len(pool.spawns) == 2, "the next pane starts as soon as the first has painted"
+
+    second = next(term for term in session.terminals if term is not first)
+    await pool.emit(second.pty_id, "\x1b[2J\x1b[H❯ \x1b[?25h")
+    await asyncio.wait_for(mounting, timeout=2.0)
+
+
+async def test_a_pane_that_never_paints_an_input_line_holds_its_slot_only_to_the_ceiling(
+    pool: CountingPtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CLI stopped on a login or trust screen must not strand the grid."""
+    monkeypatch.setattr(ide, "COLD_START_LIMIT", 1)
+    monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(ide, "COLD_START_HOLD_MAX_S", 0.2)
+    monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
+    registry = ide.Registry(pty_manager=pool)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}])
+
+    started = asyncio.get_running_loop().time()
+    await asyncio.wait_for(_attach_all(registry, session), timeout=3.0)
+
+    assert len(pool.spawns) == 2
+    elapsed = asyncio.get_running_loop().time() - started
+    assert elapsed >= 0.15, "the second pane did not wait for the ceiling at all"

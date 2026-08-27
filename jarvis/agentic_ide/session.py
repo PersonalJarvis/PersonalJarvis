@@ -67,7 +67,7 @@ import re
 import shutil
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -385,7 +385,18 @@ COLD_START_LIMIT = max(2, (os.cpu_count() or 4) // 4)
 # releasing the slot on spawn would let the whole grid pile into the same second
 # regardless of the limit. Roughly the length of a CLI's own boot burst; long
 # enough to stagger, short enough that nobody watches a spinner for it.
+#
+# That is the FLOOR. The slot is actually held until the pane shows its input
+# line — the moment the CLI has finished loading — or until COLD_START_HOLD_MAX_S,
+# whichever comes first. A fixed second was the whole gate on a machine that
+# had booted a minute earlier: eight resumed Claude Code panes went from
+# "spawned" to "loading" within two seconds of each other, each one reading a
+# session transcript and starting its MCP servers off a cold disk, and the app
+# stalled behind them (2026-08-27, BUG-189). The input line is the honest end
+# of a cold start; the ceiling keeps a CLI stopped on a login or trust screen
+# from holding everyone else's slot.
 COLD_START_SETTLE_S = 1.2
+COLD_START_HOLD_MAX_S = 15.0
 
 # How long the nudged window size is held before it is put back (see
 # ``_nudge_repaint``). A PTY carries one size, not a queue of them: set twice
@@ -1735,6 +1746,11 @@ class Registry:
         # limit; separate accounts get separate gates, and CLIs with no limit
         # never touch this path.
         self._agent_cold_starts: dict[tuple[str, str], asyncio.Semaphore] = {}
+        # The tasks holding a cold-start slot open until a pane's input line
+        # appears (see ``_cold_start_slot``). asyncio keeps only weak
+        # references to tasks; without this set a hold could be collected
+        # mid-wait and its slot never given back.
+        self._cold_start_holds: set[asyncio.Task[None]] = set()
 
     # ---------------------------------------------------------------- state
     @property
@@ -2636,7 +2652,9 @@ class Registry:
         return None if term is None else (session, term)
 
     @asynccontextmanager
-    async def _cold_start_slot(self) -> AsyncIterator[None]:
+    async def _cold_start_slot(
+        self, ready: Callable[[], Awaitable[bool]] | None = None
+    ) -> AsyncIterator[None]:
         """Hold one of the few slots for starting an agent CLI.
 
         Waiting here is what turns "open a workspace" from a burst that pins
@@ -2646,12 +2664,15 @@ class Registry:
         an agent already running is never made to wait behind one that is
         booting.
 
-        The slot is released a moment AFTER the block, not at its end. What
-        costs is the CLI loading itself and its servers, and by then ``spawn``
-        has returned; releasing immediately would let the whole grid through in
-        the same instant and the limit would gate nothing. A spawn that FAILED
-        releases at once — nothing is loading, and a broken pane must not hold
-        up the ones behind it.
+        The slot is released AFTER the block, not at its end. What costs is
+        the CLI loading itself and its servers, and by then ``spawn`` has
+        returned; releasing immediately would let the whole grid through in
+        the same instant and the limit would gate nothing. So the slot stays
+        taken for at least ``COLD_START_SETTLE_S``, and then until ``ready``
+        — the pane's input line, when the caller can name it — answers or
+        ``COLD_START_HOLD_MAX_S`` runs out. A spawn that FAILED releases at
+        once: nothing is loading, and a broken pane must not hold up the ones
+        behind it.
         """
         gate = self._cold_start
         if gate is None:
@@ -2665,9 +2686,62 @@ class Registry:
             started = True
         finally:
             if started:
-                asyncio.get_running_loop().call_later(COLD_START_SETTLE_S, gate.release)
+                self._hold_cold_start_slot(gate, ready)
             else:
                 gate.release()
+
+    def _hold_cold_start_slot(
+        self, gate: asyncio.Semaphore, ready: Callable[[], Awaitable[bool]] | None
+    ) -> None:
+        """Give ``gate`` back once the started pane has finished loading.
+
+        Runs as a task of its own so the attach that started the pane returns
+        at once — the viewer connects to a booting CLI exactly as before; only
+        the NEXT cold start waits. Whatever happens in here, the slot comes
+        back: a readiness check that raises or is cancelled releases in the
+        ``finally``, and the ceiling bounds the wait for a CLI that never
+        shows an input line (login, trust prompt, an unknown future screen).
+        """
+
+        async def _hold() -> None:
+            try:
+                await asyncio.sleep(COLD_START_SETTLE_S)
+                remaining = COLD_START_HOLD_MAX_S - COLD_START_SETTLE_S
+                if ready is not None and remaining > 0:
+                    try:
+                        await asyncio.wait_for(ready(), timeout=remaining)
+                    except TimeoutError:
+                        # The ceiling IS the release. The pane's own readiness
+                        # wait reports a CLI that never showed its input line.
+                        pass
+                    except Exception:  # noqa: BLE001 — a probe that cannot read
+                        # the screen must not keep a slot; log, release.
+                        logger.debug(
+                            "Agentic IDE: cold-start readiness check failed; "
+                            "releasing the slot",
+                            exc_info=True,
+                        )
+            finally:
+                gate.release()
+
+        task = asyncio.get_running_loop().create_task(_hold(), name="cold-start-hold")
+        self._cold_start_holds.add(task)
+        task.add_done_callback(self._cold_start_holds.discard)
+
+    async def _prompt_ready(self, session: Session, term: Terminal) -> bool:
+        """Has this pane painted its input line yet? Waits, bounded.
+
+        The input line, not ``ready_for_prompt``: Claude Code opts out of the
+        typing wait because typing early is safe with it — but its composer
+        still appears only once it has loaded, and loading is what the slot
+        is for.
+        """
+        from . import fleet_actions
+
+        ready = await fleet_actions.wait_for_input_line(
+            session, [term.name], timeout_s=COLD_START_HOLD_MAX_S
+        )
+        return term.name in ready
 
     async def _acquire_agent_cold_start(self, term: Terminal) -> asyncio.Semaphore | None:
         """Take this CLI/account's boot slot when its registry entry needs one.
@@ -3136,8 +3210,9 @@ class Registry:
         agent_start_gate = await self._acquire_agent_cold_start(term)
         spawn_succeeded = False
         try:
-            # One of a few starts at a time (see COLD_START_LIMIT).
-            async with self._cold_start_slot():
+            # One of a few starts at a time (see COLD_START_LIMIT), and the
+            # slot stays taken until this pane's input line appears.
+            async with self._cold_start_slot(ready=lambda: self._prompt_ready(session, term)):
                 try:
                     pty_session = await manager.spawn(
                         shell_argv=argv,
